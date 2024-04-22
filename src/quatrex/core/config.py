@@ -5,14 +5,23 @@ from pathlib import Path
 from pydantic import BaseModel
 
 
+class SCBAConfig(BaseModel):
+    max_iterations: int = 1000
+    tolerance: float = 1e-8
+
+    mixing_factor: float = 0.1
+
+    electron: bool = True
+    phonon: bool = False
+
+
 class StructureConfig(BaseModel):
     temperature: float = 300.0  # K
     num_cells: int
 
 
-class OpenBoundaryConditionConfig(BaseModel):
+class OBCConfig(BaseModel):
     algorithm: str = "sancho-rubio"
-    interaction_range: int = 1
 
     # Parameters for iterative solvers.
     max_iterations: int = 5000
@@ -20,22 +29,37 @@ class OpenBoundaryConditionConfig(BaseModel):
 
 
 class ElectronConfig(BaseModel):
-    energy_range: list[float]
-    energy_step: float = 1e-3  # eV
     eta: float = 1e-6  # eV
 
     fermi_level: float = 0.0  # eV
     fermi_level_splitting = 0.0  # eV
 
-    solver: str = "dense"
+    solver: str = "dense_inv"
 
-    obc: OpenBoundaryConditionConfig = OpenBoundaryConditionConfig()
+    obc: OBCConfig = OBCConfig()
+
+
+class PhononConfig(BaseModel):
+    energy_range: list[float]
+    energy_step: float = 1e-3  # eV
+
+    solver: str = "dense_inv"
+
+    # "greens_function" or "deformation_potential"
+    model: str = "deformation_potential"
+
+    obc: OBCConfig = OBCConfig()
 
 
 class QuatrexConfig(BaseModel):
     structure: StructureConfig
 
     electron: ElectronConfig
+    phonon: PhononConfig
 
     # --- Directory paths ----------------------------------------------
     simulation_dir: Path = Path("./quatrex/")
+
+    @property
+    def input_dir(self) -> Path:
+        return self.simulation_dir / "inputs/"

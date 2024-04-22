@@ -3,7 +3,7 @@ import numpy as np
 import numpy.linalg as npla
 import pytest
 
-from quantum_transport_toolbox.open_boundary_conditions_solvers import sancho_rubio
+from quantumtransporttoolbox.open_boundary_conditions_solvers import sancho_rubio
 
 
 def test_convergence(a_ii: np.ndarray, a_ij: np.ndarray):

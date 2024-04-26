@@ -135,10 +135,11 @@ class DBCSR:
             data[..., offset : offset + bnnz] = coo.data[inds]
             cols[offset : offset + bnnz] = coo.col[inds]
 
-            rowptr = np.zeros(block_sizes[i] + 1, dtype=int)
-            for row in coo.row[inds] - block_offsets[i]:
-                rowptr[row + 1] += 1
-            rowptr = np.cumsum(rowptr) + offset
+            rowptr, __ = np.histogram(
+                coo.row[inds] - block_offsets[i],
+                bins=np.arange(block_sizes[i] + 1),
+            )
+            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
             rowptr_map[(i, j)] = rowptr
 
             offset += bnnz

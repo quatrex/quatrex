@@ -8,12 +8,12 @@ import numpy as np
 import numpy.linalg as npla
 
 from quatrex.core.config import OBCConfig, QuatrexConfig
-from quantumtransporttoolbox.obc import (
+from qttools.obc import (
     sancho_rubio,
 )
-from quantumtransporttoolbox.greens_function import rgf
+from qttools.greens_function import inv, rgf
 
-from quatrex.core.coo import COOBatch
+from qttools.datastructures.dbcsr import DBCSR
 
 
 class SubsystemSolver(ABC):
@@ -39,33 +39,21 @@ class SubsystemSolver(ABC):
         self.invert = self._configure_inversion(getattr(config, self.system).solver)
         self.solver = self._configure_solver(getattr(config, self.system).solver)
 
-        (self.n_energies_per_rank, self.energy_slice) = self._compute_energy_slice()
+        (self.num_energies_per_rank, self.energy_slice) = self._compute_energy_slice()
 
     def _compute_energy_slice(self):
         """Computes the energy slice."""
-        n_energies = len(self.energies) // COMM_WORLD.size
+        num_energies = len(self.energies) // COMM_WORLD.size
 
         if len(self.energies) % COMM_WORLD.size != 0:
             raise ValueError(
                 "The number of energies must be divisible by the number of MPI processes."
             )
 
-        start_energy = n_energies * COMM_WORLD.rank
-        end_energy = start_energy + n_energies
+        start_energy = num_energies * COMM_WORLD.rank
+        end_energy = start_energy + num_energies
 
-        return (n_energies, slice(start_energy, end_energy))
-
-    def _allocate_memory(self, nnz: int) -> tuple:
-        # Inputs data
-        system_matrices = COOBatch(self.n_energies, nnz)
-        sigma_lesser = COOBatch(self.n_energies, nnz)
-        sigma_greater = COOBatch(self.n_energies, nnz)
-
-        # Results
-        g_lesser = COOBatch(self.n_energies, nnz)
-        g_greater = COOBatch(self.n_energies, nnz)
-
-        return (system_matrices, sigma_lesser, sigma_greater, g_lesser, g_greater)
+        return (num_energies, slice(start_energy, end_energy))
 
     def _configure_obc(self, obc_config: OBCConfig) -> callable:
         """Configures the OBC algorithm from the config.
@@ -112,15 +100,10 @@ class SubsystemSolver(ABC):
 
         """
         if solver == "rgf":
-            return rgf
+            return rgf.rgf_retarded
 
-        if solver == "dense_inv":
-
-            def invert(a: bsp.BSparse) -> np.ndarray:
-                inverse = npla.inv(a.toarray())
-                return bsp.BCOO.from_array(inverse, sizes=(a.row_sizes, a.col_sizes))
-
-            return invert
+        if solver == "inv":
+            return inv.inv_retarded
 
         raise NotImplementedError(f"Solver '{solver}' not implemented.")
 
@@ -139,44 +122,24 @@ class SubsystemSolver(ABC):
 
         """
         if solver == "rgf":
-            return rgf
+            return rgf.rgf_lesser_greater
 
-        if solver == "dense_inv":
-
-            def solve(
-                a: bsp.BSparse, sigma_l: bsp.BSparse, sigma_g: bsp.BSparse
-            ) -> np.ndarray:
-                y = npla.inv(a.toarray())
-                x_l = bsp.BCOO.from_array(
-                    (y @ sigma_l.toarray() @ y.conj().T),
-                    sizes=(a.row_sizes, a.col_sizes),
-                )
-                x_g = bsp.BCOO.from_array(
-                    (y @ sigma_g.toarray() @ y.conj().T),
-                    sizes=(a.row_sizes, a.col_sizes),
-                )
-
-                return x_l, x_g
-
-            return solve
+        if solver == "inv":
+            return inv.inv_lesser_greater
 
         raise NotImplementedError(f"Solver '{solver}' not implemented.")
 
     @abstractmethod
-    def apply_obc(self, *args, **kwargs) -> tuple[bsp.BSparse, ...]:
+    def apply_obc(self, *args, **kwargs) -> tuple[DBCSR, ...]:
         """Applies the OBC."""
         ...
 
     @abstractmethod
-    def assemble_system_matrix(self, energy: float) -> tuple[bsp.BSparse, ...]:
+    def assemble_system_matrix(self, energy: float) -> tuple[DBCSR, ...]:
         """Assembles the system matrix for a given energy."""
         ...
 
-    @abstractmethod
-    def solve_retarded_at_energy(self, energy: float) -> bsp.BSparse:
-        """Solves for the causal Green's function at a given energy."""
-        ...
-
+    @
     def solve_retarded(self) -> list[bsp.BCOO]:
         """Solves for the causal Green's function for all energies.
 

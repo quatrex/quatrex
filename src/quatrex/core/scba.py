@@ -4,7 +4,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.electron.sigma_phonon import SigmaPhonon
 from quatrex.electron.electron_solver import ElectronSolver
 
-from quatrex.core.coo import COOBatch
+from qttools.datastructures.dbcsr import DBCSR
 
 
 @dataclass
@@ -38,12 +38,8 @@ class SCBA:
         electron_solver = ElectronSolver(self.config, cli=True)
         g_lesser, g_greater = electron_solver.solve_lesser_greater()
 
-        sigma_lesser = COOBatch(
-            electron_solver.n_energies_per_rank, electron_solver.nnz
-        )
-        sigma_greater = COOBatch(
-            electron_solver.n_energies_per_rank, electron_solver.nnz
-        )
+        sigma_lesser = DBCSR(electron_solver.num_energies_per_rank, electron_solver.nnz)
+        sigma_greater = DBCSR(electron_solver.num_energies_per_rank, electron_solver.nnz)
 
         scba = SCBAState()
 

@@ -1,5 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and QuaTrEx authors. All rights reserved.
 
+
+import tomllib
+
+
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -63,3 +67,12 @@ class QuatrexConfig(BaseModel):
     @property
     def input_dir(self) -> Path:
         return self.simulation_dir / "inputs/"
+
+
+def parse_config(config_file: Path) -> QuatrexConfig:
+    """Reads the TOML config file."""
+    with open(config_file, "rb") as f:
+        config = tomllib.load(f)
+
+    QuatrexConfig.validate(config)
+    return QuatrexConfig.parse_obj(config)

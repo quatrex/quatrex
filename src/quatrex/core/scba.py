@@ -39,7 +39,9 @@ class SCBA:
         g_lesser, g_greater = electron_solver.solve_lesser_greater()
 
         sigma_lesser = DBCSR(electron_solver.num_energies_per_rank, electron_solver.nnz)
-        sigma_greater = DBCSR(electron_solver.num_energies_per_rank, electron_solver.nnz)
+        sigma_greater = DBCSR(
+            electron_solver.num_energies_per_rank, electron_solver.nnz
+        )
 
         scba = SCBAState()
 
@@ -104,11 +106,11 @@ class SCBA:
             # Update self-energy.
             m = self.config.scba.mixing_factor
             scba.electron_solver.sigma_lesser = (
-                m * scba.electron_solver.sigma_lesser + (1 - m) * sigma_lesser
-            )
+                1 - m
+            ) * scba.electron_solver.sigma_lesser + m * sigma_lesser
             scba.electron_solver.sigma_greater = (
-                m * scba.electron_solver.sigma_greater + (1 - m) * sigma_greater
-            )
+                1 - m
+            ) * scba.electron_solver.sigma_greater + m * sigma_greater
 
             if rel_norm_diff_causal < self.config.scba.tolerance:
                 print(f"SCBA converged after {__} iterations.")

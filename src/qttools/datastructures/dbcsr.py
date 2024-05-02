@@ -1,9 +1,9 @@
 import numpy as np
-import scipy.sparse as sps
-from line_profiler import profile
+
+from qttools.datastructures.dbsparse import DBSparse
 
 
-class DBCSR:
+class DBCSR(DBSparse):
     """Distributed block compressed sparse row matrix."""
 
     def __init__(
@@ -12,6 +12,7 @@ class DBCSR:
         cols: np.ndarray,
         rowptr_map: dict,
         block_sizes: np.ndarray,
+        return_dense: bool = False,
     ) -> None:
         """Initializes the DBCSR matrix."""
         self.data = np.asarray(data)
@@ -19,20 +20,21 @@ class DBCSR:
         self.rowptr_map = rowptr_map
         self.block_sizes = np.asarray(block_sizes).astype(int)
 
-        self.num_blocks = len(block_sizes)
-        self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
-        self.stack_shape = data.shape[:-1]
-        self.shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
-        self.nnz = self.data.shape[-1]
+        self._num_blocks = len(block_sizes)
+        self._block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
+        self._stack_shape = data.shape[:-1]
+        self._shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
+        self._nnz = self.data.shape[-1]
 
-    def _unsign_block_index(self, brow: int, bcol: int) -> tuple:
-        """Adjusts the sign to allow negative indices and checks bounds."""
-        brow = self.num_blocks + brow if brow < 0 else brow
-        bcol = self.num_blocks + bcol if bcol < 0 else bcol
-        if not (0 <= brow < self.num_blocks and 0 <= bcol < self.num_blocks):
-            raise IndexError("Block index out of bounds.")
+        self._return_dense = return_dense
 
-        return brow, bcol
+    def from_sparray(
+        a: sparray,
+        blocksizes: np.ndarray,
+        stackshape: tuple = (1,),
+        densify_blocks=None,
+        pinned=False,
+    ): ...
 
     def to_dense(self) -> np.ndarray:
         """Returns the dense matrix representation."""
@@ -47,49 +49,7 @@ class DBCSR:
 
         return arr
 
-    def get_block(self, brow: int, bcol: int) -> np.ndarray:
-        """Returns the block at the given block-row and -column."""
-        brow, bcol = self._unsign_block_index(brow, bcol)
-
-        rowptr = self.rowptr_map.get((brow, bcol), None)
-        block = np.zeros(
-            self.stack_shape + (self.block_sizes[brow], self.block_sizes[bcol]),
-            dtype=self.data.dtype,
-        )
-        if rowptr is None:
-            return block
-
-        for row in range(self.block_sizes[brow]):
-            cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            block[..., row, cols - self.block_offsets[bcol]] = self.data[
-                ..., rowptr[row] : rowptr[row + 1]
-            ]
-        return block
-
-    def set_block(self, brow: int, bcol: int, block: np.ndarray) -> None:
-        """Sets the block at the given block-row and -column."""
-        if block.shape[-2:] != (
-            self.block_sizes[brow],
-            self.block_sizes[bcol],
-        ):
-            raise ValueError("Block shape does not match.")
-
-        brow, bcol = self._unsign_block_index(brow, bcol)
-
-        rowptr = self.rowptr_map.get((brow, bcol), None)
-        if rowptr is None:
-            return
-
-        for row in range(self.block_sizes[brow]):
-            cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            self.data[..., rowptr[row] : rowptr[row + 1]] = block[
-                ..., row, cols - self.block_offsets[bcol]
-            ]
-
-    @classmethod
-    def zeros_like(cls, dbcsr: "DBCSR") -> "DBCSR":
-        """Returns a zero-initialized DBCSR matrix with the same
-        sparsity pattern."""
+    def zeros_like(cls, dbcsr: "DBCSR") -> DBSparse:
         return cls(
             np.zeros_like(dbcsr.data),
             dbcsr.cols,
@@ -97,51 +57,82 @@ class DBCSR:
             dbcsr.block_sizes,
         )
 
-    @profile
-    @classmethod
-    def from_coo(
-        cls,
-        coo: sps.coo_array,
-        block_sizes: np.ndarray,
-        stackshape: int | tuple,
-    ) -> "DBCSR":
-        """Converts a coo matrix to a DBCSR matrix."""
-        # Sort the data by block-row and -column
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-        num_blocks = len(block_sizes)
+    def block_diagonal(
+        offset: int = 0, dense: bool = False
+    ) -> list[sparray] | list[np.ndarray]: ...
 
-        rowptr_map = {}
+    def diagonal() -> np.ndarray: ...
 
-        if isinstance(stackshape, int):
-            stackshape = (stackshape,)
+    def local_transpose(copy=False) -> None | DBSparse: ...
 
-        data = np.zeros(stackshape + (coo.nnz,), dtype=coo.data.dtype)
-        cols = np.zeros(coo.nnz, dtype=int)
+    def distributed_transpose() -> None: ...
 
-        # NOTE: This is a naive implementation and can be optimized.
-        offset = 0
-        for i, j in np.ndindex(num_blocks, num_blocks):
-            inds = (
-                (block_offsets[i] <= coo.row)
-                & (coo.row < block_offsets[i + 1])
-                & (block_offsets[j] <= coo.col)
-                & (coo.col < block_offsets[j + 1])
-            )
-            bnnz = np.sum(inds)
+    def _unsign_block_index(self, brow: int, bcol: int) -> tuple:
+        """Adjusts the sign to allow negative indices and checks bounds."""
+        brow = self.num_blocks + brow if brow < 0 else brow
+        bcol = self.num_blocks + bcol if bcol < 0 else bcol
+        if not (0 <= brow < self.num_blocks and 0 <= bcol < self.num_blocks):
+            raise IndexError("Block index out of bounds.")
 
-            if bnnz == 0:
-                continue
+        return brow, bcol
 
-            data[..., offset : offset + bnnz] = coo.data[inds]
-            cols[offset : offset + bnnz] = coo.col[inds]
+    def __setitem__(
+        self, idx: tuple[int, int], block: np.ndarray
+    ) -> None:
+        if block.shape[-2:] != (
+            self.block_sizes[idx[0]],
+            self.block_sizes[idx[1]],
+        ):
+            raise ValueError("Block shape does not match.")
 
-            rowptr, __ = np.histogram(
-                coo.row[inds] - block_offsets[i],
-                bins=np.arange(block_sizes[i] + 1),
-            )
-            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
-            rowptr_map[(i, j)] = rowptr
+        idx[0], idx[1] = self._unsign_block_index(idx[0], idx[1])
 
-            offset += bnnz
+        rowptr = self.rowptr_map.get((idx[0], idx[1]), None)
+        if rowptr is None:
+            return
 
-        return cls(data, cols, rowptr_map, block_sizes)
+        for row in range(self.block_sizes[idx[0]]):
+            cols = self.cols[rowptr[row] : rowptr[row + 1]]
+            self.data[..., rowptr[row] : rowptr[row + 1]] = block[
+                ..., row, cols - self.block_offsets[idx[1]]
+            ]
+
+    def __getitem__(
+        self, idx: tuple[int, int]
+    ) -> sparray:
+
+    def __iadd__(self, other: DBSparse) -> None: ...
+
+    def __imul__(self, other: DBSparse) -> None: ...
+
+    def __neg__(self) -> None: ...
+
+    def __matmul__(self, other: DBSparse) -> None: ...
+
+    @property
+    def num_blocks(self) -> np.uint:
+        return self._num_blocks
+
+    @property
+    def block_offsets(self) -> np.uint:
+        return self._block_offsets
+
+    @property
+    def stack_shape(self) -> np.uint:
+        return self._stack_shape
+
+    @property
+    def shape(self) -> np.uint:
+        return self._shape
+
+    @property
+    def nzz(self) -> np.uint:
+        return self._nnz
+
+    @property
+    def return_dense(self) -> bool: 
+        return self._return_dense
+    
+    @return_dense.setter
+    def return_dense(self, value: bool) -> None: 
+        self._return_dense = value

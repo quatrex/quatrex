@@ -3,7 +3,7 @@
 
 import tomllib
 from pathlib import Path
-from typing import List, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -125,7 +125,7 @@ class PhononConfig(BaseModel):
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = Field(default_factory=OBCConfig)
 
-    model: List[Literal["pseudo-scattering", "negf"]] = "pseudo-scattering"
+    model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
     phonon_energy: PositiveFloat | None
     deformation_potential: PositiveFloat | None
 
@@ -139,6 +139,7 @@ class PhononConfig(BaseModel):
 class QuatrexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # --- Simulation parameters ---------------------------------------
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     poisson: PoissonConfig = PoissonConfig()

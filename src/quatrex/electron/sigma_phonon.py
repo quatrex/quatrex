@@ -1,6 +1,6 @@
 from scipy.sparse import coo_array
 
-from quatrex.core.config import QuatrexConfig
+from quatrex.core.quatrex_config import QuatrexConfig
 
 
 class SigmaPhonon:

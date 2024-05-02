@@ -7,7 +7,7 @@ from mpi4py.MPI import COMM_WORLD
 import numpy as np
 import numpy.linalg as npla
 
-from quatrex.core.config import OBCConfig, QuatrexConfig
+from quatrex.core.quatrex_config import OBCConfig, QuatrexConfig
 from qttools.obc import (
     sancho_rubio,
 )

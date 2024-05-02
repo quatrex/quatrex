@@ -34,9 +34,12 @@ class RGF(Solver):
             If `out` is None, returns None. Otherwise, returns the inverted matrix
             as a DBSparse object.
         """
-        x = bsp.zeros(a.bshape, a.dtype)
+        if out is not None:
+            x = out
+        else:
+            x = DBSparse.zeros_like(a)
 
-        x.set_block(0, 0) = npla.inv(a.get_block(i=0, j=0, dense=True))
+        x[0, 0] = npla.inv(a[0, 0])
 
         # Forwards sweep.
         t = time.perf_counter()
@@ -107,17 +110,9 @@ class RGF(Solver):
             x_l = DBSparse.zeros_like(a)
             x_g = DBSparse.zeros_like(a)
 
-        x_r.set_block(0, 0, block = npla.inv(a.get_block(i=0, j=0, dense=True)))
-        x_l.set_block(0, 0, block = (
-            x_r.get_block(i=0, j=0, dense=True)
-            @ sigma_lesser.get_block(i=0, j=0, dense=True)
-            @ x_r.get_block(i=0, j=0, dense=True).conj().T
-        ))
-        x_g.set_block(0, 0, block = (
-            x_r.get_block(i=0, j=0, dense=True)
-            @ sigma_greater.get_block(i=0, j=0, dense=True)
-            @ x_r.get_block(i=0, j=0, dense=True).conj().T
-        ))
+        x_r[0, 0] = npla.inv(a[0, 0])
+        x_l[0, 0] = x_r[0, 0] @ sigma_lesser[0, 0] @ x_r[0, 0].conj().T
+        x_g[0, 0] = x_r[0, 0] @ sigma_greater[0, 0] @ x_r[0, 0].conj().T
 
         # Forwards sweep.
         t = time.perf_counter()
@@ -173,30 +168,29 @@ class RGF(Solver):
             temp_2_l = x_r[i, i] @ a[i, j] @ x_r[j, j] @ a[j, i] @ x_l[i, i]
             temp_2_g = x_r[i, i] @ a[i, j] @ x_r[j, j] @ a[j, i] @ x_g[i, i]
 
-            if save_off_diagonal:
-                x_l[i, j] = (
-                    -x_r[i, i] @ a[i, j] @ x_l[j, j]
-                    - x_l[i, i] @ a[j, i].conj().T @ x_r[j, j].conj().T
-                    + x_r[i, i] @ sigma_lesser[i, j] @ x_r[j, j].conj().T
-                )
+            x_l[i, j] = (
+                -x_r[i, i] @ a[i, j] @ x_l[j, j]
+                - x_l[i, i] @ a[j, i].conj().T @ x_r[j, j].conj().T
+                + x_r[i, i] @ sigma_lesser[i, j] @ x_r[j, j].conj().T
+            )
 
-                x_l[j, i] = (
-                    -x_l[j, j] @ a[i, j].conj().T @ x_r[i, i].conj().T
-                    - x_r[j, j] @ a[j, i] @ x_l[i, i]
-                    + x_r[j, j] @ sigma_lesser[j, i] @ x_r[i, i].conj().T
-                )
+            x_l[j, i] = (
+                -x_l[j, j] @ a[i, j].conj().T @ x_r[i, i].conj().T
+                - x_r[j, j] @ a[j, i] @ x_l[i, i]
+                + x_r[j, j] @ sigma_lesser[j, i] @ x_r[i, i].conj().T
+            )
 
-                x_g[i, j] = (
-                    -x_r[i, i] @ a[i, j] @ x_g[j, j]
-                    - x_g[i, i] @ a[j, i].conj().T @ x_r[j, j].conj().T
-                    + x_r[i, i] @ sigma_greater[i, j] @ x_r[j, j].conj().T
-                )
+            x_g[i, j] = (
+                -x_r[i, i] @ a[i, j] @ x_g[j, j]
+                - x_g[i, i] @ a[j, i].conj().T @ x_r[j, j].conj().T
+                + x_r[i, i] @ sigma_greater[i, j] @ x_r[j, j].conj().T
+            )
 
-                x_g[j, i] = (
-                    -x_g[j, j] @ a[i, j].conj().T @ x_r[i, i].conj().T
-                    - x_r[j, j] @ a[j, i] @ x_g[i, i]
-                    + x_r[j, j] @ sigma_greater[j, i] @ x_r[i, i].conj().T
-                )
+            x_g[j, i] = (
+                -x_g[j, j] @ a[i, j].conj().T @ x_r[i, i].conj().T
+                - x_r[j, j] @ a[j, i] @ x_g[i, i]
+                + x_r[j, j] @ sigma_greater[j, i] @ x_r[i, i].conj().T
+            )
 
             x_l[i, i] = (
                 x_l[i, i]

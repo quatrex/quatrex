@@ -93,6 +93,52 @@ class SCBAData:
     d_phonon_lesser: DBCSR = None
     d_phonon_greater: DBCSR = None
 
+@dataclass
+class Observables:
+    #Electron
+    electron_ldos:
+    electron_density:
+    hole_density:
+    electron_current:
+
+    electron_electron_scattering_rate:
+    electron_photon_scattering_rate:
+    electron_phonon_scattering_rate:
+
+    sigma_retarded_density:
+    sigma_lesser_density:
+    sigma_greater_density:
+
+    #Coulomb Screening
+    w_retarded_density:
+    w_lesser_density:
+    w_greater_density:
+
+    p_retarded_density:
+    p_lesser_density:
+    p_greater_density:
+
+    #Photon
+    pi_photon_retarded:
+    pi_photon_lesser:
+    pi_photon_greater:
+
+    d_photon_retarded:
+    d_photon_lesser:
+    d_photon_greater:
+
+    photon_current:
+
+    #Phonon
+    pi_phonon_retarded:
+    pi_phonon_lesser:
+    pi_phonon_greater:
+    d_phonon_retarded:
+    d_phonon_lesser:
+    d_phonon_greater:
+
+    thermal_current:
+
 
 class SCBA:
     """Computes the self-consistent Born approximation to convergence.

@@ -12,6 +12,7 @@ class DBCSR(DBSparse):
         cols: np.ndarray,
         rowptr_map: dict,
         block_sizes: np.ndarray,
+        return_dense: bool = False,
     ) -> None:
         """Initializes the DBCSR matrix."""
         self.data = np.asarray(data)
@@ -24,6 +25,8 @@ class DBCSR(DBSparse):
         self._stack_shape = data.shape[:-1]
         self._shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
         self._nnz = self.data.shape[-1]
+
+        self._return_dense = return_dense
 
     def from_sparray(
         a: sparray,
@@ -125,3 +128,11 @@ class DBCSR(DBSparse):
     @property
     def nzz(self) -> np.uint:
         return self._nnz
+
+    @property
+    def return_dense(self) -> bool: 
+        return self._return_dense
+    
+    @return_dense.setter
+    def return_dense(self, value: bool) -> None: 
+        self._return_dense = value

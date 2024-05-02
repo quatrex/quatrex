@@ -77,3 +77,12 @@ class DBSparse(ABC):
     @property
     @abstractmethod
     def nzz(self) -> np.uint: ...
+
+    @property
+    @abstractmethod
+    def return_dense(self) -> bool: ...
+    
+    @abstractmethod
+    @return_dense.setter
+    def return_dense(self, value: bool) -> None: ...
+

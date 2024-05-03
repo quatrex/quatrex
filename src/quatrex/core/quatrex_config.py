@@ -1,6 +1,3 @@
-# Copyright 2023-2024 ETH Zurich and QuaTrEx authors. All rights reserved.
-
-
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -9,6 +6,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
     model_validator,
@@ -21,7 +19,7 @@ class SCSPConfig(BaseModel):
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
 
-    mixing_factor: PositiveFloat = Field(default=0.1, gt=0.0, le=1.0)
+    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
 
 class SCBAConfig(BaseModel):
@@ -29,7 +27,7 @@ class SCBAConfig(BaseModel):
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
 
-    mixing_factor: PositiveFloat = Field(default=0.1, gt=0.0, le=1.0)
+    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
     observables_interval: PositiveInt | None = None
 
@@ -43,7 +41,7 @@ class PoissonConfig(BaseModel):
     model: Literal["point-charge", "orbital"] = "point-charge"
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
-    mixing_factor: PositiveFloat = Field(default=0.1, gt=0.0, le=1.0)
+    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
 
 class OBCConfig(BaseModel):
@@ -77,63 +75,63 @@ class ElectronConfig(BaseModel):
 
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
-        if self.left_fermi_level is None and self.right_fermi_level is not None:
+        if (self.left_fermi_level is None) != (self.right_fermi_level is None):
+            raise ValueError(
+                "Either both left and right Fermi levels must be set or neither."
+            )
+
+        if self.left_fermi_level is None and self.right_fermi_level is None:
             self.left_fermi_level = self.fermi_level
             self.right_fermi_level = self.fermi_level
-        if (
-            self.left_fermi_level is None
-            and self.right_fermi_level is not None
-            or self.left_fermi_level is not None
-            and self.right_fermi_level is None
-        ):
-            raise ValueError(
-                "Either both left and right Fermi levels must be set or none."
-            )
+
         return self
 
     @model_validator(mode="after")
     def set_left_right_temperatures(self) -> Self:
-        if self.left_temperature is None and self.right_temperature is not None:
+        if (self.left_temperature is None) != (self.right_temperature is None):
+            raise ValueError(
+                "Either both left and right temperatures must be set or neither."
+            )
+
+        if self.left_temperature is None and self.right_temperature is None:
             self.left_temperature = self.temperature
             self.right_temperature = self.temperature
-        if (
-            self.left_temperature is None
-            and self.right_temperature is not None
-            or self.left_temperature is not None
-            and self.right_temperature is None
-        ):
-            raise ValueError(
-                "Either both left and right temperatures must be set or none."
-            )
+
         return self
 
 
 class CoulombScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
     solver: Literal["rgf", "inv"] = "rgf"
-    obc: OBCConfig = Field(default_factory=OBCConfig)
+    obc: OBCConfig = OBCConfig()
 
 
 class PhotonConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
     solver: Literal["rgf", "inv"] = "rgf"
-    obc: OBCConfig = Field(default_factory=OBCConfig)
+    obc: OBCConfig = OBCConfig()
 
 
 class PhononConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
     solver: Literal["rgf", "inv"] = "rgf"
-    obc: OBCConfig = Field(default_factory=OBCConfig)
+    obc: OBCConfig = OBCConfig()
 
     model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
-    phonon_energy: PositiveFloat | None
-    deformation_potential: PositiveFloat | None
+    phonon_energy: NonNegativeFloat | None = None
+    deformation_potential: NonNegativeFloat | None = None
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
-        if self.model == "pseudo-scattering":
-            if self.phonon_energy is None or self.deformation_potential is None:
-                raise ValueError("Phonon energy and deformation potential must be set.")
+        if self.model == "pseudo-scattering" and (
+            self.phonon_energy is None or self.deformation_potential is None
+        ):
+            raise ValueError("Phonon energy and deformation potential must be set.")
+
+        return self
 
 
 class QuatrexConfig(BaseModel):

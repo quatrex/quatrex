@@ -1,21 +1,21 @@
-# Copyright 2023-2024 ETH Zurich and QuaTrEx authors. All rights reserved.
-
-
 import tomllib
 from pathlib import Path
-from typing import Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-)
+from pydantic import BaseModel, ConfigDict, field_validator
+from qttools.datastructures import DBCSR, DBSparse
 
 
 class ComputeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # --- Memory config ---------------------------------------
-    datastructure: Literal["dbcsr"] = "dbcsr"
+    # --- Memory config ------------------------------------------------
+    dbsparse: DBSparse = DBCSR
+
+    @field_validator("dbsparse", mode="before")
+    def set_dbsparse(cls, value) -> DBSparse:
+        if value == "DBCSR":
+            return DBCSR
+        raise ValueError(f"Invalid value '{value}' for dbsparse")
 
 
 def parse_config(config_file: Path) -> ComputeConfig:

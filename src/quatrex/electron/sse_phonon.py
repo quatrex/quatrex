@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+
 import numpy as np
 from qttools.datastructures import DBSparse
 

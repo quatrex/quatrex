@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+
 from typing import Union
 
 import numpy as np

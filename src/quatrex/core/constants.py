@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+
 from scipy.constants import physical_constants
 
 c_0 = 1e10 * physical_constants["speed of light in vacuum"][0]  # angstrom / s

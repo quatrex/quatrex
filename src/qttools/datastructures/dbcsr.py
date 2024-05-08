@@ -1,4 +1,9 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# All rights reserved.
+
+
 import numpy as np
+from scipy import sparse
 
 from qttools.datastructures.dbsparse import DBSparse
 
@@ -12,32 +17,102 @@ class DBCSR(DBSparse):
         cols: np.ndarray,
         rowptr_map: dict,
         block_sizes: np.ndarray,
+        global_stack_shape: tuple,
         return_dense: bool = False,
     ) -> None:
         """Initializes the DBCSR matrix."""
-        self.data = np.asarray(data)
+        super().__init__(data, block_sizes, global_stack_shape, return_dense)
+
         self.cols = np.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
-        self.block_sizes = np.asarray(block_sizes).astype(int)
 
-        self._num_blocks = len(block_sizes)
-        self._block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
-        self._stack_shape = data.shape[:-1]
-        self._shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
-        self._nnz = self.data.shape[-1]
+    def __setitem__(self, idx: tuple[int, int], block: np.ndarray) -> None:
+        """Sets a block in the matrix."""
+        brow, bcol = self._unsign_block_index(*idx)
 
-        self._return_dense = return_dense
+        if block.shape[-2:] != (
+            self.block_sizes[brow],
+            self.block_sizes[bcol],
+        ):
+            raise ValueError("Block shape does not match.")
 
-    def from_sparray(
-        a: sparray,
-        blocksizes: np.ndarray,
-        stackshape: tuple = (1,),
-        densify_blocks=None,
-        pinned=False,
-    ): ...
+        brow, bcol = self._unsign_block_index(brow, bcol)
+
+        rowptr = self.rowptr_map.get((brow, bcol), None)
+        if rowptr is None:
+            return
+
+        for row in range(self.block_sizes[brow]):
+            cols = self.cols[rowptr[row] : rowptr[row + 1]]
+            self.data[..., rowptr[row] : rowptr[row + 1]] = block[
+                ..., row, cols - self.block_offsets[bcol]
+            ]
+
+    def __getitem__(self, idx: tuple[int, int]) -> sparse.sparray | np.ndarray:
+        """Gets a block from the matrix."""
+        brow, bcol = self._unsign_block_index(*idx)
+
+        rowptr = self.rowptr_map.get((brow, bcol), None)
+        if not self._return_dense:
+            raise NotImplementedError("Sparse array not yet implemented.")
+
+        block = np.zeros(
+            self.stack_shape + (self.block_sizes[brow], self.block_sizes[bcol]),
+            dtype=self.data.dtype,
+        )
+        if rowptr is None:
+            return block
+
+        for row in range(self.block_sizes[brow]):
+            cols = self.cols[rowptr[row] : rowptr[row + 1]]
+            block[..., row, cols - self.block_offsets[bcol]] = self.data[
+                ..., rowptr[row] : rowptr[row + 1]
+            ]
+        return block
+
+    def _check_commensurable(self, other: "DBSparse") -> None:
+        """Checks if the other matrix is commensurate."""
+        if not isinstance(other, DBCSR):
+            raise TypeError("Can only add DBCSR matrices.")
+
+        if self.shape != other.shape:
+            raise ValueError("Matrix shapes do not match.")
+
+        if self.block_sizes != other.block_sizes:
+            raise ValueError("Block sizes do not match.")
+
+        if self.rowptr_map.keys() != other.rowptr_map.keys():
+            raise ValueError("Rowptr maps do not match.")
+
+        if self.cols != other.cols:
+            raise ValueError("Column indices do not match.")
+
+    def __iadd__(self, other: "DBSparse") -> None:
+        """Adds another DBSparse matrix to the current matrix."""
+        self._check_commensurable(other)
+        self.data += other.data
+
+    def __imul__(self, other: "DBSparse") -> None:
+        """Multiplies another DBSparse matrix to the current matrix."""
+        self._check_commensurable(other)
+        self.data *= other.data
+
+    def __neg__(self) -> "DBCSR":
+        """Negates the matrix."""
+        return DBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
+
+    def __matmul__(self, other: "DBSparse") -> None:
+        ...
+
+    def ltranspose(self, copy=False) -> "None | DBSparse":
+        ...
 
     def to_dense(self) -> np.ndarray:
         """Returns the dense matrix representation."""
+        temp = self._return_dense
+
+        self._return_dense = True
+
         arr = np.zeros(self.shape, dtype=self.data.dtype)
 
         for i, j in np.ndindex(self.num_blocks, self.num_blocks):
@@ -45,94 +120,83 @@ class DBCSR(DBSparse):
                 ...,
                 self.block_offsets[i] : self.block_offsets[i + 1],
                 self.block_offsets[j] : self.block_offsets[j + 1],
-            ] = self.get_block(i, j)
+            ] = self[i, j]
+
+        self._return_dense = temp
 
         return arr
 
-    def zeros_like(cls, dbcsr: "DBCSR") -> DBSparse:
-        return cls(
-            np.zeros_like(dbcsr.data),
-            dbcsr.cols,
-            dbcsr.rowptr_map,
-            dbcsr.block_sizes,
-        )
+    @classmethod
+    def from_sparray(
+        cls,
+        a: sparse.sparray,
+        block_sizes: np.ndarray,
+        stack_shape: tuple | None = None,
+        global_stack_shape: tuple | None = None,
+        densify_blocks: list[tuple] | None = None,
+        pinned=False,
+    ):
+        coo: sparse.coo_array = a.tocoo()
 
-    def block_diagonal(
-        offset: int = 0, dense: bool = False
-    ) -> list[sparray] | list[np.ndarray]: ...
+        num_blocks = len(block_sizes)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
-    def diagonal() -> np.ndarray: ...
-
-    def local_transpose(copy=False) -> None | DBSparse: ...
-
-    def distributed_transpose() -> None: ...
-
-    def _unsign_block_index(self, brow: int, bcol: int) -> tuple:
-        """Adjusts the sign to allow negative indices and checks bounds."""
-        brow = self.num_blocks + brow if brow < 0 else brow
-        bcol = self.num_blocks + bcol if bcol < 0 else bcol
-        if not (0 <= brow < self.num_blocks and 0 <= bcol < self.num_blocks):
-            raise IndexError("Block index out of bounds.")
-
-        return brow, bcol
-
-    def __setitem__(
-        self, idx: tuple[int, int], block: np.ndarray
-    ) -> None:
-        if block.shape[-2:] != (
-            self.block_sizes[idx[0]],
-            self.block_sizes[idx[1]],
-        ):
-            raise ValueError("Block shape does not match.")
-
-        idx[0], idx[1] = self._unsign_block_index(idx[0], idx[1])
-
-        rowptr = self.rowptr_map.get((idx[0], idx[1]), None)
-        if rowptr is None:
-            return
-
-        for row in range(self.block_sizes[idx[0]]):
-            cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            self.data[..., rowptr[row] : rowptr[row + 1]] = block[
-                ..., row, cols - self.block_offsets[idx[1]]
+        # Densify the selected blocks.
+        for i, j in densify_blocks or []:
+            indices = [
+                (m + block_offsets[i], n + block_offsets[j])
+                for m, n in np.ndindex(block_sizes[i], block_sizes[j])
             ]
+            coo.row = np.append(coo.row, [m for m, __ in indices])
+            coo.col = np.append(coo.col, [n for __, n in indices])
+            coo.data = np.append(coo.data, np.zeros(len(indices), dtype=coo.data.dtype))
 
-    def __getitem__(
-        self, idx: tuple[int, int]
-    ) -> sparray:
+        # Canonicalizes the COO format.
+        coo.sum_duplicates()
 
-    def __iadd__(self, other: DBSparse) -> None: ...
+        # Initialize the data and column index arrays.
+        if isinstance(stack_shape, int):
+            stack_shape = (stack_shape,)
 
-    def __imul__(self, other: DBSparse) -> None: ...
+        data = np.zeros(stack_shape + (coo.nnz,), dtype=coo.data.dtype)
+        cols = np.zeros(coo.nnz, dtype=int)
 
-    def __neg__(self) -> None: ...
+        # NOTE: This is a naive implementation and can be parallelized.
+        rowptr_map = {}
+        offset = 0
+        for i, j in np.ndindex(num_blocks, num_blocks):
+            inds = (
+                (block_offsets[i] <= coo.row)
+                & (coo.row < block_offsets[i + 1])
+                & (block_offsets[j] <= coo.col)
+                & (coo.col < block_offsets[j + 1])
+            )
+            bnnz = np.sum(inds)
 
-    def __matmul__(self, other: DBSparse) -> None: ...
+            if bnnz == 0:
+                # Skip empty blocks.
+                continue
 
-    @property
-    def num_blocks(self) -> np.uint:
-        return self._num_blocks
+            # Sort the data by block-row and -column.
+            data[..., offset : offset + bnnz] = coo.data[inds]
+            cols[offset : offset + bnnz] = coo.col[inds]
 
-    @property
-    def block_offsets(self) -> np.uint:
-        return self._block_offsets
+            # Compute the rowptr map.
+            rowptr, __ = np.histogram(
+                coo.row[inds] - block_offsets[i],
+                bins=np.arange(block_sizes[i] + 1),
+            )
+            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
+            rowptr_map[(i, j)] = rowptr
 
-    @property
-    def stack_shape(self) -> np.uint:
-        return self._stack_shape
+            offset += bnnz
 
-    @property
-    def shape(self) -> np.uint:
-        return self._shape
+        if global_stack_shape is None:
+            global_stack_shape = stack_shape
 
-    @property
-    def nzz(self) -> np.uint:
-        return self._nnz
+        return cls(data, cols, rowptr_map, block_sizes, global_stack_shape)
 
-    @property
-    def return_dense(self) -> bool: 
-        return self._return_dense
-    
-    @return_dense.setter
-    def return_dense(self, value: bool) -> None: 
-        self._return_dense = value
+    @classmethod
+    def zeros_like(cls, a: "DBCSR") -> "DBCSR":
+        """Returns a DBCSR matrix with the same sparsity pattern."""
+        return cls(np.zeros_like(a.data), a.cols, a.rowptr_map, a.block_sizes)

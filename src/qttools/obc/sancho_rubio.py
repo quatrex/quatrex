@@ -1,21 +1,11 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors. All rights reserved.
-import logging
-import time
-
 import numpy as np
 import numpy.linalg as npla
-from numpy.typing import ArrayLike
 
-logger = logging.getLogger(__name__)
+from qttools.obc import OBC
 
 
-def sancho_rubio(
-    a_ii: ArrayLike,
-    a_ij: ArrayLike,
-    a_ji: ArrayLike,
-    max_iterations: int = 5000,
-    max_delta: float = 1e-8,
-) -> np.ndarray:
+class SanchoRubio(OBC):
     """Calculates the surface Green's function iteratively.
 
     This function generalizes the iterative scheme for the calculation
@@ -30,11 +20,7 @@ def sancho_rubio(
         Super-diagonal block of the system matrix.
     a_ji : array_like, optional
         Sub-diagonal block of the system matrix.
-    max_iterations : int, optional
-        Maximum number of iterations, by default 5000.
-    max_delta : float, optional
-        Maximum relative change in the surface greens function, by
-        default 1e-8.
+
 
     Returns
     -------
@@ -48,36 +34,47 @@ def sancho_rubio(
        Green-Functions. Journal of Physics F: Metal Physics. 15. 851.
 
     """
-    a_ii = np.asarray(a_ii)
-    a_ij = np.asarray(a_ij)
-    a_ji = np.asarray(a_ji)
 
-    epsilon = a_ii.copy()
-    epsilon_s = a_ii.copy()
-    alpha = a_ji.copy()
-    beta = a_ij.copy()
+    def __init__(self, max_iterations: int = 1000, convergence_tol: float = 1e-7):
+        """Initializes the Sancho-Rubio OBC."""
+        self.max_iterations = max_iterations
+        self.convergence_tol = convergence_tol
 
-    delta = float("inf")
-    t = time.perf_counter()
-    for __ in range(max_iterations):
-        inverse = npla.inv(epsilon)
+    def __call__(
+        self,
+        a_ii: np.ndarray,
+        a_ij: np.ndarray,
+        a_ji: np.ndarray,
+        contact: str,
+        out: None | np.ndarray = None,
+    ) -> np.ndarray | None:
+        """Returns the surface Green's function."""
 
-        epsilon = epsilon - alpha @ inverse @ beta - beta @ inverse @ alpha
-        epsilon_s = epsilon_s - alpha @ inverse @ beta
+        epsilon = a_ii.copy()
+        epsilon_s = a_ii.copy()
+        alpha = a_ji.copy()
+        beta = a_ij.copy()
 
-        alpha = alpha @ inverse @ alpha
-        beta = beta @ inverse @ beta
+        delta = float("inf")
+        for __ in range(self.max_iterations):
+            inverse = npla.inv(epsilon)
 
-        delta = np.sum(np.abs(alpha) + np.abs(beta)) / 2
+            epsilon = epsilon - alpha @ inverse @ beta - beta @ inverse @ alpha
+            epsilon_s = epsilon_s - alpha @ inverse @ beta
 
-        if delta < max_delta:
-            logger.debug(
-                f"Surface Green's function converged after {__} iterations "
-                f"({time.perf_counter() - t:.2f} s)."
-            )
-            break
+            alpha = alpha @ inverse @ alpha
+            beta = beta @ inverse @ beta
 
-    else:  # Did not break, i.e. max_iterations reached.
-        raise RuntimeError("Surface Green's function did not converge.")
+            delta = np.sum(np.abs(alpha) + np.abs(beta)) / 2
 
-    return npla.inv(epsilon_s)
+            if delta < self.convergence_tol:
+                break
+
+        else:  # Did not break, i.e. max_iterations reached.
+            raise RuntimeError("Surface Green's function did not converge.")
+
+        if out is not None:
+            out[...] = npla.inv(epsilon_s)
+            return
+
+        return npla.inv(epsilon_s)

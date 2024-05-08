@@ -1,14 +1,11 @@
 from abc import ABC, abstractmethod
-from qttools.datastructures.dbsparse import DBSparse
+
+from qttools.datastructures import DBSparse
 
 
-class Solver(ABC):
-
-    def __init__(self, config) -> None:
-        pass
-
+class GFSolver(ABC):
     @abstractmethod
-    def selected_inv(a: DBSparse, out=None, **kwargs) -> None | DBSparse:
+    def selected_inv(a: DBSparse, out=None) -> None | DBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -34,7 +31,6 @@ class Solver(ABC):
         sigma_greater: DBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
-        **kwargs,
     ) -> None | tuple:
         """Solve the selected quadratic matrix equation and compute only selected
         elements of it's inverse.

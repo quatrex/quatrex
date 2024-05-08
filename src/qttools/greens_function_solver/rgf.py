@@ -1,23 +1,13 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors. All rights reserved.
-import logging
-import time
 
-import numpy as np
 import numpy.linalg as npla
-from numpy.typing import ArrayLike
 
-logger = logging.getLogger(__name__)
-
-from qttools.greens_function_solver.solver import Solver
 from qttools.datastructures.dbsparse import DBSparse
+from qttools.greens_function_solver.solver import GFSolver
 
 
-class RGF(Solver):
-
-    def __init__(self, config) -> None:
-        pass
-
-    def selected_inv(a: DBSparse, out=None, **kwargs) -> None | DBSparse:
+class RGF(GFSolver):
+    def selected_inv(a: DBSparse, out=None) -> None | DBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -42,15 +32,11 @@ class RGF(Solver):
         x[0, 0] = npla.inv(a[0, 0])
 
         # Forwards sweep.
-        t = time.perf_counter()
         for i in range(a.bshape[0] - 1):
             j = i + 1
             x[j, j] = npla.inv(a[j, j] - a[j, i] @ x[i, i] @ a[i, j])
 
-        logger.debug(f"Forwards sweep completed ({time.perf_counter() - t:.2f} s).")
-
         # Backwards sweep.
-        t = time.perf_counter()
         for i in range(a.bshape[0] - 2, -1, -1):
             j = i + 1
 
@@ -63,8 +49,6 @@ class RGF(Solver):
             x[i, j] = -x_ii @ a_ij @ x_jj
 
             x[i, i] = x_ii - x_ii @ a_ij @ x_ji
-
-        logger.debug(f"Backwards sweep completed ({time.perf_counter() - t:.2f} s).")
 
         return x
 
@@ -115,7 +99,6 @@ class RGF(Solver):
         x_g[0, 0] = x_r[0, 0] @ sigma_greater[0, 0] @ x_r[0, 0].conj().T
 
         # Forwards sweep.
-        t = time.perf_counter()
         for i in range(a.bshape[0] - 1):
             j = i + 1
 
@@ -142,10 +125,7 @@ class RGF(Solver):
                 @ x_r[j, j].conj().T
             )
 
-        logger.debug(f"Forwards sweep completed ({time.perf_counter() - t:.2f} s).")
-
         # Backwards sweep.
-        t = time.perf_counter()
         for i in range(a.bshape[0] - 2, -1, -1):
             j = i + 1
 
@@ -215,7 +195,5 @@ class RGF(Solver):
             x_r[i, i] = (
                 x_r[i, i] + x_r[i, i] @ a[i, j] @ x_r[j, j] @ a[j, i] @ x_r[i, i]
             )
-
-        logger.debug(f"Backwards sweep completed ({time.perf_counter() - t:.2f} s).")
 
         return x_l, x_g

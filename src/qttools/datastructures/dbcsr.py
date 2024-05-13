@@ -26,17 +26,34 @@ class DBCSR(DBSparse):
         self.cols = np.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
-    def __setitem__(self, idx: tuple[int, int], block: np.ndarray) -> None:
+    def __setitem__(self, key: tuple, block_stack: np.ndarray) -> None:
         """Sets a block in the matrix."""
-        brow, bcol = self._unsign_block_index(*idx)
+        if self._distribution_state == "nnz":
+            raise NotImplementedError("Cannot get blocks when distributed through nnz.")
+        if not self._return_dense:
+            raise NotImplementedError("Sparse array not yet implemented.")
 
-        if block.shape[-2:] != (
+        if len(key) < 2:
+            raise ValueError("At least the two block indices are required.")
+
+        if len(key) >= 2:
+            *stack_index, brow, bcol = key
+
+        if len(stack_index) > len(self.stack_shape):
+            raise ValueError(
+                f"Too many stack indices for stack shape '{self.stack_shape}'."
+            )
+
+        stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
+
+        brow, bcol = self._unsign_block_index(brow, bcol)
+
+        if block_stack.shape != (
+            *self.masked_data[*stack_index].shape[:-1],
             self.block_sizes[brow],
             self.block_sizes[bcol],
         ):
             raise ValueError("Block shape does not match.")
-
-        brow, bcol = self._unsign_block_index(brow, bcol)
 
         rowptr = self.rowptr_map.get((brow, bcol), None)
         if rowptr is None:
@@ -44,29 +61,52 @@ class DBCSR(DBSparse):
 
         for row in range(self.block_sizes[brow]):
             cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            self.data[..., rowptr[row] : rowptr[row + 1]] = block[
+            self.masked_data[*stack_index, rowptr[row] : rowptr[row + 1]] = block_stack[
                 ..., row, cols - self.block_offsets[bcol]
             ]
 
-    def __getitem__(self, idx: tuple[int, int]) -> sparse.sparray | np.ndarray:
-        """Gets a block from the matrix."""
-        brow, bcol = self._unsign_block_index(*idx)
+    def __getitem__(self, key: tuple) -> sparse.sparray | np.ndarray:
+        """Gets a block from the matrix.
 
-        rowptr = self.rowptr_map.get((brow, bcol), None)
+        The two last indices are always the block indices.
+
+        """
+        if self._distribution_state == "nnz":
+            raise NotImplementedError("Cannot get blocks when distributed through nnz.")
         if not self._return_dense:
             raise NotImplementedError("Sparse array not yet implemented.")
 
+        if len(key) < 2:
+            raise ValueError("At least the two block indices are required.")
+
+        if len(key) >= 2:
+            *stack_index, brow, bcol = key
+
+        if len(stack_index) > len(self.stack_shape):
+            raise ValueError(
+                f"Too many stack indices for stack shape '{self.stack_shape}'."
+            )
+
+        stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
+
+        brow, bcol = self._unsign_block_index(brow, bcol)
+
         block = np.zeros(
-            self.stack_shape + (self.block_sizes[brow], self.block_sizes[bcol]),
+            (
+                *self.masked_data[*stack_index].shape[:-1],  # Stack dimensions.
+                self.block_sizes[brow],
+                self.block_sizes[bcol],
+            ),
             dtype=self.data.dtype,
         )
+        rowptr = self.rowptr_map.get((brow, bcol), None)
         if rowptr is None:
             return block
 
         for row in range(self.block_sizes[brow]):
             cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            block[..., row, cols - self.block_offsets[bcol]] = self.data[
-                ..., rowptr[row] : rowptr[row + 1]
+            block[..., row, cols - self.block_offsets[bcol]] = self.masked_data[
+                *stack_index, rowptr[row] : rowptr[row + 1]
             ]
         return block
 

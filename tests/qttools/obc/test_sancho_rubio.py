@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors. All rights reserved.
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 import numpy as np
 import numpy.linalg as npla
 import pytest

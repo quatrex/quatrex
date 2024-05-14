@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+
 import pytest
 from scipy import sparse
 

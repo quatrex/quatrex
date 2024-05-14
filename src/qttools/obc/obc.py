@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+
 from abc import ABC, abstractmethod
 
 import numpy as np

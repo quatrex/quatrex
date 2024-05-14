@@ -1,3 +1,6 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# All rights reserved.
+
 import numpy as np
 
 from qttools.datastructures.dbsparse import DBSparse
@@ -5,7 +8,7 @@ from qttools.greens_function_solver.solver import GFSolver
 
 
 class Inv(GFSolver):
-    def selected_inv(a: DBSparse, out=None) -> None | DBSparse:
+    def selected_inv(a: DBSparse, out: DBSparse = None) -> None | DBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -25,17 +28,20 @@ class Inv(GFSolver):
 
         inv_a = np.linalg.inv(a.to_dense())
 
-        if out is not None:
-            out[:] = inv_a
-            return ...
-        else:
-            return inv_a
+        if out is None:
+            rows, cols = a.spy()
+            sel_inv_a = a.__class__.zeros_like(a)
+            sel_inv_a.data[:] = inv_a[..., rows, cols]
+            return sel_inv_a
+
+        rows, cols = out.spy()
+        out.data[:] = inv_a[..., rows, cols]
 
     def selected_solve(
         a: DBSparse,
         sigma_lesser: DBSparse,
         sigma_greater: DBSparse,
-        out: tuple | None = None,
+        out: tuple[DBSparse, ...] | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:
         """Solve the selected quadratic matrix equation and compute only selected
@@ -61,38 +67,38 @@ class Inv(GFSolver):
             as a DBSparse object. If `return_retarded` is True, returns a tuple with
             the retarded Green's function as the second element.
         """
-        x = Inv.selected_inv(a)
+        x_r = np.linalg.inv(a.to_dense())
 
-        x_l = x @ sigma_lesser.to_dense() @ x.conj().transpose((0, 2, 1))
-        x_g = x @ sigma_greater.to_dense() @ x.conj().transpose((0, 2, 1))
+        x_l = x_r @ sigma_lesser.to_dense() @ x_r.conj().transpose((0, 2, 1))
+        x_g = x_r @ sigma_greater.to_dense() @ x_r.conj().transpose((0, 2, 1))
 
-        x_lesser = DBSparse.zeros_like(a)
-        x_greater = DBSparse.zeros_like(a)
-        for i in range(sigma_lesser.num_blocks):
-            _i = slice(*sigma_lesser.block_offsets[i : i + 2])
-            x_lesser.set_block(i, i, x_l[..., _i, _i])
-            x_greater.set_block(i, i, x_g[..., _i, _i])
+        if out is None:
+            rows, cols = a.spy()
+            sel_x_l = a.__class__.zeros_like(a)
+            sel_x_g = a.__class__.zeros_like(a)
+            sel_x_l.data[:] = x_l[..., rows, cols]
+            sel_x_g.data[:] = x_g[..., rows, cols]
 
-        for i in range(sigma_lesser.num_blocks - 1):
-            _i = slice(*sigma_lesser.block_offsets[i : i + 2])
-            _j = slice(*sigma_lesser.block_offsets[i + 1 : i + 2 + 1])
-            x_lesser.set_block(i, i + 1, x_l[..., _i, _j])
-            x_lesser.set_block(i + 1, i, x_l[..., _j, _i])
-            x_greater.set_block(i, i + 1, x_g[..., _i, _j])
-            x_greater.set_block(i + 1, i, x_g[..., _j, _i])
+            if not return_retarded:
+                return sel_x_l, sel_x_g
 
-        if not return_retarded:
-            return x_lesser, x_greater
+            sel_x_r = a.__class__.zeros_like(a)
+            sel_x_r.data[:] = x_r[..., rows, cols]
 
-        x_retarded = DBSparse.zeros_like(a)
-        for i in range(sigma_lesser.num_blocks):
-            _i = slice(*sigma_lesser.block_offsets[i : i + 2])
-            x_retarded.set_block(i, i, x[..., _i, _i])
+            return sel_x_l, sel_x_g, sel_x_r
 
-        for i in range(sigma_lesser.num_blocks - 1):
-            _i = slice(*sigma_lesser.block_offsets[i : i + 2])
-            _j = slice(*sigma_lesser.block_offsets[i + 1 : i + 2 + 1])
-            x_retarded.set_block(i, i + 1, x[..., _i, _j])
-            x_retarded.set_block(i + 1, i, x[..., _j, _i])
+        x_l_out, x_g_out, *x_r_out = out
 
-        return x_lesser, x_greater, x_retarded
+        rows_l, cols_l = x_l_out.spy()
+        rows_g, cols_g = x_g_out.spy()
+
+        x_l_out.data[:] = x_l[..., rows_l, cols_l]
+        x_g_out.data[:] = x_g[..., rows_g, cols_g]
+
+        if return_retarded:
+            if len(x_r_out) == 0:
+                raise ValueError("Missing output for the retarded Green's function.")
+            x_r_out = x_r_out[0]
+
+            rows_r, cols_r = x_r_out.spy()
+            x_r_out.data[:] = x_r[..., rows_r, cols_r]

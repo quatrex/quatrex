@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from qttools.datastructures import DBSparse
+from qttools.utils import mpi_utils
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -17,7 +18,6 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
-from quatrex.utils.mpi_utils import slice_local_array
 
 
 @dataclass
@@ -171,9 +171,11 @@ class SCBA:
         self.electron_energies = np.load(
             self.quatrex_config.input_dir / "electron_energies.npy"
         )
-        self.local_electron_energies = slice_local_array(self.electron_energies)
+        self.local_electron_energies = mpi_utils.get_local_slice(self.electron_energies)
 
-        self.electron_solver = ElectronSolver(self.quatrex_config)
+        self.electron_solver = ElectronSolver(
+            self.quatrex_config, self.compute_config, self.electron_energies
+        )
 
         self._initialize_electron_data()
 
@@ -188,7 +190,7 @@ class SCBA:
             else:
                 self.coulomb_screening_energies = self.electron_energies
 
-            self.local_coulomb_screening_energies = slice_local_array(
+            self.local_coulomb_screening_energies = mpi_utils.get_local_slice(
                 self.coulomb_screening_energies
             )
 
@@ -204,7 +206,7 @@ class SCBA:
 
             self.photon_energies = np.load(energies_path)
 
-            self.local_photon_energies = slice_local_array(self.photon_energies)
+            self.local_photon_energies = mpi_utils.get_local_slice(self.photon_energies)
 
             self.pol_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(...)
@@ -218,7 +220,7 @@ class SCBA:
 
             self.phonon_energies = np.load(energies_path)
 
-            self.local_phonon_energies = slice_local_array(self.phonon_energies)
+            self.local_phonon_energies = mpi_utils.get_local_slice(self.phonon_energies)
 
             if self.quatrex_config.phonon.model == "negf":
                 self.pol_phonon = PiPhonon(...)

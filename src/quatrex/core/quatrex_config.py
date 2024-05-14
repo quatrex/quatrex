@@ -65,7 +65,7 @@ class ElectronConfig(BaseModel):
 
     eta: PositiveFloat = 1e-6  # eV
 
-    fermi_level: float
+    fermi_level: float | None = None
 
     left_fermi_level: float | None = None
     right_fermi_level: float | None = None
@@ -83,6 +83,9 @@ class ElectronConfig(BaseModel):
             )
 
         if self.left_fermi_level is None and self.right_fermi_level is None:
+            if self.fermi_level is None:
+                raise ValueError("Fermi level must be set.")
+
             self.left_fermi_level = self.fermi_level
             self.right_fermi_level = self.fermi_level
 

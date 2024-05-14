@@ -8,7 +8,7 @@ from qttools.datastructures import DBCSR, DBSparse
 
 
 class ComputeConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     # --- Memory config ------------------------------------------------
     dbsparse: DBSparse = DBCSR

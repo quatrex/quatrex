@@ -20,8 +20,8 @@ class SubsystemSolver(ABC):
 
     """
 
-    @abstractmethod
     @property
+    @abstractmethod
     def system(self) -> str:
         ...
 

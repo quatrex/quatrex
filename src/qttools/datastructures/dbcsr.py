@@ -2,9 +2,11 @@
 # All rights reserved.
 
 import numpy as np
+from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.datastructures.dbsparse import DBSparse
+from qttools.utils.mpi_utils import get_num_elements_per_section
 
 
 class DBCSR(DBSparse):
@@ -59,7 +61,7 @@ class DBCSR(DBSparse):
 
         for row in range(self.block_sizes[brow]):
             cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            self.masked_data[*stack_index, rowptr[row] : rowptr[row + 1]] = block_stack[
+            self.data[*stack_index, rowptr[row] : rowptr[row + 1]] = block_stack[
                 ..., row, cols - self.block_offsets[bcol]
             ]
 
@@ -91,11 +93,11 @@ class DBCSR(DBSparse):
 
         block = np.zeros(
             (
-                *self.masked_data[*stack_index].shape[:-1],  # Stack dimensions.
+                *self.data[*stack_index].shape[:-1],  # Stack dimensions.
                 self.block_sizes[brow],
                 self.block_sizes[bcol],
             ),
-            dtype=self.data.dtype,
+            dtype=self._padded_data.dtype,
         )
         rowptr = self.rowptr_map.get((brow, bcol), None)
         if rowptr is None:
@@ -103,7 +105,7 @@ class DBCSR(DBSparse):
 
         for row in range(self.block_sizes[brow]):
             cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            block[..., row, cols - self.block_offsets[bcol]] = self.masked_data[
+            block[..., row, cols - self.block_offsets[bcol]] = self.data[
                 *stack_index, rowptr[row] : rowptr[row + 1]
             ]
         return block
@@ -128,16 +130,16 @@ class DBCSR(DBSparse):
     def __iadd__(self, other: "DBSparse") -> None:
         """Adds another DBSparse matrix to the current matrix."""
         self._check_commensurable(other)
-        self.masked_data += other.masked_data
+        self.data += other.data
 
     def __imul__(self, other: "DBSparse") -> None:
         """Multiplies another DBSparse matrix to the current matrix."""
         self._check_commensurable(other)
-        self.masked_data *= other.masked_data
+        self.data *= other.data
 
     def __neg__(self) -> "DBCSR":
         """Negates the matrix."""
-        return DBCSR(-self.masked_data, self.cols, self.rowptr_map, self.block_sizes)
+        return DBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
 
     def __matmul__(self, other: "DBSparse") -> None:
         ...
@@ -149,7 +151,7 @@ class DBCSR(DBSparse):
 
         if copy:
             self = DBCSR(
-                self.data.copy(),
+                self._padded_data.copy(),
                 self.cols.copy(),
                 self.rowptr_map.copy(),
                 self.block_sizes,
@@ -190,7 +192,7 @@ class DBCSR(DBSparse):
             self._rowptr_map_t = rowptr_map_t
             self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
-        self.masked_data[:] = self.masked_data[..., self._inds_bcsr2bcsr_t]
+        self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
         self._inds_bcsr2bcsr_t = np.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
@@ -210,7 +212,7 @@ class DBCSR(DBSparse):
 
         self._return_dense = True
 
-        arr = np.zeros(self.shape, dtype=self.data.dtype)
+        arr = np.zeros(self.shape, dtype=self._padded_data.dtype)
 
         for i, j in np.ndindex(self.num_blocks, self.num_blocks):
             arr[
@@ -228,16 +230,17 @@ class DBCSR(DBSparse):
         cls,
         a: sparse.sparray,
         block_sizes: np.ndarray,
-        stack_shape: tuple | None = None,
-        global_stack_shape: tuple | None = None,
+        global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
     ):
-        if isinstance(stack_shape, int):
-            stack_shape = (stack_shape,)
+        stack_section_sizes, __ = get_num_elements_per_section(
+            global_stack_shape[0], comm.size
+        )
+        local_stack_shape = stack_section_sizes[comm.rank]
 
-        if global_stack_shape is None:
-            global_stack_shape = stack_shape
+        if isinstance(local_stack_shape, int):
+            local_stack_shape = (local_stack_shape,)
 
         coo: sparse.coo_array = a.tocoo()
 
@@ -267,7 +270,7 @@ class DBCSR(DBSparse):
         rowptr_map = cls._compute_ptr_map(coo.row, coo.col, block_sizes)
         block_sort_index = cls._compute_block_sort_index(coo.row, coo.col, block_sizes)
 
-        data = np.zeros(stack_shape + (coo.nnz,), dtype=coo.data.dtype)
+        data = np.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
         data[..., :] = coo.data[block_sort_index]
         cols = coo.col[block_sort_index]
 
@@ -276,7 +279,14 @@ class DBCSR(DBSparse):
     @classmethod
     def zeros_like(cls, a: "DBCSR") -> "DBCSR":
         """Returns a DBCSR matrix with the same sparsity pattern."""
-        return cls(np.zeros_like(a.data), a.cols, a.rowptr_map, a.block_sizes)
+        return cls(
+            np.zeros_like(a.data),
+            a.cols,
+            a.rowptr_map,
+            a.block_sizes,
+            a.global_stack_shape,
+            a.return_dense,
+        )
 
     @staticmethod
     def _compute_block_sort_index(

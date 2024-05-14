@@ -41,11 +41,14 @@ class DBSparse(ABC):
         nnz_section_sizes, total_nnz_size = get_num_elements_per_section(
             data.shape[1], comm.size
         )
+
+        self.global_stack_shape = global_stack_shape
+
         # Padding
-        self.data = np.zeros(
+        self._padded_data = np.zeros(
             (max(stack_section_sizes), total_nnz_size), dtype=data.dtype
         )
-        self.data[: data.shape[0], : data.shape[1]] = data
+        self._padded_data[: data.shape[0], : data.shape[1]] = data
 
         self._stack_section_sizes = stack_section_sizes
         self._nnz_section_sizes = nnz_section_sizes
@@ -54,7 +57,7 @@ class DBSparse(ABC):
 
         self._stack_shape = data.shape[:-1]
         self._shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
-        self._nnz = self.data.shape[-1]
+        self._nnz = self._padded_data.shape[-1]
 
         self._block_sizes = np.asarray(block_sizes).astype(int)
         self._block_offsets = np.hstack(([0], np.cumsum(self._block_sizes)))
@@ -111,39 +114,51 @@ class DBSparse(ABC):
         return np.hstack([np.diagonal(self[b, b]) for b in range(self.num_blocks)])
 
     @abstractmethod
+    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+        """Returns the row and column indices of the non-zero elements."""
+        ...
+
+    @abstractmethod
     def ltranspose(self, copy=False) -> "None | DBSparse":
         """Performs a local transposition of the datastructure."""
         ...
 
     def _stack_to_nnz_dtranspose(self) -> None:
         """Transpose the data."""
-        original_buffer_shape = self.data.shape
-        self.data = np.ascontiguousarray(
+        original_buffer_shape = self._padded_data.shape
+        self._padded_data = np.ascontiguousarray(
             npst.as_strided(
-                self.data,
-                shape=(comm.size, self.data.shape[0], self.data.shape[1] // comm.size),
+                self._padded_data,
+                shape=(
+                    comm.size,
+                    self._padded_data.shape[0],
+                    self._padded_data.shape[1] // comm.size,
+                ),
                 strides=(
-                    (self.data.shape[1] // comm.size) * self.data.itemsize,
-                    self.data.shape[1] * self.data.itemsize,
-                    self.data.itemsize,
+                    (self._padded_data.shape[1] // comm.size)
+                    * self._padded_data.itemsize,
+                    self._padded_data.shape[1] * self._padded_data.itemsize,
+                    self._padded_data.itemsize,
                 ),
             )
         )
-        comm.Alltoall(MPI.IN_PLACE, self.data)
+        comm.Alltoall(MPI.IN_PLACE, self._padded_data)
 
-        self.data = self.data.reshape(
+        self._padded_data = self._padded_data.reshape(
             original_buffer_shape[0] * comm.size, original_buffer_shape[1] // comm.size
         )
 
     def _nnz_to_stack_dtranspose(self) -> None:
         """Transpose the data."""
-        original_buffer_shape = self.data.shape
-        self.data = self.data.reshape(
-            comm.size, self.data.shape[0] // comm.size, self.data.shape[1]
+        original_buffer_shape = self._padded_data.shape
+        self._padded_data = self._padded_data.reshape(
+            comm.size,
+            self._padded_data.shape[0] // comm.size,
+            self._padded_data.shape[1],
         )
-        comm.Alltoall(MPI.IN_PLACE, self.data)
-        self.data = self.data.transpose(1, 0, 2)
-        self.data = self.data.reshape(
+        comm.Alltoall(MPI.IN_PLACE, self._padded_data)
+        self._padded_data = self._padded_data.transpose(1, 0, 2)
+        self._padded_data = self._padded_data.reshape(
             original_buffer_shape[0] // comm.size, original_buffer_shape[1] * comm.size
         )
 
@@ -166,7 +181,7 @@ class DBSparse(ABC):
         cls,
         a: sparray,
         block_sizes: np.ndarray,
-        stack_shape: tuple | None = None,
+        global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
     ) -> "DBSparse":
@@ -216,13 +231,13 @@ class DBSparse(ABC):
         self._return_dense = value
 
     @property
-    def masked_data(self) -> np.ndarray:
+    def data(self) -> np.ndarray:
         if self._distribution_state == "stack":
-            return self.data[
+            return self._padded_data[
                 : self._stack_section_sizes[comm.rank],
                 : sum(self._nnz_section_sizes),
             ]
         else:
-            return self.data[
+            return self._padded_data[
                 : sum(self._stack_section_sizes), : self._nnz_section_sizes[comm.rank]
             ]

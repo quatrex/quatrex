@@ -1,7 +1,6 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 # All rights reserved.
 
-
 import numpy as np
 from scipy import sparse
 
@@ -18,7 +17,7 @@ class DBCSR(DBSparse):
         rowptr_map: dict,
         block_sizes: np.ndarray,
         global_stack_shape: tuple,
-        return_dense: bool = False,
+        return_dense: bool = True,
     ) -> None:
         """Initializes the DBCSR matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
@@ -48,8 +47,7 @@ class DBCSR(DBSparse):
 
         brow, bcol = self._unsign_block_index(brow, bcol)
 
-        if block_stack.shape != (
-            *self.masked_data[*stack_index].shape[:-1],
+        if block_stack.shape[-2:] != (
             self.block_sizes[brow],
             self.block_sizes[bcol],
         ):
@@ -122,7 +120,7 @@ class DBCSR(DBSparse):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
-            raise ValueError("Rowptr maps do not match.")
+            raise ValueError("Block sparsities do not match.")
 
         if self.cols != other.cols:
             raise ValueError("Column indices do not match.")
@@ -130,22 +128,81 @@ class DBCSR(DBSparse):
     def __iadd__(self, other: "DBSparse") -> None:
         """Adds another DBSparse matrix to the current matrix."""
         self._check_commensurable(other)
-        self.data += other.data
+        self.masked_data += other.masked_data
 
     def __imul__(self, other: "DBSparse") -> None:
         """Multiplies another DBSparse matrix to the current matrix."""
         self._check_commensurable(other)
-        self.data *= other.data
+        self.masked_data *= other.masked_data
 
     def __neg__(self) -> "DBCSR":
         """Negates the matrix."""
-        return DBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
+        return DBCSR(-self.masked_data, self.cols, self.rowptr_map, self.block_sizes)
 
     def __matmul__(self, other: "DBSparse") -> None:
         ...
 
     def ltranspose(self, copy=False) -> "None | DBSparse":
-        ...
+        """Returns the transpose of the matrix."""
+        if self._distribution_state == "nnz":
+            raise NotImplementedError("Cannot transpose when distributed through nnz.")
+
+        if copy:
+            self = DBCSR(
+                self.data.copy(),
+                self.cols.copy(),
+                self.rowptr_map.copy(),
+                self.block_sizes,
+            )
+
+        if not (
+            hasattr(self, "_inds_bcsr2bcsr_t")
+            and hasattr(self, "_rowptr_map_t")
+            and hasattr(self, "_cols_t")
+        ):
+            # These indices are sorted by block-row and -column.
+            rows, cols = self.spy()
+
+            # Transpose.
+            rows_t, cols_t = cols, rows
+
+            # Canonical ordering of the transpose.
+            inds_bcsr2canonical_t = np.lexsort((cols_t, rows_t))
+            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
+            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
+
+            # Compute index for sorting the transpose by block.
+            inds_canonical2bcsr_t = self._compute_block_sort_index(
+                canonical_rows_t, canonical_cols_t, self.block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
+
+            # Compute the rowptr map for the transpose.
+            rowptr_map_t = self._compute_ptr_map(
+                canonical_rows_t, canonical_cols_t, self.block_sizes
+            )
+
+            # Cache the necessary objects.
+            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
+            self._rowptr_map_t = rowptr_map_t
+            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
+
+        self.masked_data[:] = self.masked_data[..., self._inds_bcsr2bcsr_t]
+        self._inds_bcsr2bcsr_t = np.argsort(self._inds_bcsr2bcsr_t)
+        self.cols, self._cols_t = self._cols_t, self.cols
+        self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
+
+    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+        """Returns the COO sparsity pattern."""
+        rows = np.zeros(self.nnz, dtype=int)
+        for (brow, __), rowptr in self.rowptr_map.items():
+            for i in range(self.block_sizes[brow]):
+                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[brow]
+
+        return rows, self.cols
 
     def to_dense(self) -> np.ndarray:
         """Returns the dense matrix representation."""
@@ -176,6 +233,12 @@ class DBCSR(DBSparse):
         densify_blocks: list[tuple] | None = None,
         pinned=False,
     ):
+        if isinstance(stack_shape, int):
+            stack_shape = (stack_shape,)
+
+        if global_stack_shape is None:
+            global_stack_shape = stack_shape
+
         coo: sparse.coo_array = a.tocoo()
 
         num_blocks = len(block_sizes)
@@ -183,6 +246,12 @@ class DBCSR(DBSparse):
 
         # Densify the selected blocks.
         for i, j in densify_blocks or []:
+            # Unsign the block indices.
+            i = num_blocks + i if i < 0 else i
+            j = num_blocks + j if j < 0 else j
+            if not (0 <= i < num_blocks and 0 <= j < num_blocks):
+                raise IndexError("Block index out of bounds.")
+
             indices = [
                 (m + block_offsets[i], n + block_offsets[j])
                 for m, n in np.ndindex(block_sizes[i], block_sizes[j])
@@ -194,45 +263,13 @@ class DBCSR(DBSparse):
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
-        # Initialize the data and column index arrays.
-        if isinstance(stack_shape, int):
-            stack_shape = (stack_shape,)
+        # Compute the rowptr map.
+        rowptr_map = cls._compute_ptr_map(coo.row, coo.col, block_sizes)
+        block_sort_index = cls._compute_block_sort_index(coo.row, coo.col, block_sizes)
 
         data = np.zeros(stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        cols = np.zeros(coo.nnz, dtype=int)
-
-        # NOTE: This is a naive implementation and can be parallelized.
-        rowptr_map = {}
-        offset = 0
-        for i, j in np.ndindex(num_blocks, num_blocks):
-            inds = (
-                (block_offsets[i] <= coo.row)
-                & (coo.row < block_offsets[i + 1])
-                & (block_offsets[j] <= coo.col)
-                & (coo.col < block_offsets[j + 1])
-            )
-            bnnz = np.sum(inds)
-
-            if bnnz == 0:
-                # Skip empty blocks.
-                continue
-
-            # Sort the data by block-row and -column.
-            data[..., offset : offset + bnnz] = coo.data[inds]
-            cols[offset : offset + bnnz] = coo.col[inds]
-
-            # Compute the rowptr map.
-            rowptr, __ = np.histogram(
-                coo.row[inds] - block_offsets[i],
-                bins=np.arange(block_sizes[i] + 1),
-            )
-            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
-            rowptr_map[(i, j)] = rowptr
-
-            offset += bnnz
-
-        if global_stack_shape is None:
-            global_stack_shape = stack_shape
+        data[..., :] = coo.data[block_sort_index]
+        cols = coo.col[block_sort_index]
 
         return cls(data, cols, rowptr_map, block_sizes, global_stack_shape)
 
@@ -240,3 +277,67 @@ class DBCSR(DBSparse):
     def zeros_like(cls, a: "DBCSR") -> "DBCSR":
         """Returns a DBCSR matrix with the same sparsity pattern."""
         return cls(np.zeros_like(a.data), a.cols, a.rowptr_map, a.block_sizes)
+
+    @staticmethod
+    def _compute_block_sort_index(
+        coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
+    ) -> np.ndarray:
+        num_blocks = len(block_sizes)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+
+        sort_index = np.zeros(len(coo_cols), dtype=int)
+        offset = 0
+        for i, j in np.ndindex(num_blocks, num_blocks):
+            mask = (
+                (block_offsets[i] <= coo_rows)
+                & (coo_rows < block_offsets[i + 1])
+                & (block_offsets[j] <= coo_cols)
+                & (coo_cols < block_offsets[j + 1])
+            )
+            if not np.any(mask):
+                # Skip empty blocks.
+                continue
+
+            bnnz = np.sum(mask)
+
+            # Sort the data by block-row and -column.
+            sort_index[offset : offset + bnnz] = np.argwhere(mask).squeeze()
+
+            offset += bnnz
+
+        return sort_index
+
+    @staticmethod
+    def _compute_ptr_map(
+        coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
+    ) -> dict:
+        """Computes the rowptr map for the given COO matrix."""
+        num_blocks = len(block_sizes)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+
+        # NOTE: This is a naive implementation and can be parallelized.
+        rowptr_map = {}
+        offset = 0
+        for i, j in np.ndindex(num_blocks, num_blocks):
+            mask = (
+                (block_offsets[i] <= coo_rows)
+                & (coo_rows < block_offsets[i + 1])
+                & (block_offsets[j] <= coo_cols)
+                & (coo_cols < block_offsets[j + 1])
+            )
+            if not np.any(mask):
+                # Skip empty blocks.
+                continue
+
+            # Compute the rowptr map.
+            rowptr, __ = np.histogram(
+                coo_rows[mask] - block_offsets[i],
+                bins=np.arange(block_sizes[i] + 1),
+            )
+            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
+            rowptr_map[(i, j)] = rowptr
+
+            bnnz = np.sum(mask)
+            offset += bnnz
+
+        return rowptr_map

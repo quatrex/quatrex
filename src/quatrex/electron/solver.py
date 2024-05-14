@@ -4,12 +4,12 @@ import os
 
 import numpy as np
 from qttools.datastructures.dbcsr import DBCSR
+from qttools.utils.mpi_utils import distributed_load
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.utils.mpi_utils import distributed_load
 
 
 class ElectronSolver(SubsystemSolver):
@@ -25,7 +25,7 @@ class ElectronSolver(SubsystemSolver):
         **kwargs,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(quatrex_config)
+        super().__init__(quatrex_config, compute_config, energies)
 
         # load Hamiltonian matrix, raise error if not found
         hamiltonian_path = quatrex_config.input_dir / "hamiltonian.npz"
@@ -60,3 +60,12 @@ class ElectronSolver(SubsystemSolver):
         else:
             self.potential = 0 * sparse.eye(self.hamiltonian.shape[0], format="coo")
         self.potential_dbsparse = DBCSR.from_sparray(self.potential, stackshape=(1,))
+
+    def apply_obc(self, *args, **kwargs) -> None:
+        ...
+
+    def assemble_system_matrix(self) -> None:
+        ...
+
+    def solve(self) -> None:
+        ...

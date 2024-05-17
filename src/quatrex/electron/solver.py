@@ -1,10 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
-
-import os
-
 import numpy as np
-from qttools.datastructures.dbcsr import DBCSR
-from qttools.utils.mpi_utils import distributed_load
+from qttools.datastructures.dsbcsr import DSBCSR
+from qttools.utils import mpi_utils
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -27,39 +24,59 @@ class ElectronSolver(SubsystemSolver):
         """Initializes the solver."""
         super().__init__(quatrex_config, compute_config, energies)
 
-        # load Hamiltonian matrix, raise error if not found
-        hamiltonian_path = quatrex_config.input_dir / "hamiltonian.npz"
-        if os.path.isfile(hamiltonian_path):
-            self.hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
+        # load Hamiltonian matrix and block_sizes vector, raise error if not found
+        self.hamiltonian_sparray = mpi_utils.distributed_load(
+            quatrex_config.input_dir / "hamiltonian.npz"
+        )
+        self.block_sizes = mpi_utils.distributed_load(
+            quatrex_config.input_dir / "block_sizes.npy"
+        )
+
+        # Check wether total sizes from blocksizes and hamiltonian shape match
+        if self.block_sizes.sum() != self.hamiltonian_sparray.shape[0]:
+            raise ValueError(
+                f"Sum of block sizes does not match Hamiltonian size. {self.block_sizes.sum()} != {self.hamiltonian_sparray.shape[0]}"
             )
-            self.hamiltonian = DBCSR.from_sparray(
-                self.hamiltonian_sparray, stackshape=(1,)
-            )
-        else:
-            raise FileNotFoundError('Hamiltonian file not found: "hamiltonian.npz"')
 
         # load overlap matrix, set to identity if None
-        overlap_path = quatrex_config.input_dir / "overlap.npz"
-        if os.path.isfile(overlap_path):
-            self.overlap_sparray = distributed_load(overlap_path)
-        else:
+        try:
+            self.overlap_sparray = mpi_utils.distributed_load(
+                quatrex_config.input_dir / "overlap.npz"
+            )
+        except OSError:
             self.overlap_sparray = sparse.eye(
                 self.hamiltonian_sparray.shape[0], format="coo"
             )
-        self.overlap = DBCSR.from_sparray(
-            self.overlap_sparray, stackshape=self.local_energies.shape
-        )
 
-        self.system_matrix = self.local_energies * self.overlap - self.hamiltonian
+        if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:
+            raise ValueError(
+                "Overlap matrix and Hamiltonian matrix have different shapes."
+            )
+
+        self.bare_system_matrix = DSBCSR.from_sparray(
+            self.overlap_sparray,
+            block_sizes=self.block_sizes,
+            global_stack_shape=(self.energies.size,),
+            densify_blocks=[(0, 0), (-1, -1)],
+        )
+        self.bare_system_matrix.data[:] = (
+            mpi_utils.get_local_slice(self.energies) * self.bare_system_matrix.data[:]
+        )
+        self.bare_system_matrix -= self.hamiltonian_sparray
 
         # load potential matrix, set to diagonal zero if None
-        potential_path = quatrex_config.input_dir / "potential.npz"
-        if os.path.isfile(potential_path):
-            self.potential = distributed_load(potential_path)
-        else:
+        try:
+            self.potential = mpi_utils.distributed_load(
+                quatrex_config.input_dir / "potential.npz"
+            )
+        except OSError:
+            # File does not exist. Set potential to zero.
             self.potential = 0 * sparse.eye(self.hamiltonian.shape[0], format="coo")
-        self.potential_dbsparse = DBCSR.from_sparray(self.potential, stackshape=(1,))
+
+        if self.potential.shape != self.hamiltonian.shape:
+            raise ValueError(
+                "Potential matrix and Hamiltonian matrix have different shapes."
+            )
 
     def apply_obc(self, *args, **kwargs) -> None:
         ...

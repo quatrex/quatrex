@@ -4,8 +4,7 @@ import os
 from dataclasses import dataclass
 
 import numpy as np
-from qttools.datastructures import DBSparse
-from qttools.utils import mpi_utils
+from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -28,72 +27,72 @@ class SCBAData:
 
     Attributes:
         # Electron
-        sigma_retarded (DBSparse): Retarded self-energy.
-        sigma_lesser (DBSparse): Lesser self-energy.
-        sigma_greater (DBSparse): Greater self-energy.
-        g_retarded (DBSparse): Retarded Green's function.
-        g_lesser (DBSparse): Lesser Green's function.
-        g_greater (DBSparse): Greater Green's function.
+        sigma_retarded (DSBSparse): Retarded self-energy.
+        sigma_lesser (DSBSparse): Lesser self-energy.
+        sigma_greater (DSBSparse): Greater self-energy.
+        g_retarded (DSBSparse): Retarded Green's function.
+        g_lesser (DSBSparse): Lesser Green's function.
+        g_greater (DSBSparse): Greater Green's function.
 
         # Coulomb screening
-        p_retarded (DBSparse): Retarded Coulomb screening.
-        p_lesser (DBSparse): Lesser Coulomb screening.
-        p_greater (DBSparse): Greater Coulomb screening.
-        w_retarded (DBSparse): Retarded screened Coulomb interaction.
-        w_lesser (DBSparse): Lesser screened Coulomb interaction.
-        w_greater (DBSparse): Greater screened Coulomb interaction.
+        p_retarded (DSBSparse): Retarded Coulomb screening.
+        p_lesser (DSBSparse): Lesser Coulomb screening.
+        p_greater (DSBSparse): Greater Coulomb screening.
+        w_retarded (DSBSparse): Retarded screened Coulomb interaction.
+        w_lesser (DSBSparse): Lesser screened Coulomb interaction.
+        w_greater (DSBSparse): Greater screened Coulomb interaction.
 
         # Photon
-        pi_photon_retarded (DBSparse): Retarded photon self-energy.
-        pi_photon_lesser (DBSparse): Lesser photon self-energy.
-        pi_photon_greater (DBSparse): Greater photon self-energy.
-        d_photon_retarded (DBSparse): Retarded photon Green's function.
-        d_photon_lesser (DBSparse): Lesser photon Green's function.
-        d_photon_greater (DBSparse): Greater photon Green's function.
+        pi_photon_retarded (DSBSparse): Retarded photon self-energy.
+        pi_photon_lesser (DSBSparse): Lesser photon self-energy.
+        pi_photon_greater (DSBSparse): Greater photon self-energy.
+        d_photon_retarded (DSBSparse): Retarded photon Green's function.
+        d_photon_lesser (DSBSparse): Lesser photon Green's function.
+        d_photon_greater (DSBSparse): Greater photon Green's function.
 
         # Phonon
-        pi_phonon_retarded (DBSparse): Retarded phonon self-energy.
-        pi_phonon_lesser (DBSparse): Lesser phonon self-energy.
-        pi_phonon_greater (DBSparse): Greater phonon self-energy.
-        d_phonon_retarded (DBSparse): Retarded phonon Green's function.
-        d_phonon_lesser (DBSparse): Lesser phonon Green's function.
-        d_phonon_greater (DBSparse): Greater phonon Green's function.
+        pi_phonon_retarded (DSBSparse): Retarded phonon self-energy.
+        pi_phonon_lesser (DSBSparse): Lesser phonon self-energy.
+        pi_phonon_greater (DSBSparse): Greater phonon self-energy.
+        d_phonon_retarded (DSBSparse): Retarded phonon Green's function.
+        d_phonon_lesser (DSBSparse): Lesser phonon Green's function.
+        d_phonon_greater (DSBSparse): Greater phonon Green's function.
     """
 
     # ----- Electron data ------------------------------------------------------------
-    sigma_retarded_prev: DBSparse = None
-    sigma_lesser_prev: DBSparse = None
-    sigma_greater_prev: DBSparse = None
-    sigma_retarded: DBSparse = None
-    sigma_lesser: DBSparse = None
-    sigma_greater: DBSparse = None
-    g_retarded: DBSparse = None
-    g_lesser: DBSparse = None
-    g_greater: DBSparse = None
+    sigma_retarded_prev: DSBSparse = None
+    sigma_lesser_prev: DSBSparse = None
+    sigma_greater_prev: DSBSparse = None
+    sigma_retarded: DSBSparse = None
+    sigma_lesser: DSBSparse = None
+    sigma_greater: DSBSparse = None
+    g_retarded: DSBSparse = None
+    g_lesser: DSBSparse = None
+    g_greater: DSBSparse = None
 
     # ----- Coulomb screening data ---------------------------------------------------
-    p_retarded: DBSparse = None
-    p_lesser: DBSparse = None
-    p_greater: DBSparse = None
-    w_retarded: DBSparse = None
-    w_lesser: DBSparse = None
-    w_greater: DBSparse = None
+    p_retarded: DSBSparse = None
+    p_lesser: DSBSparse = None
+    p_greater: DSBSparse = None
+    w_retarded: DSBSparse = None
+    w_lesser: DSBSparse = None
+    w_greater: DSBSparse = None
 
     # ----- Photon data --------------------------------------------------------------
-    pi_photon_retarded: DBSparse = None
-    pi_photon_lesser: DBSparse = None
-    pi_photon_greater: DBSparse = None
-    d_photon_retarded: DBSparse = None
-    d_photon_lesser: DBSparse = None
-    d_photon_greater: DBSparse = None
+    pi_photon_retarded: DSBSparse = None
+    pi_photon_lesser: DSBSparse = None
+    pi_photon_greater: DSBSparse = None
+    d_photon_retarded: DSBSparse = None
+    d_photon_lesser: DSBSparse = None
+    d_photon_greater: DSBSparse = None
 
     # ----- Phonon data --------------------------------------------------------------
-    pi_phonon_retarded: DBSparse = None
-    pi_phonon_lesser: DBSparse = None
-    pi_phonon_greater: DBSparse = None
-    d_phonon_retarded: DBSparse = None
-    d_phonon_lesser: DBSparse = None
-    d_phonon_greater: DBSparse = None
+    pi_phonon_retarded: DSBSparse = None
+    pi_phonon_lesser: DSBSparse = None
+    pi_phonon_greater: DSBSparse = None
+    d_phonon_retarded: DSBSparse = None
+    d_phonon_lesser: DSBSparse = None
+    d_phonon_greater: DSBSparse = None
 
 
 @dataclass
@@ -171,7 +170,7 @@ class SCBA:
         self.electron_energies = np.load(
             self.quatrex_config.input_dir / "electron_energies.npy"
         )
-        self.local_electron_energies = mpi_utils.get_local_slice(self.electron_energies)
+        # self.local_electron_energies = mpi_utils.get_local_slice(self.electron_energies)
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config, self.compute_config, self.electron_energies
@@ -190,9 +189,9 @@ class SCBA:
             else:
                 self.coulomb_screening_energies = self.electron_energies
 
-            self.local_coulomb_screening_energies = mpi_utils.get_local_slice(
-                self.coulomb_screening_energies
-            )
+            # self.local_coulomb_screening_energies = mpi_utils.get_local_slice(
+            #     self.coulomb_screening_energies
+            # )
 
             self.pol_coulomb_screening = PCoulombScreening(...)
             self.coulomb_screening_solver = CoulombScreeningSolver(...)
@@ -206,7 +205,7 @@ class SCBA:
 
             self.photon_energies = np.load(energies_path)
 
-            self.local_photon_energies = mpi_utils.get_local_slice(self.photon_energies)
+            # self.local_photon_energies = mpi_utils.get_local_slice(self.photon_energies)
 
             self.pol_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(...)
@@ -220,7 +219,7 @@ class SCBA:
 
             self.phonon_energies = np.load(energies_path)
 
-            self.local_phonon_energies = mpi_utils.get_local_slice(self.phonon_energies)
+            # self.local_phonon_energies = mpi_utils.get_local_slice(self.phonon_energies)
 
             if self.quatrex_config.phonon.model == "negf":
                 self.pol_phonon = PiPhonon(...)

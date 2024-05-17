@@ -45,6 +45,8 @@ class PoissonConfig(BaseModel):
     convergence_tol: PositiveFloat = 1e-5
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
+    num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
+
 
 class OBCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")

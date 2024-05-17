@@ -1,6 +1,8 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 
+from pathlib import Path
+
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
@@ -17,17 +19,24 @@ def get_num_elements_per_section(num_elements, num_sections=comm.size):
     return num_elements_per_section, total_size
 
 
-def distributed_load(path: str) -> sparse.coo_array:
+def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
     """Loads the given sparse matrix from disk and distributes it to all ranks."""
 
     if comm.rank == 0:
-        sparse_array = sparse.load_npz(path)
-        if comm.size > 1:
-            comm.bcast(sparse_array, root=0)
-    else:
-        sparse_array = comm.bcast(None, root=0)
+        if path.suffix == ".npz":
+            arr = sparse.load_npz(path)
+        elif path.suffix == ".npy":
+            arr = np.load(path)
+        else:
+            raise ValueError(f"Unknown file extension: {path.suffix}")
 
-    return sparse_array
+        if comm.size > 1:
+            comm.bcast(arr, root=0)
+
+    else:
+        arr = comm.bcast(None, root=0)
+
+    return arr
 
 
 def get_local_slice(global_array: np.ndarray) -> None:

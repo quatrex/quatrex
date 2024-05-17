@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from qttools.datastructures import DBCSR
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures import DSBCSR
+from qttools.datastructures.dsbsparse import DSBSparse
 
 
 @pytest.mark.parametrize(
@@ -29,10 +29,10 @@ from qttools.datastructures.dbsparse import DBSparse
         pytest.param([(2, 4)], id="densify-random"),
     ],
 )
-@pytest.mark.parametrize("dbsparse_type", [DBCSR])
+@pytest.mark.parametrize("dbsparse_type", [DSBCSR])
 def test_from_sparray(
     coo: sparse.coo_array,
-    dbsparse_type: DBSparse,
+    dbsparse_type: DSBSparse,
     block_sizes: np.ndarray,
     global_stack_shape: int | tuple[int],
     densify_blocks: list[tuple[int]] | None,

@@ -2,12 +2,12 @@
 
 from abc import ABC, abstractmethod
 
-from qttools.datastructures import DBSparse
+from qttools.datastructures import DSBSparse
 
 
 class GFSolver(ABC):
     @abstractmethod
-    def selected_inv(a: DBSparse, out=None) -> None | DBSparse:
+    def selected_inv(a: DSBSparse, out=None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -28,9 +28,9 @@ class GFSolver(ABC):
 
     @abstractmethod
     def selected_solve(
-        a: DBSparse,
-        sigma_lesser: DBSparse,
-        sigma_greater: DBSparse,
+        a: DSBSparse,
+        sigma_lesser: DSBSparse,
+        sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:

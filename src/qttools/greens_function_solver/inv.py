@@ -2,12 +2,12 @@
 
 import numpy as np
 
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
 
 
 class Inv(GFSolver):
-    def selected_inv(a: DBSparse, out: DBSparse = None) -> None | DBSparse:
+    def selected_inv(a: DSBSparse, out: DSBSparse = None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -37,10 +37,10 @@ class Inv(GFSolver):
         out.data[:] = inv_a[..., rows, cols]
 
     def selected_solve(
-        a: DBSparse,
-        sigma_lesser: DBSparse,
-        sigma_greater: DBSparse,
-        out: tuple[DBSparse, ...] | None = None,
+        a: DSBSparse,
+        sigma_lesser: DSBSparse,
+        sigma_greater: DSBSparse,
+        out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:
         """Solve the selected quadratic matrix equation and compute only selected

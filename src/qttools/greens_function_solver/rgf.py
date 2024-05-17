@@ -2,12 +2,12 @@
 
 import numpy.linalg as npla
 
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
 
 
 class RGF(GFSolver):
-    def selected_inv(a: DBSparse, out=None) -> None | DBSparse:
+    def selected_inv(a: DSBSparse, out=None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -27,7 +27,7 @@ class RGF(GFSolver):
         if out is not None:
             x = out
         else:
-            x = DBSparse.zeros_like(a)
+            x = DSBSparse.zeros_like(a)
 
         x[0, 0] = npla.inv(a[0, 0])
 
@@ -53,9 +53,9 @@ class RGF(GFSolver):
         return x
 
     def selected_solve(
-        a: DBSparse,
-        sigma_lesser: DBSparse,
-        sigma_greater: DBSparse,
+        a: DSBSparse,
+        sigma_lesser: DSBSparse,
+        sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
         **kwargs,
@@ -90,9 +90,9 @@ class RGF(GFSolver):
             x_l = out[1]
             x_g = out[2]
         else:
-            x_r = DBSparse.zeros_like(a)
-            x_l = DBSparse.zeros_like(a)
-            x_g = DBSparse.zeros_like(a)
+            x_r = DSBSparse.zeros_like(a)
+            x_l = DSBSparse.zeros_like(a)
+            x_g = DSBSparse.zeros_like(a)
 
         x_r[0, 0] = npla.inv(a[0, 0])
         x_l[0, 0] = x_r[0, 0] @ sigma_lesser[0, 0] @ x_r[0, 0].conj().T

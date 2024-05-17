@@ -1,7 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 
-from qttools.datastructures.dbcsr import DBCSR
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbcsr import DSBCSR
+from qttools.datastructures.dsbsparse import DSBSparse
 
-__all__ = ["DBSparse", "DBCSR"]
+__all__ = ["DSBSparse", "DSBCSR"]

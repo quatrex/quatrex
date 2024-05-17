@@ -11,7 +11,7 @@ from scipy.sparse import sparray
 from qttools.utils.mpi_utils import get_num_elements_per_section
 
 
-class DBSparse(ABC):
+class DSBSparse(ABC):
     """Abstract base class for distributed block sparse matrices.
 
     The data is distributed in blocks across the ranks. The data is
@@ -84,11 +84,11 @@ class DBSparse(ABC):
         ...
 
     @abstractmethod
-    def __iadd__(self, other: "DBSparse") -> None:
+    def __iadd__(self, other: "DSBSparse") -> None:
         ...
 
     @abstractmethod
-    def __imul__(self, other: "DBSparse") -> None:
+    def __imul__(self, other: "DSBSparse") -> None:
         ...
 
     @abstractmethod
@@ -96,7 +96,7 @@ class DBSparse(ABC):
         ...
 
     @abstractmethod
-    def __matmul__(self, other: "DBSparse") -> None:
+    def __matmul__(self, other: "DSBSparse") -> None:
         ...
 
     def block_diagonal(self, offset: int = 0) -> list[sparray] | list[np.ndarray]:
@@ -119,7 +119,7 @@ class DBSparse(ABC):
         ...
 
     @abstractmethod
-    def ltranspose(self, copy=False) -> "None | DBSparse":
+    def ltranspose(self, copy=False) -> "None | DSBSparse":
         """Performs a local transposition of the datastructure."""
         ...
 
@@ -184,12 +184,12 @@ class DBSparse(ABC):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
-    ) -> "DBSparse":
+    ) -> "DSBSparse":
         ...
 
     @classmethod
     @abstractmethod
-    def zeros_like(cls, a: "DBSparse") -> "DBSparse":
+    def zeros_like(cls, a: "DSBSparse") -> "DSBSparse":
         ...
 
     @property

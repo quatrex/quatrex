@@ -4,11 +4,11 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.mpi_utils import get_num_elements_per_section
 
 
-class DBCSR(DBSparse):
+class DSBCSR(DSBSparse):
     """Distributed block compressed sparse row matrix."""
 
     def __init__(
@@ -109,9 +109,9 @@ class DBCSR(DBSparse):
             ]
         return block
 
-    def _check_commensurable(self, other: "DBSparse") -> None:
+    def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, DBCSR):
+        if not isinstance(other, DSBCSR):
             raise TypeError("Can only add DBCSR matrices.")
 
         if self.shape != other.shape:
@@ -126,30 +126,40 @@ class DBCSR(DBSparse):
         if self.cols != other.cols:
             raise ValueError("Column indices do not match.")
 
-    def __iadd__(self, other: "DBSparse") -> None:
+    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> None:
         """Adds another DBSparse matrix to the current matrix."""
+
+        if isinstance(other, sparse.sparray):
+            coo = other.tocoo()
+            coo.sum_duplicates()
+            rows, cols = self.spy()
+
         self._check_commensurable(other)
         self.data += other.data
 
-    def __imul__(self, other: "DBSparse") -> None:
+    def __isub__(self, other: "DSBSparse | sparse.sparray") -> None:
+        """Subtracts another DBSparse matrix from the current matrix."""
+        self.__iadd__(self, -other)
+
+    def __imul__(self, other: "DSBSparse") -> None:
         """Multiplies another DBSparse matrix to the current matrix."""
         self._check_commensurable(other)
         self.data *= other.data
 
-    def __neg__(self) -> "DBCSR":
+    def __neg__(self) -> "DSBCSR":
         """Negates the matrix."""
-        return DBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
+        return DSBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
 
-    def __matmul__(self, other: "DBSparse") -> None:
+    def __matmul__(self, other: "DSBSparse") -> None:
         ...
 
-    def ltranspose(self, copy=False) -> "None | DBSparse":
+    def ltranspose(self, copy=False) -> "None | DSBSparse":
         """Returns the transpose of the matrix."""
         if self._distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if copy:
-            self = DBCSR(
+            self = DSBCSR(
                 self._padded_data.copy(),
                 self.cols.copy(),
                 self.rowptr_map.copy(),
@@ -232,7 +242,7 @@ class DBCSR(DBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
-    ):
+    ) -> "DSBCSR":
         stack_section_sizes, __ = get_num_elements_per_section(
             global_stack_shape[0], comm.size
         )
@@ -276,7 +286,7 @@ class DBCSR(DBSparse):
         return cls(data, cols, rowptr_map, block_sizes, global_stack_shape)
 
     @classmethod
-    def zeros_like(cls, a: "DBCSR") -> "DBCSR":
+    def zeros_like(cls, a: "DSBCSR") -> "DSBCSR":
         """Returns a DBCSR matrix with the same sparsity pattern."""
         return cls(
             np.zeros_like(a.data),

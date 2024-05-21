@@ -1,5 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
+import copy
+
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
@@ -112,7 +114,7 @@ class DSBCSR(DSBSparse):
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
         if not isinstance(other, DSBCSR):
-            raise TypeError("Can only add DBCSR matrices.")
+            raise TypeError("Can only add DSBCSR matrices.")
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
@@ -126,20 +128,26 @@ class DSBCSR(DSBSparse):
         if self.cols != other.cols:
             raise ValueError("Column indices do not match.")
 
-    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> None:
+    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
         """Adds another DBSparse matrix to the current matrix."""
 
-        if isinstance(other, sparse.sparray):
-            coo = other.tocoo()
-            coo.sum_duplicates()
-            rows, cols = self.spy()
+        if sparse.issparse(other):
+            lil = other.tolil()
+
+            sparray_data = np.zeros(self.nnz, dtype=self._padded_data.dtype)
+            for i, (row, col) in enumerate(zip(*self.spy())):
+                sparray_data[i] = lil[row, col]
+            self.data[:] += sparray_data
+            return self
 
         self._check_commensurable(other)
-        self.data += other.data
+        self.data[:] += other.data[:]
+        return self
 
-    def __isub__(self, other: "DSBSparse | sparse.sparray") -> None:
+    def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
         """Subtracts another DBSparse matrix from the current matrix."""
-        self.__iadd__(self, -other)
+        self += -other
+        return self
 
     def __imul__(self, other: "DSBSparse") -> None:
         """Multiplies another DBSparse matrix to the current matrix."""
@@ -288,14 +296,9 @@ class DSBCSR(DSBSparse):
     @classmethod
     def zeros_like(cls, a: "DSBCSR") -> "DSBCSR":
         """Returns a DBCSR matrix with the same sparsity pattern."""
-        return cls(
-            np.zeros_like(a.data),
-            a.cols,
-            a.rowptr_map,
-            a.block_sizes,
-            a.global_stack_shape,
-            a.return_dense,
-        )
+        out = copy.deepcopy(a)
+        out.data[:] = 0.0
+        return out
 
     @staticmethod
     def _compute_block_sort_index(

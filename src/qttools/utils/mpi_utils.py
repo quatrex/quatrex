@@ -22,19 +22,21 @@ def get_num_elements_per_section(num_elements, num_sections=comm.size):
 def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
     """Loads the given sparse matrix from disk and distributes it to all ranks."""
 
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    if path.suffix not in [".npz", ".npy"]:
+        raise ValueError(f"Invalid file extension: {path.suffix}")
+
     if comm.rank == 0:
         if path.suffix == ".npz":
             arr = sparse.load_npz(path)
         elif path.suffix == ".npy":
             arr = np.load(path)
-        else:
-            raise ValueError(f"Unknown file extension: {path.suffix}")
-
-        if comm.size > 1:
-            comm.bcast(arr, root=0)
 
     else:
-        arr = comm.bcast(None, root=0)
+        arr = None
+
+    arr = comm.bcast(arr, root=0)
 
     return arr
 

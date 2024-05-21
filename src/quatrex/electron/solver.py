@@ -28,6 +28,7 @@ class ElectronSolver(SubsystemSolver):
         self.hamiltonian_sparray = mpi_utils.distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"
         )
+
         self.block_sizes = mpi_utils.distributed_load(
             quatrex_config.input_dir / "block_sizes.npy"
         )
@@ -43,7 +44,7 @@ class ElectronSolver(SubsystemSolver):
             self.overlap_sparray = mpi_utils.distributed_load(
                 quatrex_config.input_dir / "overlap.npz"
             )
-        except OSError:
+        except FileNotFoundError:
             self.overlap_sparray = sparse.eye(
                 self.hamiltonian_sparray.shape[0], format="coo"
             )
@@ -60,28 +61,37 @@ class ElectronSolver(SubsystemSolver):
             densify_blocks=[(0, 0), (-1, -1)],
         )
         self.bare_system_matrix.data[:] = (
-            mpi_utils.get_local_slice(self.energies) * self.bare_system_matrix.data[:]
-        )
+            mpi_utils.get_local_slice(self.energies) * self.bare_system_matrix.data[:].T
+        ).T
         self.bare_system_matrix -= self.hamiltonian_sparray
 
         # load potential matrix, set to diagonal zero if None
         try:
             self.potential = mpi_utils.distributed_load(
-                quatrex_config.input_dir / "potential.npz"
+                quatrex_config.input_dir / "potential.npy"
             )
-        except OSError:
+            if self.potential.size != self.hamiltonian_sparray.shape[0]:
+                raise ValueError(
+                    "Potential matrix and Hamiltonian have different shapes."
+                )
+        except FileNotFoundError:
             # File does not exist. Set potential to zero.
-            self.potential = 0 * sparse.eye(self.hamiltonian.shape[0], format="coo")
+            self.potential = np.zeros(self.hamiltonian_sparray.shape[0])
 
-        if self.potential.shape != self.hamiltonian.shape:
-            raise ValueError(
-                "Potential matrix and Hamiltonian matrix have different shapes."
-            )
+        self.bare_system_matrix -= sparse.diags(self.potential)
 
-    def apply_obc(self, *args, **kwargs) -> None:
+        self.system_matrix = DSBCSR.zeros_like(self.bare_system_matrix)
+
+    def update_potential(self, new_potential: np.ndarray) -> None:
+        """Updates the potential matrix."""
+        potential_diff_matrix = sparse.diags(new_potential - self.potential)
+        self.bare_system_matrix -= potential_diff_matrix
+        self.potential = new_potential
+
+    def _apply_obc(self, *args, **kwargs) -> None:
         ...
 
-    def assemble_system_matrix(self) -> None:
+    def _assemble_system_matrix(self) -> None:
         ...
 
     def solve(self) -> None:

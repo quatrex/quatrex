@@ -59,16 +59,6 @@ class SubsystemSolver(ABC):
         raise NotImplementedError(f"Solver '{solver}' not implemented.")
 
     @abstractmethod
-    def apply_obc(self, *args, **kwargs) -> None:
-        """Applies the OBC."""
-        ...
-
-    @abstractmethod
-    def assemble_system_matrix(self) -> None:
-        """Assembles the system matrix for a given energy."""
-        ...
-
-    @abstractmethod
     def solve(self) -> None:
         """Solves the system for a given energy."""
         ...

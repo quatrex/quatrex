@@ -4,19 +4,19 @@ import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
-from qttools.datastructures import DBCSR, DBSparse
+from qttools.datastructures import DSBCSR, DSBSparse
 
 
 class ComputeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     # --- Memory config ------------------------------------------------
-    dbsparse: DBSparse = DBCSR
+    dbsparse: DSBSparse = DSBCSR
 
     @field_validator("dbsparse", mode="before")
-    def set_dbsparse(cls, value) -> DBSparse:
-        if value == "DBCSR":
-            return DBCSR
+    def set_dbsparse(cls, value) -> DSBSparse:
+        if value == "DSBCSR":
+            return DSBCSR
         raise ValueError(f"Invalid value '{value}' for dbsparse")
 
 

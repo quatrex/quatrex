@@ -1,7 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
 import numpy as np
-from qttools.datastructures import DBSparse
+from qttools.datastructures import DSBSparse
 
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -13,8 +13,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
     def __init__(
         self,
         config: QuatrexConfig,
-        g_lesser: DBSparse,
-        g_greater: DBSparse,
+        g_lesser: DSBSparse,
+        g_greater: DSBSparse,
     ) -> None:
         """Initializes the self-energy."""
         self.model = config.phonon.model

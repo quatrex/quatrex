@@ -249,6 +249,9 @@ class DSBCSR(DSBSparse):
         if stack_slice is None:
             stack_slice = slice(0, self.shape[0], 1)
 
+        if stack_slice.step is None:
+            raise ValueError("stack_slice doesn't specifcy a step.")
+
         arr = np.zeros(
             ((stack_slice.stop - stack_slice.start) // stack_slice.step, *self.shape[1:]), 
             dtype=self._padded_data.dtype

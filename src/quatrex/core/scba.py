@@ -7,6 +7,7 @@ import numpy as np
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.observables import density
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -98,48 +99,48 @@ class SCBAData:
 @dataclass
 class Observables:
     # Electron
-    electron_ldos: np.ndarray
-    electron_density: np.ndarray
-    hole_density: np.ndarray
-    electron_current: np.ndarray
+    electron_ldos: np.ndarray = None
+    electron_density: np.ndarray = None
+    hole_density: np.ndarray = None
+    electron_current: np.ndarray = None
 
-    electron_electron_scattering_rate: np.ndarray
-    electron_photon_scattering_rate: np.ndarray
-    electron_phonon_scattering_rate: np.ndarray
+    electron_electron_scattering_rate: np.ndarray = None
+    electron_photon_scattering_rate: np.ndarray = None
+    electron_phonon_scattering_rate: np.ndarray = None
 
-    sigma_retarded_density: np.ndarray
-    sigma_lesser_density: np.ndarray
-    sigma_greater_density: np.ndarray
+    sigma_retarded_density: np.ndarray = None
+    sigma_lesser_density: np.ndarray = None
+    sigma_greater_density: np.ndarray = None
 
     # Coulomb Screening
-    w_retarded_density: np.ndarray
-    w_lesser_density: np.ndarray
-    w_greater_density: np.ndarray
+    w_retarded_density: np.ndarray = None
+    w_lesser_density: np.ndarray = None
+    w_greater_density: np.ndarray = None
 
-    p_retarded_density: np.ndarray
-    p_lesser_density: np.ndarray
-    p_greater_density: np.ndarray
+    p_retarded_density: np.ndarray = None
+    p_lesser_density: np.ndarray = None
+    p_greater_density: np.ndarray = None
 
     # Photon
-    pi_photon_retarded_density: np.ndarray
-    pi_photon_lesser_density: np.ndarray
-    pi_photon_greater_density: np.ndarray
+    pi_photon_retarded_density: np.ndarray = None
+    pi_photon_lesser_density: np.ndarray = None
+    pi_photon_greater_density: np.ndarray = None
 
-    d_photon_retarded_density: np.ndarray
-    d_photon_lesser_density: np.ndarray
-    d_photon_greater_density: np.ndarray
+    d_photon_retarded_density: np.ndarray = None
+    d_photon_lesser_density: np.ndarray = None
+    d_photon_greater_density: np.ndarray = None
 
-    photon_current_density: np.ndarray
+    photon_current_density: np.ndarray = None
 
     # Phonon
-    pi_phonon_retarded_density: np.ndarray
-    pi_phonon_lesser_density: np.ndarray
-    pi_phonon_greater_density: np.ndarray
-    d_phonon_retarded_density: np.ndarray
-    d_phonon_lesser_density: np.ndarray
-    d_phonon_greater_density: np.ndarray
+    pi_phonon_retarded_density: np.ndarray = None
+    pi_phonon_lesser_density: np.ndarray = None
+    pi_phonon_greater_density: np.ndarray = None
+    d_phonon_retarded_density: np.ndarray = None
+    d_phonon_lesser_density: np.ndarray = None
+    d_phonon_greater_density: np.ndarray = None
 
-    thermal_current: np.ndarray
+    thermal_current: np.ndarray = None
 
 
 class SCBA:
@@ -162,9 +163,10 @@ class SCBA:
             compute_config = ComputeConfig()
 
         self.compute_config = compute_config
-        self.dbsparse = compute_config.dbsparse
+        self.dsbsparse = compute_config.dbsparse
 
         self.data = SCBAData()
+        self.observables = Observables()
 
         # ----- Electron init ----------------------------------------------------------
         self.electron_energies = np.load(
@@ -229,93 +231,107 @@ class SCBA:
             self.sse_phonon = SigmaPhonon(...)
 
     def _initialize_electron_data(self) -> None:
-        self.data.sigma_retarded_prev = self.dbsparse.zeros_like(
+        self.data.sigma_retarded_prev = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.sigma_lesser_prev = self.dbsparse.zeros_like(
+        self.data.sigma_lesser_prev = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.sigma_greater_prev = self.dbsparse.zeros_like(
+        self.data.sigma_greater_prev = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.sigma_retarded = self.dbsparse.zeros_like(
+        self.data.sigma_retarded = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.sigma_lesser = self.dbsparse.zeros_like(
+        self.data.sigma_lesser = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.sigma_greater = self.dbsparse.zeros_like(
+        self.data.sigma_greater = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.g_retarded = self.dbsparse.zeros_like(
+        self.data.g_retarded = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.g_lesser = self.dbsparse.zeros_like(
+        self.data.g_lesser = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
-        self.data.g_greater = self.dbsparse.zeros_like(
+        self.data.g_greater = self.dsbsparse.zeros_like(
             self.electron_solver.system_matrix
         )
 
     def _initialize_coulomb_screening_data(self) -> None:
-        self.data.p_retarded = self.dbsparse.zeros_like(
+        self.data.p_retarded = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
-        self.data.p_lesser = self.dbsparse.zeros_like(
+        self.data.p_lesser = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
-        self.data.p_greater = self.dbsparse.zeros_like(
+        self.data.p_greater = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
-        self.data.w_retarded = self.dbsparse.zeros_like(
+        self.data.w_retarded = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
-        self.data.w_lesser = self.dbsparse.zeros_like(
+        self.data.w_lesser = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
-        self.data.w_greater = self.dbsparse.zeros_like(
+        self.data.w_greater = self.dsbsparse.zeros_like(
             self.coulomb_screening_solver.system_matrix
         )
 
     def _initialize_photon_data(self) -> None:
-        self.data.pi_photon_retarded = self.dbsparse.zeros_like(
+        self.data.pi_photon_retarded = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
-        self.data.pi_photon_lesser = self.dbsparse.zeros_like(
+        self.data.pi_photon_lesser = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
-        self.data.pi_photon_greater = self.dbsparse.zeros_like(
+        self.data.pi_photon_greater = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
-        self.data.d_photon_retarded = self.dbsparse.zeros_like(
+        self.data.d_photon_retarded = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
-        self.data.d_photon_lesser = self.dbsparse.zeros_like(
+        self.data.d_photon_lesser = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
-        self.data.d_photon_greater = self.dbsparse.zeros_like(
+        self.data.d_photon_greater = self.dsbsparse.zeros_like(
             self.photon_solver.system_matrix
         )
 
     def _initialize_phonon_data(self) -> None:
-        self.data.pi_phonon_retarded = self.dbsparse.zeros_like(
+        self.data.pi_phonon_retarded = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
-        self.data.pi_phonon_lesser = self.dbsparse.zeros_like(
+        self.data.pi_phonon_lesser = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
-        self.data.pi_phonon_greater = self.dbsparse.zeros_like(
+        self.data.pi_phonon_greater = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
-        self.data.d_phonon_retarded = self.dbsparse.zeros_like(
+        self.data.d_phonon_retarded = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
-        self.data.d_phonon_lesser = self.dbsparse.zeros_like(
+        self.data.d_phonon_lesser = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
-        self.data.d_phonon_greater = self.dbsparse.zeros_like(
+        self.data.d_phonon_greater = self.dsbsparse.zeros_like(
             self.phonon_solver.system_matrix
         )
+
+    def _compute_observables(self) -> None:
+        self.observables.electron_ldos = -density(
+            self.data.g_retarded, self.electron_solver.overlap_sparray
+        )
+        self.observables.electron_density = density(
+            self.data.g_lesser, self.electron_solver.overlap_sparray
+        )
+        self.observables.hole_density = -density(
+            self.data.g_greater, self.electron_solver.overlap_sparray
+        )
+
+    def _has_converged(self) -> bool:
+        return False
 
     def _compute_phonon_interaction(self):
         if self.quatrex_config.phonon.model == "negf":
@@ -340,8 +356,10 @@ class SCBA:
 
     def run(self) -> None:
         """Runs the SCBA to convergence."""
-        for __ in range(self.quatrex_config.scba.max_iterations):
-            self.electron_solver.solve_lesser_greater(
+        print("Entering SCBA loop...", flush=True)
+        for i in range(self.quatrex_config.scba.max_iterations):
+            print(f"Iteration {i}", flush=True)
+            self.electron_solver.solve(
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
@@ -349,15 +367,15 @@ class SCBA:
             )
 
             # Swap current and previous self-energy buffers.
-            self.data.sigma_retarded.data, self.data.sigma_retarded_prev.data = (
+            self.data.sigma_retarded.data[:], self.data.sigma_retarded_prev.data[:] = (
                 self.data.sigma_retarded_prev.data,
                 self.data.sigma_retarded.data,
             )
-            self.data.sigma_lesser.data, self.data.sigma_lesser_prev.data = (
+            self.data.sigma_lesser.data[:], self.data.sigma_lesser_prev.data[:] = (
                 self.data.sigma_lesser_prev.data,
                 self.data.sigma_lesser.data,
             )
-            self.data.sigma_greater.data, self.data.sigma_greater_prev.data = (
+            self.data.sigma_greater.data[:], self.data.sigma_greater_prev.data[:] = (
                 self.data.sigma_greater_prev.data,
                 self.data.sigma_greater.data,
             )
@@ -376,21 +394,23 @@ class SCBA:
             if self.quatrex_config.scba.phonon:
                 self._compute_phonon_interaction()
 
-            if self.has_converged():
-                print(f"SCBA converged after {__} iterations.")
+            if self._has_converged():
+                print(f"SCBA converged after {i} iterations.")
                 break
 
             # Update self-energy with mixing factor.
             m = self.quatrex_config.scba.mixing_factor
-            self.data.sigma_retarded = (
+            self.data.sigma_retarded.data[:] = (
+                (1 - m) * self.data.sigma_retarded_prev.data
+                + m * self.data.sigma_retarded.data
+            )
+            self.data.sigma_retarded.data[:] = (
                 1 - m
-            ) * self.data.sigma_retarded_prev + m * self.data.sigma_retarded
-            self.data.sigma_retarded = (
+            ) * self.data.sigma_lesser_prev.data + m * self.data.sigma_lesser.data
+            self.data.sigma_greater.data[:] = (
                 1 - m
-            ) * self.data.sigma_lesser_prev + m * self.data.sigma_lesser
-            self.data.sigma_greater = (
-                1 - m
-            ) * self.data.sigma_greater_prev + m * self.data.sigma_greater
+            ) * self.data.sigma_greater_prev.data + m * self.data.sigma_greater.data
 
         else:  # Did not break, i.e. max_iterations reached.
-            print(f"SCBA did not converge after {__} iterations.")
+            print(f"SCBA did not converge after {i} iterations.")
+            self._compute_observables()

@@ -7,7 +7,7 @@ from qttools.greens_function_solver.solver import GFSolver
 
 
 class RGF(GFSolver):
-    def selected_inv(a: DSBSparse, out=None) -> None | DSBSparse:
+    def selected_inv(self, a: DSBSparse, out=None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -27,17 +27,17 @@ class RGF(GFSolver):
         if out is not None:
             x = out
         else:
-            x = DSBSparse.zeros_like(a)
+            x = a.__class__.zeros_like(a)
 
         x[0, 0] = npla.inv(a[0, 0])
 
         # Forwards sweep.
-        for i in range(a.bshape[0] - 1):
+        for i in range(a.num_blocks - 1):
             j = i + 1
             x[j, j] = npla.inv(a[j, j] - a[j, i] @ x[i, i] @ a[i, j])
 
         # Backwards sweep.
-        for i in range(a.bshape[0] - 2, -1, -1):
+        for i in range(a.num_blocks - 2, -1, -1):
             j = i + 1
 
             x_ii = x[i, i]
@@ -53,12 +53,12 @@ class RGF(GFSolver):
         return x
 
     def selected_solve(
+        self,
         a: DSBSparse,
         sigma_lesser: DSBSparse,
         sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
-        **kwargs,
     ) -> None | tuple:
         """Solve the selected quadratic matrix equation and compute only selected
         elements of it's inverse.
@@ -86,13 +86,12 @@ class RGF(GFSolver):
 
         # If out is not none, x_r will bhe the first element of the tuple. and so on for x_l and x_g
         if out is not None:
-            x_r = out[0]
-            x_l = out[1]
-            x_g = out[2]
+            x_l, x_g, *x_r = out
+
         else:
-            x_r = DSBSparse.zeros_like(a)
-            x_l = DSBSparse.zeros_like(a)
-            x_g = DSBSparse.zeros_like(a)
+            x_r = a.__class__.zeros_like(a)
+            x_l = a.__class__.zeros_like(a)
+            x_g = a.__class__.zeros_like(a)
 
         x_r[0, 0] = npla.inv(a[0, 0])
         x_l[0, 0] = x_r[0, 0] @ sigma_lesser[0, 0] @ x_r[0, 0].conj().T

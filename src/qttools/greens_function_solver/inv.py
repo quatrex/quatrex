@@ -7,7 +7,7 @@ from qttools.greens_function_solver.solver import GFSolver
 
 
 class Inv(GFSolver):
-    def selected_inv(a: DSBSparse, out: DSBSparse = None) -> None | DSBSparse:
+    def selected_inv(self, a: DSBSparse, out: DSBSparse = None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -37,6 +37,7 @@ class Inv(GFSolver):
         out.data[:] = inv_a[..., rows, cols]
 
     def selected_solve(
+        self,
         a: DSBSparse,
         sigma_lesser: DSBSparse,
         sigma_greater: DSBSparse,

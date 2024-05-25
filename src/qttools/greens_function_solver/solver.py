@@ -7,7 +7,7 @@ from qttools.datastructures import DSBSparse
 
 class GFSolver(ABC):
     @abstractmethod
-    def selected_inv(a: DSBSparse, out=None) -> None | DSBSparse:
+    def selected_inv(self, a: DSBSparse, out=None) -> None | DSBSparse:
         """
         Perform the selected inversion of a matrix in block-tridiagonal form.
 
@@ -28,6 +28,7 @@ class GFSolver(ABC):
 
     @abstractmethod
     def selected_solve(
+        self,
         a: DSBSparse,
         sigma_lesser: DSBSparse,
         sigma_greater: DSBSparse,

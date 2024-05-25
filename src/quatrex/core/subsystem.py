@@ -3,8 +3,11 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
-from qttools.obc import OBC, SanchoRubio
+from qttools.obc.full import Full
+from qttools.obc.obc import OBC
+from qttools.obc.sancho_rubio import SanchoRubio
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import OBCConfig, QuatrexConfig
@@ -32,6 +35,7 @@ class SubsystemSolver(ABC):
         energies: np.ndarray,
     ) -> None:
         """Initializes the solver."""
+        self.dbsparse = compute_config.dbsparse
         self.energies = energies
 
         self.obc = self._configure_obc(getattr(quatrex_config, self.system).obc)
@@ -43,6 +47,9 @@ class SubsystemSolver(ABC):
         """Configures the OBC algorithm from the config."""
         if obc_config.algorithm == "sancho-rubio":
             return SanchoRubio(obc_config.max_iterations, obc_config.convergence_tol)
+
+        if obc_config.algorithm == "full":
+            return Full()
 
         raise NotImplementedError(
             f"OBC algorithm '{obc_config.algorithm}' not implemented."
@@ -59,6 +66,12 @@ class SubsystemSolver(ABC):
         raise NotImplementedError(f"Solver '{solver}' not implemented.")
 
     @abstractmethod
-    def solve(self) -> None:
+    def solve(
+        self,
+        sse_lesser: DSBSparse,
+        sse_greater: DSBSparse,
+        sse_retarded: DSBSparse,
+        out: tuple[DSBSparse, ...],
+    ) -> None:
         """Solves the system for a given energy."""
         ...

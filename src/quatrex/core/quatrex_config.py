@@ -51,7 +51,7 @@ class PoissonConfig(BaseModel):
 class OBCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    algorithm: Literal["sancho-rubio", "beyn"] = "sancho-rubio"
+    algorithm: Literal["sancho-rubio", "full"] = "sancho-rubio"
 
     max_iterations: PositiveInt = 1000
     convergence_tol: PositiveFloat = 1e-7

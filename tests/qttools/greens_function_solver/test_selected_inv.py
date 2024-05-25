@@ -42,10 +42,12 @@ def test_selected_inv(
 
     dbsparse = dbsparse_type.from_sparray(coo_bt, BT_block_sizes, stackshape)
 
+    solver = gf_solver()
+
     if out:
         test_inv = dbsparse_type.zeros_like(dbsparse)
-        gf_solver.selected_inv(dbsparse, out=test_inv)
+        solver.selected_inv(dbsparse, out=test_inv)
     else:
-        test_inv = gf_solver.selected_inv(dbsparse)
+        test_inv = solver.selected_inv(dbsparse)
 
     assert np.allclose(test_inv.to_dense()[(0,) * len(stackshape)], ref_inv)

@@ -2,21 +2,31 @@
 
 import numpy as np
 
+from qttools.utils.mpi_utils import get_num_elements_per_section
+
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
 
 
 class Inv(GFSolver):
-    def selected_inv(self, a: DSBSparse, out: DSBSparse = None) -> None | DSBSparse:
+    def selected_inv(
+        self, a: DSBSparse, out: DSBSparse = None, max_batch_size: int = 1
+    ) -> None | DSBSparse:
         """
-        Perform the selected inversion of a matrix in block-tridiagonal form.
+        Perform the selected inversion of a matrix in block-tridiagonal form using
+        batching through the first dimmension matrix stack.
+
+        This method will invert the matrix as dense and then select the elements
+        to keep by matching the sparse structure of the input matrix.
 
         Parameters
         ----------
         a : DBSparse
             Matrix to invert.
-        out : _type_, optional
+        out : DSBSparse, optional
             Output matrix, by default None.
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1.
 
         Returns
         -------
@@ -25,16 +35,37 @@ class Inv(GFSolver):
             as a DBSparse object.
         """
 
-        inv_a = np.linalg.inv(a.to_dense())
+        # Get list of batches to perform
+        batches_sizes, _ = get_num_elements_per_section(
+            num_elements=a.shape[0],
+            num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
+        )
+        batches_slices = np.cumsum([0] + batches_sizes)
 
+        # Allocate batching buffer
+        inv_a = np.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
+
+        # Prepare output
+        return_out = False
         if out is None:
             rows, cols = a.spy()
-            sel_inv_a = a.__class__.zeros_like(a)
-            sel_inv_a.data[:] = inv_a[..., rows, cols]
-            return sel_inv_a
+            out = a.__class__.zeros_like(a)
+            return_out = True
+        else:
+            rows, cols = out.spy()
 
-        rows, cols = out.spy()
-        out.data[:] = inv_a[..., rows, cols]
+        # Perform the inversion in batches
+        for i in range(len(batches_sizes)):
+            stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+
+            inv_a[: batches_sizes[i]] = np.linalg.inv(
+                a.to_dense(stack_slice=stack_slice)
+            )
+
+            out.data[stack_slice,] = inv_a[: batches_sizes[i], rows, cols]
+
+        if return_out:
+            return out
 
     def selected_solve(
         self,

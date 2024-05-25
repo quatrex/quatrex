@@ -49,6 +49,7 @@ class DSBSparse(ABC):
             (max(stack_section_sizes), total_nnz_size), dtype=data.dtype
         )
         self._padded_data[: data.shape[0], : data.shape[1]] = data
+        self._dtype = data.dtype
 
         self._stack_section_sizes = stack_section_sizes
         self._nnz_section_sizes = nnz_section_sizes
@@ -219,6 +220,10 @@ class DSBSparse(ABC):
     @property
     def return_dense(self) -> bool:
         return self._return_dense
+
+    @property
+    def dtype(self) -> np.dtype:
+        return self._dtype
 
     @return_dense.setter
     def return_dense(self, value: bool) -> None:

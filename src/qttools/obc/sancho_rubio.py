@@ -3,7 +3,7 @@
 import numpy as np
 import numpy.linalg as npla
 
-from qttools.obc import OBC
+from qttools.obc.obc import OBC
 
 
 class SanchoRubio(OBC):
@@ -21,7 +21,8 @@ class SanchoRubio(OBC):
         Super-diagonal block of the system matrix.
     a_ji : array_like, optional
         Sub-diagonal block of the system matrix.
-
+    contact : str
+        The contact side.
 
     Returns
     -------
@@ -74,8 +75,10 @@ class SanchoRubio(OBC):
         else:  # Did not break, i.e. max_iterations reached.
             raise RuntimeError("Surface Green's function did not converge.")
 
+        x_ii = npla.inv(epsilon_s)
+
         if out is not None:
-            out[...] = npla.inv(epsilon_s)
+            out[...] = x_ii
             return
 
-        return npla.inv(epsilon_s)
+        return x_ii

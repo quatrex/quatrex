@@ -56,8 +56,8 @@ class DSBSparse(ABC):
         self._total_nnz_size = total_nnz_size
 
         self._stack_shape = data.shape[:-1]
+        self._nnz = data.shape[-1]
         self._shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
-        self._nnz = self._padded_data.shape[-1]
 
         self._block_sizes = np.asarray(block_sizes).astype(int)
         self._block_offsets = np.hstack(([0], np.cumsum(self._block_sizes)))
@@ -111,7 +111,12 @@ class DSBSparse(ABC):
 
     def diagonal(self) -> np.ndarray:
         """Returns the diagonal of the matrix."""
-        return np.hstack([np.diagonal(self[b, b]) for b in range(self.num_blocks)])
+        return np.hstack(
+            [
+                np.diagonal(self[b, b], axis1=-2, axis2=-1)
+                for b in range(self.num_blocks)
+            ]
+        )
 
     @abstractmethod
     def spy(self) -> tuple[np.ndarray, np.ndarray]:

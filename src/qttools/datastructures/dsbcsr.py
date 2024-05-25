@@ -119,13 +119,13 @@ class DSBCSR(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if self.block_sizes != other.block_sizes:
+        if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
             raise ValueError("Block sparsities do not match.")
 
-        if self.cols != other.cols:
+        if np.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
@@ -146,7 +146,17 @@ class DSBCSR(DSBSparse):
 
     def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
         """Subtracts another DBSparse matrix from the current matrix."""
-        self += -other
+        if sparse.issparse(other):
+            lil = other.tolil()
+
+            sparray_data = np.zeros(self.nnz, dtype=self._padded_data.dtype)
+            for i, (row, col) in enumerate(zip(*self.spy())):
+                sparray_data[i] = lil[row, col]
+            self.data[:] -= sparray_data
+            return self
+
+        self._check_commensurable(other)
+        self.data[:] -= other.data[:]
         return self
 
     def __imul__(self, other: "DSBSparse") -> None:
@@ -156,7 +166,14 @@ class DSBCSR(DSBSparse):
 
     def __neg__(self) -> "DSBCSR":
         """Negates the matrix."""
-        return DSBCSR(-self.data, self.cols, self.rowptr_map, self.block_sizes)
+        return DSBCSR(
+            data=-self.data,
+            cols=self.cols,
+            rowptr_map=self.rowptr_map,
+            block_sizes=self.block_sizes,
+            global_stack_shape=self.global_stack_shape,
+            return_dense=self.return_dense,
+        )
 
     def __matmul__(self, other: "DSBSparse") -> None:
         ...

@@ -43,5 +43,6 @@ def test_from_sparray(
         coo, block_sizes, global_stack_shape, densify_blocks
     )
     assert np.allclose(
-        dbsparse.to_dense()[(0,) * len(global_stack_shape)], coo.toarray()
+        np.repeat(coo.toarray()[np.newaxis, :, :], global_stack_shape[0], axis=0),
+        dbsparse.to_dense(),
     )

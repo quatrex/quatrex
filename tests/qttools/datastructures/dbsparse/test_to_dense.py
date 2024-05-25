@@ -54,7 +54,7 @@ def test_to_dense(
     dense_stack = dbsparse.to_dense(stack_slice=stack_slice)
 
     if stack_slice is None:
-        testing_stack_size = len(global_stack_shape)
+        testing_stack_size = global_stack_shape[0]
     else:
         testing_stack_size = (stack_slice.stop - stack_slice.start) // stack_slice.step
 

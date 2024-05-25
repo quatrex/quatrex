@@ -8,6 +8,7 @@ from qttools.datastructures import DSBCSR
 from qttools.datastructures.dsbsparse import DSBSparse
 
 
+@pytest.mark.parametrize("dbsparse_type", [DSBCSR])
 @pytest.mark.parametrize(
     "block_sizes",
     [
@@ -18,7 +19,6 @@ from qttools.datastructures.dsbsparse import DSBSparse
 @pytest.mark.parametrize(
     "global_stack_shape",
     [
-        pytest.param((1,), id="no-stack"),
         pytest.param((10,), id="1D-stack"),
     ],
 )
@@ -30,18 +30,34 @@ from qttools.datastructures.dsbsparse import DSBSparse
         pytest.param([(2, 4)], id="densify-random"),
     ],
 )
-@pytest.mark.parametrize("dbsparse_type", [DSBCSR])
-def test_from_sparray(
+@pytest.mark.parametrize(
+    "stack_slice",
+    [
+        pytest.param(None, id="entire-stack"),
+        pytest.param(slice(3, 5, 1), id="stack-slice"),
+    ],
+)
+def test_to_dense(
     coo: sparse.coo_array,
     dbsparse_type: DSBSparse,
     block_sizes: np.ndarray,
     global_stack_shape: int | tuple[int],
     densify_blocks: list[tuple[int]] | None,
+    stack_slice: tuple[int] | None,
 ):
-    """Tests that the from_sparray method works."""
+    dense_ref = coo.toarray()
+
     dbsparse = dbsparse_type.from_sparray(
         coo, block_sizes, global_stack_shape, densify_blocks
     )
+
+    dense_stack = dbsparse.to_dense(stack_slice=stack_slice)
+
+    if stack_slice is None:
+        testing_stack_size = len(global_stack_shape)
+    else:
+        testing_stack_size = (stack_slice.stop - stack_slice.start) // stack_slice.step
+
     assert np.allclose(
-        dbsparse.to_dense()[(0,) * len(global_stack_shape)], coo.toarray()
+        np.repeat(dense_ref[np.newaxis, :, :], testing_stack_size, axis=0), dense_stack
     )

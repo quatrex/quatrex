@@ -76,28 +76,22 @@ class DSBSparse(ABC):
         return brow, bcol
 
     @abstractmethod
-    def __setitem__(self, idx: tuple[int, int], block: np.ndarray) -> None:
-        ...
+    def __setitem__(self, idx: tuple[int, int], block: np.ndarray) -> None: ...
 
     @abstractmethod
-    def __getitem__(self, idx: tuple[int, int]) -> sparray:
-        ...
+    def __getitem__(self, idx: tuple[int, int]) -> sparray: ...
 
     @abstractmethod
-    def __iadd__(self, other: "DSBSparse") -> None:
-        ...
+    def __iadd__(self, other: "DSBSparse") -> None: ...
 
     @abstractmethod
-    def __imul__(self, other: "DSBSparse") -> None:
-        ...
+    def __imul__(self, other: "DSBSparse") -> None: ...
 
     @abstractmethod
-    def __neg__(self) -> None:
-        ...
+    def __neg__(self) -> None: ...
 
     @abstractmethod
-    def __matmul__(self, other: "DSBSparse") -> None:
-        ...
+    def __matmul__(self, other: "DSBSparse") -> None: ...
 
     def block_diagonal(self, offset: int = 0) -> list[sparray] | list[np.ndarray]:
         """Returns the block diagonal of the matrix."""
@@ -177,8 +171,7 @@ class DSBSparse(ABC):
             self._distribution_state = "stack"
 
     @abstractmethod
-    def to_dense(self) -> np.ndarray:
-        ...
+    def to_dense(self, stack_slice: slice = None) -> np.ndarray: ...
 
     @classmethod
     @abstractmethod
@@ -189,13 +182,11 @@ class DSBSparse(ABC):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
-    ) -> "DSBSparse":
-        ...
+    ) -> "DSBSparse": ...
 
     @classmethod
     @abstractmethod
-    def zeros_like(cls, a: "DSBSparse") -> "DSBSparse":
-        ...
+    def zeros_like(cls, a: "DSBSparse") -> "DSBSparse": ...
 
     @property
     def distribution_state(self) -> str:

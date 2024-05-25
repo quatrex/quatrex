@@ -2,6 +2,7 @@
 
 import copy
 
+
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
@@ -240,20 +241,30 @@ class DSBCSR(DSBSparse):
 
         return rows, self.cols
 
-    def to_dense(self) -> np.ndarray:
+    def to_dense(self, stack_slice: slice = None) -> np.ndarray:
         """Returns the dense matrix representation."""
         temp = self._return_dense
-
         self._return_dense = True
 
-        arr = np.zeros(self.shape, dtype=self._padded_data.dtype)
+        if stack_slice is None:
+            stack_slice = slice(0, self.shape[0], 1)
+
+        arr = np.zeros(
+            ((stack_slice.stop - stack_slice.start) // stack_slice.step, *self.shape[1:]), 
+            dtype=self._padded_data.dtype
+        )
+
+        if arr.ndim == 3:
+            stack_slice = (stack_slice,)
+        else:
+            stack_slice = (stack_slice, ...)
 
         for i, j in np.ndindex(self.num_blocks, self.num_blocks):
             arr[
                 ...,
                 self.block_offsets[i] : self.block_offsets[i + 1],
                 self.block_offsets[j] : self.block_offsets[j + 1],
-            ] = self[i, j]
+            ] = self[*stack_slice, i, j]
 
         self._return_dense = temp
 

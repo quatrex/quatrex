@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 
-def get_num_elements_per_section(num_elements, num_sections=comm.size):
+def get_num_elements_per_section(num_elements: int, num_sections: int = comm.size):
     """Computes the number of un-evenly divided elements per section."""
     quotient, remainder = divmod(num_elements, num_sections)
     section_size = quotient + remainder

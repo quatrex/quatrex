@@ -1,8 +1,8 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
-import tomllib
 from pathlib import Path
 
+import tomllib
 from pydantic import BaseModel, ConfigDict, field_validator
 from qttools.datastructures import DSBCSR, DSBSparse
 

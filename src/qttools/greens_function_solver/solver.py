@@ -10,8 +10,7 @@ class GFSolver(ABC):
     def selected_inv(
         self, a: DSBSparse, out=None, max_batch_size: int = 1
     ) -> None | DSBSparse:
-        """
-        Perform the selected inversion of a matrix in block-tridiagonal form.
+        """Perform the selected inversion of a matrix in block-tridiagonal form.
 
         Parameters
         ----------
@@ -37,8 +36,7 @@ class GFSolver(ABC):
         out: tuple | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:
-        """Solve the selected quadratic matrix equation and compute only selected
-        elements of it's inverse.
+        """Perform a selected-solve of the congruence matrix equation: A * X * A^T = B.
 
         Parameters
         ----------

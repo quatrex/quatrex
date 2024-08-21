@@ -16,5 +16,4 @@ class OBC(ABC):
         a_ji: np.ndarray,
         contact: str,
         out=None | np.ndarray,
-    ) -> np.ndarray | None:
-        ...
+    ) -> np.ndarray | None: ...

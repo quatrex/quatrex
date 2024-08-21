@@ -4,11 +4,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
+from qttools.datastructures import DSBCSR, DSBSparse
 from qttools.greens_function_solver.inv import Inv
 from qttools.greens_function_solver.solver import GFSolver
-
-from qttools.datastructures import DSBCSR
-from qttools.datastructures import DSBSparse
 
 
 @pytest.mark.parametrize("gf_solver", [Inv])

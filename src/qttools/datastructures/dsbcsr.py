@@ -2,7 +2,6 @@
 
 import copy
 
-
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
@@ -176,8 +175,7 @@ class DSBCSR(DSBSparse):
             return_dense=self.return_dense,
         )
 
-    def __matmul__(self, other: "DSBSparse") -> None:
-        ...
+    def __matmul__(self, other: "DSBSparse") -> None: ...
 
     def ltranspose(self, copy=False) -> "None | DSBSparse":
         """Returns the transpose of the matrix."""
@@ -253,8 +251,11 @@ class DSBCSR(DSBSparse):
             raise ValueError("stack_slice doesn't specifcy a step.")
 
         arr = np.zeros(
-            ((stack_slice.stop - stack_slice.start) // stack_slice.step, *self.shape[1:]), 
-            dtype=self._padded_data.dtype
+            (
+                (stack_slice.stop - stack_slice.start) // stack_slice.step,
+                *self.shape[1:],
+            ),
+            dtype=self._padded_data.dtype,
         )
 
         if arr.ndim == 3:

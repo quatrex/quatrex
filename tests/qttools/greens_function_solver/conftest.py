@@ -1,10 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-SEED = 63
-
-import pytest
-from scipy import sparse
 import numpy as np
+import pytest
+
+SEED = 63
 
 np.random.seed(SEED)
 

@@ -2,7 +2,6 @@
 
 import pytest
 from scipy import sparse
-import numpy as np
 
 ARRAY_SHAPE = (100, 100)
 

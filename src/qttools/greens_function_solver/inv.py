@@ -2,18 +2,16 @@
 
 import numpy as np
 
-from qttools.utils.mpi_utils import get_num_elements_per_section
-
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
+from qttools.utils.mpi_utils import get_num_elements_per_section
 
 
 class Inv(GFSolver):
     def selected_inv(
         self, a: DSBSparse, out: DSBSparse = None, max_batch_size: int = 1
     ) -> None | DSBSparse:
-        """
-        Perform the selected inversion of a matrix in block-tridiagonal form using
+        """Perform the selected inversion of a matrix in block-tridiagonal form using
         batching through the first dimmension matrix stack.
 
         This method will invert the matrix as dense and then select the elements
@@ -75,8 +73,7 @@ class Inv(GFSolver):
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:
-        """Solve the selected quadratic matrix equation and compute only selected
-        elements of it's inverse.
+        """Solve the congruence matrix equation: A * X * A^T = B.
 
         Parameters
         ----------

@@ -30,15 +30,20 @@ from qttools.datastructures.dsbsparse import DSBSparse
         pytest.param([(2, 4)], id="densify-random"),
     ],
 )
-@pytest.mark.parametrize("dbsparse_type", [DSBCSR])
+@pytest.mark.parametrize(
+    "dbsparse_type",
+    [
+        DSBCSR,
+    ],
+)
 def test_from_sparray(
     coo: sparse.coo_array,
     dbsparse_type: DSBSparse,
     block_sizes: np.ndarray,
-    global_stack_shape: int | tuple[int],
-    densify_blocks: list[tuple[int]] | None,
+    global_stack_shape: int | tuple,
+    densify_blocks: list[tuple] | None,
 ):
-    """Tests that the from_sparray method works."""
+    """Tests the creation of DSBSparse matrices from sparse arrays."""
     dbsparse = dbsparse_type.from_sparray(
         coo, block_sizes, global_stack_shape, densify_blocks
     )

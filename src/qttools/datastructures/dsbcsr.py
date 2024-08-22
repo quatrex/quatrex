@@ -10,8 +10,89 @@ from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.mpi_utils import get_num_elements_per_section
 
 
+def _compute_block_sort_index(
+    coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
+) -> np.ndarray:
+    num_blocks = len(block_sizes)
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+
+    sort_index = np.zeros(len(coo_cols), dtype=int)
+    offset = 0
+    for i, j in np.ndindex(num_blocks, num_blocks):
+        mask = (
+            (block_offsets[i] <= coo_rows)
+            & (coo_rows < block_offsets[i + 1])
+            & (block_offsets[j] <= coo_cols)
+            & (coo_cols < block_offsets[j + 1])
+        )
+        if not np.any(mask):
+            # Skip empty blocks.
+            continue
+
+        bnnz = np.sum(mask)
+
+        # Sort the data by block-row and -column.
+        sort_index[offset : offset + bnnz] = np.argwhere(mask).squeeze()
+
+        offset += bnnz
+
+    return sort_index
+
+
+def _compute_ptr_map(
+    coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
+) -> dict:
+    """Computes the rowptr map for the given COO matrix."""
+    num_blocks = len(block_sizes)
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+
+    # NOTE: This is a naive implementation and can be parallelized.
+    rowptr_map = {}
+    offset = 0
+    for i, j in np.ndindex(num_blocks, num_blocks):
+        mask = (
+            (block_offsets[i] <= coo_rows)
+            & (coo_rows < block_offsets[i + 1])
+            & (block_offsets[j] <= coo_cols)
+            & (coo_cols < block_offsets[j + 1])
+        )
+        if not np.any(mask):
+            # Skip empty blocks.
+            continue
+
+        # Compute the rowptr map.
+        rowptr, __ = np.histogram(
+            coo_rows[mask] - block_offsets[i],
+            bins=np.arange(block_sizes[i] + 1),
+        )
+        rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
+        rowptr_map[(i, j)] = rowptr
+
+        bnnz = np.sum(mask)
+        offset += bnnz
+
+    return rowptr_map
+
+
 class DSBCSR(DSBSparse):
-    """Distributed block compressed sparse row matrix."""
+    """Distributed stack of block-compressed sparse row matrices.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The data array.
+    cols : np.ndarray
+        The column indices.
+    rowptr_map : dict
+        The row pointer map.
+    block_sizes : np.ndarray
+        The block sizes.
+    global_stack_shape : tuple
+        The global stack shape.
+    return_dense : bool, optional
+        Whether to return dense matrices, by default True.
+
+    """
 
     def __init__(
         self,
@@ -28,88 +109,73 @@ class DSBCSR(DSBSparse):
         self.cols = np.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
-    def __setitem__(self, key: tuple, block_stack: np.ndarray) -> None:
-        """Sets a block in the matrix."""
-        if self._distribution_state == "nnz":
-            raise NotImplementedError("Cannot get blocks when distributed through nnz.")
-        if not self._return_dense:
-            raise NotImplementedError("Sparse array not yet implemented.")
+    def _get_block(self, row: int, col: int) -> np.ndarray:
+        """Gets a block from the data structure.
 
-        if len(key) < 2:
-            raise ValueError("At least the two block indices are required.")
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the block indexer.
+        The index is assumed to already be renormalized.
 
-        if len(key) >= 2:
-            *stack_index, brow, bcol = key
+        Parameters
+        ----------
+        row : int
+            Row index of the block.
+        col : int
+            Column index of the block.
 
-        if len(stack_index) > len(self.stack_shape):
-            raise ValueError(
-                f"Too many stack indices for stack shape '{self.stack_shape}'."
-            )
-
-        stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
-
-        brow, bcol = self._unsign_block_index(brow, bcol)
-
-        if block_stack.shape[-2:] != (
-            self.block_sizes[brow],
-            self.block_sizes[bcol],
-        ):
-            raise ValueError("Block shape does not match.")
-
-        rowptr = self.rowptr_map.get((brow, bcol), None)
-        if rowptr is None:
-            return
-
-        for row in range(self.block_sizes[brow]):
-            cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            self.data[*stack_index, rowptr[row] : rowptr[row + 1]] = block_stack[
-                ..., row, cols - self.block_offsets[bcol]
-            ]
-
-    def __getitem__(self, key: tuple) -> sparse.sparray | np.ndarray:
-        """Gets a block from the matrix.
-
-        The two last indices are always the block indices.
+        Returns
+        -------
+        block : sparray | np.ndarray
+            The block at the requested index. This is an array of shape
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        if self._distribution_state == "nnz":
-            raise NotImplementedError("Cannot get blocks when distributed through nnz.")
-        if not self._return_dense:
-            raise NotImplementedError("Sparse array not yet implemented.")
-
-        if len(key) < 2:
-            raise ValueError("At least the two block indices are required.")
-
-        if len(key) >= 2:
-            *stack_index, brow, bcol = key
-
-        if len(stack_index) > len(self.stack_shape):
-            raise ValueError(
-                f"Too many stack indices for stack shape '{self.stack_shape}'."
-            )
-
-        stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
-
-        brow, bcol = self._unsign_block_index(brow, bcol)
-
         block = np.zeros(
             (
-                *self.data[*stack_index].shape[:-1],  # Stack dimensions.
-                self.block_sizes[brow],
-                self.block_sizes[bcol],
+                *self.stack_shape,  # Stack dimensions.
+                self.block_sizes[row],
+                self.block_sizes[col],
             ),
-            dtype=self._padded_data.dtype,
+            dtype=self.dtype,
         )
-        rowptr = self.rowptr_map.get((brow, bcol), None)
+        rowptr = self.rowptr_map.get((row, col), None)
         if rowptr is None:
+            # No data in this block.
             return block
 
-        for row in range(self.block_sizes[brow]):
-            cols = self.cols[rowptr[row] : rowptr[row + 1]]
-            block[..., row, cols - self.block_offsets[bcol]] = self.data[
-                *stack_index, rowptr[row] : rowptr[row + 1]
+        for i in range(self.block_sizes[row]):
+            cols = self.cols[rowptr[i] : rowptr[i + 1]]
+            block[..., i, cols - self.block_offsets[col]] = self.data[
+                ..., rowptr[i] : rowptr[i + 1]
             ]
         return block
+
+    def _set_block(self, row: int, col: int, block: np.ndarray) -> None:
+        """Sets a block throughout the stack in the data structure.
+
+        The index is assumed to already be renormalized.
+
+        Parameters
+        ----------
+        row : int
+            Row index of the block.
+        col : int
+            Column index of the block.
+        block : np.ndarray
+            The block to set. This must be an array of shape
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+
+        """
+        rowptr = self.rowptr_map.get((row, col), None)
+        if rowptr is None:
+            # No data in this block, nothing to do.
+            return
+
+        for i in range(self.block_sizes[row]):
+            cols = self.cols[rowptr[i] : rowptr[i + 1]]
+            self.data[..., rowptr[i] : rowptr[i + 1]] = block[
+                ..., i, cols - self.block_offsets[col]
+            ]
 
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
@@ -134,7 +200,7 @@ class DSBCSR(DSBSparse):
         if sparse.issparse(other):
             lil = other.tolil()
 
-            sparray_data = np.zeros(self.nnz, dtype=self._padded_data.dtype)
+            sparray_data = np.zeros(self.nnz, dtype=self.dtype)
             for i, (row, col) in enumerate(zip(*self.spy())):
                 sparray_data[i] = lil[row, col]
             self.data[:] += sparray_data
@@ -149,7 +215,7 @@ class DSBCSR(DSBSparse):
         if sparse.issparse(other):
             lil = other.tolil()
 
-            sparray_data = np.zeros(self.nnz, dtype=self._padded_data.dtype)
+            sparray_data = np.zeros(self.nnz, dtype=self.dtype)
             for i, (row, col) in enumerate(zip(*self.spy())):
                 sparray_data[i] = lil[row, col]
             self.data[:] -= sparray_data
@@ -179,12 +245,12 @@ class DSBCSR(DSBSparse):
 
     def ltranspose(self, copy=False) -> "None | DSBSparse":
         """Returns the transpose of the matrix."""
-        if self._distribution_state == "nnz":
+        if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if copy:
             self = DSBCSR(
-                self._padded_data.copy(),
+                self.data.copy(),
                 self.cols.copy(),
                 self.rowptr_map.copy(),
                 self.block_sizes,
@@ -207,7 +273,7 @@ class DSBCSR(DSBSparse):
             canonical_cols_t = cols_t[inds_bcsr2canonical_t]
 
             # Compute index for sorting the transpose by block.
-            inds_canonical2bcsr_t = self._compute_block_sort_index(
+            inds_canonical2bcsr_t = _compute_block_sort_index(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
@@ -216,7 +282,7 @@ class DSBCSR(DSBSparse):
             inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
 
             # Compute the rowptr map for the transpose.
-            rowptr_map_t = self._compute_ptr_map(
+            rowptr_map_t = _compute_ptr_map(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
@@ -233,46 +299,11 @@ class DSBCSR(DSBSparse):
     def spy(self) -> tuple[np.ndarray, np.ndarray]:
         """Returns the COO sparsity pattern."""
         rows = np.zeros(self.nnz, dtype=int)
-        for (brow, __), rowptr in self.rowptr_map.items():
-            for i in range(self.block_sizes[brow]):
-                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[brow]
+        for (row, __), rowptr in self.rowptr_map.items():
+            for i in range(self.block_sizes[row]):
+                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
 
         return rows, self.cols
-
-    def to_dense(self, stack_slice: slice = None) -> np.ndarray:
-        """Returns the dense matrix representation."""
-        temp = self._return_dense
-        self._return_dense = True
-
-        if stack_slice is None:
-            stack_slice = slice(0, self.shape[0], 1)
-
-        if stack_slice.step is None:
-            raise ValueError("stack_slice doesn't specifcy a step.")
-
-        arr = np.zeros(
-            (
-                (stack_slice.stop - stack_slice.start) // stack_slice.step,
-                *self.shape[1:],
-            ),
-            dtype=self._padded_data.dtype,
-        )
-
-        if arr.ndim == 3:
-            stack_slice = (stack_slice,)
-        else:
-            stack_slice = (stack_slice, ...)
-
-        for i, j in np.ndindex(self.num_blocks, self.num_blocks):
-            arr[
-                ...,
-                self.block_offsets[i] : self.block_offsets[i + 1],
-                self.block_offsets[j] : self.block_offsets[j + 1],
-            ] = self[*stack_slice, i, j]
-
-        self._return_dense = temp
-
-        return arr
 
     @classmethod
     def from_sparray(
@@ -316,8 +347,8 @@ class DSBCSR(DSBSparse):
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        rowptr_map = cls._compute_ptr_map(coo.row, coo.col, block_sizes)
-        block_sort_index = cls._compute_block_sort_index(coo.row, coo.col, block_sizes)
+        rowptr_map = _compute_ptr_map(coo.row, coo.col, block_sizes)
+        block_sort_index = _compute_block_sort_index(coo.row, coo.col, block_sizes)
 
         data = np.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
         data[..., :] = coo.data[block_sort_index]
@@ -331,67 +362,3 @@ class DSBCSR(DSBSparse):
         out = copy.deepcopy(a)
         out.data[:] = 0.0
         return out
-
-    @staticmethod
-    def _compute_block_sort_index(
-        coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
-    ) -> np.ndarray:
-        num_blocks = len(block_sizes)
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-
-        sort_index = np.zeros(len(coo_cols), dtype=int)
-        offset = 0
-        for i, j in np.ndindex(num_blocks, num_blocks):
-            mask = (
-                (block_offsets[i] <= coo_rows)
-                & (coo_rows < block_offsets[i + 1])
-                & (block_offsets[j] <= coo_cols)
-                & (coo_cols < block_offsets[j + 1])
-            )
-            if not np.any(mask):
-                # Skip empty blocks.
-                continue
-
-            bnnz = np.sum(mask)
-
-            # Sort the data by block-row and -column.
-            sort_index[offset : offset + bnnz] = np.argwhere(mask).squeeze()
-
-            offset += bnnz
-
-        return sort_index
-
-    @staticmethod
-    def _compute_ptr_map(
-        coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
-    ) -> dict:
-        """Computes the rowptr map for the given COO matrix."""
-        num_blocks = len(block_sizes)
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-
-        # NOTE: This is a naive implementation and can be parallelized.
-        rowptr_map = {}
-        offset = 0
-        for i, j in np.ndindex(num_blocks, num_blocks):
-            mask = (
-                (block_offsets[i] <= coo_rows)
-                & (coo_rows < block_offsets[i + 1])
-                & (block_offsets[j] <= coo_cols)
-                & (coo_cols < block_offsets[j + 1])
-            )
-            if not np.any(mask):
-                # Skip empty blocks.
-                continue
-
-            # Compute the rowptr map.
-            rowptr, __ = np.histogram(
-                coo_rows[mask] - block_offsets[i],
-                bins=np.arange(block_sizes[i] + 1),
-            )
-            rowptr = np.hstack(([0], np.cumsum(rowptr))) + offset
-            rowptr_map[(i, j)] = rowptr
-
-            bnnz = np.sum(mask)
-            offset += bnnz
-
-        return rowptr_map

@@ -8,15 +8,12 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 
-def get_num_elements_per_section(num_elements: int, num_sections: int = comm.size):
+def get_section_sizes(num_elements: int, num_sections: int = comm.size):
     """Computes the number of un-evenly divided elements per section."""
     quotient, remainder = divmod(num_elements, num_sections)
-    section_size = quotient + remainder
-    total_size = section_size * num_sections
-    num_elements_per_section = [section_size] * (num_sections - 1) + [
-        num_elements - section_size * (num_sections - 1)
-    ]
-    return num_elements_per_section, total_size
+    section_sizes = remainder * [quotient + 1] + (num_sections - remainder) * [quotient]
+    effective_num_elements = max(section_sizes) * num_sections
+    return section_sizes, effective_num_elements
 
 
 def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
@@ -44,8 +41,8 @@ def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
 def get_local_slice(global_array: np.ndarray) -> None:
     """Computes the local slice of energies energies and return the corresponding
     sliced energy arraiy."""
-    num_elements_per_section, __ = get_num_elements_per_section(global_array.shape[-1])
-    section_offsets = np.cumsum([0] + num_elements_per_section)
+    section_sizes, __ = get_section_sizes(global_array.shape[-1])
+    section_offsets = np.cumsum([0] + section_sizes)
 
     return global_array[
         ..., section_offsets[comm.rank] : section_offsets[comm.rank + 1]

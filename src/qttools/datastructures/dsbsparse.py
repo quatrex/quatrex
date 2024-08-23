@@ -1,5 +1,6 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
+import copy
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -8,7 +9,37 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
-from qttools.utils.mpi_utils import get_num_elements_per_section
+from qttools.utils.mpi_utils import get_section_sizes
+
+
+def _block_view(arr: np.ndarray, axis: int):
+    """Gets a block view of an array along a given axis.
+
+    This is a helper function to get a block view of an array along a
+    given axis. This is useful for the distributed transposition of
+    arrays, where we need to transpose the data through the network.
+
+    This is stolen from `skimage.util.view_as_blocks`.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        The array to get the block view of.
+    axis : int
+        The axis along which to get the block view.
+
+    """
+    arr_shape = np.array(arr.shape)
+
+    block_shape = arr_shape.copy()
+    block_shape[axis] //= comm.size
+
+    new_shape = tuple(arr_shape // block_shape) + tuple(block_shape)
+    new_strides = tuple(arr.strides * block_shape) + arr.strides
+
+    return npst.as_strided(arr, shape=new_shape, strides=new_strides).squeeze(
+        (arr.ndim - 1) - axis
+    )
 
 
 class DSBSparse(ABC):
@@ -36,6 +67,15 @@ class DSBSparse(ABC):
     stack-size / number of non-zero elements, the data is stored with
     some padding on each rank.
 
+    When calling the `dtranspose` method, the data is transposed through
+    the network. This is done by first reshaping the local data, then
+    performing an Alltoall communication, and finally reshaping the data
+    back to the correct new shape. The local reshaping of the data
+    cannot be done entirely in-place. This can lead to pronounced memory
+    peaks if all ranks start reshaping concurrently, which can be
+    mitigated by using more ranks and by not forcing a synchronization
+    barrier right before calling `dtranspose`.
+
     DSBSparse implementations should provide the following methods:
     - `_set_block(row, col, block)`: Sets a block throughout the stack.
     - `_get_block(row, col)`: Gets a block from the stack.
@@ -61,8 +101,9 @@ class DSBSparse(ABC):
         ranks.
     block_sizes : np.ndarray
         The size of each block in the sparse matrix.
-    global_stack_shape : tuple
-        The global shape of the stack.
+    global_stack_shape : tuple or int
+        The global shape of the stack. If this is an integer, it is
+        interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is False.
@@ -73,25 +114,20 @@ class DSBSparse(ABC):
         self,
         data: np.ndarray,
         block_sizes: np.ndarray,
-        global_stack_shape: tuple,
+        global_stack_shape: tuple | int,
         return_dense: bool = False,
     ) -> None:
         """Initializes the DBSparse matrix."""
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
 
-        if data.ndim != 2 or len(global_stack_shape) != 1:
-            raise NotImplementedError("Currently only 2D data is supported.")
-
         self.global_stack_shape = global_stack_shape
 
         # Determine how the data is distributed across the ranks.
-        stack_section_sizes, total_stack_size = get_num_elements_per_section(
+        stack_section_sizes, total_stack_size = get_section_sizes(
             global_stack_shape[0], comm.size
         )
-        nnz_section_sizes, total_nnz_size = get_num_elements_per_section(
-            data.shape[-1], comm.size
-        )
+        nnz_section_sizes, total_nnz_size = get_section_sizes(data.shape[-1], comm.size)
 
         self.stack_section_sizes = stack_section_sizes
         self.nnz_section_sizes = nnz_section_sizes
@@ -258,45 +294,48 @@ class DSBSparse(ABC):
         return np.hstack(diagonals)
 
     def _stack_to_nnz_dtranspose(self) -> None:
-        """Transpose the data."""
-        original_buffer_shape = self._data.shape
-        self._data = np.ascontiguousarray(
-            npst.as_strided(
-                self._data,
-                shape=(
-                    comm.size,
-                    self._data.shape[0],
-                    self._data.shape[1] // comm.size,
-                ),
-                strides=(
-                    (self._data.shape[1] // comm.size) * self._data.itemsize,
-                    self._data.shape[1] * self._data.itemsize,
-                    self._data.itemsize,
-                ),
-            )
-        )
+        """Transposes the data from stack to nnz distribution."""
+        # Preserve old shape and compute new shape.
+        old_shape = self._data.shape
+        new_shape = (old_shape[0] * comm.size, old_shape[1] // comm.size)
+
+        self._data = _block_view(self._data, axis=1)
+        # We need to make sure that the block-view is memory-contiguous.
+        self._data = np.ascontiguousarray(self._data)
+
         comm.Alltoall(MPI.IN_PLACE, self._data)
 
-        self._data = self._data.reshape(
-            original_buffer_shape[0] * comm.size, original_buffer_shape[1] // comm.size
-        )
+        self._data = self._data.reshape(new_shape)
 
     def _nnz_to_stack_dtranspose(self) -> None:
-        """Transpose the data."""
-        original_buffer_shape = self._data.shape
-        self._data = self._data.reshape(
-            comm.size,
-            self._data.shape[0] // comm.size,
-            self._data.shape[1],
-        )
+        """Transposes the data from nnz to stack distribution."""
+        # Preserve old shape and compute new shape.
+        old_shape = self._data.shape
+        new_shape = (old_shape[0] // comm.size, old_shape[1] * comm.size)
+
+        # Here the data is already contiguous in memory.
+        self._data = _block_view(self._data, axis=0)
+
         comm.Alltoall(MPI.IN_PLACE, self._data)
-        self._data = self._data.transpose(1, 0, 2)
-        self._data = self._data.reshape(
-            original_buffer_shape[0] // comm.size, original_buffer_shape[1] * comm.size
-        )
+
+        # The blocks we receive are now flipped, so transpose them back.
+        self._data = self._data.swapaxes(0, 1)
+        self._data = self._data.reshape(new_shape)
 
     def dtranspose(self) -> None:
-        """Performs a distributed transposition of the datastructure."""
+        """Performs a distributed transposition of the datastructure.
+
+        This is done by reshaping the local data, then performing an
+        in-place Alltoall communication, and finally reshaping the data
+        back to the correct new shape.
+
+        The local reshaping of the data cannot be done entirely
+        in-place. This can lead to pronounced memory peaks if all ranks
+        start reshaping concurrently, which can be mitigated by using
+        more ranks and by not forcing a synchronization barrier right
+        before calling `dtranspose`.
+
+        """
         if self.distribution_state == "stack":
             self._stack_to_nnz_dtranspose()
             self.distribution_state = "nnz"
@@ -348,7 +387,13 @@ class DSBSparse(ABC):
         -------
         arr : np.ndarray
             The dense array of shape `(*local_stack_shape, *shape)`.
+
         """
+        if self.distribution_state != "stack":
+            raise ValueError(
+                "Conversion to dense is only supported in 'stack' distribution state."
+            )
+
         original_return_dense = self.return_dense
         self.return_dense = True
 
@@ -368,16 +413,58 @@ class DSBSparse(ABC):
     @abstractmethod
     def from_sparray(
         cls,
-        a: sparse.sparray,
+        arr: sparse.sparray,
         block_sizes: np.ndarray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
-    ) -> "DSBSparse": ...
+    ) -> "DSBSparse":
+        """Creates a new DSBSparse matrix from a scipy.sparse array.
+
+        Parameters
+        ----------
+        arr : sparse.sparray
+            The sparse array to convert.
+        block_sizes : np.ndarray
+            The size of all the blocks in the matrix.
+        global_stack_shape : tuple
+            The global shape of the stack of matrices. The provided
+            sparse matrix is replicated across the stack.
+        densify_blocks : list[tuple], optional
+            List of matrix blocks to densify. Default is None. This is
+            useful to densify the boundary blocks of the matrix
+        pinned : bool, optional
+            Whether to pin the memory when using GPU. Default is False.
+
+        Returns
+        -------
+        DSBSparse
+            The new DSBSparse matrix.
+
+        """
+        ...
 
     @classmethod
-    @abstractmethod
-    def zeros_like(cls, a: "DSBSparse") -> "DSBSparse": ...
+    def zeros_like(cls, dsbsparse: "DSBSparse") -> "DSBSparse":
+        """Creates a new DSBSparse matrix with the same shape and dtype.
+
+        All non-zero elements are set to zero, but the sparsity pattern
+        is preserved.
+
+        Parameters
+        ----------
+        dsbsparse : DSBSparse
+            The matrix to copy the shape and dtype from.
+
+        Returns
+        -------
+        DSBSparse
+            The new DSBSparse matrix.
+
+        """
+        out = copy.deepcopy(dsbsparse)
+        out.data[:] = 0.0
+        return out
 
 
 class _DSBlockIndexer:
@@ -396,27 +483,14 @@ class _DSBlockIndexer:
     """
 
     def __init__(self, dsbsparse: DSBSparse) -> None:
+        """Initializes the block indexer."""
         self.dsbsparse = dsbsparse
         self.num_blocks = dsbsparse.num_blocks
         self.block_sizes = dsbsparse.block_sizes
         self.return_dense = dsbsparse.return_dense
 
     def _unsign_index(self, row: int, col: int) -> tuple:
-        """Adjusts the sign to allow negative indices and checks bounds.
-
-        Parameters
-        ----------
-        row : int
-            Block row index.
-        col : int
-            Block column index.
-
-        Returns
-        -------
-        tuple
-            Renormalized block indices.
-
-        """
+        """Adjusts the sign to allow negative indices and checks bounds."""
         row = self.dsbsparse.num_blocks + row if row < 0 else row
         col = self.dsbsparse.num_blocks + col if col < 0 else col
         if not (0 <= row < self.num_blocks and 0 <= col < self.num_blocks):
@@ -424,52 +498,28 @@ class _DSBlockIndexer:
 
         return row, col
 
-    def __getitem__(self, key: tuple | slice) -> int:
-        """Gets the requested block(s) from the data structure."""
-        if self.dsbsparse.distribution_state == "nnz":
-            raise NotImplementedError(
-                "Block indexing is not supported in 'stack' distribution state."
+    def _normalize_index(self, index: tuple) -> tuple:
+        """Normalizes the block index."""
+        if self.dsbsparse.distribution_state != "stack":
+            raise ValueError(
+                "Block indexing is only supported in 'stack' distribution state."
             )
+        if len(index) != 2:
+            raise IndexError("Exactly two block indices are required.")
 
-        row, col = key
+        row, col = index
+        if isinstance(row, slice) or isinstance(col, slice):
+            raise NotImplementedError("Slicing is not supported.")
+
+        row, col = self._unsign_index(row, col)
+        return row, col
+
+    def __getitem__(self, index: tuple) -> sparse.sparray | np.ndarray:
+        """Gets the requested block from the data structure."""
+        row, col = self._normalize_index(index)
         return self.dsbsparse._get_block(row, col)
 
-        # if len(stack_index) > len(self.stack_shape):
-        #     raise ValueError(
-        #         f"Too many stack indices for stack shape '{self.stack_shape}'."
-        #     )
-
-        # stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
-
-    def __setitem__(self, key: tuple | slice, value: int) -> None:
-        """Sets the requested block(s) in the data structure."""
-        # if self.dsbsparse.distribution_state == "stack":
-        #     raise NotImplementedError(
-        #         "Block indexing is not supported in stack distribution state."
-        #     )
-
-        # if self.distribution_state == "nnz":
-        #     raise NotImplementedError("Cannot get blocks when distributed through nnz.")
-        # if not self.return_dense:
-        #     raise NotImplementedError("Sparse array not yet implemented.")
-
-        # if len(key) < 2:
-        #     raise ValueError("At least the two block indices are required.")
-
-        # if len(key) >= 2:
-        #     *stack_index, brow, bcol = key
-
-        # if len(stack_index) > len(self.stack_shape):
-        #     raise ValueError(
-        #         f"Too many stack indices for stack shape '{self.stack_shape}'."
-        #     )
-
-        # stack_index += (slice(None),) * (len(self.stack_shape) - len(stack_index))
-
-        # brow, bcol = self._unsign_block_index(brow, bcol)
-
-    # if block.shape[-2:] != (
-    #             self.block_sizes[brow],
-    #             self.block_sizes[bcol],
-    #         ):
-    #             raise ValueError("Block shape does not match.")
+    def __setitem__(self, index: tuple, block: sparse.sparray | np.ndarray) -> None:
+        """Sets the requested block in the data structure."""
+        row, col = self._normalize_index(index)
+        self.dsbsparse._set_block(row, col, block)

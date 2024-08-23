@@ -1,18 +1,33 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import copy
-
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.utils.mpi_utils import get_num_elements_per_section
+from qttools.utils.mpi_utils import get_section_sizes
 
 
 def _compute_block_sort_index(
     coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
 ) -> np.ndarray:
+    """Computes the block-sorting index for a sparse matrix.
+
+    Parameters
+    ----------
+    coo_rows : np.ndarray
+        The row indices of the matrix in coordinate format.
+    coo_cols : np.ndarray
+        The column indices of the matrix in coordinate format.
+    block_sizes : np.ndarray
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : np.ndarray
+        The indexing that sorts the data by block-row and -column.
+
+    """
     num_blocks = len(block_sizes)
     block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
@@ -42,7 +57,24 @@ def _compute_block_sort_index(
 def _compute_ptr_map(
     coo_rows: np.ndarray, coo_cols: np.ndarray, block_sizes: np.ndarray
 ) -> dict:
-    """Computes the rowptr map for the given COO matrix."""
+    """Computes the rowptr map for a sparse matrix.
+
+    Parameters
+    ----------
+    coo_rows : np.ndarray
+        The row indices of the matrix in coordinate format.
+    coo_cols : np.ndarray
+        The column indices of the matrix in coordinate format.
+    block_sizes : np.ndarray
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    rowptr_map : dict
+        The row pointer map, describing the block-sparse matrix in
+        blockwise column-sparse-row format.
+
+    """
     num_blocks = len(block_sizes)
     block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
@@ -77,20 +109,30 @@ def _compute_ptr_map(
 class DSBCSR(DSBSparse):
     """Distributed stack of block-compressed sparse row matrices.
 
+    This DSBSparse implementation uses a block-compressed sparse row
+    format to store the sparsity pattern of the matrix. The data is
+    sorted by block-row and -column. We use a row pointer map together
+    with the column indices to access the blocks efficiently.
+
     Parameters
     ----------
     data : np.ndarray
-        The data array.
+        The local slice of the data. This should be an array of shape
+        `(*local_stack_shape, nnz)`. It is the caller's responsibility
+        to ensure that the data is distributed correctly across the
+        ranks.
     cols : np.ndarray
         The column indices.
     rowptr_map : dict
         The row pointer map.
     block_sizes : np.ndarray
-        The block sizes.
-    global_stack_shape : tuple
-        The global stack shape.
+        The size of each block in the sparse matrix.
+    global_stack_shape : tuple or int
+        The global shape of the stack. If this is an integer, it is
+        interpreted as a one-dimensional stack.
     return_dense : bool, optional
-        Whether to return dense matrices, by default True.
+        Whether to return dense arrays when accessing the blocks.
+        Default is False.
 
     """
 
@@ -195,8 +237,7 @@ class DSBCSR(DSBSparse):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
-        """Adds another DBSparse matrix to the current matrix."""
-
+        """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
 
@@ -211,7 +252,7 @@ class DSBCSR(DSBSparse):
         return self
 
     def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
-        """Subtracts another DBSparse matrix from the current matrix."""
+        """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
 
@@ -226,12 +267,12 @@ class DSBCSR(DSBSparse):
         return self
 
     def __imul__(self, other: "DSBSparse") -> None:
-        """Multiplies another DBSparse matrix to the current matrix."""
+        """In-place multiplication of two DSBSparse matrices."""
         self._check_commensurable(other)
         self.data *= other.data
 
     def __neg__(self) -> "DSBCSR":
-        """Negates the matrix."""
+        """Negation of the data."""
         return DSBCSR(
             data=-self.data,
             cols=self.cols,
@@ -241,10 +282,24 @@ class DSBCSR(DSBSparse):
             return_dense=self.return_dense,
         )
 
-    def __matmul__(self, other: "DSBSparse") -> None: ...
+    def __matmul__(self, other: "DSBSparse") -> None:
+        """Matrix multiplication of two DSBSparse matrices."""
+        raise NotImplementedError("Matrix multiplication is not implemented.")
 
-    def ltranspose(self, copy=False) -> "None | DSBSparse":
-        """Returns the transpose of the matrix."""
+    def ltranspose(self, copy=False) -> "None | DSBCSR":
+        """Performs a local transposition of the matrix.
+
+        Parameters
+        ----------
+        copy : bool, optional
+            Whether to return a new object. Default is False.
+
+        Returns
+        -------
+        None | DSBCSR
+            The transposed matrix. If copy is False, this is None.
+
+        """
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
@@ -297,7 +352,20 @@ class DSBCSR(DSBSparse):
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
 
     def spy(self) -> tuple[np.ndarray, np.ndarray]:
-        """Returns the COO sparsity pattern."""
+        """Returns the row and column indices of the non-zero elements.
+
+        This is essentially the same as converting the sparsity pattern
+        to coordinate format. The returned sparsity pattern is not
+        sorted.
+
+        Returns
+        -------
+        rows : np.ndarray
+            Row indices of the non-zero elements.
+        cols : np.ndarray
+            Column indices of the non-zero elements.
+
+        """
         rows = np.zeros(self.nnz, dtype=int)
         for (row, __), rowptr in self.rowptr_map.items():
             for i in range(self.block_sizes[row]):
@@ -308,21 +376,42 @@ class DSBCSR(DSBSparse):
     @classmethod
     def from_sparray(
         cls,
-        a: sparse.sparray,
+        arr: sparse.sparray,
         block_sizes: np.ndarray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
     ) -> "DSBCSR":
-        stack_section_sizes, __ = get_num_elements_per_section(
-            global_stack_shape[0], comm.size
-        )
+        """Creates a new DSBSparse matrix from a scipy.sparse array.
+
+        Parameters
+        ----------
+        arr : sparse.sparray
+            The sparse array to convert.
+        block_sizes : np.ndarray
+            The size of all the blocks in the matrix.
+        global_stack_shape : tuple
+            The global shape of the stack of matrices. The provided
+            sparse matrix is replicated across the stack.
+        densify_blocks : list[tuple], optional
+            List of matrix blocks to densify. Default is None. This is
+            useful to densify the boundary blocks of the matrix
+        pinned : bool, optional
+            Whether to pin the memory when using GPU. Default is False.
+
+        Returns
+        -------
+        DSBCSR
+            The new DSBCSR matrix.
+
+        """
+        stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         local_stack_shape = stack_section_sizes[comm.rank]
 
         if isinstance(local_stack_shape, int):
             local_stack_shape = (local_stack_shape,)
 
-        coo: sparse.coo_array = a.tocoo()
+        coo: sparse.coo_array = arr.tocoo()
 
         num_blocks = len(block_sizes)
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
@@ -355,10 +444,3 @@ class DSBCSR(DSBSparse):
         cols = coo.col[block_sort_index]
 
         return cls(data, cols, rowptr_map, block_sizes, global_stack_shape)
-
-    @classmethod
-    def zeros_like(cls, a: "DSBCSR") -> "DSBCSR":
-        """Returns a DBCSR matrix with the same sparsity pattern."""
-        out = copy.deepcopy(a)
-        out.data[:] = 0.0
-        return out

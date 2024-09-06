@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from qttools.datastructures import DSBCSR
+from qttools.datastructures import DSBCOO, DSBCSR
 from qttools.datastructures.dsbsparse import DSBSparse
 
 
@@ -25,7 +25,7 @@ def test_indexing(): ...
         pytest.param((10,), id="1D-stack"),
     ],
 )
-@pytest.mark.parametrize("dbsparse_type", [DSBCSR])
+@pytest.mark.parametrize("dbsparse_type", [DSBCSR, DSBCOO])
 def test_diagonal(
     coo: sparse.coo_array,
     dbsparse_type: DSBSparse,

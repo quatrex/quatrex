@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from qttools.datastructures import DSBCSR
+from qttools.datastructures import DSBCOO, DSBCSR
 from qttools.datastructures.dsbsparse import DSBSparse
 
 
@@ -31,12 +31,7 @@ from qttools.datastructures.dsbsparse import DSBSparse
         pytest.param([(2, 4)], id="densify-random"),
     ],
 )
-@pytest.mark.parametrize(
-    "dbsparse_type",
-    [
-        DSBCSR,
-    ],
-)
+@pytest.mark.parametrize("dbsparse_type", [DSBCSR, DSBCOO])
 class TestConversion:
     """Tests for the conversion methods of DSBSparse."""
 

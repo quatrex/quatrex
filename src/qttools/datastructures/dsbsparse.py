@@ -29,17 +29,13 @@ def _block_view(arr: np.ndarray, axis: int):
         The axis along which to get the block view.
 
     """
-    arr_shape = np.array(arr.shape)
-
-    block_shape = arr_shape.copy()
+    block_shape = list(arr.shape)
     block_shape[axis] //= comm.size
 
-    new_shape = tuple(arr_shape // block_shape) + tuple(block_shape)
-    new_strides = tuple(arr.strides * block_shape) + arr.strides
+    new_shape = (comm.size,) + tuple(block_shape)
+    new_strides = (arr.strides[axis] * block_shape[axis],) + arr.strides
 
-    return npst.as_strided(arr, shape=new_shape, strides=new_strides).squeeze(
-        (arr.ndim - 1) - axis
-    )
+    return npst.as_strided(arr, shape=new_shape, strides=new_strides)
 
 
 class DSBSparse(ABC):
@@ -140,15 +136,16 @@ class DSBSparse(ABC):
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the in-place Alltoall communication.
         self._data = np.zeros(
-            (max(stack_section_sizes), total_nnz_size), dtype=data.dtype
+            (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
+            dtype=data.dtype,
         )
-        self._data[: data.shape[0], : data.shape[1]] = data
+        self._data[: data.shape[0], ..., : data.shape[-1]] = data
 
         self.dtype = data.dtype
 
         self.stack_shape = data.shape[:-1]
         self.nnz = data.shape[-1]
-        self.shape = self.stack_shape + (np.sum(block_sizes), np.sum(block_sizes))
+        self.shape = self.stack_shape + (sum(block_sizes), sum(block_sizes))
 
         self.block_sizes = np.asarray(block_sizes).astype(int)
         self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
@@ -172,11 +169,22 @@ class DSBSparse(ABC):
         if self.distribution_state == "stack":
             return self._data[
                 : self.stack_section_sizes[comm.rank],
+                ...,
                 : sum(self.nnz_section_sizes),
             ]
         return self._data[
-            : sum(self.stack_section_sizes), : self.nnz_section_sizes[comm.rank]
+            : sum(self.stack_section_sizes), ..., : self.nnz_section_sizes[comm.rank]
         ]
+
+    def __repr__(self) -> str:
+        """Returns a string representation of the object."""
+        return (
+            f"{self.__class__.__name__}("
+            f"shape={self.shape}, "
+            f"block_sizes={self.block_sizes}, "
+            f"global_stack_shape={self.global_stack_shape}, "
+            f'distribution_state="{self.distribution_state}")'
+        )
 
     @abstractmethod
     def _set_block(self, row: int, col: int, block: np.ndarray) -> None:
@@ -297,9 +305,13 @@ class DSBSparse(ABC):
         """Transposes the data from stack to nnz distribution."""
         # Preserve old shape and compute new shape.
         old_shape = self._data.shape
-        new_shape = (old_shape[0] * comm.size, old_shape[1] // comm.size)
+        new_shape = (
+            old_shape[0] * comm.size,
+            *old_shape[1:-1],
+            old_shape[-1] // comm.size,
+        )
 
-        self._data = _block_view(self._data, axis=1)
+        self._data = _block_view(self._data, axis=-1)
         # We need to make sure that the block-view is memory-contiguous.
         self._data = np.ascontiguousarray(self._data)
 
@@ -311,7 +323,11 @@ class DSBSparse(ABC):
         """Transposes the data from nnz to stack distribution."""
         # Preserve old shape and compute new shape.
         old_shape = self._data.shape
-        new_shape = (old_shape[0] // comm.size, old_shape[1] * comm.size)
+        new_shape = (
+            old_shape[0] // comm.size,
+            *old_shape[1:-1],
+            old_shape[-1] * comm.size,
+        )
 
         # Here the data is already contiguous in memory.
         self._data = _block_view(self._data, axis=0)
@@ -319,7 +335,7 @@ class DSBSparse(ABC):
         comm.Alltoall(MPI.IN_PLACE, self._data)
 
         # The blocks we receive are now flipped, so transpose them back.
-        self._data = self._data.swapaxes(0, 1)
+        self._data = self._data.swapaxes(0, -2)
         self._data = self._data.reshape(new_shape)
 
     def dtranspose(self) -> None:

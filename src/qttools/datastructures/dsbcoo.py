@@ -304,11 +304,10 @@ class DSBCOO(DSBSparse):
             The new DSBCOO matrix.
 
         """
+        # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
-        local_stack_shape = stack_section_sizes[comm.rank]
-
-        if isinstance(local_stack_shape, int):
-            local_stack_shape = (local_stack_shape,)
+        section_size = stack_section_sizes[comm.rank]
+        local_stack_shape = (section_size,) + global_stack_shape[1:]
 
         coo: sparse.coo_array = arr.tocoo()
 

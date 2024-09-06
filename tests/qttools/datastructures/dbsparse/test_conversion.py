@@ -44,11 +44,7 @@ class TestConversion:
         densify_blocks: list[tuple[int]] | None,
     ):
         """Tests that we can convert a DSBSparse matrix to dense."""
-        reference = np.repeat(
-            coo.toarray()[np.newaxis, :, :],
-            global_stack_shape[0],
-            axis=0,
-        )
+        reference = np.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
 
         dbsparse = dbsparse_type.from_sparray(
             coo,
@@ -68,11 +64,7 @@ class TestConversion:
         densify_blocks: list[tuple[int]] | None,
     ):
         """Tests that we can transpose a DSBSparse matrix."""
-        dense = np.repeat(
-            coo.toarray()[np.newaxis, :, :],
-            global_stack_shape[0],
-            axis=0,
-        )
+        dense = np.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
         reference = np.swapaxes(dense, -2, -1)
 
         dbsparse = dbsparse_type.from_sparray(

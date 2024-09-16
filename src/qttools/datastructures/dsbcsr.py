@@ -5,6 +5,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.utils.gpu_utils import ArrayLike, get_device, xp
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import compute_block_sort_index, compute_ptr_map
 
@@ -19,16 +20,16 @@ class DSBCSR(DSBSparse):
 
     Parameters
     ----------
-    data : np.ndarray
+    data : array_like
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    cols : np.ndarray
+    cols : array_like
         The column indices.
     rowptr_map : dict
         The row pointer map.
-    block_sizes : np.ndarray
+    block_sizes : array_like
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
@@ -41,20 +42,20 @@ class DSBCSR(DSBSparse):
 
     def __init__(
         self,
-        data: np.ndarray,
-        cols: np.ndarray,
+        data: ArrayLike,
+        cols: ArrayLike,
         rowptr_map: dict,
-        block_sizes: np.ndarray,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCSR matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.cols = np.asarray(cols).astype(int)
+        self.cols = xp.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
-    def _get_block(self, row: int, col: int) -> np.ndarray:
+    def _get_block(self, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -75,11 +76,11 @@ class DSBCSR(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        block = np.zeros(
+        block = xp.zeros(
             (
                 *self.stack_shape,  # Stack dimensions.
-                self.block_sizes[row],
-                self.block_sizes[col],
+                int(self.block_sizes[row]),
+                int(self.block_sizes[col]),
             ),
             dtype=self.dtype,
         )
@@ -88,14 +89,14 @@ class DSBCSR(DSBSparse):
             # No data in this block, return zeros.
             return block
 
-        for i in range(self.block_sizes[row]):
+        for i in range(int(self.block_sizes[row])):
             cols = self.cols[rowptr[i] : rowptr[i + 1]]
             block[..., i, cols - self.block_offsets[col]] = self.data[
                 ..., rowptr[i] : rowptr[i + 1]
             ]
         return block
 
-    def _set_block(self, row: int, col: int, block: np.ndarray) -> None:
+    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
         """Sets a block throughout the stack in the data structure.
 
         The index is assumed to already be renormalized.
@@ -106,7 +107,7 @@ class DSBCSR(DSBSparse):
             Row index of the block.
         col : int
             Column index of the block.
-        block : np.ndarray
+        block : array_like
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -116,7 +117,7 @@ class DSBCSR(DSBSparse):
             # No data in this block, nothing to do.
             return
 
-        for i in range(self.block_sizes[row]):
+        for i in range(int(self.block_sizes[row])):
             cols = self.cols[rowptr[i] : rowptr[i + 1]]
             self.data[..., rowptr[i] : rowptr[i + 1]] = block[
                 ..., i, cols - self.block_offsets[col]
@@ -130,13 +131,13 @@ class DSBCSR(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if np.any(self.block_sizes != other.block_sizes):
+        if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
             raise ValueError("Block sparsities do not match.")
 
-        if np.any(self.cols != other.cols):
+        if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
@@ -144,7 +145,7 @@ class DSBCSR(DSBSparse):
         if sparse.issparse(other):
             lil = other.tolil()
 
-            sparray_data = np.zeros(self.nnz, dtype=self.dtype)
+            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
             for i, (row, col) in enumerate(zip(*self.spy())):
                 sparray_data[i] = lil[row, col]
             self.data[:] += sparray_data
@@ -159,7 +160,7 @@ class DSBCSR(DSBSparse):
         if sparse.issparse(other):
             lil = other.tolil()
 
-            sparray_data = np.zeros(self.nnz, dtype=self.dtype)
+            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
             for i, (row, col) in enumerate(zip(*self.spy())):
                 sparray_data[i] = lil[row, col]
             self.data[:] -= sparray_data
@@ -226,7 +227,7 @@ class DSBCSR(DSBSparse):
             rows_t, cols_t = cols, rows
 
             # Canonical ordering of the transpose.
-            inds_bcsr2canonical_t = np.lexsort((cols_t, rows_t))
+            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
             canonical_rows_t = rows_t[inds_bcsr2canonical_t]
             canonical_cols_t = cols_t[inds_bcsr2canonical_t]
 
@@ -250,7 +251,7 @@ class DSBCSR(DSBSparse):
             self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
         self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
-        self._inds_bcsr2bcsr_t = np.argsort(self._inds_bcsr2bcsr_t)
+        self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
 
@@ -269,9 +270,9 @@ class DSBCSR(DSBSparse):
             Column indices of the non-zero elements.
 
         """
-        rows = np.zeros(self.nnz, dtype=int)
+        rows = xp.zeros(self.nnz, dtype=int)
         for (row, __), rowptr in self.rowptr_map.items():
-            for i in range(self.block_sizes[row]):
+            for i in range(int(self.block_sizes[row])):
                 rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
 
         return rows, self.cols
@@ -328,7 +329,7 @@ class DSBCSR(DSBSparse):
 
             indices = [
                 (m + block_offsets[i], n + block_offsets[j])
-                for m, n in np.ndindex(block_sizes[i], block_sizes[j])
+                for m, n in xp.ndindex(block_sizes[i], block_sizes[j])
             ]
             coo.row = np.append(coo.row, [m for m, __ in indices])
             coo.col = np.append(coo.col, [n for __, n in indices])
@@ -338,17 +339,21 @@ class DSBCSR(DSBSparse):
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        rowptr_map = compute_ptr_map(coo.row, coo.col, block_sizes)
-        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
+        rowptr_map = compute_ptr_map(
+            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
+        )
+        block_sort_index = compute_block_sort_index(
+            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
+        )
 
-        data = np.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = coo.data[block_sort_index]
-        cols = coo.col[block_sort_index]
+        data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
+        data[..., :] = get_device(coo.data)[block_sort_index]
+        cols = get_device(coo.col)[block_sort_index]
 
         return cls(
             data=data,
             cols=cols,
             rowptr_map=rowptr_map,
-            block_sizes=block_sizes,
+            block_sizes=get_device(block_sizes),
             global_stack_shape=global_stack_shape,
         )

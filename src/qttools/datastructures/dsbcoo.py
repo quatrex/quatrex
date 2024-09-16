@@ -3,6 +3,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.utils.gpu_utils import ArrayLike, get_device, xp
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import compute_block_sort_index
 
@@ -16,16 +17,16 @@ class DSBCOO(DSBSparse):
 
     Parameters
     ----------
-    data : np.ndarray
+    data : array_like
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    rows : np.ndarray
+    rows : array_like
         The row indices.
-    cols : np.ndarray
+    cols : array_like
         The column indices.
-    block_sizes : np.ndarray
+    block_sizes : array_like
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
@@ -38,20 +39,20 @@ class DSBCOO(DSBSparse):
 
     def __init__(
         self,
-        data: np.ndarray,
-        rows: np.ndarray,
-        cols: np.ndarray,
-        block_sizes: np.ndarray,
+        data: ArrayLike,
+        rows: ArrayLike,
+        cols: ArrayLike,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.rows = np.asarray(rows).astype(int)
-        self.cols = np.asarray(cols).astype(int)
+        self.rows = xp.asarray(rows).astype(int)
+        self.cols = xp.asarray(cols).astype(int)
 
-    def _get_block(self, row: int, col: int) -> np.ndarray:
+    def _get_block(self, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -67,16 +68,16 @@ class DSBCOO(DSBSparse):
 
         Returns
         -------
-        block : sparray | np.ndarray
+        block : array_like
             The block at the requested index. This is an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        block = np.zeros(
+        block = xp.zeros(
             (
                 *self.stack_shape,  # Stack dimensions.
-                self.block_sizes[row],
-                self.block_sizes[col],
+                int(self.block_sizes[row]),
+                int(self.block_sizes[col]),
             ),
             dtype=self.dtype,
         )
@@ -87,7 +88,7 @@ class DSBCOO(DSBSparse):
             & (self.cols < self.block_offsets[col + 1])
         )
 
-        if not np.any(mask):
+        if not xp.any(mask):
             # No data in this block, return zeros.
             return block
 
@@ -99,7 +100,7 @@ class DSBCOO(DSBSparse):
 
         return block
 
-    def _set_block(self, row: int, col: int, block: np.ndarray) -> None:
+    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
         """Sets a block throughout the stack in the data structure.
 
         The index is assumed to already be renormalized.
@@ -110,7 +111,7 @@ class DSBCOO(DSBSparse):
             Row index of the block.
         col : int
             Column index of the block.
-        block : np.ndarray
+        block : array_like
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -122,7 +123,7 @@ class DSBCOO(DSBSparse):
             & (self.cols < self.block_offsets[col + 1])
         )
 
-        if not np.any(mask):
+        if not xp.any(mask):
             # No data in this block, nothing to do.
             return
 
@@ -140,13 +141,13 @@ class DSBCOO(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if np.any(self.block_sizes != other.block_sizes):
+        if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if np.any(self.rows != other.rows):
+        if xp.any(self.rows != other.rows):
             raise ValueError("Row indices do not match.")
 
-        if np.any(self.cols != other.cols):
+        if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCOO":
@@ -201,7 +202,8 @@ class DSBCOO(DSBSparse):
         copy : bool, optional
             Whether to return a new object. Default is False.
 
-        Returns-------
+        Returns
+        -------
         None | DSBCOO
             The transposed matrix. If copy is False, this is None.
 
@@ -227,7 +229,7 @@ class DSBCOO(DSBSparse):
             rows_t, cols_t = self.cols, self.rows
 
             # Canonical ordering of the transpose.
-            inds_bcoo2canonical_t = np.lexsort((cols_t, rows_t))
+            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
             canonical_rows_t = rows_t[inds_bcoo2canonical_t]
             canonical_cols_t = cols_t[inds_bcoo2canonical_t]
 
@@ -246,11 +248,11 @@ class DSBCOO(DSBSparse):
             self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
 
         self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
-        self._inds_bcoo2bcoo_t = np.argsort(self._inds_bcoo2bcoo_t)
+        self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows
 
-    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+    def spy(self) -> tuple[ArrayLike, ArrayLike]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -259,15 +261,15 @@ class DSBCOO(DSBSparse):
 
         Returns
         -------
-        rows : np.ndarray
+        rows : array_like
             Row indices of the non-zero elements.
-        cols : np.ndarray
+        cols : array_like
             Column indices of the non-zero elements.
 
         """
-        rows = np.zeros(self.nnz, dtype=int)
+        rows = xp.zeros(self.nnz, dtype=int)
         for (row, __), rowptr in self.rowptr_map.items():
-            for i in range(self.block_sizes[row]):
+            for i in range(int(self.block_sizes[row])):
                 rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
 
         return rows, self.cols
@@ -276,7 +278,7 @@ class DSBCOO(DSBSparse):
     def from_sparray(
         cls,
         arr: sparse.sparray,
-        block_sizes: np.ndarray,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
@@ -287,7 +289,7 @@ class DSBCOO(DSBSparse):
         ----------
         arr : sparse.sparray
             The sparse array to convert.
-        block_sizes : np.ndarray
+        block_sizes : array_like
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided
@@ -334,17 +336,19 @@ class DSBCOO(DSBSparse):
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
+        block_sort_index = compute_block_sort_index(
+            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
+        )
 
-        data = np.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = coo.data[block_sort_index]
-        rows = coo.row[block_sort_index]
-        cols = coo.col[block_sort_index]
+        data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
+        data[..., :] = get_device(coo.data)[block_sort_index]
+        rows = get_device(coo.row)[block_sort_index]
+        cols = get_device(coo.col)[block_sort_index]
 
         return cls(
             data=data,
             rows=rows,
             cols=cols,
-            block_sizes=block_sizes,
+            block_sizes=get_device(block_sizes),
             global_stack_shape=global_stack_shape,
         )

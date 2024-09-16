@@ -4,15 +4,15 @@ import copy
 from abc import ABC, abstractmethod
 
 import numpy as np
-import numpy.lib.stride_tricks as npst
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
+from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream, xp
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _block_view(arr: np.ndarray, axis: int):
+def _block_view(arr: ArrayLike, axis: int):
     """Gets a block view of an array along a given axis.
 
     This is a helper function to get a block view of an array along a
@@ -23,7 +23,7 @@ def _block_view(arr: np.ndarray, axis: int):
 
     Parameters
     ----------
-    arr : np.ndarray
+    arr : array_like
         The array to get the block view of.
     axis : int
         The axis along which to get the block view.
@@ -35,7 +35,7 @@ def _block_view(arr: np.ndarray, axis: int):
     new_shape = (comm.size,) + tuple(block_shape)
     new_strides = (arr.strides[axis] * block_shape[axis],) + arr.strides
 
-    return npst.as_strided(arr, shape=new_shape, strides=new_strides)
+    return xp.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
 
 
 class DSBSparse(ABC):
@@ -90,12 +90,12 @@ class DSBSparse(ABC):
 
     Parameters
     ----------
-    data : np.ndarray
+    data : array_like
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    block_sizes : np.ndarray
+    block_sizes : array_like
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
@@ -108,8 +108,8 @@ class DSBSparse(ABC):
 
     def __init__(
         self,
-        data: np.ndarray,
-        block_sizes: np.ndarray,
+        data: ArrayLike,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple | int,
         return_dense: bool = False,
     ) -> None:
@@ -135,7 +135,7 @@ class DSBSparse(ABC):
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the in-place Alltoall communication.
-        self._data = np.zeros(
+        self._data = xp.zeros(
             (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
             dtype=data.dtype,
         )
@@ -145,10 +145,10 @@ class DSBSparse(ABC):
 
         self.stack_shape = data.shape[:-1]
         self.nnz = data.shape[-1]
-        self.shape = self.stack_shape + (sum(block_sizes), sum(block_sizes))
+        self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
-        self.block_sizes = np.asarray(block_sizes).astype(int)
-        self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
+        self.block_sizes = xp.asarray(block_sizes).astype(int)
+        self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
 
@@ -158,7 +158,7 @@ class DSBSparse(ABC):
         return _DSBlockIndexer(self)
 
     @property
-    def data(self) -> np.ndarray:
+    def data(self) -> ArrayLike:
         """Returns the local slice of the data, masking the padding.
 
         This does not return a copy of the data, but a view. This is
@@ -187,7 +187,7 @@ class DSBSparse(ABC):
         )
 
     @abstractmethod
-    def _set_block(self, row: int, col: int, block: np.ndarray) -> None:
+    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
         """Sets a block throughout the stack in the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -200,7 +200,7 @@ class DSBSparse(ABC):
             Row index of the block.
         col : int
             Column index of the block.
-        block : np.ndarray
+        block : array_like
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -208,7 +208,7 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def _get_block(self, row: int, col: int) -> sparse.sparray | np.ndarray:
+    def _get_block(self, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -224,7 +224,7 @@ class DSBSparse(ABC):
 
         Returns
         -------
-        block : sparse.sparray | np.ndarray
+        block : array_like
             The block at the requested index. This is an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -251,9 +251,7 @@ class DSBSparse(ABC):
         """Matrix multiplication of two DSBSparse matrices."""
         ...
 
-    def block_diagonal(
-        self, offset: int = 0
-    ) -> list[sparse.sparray] | list[np.ndarray]:
+    def block_diagonal(self, offset: int = 0) -> list[ArrayLike]:
         """Returns the block diagonal of the matrix.
 
         Parameters
@@ -278,14 +276,14 @@ class DSBSparse(ABC):
 
         return blocks
 
-    def diagonal(self) -> np.ndarray:
+    def diagonal(self) -> ArrayLike:
         """Returns the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True.
 
         Returns
         -------
-        diagonal : np.ndarray
+        diagonal : array_like
             The diagonal elements of the matrix.
 
         """
@@ -295,11 +293,11 @@ class DSBSparse(ABC):
 
         diagonals = []
         for b in range(self.num_blocks):
-            diagonals.append(np.diagonal(self.blocks[b, b], axis1=-2, axis2=-1))
+            diagonals.append(xp.diagonal(self.blocks[b, b], axis1=-2, axis2=-1))
 
         # Restore the original return_dense state.
         self.return_dense = original_return_dense
-        return np.hstack(diagonals)
+        return xp.hstack(diagonals)
 
     def _stack_to_nnz_dtranspose(self) -> None:
         """Transposes the data from stack to nnz distribution."""
@@ -313,8 +311,9 @@ class DSBSparse(ABC):
 
         self._data = _block_view(self._data, axis=-1)
         # We need to make sure that the block-view is memory-contiguous.
-        self._data = np.ascontiguousarray(self._data)
+        self._data = xp.ascontiguousarray(self._data)
 
+        synchronize_current_stream()
         comm.Alltoall(MPI.IN_PLACE, self._data)
 
         self._data = self._data.reshape(new_shape)
@@ -332,6 +331,7 @@ class DSBSparse(ABC):
         # Here the data is already contiguous in memory.
         self._data = _block_view(self._data, axis=0)
 
+        synchronize_current_stream()
         comm.Alltoall(MPI.IN_PLACE, self._data)
 
         # The blocks we receive are now flipped, so transpose them back.
@@ -413,8 +413,8 @@ class DSBSparse(ABC):
         original_return_dense = self.return_dense
         self.return_dense = True
 
-        arr = np.zeros(self.shape, dtype=self.dtype)
-        for i, j in np.ndindex(self.num_blocks, self.num_blocks):
+        arr = xp.zeros(self.shape, dtype=self.dtype)
+        for i, j in xp.ndindex(self.num_blocks, self.num_blocks):
             arr[
                 ...,
                 self.block_offsets[i] : self.block_offsets[i + 1],
@@ -423,14 +423,14 @@ class DSBSparse(ABC):
 
         self.return_dense = original_return_dense
 
-        return arr
+        return get_host(arr)
 
     @classmethod
     @abstractmethod
     def from_sparray(
         cls,
         arr: sparse.sparray,
-        block_sizes: np.ndarray,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
@@ -530,12 +530,12 @@ class _DSBlockIndexer:
         row, col = self._unsign_index(row, col)
         return row, col
 
-    def __getitem__(self, index: tuple) -> sparse.sparray | np.ndarray:
+    def __getitem__(self, index: tuple) -> ArrayLike:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
         return self.dsbsparse._get_block(row, col)
 
-    def __setitem__(self, index: tuple, block: sparse.sparray | np.ndarray) -> None:
+    def __setitem__(self, index: tuple, block: ArrayLike) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
         self.dsbsparse._set_block(row, col, block)

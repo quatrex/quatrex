@@ -80,9 +80,7 @@ class DSBSparse(ABC):
     - `__imatmul__(other)`: In-place matrix multiplication.
     - `__neg__()`: In-place negation.
     - `ltranspose()`: Local transposition.
-    - `to_dense()`: Convert to dense.
     - `from_sparray()`: Create from a scipy.sparse array.
-    - `zeros_like()`: Create a new object with the same shape and dtype
       and no non-zero elements.
 
     Note that only in-place arithmetic operations are required by this
@@ -299,44 +297,43 @@ class DSBSparse(ABC):
         self.return_dense = original_return_dense
         return xp.hstack(diagonals)
 
-    def _stack_to_nnz_dtranspose(self) -> None:
-        """Transposes the data from stack to nnz distribution."""
-        # Preserve old shape and compute new shape.
-        old_shape = self._data.shape
-        new_shape = (
-            old_shape[0] * comm.size,
-            *old_shape[1:-1],
-            old_shape[-1] // comm.size,
-        )
+    def _dtranspose(self, block_axis: int, concatenate_axis: int) -> None:
+        """Performs the distributed transposition of the data.
 
-        self._data = _block_view(self._data, axis=-1)
+        This is a helper method that performs the distributed transposition
+        depending on the current distribution state.
+
+        Parameters
+        ----------
+        block_axis : int
+            The axis along which the blocks view is created.
+        concatenate_axis : int
+            The axis along which the received blocks are concatenated.
+
+        """
+        # old_shape = self._data.shape
+        # new_shape = (
+        #     old_shape[0] // comm.size,
+        #     *old_shape[1:-1],
+        #     old_shape[-1] * comm.size,
+        # )
+
+        self._data = _block_view(self._data, axis=block_axis)
         # We need to make sure that the block-view is memory-contiguous.
+        # This does nothing if the data is already contiguous.
         self._data = xp.ascontiguousarray(self._data)
 
         synchronize_current_stream()
         comm.Alltoall(MPI.IN_PLACE, self._data)
 
-        self._data = self._data.reshape(new_shape)
+        self._data = xp.concatenate(self._data, axis=concatenate_axis)
 
-    def _nnz_to_stack_dtranspose(self) -> None:
-        """Transposes the data from nnz to stack distribution."""
-        # Preserve old shape and compute new shape.
-        old_shape = self._data.shape
-        new_shape = (
-            old_shape[0] // comm.size,
-            *old_shape[1:-1],
-            old_shape[-1] * comm.size,
-        )
+        # NOTE: There are a few things commented out here, since there
+        # may be an alternative way to do the correct reshaping after
+        # the Alltoall communication. The concatenatation needs to be
+        # checked, as it may copy some data.
 
-        # Here the data is already contiguous in memory.
-        self._data = _block_view(self._data, axis=0)
-
-        synchronize_current_stream()
-        comm.Alltoall(MPI.IN_PLACE, self._data)
-
-        # The blocks we receive are now flipped, so transpose them back.
-        self._data = self._data.swapaxes(0, -2)
-        self._data = self._data.reshape(new_shape)
+        # self._data = np.moveaxis(self._data, concatenate_axis, -2).reshape(new_shape)
 
     def dtranspose(self) -> None:
         """Performs a distributed transposition of the datastructure.
@@ -353,10 +350,10 @@ class DSBSparse(ABC):
 
         """
         if self.distribution_state == "stack":
-            self._stack_to_nnz_dtranspose()
+            self._dtranspose(block_axis=-1, concatenate_axis=0)
             self.distribution_state = "nnz"
         else:
-            self._nnz_to_stack_dtranspose()
+            self._dtranspose(block_axis=0, concatenate_axis=-1)
             self.distribution_state = "stack"
 
     @abstractmethod

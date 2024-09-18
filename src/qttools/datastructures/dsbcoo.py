@@ -174,10 +174,11 @@ class DSBCOO(DSBSparse):
         self.data[:] -= other.data[:]
         return self
 
-    def __imul__(self, other: "DSBSparse") -> None:
+    def __imul__(self, other: "DSBSparse") -> "DSBCOO":
         """In-place multiplication of two DSBSparse matrices."""
         self._check_commensurable(other)
-        self.data *= other.data
+        self.data[:] *= other.data[:]
+        return self
 
     def __neg__(self) -> "DSBCOO":
         """Negation of the data."""
@@ -267,12 +268,7 @@ class DSBCOO(DSBSparse):
             Column indices of the non-zero elements.
 
         """
-        rows = xp.zeros(self.nnz, dtype=int)
-        for (row, __), rowptr in self.rowptr_map.items():
-            for i in range(int(self.block_sizes[row])):
-                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
-
-        return rows, self.cols
+        return self.rows, self.cols
 
     @classmethod
     def from_sparray(

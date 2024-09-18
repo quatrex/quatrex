@@ -170,10 +170,11 @@ class DSBCSR(DSBSparse):
         self.data[:] -= other.data[:]
         return self
 
-    def __imul__(self, other: "DSBSparse") -> None:
+    def __imul__(self, other: "DSBSparse") -> "DSBCSR":
         """In-place multiplication of two DSBSparse matrices."""
         self._check_commensurable(other)
-        self.data *= other.data
+        self.data[:] *= other.data[:]
+        return self
 
     def __neg__(self) -> "DSBCSR":
         """Negation of the data."""

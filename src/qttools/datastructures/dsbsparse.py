@@ -14,7 +14,7 @@ from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
-def _block_view(arr: ArrayLike, axis: int):
+def _block_view(arr: ArrayLike, axis: int, num_blocks: int = comm.size) -> ArrayLike:
     """Gets a block view of an array along a given axis.
 
     This is a helper function to get a block view of an array along a
@@ -29,12 +29,24 @@ def _block_view(arr: ArrayLike, axis: int):
         The array to get the block view of.
     axis : int
         The axis along which to get the block view.
+    num_blocks : int, optional
+        The number of blocks to divide the array into. Default is the
+        number of MPI ranks.
+
+    Returns
+    -------
+    block_view : array_like
+        The specified block view of the array.
 
     """
     block_shape = list(arr.shape)
-    block_shape[axis] //= comm.size
 
-    new_shape = (comm.size,) + tuple(block_shape)
+    if block_shape[axis] % num_blocks != 0:
+        raise ValueError("The array shape is not divisible by the number of blocks.")
+
+    block_shape[axis] //= num_blocks
+
+    new_shape = (num_blocks,) + tuple(block_shape)
     new_strides = (arr.strides[axis] * block_shape[axis],) + arr.strides
 
     return xp.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
@@ -232,22 +244,22 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def __iadd__(self, other: "DSBSparse") -> None:
+    def __iadd__(self, other: "DSBSparse") -> "DSBSparse":
         """In-place addition of two DSBSparse matrices."""
         ...
 
     @abstractmethod
-    def __imul__(self, other: "DSBSparse") -> None:
+    def __imul__(self, other: "DSBSparse") -> "DSBSparse":
         """In-place multiplication of two DSBSparse matrices."""
         ...
 
     @abstractmethod
-    def __neg__(self) -> None:
+    def __neg__(self) -> "DSBSparse":
         """Negation of the data."""
         ...
 
     @abstractmethod
-    def __matmul__(self, other: "DSBSparse") -> None:
+    def __matmul__(self, other: "DSBSparse") -> "DSBSparse":
         """Matrix multiplication of two DSBSparse matrices."""
         ...
 
@@ -297,7 +309,7 @@ class DSBSparse(ABC):
 
         # Restore the original return_dense state.
         self.return_dense = original_return_dense
-        return xp.hstack(diagonals)
+        return xp.concatenate(diagonals, axis=-1)
 
     def _dtranspose(self, block_axis: int, concatenate_axis: int) -> None:
         """Performs the distributed transposition of the data.

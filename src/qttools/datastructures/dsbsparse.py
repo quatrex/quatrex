@@ -9,7 +9,9 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream, xp
-from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+
+GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 def _block_view(arr: ArrayLike, axis: int):
@@ -324,7 +326,10 @@ class DSBSparse(ABC):
         self._data = xp.ascontiguousarray(self._data)
 
         synchronize_current_stream()
-        comm.Alltoall(MPI.IN_PLACE, self._data)
+        if xp.__name__ == "numpy" or GPU_AWARE_MPI:
+            comm.Alltoall(MPI.IN_PLACE, self._data)
+        else:
+            comm.Alltoall(MPI.IN_PLACE, get_host(self._data))
 
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
 

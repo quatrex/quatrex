@@ -4,7 +4,7 @@ import numpy as np
 
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
-from qttools.utils.mpi_utils import get_num_elements_per_section
+from qttools.utils.mpi_utils import get_section_sizes
 
 
 class Inv(GFSolver):
@@ -34,7 +34,7 @@ class Inv(GFSolver):
         """
 
         # Get list of batches to perform
-        batches_sizes, _ = get_num_elements_per_section(
+        batches_sizes, _ = get_section_sizes(
             num_elements=a.shape[0],
             num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
         )

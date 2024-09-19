@@ -3,9 +3,66 @@
 import numpy as np
 import pytest
 
-SEED = 63
+from qttools.greens_function_solver import Inv, RGF
 
+SEED = 63
 np.random.seed(SEED)
+
+GFSOLVERS_TYPE = [Inv, RGF]
+
+N_DIAGONAL_BLOCKS = [
+    pytest.param(1, id="1-blocks"),
+    pytest.param(2, id="2-blocks"),
+    pytest.param(3, id="3-blocks"),
+    pytest.param(10, id="10-blocks"),
+]
+
+BLOCK_SIZES = [
+    pytest.param(np.array([2] * 10), id="constant-block-size"),
+    pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+]
+
+
+@pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
+def gfsolver_type(request):
+    return request.param
+
+
+@pytest.fixture(autouse=True)
+def bt_dense() -> np.ndarray:
+    """Returns a random block-tridiagonal matrix."""
+    bt = np.zeros(
+        (N_DIAGONAL_BLOCKS * BLOCK_SIZES, N_DIAGONAL_BLOCKS * BLOCK_SIZES),
+        dtype=complex,
+    )
+
+    # Fill the block-tridiagonal blocks
+    for i in range(N_DIAGONAL_BLOCKS):
+        bt[
+            i * BLOCK_SIZES : (i + 1) * BLOCK_SIZES,
+            i * BLOCK_SIZES : (i + 1) * BLOCK_SIZES,
+        ] = np.random.rand(BLOCK_SIZES, BLOCK_SIZES) + 1j * np.random.rand(
+            BLOCK_SIZES, BLOCK_SIZES
+        )
+        if i > 0:
+            bt[
+                i * BLOCK_SIZES : (i + 1) * BLOCK_SIZES,
+                (i - 1) * BLOCK_SIZES : i * BLOCK_SIZES,
+            ] = np.random.rand(BLOCK_SIZES, BLOCK_SIZES) + 1j * np.random.rand(
+                BLOCK_SIZES, BLOCK_SIZES
+            )
+            bt[
+                (i - 1) * BLOCK_SIZES : i * BLOCK_SIZES,
+                i * BLOCK_SIZES : (i + 1) * BLOCK_SIZES,
+            ] = np.random.rand(BLOCK_SIZES, BLOCK_SIZES) + 1j * np.random.rand(
+                BLOCK_SIZES, BLOCK_SIZES
+            )
+
+    # Make the matrix diagonally dominant
+    for i in range(bt.shape[0]):
+        bt[i, i] = 1 + np.sum(bt[i, :])
+
+    return bt
 
 
 @pytest.fixture(scope="function", autouse=True)

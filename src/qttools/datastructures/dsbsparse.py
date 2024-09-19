@@ -447,7 +447,7 @@ class DSBSparse(ABC):
 
         self.return_dense = original_return_dense
 
-        return get_host(arr)
+        return arr
 
     @classmethod
     @abstractmethod

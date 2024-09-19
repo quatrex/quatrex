@@ -28,7 +28,7 @@ class TestCreation:
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
-        assert np.array_equiv(coo.toarray(), dsbsparse.to_dense())
+        assert np.array_equiv(coo.toarray(), get_host(dsbsparse.to_dense()))
 
     def test_zeros_like(
         self,

@@ -45,7 +45,7 @@ STACK_INDICES = [
 @pytest.fixture(autouse=True)
 def coo() -> sparse.coo_array:
     """Returns a random complex sparse array."""
-    return sparse.random(*ARRAY_SHAPE, density=0.3, format="coo", dtype=complex)
+    return sparse.random(*ARRAY_SHAPE, density=0.3, format="coo", dtype=np.complex128)
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)

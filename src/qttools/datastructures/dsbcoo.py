@@ -1,5 +1,3 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
-
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
@@ -7,16 +5,15 @@ from scipy import sparse
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.gpu_utils import ArrayLike, get_device, xp
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import compute_block_sort_index, compute_ptr_map
+from qttools.utils.sparse_utils import compute_block_sort_index
 
 
-class DSBCSR(DSBSparse):
-    """Distributed stack of block-compressed sparse row matrices.
+class DSBCOO(DSBSparse):
+    """Distributed stack of sparse matrices in coordinate format.
 
-    This DSBSparse implementation uses a block-compressed sparse row
-    format to store the sparsity pattern of the matrix. The data is
-    sorted by block-row and -column. We use a row pointer map together
-    with the column indices to access the blocks efficiently.
+    This DSBSparse implementation stores the matrix sparsity pattern in
+    probably the most straight-forward way: as a list of coordinates.
+    Both data and coordinates are sorted by block-row and -column.
 
     Parameters
     ----------
@@ -25,10 +22,10 @@ class DSBCSR(DSBSparse):
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
+    rows : array_like
+        The row indices.
     cols : array_like
         The column indices.
-    rowptr_map : dict
-        The row pointer map.
     block_sizes : array_like
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
@@ -43,17 +40,17 @@ class DSBCSR(DSBSparse):
     def __init__(
         self,
         data: ArrayLike,
+        rows: ArrayLike,
         cols: ArrayLike,
-        rowptr_map: dict,
         block_sizes: ArrayLike,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
-        """Initializes the DBCSR matrix."""
+        """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
+        self.rows = xp.asarray(rows).astype(int)
         self.cols = xp.asarray(cols).astype(int)
-        self.rowptr_map = rowptr_map
 
     def _get_block(self, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
@@ -71,7 +68,7 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        block : sparray | np.ndarray
+        block : array_like
             The block at the requested index. This is an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -84,16 +81,23 @@ class DSBCSR(DSBSparse):
             ),
             dtype=self.dtype,
         )
-        rowptr = self.rowptr_map.get((row, col), None)
-        if rowptr is None:
+        mask = (
+            (self.rows >= self.block_offsets[row])
+            & (self.rows < self.block_offsets[row + 1])
+            & (self.cols >= self.block_offsets[col])
+            & (self.cols < self.block_offsets[col + 1])
+        )
+
+        if not xp.any(mask):
             # No data in this block, return zeros.
             return block
 
-        for i in range(int(self.block_sizes[row])):
-            cols = self.cols[rowptr[i] : rowptr[i + 1]]
-            block[..., i, cols - self.block_offsets[col]] = self.data[
-                ..., rowptr[i] : rowptr[i + 1]
-            ]
+        block[
+            ...,
+            self.rows[mask] - self.block_offsets[row],
+            self.cols[mask] - self.block_offsets[col],
+        ] = self.data[..., mask]
+
         return block
 
     def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
@@ -112,21 +116,27 @@ class DSBCSR(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        rowptr = self.rowptr_map.get((row, col), None)
-        if rowptr is None:
+        mask = (
+            (self.rows >= self.block_offsets[row])
+            & (self.rows < self.block_offsets[row + 1])
+            & (self.cols >= self.block_offsets[col])
+            & (self.cols < self.block_offsets[col + 1])
+        )
+
+        if not xp.any(mask):
             # No data in this block, nothing to do.
             return
 
-        for i in range(int(self.block_sizes[row])):
-            cols = self.cols[rowptr[i] : rowptr[i + 1]]
-            self.data[..., rowptr[i] : rowptr[i + 1]] = block[
-                ..., i, cols - self.block_offsets[col]
-            ]
+        self.data[..., mask] = block[
+            ...,
+            self.rows[mask] - self.block_offsets[row],
+            self.cols[mask] - self.block_offsets[col],
+        ]
 
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, DSBCSR):
-            raise TypeError("Can only add DSBCSR matrices.")
+        if not isinstance(other, DSBCOO):
+            raise TypeError("Can only add DSBCOO matrices.")
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
@@ -134,20 +144,17 @@ class DSBCSR(DSBSparse):
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if self.rowptr_map.keys() != other.rowptr_map.keys():
-            raise ValueError("Block sparsities do not match.")
+        if xp.any(self.rows != other.rows):
+            raise ValueError("Row indices do not match.")
 
         if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
-    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
+    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCOO":
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
-
-            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
-            for i, (row, col) in enumerate(zip(*self.spy())):
-                sparray_data[i] = lil[row, col]
+            sparray_data = lil[self.rows, self.cols]
             self.data[:] += sparray_data
             return self
 
@@ -155,14 +162,11 @@ class DSBCSR(DSBSparse):
         self.data[:] += other.data[:]
         return self
 
-    def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
+    def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCOO":
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
-
-            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
-            for i, (row, col) in enumerate(zip(*self.spy())):
-                sparray_data[i] = lil[row, col]
+            sparray_data = lil[self.rows, self.cols]
             self.data[:] -= sparray_data
             return self
 
@@ -170,18 +174,18 @@ class DSBCSR(DSBSparse):
         self.data[:] -= other.data[:]
         return self
 
-    def __imul__(self, other: "DSBSparse") -> "DSBCSR":
+    def __imul__(self, other: "DSBSparse") -> "DSBCOO":
         """In-place multiplication of two DSBSparse matrices."""
         self._check_commensurable(other)
         self.data[:] *= other.data[:]
         return self
 
-    def __neg__(self) -> "DSBCSR":
+    def __neg__(self) -> "DSBCOO":
         """Negation of the data."""
-        return DSBCSR(
+        return DSBCOO(
             data=-self.data,
+            rows=self.rows,
             cols=self.cols,
-            rowptr_map=self.rowptr_map,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
@@ -191,7 +195,7 @@ class DSBCSR(DSBSparse):
         """Matrix multiplication of two DSBSparse matrices."""
         raise NotImplementedError("Matrix multiplication is not implemented.")
 
-    def ltranspose(self, copy=False) -> "None | DSBCSR":
+    def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.
 
         Parameters
@@ -201,62 +205,55 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        None | DSBCSR
+        None | DSBCOO
             The transposed matrix. If copy is False, this is None.
 
         """
+
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if copy:
-            self = DSBCSR(
+            self = DSBCOO(
                 self.data.copy(),
+                self.rows.copy(),
                 self.cols.copy(),
-                self.rowptr_map.copy(),
                 self.block_sizes,
             )
 
         if not (
-            hasattr(self, "_inds_bcsr2bcsr_t")
-            and hasattr(self, "_rowptr_map_t")
+            hasattr(self, "_inds_bcoo2bcoo_t")
+            and hasattr(self, "_rows_t")
             and hasattr(self, "_cols_t")
         ):
-            # These indices are sorted by block-row and -column.
-            rows, cols = self.spy()
-
             # Transpose.
-            rows_t, cols_t = cols, rows
+            rows_t, cols_t = self.cols, self.rows
 
             # Canonical ordering of the transpose.
-            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
-            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
-            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
+            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
+            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
 
             # Compute index for sorting the transpose by block.
-            inds_canonical2bcsr_t = compute_block_sort_index(
+            inds_canonical2bcoo_t = compute_block_sort_index(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
             # Mapping directly from original ordering to transpose
             # block-ordering is achieved by chaining the two mappings.
-            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
-
-            # Compute the rowptr map for the transpose.
-            rowptr_map_t = compute_ptr_map(
-                canonical_rows_t, canonical_cols_t, self.block_sizes
-            )
+            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
 
             # Cache the necessary objects.
-            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
-            self._rowptr_map_t = rowptr_map_t
-            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
+            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
+            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
+            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
 
-        self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
-        self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
+        self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
+        self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
         self.cols, self._cols_t = self._cols_t, self.cols
-        self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
+        self.rows, self._rows_t = self._rows_t, self.rows
 
-    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+    def spy(self) -> tuple[ArrayLike, ArrayLike]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -265,35 +262,30 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        rows : np.ndarray
+        rows : array_like
             Row indices of the non-zero elements.
-        cols : np.ndarray
+        cols : array_like
             Column indices of the non-zero elements.
 
         """
-        rows = xp.zeros(self.nnz, dtype=int)
-        for (row, __), rowptr in self.rowptr_map.items():
-            for i in range(int(self.block_sizes[row])):
-                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
-
-        return rows, self.cols
+        return self.rows, self.cols
 
     @classmethod
     def from_sparray(
         cls,
         arr: sparse.sparray,
-        block_sizes: np.ndarray,
+        block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
-    ) -> "DSBCSR":
+    ) -> "DSBCOO":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
         Parameters
         ----------
         arr : sparse.sparray
             The sparse array to convert.
-        block_sizes : np.ndarray
+        block_sizes : array_like
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided
@@ -306,8 +298,8 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        DSBCSR
-            The new DSBCSR matrix.
+        DSBCOO
+            The new DSBCOO matrix.
 
         """
         # We only distribute the first dimension of the stack.
@@ -330,7 +322,7 @@ class DSBCSR(DSBSparse):
 
             indices = [
                 (m + block_offsets[i], n + block_offsets[j])
-                for m, n in xp.ndindex(block_sizes[i], block_sizes[j])
+                for m, n in np.ndindex(block_sizes[i], block_sizes[j])
             ]
             coo.row = np.append(coo.row, [m for m, __ in indices])
             coo.col = np.append(coo.col, [n for __, n in indices])
@@ -340,21 +332,19 @@ class DSBCSR(DSBSparse):
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        rowptr_map = compute_ptr_map(
-            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
-        )
         block_sort_index = compute_block_sort_index(
             get_device(coo.row), get_device(coo.col), get_device(block_sizes)
         )
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
         data[..., :] = get_device(coo.data)[block_sort_index]
+        rows = get_device(coo.row)[block_sort_index]
         cols = get_device(coo.col)[block_sort_index]
 
         return cls(
             data=data,
+            rows=rows,
             cols=cols,
-            rowptr_map=rowptr_map,
             block_sizes=get_device(block_sizes),
             global_stack_shape=global_stack_shape,
         )

@@ -4,6 +4,7 @@ import numpy as np
 
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
+from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -32,16 +33,15 @@ class Inv(GFSolver):
             If `out` is None, returns None. Otherwise, returns the inverted matrix
             as a DBSparse object.
         """
-
         # Get list of batches to perform
         batches_sizes, _ = get_section_sizes(
             num_elements=a.shape[0],
             num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
         )
-        batches_slices = np.cumsum([0] + batches_sizes)
+        batches_slices = xp.cumsum(xp.array([0] + batches_sizes))
 
         # Allocate batching buffer
-        inv_a = np.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
+        inv_a = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
 
         # Prepare output
         return_out = False
@@ -56,11 +56,9 @@ class Inv(GFSolver):
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
 
-            inv_a[: batches_sizes[i]] = np.linalg.inv(
-                a.to_dense(stack_slice=stack_slice)
-            )
+            inv_a[: batches_sizes[i]] = xp.linalg.inv(a.to_dense())[stack_slice, ...]
 
-            out.data[stack_slice,] = inv_a[: batches_sizes[i], rows, cols]
+            out.data[stack_slice,] = inv_a[: batches_sizes[i], ..., rows, cols]
 
         if return_out:
             return out
@@ -72,6 +70,7 @@ class Inv(GFSolver):
         sigma_greater: DSBSparse,
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
+        max_batch_size: int = 1,
     ) -> None | tuple:
         """Solve the congruence matrix equation: A * X * A^T = B.
 
@@ -87,6 +86,8 @@ class Inv(GFSolver):
             Output matrix, by default None
         return_retarded : bool, optional
             Weither the retarded Green's functioln should be returned, by default False
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1
 
         Returns
         -------
@@ -95,38 +96,64 @@ class Inv(GFSolver):
             as a DBSparse object. If `return_retarded` is True, returns a tuple with
             the retarded Green's function as the second element.
         """
-        x_r = np.linalg.inv(a.to_dense())
+        # Get list of batches to perform
+        batches_sizes, _ = get_section_sizes(
+            num_elements=a.shape[0],
+            num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
+        )
+        batches_slices = xp.cumsum(xp.array([0] + batches_sizes))
 
-        x_l = x_r @ sigma_lesser.to_dense() @ x_r.conj().transpose((0, 2, 1))
-        x_g = x_r @ sigma_greater.to_dense() @ x_r.conj().transpose((0, 2, 1))
+        # Allocate batching buffer
+        x_r = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
+        x_l = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
+        x_g = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
 
+        # Prepare output
         if out is None:
-            rows, cols = a.spy()
+            # Allocate output datastructures
             sel_x_l = a.__class__.zeros_like(a)
             sel_x_g = a.__class__.zeros_like(a)
-            sel_x_l.data[:] = x_l[..., rows, cols]
-            sel_x_g.data[:] = x_g[..., rows, cols]
+            if return_retarded:
+                sel_x_r = a.__class__.zeros_like(a)
+        else:
+            # Get output datastructures
+            sel_x_l, sel_x_g, *sel_x_r = out
+            if return_retarded:
+                if len(sel_x_r) == 0:
+                    raise ValueError(
+                        "Missing output for the retarded Green's function."
+                    )
+                sel_x_r = sel_x_r[0]
+        rows_l, cols_l = sel_x_l.spy()
+        rows_g, cols_g = sel_x_g.spy()
+        if return_retarded:
+            rows_r, cols_r = sel_x_r.spy()
 
-            if not return_retarded:
-                return sel_x_l, sel_x_g
+        # Perform the inversion in batches
+        for i in range(len(batches_sizes)):
+            stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
 
-            sel_x_r = a.__class__.zeros_like(a)
-            sel_x_r.data[:] = x_r[..., rows, cols]
+            x_r[: batches_sizes[i]] = xp.linalg.inv(a.to_dense())[stack_slice, ...]
+            x_l[: batches_sizes[i]] = (
+                x_r[: batches_sizes[i]]
+                @ sigma_lesser.to_dense()[: batches_sizes[i]]
+                @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
+            )
+            x_g[: batches_sizes[i]] = (
+                x_r[: batches_sizes[i]]
+                @ sigma_greater.to_dense()[: batches_sizes[i]]
+                @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
+            )
 
-            return sel_x_l, sel_x_g, sel_x_r
-
-        x_l_out, x_g_out, *x_r_out = out
-
-        rows_l, cols_l = x_l_out.spy()
-        rows_g, cols_g = x_g_out.spy()
-
-        x_l_out.data[:] = x_l[..., rows_l, cols_l]
-        x_g_out.data[:] = x_g[..., rows_g, cols_g]
+            # Store the dense batches in the DSBSparse datastructures
+            sel_x_l.data[stack_slice,] = x_l[: batches_sizes[i], ..., rows_l, cols_l]
+            sel_x_g.data[stack_slice,] = x_g[: batches_sizes[i], ..., rows_g, cols_g]
+            if return_retarded:
+                sel_x_r.data[stack_slice,] = x_r[
+                    : batches_sizes[i], ..., rows_r, cols_r
+                ]
 
         if return_retarded:
-            if len(x_r_out) == 0:
-                raise ValueError("Missing output for the retarded Green's function.")
-            x_r_out = x_r_out[0]
-
-            rows_r, cols_r = x_r_out.spy()
-            x_r_out.data[:] = x_r[..., rows_r, cols_r]
+            return sel_x_l, sel_x_g, sel_x_r
+        else:
+            return sel_x_l, sel_x_g

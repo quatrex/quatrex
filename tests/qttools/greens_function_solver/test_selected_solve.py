@@ -1,71 +1,46 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import numpy as np
-import pytest
+from numpy.typing import ArrayLike
 from scipy import sparse
 
-from qttools.datastructures import DSBCSR, DSBSparse
-from qttools.greens_function_solver.inv import Inv
-from qttools.greens_function_solver.solver import GFSolver
+from qttools.datastructures import DSBSparse
+from qttools.greens_function_solver import GFSolver
+from qttools.utils.gpu_utils import get_host, xp
 
 
-@pytest.mark.parametrize("gf_solver", [Inv])
-@pytest.mark.parametrize(
-    "blocksize, n_blocks",
-    [(10, 10)],
-)
-@pytest.mark.parametrize("dsbsparse_type", [DSBCSR])
-@pytest.mark.parametrize(
-    "global_stack_shape",
-    [
-        pytest.param((10,), id="stack"),
-    ],
-)
-@pytest.mark.parametrize("out", [True, False])
-@pytest.mark.parametrize("return_retarded", [True])
-@pytest.mark.parametrize(
-    "max_batch_size",
-    [
-        pytest.param(1, id="no_batch"),
-        pytest.param(2, id="uniform_batch"),
-        pytest.param(3, id="non_uniform_batch"),
-        pytest.param(10, id="everything_batch"),
-    ],
-)
 def test_selected_solve(
-    BT_array: np.ndarray,
-    BT_block_sizes: np.ndarray,
-    cut_dense_to_BT: callable,
-    gf_solver: GFSolver,
+    bt_dense: ArrayLike,
+    gfsolver_type: GFSolver,
     dsbsparse_type: DSBSparse,
-    blocksize: int,
-    n_blocks: int,
-    global_stack_shape: tuple[int],
     out: bool,
     return_retarded: bool,
     max_batch_size: int,
+    block_sizes: ArrayLike,
+    global_stack_shape: int | tuple,
 ):
-    coo_A = sparse.coo_matrix(BT_array)
-    coo_Bl = sparse.coo_matrix(BT_array)
-    coo_Bg = sparse.coo_matrix(BT_array)
+    bt_mask = bt_dense.astype(bool)
+
+    coo_A = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bl = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bg = sparse.coo_matrix(get_host(bt_dense))
 
     # Reference solution of:
     # (1) A * Xr = I
+    ref_Xr = xp.linalg.inv(bt_dense)
+
     # (2) A * Xl * A^T = Bl
+    ref_Xl = (ref_Xr @ xp.asarray(coo_Bl.toarray()) @ ref_Xr.conj().T) * bt_mask
+
     # (3) A * Xg * A^T = Bg
-    ref_Xr = np.linalg.inv(coo_A.toarray())
-    ref_Xl = cut_dense_to_BT(
-        ref_Xr @ coo_Bl.toarray() @ ref_Xr.conj().T, blocksize, n_blocks
-    )
-    ref_Xg = cut_dense_to_BT(
-        ref_Xr @ coo_Bg.toarray() @ ref_Xr.conj().T, blocksize, n_blocks
-    )
+    ref_Xg = (ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T) * bt_mask
 
-    A = dsbsparse_type.from_sparray(coo_A, BT_block_sizes, global_stack_shape)
-    Bl = dsbsparse_type.from_sparray(coo_Bl, BT_block_sizes, global_stack_shape)
-    Bg = dsbsparse_type.from_sparray(coo_Bg, BT_block_sizes, global_stack_shape)
+    ref_Xr = ref_Xr * bt_mask
 
-    solver = gf_solver()
+    A = dsbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
+    Bl = dsbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
+    Bg = dsbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
+
+    solver = gfsolver_type()
 
     if out:
         Xr = dsbsparse_type.zeros_like(A)
@@ -76,30 +51,40 @@ def test_selected_solve(
             A,
             Bl,
             Bg,
-            out=[Xr, Xl, Xg],
+            out=[Xl, Xg, Xr],
             return_retarded=return_retarded,
             max_batch_size=max_batch_size,
         )
     else:
-        Xr, Xl, Xg = solver.selected_solve(
-            A,
-            Bl,
-            Bg,
-            return_retarded=return_retarded,
-            max_batch_size=max_batch_size,
+        if return_retarded:
+            Xl, Xg, Xr = solver.selected_solve(
+                A,
+                Bl,
+                Bg,
+                return_retarded=return_retarded,
+                max_batch_size=max_batch_size,
+            )
+        else:
+            Xl, Xg = solver.selected_solve(
+                A,
+                Bl,
+                Bg,
+                return_retarded=return_retarded,
+                max_batch_size=max_batch_size,
+            )
+
+    if return_retarded:
+        assert xp.allclose(
+            xp.broadcast_to(ref_Xr, (*global_stack_shape, *ref_Xr.shape)),
+            Xr.to_dense(),
         )
 
-    assert np.allclose(
-        np.repeat(ref_Xr[np.newaxis, :, :], global_stack_shape[0], axis=0),
-        Xr.to_dense(),
-    )
-
-    assert np.allclose(
-        np.repeat(ref_Xl[np.newaxis, :, :], global_stack_shape[0], axis=0),
+    assert xp.allclose(
+        xp.broadcast_to(ref_Xl, (*global_stack_shape, *ref_Xl.shape)),
         Xl.to_dense(),
     )
 
-    assert np.allclose(
-        np.repeat(ref_Xg[np.newaxis, :, :], global_stack_shape[0], axis=0),
+    assert xp.allclose(
+        xp.broadcast_to(ref_Xg, (*global_stack_shape, *ref_Xg.shape)),
         Xg.to_dense(),
     )

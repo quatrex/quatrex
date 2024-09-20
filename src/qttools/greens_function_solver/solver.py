@@ -35,6 +35,7 @@ class GFSolver(ABC):
         sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
+        max_batch_size: int = 1,
     ) -> None | tuple:
         """Perform a selected-solve of the congruence matrix equation: A * X * A^T = B.
 

@@ -431,7 +431,7 @@ class TestDistribution:
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
-        assert np.array_equiv(coo.toarray(), dsbsparse.to_dense())
+        assert np.array_equiv(coo.toarray(), get_host(dsbsparse.to_dense()))
 
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         section_size = stack_section_sizes[comm.rank]

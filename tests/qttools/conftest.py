@@ -2,7 +2,6 @@
 
 import pytest
 
-
 GLOBAL_STACK_SHAPES = [
     pytest.param((10,), id="1D-stack"),
     pytest.param((7, 2), id="2D-stack"),

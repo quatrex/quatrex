@@ -18,6 +18,8 @@ class GFSolver(ABC):
             Matrix to invert.
         out : _type_, optional
             Output matrix, by default None.
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1.
 
         Returns
         -------
@@ -51,12 +53,14 @@ class GFSolver(ABC):
             Output matrix, by default None
         return_retarded : bool, optional
             Weither the retarded Green's functioln should be returned, by default False
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1
 
         Returns
         -------
         None | tuple
             If `out` is None, returns None. Otherwise, returns the inverted matrix
             as a DBSparse object. If `return_retarded` is True, returns a tuple with
-            the retarded Green's function as the second element.
+            the retarded Green's function as the last element.
         """
         ...

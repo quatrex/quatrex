@@ -1,11 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import numpy as np
-
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
 from qttools.utils.gpu_utils import xp
-from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.solvers_utils import get_batches
 
 
 class Inv(GFSolver):
@@ -34,11 +32,7 @@ class Inv(GFSolver):
             as a DBSparse object.
         """
         # Get list of batches to perform
-        batches_sizes, _ = get_section_sizes(
-            num_elements=a.shape[0],
-            num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
-        )
-        batches_slices = xp.cumsum(xp.array([0] + batches_sizes))
+        batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
 
         # Allocate batching buffer
         inv_a = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
@@ -94,14 +88,10 @@ class Inv(GFSolver):
         None | tuple
             If `out` is None, returns None. Otherwise, returns the inverted matrix
             as a DBSparse object. If `return_retarded` is True, returns a tuple with
-            the retarded Green's function as the second element.
+            the retarded Green's function as the last element.
         """
         # Get list of batches to perform
-        batches_sizes, _ = get_section_sizes(
-            num_elements=a.shape[0],
-            num_sections=a.shape[0] // min(max_batch_size, a.shape[0]),
-        )
-        batches_slices = xp.cumsum(xp.array([0] + batches_sizes))
+        batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
 
         # Allocate batching buffer
         x_r = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)

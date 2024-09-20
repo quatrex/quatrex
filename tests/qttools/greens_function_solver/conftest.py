@@ -4,7 +4,7 @@ import pytest
 import scipy.sparse as sparse
 from numpy.typing import ArrayLike
 
-from qttools.datastructures import DSBCOO, DSBCSR
+from qttools.datastructures import DSBCOO
 from qttools.greens_function_solver import Inv
 from qttools.utils.gpu_utils import xp
 
@@ -17,11 +17,6 @@ BLOCK_SIZES = [
     pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
-GLOBAL_STACK_SHAPES = [
-    pytest.param((10,), id="1D-stack"),
-    pytest.param((7, 2), id="2D-stack"),
-    pytest.param((9, 2, 4), id="3D-stack"),
-]
 
 BATCHING_TYPE = [
     pytest.param("no-batching"),
@@ -40,6 +35,11 @@ RETURN_RETARDED = [
 ]
 
 
+@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+def block_sizes(request):
+    return request.param
+
+
 @pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
 def gfsolver_type(request):
     return request.param
@@ -47,16 +47,6 @@ def gfsolver_type(request):
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
 def dsbsparse_type(request):
-    return request.param
-
-
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
-def global_stack_shape(request):
-    return request.param
-
-
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def block_sizes(request):
     return request.param
 
 

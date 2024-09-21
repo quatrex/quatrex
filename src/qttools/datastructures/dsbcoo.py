@@ -52,7 +52,7 @@ class DSBCOO(DSBSparse):
         self.rows = xp.asarray(rows).astype(int)
         self.cols = xp.asarray(cols).astype(int)
 
-    def _get_block(self, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -61,6 +61,8 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index of the stack.
         row : int
             Row index of the block.
         col : int
@@ -73,19 +75,18 @@ class DSBCOO(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        block = xp.zeros(
-            (
-                *self.stack_shape,  # Stack dimensions.
-                int(self.block_sizes[row]),
-                int(self.block_sizes[col]),
-            ),
-            dtype=self.dtype,
-        )
         mask = (
             (self.rows >= self.block_offsets[row])
             & (self.rows < self.block_offsets[row + 1])
             & (self.cols >= self.block_offsets[col])
             & (self.cols < self.block_offsets[col + 1])
+        )
+
+        data_stack = self.data[*stack_index]
+        block = xp.zeros(
+            data_stack.shape[:-1]
+            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+            dtype=self.dtype,
         )
 
         if not xp.any(mask):
@@ -96,17 +97,21 @@ class DSBCOO(DSBSparse):
             ...,
             self.rows[mask] - self.block_offsets[row],
             self.cols[mask] - self.block_offsets[col],
-        ] = self.data[..., mask]
+        ] = data_stack[..., mask]
 
         return block
 
-    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
+    def _set_block(
+        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+    ) -> None:
         """Sets a block throughout the stack in the data structure.
 
         The index is assumed to already be renormalized.
 
         Parameters
         ----------
+        stack_index : tuple
+            The index of the stack.
         row : int
             Row index of the block.
         col : int
@@ -127,7 +132,7 @@ class DSBCOO(DSBSparse):
             # No data in this block, nothing to do.
             return
 
-        self.data[..., mask] = block[
+        self.data[*stack_index][..., mask] = block[
             ...,
             self.rows[mask] - self.block_offsets[row],
             self.cols[mask] - self.block_offsets[col],

@@ -170,6 +170,11 @@ class DSBSparse(ABC):
         return _DSBlockIndexer(self)
 
     @property
+    def stack(self) -> "_DStackIndexer":
+        """Returns a stack indexer."""
+        return _DStackIndexer(self)
+
+    @property
     def data(self) -> ArrayLike:
         """Returns the local slice of the data, masking the padding.
 
@@ -199,7 +204,9 @@ class DSBSparse(ABC):
         )
 
     @abstractmethod
-    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
+    def _set_block(
+        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+    ) -> None:
         """Sets a block throughout the stack in the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -208,6 +215,8 @@ class DSBSparse(ABC):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index in the stack.
         row : int
             Row index of the block.
         col : int
@@ -220,7 +229,7 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def _get_block(self, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -229,6 +238,8 @@ class DSBSparse(ABC):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index in the stack.
         row : int
             Row index of the block.
         col : int
@@ -497,6 +508,45 @@ class DSBSparse(ABC):
         return out
 
 
+class _DStackIndexer:
+    """A utility class to locate substacks in the distributed stack.
+
+    Parameters
+    ----------
+    dsbsparse : DSBSparse
+        The underlying datastructure
+
+    """
+
+    def __init__(self, dsbsparse: DSBSparse) -> None:
+        """Initializes the stack indexer."""
+        self.dsbsparse = dsbsparse
+
+    def __getitem__(self, index: tuple) -> "_DStackView":
+        return _DStackView(self.dsbsparse, index)
+
+
+class _DStackView:
+    """A utility class to view .
+
+    Parameters
+    ----------
+    dsbsparse : DSBSparse
+        The underlying datastructure
+
+    """
+
+    def __init__(self, dsbsparse: DSBSparse, index) -> None:
+        """Initializes the stack indexer."""
+        self.dsbsparse = dsbsparse
+        self.index = index
+
+    @property
+    def blocks(self) -> "_DSBlockIndexer":
+        """Returns a block indexer."""
+        return _DSBlockIndexer(self.dsbsparse, self.index)
+
+
 class _DSBlockIndexer:
     """A utility class to locate blocks in the distributed stack.
 
@@ -509,15 +559,23 @@ class _DSBlockIndexer:
     ----------
     dsbsparse : DSBSparse
         The underlying datastructure
+    stack_index : tuple, optional
+        The stack index to slice the blocks from. Default is Ellipsis,
+        i.e. we return the whole stack of blocks.
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse) -> None:
+    def __init__(
+        self, dsbsparse: DSBSparse, stack_index: int | slice | tuple = (Ellipsis,)
+    ) -> None:
         """Initializes the block indexer."""
         self.dsbsparse = dsbsparse
         self.num_blocks = dsbsparse.num_blocks
         self.block_sizes = dsbsparse.block_sizes
         self.return_dense = dsbsparse.return_dense
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
+        self.stack_index = stack_index
 
     def _unsign_index(self, row: int, col: int) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
@@ -547,9 +605,9 @@ class _DSBlockIndexer:
     def __getitem__(self, index: tuple) -> ArrayLike:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
-        return self.dsbsparse._get_block(row, col)
+        return self.dsbsparse._get_block(self.stack_index, row, col)
 
     def __setitem__(self, index: tuple, block: ArrayLike) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
-        self.dsbsparse._set_block(row, col, block)
+        self.dsbsparse._set_block(self.stack_index, row, col, block)

@@ -55,7 +55,7 @@ class DSBCSR(DSBSparse):
         self.cols = xp.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
-    def _get_block(self, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -64,6 +64,8 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index of the block in the stack.
         row : int
             Row index of the block.
         col : int
@@ -76,33 +78,36 @@ class DSBCSR(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
+        rowptr = self.rowptr_map.get((row, col), None)
+        data_stack = self.data[*stack_index]
         block = xp.zeros(
-            (
-                *self.stack_shape,  # Stack dimensions.
-                int(self.block_sizes[row]),
-                int(self.block_sizes[col]),
-            ),
+            data_stack.shape[:-1]
+            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
-        rowptr = self.rowptr_map.get((row, col), None)
         if rowptr is None:
             # No data in this block, return zeros.
             return block
 
         for i in range(int(self.block_sizes[row])):
             cols = self.cols[rowptr[i] : rowptr[i + 1]]
-            block[..., i, cols - self.block_offsets[col]] = self.data[
+            block[..., i, cols - self.block_offsets[col]] = data_stack[
                 ..., rowptr[i] : rowptr[i + 1]
             ]
+
         return block
 
-    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
+    def _set_block(
+        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+    ) -> None:
         """Sets a block throughout the stack in the data structure.
 
         The index is assumed to already be renormalized.
 
         Parameters
         ----------
+        stack_index : tuple
+            The index of the block in the stack.
         row : int
             Row index of the block.
         col : int
@@ -119,7 +124,7 @@ class DSBCSR(DSBSparse):
 
         for i in range(int(self.block_sizes[row])):
             cols = self.cols[rowptr[i] : rowptr[i + 1]]
-            self.data[..., rowptr[i] : rowptr[i + 1]] = block[
+            self.data[*stack_index][..., rowptr[i] : rowptr[i + 1]] = block[
                 ..., i, cols - self.block_offsets[col]
             ]
 

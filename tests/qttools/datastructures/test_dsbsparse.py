@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
-from qttools.utils.gpu_utils import get_device
+from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -54,16 +54,14 @@ def _unsign_index(row: int, col: int, num_blocks) -> tuple:
     return row, col, in_bounds
 
 
-def _get_dense_index(dense: np.ndarray, block: tuple, block_sizes: np.ndarray) -> tuple:
-    """Returns the dense index for a block."""
+def _get_block_inds(block: tuple, block_sizes: np.ndarray) -> tuple:
+    """Returns the equivalent dense indices for a block."""
     block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
     num_blocks = len(block_sizes)
 
     # Normalize negative indices.
     row, col, in_bounds = _unsign_index(*block, num_blocks)
-
-    index = [slice(None)] * dense.ndim
-    index[-2:] = (
+    index = (
         slice(block_offsets[row], block_offsets[row + 1]),
         slice(block_offsets[col], block_offsets[col + 1]),
     )
@@ -140,8 +138,8 @@ class TestAccess:
         )
         dense = dsbsparse.to_dense()
 
-        index, in_bounds = _get_dense_index(dense, accessed_block, block_sizes)
-        reference_block = dense[*index]
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+        reference_block = dense[..., *inds]
 
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
             assert np.allclose(reference_block, dsbsparse.blocks[accessed_block])
@@ -165,17 +163,90 @@ class TestAccess:
         )
         dense = dsbsparse.to_dense()
 
-        index, in_bounds = _get_dense_index(dense, accessed_block, block_sizes)
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
 
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            dsbsparse.blocks[accessed_block] = get_device(np.ones_like(dense[*index]))
+            dsbsparse.blocks[accessed_block] = get_device(
+                np.ones_like(dense[..., *inds])
+            )
 
         if densify_blocks is not None and accessed_block in densify_blocks:
             # Sparsity structure should be modified.
-            assert (dsbsparse.to_dense()[*index] == 1).all()
+            assert (dsbsparse.to_dense()[..., *inds] == 1).all()
         else:
             # Sparsity structure should not be modified.
-            dense[*index][dense[*index].nonzero()] = 1
+            dense[..., *inds][dense[..., *inds].nonzero()] = 1
+            assert np.allclose(dense, dsbsparse.to_dense())
+
+    @pytest.mark.usefixtures("accessed_block", "stack_index")
+    def test_get_block_substack(
+        self,
+        coo: sparse.coo_array,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        accessed_block: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can get the correct block from a substack."""
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+        inds = (
+            stack_index
+            + (slice(None),) * (len(global_stack_shape) - len(stack_index))
+            + inds
+        )
+        reference_block = dense[inds]
+
+        with pytest.raises(IndexError) if not in_bounds else nullcontext():
+            assert np.allclose(
+                reference_block, dsbsparse.stack[stack_index].blocks[accessed_block]
+            )
+
+    @pytest.mark.usefixtures("accessed_block", "densify_blocks", "stack_index")
+    def test_set_block_substack(
+        self,
+        coo: sparse.coo_array,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+        accessed_block: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can set a block in a substack and not modify sparsity structure."""
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+            densify_blocks=densify_blocks,
+        )
+        dense = dsbsparse.to_dense()
+
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+        inds = (
+            stack_index
+            + (slice(None),) * (len(global_stack_shape) - len(stack_index))
+            + inds
+        )
+
+        with pytest.raises(IndexError) if not in_bounds else nullcontext():
+            dsbsparse.stack[stack_index].blocks[accessed_block] = get_device(
+                np.ones_like(dense[inds])
+            )
+
+        if densify_blocks is not None and accessed_block in densify_blocks:
+            # Sparsity structure should be modified.
+            assert (dsbsparse.to_dense()[inds] == 1).all()
+        else:
+            # Sparsity structure should not be modified.
+            dense[inds][dense[inds].nonzero()] = 1
             assert np.allclose(dense, dsbsparse.to_dense())
 
     def test_spy(
@@ -195,7 +266,7 @@ class TestAccess:
         ref_col, ref_row = coo.col[inds], coo.row[inds]
 
         rows, cols = dsbsparse.spy()
-        inds = np.lexsort((cols, rows))
+        inds = np.lexsort((get_host(cols), get_host(rows)))
         col, row = cols[inds], rows[inds]
 
         assert np.allclose(ref_col, col)

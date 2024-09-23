@@ -87,15 +87,14 @@ class DSBSparse(ABC):
     barrier right before calling `dtranspose`.
 
     DSBSparse implementations should provide the following methods:
-    - `_set_block(row, col, block)`: Sets a block throughout the stack.
-    - `_get_block(row, col)`: Gets a block from the stack.
+    - `_set_block(stack_index, row, col, block)`: Sets a block.
+    - `_get_block(stack_index, row, col)`: Gets a block the stack.
     - `__iadd__(other)`: In-place addition.
     - `__imul__(other)`: In-place multiplication.
     - `__imatmul__(other)`: In-place matrix multiplication.
     - `__neg__()`: In-place negation.
     - `ltranspose()`: Local transposition.
-    - `from_sparray()`: Create from a scipy.sparse array.
-      and no non-zero elements.
+    - `from_sparray()`: Create from scipy.sparse array.
 
     Note that only in-place arithmetic operations are required by this
     interface. We never want to implicitly create a new object.
@@ -170,6 +169,11 @@ class DSBSparse(ABC):
         return _DSBlockIndexer(self)
 
     @property
+    def stack(self) -> "_DStackIndexer":
+        """Returns a stack indexer."""
+        return _DStackIndexer(self)
+
+    @property
     def data(self) -> ArrayLike:
         """Returns the local slice of the data, masking the padding.
 
@@ -199,7 +203,9 @@ class DSBSparse(ABC):
         )
 
     @abstractmethod
-    def _set_block(self, row: int, col: int, block: ArrayLike) -> None:
+    def _set_block(
+        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+    ) -> None:
         """Sets a block throughout the stack in the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -208,6 +214,8 @@ class DSBSparse(ABC):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index in the stack.
         row : int
             Row index of the block.
         col : int
@@ -220,7 +228,7 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def _get_block(self, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -229,6 +237,8 @@ class DSBSparse(ABC):
 
         Parameters
         ----------
+        stack_index : tuple
+            The index in the stack.
         row : int
             Row index of the block.
         col : int
@@ -433,7 +443,7 @@ class DSBSparse(ABC):
                 ...,
                 self.block_offsets[i] : self.block_offsets[i + 1],
                 self.block_offsets[j] : self.block_offsets[j + 1],
-            ] = self._get_block(i, j)
+            ] = self._get_block((Ellipsis,), i, j)
 
         self.return_dense = original_return_dense
 
@@ -497,6 +507,48 @@ class DSBSparse(ABC):
         return out
 
 
+class _DStackIndexer:
+    """A utility class to locate substacks in the distributed stack.
+
+    Parameters
+    ----------
+    dsbsparse : DSBSparse
+        The underlying datastructure
+
+    """
+
+    def __init__(self, dsbsparse: DSBSparse) -> None:
+        """Initializes the stack indexer."""
+        self._dsbsparse = dsbsparse
+
+    def __getitem__(self, index: tuple) -> "_DStackView":
+        """Gets a substack view."""
+        return _DStackView(self._dsbsparse, index)
+
+
+class _DStackView:
+    """A utility class to create substack views.
+
+    Parameters
+    ----------
+    dsbsparse : DSBSparse
+        The underlying datastructure.
+    index : tuple
+        The index of the substack to address.
+
+    """
+
+    def __init__(self, dsbsparse: DSBSparse, index) -> None:
+        """Initializes the stack indexer."""
+        self._dsbsparse = dsbsparse
+        self._index = index
+
+    @property
+    def blocks(self) -> "_DSBlockIndexer":
+        """Returns a block indexer on the substack."""
+        return _DSBlockIndexer(self._dsbsparse, self._index)
+
+
 class _DSBlockIndexer:
     """A utility class to locate blocks in the distributed stack.
 
@@ -509,28 +561,34 @@ class _DSBlockIndexer:
     ----------
     dsbsparse : DSBSparse
         The underlying datastructure
+    stack_index : tuple, optional
+        The stack index to slice the blocks from. Default is Ellipsis,
+        i.e. we return the whole stack of blocks.
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse) -> None:
+    def __init__(
+        self, dsbsparse: DSBSparse, stack_index: int | slice | tuple = (Ellipsis,)
+    ) -> None:
         """Initializes the block indexer."""
-        self.dsbsparse = dsbsparse
-        self.num_blocks = dsbsparse.num_blocks
-        self.block_sizes = dsbsparse.block_sizes
-        self.return_dense = dsbsparse.return_dense
+        self._dsbsparse = dsbsparse
+        self._num_blocks = dsbsparse.num_blocks
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
+        self._stack_index = stack_index
 
     def _unsign_index(self, row: int, col: int) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
-        row = self.dsbsparse.num_blocks + row if row < 0 else row
-        col = self.dsbsparse.num_blocks + col if col < 0 else col
-        if not (0 <= row < self.num_blocks and 0 <= col < self.num_blocks):
+        row = self._dsbsparse.num_blocks + row if row < 0 else row
+        col = self._dsbsparse.num_blocks + col if col < 0 else col
+        if not (0 <= row < self._num_blocks and 0 <= col < self._num_blocks):
             raise IndexError("Block index out of bounds.")
 
         return row, col
 
     def _normalize_index(self, index: tuple) -> tuple:
         """Normalizes the block index."""
-        if self.dsbsparse.distribution_state != "stack":
+        if self._dsbsparse.distribution_state != "stack":
             raise ValueError(
                 "Block indexing is only supported in 'stack' distribution state."
             )
@@ -547,9 +605,9 @@ class _DSBlockIndexer:
     def __getitem__(self, index: tuple) -> ArrayLike:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
-        return self.dsbsparse._get_block(row, col)
+        return self._dsbsparse._get_block(self._stack_index, row, col)
 
     def __setitem__(self, index: tuple, block: ArrayLike) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
-        self.dsbsparse._set_block(row, col, block)
+        self._dsbsparse._set_block(self._stack_index, row, col, block)

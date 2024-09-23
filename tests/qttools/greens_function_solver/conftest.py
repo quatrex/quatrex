@@ -5,7 +5,7 @@ import scipy.sparse as sparse
 from numpy.typing import ArrayLike
 
 from qttools.datastructures import DSBCOO
-from qttools.greens_function_solver import Inv, RGF
+from qttools.greens_function_solver import RGF, Inv
 from qttools.utils.gpu_utils import xp
 
 GFSOLVERS_TYPE = [Inv, RGF]

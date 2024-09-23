@@ -3,8 +3,8 @@
 
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
-from qttools.utils.solvers_utils import get_batches
 from qttools.utils.gpu_utils import xp
+from qttools.utils.solvers_utils import get_batches
 
 
 class RGF(GFSolver):
@@ -134,12 +134,12 @@ class RGF(GFSolver):
             xl_.blocks[0, 0] = (
                 xr_.blocks[0, 0]
                 @ sigma_lesser_.blocks[0, 0]
-                @ xr_.blocks[0, 0].conj().T
+                @ xr_.blocks[0, 0].conj().swapaxes(-2, -1)
             )
             xg_.blocks[0, 0] = (
                 xr_.blocks[0, 0]
                 @ sigma_greater_.blocks[0, 0]
-                @ xr_.blocks[0, 0].conj().T
+                @ xr_.blocks[0, 0].conj().swapaxes(-2, -1)
             )
 
             # Forwards sweep.
@@ -155,30 +155,34 @@ class RGF(GFSolver):
                     xr_.blocks[j, j]
                     @ (
                         sigma_lesser_.blocks[j, j]
-                        + a_.blocks[j, i] @ xl_.blocks[i, i] @ a_.blocks[j, i].conj().T
+                        + a_.blocks[j, i]
+                        @ xl_.blocks[i, i]
+                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
                         - sigma_lesser_.blocks[j, i]
-                        @ xr_.blocks[i, i].conj().T
-                        @ a_.blocks[j, i].conj().T
+                        @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
                         - a_.blocks[j, i]
                         @ xr_.blocks[i, i]
                         @ sigma_lesser_.blocks[i, j]
                     )
-                    @ xr_.blocks[j, j].conj().T
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                 )
 
                 xg_.blocks[j, j] = (
                     xr_.blocks[j, j]
                     @ (
                         sigma_greater_.blocks[j, j]
-                        + a_.blocks[j, i] @ xg_.blocks[i, i] @ a_.blocks[j, i].conj().T
+                        + a_.blocks[j, i]
+                        @ xg_.blocks[i, i]
+                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
                         - sigma_greater_.blocks[j, i]
-                        @ xr_.blocks[i, i].conj().T
-                        @ a_.blocks[j, i].conj().T
+                        @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
                         - a_.blocks[j, i]
                         @ xr_.blocks[i, i]
                         @ sigma_greater_.blocks[i, j]
                     )
-                    @ xr_.blocks[j, j].conj().T
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                 )
 
             # Backwards sweep.
@@ -189,26 +193,26 @@ class RGF(GFSolver):
                     xr_.blocks[i, i]
                     @ (
                         sigma_lesser_.blocks[i, j]
-                        @ xr_.blocks[j, j].conj().T
-                        @ a_.blocks[i, j].conj().T
+                        @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
+                        @ a_.blocks[i, j].conj().swapaxes(-2, -1)
                         + a_.blocks[i, j]
                         @ xr_.blocks[j, j]
                         @ sigma_lesser_.blocks[j, i]
                     )
-                    @ xr_.blocks[i, i].conj().T
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                 )
 
                 temp_1_g = (
                     xr_.blocks[i, i]
                     @ (
                         sigma_greater_.blocks[i, j]
-                        @ xr_.blocks[j, j].conj().T
-                        @ a_.blocks[i, j].conj().T
+                        @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
+                        @ a_.blocks[i, j].conj().swapaxes(-2, -1)
                         + a_.blocks[i, j]
                         @ xr_.blocks[j, j]
                         @ sigma_greater_.blocks[j, i]
                     )
-                    @ xr_.blocks[i, i].conj().T
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                 )
 
                 temp_2_l = (
@@ -230,41 +234,41 @@ class RGF(GFSolver):
                 xl_.blocks[i, j] = (
                     -xr_.blocks[i, i] @ a_.blocks[i, j] @ xl_.blocks[j, j]
                     - xl_.blocks[i, i]
-                    @ a_.blocks[j, i].conj().T
-                    @ xr_.blocks[j, j].conj().T
+                    @ a_.blocks[j, i].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                     + xr_.blocks[i, i]
                     @ sigma_lesser_.blocks[i, j]
-                    @ xr_.blocks[j, j].conj().T
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                 )
 
                 xl_.blocks[j, i] = (
                     -xl_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().T
-                    @ xr_.blocks[i, i].conj().T
+                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                     - xr_.blocks[j, j] @ a_.blocks[j, i] @ xl_.blocks[i, i]
                     + xr_.blocks[j, j]
                     @ sigma_lesser_.blocks[j, i]
-                    @ xr_.blocks[i, i].conj().T
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                 )
 
                 xg_.blocks[i, j] = (
                     -xr_.blocks[i, i] @ a_.blocks[i, j] @ xg_.blocks[j, j]
                     - xg_.blocks[i, i]
-                    @ a_.blocks[j, i].conj().T
-                    @ xr_.blocks[j, j].conj().T
+                    @ a_.blocks[j, i].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                     + xr_.blocks[i, i]
                     @ sigma_greater_.blocks[i, j]
-                    @ xr_.blocks[j, j].conj().T
+                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
                 )
 
                 xg_.blocks[j, i] = (
                     -xg_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().T
-                    @ xr_.blocks[i, i].conj().T
+                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                     - xr_.blocks[j, j] @ a_.blocks[j, i] @ xg_.blocks[i, i]
                     + xr_.blocks[j, j]
                     @ sigma_greater_.blocks[j, i]
-                    @ xr_.blocks[i, i].conj().T
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                 )
 
                 xl_.blocks[i, i] = (
@@ -272,20 +276,20 @@ class RGF(GFSolver):
                     + xr_.blocks[i, i]
                     @ a_.blocks[i, j]
                     @ xl_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().T
-                    @ xr_.blocks[i, i].conj().T
+                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                     - temp_1_l
-                    + (temp_2_l - temp_2_l.conj().T)
+                    + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
                 )
                 xg_.blocks[i, i] = (
                     xg_.blocks[i, i]
                     + xr_.blocks[i, i]
                     @ a_.blocks[i, j]
                     @ xg_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().T
-                    @ xr_.blocks[i, i].conj().T
+                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
+                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
                     - temp_1_g
-                    + (temp_2_g - temp_2_g.conj().T)
+                    + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
                 )
                 xr_.blocks[i, i] = (
                     xr_.blocks[i, i]

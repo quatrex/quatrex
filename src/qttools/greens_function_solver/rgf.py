@@ -81,6 +81,14 @@ class RGF(GFSolver):
     ) -> None | tuple:
         """Perform a selected-solve of the congruence matrix equation: A * X * A^T = B.
 
+        Note
+        ----
+        If the diagonal blocks of the input matrix ```a: DSBSparse``` are not dense,
+        the selected-solve will not be performed correctly. This happen because during
+        the forward sweep, only the elements of the inverse that match the sparsity
+        pattern of the input diagonal blocks will be stored. Leading to incomplete
+        matrix-multiplications down the line.
+
         Parameters
         ----------
         a : DBSparse

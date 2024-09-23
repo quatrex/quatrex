@@ -67,7 +67,8 @@ class RGF(GFSolver):
 
                 x_.blocks[i, i] = x_ii - x_ii @ a_ij @ x_ji
 
-        return x
+        if out is None:
+            return x
 
     def selected_solve(
         self,
@@ -300,7 +301,7 @@ class RGF(GFSolver):
                     @ xr_.blocks[i, i]
                 )
 
-        if return_retarded:
-            return xl, xg, xr
-        else:
+        if out is None:
+            if return_retarded:
+                return xl, xg, xr
             return xl, xg

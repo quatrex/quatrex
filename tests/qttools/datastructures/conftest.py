@@ -35,6 +35,12 @@ ACCESSED_BLOCKS = [
     pytest.param((-9, 3), id="out-of-bounds"),
 ]
 
+STACK_INDICES = [
+    pytest.param((5,), id="single"),
+    pytest.param((slice(1, 4),), id="slice"),
+    pytest.param((Ellipsis,), id="ellipsis"),
+]
+
 
 @pytest.fixture(autouse=True)
 def coo() -> sparse.coo_array:
@@ -64,4 +70,9 @@ def densify_blocks(request):
 
 @pytest.fixture(params=ACCESSED_BLOCKS)
 def accessed_block(request):
+    return request.param
+
+
+@pytest.fixture(params=STACK_INDICES)
+def stack_index(request):
     return request.param

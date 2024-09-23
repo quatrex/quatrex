@@ -37,57 +37,35 @@ class RGF(GFSolver):
         else:
             x = a.__class__.zeros_like(a)
 
-        x.blocks[0, 0] = xp.linalg.inv(a.blocks[0, 0])
+        for i in range(len(batches_sizes)):
+            stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
 
-        # Forwards sweep.
-        for i in range(a.num_blocks - 1):
-            j = i + 1
-            x.blocks[j, j] = xp.linalg.inv(
-                a.blocks[j, j] - a.blocks[j, i] @ x.blocks[i, i] @ a.blocks[i, j]
-            )
+            a_ = a.stack[stack_slice]
+            x_ = x.stack[stack_slice]
 
-        # Backwards sweep.
-        for i in range(a.num_blocks - 2, -1, -1):
-            j = i + 1
+            x_.blocks[0, 0] = xp.linalg.inv(a_.blocks[0, 0])
 
-            x_ii = x.blocks[i, i]
-            x_jj = x.blocks[j, j]
-            a_ij = a.blocks[i, j]
+            # Forwards sweep.
+            for i in range(a.num_blocks - 1):
+                j = i + 1
+                x_.blocks[j, j] = xp.linalg.inv(
+                    a_.blocks[j, j]
+                    - a_.blocks[j, i] @ x_.blocks[i, i] @ a_.blocks[i, j]
+                )
 
-            x_ji = -x_jj @ a.blocks[j, i] @ x_ii
-            x.blocks[j, i] = x_ji
-            x.blocks[i, j] = -x_ii @ a_ij @ x_jj
+            # Backwards sweep.
+            for i in range(a.num_blocks - 2, -1, -1):
+                j = i + 1
 
-            x.blocks[i, i] = x_ii - x_ii @ a_ij @ x_ji
+                x_ii = x_.blocks[i, i]
+                x_jj = x_.blocks[j, j]
+                a_ij = a_.blocks[i, j]
 
-        # for i in range(len(batches_sizes)):
-        #     stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+                x_ji = -x_jj @ a_.blocks[j, i] @ x_ii
+                x_.blocks[j, i] = x_ji
+                x_.blocks[i, j] = -x_ii @ a_ij @ x_jj
 
-        #     x.blocks[0, 0][stack_slice] = xp.linalg.inv(a.blocks[0, 0][stack_slice])
-
-        #     # Forwards sweep.
-        #     for i in range(a.num_blocks - 1):
-        #         j = i + 1
-        #         x.blocks[j, j][stack_slice] = xp.linalg.inv(
-        #             a.blocks[j, j][stack_slice]
-        #             - a.blocks[j, i][stack_slice]
-        #             @ x.blocks[i, i][stack_slice]
-        #             @ a.blocks[i, j][stack_slice]
-        #         )
-
-        #     # Backwards sweep.
-        #     for i in range(a.num_blocks - 2, -1, -1):
-        #         j = i + 1
-
-        #         x_ii = x.blocks[i, i][stack_slice]
-        #         x_jj = x.blocks[j, j][stack_slice]
-        #         a_ij = a.blocks[i, j][stack_slice]
-
-        #         x_ji = -x_jj @ a.blocks[j, i][stack_slice] @ x_ii
-        #         x.blocks[j, i][stack_slice] = x_ji
-        #         x.blocks[i, j][stack_slice] = -x_ii @ a_ij @ x_jj
-
-        #         x.blocks[i, i][stack_slice] = x_ii - x_ii @ a_ij @ x_ji
+                x_.blocks[i, i] = x_ii - x_ii @ a_ij @ x_ji
 
         return x
 
@@ -128,71 +106,79 @@ class RGF(GFSolver):
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
 
-        # If out is not none, x_r will be the last element of the tuple.
+        # If out is not none, xr will be the last element of the tuple.
         if out is not None:
-            x_l, x_g, *x_r = out
+            xl, xg, *xr = out
+            if len(xr) == 0:
+                xr = a.__class__.zeros_like(a)
+            else:
+                xr = xr[0]
         else:
-            x_r = a.__class__.zeros_like(a)
-            x_l = a.__class__.zeros_like(a)
-            x_g = a.__class__.zeros_like(a)
+            xr = a.__class__.zeros_like(a)
+            xl = a.__class__.zeros_like(a)
+            xg = a.__class__.zeros_like(a)
 
+        # Perform the selected solve by batches.
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
 
-            x_r.blocks[0, 0][stack_slice] = xp.linalg.inv(a.blocks[0, 0][stack_slice])
-            x_l.blocks[0, 0][stack_slice] = (
-                x_r.blocks[0, 0][stack_slice]
-                @ sigma_lesser.blocks[0, 0][stack_slice]
-                @ x_r.blocks[0, 0][stack_slice].conj().T
+            a_ = a.stack[stack_slice]
+            sigma_lesser_ = sigma_lesser.stack[stack_slice]
+            sigma_greater_ = sigma_greater.stack[stack_slice]
+
+            xr_ = xr.stack[stack_slice]
+            xl_ = xl.stack[stack_slice]
+            xg_ = xg.stack[stack_slice]
+
+            xr_.blocks[0, 0] = xp.linalg.inv(a_.blocks[0, 0])
+            xl_.blocks[0, 0] = (
+                xr_.blocks[0, 0]
+                @ sigma_lesser_.blocks[0, 0]
+                @ xr_.blocks[0, 0].conj().T
             )
-            x_g.blocks[0, 0][stack_slice] = (
-                x_r.blocks[0, 0][stack_slice]
-                @ sigma_greater.blocks[0, 0][stack_slice]
-                @ x_r.blocks[0, 0][stack_slice].conj().T
+            xg_.blocks[0, 0] = (
+                xr_.blocks[0, 0]
+                @ sigma_greater_.blocks[0, 0]
+                @ xr_.blocks[0, 0].conj().T
             )
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
 
-                x_r.blocks[j, j][stack_slice] = xp.linalg.inv(
-                    a.blocks[j, j][stack_slice]
-                    - a.blocks[j, i][stack_slice]
-                    @ x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
+                xr_.blocks[j, j] = xp.linalg.inv(
+                    a_.blocks[j, j]
+                    - a_.blocks[j, i] @ xr_.blocks[i, i] @ a_.blocks[i, j]
                 )
 
-                x_l.blocks[j, j][stack_slice] = (
-                    x_r.blocks[j, j][stack_slice]
+                xl_.blocks[j, j] = (
+                    xr_.blocks[j, j]
                     @ (
-                        sigma_lesser.blocks[j, j][stack_slice]
-                        + a.blocks[j, i][stack_slice]
-                        @ x_l.blocks[i, i][stack_slice]
-                        @ a.blocks[j, i][stack_slice].conj().T
-                        - sigma_lesser.blocks[j, i][stack_slice]
-                        @ x_r.blocks[i, i][stack_slice].conj().T
-                        @ a.blocks[j, i][stack_slice].conj().T
-                        - a.blocks[j, i][stack_slice]
-                        @ x_r.blocks[i, i][stack_slice]
-                        @ sigma_lesser.blocks[i, j][stack_slice]
+                        sigma_lesser_.blocks[j, j]
+                        + a_.blocks[j, i] @ xl_.blocks[i, i] @ a_.blocks[j, i].conj().T
+                        - sigma_lesser_.blocks[j, i]
+                        @ xr_.blocks[i, i].conj().T
+                        @ a_.blocks[j, i].conj().T
+                        - a_.blocks[j, i]
+                        @ xr_.blocks[i, i]
+                        @ sigma_lesser_.blocks[i, j]
                     )
-                    @ x_r.blocks[j, j][stack_slice].conj().T
+                    @ xr_.blocks[j, j].conj().T
                 )
-                x_g.blocks[j, j][stack_slice] = (
-                    x_r.blocks[j, j][stack_slice]
+
+                xg_.blocks[j, j] = (
+                    xr_.blocks[j, j]
                     @ (
-                        sigma_greater.blocks[j, j][stack_slice]
-                        + a.blocks[j, i][stack_slice]
-                        @ x_g.blocks[i, i][stack_slice]
-                        @ a.blocks[j, i][stack_slice].conj().T
-                        - sigma_greater.blocks[j, i][stack_slice]
-                        @ x_r.blocks[i, i][stack_slice].conj().T
-                        @ a.blocks[j, i][stack_slice].conj().T
-                        - a.blocks[j, i][stack_slice]
-                        @ x_r.blocks[i, i][stack_slice]
-                        @ sigma_greater.blocks[i, j][stack_slice]
+                        sigma_greater_.blocks[j, j]
+                        + a_.blocks[j, i] @ xg_.blocks[i, i] @ a_.blocks[j, i].conj().T
+                        - sigma_greater_.blocks[j, i]
+                        @ xr_.blocks[i, i].conj().T
+                        @ a_.blocks[j, i].conj().T
+                        - a_.blocks[j, i]
+                        @ xr_.blocks[i, i]
+                        @ sigma_greater_.blocks[i, j]
                     )
-                    @ x_r.blocks[j, j][stack_slice].conj().T
+                    @ xr_.blocks[j, j].conj().T
                 )
 
             # Backwards sweep.
@@ -200,119 +186,117 @@ class RGF(GFSolver):
                 j = i + 1
 
                 temp_1_l = (
-                    x_r.blocks[i, i][stack_slice]
+                    xr_.blocks[i, i]
                     @ (
-                        sigma_lesser.blocks[i, j][stack_slice]
-                        @ x_r.blocks[j, j][stack_slice].conj().T
-                        @ a.blocks[i, j][stack_slice].conj().T
-                        + a.blocks[i, j][stack_slice]
-                        @ x_r.blocks[j, j][stack_slice]
-                        @ sigma_lesser.blocks[j, i][stack_slice]
+                        sigma_lesser_.blocks[i, j]
+                        @ xr_.blocks[j, j].conj().T
+                        @ a_.blocks[i, j].conj().T
+                        + a_.blocks[i, j]
+                        @ xr_.blocks[j, j]
+                        @ sigma_lesser_.blocks[j, i]
                     )
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                    @ xr_.blocks[i, i].conj().T
                 )
+
                 temp_1_g = (
-                    x_r.blocks[i, i][stack_slice]
+                    xr_.blocks[i, i]
                     @ (
-                        sigma_greater.blocks[i, j][stack_slice]
-                        @ x_r.blocks[j, j][stack_slice].conj().T
-                        @ a.blocks[i, j][stack_slice].conj().T
-                        + a.blocks[i, j][stack_slice]
-                        @ x_r.blocks[j, j][stack_slice]
-                        @ sigma_greater.blocks[j, i][stack_slice]
+                        sigma_greater_.blocks[i, j]
+                        @ xr_.blocks[j, j].conj().T
+                        @ a_.blocks[i, j].conj().T
+                        + a_.blocks[i, j]
+                        @ xr_.blocks[j, j]
+                        @ sigma_greater_.blocks[j, i]
                     )
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                    @ xr_.blocks[i, i].conj().T
                 )
+
                 temp_2_l = (
-                    x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_r.blocks[j, j][stack_slice]
-                    @ a.blocks[j, i][stack_slice]
-                    @ x_l.blocks[i, i][stack_slice]
+                    xr_.blocks[i, i]
+                    @ a_.blocks[i, j]
+                    @ xr_.blocks[j, j]
+                    @ a_.blocks[j, i]
+                    @ xl_.blocks[i, i]
                 )
+
                 temp_2_g = (
-                    x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_r.blocks[j, j][stack_slice]
-                    @ a.blocks[j, i][stack_slice]
-                    @ x_g.blocks[i, i][stack_slice]
+                    xr_.blocks[i, i]
+                    @ a_.blocks[i, j]
+                    @ xr_.blocks[j, j]
+                    @ a_.blocks[j, i]
+                    @ xg_.blocks[i, i]
                 )
 
-                x_l.blocks[i, j][stack_slice] = (
-                    -x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_l.blocks[j, j][stack_slice]
-                    - x_l.blocks[i, i][stack_slice]
-                    @ a.blocks[j, i][stack_slice].conj().T
-                    @ x_r.blocks[j, j][stack_slice].conj().T
-                    + x_r.blocks[i, i][stack_slice]
-                    @ sigma_lesser.blocks[i, j][stack_slice]
-                    @ x_r.blocks[j, j][stack_slice].conj().T
+                xl_.blocks[i, j] = (
+                    -xr_.blocks[i, i] @ a_.blocks[i, j] @ xl_.blocks[j, j]
+                    - xl_.blocks[i, i]
+                    @ a_.blocks[j, i].conj().T
+                    @ xr_.blocks[j, j].conj().T
+                    + xr_.blocks[i, i]
+                    @ sigma_lesser_.blocks[i, j]
+                    @ xr_.blocks[j, j].conj().T
                 )
 
-                x_l.blocks[j, i][stack_slice] = (
-                    -x_l.blocks[j, j][stack_slice]
-                    @ a.blocks[i, j][stack_slice].conj().T
-                    @ x_r.blocks[i, i][stack_slice].conj().T
-                    - x_r.blocks[j, j][stack_slice]
-                    @ a.blocks[j, i][stack_slice]
-                    @ x_l.blocks[i, i][stack_slice]
-                    + x_r.blocks[j, j][stack_slice]
-                    @ sigma_lesser.blocks[j, i][stack_slice]
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                xl_.blocks[j, i] = (
+                    -xl_.blocks[j, j]
+                    @ a_.blocks[i, j].conj().T
+                    @ xr_.blocks[i, i].conj().T
+                    - xr_.blocks[j, j] @ a_.blocks[j, i] @ xl_.blocks[i, i]
+                    + xr_.blocks[j, j]
+                    @ sigma_lesser_.blocks[j, i]
+                    @ xr_.blocks[i, i].conj().T
                 )
 
-                x_g.blocks[i, j][stack_slice] = (
-                    -x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_g.blocks[j, j][stack_slice]
-                    - x_g.blocks[i, i][stack_slice]
-                    @ a.blocks[j, i][stack_slice].conj().T
-                    @ x_r.blocks[j, j][stack_slice].conj().T
-                    + x_r.blocks[i, i][stack_slice]
-                    @ sigma_greater.blocks[i, j][stack_slice]
-                    @ x_r.blocks[j, j][stack_slice].conj().T
+                xg_.blocks[i, j] = (
+                    -xr_.blocks[i, i] @ a_.blocks[i, j] @ xg_.blocks[j, j]
+                    - xg_.blocks[i, i]
+                    @ a_.blocks[j, i].conj().T
+                    @ xr_.blocks[j, j].conj().T
+                    + xr_.blocks[i, i]
+                    @ sigma_greater_.blocks[i, j]
+                    @ xr_.blocks[j, j].conj().T
                 )
 
-                x_g.blocks[j, i][stack_slice] = (
-                    -x_g.blocks[j, j][stack_slice]
-                    @ a.blocks[i, j][stack_slice].conj().T
-                    @ x_r.blocks[i, i][stack_slice].conj().T
-                    - x_r.blocks[j, j][stack_slice]
-                    @ a.blocks[j, i][stack_slice]
-                    @ x_g.blocks[i, i][stack_slice]
-                    + x_r.blocks[j, j][stack_slice]
-                    @ sigma_greater.blocks[j, i][stack_slice]
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                xg_.blocks[j, i] = (
+                    -xg_.blocks[j, j]
+                    @ a_.blocks[i, j].conj().T
+                    @ xr_.blocks[i, i].conj().T
+                    - xr_.blocks[j, j] @ a_.blocks[j, i] @ xg_.blocks[i, i]
+                    + xr_.blocks[j, j]
+                    @ sigma_greater_.blocks[j, i]
+                    @ xr_.blocks[i, i].conj().T
                 )
 
-                x_l.blocks[i, i][stack_slice] = (
-                    x_l.blocks[i, i][stack_slice]
-                    + x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_l.blocks[j, j][stack_slice]
-                    @ a.blocks[i, j][stack_slice].conj().T
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                xl_.blocks[i, i] = (
+                    xl_.blocks[i, i]
+                    + xr_.blocks[i, i]
+                    @ a_.blocks[i, j]
+                    @ xl_.blocks[j, j]
+                    @ a_.blocks[i, j].conj().T
+                    @ xr_.blocks[i, i].conj().T
                     - temp_1_l
                     + (temp_2_l - temp_2_l.conj().T)
                 )
-                x_g.blocks[i, i][stack_slice] = (
-                    x_g.blocks[i, i][stack_slice]
-                    + x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_g.blocks[j, j][stack_slice]
-                    @ a.blocks[i, j][stack_slice].conj().T
-                    @ x_r.blocks[i, i][stack_slice].conj().T
+                xg_.blocks[i, i] = (
+                    xg_.blocks[i, i]
+                    + xr_.blocks[i, i]
+                    @ a_.blocks[i, j]
+                    @ xg_.blocks[j, j]
+                    @ a_.blocks[i, j].conj().T
+                    @ xr_.blocks[i, i].conj().T
                     - temp_1_g
                     + (temp_2_g - temp_2_g.conj().T)
                 )
-                x_r.blocks[i, i][stack_slice] = (
-                    x_r.blocks[i, i][stack_slice]
-                    + x_r.blocks[i, i][stack_slice]
-                    @ a.blocks[i, j][stack_slice]
-                    @ x_r.blocks[j, j][stack_slice]
-                    @ a.blocks[j, i][stack_slice]
-                    @ x_r.blocks[i, i][stack_slice]
+                xr_.blocks[i, i] = (
+                    xr_.blocks[i, i]
+                    + xr_.blocks[i, i]
+                    @ a_.blocks[i, j]
+                    @ xr_.blocks[j, j]
+                    @ a_.blocks[j, i]
+                    @ xr_.blocks[i, i]
                 )
 
-        return x_l, x_g
+        if return_retarded:
+            return xl, xg, xr
+        else:
+            return xl, xg

@@ -4,7 +4,7 @@ from numpy.typing import ArrayLike
 from scipy import sparse
 
 from qttools.datastructures import DSBSparse
-from qttools.greens_function_solver import GFSolver
+from qttools.greens_function_solver import RGF, GFSolver
 from qttools.utils.gpu_utils import get_host, xp
 
 
@@ -22,7 +22,11 @@ def test_selected_inv(
 
     coo = sparse.coo_matrix(get_host(bt_dense))
 
-    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    block_sizes = get_host(block_sizes)
+    densify_blocks = [(i, i) for i in range(len(block_sizes))]
+    dsbsparse = dsbsparse_type.from_sparray(
+        coo, block_sizes, global_stack_shape, densify_blocks
+    )
 
     solver = gfsolver_type()
 
@@ -32,7 +36,11 @@ def test_selected_inv(
     else:
         gf_inv = solver.selected_inv(dsbsparse, max_batch_size=max_batch_size)
 
+    bt_mask_broadcasted = xp.broadcast_to(
+        bt_mask, (*global_stack_shape, *bt_mask.shape)
+    )
+
     assert xp.allclose(
         xp.broadcast_to(ref_inv, (*global_stack_shape, *ref_inv.shape)),
-        gf_inv.to_dense(),
+        gf_inv.to_dense() * bt_mask_broadcasted,
     )

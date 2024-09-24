@@ -50,11 +50,10 @@ def dsbsparse_type(request):
     return request.param
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def bt_dense(request) -> ArrayLike:
-    """Returns a random block-tridiagonal matrix."""
-    block_sizes = request.param
-
+@pytest.fixture(scope="function", autouse=False)
+def bt_dense(
+    block_sizes: ArrayLike,
+):
     block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
     num_blocks = len(block_sizes)
     size = int(xp.sum(block_sizes))
@@ -114,11 +113,6 @@ def bt_dense(request) -> ArrayLike:
         arr[i, i] = (1 + 1j) + complex(xp.sum(arr[i, :]))
 
     return arr
-
-
-@pytest.fixture(params=BATCHING_TYPE, autouse=True)
-def batching_type(request) -> str:
-    return request.param
 
 
 @pytest.fixture(params=BATCHING_TYPE, autouse=True)

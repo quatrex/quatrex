@@ -37,8 +37,8 @@ class RGF(GFSolver):
         else:
             x = a.__class__.zeros_like(a)
 
-        for i in range(len(batches_sizes)):
-            stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+        for b in range(len(batches_sizes)):
+            stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
 
             a_ = a.stack[stack_slice]
             x_ = x.stack[stack_slice]

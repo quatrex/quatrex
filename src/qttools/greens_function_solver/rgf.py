@@ -94,9 +94,9 @@ class RGF(GFSolver):
         a : DBSparse
             Matrix to invert.
         sigma_lesser : DBSparse
-            Lesser matrix.
+            Lesser matrix. This matrix is expected to be skewed-hermitian.
         sigma_greater : DBSparse
-            Greater matrix.
+            Greater matrix. This matrix is expected to be skewed-hermitian.
         out : tuple | None, optional
             Output matrix, by default None
         return_retarded : bool, optional
@@ -129,7 +129,7 @@ class RGF(GFSolver):
 
         # Perform the selected solve by batches.
         for i in range(len(batches_sizes)):
-            stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+            stack_slice = slice(int(batches_slices[i]), int(batches_slices[i + 1]), 1)
 
             a_ = a.stack[stack_slice]
             sigma_lesser_ = sigma_lesser.stack[stack_slice]

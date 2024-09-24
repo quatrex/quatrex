@@ -46,9 +46,9 @@ class GFSolver(ABC):
         a : DBSparse
             Matrix to invert.
         sigma_lesser : DBSparse
-            Lesser matrix.
+            Lesser matrix. This matrix is expected to be skewed-hermitian.
         sigma_greater : DBSparse
-            Greater matrix.
+            Greater matrix. This matrix is expected to be skewed-hermitian.
         out : tuple | None, optional
             Output matrix, by default None
         return_retarded : bool, optional

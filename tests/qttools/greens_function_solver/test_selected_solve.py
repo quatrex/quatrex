@@ -18,27 +18,36 @@ def test_selected_solve(
     block_sizes: ArrayLike,
     global_stack_shape: int | tuple,
 ):
-    bt_mask = bt_dense.astype(bool)
-
     coo_A = sparse.coo_matrix(get_host(bt_dense))
+
     coo_Bl = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bl += -coo_Bl.conj().T
+
     coo_Bg = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bg += -coo_Bg.conj().T
 
     # Reference solution of:
     # (1) A * Xr = I
     ref_Xr = xp.linalg.inv(bt_dense)
 
     # (2) A * Xl * A^T = Bl
-    ref_Xl = (ref_Xr @ xp.asarray(coo_Bl.toarray()) @ ref_Xr.conj().T) * bt_mask
+    ref_Xl = ref_Xr @ xp.asarray(coo_Bl.toarray()) @ ref_Xr.conj().T
 
     # (3) A * Xg * A^T = Bg
-    ref_Xg = (ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T) * bt_mask
+    ref_Xg = ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T
 
-    ref_Xr = ref_Xr * bt_mask
+    block_sizes = get_host(block_sizes)
+    densify_blocks = [(i, i) for i in range(len(block_sizes))]
 
-    A = dsbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
-    Bl = dsbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
-    Bg = dsbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
+    A = dsbsparse_type.from_sparray(
+        coo_A, block_sizes, global_stack_shape, densify_blocks
+    )
+    Bl = dsbsparse_type.from_sparray(
+        coo_Bl, block_sizes, global_stack_shape, densify_blocks
+    )
+    Bg = dsbsparse_type.from_sparray(
+        coo_Bg, block_sizes, global_stack_shape, densify_blocks
+    )
 
     solver = gfsolver_type()
 
@@ -74,17 +83,20 @@ def test_selected_solve(
             )
 
     if return_retarded:
+        xr_mask = Xr.to_dense().astype(bool)
         assert xp.allclose(
-            xp.broadcast_to(ref_Xr, (*global_stack_shape, *ref_Xr.shape)),
-            Xr.to_dense(),
+            xp.broadcast_to(ref_Xr, (*global_stack_shape, *ref_Xr.shape)) * xr_mask,
+            Xr.to_dense() * xr_mask,
         )
 
+    xl_mask = Xl.to_dense().astype(bool)
     assert xp.allclose(
-        xp.broadcast_to(ref_Xl, (*global_stack_shape, *ref_Xl.shape)),
-        Xl.to_dense(),
+        xp.broadcast_to(ref_Xl, (*global_stack_shape, *ref_Xl.shape)) * xl_mask,
+        Xl.to_dense() * xl_mask,
     )
 
+    xg_mask = Xg.to_dense().astype(bool)
     assert xp.allclose(
-        xp.broadcast_to(ref_Xg, (*global_stack_shape, *ref_Xg.shape)),
-        Xg.to_dense(),
+        xp.broadcast_to(ref_Xg, (*global_stack_shape, *ref_Xg.shape)) * xg_mask,
+        Xg.to_dense() * xg_mask,
     )

@@ -6,20 +6,11 @@ from scipy import sparse
 
 from qttools.datastructures import DSBCOO, DSBCSR
 
-ARRAY_SHAPE = (20, 20)
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
-
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size"),
     pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
-]
-
-
-GLOBAL_STACK_SHAPES = [
-    pytest.param((10,), id="1D-stack"),
-    pytest.param((7, 2), id="2D-stack"),
-    pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
 DENSIFY_BLOCKS = [
@@ -42,24 +33,21 @@ STACK_INDICES = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def coo() -> sparse.coo_array:
-    """Returns a random complex sparse array."""
-    return sparse.random(*ARRAY_SHAPE, density=0.3, format="coo", dtype=complex)
-
-
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request):
-    return request.param
-
-
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request):
     return request.param
 
 
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
-def global_stack_shape(request):
+@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+def coo(request) -> sparse.coo_array:
+    """Returns a random complex sparse array."""
+    block_sizes = request.param
+    size = int(np.sum(block_sizes))
+    return sparse.random(size, size, density=0.3, format="coo", dtype=np.complex128)
+
+
+@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+def dsbsparse_type(request):
     return request.param
 
 

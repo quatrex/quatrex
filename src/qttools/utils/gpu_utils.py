@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+
 import inspect
 import os
 from warnings import warn

@@ -1,3 +1,5 @@
+# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+
 from qttools.utils.gpu_utils import ArrayLike, xp
 
 

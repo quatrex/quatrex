@@ -312,7 +312,7 @@ class DSBCOO(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        coo: sparse.coo_array = arr.tocoo()
+        coo: sparse.coo_array = arr.tocoo().copy()
 
         num_blocks = len(block_sizes)
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)))

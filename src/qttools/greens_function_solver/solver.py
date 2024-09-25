@@ -18,6 +18,8 @@ class GFSolver(ABC):
             Matrix to invert.
         out : _type_, optional
             Output matrix, by default None.
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1.
 
         Returns
         -------
@@ -35,6 +37,7 @@ class GFSolver(ABC):
         sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
+        max_batch_size: int = 1,
     ) -> None | tuple:
         """Perform a selected-solve of the congruence matrix equation: A * X * A^T = B.
 
@@ -43,19 +46,21 @@ class GFSolver(ABC):
         a : DBSparse
             Matrix to invert.
         sigma_lesser : DBSparse
-            Lesser matrix.
+            Lesser matrix. This matrix is expected to be skewed-hermitian.
         sigma_greater : DBSparse
-            Greater matrix.
+            Greater matrix. This matrix is expected to be skewed-hermitian.
         out : tuple | None, optional
             Output matrix, by default None
         return_retarded : bool, optional
             Weither the retarded Green's functioln should be returned, by default False
+        max_batch_size : int, optional
+            Maximum batch size to use when inverting the matrix, by default 1
 
         Returns
         -------
         None | tuple
             If `out` is None, returns None. Otherwise, returns the inverted matrix
             as a DBSparse object. If `return_retarded` is True, returns a tuple with
-            the retarded Green's function as the second element.
+            the retarded Green's function as the last element.
         """
         ...

@@ -55,6 +55,61 @@ class DSBCSR(DSBSparse):
         self.cols = xp.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
+    def _normalize_index(self, index: tuple) -> tuple:
+        """Adjusts the sign to allow negative indices and checks bounds."""
+        if not isinstance(index, tuple):
+            raise IndexError("Invalid index.")
+
+        if not len(index) == 2:
+            raise IndexError("Invalid index.")
+
+        row, col = index
+
+        row = self.shape[-2] + row if row < 0 else row
+        col = self.shape[-1] + col if col < 0 else col
+        if not (0 <= row < self.shape[-2] and 0 <= col < self.shape[-1]):
+            raise IndexError("Index out of bounds.")
+
+        return row, col
+
+    def __getitem__(self, index: tuple) -> ArrayLike:
+        """Gets a single value or from the data structure."""
+        row, col = self._normalize_index(index)
+
+        brow = np.where(self.block_offsets <= row)[0].max()
+        bcol = np.where(self.block_offsets <= col)[0].max()
+        rowptr = self.rowptr_map.get((brow, bcol), None)
+
+        if rowptr is None:
+            return np.zeros(self.data.shape[:-1], dtype=self.dtype)
+
+        cols = self.cols[rowptr[row] : rowptr[row + 1]]
+        ind = xp.where(cols == col)[0]
+
+        if len(ind) == 0:
+            return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
+
+        return self.data[..., rowptr[col] : rowptr[col + 1]][..., ind[0]]
+
+    def __setitem__(self, index: tuple, value: ArrayLike) -> None:
+        """Sets a single value or block in the data structure."""
+        row, col = self._normalize_index(index)
+
+        brow = np.where(self.block_offsets <= row)[0].max()
+        bcol = np.where(self.block_offsets <= col)[0].max()
+        rowptr = self.rowptr_map.get((brow, bcol), None)
+
+        if rowptr is None:
+            return
+
+        cols = self.cols[rowptr[row] : rowptr[row + 1]]
+        ind = xp.where(cols == col)[0]
+
+        if len(ind) == 0:
+            return
+
+        self.data[..., rowptr[col] : rowptr[col + 1]][..., ind[0]] = value
+
     def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 

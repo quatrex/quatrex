@@ -4,7 +4,7 @@ from numpy.typing import ArrayLike
 from scipy import sparse
 
 from qttools.datastructures import DSBSparse
-from qttools.greens_function_solver import RGF, GFSolver
+from qttools.greens_function_solver import GFSolver
 from qttools.utils.gpu_utils import get_host, xp
 
 

@@ -152,6 +152,13 @@ class DSBSparse(ABC):
         )
         self._data[: data.shape[0], ..., : data.shape[-1]] = data
 
+        # For the weird padding convention we use, we need to keep track
+        # of this padding mask.
+        self._stack_padding_mask = np.zeros(total_stack_size, dtype=bool)
+        for i, size in enumerate(stack_section_sizes):
+            offset = i * max(stack_section_sizes)
+            self._stack_padding_mask[offset : offset + size] = True
+
         self.dtype = data.dtype
 
         self.stack_shape = data.shape[:-1]
@@ -162,6 +169,16 @@ class DSBSparse(ABC):
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
+
+    @abstractmethod
+    def __getitem__(self, index: tuple) -> ArrayLike:
+        """Gets the requested block from the data structure."""
+        ...
+
+    @abstractmethod
+    def __setitem__(self, index: tuple, value: ArrayLike) -> None:
+        """Sets the requested block in the data structure."""
+        ...
 
     @property
     def blocks(self) -> "_DSBlockIndexer":
@@ -189,7 +206,7 @@ class DSBSparse(ABC):
                 : sum(self.nnz_section_sizes),
             ]
         return self._data[
-            : sum(self.stack_section_sizes), ..., : self.nnz_section_sizes[comm.rank]
+            self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
         ]
 
     def __repr__(self) -> str:

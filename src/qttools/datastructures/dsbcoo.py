@@ -72,18 +72,19 @@ class DSBCOO(DSBSparse):
     def __getitem__(self, index: tuple) -> ArrayLike:
         """Gets a single value or from the data structure."""
         row, col = self._normalize_index(index)
-
         ind = xp.where((self.rows == row) & (self.cols == col))[0]
+
         if self.distribution_state == "stack":
             if len(ind) == 0:
-                return np.zeros(self.data.shape[:-1], dtype=self.dtype)
+                return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
 
             return self.data[..., ind[0]]
 
-        # If nnz are distributed accross the stack, we need to find the
+        # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = np.hstack(([0], np.cumsum(self.nnz_section_sizes)))
-        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
+        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
+
         if rank == comm.rank:
             if len(ind) == 0:
                 return np.zeros(self.data.shape[:-1], dtype=self.dtype)
@@ -97,8 +98,8 @@ class DSBCOO(DSBSparse):
     def __setitem__(self, index: tuple, value: ArrayLike) -> None:
         """Sets a single value or block in the data structure."""
         row, col = self._normalize_index(index)
-
         ind = xp.where((self.rows == row) & (self.cols == col))[0]
+
         if self.distribution_state == "stack":
             if len(ind) == 0:
                 return
@@ -107,8 +108,9 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = np.hstack(([0], np.cumsum(self.nnz_section_sizes)))
-        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
+        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
+
         if rank == comm.rank:
             if len(ind) == 0:
                 return

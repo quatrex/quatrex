@@ -105,6 +105,7 @@ class DSBCOO(DSBSparse):
                 return
 
             self.data[..., ind[0]] = value
+            return
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.

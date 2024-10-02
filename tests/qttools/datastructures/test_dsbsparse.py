@@ -477,7 +477,9 @@ class TestDistribution:
         densify_blocks: list[tuple] | None,
     ):
         """Tests distributed creation of DSBSparse matrices from sparrays."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
@@ -495,7 +497,9 @@ class TestDistribution:
         global_stack_shape: tuple,
     ):
         """Tests the distributed transpose method."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         assert dsbsparse.distribution_state == "stack"
 
@@ -522,7 +526,9 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
 
@@ -538,7 +544,9 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
 

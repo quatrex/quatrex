@@ -118,7 +118,11 @@ class DSBCOO(DSBSparse):
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
-            self.data[..., ind[0] - nnz_section_offsets[rank]] = value
+            # We need to access the full data buffer directly to set the
+            # value since we are using advanced indexing.
+            self._data[
+                self._stack_padding_mask, ..., ind[0] - nnz_section_offsets[rank]
+            ] = value
             return
 
         raise IndexError(

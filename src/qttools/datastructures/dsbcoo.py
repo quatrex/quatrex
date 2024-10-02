@@ -82,6 +82,11 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
+        if len(ind) == 0:
+            # We cannot know which rank is supposed to hold an element
+            # that is not in the matrix, so we raise an error.
+            raise IndexError("Requested element not in matrix.")
+
         nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
@@ -99,11 +104,11 @@ class DSBCOO(DSBSparse):
         """Sets a single value or block in the data structure."""
         row, col = self._normalize_index(index)
         ind = xp.where((self.rows == row) & (self.cols == col))[0]
+        if len(ind) == 0:
+            # Nothing to do if the element is not in the matrix.
+            return
 
         if self.distribution_state == "stack":
-            if len(ind) == 0:
-                return
-
             self.data[..., ind[0]] = value
             return
 
@@ -113,9 +118,6 @@ class DSBCOO(DSBSparse):
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
-            if len(ind) == 0:
-                return
-
             self.data[..., ind[0] - nnz_section_offsets[rank]] = value
             return
 

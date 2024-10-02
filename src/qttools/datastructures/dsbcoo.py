@@ -80,20 +80,17 @@ class DSBCOO(DSBSparse):
 
             return self.data[..., ind[0]]
 
-        # If nnz are distributed accross the ranks, we need to find the
-        # rank that holds the data.
         if len(ind) == 0:
             # We cannot know which rank is supposed to hold an element
             # that is not in the matrix, so we raise an error.
             raise IndexError("Requested element not in matrix.")
 
+        # If nnz are distributed accross the ranks, we need to find the
+        # rank that holds the data.
         nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
-            if len(ind) == 0:
-                return np.zeros(self.data.shape[:-1], dtype=self.dtype)
-
             return self.data[..., ind[0] - nnz_section_offsets[rank]]
 
         raise IndexError(

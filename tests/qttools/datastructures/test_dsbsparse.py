@@ -518,7 +518,7 @@ class TestDistribution:
         assert np.allclose(original_data, dsbsparse._data)
 
     @pytest.mark.usefixtures("accessed_element")
-    def test_getitem(
+    def test_getitem_stack(
         self,
         dsbsparse_type: DSBSparse,
         block_sizes: np.ndarray,
@@ -536,7 +536,7 @@ class TestDistribution:
         assert np.allclose(reference, dsbsparse[accessed_element])
 
     @pytest.mark.usefixtures("accessed_element")
-    def test_setitem(
+    def test_setitem_stack(
         self,
         dsbsparse_type: DSBSparse,
         block_sizes: np.ndarray,
@@ -553,4 +553,79 @@ class TestDistribution:
         dsbsparse[accessed_element] = get_device(42)
 
         dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        assert np.allclose(dense, dsbsparse.to_dense())
+
+    @pytest.mark.usefixtures("accessed_element")
+    def test_getitem_nnz(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        accessed_element: tuple,
+    ):
+        """Tests distributed access of individual matrix elements."""
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
+        dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+        dense = dsbsparse.to_dense()
+        rows, cols = dsbsparse.spy()
+        row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
+        ind = np.where((rows == row) & (cols == col))[0]
+
+        reference = dense[..., *accessed_element].flatten()[0]
+
+        dsbsparse.dtranspose()
+
+        if len(ind) == 0:
+            with pytest.raises(IndexError):
+                dsbsparse[accessed_element]
+            return
+
+        nnz_section_offsets = np.hstack(([0], np.cumsum(dsbsparse.nnz_section_sizes)))
+        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
+
+        if rank == comm.rank:
+            assert np.allclose(reference, dsbsparse[accessed_element])
+        else:
+            with pytest.raises(IndexError):
+                dsbsparse[accessed_element]
+
+    @pytest.mark.usefixtures("accessed_element")
+    def test_setitem_nnz(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        accessed_element: tuple,
+    ):
+        """Tests distributed setting of individual matrix elements."""
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = comm.bcast(coo, root=0)
+
+        dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+        dense = dsbsparse.to_dense()
+        rows, cols = dsbsparse.spy()
+        row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
+        ind = np.where((rows == row) & (cols == col))[0]
+
+        if len(ind) == 0:
+            return
+
+        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+
+        dsbsparse.dtranspose()
+
+        nnz_section_offsets = np.hstack(([0], np.cumsum(dsbsparse.nnz_section_sizes)))
+        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
+
+        if rank == comm.rank:
+            dsbsparse[accessed_element] = get_device(42)
+            dsbsparse.dtranspose()
+        else:
+            with pytest.raises(IndexError):
+                dsbsparse[accessed_element] = get_device(42)
+            dsbsparse.dtranspose()
+            return
+
         assert np.allclose(dense, dsbsparse.to_dense())

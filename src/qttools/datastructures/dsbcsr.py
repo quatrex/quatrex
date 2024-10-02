@@ -73,42 +73,83 @@ class DSBCSR(DSBSparse):
         return row, col
 
     def __getitem__(self, index: tuple) -> ArrayLike:
-        """Gets a single value or from the data structure."""
+        """Gets a single value accross the stack."""
         row, col = self._normalize_index(index)
 
-        brow = np.where(self.block_offsets <= row)[0].max()
-        bcol = np.where(self.block_offsets <= col)[0].max()
+        brow = xp.where(self.block_offsets <= row)[0][-1]
+        bcol = xp.where(self.block_offsets <= col)[0][-1]
         rowptr = self.rowptr_map.get((brow, bcol), None)
 
         if rowptr is None:
-            return np.zeros(self.data.shape[:-1], dtype=self.dtype)
+            if self.distribution_state == "stack":
+                return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
+            # We cannot know which rank is supposed to hold an element
+            # that is not in the matrix, so we raise an error.
+            raise IndexError("Requested element not in matrix.")
 
-        cols = self.cols[rowptr[row] : rowptr[row + 1]]
-        ind = xp.where(cols == col)[0]
+        row -= self.block_offsets[brow]  # Renormalize the row index for this block.
+        ind = xp.where(self.cols[rowptr[row] : rowptr[row + 1]] == col)[0]
+
+        if self.distribution_state == "stack":
+            if len(ind) == 0:
+                return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
+
+            return self.data[..., rowptr[row] + ind[0]]
 
         if len(ind) == 0:
-            return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
+            # We cannot know which rank is supposed to hold an element
+            # that is not in the matrix, so we raise an error.
+            raise IndexError("Requested element not in matrix.")
 
-        return self.data[..., rowptr[col] : rowptr[col + 1]][..., ind[0]]
+        # If nnz are distributed accross the ranks, we need to find the
+        # rank that holds the data.
+        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        rank = xp.where(nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
+
+        if rank == comm.rank:
+            return self.data[..., rowptr[row] + ind[0] - nnz_section_offsets[rank]]
+
+        raise IndexError(
+            f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
+        )
 
     def __setitem__(self, index: tuple, value: ArrayLike) -> None:
-        """Sets a single value or block in the data structure."""
+        """Sets a single value in the matrix."""
         row, col = self._normalize_index(index)
 
-        brow = np.where(self.block_offsets <= row)[0].max()
-        bcol = np.where(self.block_offsets <= col)[0].max()
+        brow = xp.where(self.block_offsets <= row)[0][-1]
+        bcol = xp.where(self.block_offsets <= col)[0][-1]
         rowptr = self.rowptr_map.get((brow, bcol), None)
 
         if rowptr is None:
             return
 
-        cols = self.cols[rowptr[row] : rowptr[row + 1]]
-        ind = xp.where(cols == col)[0]
+        row -= self.block_offsets[brow]  # Renormalize the row index for this block.
+        ind = xp.where(self.cols[rowptr[row] : rowptr[row + 1]] == col)[0]
 
         if len(ind) == 0:
             return
 
-        self.data[..., rowptr[col] : rowptr[col + 1]][..., ind[0]] = value
+        if self.distribution_state == "stack":
+            self.data[..., rowptr[row] + ind[0]] = value
+            return
+
+        # If nnz are distributed accross the ranks, we need to find the
+        # rank that holds the data.
+        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        rank = xp.where(nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
+
+        if rank == comm.rank:
+            self._data[
+                self._stack_padding_mask,
+                ...,
+                rowptr[row] + ind[0] - nnz_section_offsets[rank],
+            ] = value
+            return
+
+        raise IndexError(
+            f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
+        )
 
     def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.

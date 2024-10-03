@@ -128,6 +128,11 @@ class DSBSparse(ABC):
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
 
+        if global_stack_shape[0] < comm.size:
+            raise ValueError(
+                f"Number of MPI ranks {comm.size} exceeds stack shape {global_stack_shape}."
+            )
+
         self.global_stack_shape = global_stack_shape
 
         # Determine how the data is distributed across the ranks.

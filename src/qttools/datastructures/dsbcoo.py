@@ -87,7 +87,9 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        nnz_section_offsets = xp.hstack(
+            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
+        )
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
@@ -111,7 +113,9 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
+        nnz_section_offsets = xp.hstack(
+            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
+        )
         rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:

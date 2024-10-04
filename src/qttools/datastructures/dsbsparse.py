@@ -137,13 +137,16 @@ class DSBSparse(ABC):
 
         # Determine how the data is distributed across the ranks.
         stack_section_sizes, total_stack_size = get_section_sizes(
-            global_stack_shape[0], comm.size
+            global_stack_shape[0], comm.size, strategy="balanced"
         )
-        nnz_section_sizes, total_nnz_size = get_section_sizes(data.shape[-1], comm.size)
-
-        self.stack_section_sizes = stack_section_sizes
-        self.nnz_section_sizes = nnz_section_sizes
+        self.stack_section_sizes = xp.array(stack_section_sizes)
         self.total_stack_size = total_stack_size
+
+        nnz_section_sizes, total_nnz_size = get_section_sizes(
+            data.shape[-1], comm.size, strategy="greedy"
+        )
+        self.nnz_section_sizes = xp.array(nnz_section_sizes)
+        self.nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
 
         # Per default, we have the data is distributed in stack format.
@@ -159,11 +162,12 @@ class DSBSparse(ABC):
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
-        self._stack_padding_mask = np.zeros(total_stack_size, dtype=bool)
+        # NOTE: We should maybe consistently use the greedy strategy for
+        # the stack distribution as well.
+        self._stack_padding_mask = xp.zeros(total_stack_size, dtype=bool)
         for i, size in enumerate(stack_section_sizes):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
-
         self.dtype = data.dtype
 
         self.stack_shape = data.shape[:-1]
@@ -373,7 +377,9 @@ class DSBSparse(ABC):
         if xp.__name__ == "numpy" or GPU_AWARE_MPI:
             comm.Alltoall(MPI.IN_PLACE, self._data)
         else:
-            comm.Alltoall(MPI.IN_PLACE, get_host(self._data))
+            _data_host = get_host(self._data)
+            comm.Alltoall(MPI.IN_PLACE, _data_host)
+            self._data = xp.array(_data_host)
 
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
 

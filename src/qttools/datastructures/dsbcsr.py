@@ -76,8 +76,8 @@ class DSBCSR(DSBSparse):
         """Gets a single value accross the stack."""
         row, col = self._normalize_index(index)
 
-        brow = xp.where(self.block_offsets <= row)[0][-1]
-        bcol = xp.where(self.block_offsets <= col)[0][-1]
+        brow = int(xp.where(self.block_offsets <= row)[0][-1])
+        bcol = int(xp.where(self.block_offsets <= col)[0][-1])
         rowptr = self.rowptr_map.get((brow, bcol), None)
 
         if rowptr is None:
@@ -103,13 +103,9 @@ class DSBCSR(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(
-            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
-        )
-        rank = xp.where(nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
-
+        rank = xp.where(self.nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
         if rank == comm.rank:
-            return self.data[..., rowptr[row] + ind[0] - nnz_section_offsets[rank]]
+            return self.data[..., rowptr[row] + ind[0] - self.nnz_section_offsets[rank]]
 
         raise IndexError(
             f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
@@ -119,8 +115,8 @@ class DSBCSR(DSBSparse):
         """Sets a single value in the matrix."""
         row, col = self._normalize_index(index)
 
-        brow = xp.where(self.block_offsets <= row)[0][-1]
-        bcol = xp.where(self.block_offsets <= col)[0][-1]
+        brow = int(xp.where(self.block_offsets <= row)[0][-1])
+        bcol = int(xp.where(self.block_offsets <= col)[0][-1])
         rowptr = self.rowptr_map.get((brow, bcol), None)
 
         if rowptr is None:
@@ -138,16 +134,13 @@ class DSBCSR(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(
-            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
-        )
-        rank = xp.where(nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
+        rank = xp.where(self.nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
 
         if rank == comm.rank:
             self._data[
                 self._stack_padding_mask,
                 ...,
-                rowptr[row] + ind[0] - nnz_section_offsets[rank],
+                rowptr[row] + ind[0] - self.nnz_section_offsets[rank],
             ] = value
             return
 

@@ -87,13 +87,10 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(
-            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
-        )
-        rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
+        rank = xp.where(self.nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
-            return self.data[..., ind[0] - nnz_section_offsets[rank]]
+            return self.data[..., ind[0] - self.nnz_section_offsets[rank]]
 
         raise IndexError(
             f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
@@ -113,16 +110,13 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        nnz_section_offsets = xp.hstack(
-            ([0], xp.cumsum([max(self.nnz_section_sizes)] * comm.size))
-        )
-        rank = xp.where(nnz_section_offsets <= ind[0])[0][-1]
+        rank = xp.where(self.nnz_section_offsets <= ind[0])[0][-1]
 
         if rank == comm.rank:
             # We need to access the full data buffer directly to set the
             # value since we are using advanced indexing.
             self._data[
-                self._stack_padding_mask, ..., ind[0] - nnz_section_offsets[rank]
+                self._stack_padding_mask, ..., ind[0] - self.nnz_section_offsets[rank]
             ] = value
             return
 

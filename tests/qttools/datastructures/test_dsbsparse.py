@@ -15,7 +15,9 @@ from qttools.utils.mpi_utils import get_section_sizes
 def _create_coo(sizes) -> sparse.coo_array:
     """Returns a random complex sparse array."""
     size = int(np.sum(sizes))
-    return sparse.random(size, size, density=0.3, format="coo", dtype=np.complex128)
+    rng = np.random.default_rng()
+    density = rng.uniform(low=0.1, high=0.3)
+    return sparse.random(size, size, density=density, format="coo", dtype=np.complex128)
 
 
 @pytest.mark.usefixtures("densify_blocks")
@@ -582,9 +584,7 @@ class TestDistribution:
                 dsbsparse[accessed_element]
             return
 
-        nnz_section_offsets = np.hstack(([0], np.cumsum(dsbsparse.nnz_section_sizes)))
-        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
-
+        rank = np.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
         if rank == comm.rank:
             assert np.allclose(reference, dsbsparse[accessed_element])
         else:
@@ -616,15 +616,13 @@ class TestDistribution:
 
         dsbsparse.dtranspose()
 
-        nnz_section_offsets = np.hstack(([0], np.cumsum(dsbsparse.nnz_section_sizes)))
-        rank = np.where(nnz_section_offsets <= ind[0])[0][-1]
-
+        rank = np.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
         if rank == comm.rank:
-            dsbsparse[accessed_element] = get_device(42)
+            dsbsparse[accessed_element] = 42
             dsbsparse.dtranspose()
         else:
             with pytest.raises(IndexError):
-                dsbsparse[accessed_element] = get_device(42)
+                dsbsparse[accessed_element] = 42
             dsbsparse.dtranspose()
             return
 

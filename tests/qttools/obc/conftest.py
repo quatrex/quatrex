@@ -4,6 +4,7 @@ import pytest
 
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP, Beyn
+from qttools.utils.gpu_utils import get_device
 
 NEVP_SOLVERS = [
     pytest.param(Beyn(r_o=10, r_i=0.9, c_hat=5, num_quad_points=10), id="Beyn-small"),
@@ -39,6 +40,8 @@ def a_xx(request) -> np.ndarray:
     np.fill_diagonal(arr, 2 * np.abs(arr.sum(-1).max() + arr.diagonal()))
     # Filter out small values to make it sparse.
     arr[arr < 1] = 0
+
+    arr = get_device(arr)
 
     blocks = _block_view(_block_view(arr, -1, 2), -2, 2)
     return blocks[1, 0], blocks[0, 0], blocks[0, 1]

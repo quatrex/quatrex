@@ -8,26 +8,56 @@ from mpi4py.MPI import COMM_WORLD as comm
 from scipy import sparse
 
 
-def get_section_sizes(num_elements: int, num_sections: int = comm.size) -> tuple:
+def get_section_sizes(
+    num_elements: int,
+    num_sections: int = comm.size,
+    strategy: str = "balanced",
+) -> tuple:
     """Computes the number of un-evenly divided elements per section.
 
     Parameters
     ----------
     num_elements : int
         The total number of elements to divide.
-    num_sections : int
+    num_sections : int, optional
         The number of sections to divide the elements into. Defaults to
         the number of MPI ranks.
+    strategy : str, optional
+        The strategy to use for dividing the elements. Can be one of
+        "balanced" (default) or "greedy". In the "balanced" strategy,
+        the elements are divided as evenly as possible across the
+        sections. In the "greedy" strategy, the elements are divided
+        such that the we get many sections with the maximum number of
+        elements.
 
     Returns
     -------
-    section_sizes, effective_num_elements : tuple
-        A tuple containing the sizes of each section and the effective
-        number of elements after division.
+    section_sizes : list
+        The sizes of each section.
+    effective_num_elements : int
+        The effective number of elements after sectioning.
+
+    Examples
+    --------
+    >>> get_section_sizes(10, 3, "fair")
+    ([4, 3, 3], 12)
+    >>> get_section_sizes(10, 3, "greedy")
+    ([4, 4, 2], 12)
 
     """
     quotient, remainder = divmod(num_elements, num_sections)
-    section_sizes = remainder * [quotient + 1] + (num_sections - remainder) * [quotient]
+    if strategy == "balanced":
+        section_sizes = remainder * [quotient + 1] + (num_sections - remainder) * [
+            quotient
+        ]
+    elif strategy == "greedy":
+        section_sizes = [0] * num_sections
+        for i in range(num_sections):
+            section_sizes[i] = min(
+                quotient + min(remainder, 1), num_elements - sum(section_sizes)
+            )
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}")
     effective_num_elements = max(section_sizes) * num_sections
     return section_sizes, effective_num_elements
 

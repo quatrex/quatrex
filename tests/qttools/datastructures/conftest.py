@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from scipy import sparse
 
 from qttools.datastructures import DSBCOO, DSBCSR
 
@@ -26,6 +25,12 @@ ACCESSED_BLOCKS = [
     pytest.param((-9, 3), id="out-of-bounds"),
 ]
 
+ACCESSED_ELEMENTS = [
+    pytest.param((0, 0), id="first-element"),
+    pytest.param((-1, -1), id="last-element"),
+    pytest.param((2, -7), id="random-element"),
+]
+
 STACK_INDICES = [
     pytest.param((5,), id="single"),
     pytest.param((slice(1, 4),), id="slice"),
@@ -36,14 +41,6 @@ STACK_INDICES = [
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request):
     return request.param
-
-
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def coo(request) -> sparse.coo_array:
-    """Returns a random complex sparse array."""
-    block_sizes = request.param
-    size = int(np.sum(block_sizes))
-    return sparse.random(size, size, density=0.3, format="coo", dtype=np.complex128)
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
@@ -58,6 +55,11 @@ def densify_blocks(request):
 
 @pytest.fixture(params=ACCESSED_BLOCKS)
 def accessed_block(request):
+    return request.param
+
+
+@pytest.fixture(params=ACCESSED_ELEMENTS)
+def accessed_element(request):
     return request.param
 
 

@@ -18,7 +18,7 @@ def density(x: DSBSparse, overlap: sparse.sparray | None = None) -> np.ndarray:
             x.block_offsets[i] : x.block_offsets[i + 1],
         ].toarray()
         local_density_slice = np.diagonal(
-            x[i, i] @ overlap_diag, axis1=-2, axis2=-1
+            x.blocks[i, i] @ overlap_diag, axis1=-2, axis2=-1
         ).copy()
         if i < x.num_blocks - 1:
             overlap_upper = overlap[
@@ -26,7 +26,7 @@ def density(x: DSBSparse, overlap: sparse.sparray | None = None) -> np.ndarray:
                 x.block_offsets[i] : x.block_offsets[i + 1],
             ].toarray()
             local_density_slice += np.diagonal(
-                x[i, i + 1] @ overlap_upper, axis1=-2, axis2=-1
+                x.blocks[i, i + 1] @ overlap_upper, axis1=-2, axis2=-1
             )
         if i > 0:
             overlap_lower = overlap[
@@ -34,7 +34,7 @@ def density(x: DSBSparse, overlap: sparse.sparray | None = None) -> np.ndarray:
                 x.block_offsets[i] : x.block_offsets[i + 1],
             ].toarray()
             local_density_slice += np.diagonal(
-                x[i, i - 1] @ overlap_lower, axis1=-2, axis2=-1
+                x.blocks[i, i - 1] @ overlap_lower, axis1=-2, axis2=-1
             )
 
         local_density.append(local_density_slice.imag)

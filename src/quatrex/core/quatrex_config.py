@@ -1,9 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
+import tomllib
 from pathlib import Path
 from typing import Literal
 
-import tomllib
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -51,12 +51,26 @@ class PoissonConfig(BaseModel):
 class OBCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    algorithm: Literal["sancho-rubio", "full"] = "sancho-rubio"
+    algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
+    nevp_solver: Literal["beyn", "full"] = "beyn"
 
+    # Parameters for spectral OBC algorithms.
+    block_sections: PositiveInt = 1
+    min_decay: PositiveFloat = 1e-6
+    max_decay: PositiveFloat | None = None
+    num_ref_iterations: PositiveInt = 2
+
+    # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 1000
     convergence_tol: PositiveFloat = 1e-7
 
-    lyapunov_method: Literal["spectral", "scipy"] = "spectral"
+    # Parameters for subspace NEVP solvers.
+    r_o: PositiveFloat = 10.0
+    r_i: PositiveFloat = 0.9
+    c_hat: PositiveInt = 10
+    num_quad_points: PositiveInt = 20
+
+    lyapunov_method: Literal["spectral"] = "spectral"
 
 
 class ElectronConfig(BaseModel):
@@ -65,7 +79,7 @@ class ElectronConfig(BaseModel):
 
     obc: OBCConfig = OBCConfig()
 
-    eta: PositiveFloat = 1e-6  # eV
+    eta: NonNegativeFloat = 1e-6  # eV
 
     fermi_level: float | None = None
 

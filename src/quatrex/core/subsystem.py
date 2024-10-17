@@ -5,27 +5,32 @@ from abc import ABC, abstractmethod
 import numpy as np
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
-from qttools.obc.full import Full
-from qttools.obc.obc import OBC
-from qttools.obc.sancho_rubio import SanchoRubio
+from qttools.nevp import NEVP, Beyn, Full
+from qttools.obc import OBC, SanchoRubio, Spectral
+from qttools.utils.mpi_utils import get_local_slice
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import OBCConfig, QuatrexConfig
 
 
 class SubsystemSolver(ABC):
-    """Abstract core class for subsystem solvers.
+    """Abstract base class for subsystem solvers.
 
     Parameters
     ----------
-    config : QuatrexConfig
-        The configuration object.
+    quatrex_config : QuatrexConfig
+        The quatrex simulation configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+    energies : np.ndarray
+        The energies at which to solve.
 
     """
 
     @property
     @abstractmethod
     def system(self) -> str:
+        """The physical system for which the solver is implemented."""
         ...
 
     def __init__(
@@ -35,12 +40,28 @@ class SubsystemSolver(ABC):
         energies: np.ndarray,
     ) -> None:
         """Initializes the solver."""
-        self.dbsparse = compute_config.dbsparse
         self.energies = energies
+        self.local_energies = get_local_slice(energies)
 
         self.obc = self._configure_obc(getattr(quatrex_config, self.system).obc)
         self.solver = self._configure_solver(
             getattr(quatrex_config, self.system).solver
+        )
+
+    def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
+        """Configures the NEVP solver from the config."""
+        if obc_config.nevp_solver == "beyn":
+            return Beyn(
+                r_o=obc_config.r_o,
+                r_i=obc_config.r_i,
+                c_hat=obc_config.c_hat,
+                num_quad_points=obc_config.num_quad_points,
+            )
+        if obc_config.nevp_solver == "full":
+            return Full()
+
+        raise NotImplementedError(
+            f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
     def _configure_obc(self, obc_config: OBCConfig) -> OBC:
@@ -48,8 +69,15 @@ class SubsystemSolver(ABC):
         if obc_config.algorithm == "sancho-rubio":
             return SanchoRubio(obc_config.max_iterations, obc_config.convergence_tol)
 
-        if obc_config.algorithm == "full":
-            return Full()
+        if obc_config.algorithm == "spectral":
+            nevp = self._configure_nevp(obc_config)
+            return Spectral(
+                nevp=nevp,
+                block_sections=obc_config.block_sections,
+                min_decay=obc_config.min_decay,
+                max_decay=obc_config.max_decay,
+                num_ref_iterations=obc_config.num_ref_iterations,
+            )
 
         raise NotImplementedError(
             f"OBC algorithm '{obc_config.algorithm}' not implemented."

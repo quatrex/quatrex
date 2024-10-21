@@ -164,7 +164,7 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.blocks[-1, -1] + 1j * self.eta * s_nn,
             self.system_matrix.blocks[-1, -2] + 1j * self.eta * s_nm,
             self.system_matrix.blocks[-2, -1] + 1j * self.eta * s_mn,
-            "left",
+            "right",
         )
 
         # Apply the retarded boundary self-energy.

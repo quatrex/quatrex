@@ -9,14 +9,12 @@ class NEVP(ABC):
     """Abstract base class for the non-linear eigenvalue solvers."""
 
     @abstractmethod
-    def __call__(
-        self,
-        a_xx: list[xp.ndarray],
-    ) -> tuple[xp.ndarray, xp.ndarray]:
-        """Solves a polynomial non-linear eigenvalue problem.
+    def __call__(self, a_xx: list[xp.ndarray]) -> tuple[xp.ndarray, xp.ndarray]:
+        """Solves the eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
+
 
         Parameters
         ----------
@@ -26,8 +24,10 @@ class NEVP(ABC):
 
         Returns
         -------
-        ws, vs : tuple[xp.ndarray, xp.ndarray]
-            The eigenvalues and eigenvectors.
+        ws : xp.ndarray
+            The eigenvalues.
+        vs : xp.ndarray
+            The eigenvectors.
 
         """
         ...

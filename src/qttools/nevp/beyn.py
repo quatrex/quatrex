@@ -43,10 +43,8 @@ class Beyn(NEVP):
         self.c_hat = c_hat
         self.num_quad_points = num_quad_points
 
-    def __call__(
-        self,
-        a_xx: list[xp.ndarray],
-    ):
+    def __call__(self, a_xx: list[xp.ndarray]):
+
         d = a_xx[0].shape[-1]
         in_type = a_xx[0].dtype
 
@@ -92,27 +90,16 @@ class Beyn(NEVP):
 
             # Remove the zero singular values (within numerical tolerance).
             eps_svd = s.max() * d * xp.finfo(in_type).eps
-
             inds = xp.where(s > eps_svd)[0]
-            if len(inds) == self.c_hat:
-                print("Search space too small. Relevant eigenvalues may be missing.")
 
             u, s, vh = u[:, inds], s[inds], vh[inds, :]
 
             # Probe second moment. No eigenvalues on the GPU :(
-            w, v = npla.eig(
-                get_host(u.conj().T @ P_1[i] @ vh.conj().T @ xp.diag(1 / s))
-            )
-            w, v = get_device(w), get_device(v)
+            a = get_host(u.conj().T @ P_1[i] @ vh.conj().T / s)
+            w, v = npla.eig(a)
 
             # Recover the full eigenvectors from the subspace.
-            v = u @ v
-
-            ws[i, : len(inds)] = w
-            vs[i, :, : len(inds)] = v
-
-        # Stack the batch dimension.
-        ws = xp.hstack(ws)
-        vs = xp.hstack(vs)
+            ws[i, : len(inds)] = get_device(w)
+            vs[i, :, : len(inds)] = u @ get_device(v)
 
         return ws, vs

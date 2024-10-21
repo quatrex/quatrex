@@ -231,7 +231,7 @@ class DSBCOO(DSBSparse):
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
-            sparray_data = lil[self.rows, self.cols]
+            sparray_data = lil[self.rows, self.cols].toarray()
             self.data[:] += sparray_data
             return self
 
@@ -243,7 +243,7 @@ class DSBCOO(DSBSparse):
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
-            sparray_data = lil[self.rows, self.cols]
+            sparray_data = lil[self.rows, self.cols].toarray()
             self.data[:] -= sparray_data
             return self
 

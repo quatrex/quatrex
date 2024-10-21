@@ -34,6 +34,12 @@ RETURN_RETARDED = [
     pytest.param(False, id="not_return_retarded"),
 ]
 
+GLOBAL_STACK_SHAPES = [
+    pytest.param((10,), id="1D-stack"),
+    pytest.param((7, 2), id="2D-stack"),
+    pytest.param((9, 2, 4), id="3D-stack"),
+]
+
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request):
@@ -134,4 +140,9 @@ def out(request) -> bool:
 
 @pytest.fixture(params=RETURN_RETARDED, autouse=True)
 def return_retarded(request) -> bool:
+    return request.param
+
+
+@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+def global_stack_shape(request):
     return request.param

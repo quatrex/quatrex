@@ -9,25 +9,14 @@ from qttools.obc.obc import OBC
 class SanchoRubio(OBC):
     """Calculates the surface Green's function iteratively.
 
-    This function generalizes the iterative scheme for the calculation
-    of surface Green's functions given in [1]_ in the sense that it can
-    be applied to arbitrary periodic system matrices.
-
     Parameters
     ----------
-    a_ii : array_like
-        On-diagonal block of the system matrix.
-    a_ij : array_like
-        Super-diagonal block of the system matrix.
-    a_ji : array_like, optional
-        Sub-diagonal block of the system matrix.
-    contact : str
-        The contact side.
-
-    Returns
-    -------
-    x_ii : np.ndarray
-        The surface Green's function.
+    max_iterations : int, optional
+        The maximum number of iterations to perform.
+    convergence_tol : float, optional
+        The convergence tolerance for the iterative scheme. The
+        criterion for convergence is that the average Frobenius norm of
+        the update matrices `alpha` and `beta` is less than this value.
 
     References
     ----------
@@ -50,7 +39,6 @@ class SanchoRubio(OBC):
         contact: str,
         out: None | np.ndarray = None,
     ) -> np.ndarray | None:
-        """Returns the surface Green's function."""
 
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()

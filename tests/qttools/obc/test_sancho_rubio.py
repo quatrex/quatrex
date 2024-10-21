@@ -6,22 +6,23 @@ import pytest
 from qttools.obc.sancho_rubio import SanchoRubio
 
 
-def test_convergence(a_xx: tuple[np.ndarray]):
+def test_convergence(a_xx: tuple[np.ndarray], contact: str):
     """Tests that the OBC return the correct result."""
     sancho_rubio = SanchoRubio()
     a_ji, a_ii, a_ij = a_xx
-    x_ii = sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=None)
+    x_ii = sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert np.allclose(x_ii, npla.inv(a_ii - a_ji @ x_ii @ a_ij))
 
 
-def test_convergence_batch(a_xx: tuple[np.ndarray]):
+def test_convergence_batch(a_xx: tuple[np.ndarray], contact: str):
     """Tests that the OBC return the correct result."""
     sancho_rubio = SanchoRubio()
     a_ji, a_ii, a_ij = a_xx
-    a_ji = np.stack(10 * [a_ji])
-    a_ii = np.stack(10 * [a_ii])
-    a_ij = np.stack(10 * [a_ij])
-    x_ii = sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=None)
+    factors = np.random.rand(10)
+    a_ji = np.stack([f * a_ji for f in factors])
+    a_ii = np.stack([f * a_ii for f in factors])
+    a_ij = np.stack([f * a_ij for f in factors])
+    x_ii = sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert np.allclose(x_ii, npla.inv(a_ii - a_ji @ x_ii @ a_ij))
 
 

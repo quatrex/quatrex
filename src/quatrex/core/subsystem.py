@@ -77,6 +77,7 @@ class SubsystemSolver(ABC):
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
+                x_ii_formula=obc_config.x_ii_formula,
             )
 
         raise NotImplementedError(

@@ -59,6 +59,7 @@ class OBCConfig(BaseModel):
     min_decay: PositiveFloat = 1e-6
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = 2
+    x_ii_formula: Literal["self-energy", "direct", "stabilized"] = "self-energy"
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 1000

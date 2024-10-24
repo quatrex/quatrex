@@ -19,7 +19,7 @@ def get_averages(
 
 def spectral_plot(
     ax: plt.Axes,
-    averages: np.ndarray, 
+    averages: np.ndarray,
     energies: np.ndarray,
     colorbar_label: str | None = None,
     **pcolormesh_kwargs: dict,

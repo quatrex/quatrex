@@ -148,14 +148,17 @@ class BeynTuner:
                     res[..., i] = np.einsum(
                         "eij,ej->ei", self.a_ji / w + self.a_ii + self.a_ij * w, v
                     )
-            res = np.linalg.norm(np.nan_to_num(res, posinf=0, neginf=0))
+            # Check that most of the residuals are small.
+            res = np.nan_to_num(res, posinf=0, neginf=0)
+            spurious_mask = (np.mean(res) < res) | (np.isnan(res))
+            res = np.linalg.norm(res[~spurious_mask])
             print(f"{num_quad_points:15} | {res}")
             return res
 
         num_quad_points = np.arange(self.min_num_quad_points, self.max_num_quad_points)
         print("Starting brute-force search for optimal number of quadrature points.")
         print("num_quad_points | residual norm")
-        with mp.Pool() as pool:
+        with mp.Pool(processes=1) as pool:
             results = pool.map(_evaluate, num_quad_points)
 
         opt_ind = np.argmin(results)

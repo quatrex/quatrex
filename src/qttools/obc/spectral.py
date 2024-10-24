@@ -1,10 +1,11 @@
+import warnings
+
 import numpy.linalg as npla
 
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBC
 from qttools.utils.gpu_utils import xp
-import warnings
 
 
 class Spectral(OBC):

@@ -4,6 +4,7 @@ from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBC
 from qttools.utils.gpu_utils import xp
+import warnings
 
 
 class Spectral(OBC):
@@ -162,14 +163,17 @@ class Spectral(OBC):
         # NOTE: This is actually only correct if we have no overlap.
         # phi.H d/dk (H00 + lambda * H01 + 1/lambda * H10) phi =
         # phi.H d/dk energy (S00 + lambda * S01 + 1/lambda * S10) phi
-        for i in range(batchsize):
-            for j, w in enumerate(ws[i]):
-                a = -(1j * w * a_ij[i] - 1j / w * a_ji[i])
-                phi = vs[i, :, j]
-                phi_t = phi.conj().T
-                dEk_dk[i, j] = (phi_t @ a @ phi) / (phi_t @ phi)
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+            for i in range(batchsize):
+                for j, w in enumerate(ws[i]):
+                    a = -(1j * w * a_ij[i] - 1j / w * a_ji[i])
+                    phi = vs[i, :, j]
+                    phi_t = phi.conj().T
+                    dEk_dk[i, j] = (phi_t @ a @ phi) / (phi_t @ phi)
 
-        ks = -1j * xp.log(ws)
+            ks = -1j * xp.log(ws)
 
         # Find eigenvalues that correspond to reflected modes. These are
         # modes that either propagate into the leads or decay away from

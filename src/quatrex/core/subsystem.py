@@ -6,7 +6,7 @@ import numpy as np
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 from qttools.nevp import NEVP, Beyn, Full
-from qttools.obc import OBC, SanchoRubio, Spectral
+from qttools.obc import OBC, Memoizer, SanchoRubio, Spectral
 from qttools.utils.mpi_utils import get_local_slice
 
 from quatrex.core.compute_config import ComputeConfig
@@ -67,11 +67,11 @@ class SubsystemSolver(ABC):
     def _configure_obc(self, obc_config: OBCConfig) -> OBC:
         """Configures the OBC algorithm from the config."""
         if obc_config.algorithm == "sancho-rubio":
-            return SanchoRubio(obc_config.max_iterations, obc_config.convergence_tol)
+            obc = SanchoRubio(obc_config.max_iterations, obc_config.convergence_tol)
 
-        if obc_config.algorithm == "spectral":
+        elif obc_config.algorithm == "spectral":
             nevp = self._configure_nevp(obc_config)
-            return Spectral(
+            obc = Spectral(
                 nevp=nevp,
                 block_sections=obc_config.block_sections,
                 min_decay=obc_config.min_decay,
@@ -80,9 +80,19 @@ class SubsystemSolver(ABC):
                 x_ii_formula=obc_config.x_ii_formula,
             )
 
-        raise NotImplementedError(
-            f"OBC algorithm '{obc_config.algorithm}' not implemented."
-        )
+        else:
+            raise NotImplementedError(
+                f"OBC algorithm '{obc_config.algorithm}' not implemented."
+            )
+
+        if obc_config.memoizer.enable:
+            obc = Memoizer(
+                obc,
+                obc_config.memoizer.num_ref_iterations,
+                obc_config.memoizer.convergence_tol,
+            )
+
+        return obc
 
     def _configure_solver(self, solver: str) -> GFSolver:
         """Configures the solver algorithm from the config."""

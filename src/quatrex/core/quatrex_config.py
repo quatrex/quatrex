@@ -48,6 +48,14 @@ class PoissonConfig(BaseModel):
     num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
 
 
+class OBCMemoizerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enable: bool = True
+    num_ref_iterations: PositiveInt = 2
+    convergence_tol: PositiveFloat = 1e-5
+
+
 class OBCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,6 +78,10 @@ class OBCConfig(BaseModel):
     r_i: PositiveFloat = 0.9
     c_hat: PositiveInt = 10
     num_quad_points: PositiveInt = 20
+
+    # Parameters for reusing surface Green's functions from previous
+    # SCBA iterations.
+    memoizer: OBCMemoizerConfig = OBCMemoizerConfig()
 
     lyapunov_method: Literal["spectral"] = "spectral"
 
@@ -145,13 +157,14 @@ class PhononConfig(BaseModel):
     model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
     phonon_energy: NonNegativeFloat | None = None
     deformation_potential: NonNegativeFloat | None = None
+    temperature: PositiveFloat = 300.0  # K
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
         if self.model == "pseudo-scattering" and (
             self.phonon_energy is None or self.deformation_potential is None
         ):
-            raise ValueError("Phonon energy and deformation potential must be set.")
+            raise ValueError("'phonon_energy' and 'deformation_potential' must be set.")
 
         return self
 

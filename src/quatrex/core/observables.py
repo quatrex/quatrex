@@ -3,6 +3,8 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures.dsbsparse import DSBSparse
 from scipy import sparse
 
+from quatrex.electron import ElectronSolver
+
 
 def density(x: DSBSparse, overlap: sparse.sparray | None = None) -> np.ndarray:
     """Computes the density from the Green's function."""
@@ -40,3 +42,10 @@ def density(x: DSBSparse, overlap: sparse.sparray | None = None) -> np.ndarray:
         local_density.append(local_density_slice.imag)
 
     return np.vstack(comm.allgather(np.hstack(local_density)))
+
+
+def contact_currents(solver: ElectronSolver) -> np.ndarray:
+    """Computes the contact currents."""
+    i_left = np.hstack(comm.allgather(solver.i_left))
+    i_right = np.hstack(comm.allgather(solver.i_right))
+    return i_left, i_right

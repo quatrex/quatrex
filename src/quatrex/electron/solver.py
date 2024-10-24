@@ -1,4 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+import time
+
+from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
@@ -126,6 +129,9 @@ class ElectronSolver(SubsystemSolver):
         self.obc_blocks_greater_left = xp.zeros_like(self.system_matrix.blocks[0, 0])
         self.obc_blocks_greater_right = xp.zeros_like(self.system_matrix.blocks[-1, -1])
 
+        self.i_left = None
+        self.i_right = None
+
     def update_potential(self, new_potential: xp.ndarray) -> None:
         """Updates the potential matrix."""
         potential_diff_matrix = sparse.diags(new_potential - self.potential)
@@ -220,6 +226,29 @@ class ElectronSolver(SubsystemSolver):
         self.obc_blocks_greater_left[:] = sse_greater.blocks[0, 0]
         self.obc_blocks_greater_right[:] = sse_greater.blocks[-1, -1]
 
+    def _compute_contact_current(
+        self, sse_lesser: DSBSparse, sse_greater: DSBSparse, g_: tuple[DSBSparse, ...]
+    ) -> None:
+        """Computes the contact current."""
+        g_lesser, g_greater, __ = g_
+
+        self.i_left = xp.trace(
+            (sse_greater.blocks[0, 0] - self.obc_blocks_greater_left)
+            @ g_lesser.blocks[0, 0]
+            - g_greater.blocks[0, 0]
+            @ (sse_lesser.blocks[0, 0] - self.obc_blocks_lesser_left),
+            axis1=-2,
+            axis2=-1,
+        )
+        self.i_right = xp.trace(
+            (sse_greater.blocks[-1, -1] - self.obc_blocks_greater_right)
+            @ g_lesser.blocks[-1, -1]
+            - g_greater.blocks[-1, -1]
+            @ (sse_lesser.blocks[-1, -1] - self.obc_blocks_lesser_right),
+            axis1=-2,
+            axis2=-1,
+        )
+
     def _recover_contact_blocks(
         self,
         sse_lesser: DSBSparse,
@@ -242,15 +271,18 @@ class ElectronSolver(SubsystemSolver):
         out: tuple[DSBSparse, ...],
     ):
         """Solves for the lesser electron Green's function."""
+        times = []
         self._stash_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 
-        print("Assembling system matrix.", flush=True)
+        times.append(time.perf_counter())
         self._assemble_system_matrix(sse_retarded)
+        t_assemble = time.perf_counter() - times.pop()
 
-        print("Applying OBC.", flush=True)
+        times.append(time.perf_counter())
         self._apply_obc(sse_lesser, sse_greater)
+        t_obc = time.perf_counter() - times.pop()
 
-        print("Computing electron Green's function.", flush=True)
+        times.append(time.perf_counter())
         self.solver.selected_solve(
             a=self.system_matrix,
             sigma_lesser=sse_lesser,
@@ -258,8 +290,16 @@ class ElectronSolver(SubsystemSolver):
             out=out,
             return_retarded=True,
         )
+        t_solve = time.perf_counter() - times.pop()
 
-        print("Recovering contact OBC blocks.", flush=True)
+        self._compute_contact_current(sse_lesser, sse_greater, out)
         self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 
-        return out
+        (
+            print(
+                f"Assemble: {t_assemble}, OBC: {t_obc}, Solve: {t_solve}",
+                flush=True,
+            )
+            if comm.rank == 0
+            else None
+        )

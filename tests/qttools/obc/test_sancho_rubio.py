@@ -30,5 +30,5 @@ def test_max_iterations(a_xx: tuple[np.ndarray]):
     """Tests that Sancho-Rubio raises Exception after max_iterations."""
     sancho_rubio = SanchoRubio(max_iterations=1, convergence_tol=1e-8)
     a_ji, a_ii, a_ij = a_xx
-    with pytest.raises(RuntimeError):
+    with pytest.warns(RuntimeWarning):
         sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=None)

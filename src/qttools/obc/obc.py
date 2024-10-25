@@ -8,7 +8,12 @@ from qttools.utils.gpu_utils import xp
 
 
 class OBC(ABC):
-    """Abstract base class for the open-boundary condition solver."""
+    """Abstract base class for the open-boundary condition solver.
+
+    The recursion relation for the surface Green's function is given by:
+    `x_ii = xp.inv(a_ii - a_ji @ x_ij @ a_ij)`.
+
+    """
 
     @abstractmethod
     def __call__(
@@ -46,7 +51,7 @@ class OBC(ABC):
         ...
 
 
-class Memoizer:
+class OBCMemoizer:
     """Memoization class to reuse the result of an OBC function call.
 
     Parameters
@@ -54,8 +59,7 @@ class Memoizer:
     obc : OBC
         The OBC solver to wrap.
     num_ref_iterations : int, optional
-        The maximum number of refinement iterations to try before giving
-        up.
+        The maximum number of refinement iterations to do.
     convergence_tol : float, optional
         The required accuracy for convergence.
 

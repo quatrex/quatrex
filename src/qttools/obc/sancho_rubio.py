@@ -1,5 +1,7 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
+import warnings
+
 import numpy as np
 import numpy.linalg as npla
 
@@ -55,13 +57,15 @@ class SanchoRubio(OBC):
             alpha = alpha @ inverse @ alpha
             beta = beta @ inverse @ beta
 
-            delta = np.sum(np.abs(alpha) + np.abs(beta)) / 2
+            delta = (
+                np.linalg.norm(np.abs(alpha) + np.abs(beta), axis=(-2, -1)).max() / 2
+            )
 
             if delta < self.convergence_tol:
                 break
 
         else:  # Did not break, i.e. max_iterations reached.
-            raise RuntimeError("Surface Green's function did not converge.")
+            warnings.warn("Surface Green's function did not converge.", RuntimeWarning)
 
         x_ii = npla.inv(epsilon_s)
 

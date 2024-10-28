@@ -195,6 +195,15 @@ class DSBCOO(DSBSparse):
         data_stack = self.data[*stack_index]
         block_slice = self._get_block_slice(row, col)
 
+        if not self.return_dense:
+            if block_slice == slice(None):
+                # No data in this block, return an empty block.
+                return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
+
+            rows = self.rows[block_slice] - self.block_offsets[row]
+            cols = self.cols[block_slice] - self.block_offsets[col]
+            return rows, cols, data_stack[..., block_slice]
+
         block = xp.zeros(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),

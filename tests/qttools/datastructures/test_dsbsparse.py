@@ -195,6 +195,52 @@ class TestAccess:
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
             assert np.allclose(reference_block, dsbsparse.blocks[accessed_block])
 
+    @pytest.mark.usefixtures("accessed_block")
+    def test_get_sparse_block(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        accessed_block: tuple,
+    ):
+        """Tests that we can get the correct block."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+        reference_block = dense[..., *inds]
+
+        # We want to get sparse blocks.
+        dsbsparse.return_dense = False
+
+        with pytest.raises(IndexError) if not in_bounds else nullcontext():
+            if "CSR" in dsbsparse_type.__name__:
+                rowptr, cols, data = dsbsparse.blocks[accessed_block]
+                rowptr, cols, data = get_host(rowptr), get_host(cols), get_host(data)
+                for ind in np.ndindex(reference_block.shape[:-2]):
+                    block = sparse.csr_array(
+                        (data[ind], cols, rowptr),
+                        shape=reference_block.shape[-2:],
+                    )
+                    assert np.allclose(reference_block[ind], block.toarray())
+
+            elif "COO" in dsbsparse_type.__name__:
+                rows, cols, data = dsbsparse.blocks[accessed_block]
+                rows, cols, data = get_host(rows), get_host(cols), get_host(data)
+                for ind in np.ndindex(reference_block.shape[:-2]):
+                    block = sparse.coo_array(
+                        (data[ind], (rows, cols)), shape=reference_block.shape[-2:]
+                    )
+                    assert np.allclose(reference_block[ind], block.toarray())
+
+            else:
+                raise ValueError("Unknown DSBSparse type.")
+
     @pytest.mark.usefixtures("accessed_block", "densify_blocks")
     def test_set_block(
         self,
@@ -254,11 +300,62 @@ class TestAccess:
             + inds
         )
         reference_block = dense[inds]
-
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
             assert np.allclose(
                 reference_block, dsbsparse.stack[stack_index].blocks[accessed_block]
             )
+
+    @pytest.mark.usefixtures("accessed_block", "stack_index")
+    def test_get_sparse_block_substack(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: np.ndarray,
+        global_stack_shape: tuple,
+        accessed_block: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can get the correct block from a substack."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+        inds = (
+            stack_index
+            + (slice(None),) * (len(global_stack_shape) - len(stack_index))
+            + inds
+        )
+        reference_block = dense[inds]
+
+        # We want to get sparse blocks.
+        dsbsparse.return_dense = False
+
+        with pytest.raises(IndexError) if not in_bounds else nullcontext():
+            if "CSR" in dsbsparse_type.__name__:
+                rowptr, cols, data = dsbsparse.stack[stack_index].blocks[accessed_block]
+                rowptr, cols, data = get_host(rowptr), get_host(cols), get_host(data)
+                for ind in np.ndindex(reference_block.shape[:-2]):
+                    block = sparse.csr_array(
+                        (data[ind], cols, rowptr),
+                        shape=reference_block.shape[-2:],
+                    )
+                    assert np.allclose(reference_block[ind], block.toarray())
+
+            elif "COO" in dsbsparse_type.__name__:
+                rows, cols, data = dsbsparse.stack[stack_index].blocks[accessed_block]
+                rows, cols, data = get_host(rows), get_host(cols), get_host(data)
+                for ind in np.ndindex(reference_block.shape[:-2]):
+                    block = sparse.coo_array(
+                        (data[ind], (rows, cols)), shape=reference_block.shape[-2:]
+                    )
+                    assert np.allclose(reference_block[ind], block.toarray())
+
+            else:
+                raise ValueError("Unknown DSBSparse type.")
 
     @pytest.mark.usefixtures("accessed_block", "densify_blocks", "stack_index")
     def test_set_block_substack(

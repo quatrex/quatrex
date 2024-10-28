@@ -171,8 +171,21 @@ class DSBCSR(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        rowptr = self.rowptr_map.get((row, col), None)
         data_stack = self.data[*stack_index]
+        rowptr = self.rowptr_map.get((row, col), None)
+
+        if not self.return_dense:
+            if rowptr is None:
+                # No data in this block, return zeros.
+                return (
+                    xp.zeros(int(self.block_sizes[row]) + 1),
+                    xp.empty(0),
+                    xp.empty(data_stack.shape[:-1] + (0,)),
+                )
+
+            cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
+            return rowptr - rowptr[0], cols, data_stack[..., rowptr[0] : rowptr[-1]]
+
         block = xp.zeros(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),

@@ -7,7 +7,7 @@ import numpy as np
 from qttools.utils.gpu_utils import xp
 
 
-class OBC(ABC):
+class OBCSolver(ABC):
     """Abstract base class for the open-boundary condition solver.
 
     The recursion relation for the surface Green's function is given by:
@@ -67,12 +67,12 @@ class OBCMemoizer:
 
     def __init__(
         self,
-        obc: "OBC",
+        obc_solver: "OBCSolver",
         num_ref_iterations: int = 2,
         convergence_tol: float = 1e-6,
     ) -> None:
         """Initalizes the memoizer."""
-        self.obc = obc
+        self.obc_solver = obc_solver
         self.num_ref_iterations = num_ref_iterations
         self.convergence_tol = convergence_tol
         self._cache = {}
@@ -86,7 +86,7 @@ class OBCMemoizer:
         out: None | np.ndarray = None,
     ) -> np.ndarray | None:
         """Calls the wrapped obc function with cache handling."""
-        x_ii = self.obc(a_ii, a_ij, a_ji, contact, out=out)
+        x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact, out=out)
         if out is None:
             self._cache[contact] = x_ii.copy()
             return x_ii

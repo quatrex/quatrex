@@ -1,9 +1,11 @@
 import numpy as np
 
-from qttools.lyapunov import Lyapunov
+from qttools.lyapunov import LyapunovSolver
 
 
-def test_correctness(inputs: tuple[np.ndarray, np.ndarray], lyapunov_solver: Lyapunov):
+def test_correctness(
+    inputs: tuple[np.ndarray, np.ndarray], lyapunov_solver: LyapunovSolver
+):
     """Tests that the Lyapunov solver returns the correct result."""
     a, q = inputs
     x = lyapunov_solver(a, q, "contact")
@@ -12,7 +14,7 @@ def test_correctness(inputs: tuple[np.ndarray, np.ndarray], lyapunov_solver: Lya
 
 
 def test_correctness_batch(
-    inputs: tuple[np.ndarray, np.ndarray], lyapunov_solver: Lyapunov
+    inputs: tuple[np.ndarray, np.ndarray], lyapunov_solver: LyapunovSolver
 ):
     """Tests that the batched Lyapunov solver returns the correct result."""
     a, q = inputs

@@ -1,10 +1,10 @@
 import numpy as np
 
-from qttools.lyapunov.lyapunov import Lyapunov
+from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.utils.gpu_utils import get_device, get_host, xp
 
 
-class Spectral(Lyapunov):
+class Spectral(LyapunovSolver):
     """A solver for the Lyapunov equation by using the matrix spectrum."""
 
     def __call__(

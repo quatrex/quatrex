@@ -5,10 +5,10 @@ import warnings
 import numpy as np
 import numpy.linalg as npla
 
-from qttools.obc.obc import OBC
+from qttools.obc.obc import OBCSolver
 
 
-class SanchoRubio(OBC):
+class SanchoRubio(OBCSolver):
     """Calculates the surface Green's function iteratively.
 
     Parameters

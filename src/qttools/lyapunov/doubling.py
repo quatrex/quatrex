@@ -1,10 +1,10 @@
 import warnings
 
-from qttools.lyapunov.lyapunov import Lyapunov
+from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.utils.gpu_utils import xp
 
 
-class Doubling(Lyapunov):
+class Doubling(LyapunovSolver):
     """A solver for the Lyapunov equation using iterative doubling.
 
     Parameters
@@ -17,7 +17,7 @@ class Doubling(Lyapunov):
     """
 
     def __init__(
-        self, max_iterations: int = 10000, convergence_tol: float = 1e-3
+        self, max_iterations: int = 1000, convergence_tol: float = 1e-7
     ) -> None:
         """Initializes the solver."""
         self.max_iterations = max_iterations

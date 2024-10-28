@@ -1,8 +1,8 @@
-from qttools.lyapunov.lyapunov import Lyapunov
+from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.utils.gpu_utils import xp
 
 
-class Vectorize(Lyapunov):
+class Vectorize(LyapunovSolver):
     """A solver for the Lyapunov equation using vectorization."""
 
     def __call__(

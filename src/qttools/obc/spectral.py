@@ -4,11 +4,11 @@ import numpy.linalg as npla
 
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
-from qttools.obc.obc import OBC
+from qttools.obc.obc import OBCSolver
 from qttools.utils.gpu_utils import xp
 
 
-class Spectral(OBC):
+class Spectral(OBCSolver):
     """Spectral open-boundary condition solver.
 
     This technique of obtaining the surface Green's function is based on

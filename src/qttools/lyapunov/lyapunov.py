@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from qttools.utils.gpu_utils import xp
 
 
-class Lyapunov(ABC):
+class LyapunovSolver(ABC):
     """Solver interface for the discrete-time Lyapunov equation.
 
     The discrete-time Lyapunov equation is defined as:
@@ -58,7 +58,7 @@ class LyapunovMemoizer:
 
     def __init__(
         self,
-        lyapunov: Lyapunov,
+        lyapunov: LyapunovSolver,
         num_ref_iterations: int = 10,
         convergence_tol: float = 1e-6,
     ) -> None:

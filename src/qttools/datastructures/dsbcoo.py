@@ -52,6 +52,10 @@ class DSBCOO(DSBSparse):
         self.rows = xp.asarray(rows).astype(int)
         self.cols = xp.asarray(cols).astype(int)
 
+        # Since the data is block-wise contiguous, we can cache block
+        # *slices* for faster access.
+        self._block_slice_cache = {}
+
     def _normalize_index(self, index: tuple) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
         if not isinstance(index, tuple):
@@ -124,6 +128,47 @@ class DSBCOO(DSBSparse):
             f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
         )
 
+    def _get_block_slice(self, row, col):
+        """Gets the slice of data corresponding to a given block.
+
+        This also handles the block slice cache. If there is no data in
+        the block, an `slice(None)` is cached.
+
+        Parameters
+        ----------
+        row : int
+            Row index of the block.
+        col : int
+            Column index of the block.
+
+        Returns
+        -------
+        block_slice : slice
+            The slice of the data corresponding to the block.
+
+        """
+        block_slice = self._block_slice_cache.get((row, col), None)
+
+        if block_slice is None:
+            # Cache miss, compute the slice.
+            mask = (
+                (self.rows >= self.block_offsets[row])
+                & (self.rows < self.block_offsets[row + 1])
+                & (self.cols >= self.block_offsets[col])
+                & (self.cols < self.block_offsets[col + 1])
+            )
+            inds = mask.nonzero()[0]
+            if len(inds) == 0:
+                # No data in this block, cache an empty slice.
+                block_slice = slice(None)
+            else:
+                # NOTE: The data is sorted by block-row and -column, so
+                # we can safely assume that the block is contiguous.
+                block_slice = slice(inds[0], inds[-1] + 1)
+
+        self._block_slice_cache[(row, col)] = block_slice
+        return block_slice
+
     def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
         """Gets a block from the data structure.
 
@@ -147,29 +192,23 @@ class DSBCOO(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        mask = (
-            (self.rows >= self.block_offsets[row])
-            & (self.rows < self.block_offsets[row + 1])
-            & (self.cols >= self.block_offsets[col])
-            & (self.cols < self.block_offsets[col + 1])
-        )
-
         data_stack = self.data[*stack_index]
+        block_slice = self._get_block_slice(row, col)
+
         block = xp.zeros(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
-
-        if not xp.any(mask):
-            # No data in this block, return zeros.
+        if block_slice == slice(None):
+            # No data in this block, return an empty block.
             return block
 
         block[
             ...,
-            self.rows[mask] - self.block_offsets[row],
-            self.cols[mask] - self.block_offsets[col],
-        ] = data_stack[..., mask]
+            self.rows[block_slice] - self.block_offsets[row],
+            self.cols[block_slice] - self.block_offsets[col],
+        ] = data_stack[..., block_slice]
 
         return block
 
@@ -193,21 +232,15 @@ class DSBCOO(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
-        mask = (
-            (self.rows >= self.block_offsets[row])
-            & (self.rows < self.block_offsets[row + 1])
-            & (self.cols >= self.block_offsets[col])
-            & (self.cols < self.block_offsets[col + 1])
-        )
-
-        if not xp.any(mask):
+        block_slice = self._get_block_slice(row, col)
+        if block_slice == slice(None):
             # No data in this block, nothing to do.
             return
 
-        self.data[*stack_index][..., mask] = block[
+        self.data[*stack_index][..., block_slice] = block[
             ...,
-            self.rows[mask] - self.block_offsets[row],
-            self.cols[mask] - self.block_offsets[col],
+            self.rows[block_slice] - self.block_offsets[row],
+            self.cols[block_slice] - self.block_offsets[col],
         ]
 
     def _check_commensurable(self, other: "DSBSparse") -> None:
@@ -302,6 +335,7 @@ class DSBCOO(DSBSparse):
             hasattr(self, "_inds_bcoo2bcoo_t")
             and hasattr(self, "_rows_t")
             and hasattr(self, "_cols_t")
+            and hasattr(self, "_block_slice_cache_t")
         ):
             # Transpose.
             rows_t, cols_t = self.cols, self.rows
@@ -325,10 +359,17 @@ class DSBCOO(DSBSparse):
             self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
             self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
 
+            self._block_slice_cache_t = {}
+
         self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
         self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows
+
+        self._block_slice_cache, self._block_slice_cache_t = (
+            self._block_slice_cache_t,
+            self._block_slice_cache,
+        )
 
     def spy(self) -> tuple[ArrayLike, ArrayLike]:
         """Returns the row and column indices of the non-zero elements.

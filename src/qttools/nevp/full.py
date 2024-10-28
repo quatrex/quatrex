@@ -20,11 +20,15 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = [a_x[xp.newaxis, :, :] for a_x in a_xx]
 
-        inverse = xp.linalg.inv(sum(a_xx))
-        row = [inverse @ sum(a_xx[:i]) for i in range(1, len(a_xx) - 1)] + [
-            inverse @ -a_xx[-1]
-        ]
-        A = xp.block([row] * (len(a_xx) - 1))
+        # TODO: Batched inversion is not supported directly via CuPy.
+        inverse = xp.array([xp.linalg.inv(a) for a in sum(a_xx)])
+        # NOTE: CuPy does not expose a `block` function.
+        row = xp.concatenate(
+            [inverse @ sum(a_xx[:i]) for i in range(1, len(a_xx) - 1)]
+            + [inverse @ -a_xx[-1]],
+            axis=-1,
+        )
+        A = xp.concatenate([row] * (len(a_xx) - 1), axis=-2)
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 

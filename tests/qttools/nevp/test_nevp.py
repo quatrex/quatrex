@@ -2,12 +2,14 @@ import numpy as np
 import pytest
 
 from qttools.nevp import Beyn, Full
+from qttools.utils.gpu_utils import get_device, get_host
 
 
 def test_full(a_xx: tuple[np.ndarray]):
     """Tests that the Full NEVP solver returns the correct result."""
     full_nevp = Full()
-    ws, vs = full_nevp(a_xx)
+    ws, vs = full_nevp(get_device(a_xx))
+    ws, vs = get_host(ws), get_host(vs)
     a_ji, a_ii, a_ij = a_xx
 
     for i in range(ws.shape[1]):
@@ -20,7 +22,8 @@ def test_full(a_xx: tuple[np.ndarray]):
 @pytest.mark.usefixtures("subspace_nevp")
 def test_subspace(a_xx: tuple[np.ndarray], subspace_nevp: Beyn):
     """Tests that the subspace NEVP solver returns the correct result."""
-    ws, vs = subspace_nevp(a_xx)
+    ws, vs = subspace_nevp(get_device(a_xx))
+    ws, vs = get_host(ws), get_host(vs)
 
     a_ji, a_ii, a_ij = a_xx
     residuals = []

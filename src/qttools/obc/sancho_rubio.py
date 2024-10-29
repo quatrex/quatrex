@@ -2,10 +2,8 @@
 
 import warnings
 
-import numpy as np
-import numpy.linalg as npla
-
 from qttools.obc.obc import OBCSolver
+from qttools.utils.gpu_utils import xp
 
 
 class SanchoRubio(OBCSolver):
@@ -35,12 +33,12 @@ class SanchoRubio(OBCSolver):
 
     def __call__(
         self,
-        a_ii: np.ndarray,
-        a_ij: np.ndarray,
-        a_ji: np.ndarray,
+        a_ii: xp.ndarray,
+        a_ij: xp.ndarray,
+        a_ji: xp.ndarray,
         contact: str,
-        out: None | np.ndarray = None,
-    ) -> np.ndarray | None:
+        out: None | xp.ndarray = None,
+    ) -> xp.ndarray | None:
 
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()
@@ -49,7 +47,7 @@ class SanchoRubio(OBCSolver):
 
         delta = float("inf")
         for __ in range(self.max_iterations):
-            inverse = npla.inv(epsilon)
+            inverse = xp.linalg.inv(epsilon)
 
             epsilon = epsilon - alpha @ inverse @ beta - beta @ inverse @ alpha
             epsilon_s = epsilon_s - alpha @ inverse @ beta
@@ -58,7 +56,7 @@ class SanchoRubio(OBCSolver):
             beta = beta @ inverse @ beta
 
             delta = (
-                np.linalg.norm(np.abs(alpha) + np.abs(beta), axis=(-2, -1)).max() / 2
+                xp.linalg.norm(xp.abs(alpha) + xp.abs(beta), axis=(-2, -1)).max() / 2
             )
 
             if delta < self.convergence_tol:
@@ -67,7 +65,7 @@ class SanchoRubio(OBCSolver):
         else:  # Did not break, i.e. max_iterations reached.
             warnings.warn("Surface Green's function did not converge.", RuntimeWarning)
 
-        x_ii = npla.inv(epsilon_s)
+        x_ii = xp.linalg.inv(epsilon_s)
 
         if out is not None:
             out[...] = x_ii

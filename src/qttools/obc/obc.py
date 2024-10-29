@@ -2,8 +2,6 @@
 
 from abc import ABC, abstractmethod
 
-import numpy as np
-
 from qttools.utils.gpu_utils import xp
 
 
@@ -23,7 +21,7 @@ class OBCSolver(ABC):
         a_ji: xp.ndarray,
         contact: str,
         out: None | xp.ndarray = None,
-    ) -> np.ndarray | None:
+    ) -> xp.ndarray | None:
         """Returns the surface Green's function.
 
         Parameters
@@ -79,12 +77,12 @@ class OBCMemoizer:
 
     def _call_with_cache(
         self,
-        a_ii: np.ndarray,
-        a_ij: np.ndarray,
-        a_ji: np.ndarray,
+        a_ii: xp.ndarray,
+        a_ij: xp.ndarray,
+        a_ji: xp.ndarray,
         contact: str,
-        out: None | np.ndarray = None,
-    ) -> np.ndarray | None:
+        out: None | xp.ndarray = None,
+    ) -> xp.ndarray | None:
         """Calls the wrapped obc function with cache handling."""
         x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact, out=out)
         if out is None:
@@ -96,12 +94,12 @@ class OBCMemoizer:
 
     def __call__(
         self,
-        a_ii: np.ndarray,
-        a_ij: np.ndarray,
-        a_ji: np.ndarray,
+        a_ii: xp.ndarray,
+        a_ij: xp.ndarray,
+        a_ji: xp.ndarray,
         contact: str,
-        out: None | np.ndarray = None,
-    ) -> np.ndarray | None:
+        out: None | xp.ndarray = None,
+    ) -> xp.ndarray | None:
         """Calls the wrapped function."""
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)

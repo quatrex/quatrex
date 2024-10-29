@@ -1,4 +1,4 @@
-import numpy.linalg as npla
+import numpy as np
 
 from qttools.nevp.nevp import NEVP
 from qttools.utils.gpu_utils import get_device, get_host, xp
@@ -32,7 +32,7 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        w, v = npla.eig(get_host(A))
+        w, v = np.linalg.eig(get_host(A))
         w, v = get_device(w), get_device(v)
 
         # Recover the original eigenvalues from the spectral transform.

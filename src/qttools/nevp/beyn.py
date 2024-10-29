@@ -1,4 +1,4 @@
-import numpy.linalg as npla
+import numpy as np
 
 from qttools.nevp.nevp import NEVP
 from qttools.nevp.utils import operator_inverse
@@ -96,7 +96,7 @@ class Beyn(NEVP):
 
             # Probe second moment. No eigenvalues on the GPU :(
             a = get_host(u.conj().T @ P_1[i] @ vh.conj().T / s)
-            w, v = npla.eig(a)
+            w, v = np.linalg.eig(a)
 
             # Recover the full eigenvectors from the subspace.
             ws[i, : len(inds)] = get_device(w)

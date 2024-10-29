@@ -1,7 +1,5 @@
 import warnings
 
-import numpy.linalg as npla
-
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
@@ -235,7 +233,7 @@ class Spectral(OBCSolver):
                 v = vs[i][:, m]
                 w = ws[i, m]
                 # Direct computation of the surface Green's function.
-                inverse = npla.inv(v.conj().T @ a_ij[i] @ v * w)
+                inverse = xp.linalg.inv(v.conj().T @ a_ij[i] @ v * w)
                 x_ii[i] = -v @ inverse @ v.conj().T
 
             return x_ii
@@ -247,7 +245,7 @@ class Spectral(OBCSolver):
                 v = vs[i][:, m]
                 w = ws[i, m]
                 # "More stable" computation of the surface Green's function.
-                inverse = npla.inv(
+                inverse = xp.linalg.inv(
                     v.conj().T @ a_ii[i] @ v + v.conj().T @ a_ji[i] @ v / w
                 )
                 x_ii[i] = v @ inverse @ v.conj().T
@@ -280,7 +278,7 @@ class Spectral(OBCSolver):
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations):
-            x_ii = npla.inv(a_ii - a_ji @ x_ii @ a_ij)
+            x_ii = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Return the surface Green's function.
         if out is not None:

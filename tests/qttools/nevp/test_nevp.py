@@ -34,7 +34,11 @@ def test_subspace(a_xx: tuple[np.ndarray], subspace_nevp: Beyn):
             residuals.append(np.linalg.norm((a_ji / w + a_ii + a_ij * w) @ v))
 
     residuals = np.nan_to_num(np.array(residuals))
-    # Filter spurious eigenmodes.
-    spurious_mask = (np.mean(residuals) < residuals) | (np.isnan(residuals))
 
-    assert residuals[~spurious_mask].mean() < 1e-4
+    # Filter outlier eigenmodes (robust Z-score method).
+    median = np.median(residuals)
+    median_abs_deviation = np.median(np.abs(residuals - median))
+    z_scores = 0.6745 * (residuals - median) / median_abs_deviation
+    spurious_mask = np.abs(z_scores) > 30  # Very generous threshold.
+
+    assert residuals[~spurious_mask].max() < 1e-10

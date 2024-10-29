@@ -17,12 +17,20 @@ NEVP_SOLVERS = [
     pytest.param(Full(), id="Full"),
 ]
 
+X_II_FORMULAS = ["self-energy", "direct", "stabilized"]
+
 BLOCK_SIZE = [
     pytest.param(20, id="20x20"),
     pytest.param(17, id="17x17"),
 ]
 
 CONTACTS = ["left", "right"]
+
+
+@pytest.fixture(params=X_II_FORMULAS)
+def x_ii_formula(request) -> str:
+    """Returns a NEVP solver."""
+    return request.param
 
 
 @pytest.fixture(params=NEVP_SOLVERS)
@@ -32,7 +40,7 @@ def nevp(request) -> NEVP:
 
 
 @pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def a_xx(request) -> np.ndarray:
+def a_xx(request) -> tuple[np.ndarray, ...]:
     """Returns some random complex boundary blocks."""
     size = request.param * 2
     # Generate a decaying random complex array.

@@ -1,33 +1,22 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import numpy as np
-import numpy.linalg as npla
+import warnings
 
-from qttools.obc.obc import OBC
+from qttools.obc.obc import OBCSolver
+from qttools.utils.gpu_utils import xp
 
 
-class SanchoRubio(OBC):
+class SanchoRubio(OBCSolver):
     """Calculates the surface Green's function iteratively.
-
-    This function generalizes the iterative scheme for the calculation
-    of surface Green's functions given in [1]_ in the sense that it can
-    be applied to arbitrary periodic system matrices.
 
     Parameters
     ----------
-    a_ii : array_like
-        On-diagonal block of the system matrix.
-    a_ij : array_like
-        Super-diagonal block of the system matrix.
-    a_ji : array_like, optional
-        Sub-diagonal block of the system matrix.
-    contact : str
-        The contact side.
-
-    Returns
-    -------
-    x_ii : np.ndarray
-        The surface Green's function.
+    max_iterations : int, optional
+        The maximum number of iterations to perform.
+    convergence_tol : float, optional
+        The convergence tolerance for the iterative scheme. The
+        criterion for convergence is that the average Frobenius norm of
+        the update matrices `alpha` and `beta` is less than this value.
 
     References
     ----------
@@ -44,13 +33,12 @@ class SanchoRubio(OBC):
 
     def __call__(
         self,
-        a_ii: np.ndarray,
-        a_ij: np.ndarray,
-        a_ji: np.ndarray,
+        a_ii: xp.ndarray,
+        a_ij: xp.ndarray,
+        a_ji: xp.ndarray,
         contact: str,
-        out: None | np.ndarray = None,
-    ) -> np.ndarray | None:
-        """Returns the surface Green's function."""
+        out: None | xp.ndarray = None,
+    ) -> xp.ndarray | None:
 
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()
@@ -59,7 +47,7 @@ class SanchoRubio(OBC):
 
         delta = float("inf")
         for __ in range(self.max_iterations):
-            inverse = npla.inv(epsilon)
+            inverse = xp.linalg.inv(epsilon)
 
             epsilon = epsilon - alpha @ inverse @ beta - beta @ inverse @ alpha
             epsilon_s = epsilon_s - alpha @ inverse @ beta
@@ -67,15 +55,17 @@ class SanchoRubio(OBC):
             alpha = alpha @ inverse @ alpha
             beta = beta @ inverse @ beta
 
-            delta = np.sum(np.abs(alpha) + np.abs(beta)) / 2
+            delta = (
+                xp.linalg.norm(xp.abs(alpha) + xp.abs(beta), axis=(-2, -1)).max() / 2
+            )
 
             if delta < self.convergence_tol:
                 break
 
         else:  # Did not break, i.e. max_iterations reached.
-            raise RuntimeError("Surface Green's function did not converge.")
+            warnings.warn("Surface Green's function did not converge.", RuntimeWarning)
 
-        x_ii = npla.inv(epsilon_s)
+        x_ii = xp.linalg.inv(epsilon_s)
 
         if out is not None:
             out[...] = x_ii

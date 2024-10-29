@@ -31,6 +31,12 @@ ACCESSED_ELEMENTS = [
     pytest.param((2, -7), id="random-element"),
 ]
 
+GLOBAL_STACK_SHAPES = [
+    pytest.param((10,), id="1D-stack"),
+    pytest.param((7, 2), id="2D-stack"),
+    pytest.param((9, 2, 4), id="3D-stack"),
+]
+
 STACK_INDICES = [
     pytest.param((5,), id="single"),
     pytest.param((slice(1, 4),), id="slice"),
@@ -60,6 +66,11 @@ def accessed_block(request):
 
 @pytest.fixture(params=ACCESSED_ELEMENTS)
 def accessed_element(request):
+    return request.param
+
+
+@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+def global_stack_shape(request):
     return request.param
 
 

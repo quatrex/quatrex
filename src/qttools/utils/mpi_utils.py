@@ -123,6 +123,9 @@ def check_gpu_aware_mpi() -> bool:
     This is done by inspecting the MPI info object for the presence of
     the "gpu" memory allocation kind. See [1]_ for more info.
 
+    On Cray systems, the check is done by inspecting the MPI library
+    version string.
+
     Returns
     -------
     bool

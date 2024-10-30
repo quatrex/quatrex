@@ -3,14 +3,14 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+from qttools import lyapunov, obc
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 from qttools.nevp import NEVP, Beyn, Full
-from qttools.obc import OBC, Memoizer, SanchoRubio, Spectral
 from qttools.utils.mpi_utils import get_local_slice
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import OBCConfig, QuatrexConfig
+from quatrex.core.quatrex_config import LyapunovConfig, OBCConfig, QuatrexConfig
 
 
 class SubsystemSolver(ABC):
@@ -44,6 +44,9 @@ class SubsystemSolver(ABC):
         self.local_energies = get_local_slice(energies)
 
         self.obc = self._configure_obc(getattr(quatrex_config, self.system).obc)
+        self.lyapunov = self._configure_lyapunov(
+            getattr(quatrex_config, self.system).obc
+        )
         self.solver = self._configure_solver(
             getattr(quatrex_config, self.system).solver
         )
@@ -64,14 +67,16 @@ class SubsystemSolver(ABC):
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def _configure_obc(self, obc_config: OBCConfig) -> OBC:
+    def _configure_obc(self, obc_config: OBCConfig) -> obc.OBCSolver:
         """Configures the OBC algorithm from the config."""
         if obc_config.algorithm == "sancho-rubio":
-            obc = SanchoRubio(obc_config.max_iterations, obc_config.convergence_tol)
+            obc_solver = obc.SanchoRubio(
+                obc_config.max_iterations, obc_config.convergence_tol
+            )
 
         elif obc_config.algorithm == "spectral":
             nevp = self._configure_nevp(obc_config)
-            obc = Spectral(
+            obc_solver = obc.Spectral(
                 nevp=nevp,
                 block_sections=obc_config.block_sections,
                 min_decay=obc_config.min_decay,
@@ -86,13 +91,37 @@ class SubsystemSolver(ABC):
             )
 
         if obc_config.memoizer.enable:
-            obc = Memoizer(
-                obc,
+            obc_solver = obc.OBCMemoizer(
+                obc_solver,
                 obc_config.memoizer.num_ref_iterations,
                 obc_config.memoizer.convergence_tol,
             )
 
-        return obc
+        return obc_solver
+
+    def _configure_lyapunov(
+        self, lyapunov_config: LyapunovConfig
+    ) -> lyapunov.LyapunovSolver:
+        """Configures the Lyapunov solver from the config."""
+        if lyapunov_config.algorithm == "spectral":
+            lyapunov_solver = lyapunov.Spectral()
+        elif lyapunov_config.algorithm == "doubling":
+            lyapunov_solver = lyapunov.Doubling(
+                lyapunov_config.max_iterations, lyapunov_config.convergence_tol
+            )
+        elif lyapunov_config.algorithm == "vectorize":
+            lyapunov_solver = lyapunov.Vectorize()
+        else:
+            raise NotImplementedError(
+                f"Lyapunov algorithm '{lyapunov_config.algorithm}' not implemented."
+            )
+
+        if lyapunov_config.memoizer.enable:
+            lyapunov_solver = lyapunov.LyapunovMemoizer(
+                lyapunov_solver,
+                lyapunov_config.memoizer.num_ref_iterations,
+                lyapunov_config.memoizer.convergence_tol,
+            )
 
     def _configure_solver(self, solver: str) -> GFSolver:
         """Configures the solver algorithm from the config."""

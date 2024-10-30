@@ -48,7 +48,7 @@ class PoissonConfig(BaseModel):
     num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
 
 
-class OBCMemoizerConfig(BaseModel):
+class MemoizerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enable: bool = True
@@ -81,9 +81,18 @@ class OBCConfig(BaseModel):
 
     # Parameters for reusing surface Green's functions from previous
     # SCBA iterations.
-    memoizer: OBCMemoizerConfig = OBCMemoizerConfig()
+    memoizer: MemoizerConfig = MemoizerConfig()
 
-    lyapunov_method: Literal["spectral"] = "spectral"
+
+class LyapunovConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    algorithm: Literal["spectral", "doubling", "vectorize"] = "spectral"
+
+    # Parameters for iterative Lyapunov algorithms.
+    max_iterations: PositiveInt = 1000
+    convergence_tol: PositiveFloat = 1e-7
+
+    memoizer: MemoizerConfig = MemoizerConfig()
 
 
 class ElectronConfig(BaseModel):
@@ -91,6 +100,7 @@ class ElectronConfig(BaseModel):
     solver: Literal["rgf", "inv"] = "rgf"
 
     obc: OBCConfig = OBCConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
 
     eta: NonNegativeFloat = 1e-6  # eV
 
@@ -139,6 +149,7 @@ class CoulombScreeningConfig(BaseModel):
 
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
 
 
 class PhotonConfig(BaseModel):
@@ -146,6 +157,7 @@ class PhotonConfig(BaseModel):
 
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
 
 
 class PhononConfig(BaseModel):
@@ -153,6 +165,7 @@ class PhononConfig(BaseModel):
 
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
 
     model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
     phonon_energy: NonNegativeFloat | None = None

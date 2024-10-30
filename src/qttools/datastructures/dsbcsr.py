@@ -36,7 +36,7 @@ class DSBCSR(DSBSparse):
         interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
-        Default is False.
+        Default is True.
 
     """
 
@@ -55,30 +55,49 @@ class DSBCSR(DSBSparse):
         self.cols = xp.asarray(cols).astype(int)
         self.rowptr_map = rowptr_map
 
-    def _normalize_index(self, index: tuple) -> tuple:
-        """Adjusts the sign to allow negative indices and checks bounds."""
-        if not isinstance(index, tuple):
-            raise IndexError("Invalid index.")
+    def _get_items(
+        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray
+    ) -> ArrayLike:
+        """Gets the requested items from the data structure.
 
-        if not len(index) == 2:
-            raise IndexError("Invalid index.")
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the __getitem__
+        method. The index is assumed to already be renormalized.
 
-        row, col = index
+        If we are in the "stack" distribution state, you will get an
+        array of the expected shape, padded with zeros where requested
+        elements are not in the matrix.
 
-        row = self.shape[-2] + row if row < 0 else row
-        col = self.shape[-1] + col if col < 0 else col
-        if not (0 <= row < self.shape[-2] and 0 <= col < self.shape[-1]):
-            raise IndexError("Index out of bounds.")
+        If we are in the "nnz" distribution state, and you are
+        requesting an element that is not in the matrix, an IndexError
+        is raised. If we are in the "nnz" distribution state, you will
+        get the requested elements that are on the current rank, and an
+        empty array on the ranks that hold none of the requested
+        elements.
 
-        return row, col
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        rows : int | array_like
+            The row indices of the items.
+        cols : int | array_like
+            The column indices of the items.
 
-    def __getitem__(self, index: tuple) -> ArrayLike:
-        """Gets a single value accross the stack."""
-        row, col = self._normalize_index(index)
+        Returns
+        -------
+        items : array_like
+            The requested items.
 
-        brow = int(xp.where(self.block_offsets <= row)[0][-1])
-        bcol = int(xp.where(self.block_offsets <= col)[0][-1])
-        rowptr = self.rowptr_map.get((brow, bcol), None)
+        """
+        # TODO
+        brows = (self.block_offsets[:, xp.newaxis] <= rows).nonzero()[0]
+        bcols = (self.block_offsets[:, xp.newaxis] <= cols).nonzero()[0]
+        rowptr = [
+            self.rowptr_map.get((brow, bcol), None)
+            for brow, bcol in set(zip(map(int, brows), map(int, bcols)))
+        ]
+        # TODO: Implement the rest of the method. :(
 
         if rowptr is None:
             if self.distribution_state == "stack":
@@ -87,14 +106,14 @@ class DSBCSR(DSBSparse):
             # that is not in the matrix, so we raise an error.
             raise IndexError("Requested element not in matrix.")
 
-        row -= self.block_offsets[brow]  # Renormalize the row index for this block.
-        ind = xp.where(self.cols[rowptr[row] : rowptr[row + 1]] == col)[0]
+        rows -= self.block_offsets[brows]  # Renormalize the row index for this block.
+        ind = xp.where(self.cols[rowptr[rows] : rowptr[rows + 1]] == cols)[0]
 
         if self.distribution_state == "stack":
             if len(ind) == 0:
                 return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
 
-            return self.data[..., rowptr[row] + ind[0]]
+            return self.data[..., rowptr[rows] + ind[0]]
 
         if len(ind) == 0:
             # We cannot know which rank is supposed to hold an element
@@ -103,44 +122,46 @@ class DSBCSR(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        rank = xp.where(self.nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
+        rank = xp.where(self.nnz_section_offsets <= rowptr[rows] + ind[0])[0][-1]
         if rank == comm.rank:
-            return self.data[..., rowptr[row] + ind[0] - self.nnz_section_offsets[rank]]
+            return self.data[
+                ..., rowptr[rows] + ind[0] - self.nnz_section_offsets[rank]
+            ]
 
         raise IndexError(
             f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
         )
 
-    def __setitem__(self, index: tuple, value: ArrayLike) -> None:
-        """Sets a single value in the matrix."""
-        row, col = self._normalize_index(index)
+    def _set_items(
+        self, stack_index: tuple, rows: int | list, cols: int | list, value: ArrayLike
+    ) -> None:
 
-        brow = int(xp.where(self.block_offsets <= row)[0][-1])
-        bcol = int(xp.where(self.block_offsets <= col)[0][-1])
+        brow = int(xp.where(self.block_offsets <= rows)[0][-1])
+        bcol = int(xp.where(self.block_offsets <= cols)[0][-1])
         rowptr = self.rowptr_map.get((brow, bcol), None)
 
         if rowptr is None:
             return
 
-        row -= self.block_offsets[brow]  # Renormalize the row index for this block.
-        ind = xp.where(self.cols[rowptr[row] : rowptr[row + 1]] == col)[0]
+        rows -= self.block_offsets[brow]  # Renormalize the row index for this block.
+        ind = xp.where(self.cols[rowptr[rows] : rowptr[rows + 1]] == cols)[0]
 
         if len(ind) == 0:
             return
 
         if self.distribution_state == "stack":
-            self.data[..., rowptr[row] + ind[0]] = value
+            self.data[..., rowptr[rows] + ind[0]] = value
             return
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        rank = xp.where(self.nnz_section_offsets <= rowptr[row] + ind[0])[0][-1]
+        rank = xp.where(self.nnz_section_offsets <= rowptr[rows] + ind[0])[0][-1]
 
         if rank == comm.rank:
             self._data[
                 self._stack_padding_mask,
                 ...,
-                rowptr[row] + ind[0] - self.nnz_section_offsets[rank],
+                rowptr[rows] + ind[0] - self.nnz_section_offsets[rank],
             ] = value
             return
 

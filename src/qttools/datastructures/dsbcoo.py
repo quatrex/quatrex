@@ -169,25 +169,6 @@ class DSBCOO(DSBSparse):
         # rank that holds the data.
         ranks = (self.nnz_section_offsets <= inds[:, xp.newaxis]).sum(-1) - 1
 
-        # NOTE: This replacement of ellipsis is nicked from
-        # https://github.com/dask/dask/blob/main/dask/array/slicing.py
-        # See license at
-        # https://github.com/dask/dask/blob/main/LICENSE.txt
-        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
-        if is_ellipsis:
-            if len(is_ellipsis) > 1:
-                raise IndexError("an index can only have a single ellipsis ('...')")
-
-            loc = is_ellipsis[0]
-            extra_dimensions = (self.data.ndim - 1) - (
-                len(stack_index) - sum(i is None for i in stack_index) - 1
-            )
-            stack_index = (
-                stack_index[:loc]
-                + (slice(None, None, None),) * extra_dimensions
-                + stack_index[loc + 1 :]
-            )
-
         stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
         stack_inds, nnz_inds = xp.ix_(
             stack_padding_inds,

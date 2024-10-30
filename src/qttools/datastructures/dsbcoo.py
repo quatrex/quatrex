@@ -340,7 +340,39 @@ class DSBCOO(DSBSparse):
 
     def __matmul__(self, other: "DSBSparse") -> None:
         """Matrix multiplication of two DSBSparse matrices."""
-        raise NotImplementedError("Matrix multiplication is not implemented.")
+        self._check_commensurable(other)
+        stack_indices = xp.ndindex(self.data.shape[:-1])
+        first_index = next(stack_indices)
+        # Multiply the matrices in the first stack.
+        first_product = sparse.coo_matrix(
+            (self.data[first_index], (self.rows, self.cols)),
+        ).tocsr() @ sparse.coo_matrix(
+            (other.data[first_index], (other.rows, other.cols)),
+        ).tocsr()
+        # Create a new DSBCOO matrix for the product.
+        product = DSBCOO.from_sparray(
+            first_product,
+            block_sizes=self.block_sizes,
+            global_stack_shape=self.global_stack_shape,
+        )
+        # Compute the block-sorting index.
+        first_product = first_product.tocoo()
+        first_product.sum_duplicates()
+        block_sort_index = compute_block_sort_index(
+            get_device(first_product.row), get_device(first_product.col), get_device(self.block_sizes)
+        )
+        # Loop through the stack and perform the multiplication.
+        for stack_index in stack_indices:
+            temp_product = sparse.csr_matrix(
+                (self.data[stack_index], (self.rows, self.cols)),
+            ) @ sparse.csr_matrix(
+                (other.data[stack_index], (other.rows, other.cols)),
+            )
+            temp_product = temp_product.tocoo()
+            temp_product.sum_duplicates()
+            product.data[stack_index, :] = temp_product.data[block_sort_index]
+        
+        return product
 
     def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.

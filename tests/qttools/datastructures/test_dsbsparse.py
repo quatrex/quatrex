@@ -632,6 +632,9 @@ class TestDistribution:
         dense = dsbsparse.to_dense()
 
         reference = dense[..., *accessed_element]
+        print(dsbsparse[accessed_element].shape, flush=True) if comm.rank == 0 else None
+        print(reference.shape, flush=True) if comm.rank == 0 else None
+
         assert np.allclose(reference, dsbsparse[accessed_element])
 
     @pytest.mark.usefixtures("accessed_element")
@@ -685,8 +688,7 @@ class TestDistribution:
         if rank == comm.rank:
             assert np.allclose(reference, dsbsparse[accessed_element])
         else:
-            with pytest.raises(IndexError):
-                dsbsparse[accessed_element]
+            assert dsbsparse[accessed_element].shape[-1] == 0
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem_nnz(
@@ -713,14 +715,8 @@ class TestDistribution:
 
         dsbsparse.dtranspose()
 
-        rank = np.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
-        if rank == comm.rank:
-            dsbsparse[accessed_element] = 42
-            dsbsparse.dtranspose()
-        else:
-            with pytest.raises(IndexError):
-                dsbsparse[accessed_element] = 42
-            dsbsparse.dtranspose()
-            return
+        dsbsparse[accessed_element] = 42
+
+        dsbsparse.dtranspose()
 
         assert np.allclose(dense, dsbsparse.to_dense())

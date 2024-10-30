@@ -33,7 +33,7 @@ class DSBCOO(DSBSparse):
         interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
-        Default is False.
+        Default is True.
 
     """
 
@@ -56,77 +56,157 @@ class DSBCOO(DSBSparse):
         # *slices* for faster access.
         self._block_slice_cache = {}
 
-    def _normalize_index(self, index: tuple) -> tuple:
-        """Adjusts the sign to allow negative indices and checks bounds."""
-        if not isinstance(index, tuple):
-            raise IndexError("Invalid index.")
+    def _get_items(
+        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray
+    ) -> ArrayLike:
+        """Gets the requested items from the data structure.
 
-        if not len(index) == 2:
-            raise IndexError("Invalid index.")
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the __getitem__
+        method. The index is assumed to already be renormalized.
 
-        row, col = index
+        If we are in the "stack" distribution state, you will get an
+        array of the expected shape, padded with zeros where requested
+        elements are not in the matrix.
 
-        row = self.shape[-2] + row if row < 0 else row
-        col = self.shape[-1] + col if col < 0 else col
-        if not (0 <= row < self.shape[-2] and 0 <= col < self.shape[-1]):
-            raise IndexError("Index out of bounds.")
+        If we are in the "nnz" distribution state, and you are
+        requesting an element that is not in the matrix, an IndexError
+        is raised. If we are in the "nnz" distribution state, you will
+        get the requested elements that are on the current rank, and an
+        empty array on the ranks that hold none of the requested
+        elements.
 
-        return row, col
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        rows : int | array_like
+            The row indices of the items.
+        cols : int | array_like
+            The column indices of the items.
 
-    def __getitem__(self, index: tuple) -> ArrayLike:
-        """Gets a single value or from the data structure."""
-        row, col = self._normalize_index(index)
-        ind = xp.where((self.rows == row) & (self.cols == col))[0]
+        Returns
+        -------
+        items : array_like
+            The requested items.
+
+        """
+        inds, value_inds = (
+            (self.rows[:, xp.newaxis] == rows) & (self.cols[:, xp.newaxis] == cols)
+        ).nonzero()
+        data_stack = self.data[*stack_index]
 
         if self.distribution_state == "stack":
-            if len(ind) == 0:
-                return xp.zeros(self.data.shape[:-1], dtype=self.dtype)
+            if len(inds) != rows.size:
+                arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
+                arr[..., value_inds] = data_stack[..., inds]
+                return xp.squeeze(arr)
 
-            return self.data[..., ind[0]]
+            return xp.squeeze(data_stack[..., inds])
 
-        if len(ind) == 0:
+        if len(inds) != rows.size:
             # We cannot know which rank is supposed to hold an element
             # that is not in the matrix, so we raise an error.
             raise IndexError("Requested element not in matrix.")
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        rank = xp.where(self.nnz_section_offsets <= ind[0])[0][-1]
+        ranks = (self.nnz_section_offsets <= inds[:, xp.newaxis]).sum(-1) - 1
 
-        if rank == comm.rank:
-            return self.data[..., ind[0] - self.nnz_section_offsets[rank]]
+        return data_stack[
+            ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
+        ]
 
-        raise IndexError(
-            f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
-        )
+    def _set_items(
+        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray, value: ArrayLike
+    ) -> None:
+        """Sets the requested items in the data structure.
 
-    def __setitem__(self, index: tuple, value: ArrayLike) -> None:
-        """Sets a single value or block in the data structure."""
-        row, col = self._normalize_index(index)
-        ind = xp.where((self.rows == row) & (self.cols == col))[0]
-        if len(ind) == 0:
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the __setitem__
+        method. The index is assumed to already be renormalized.
+
+        If we are in the "stack" distribution state, you need to provide
+        an array of the expected shape. The sparsity pattern is not
+        modified.
+
+        If we are in the "nnz" distribution state, you need to provide
+        the values that are on the current rank. The sparsity pattern is
+        not modified.
+
+        In both cases, if you are trying to set a value that is not in
+        the matrix, nothing happens.
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        rows : int | array_like
+            The row indices of the items.
+        cols : int | array_like
+            The column indices of the items.
+        values : array_like
+            The values to set.
+
+        """
+        inds, value_inds = (
+            (self.rows[:, xp.newaxis] == rows) & (self.cols[:, xp.newaxis] == cols)
+        ).nonzero()
+        if len(inds) == 0:
             # Nothing to do if the element is not in the matrix.
             return
 
+        value = xp.asarray(value)
         if self.distribution_state == "stack":
-            self.data[..., ind[0]] = value
+            if value.ndim == 0:
+                self.data[*stack_index][..., inds] = value
+                return
+
+            self.data[*stack_index][..., inds] = value[..., value_inds]
             return
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        rank = xp.where(self.nnz_section_offsets <= ind[0])[0][-1]
+        ranks = (self.nnz_section_offsets <= inds[:, xp.newaxis]).sum(-1) - 1
 
-        if rank == comm.rank:
-            # We need to access the full data buffer directly to set the
-            # value since we are using advanced indexing.
-            self._data[
-                self._stack_padding_mask, ..., ind[0] - self.nnz_section_offsets[rank]
-            ] = value
+        # NOTE: This replacement of ellipsis is nicked from
+        # https://github.com/dask/dask/blob/main/dask/array/slicing.py
+        # See license at
+        # https://github.com/dask/dask/blob/main/LICENSE.txt
+        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+        if is_ellipsis:
+            if len(is_ellipsis) > 1:
+                raise IndexError("an index can only have a single ellipsis ('...')")
+
+            loc = is_ellipsis[0]
+            extra_dimensions = (self.data.ndim - 1) - (
+                len(stack_index) - sum(i is None for i in stack_index) - 1
+            )
+            stack_index = (
+                stack_index[:loc]
+                + (slice(None, None, None),) * extra_dimensions
+                + stack_index[loc + 1 :]
+            )
+
+        stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
+        stack_inds, nnz_inds = xp.ix_(
+            stack_padding_inds,
+            inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank],
+        )
+        # We need to access the full data buffer directly to set the
+        # value since we are using advanced indexing.
+        if value.ndim == 0:
+            self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value
             return
 
-        raise IndexError(
-            f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
-        )
+        self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value[
+            ..., value_inds[ranks == comm.rank]
+        ]
+        return
+
+        # raise IndexError(
+        #     f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
+        # )
 
     def _get_block_slice(self, row, col):
         """Gets the slice of data corresponding to a given block.

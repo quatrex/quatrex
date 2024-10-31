@@ -33,8 +33,8 @@ def _make_periodic(
     for i in range(block_sections):
         view[i, :] = xp.roll(view[0, :], i, axis=0)
 
-    layer = np.concatenate(np.concatenate(view, axis=-2), axis=-1)
-    a_xx = np.array_split(layer, 3, axis=-1)
+    layer = xp.concatenate(xp.concatenate(view, axis=-2), axis=-1)
+    return xp.array_split(layer, 3, axis=-1)
 
 
 @pytest.mark.usefixtures(

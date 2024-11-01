@@ -221,7 +221,7 @@ class DSBCSR(DSBSparse):
             return
 
         self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value[
-            ..., value_inds[ranks == comm.rank]
+            ..., value_inds[ranks == comm.rank] - value_inds[ranks == comm.rank][0]
         ]
         return
 

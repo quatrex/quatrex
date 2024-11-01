@@ -71,13 +71,17 @@ class SCBAData:
         self.g_greater = allocate_electron_quantity()
 
         if hasattr(scba, "coulomb_screening_solver"):
+            allocate_polarization_quantity = _get_allocator(
+                scba.compute_config.dbsparse_type,
+                scba.electron_solver.system_matrix,
+            )
+            self.p_retarded = allocate_polarization_quantity()
+            self.p_lesser = allocate_polarization_quantity()
+            self.p_greater = allocate_polarization_quantity()
             allocate_coulomb_screening_quantity = _get_allocator(
                 scba.compute_config.dbsparse_type,
                 scba.coulomb_screening_solver.system_matrix,
             )
-            self.p_retarded = allocate_coulomb_screening_quantity()
-            self.p_lesser = allocate_coulomb_screening_quantity()
-            self.p_greater = allocate_coulomb_screening_quantity()
             self.w_retarded = allocate_coulomb_screening_quantity()
             self.w_lesser = allocate_coulomb_screening_quantity()
             self.w_greater = allocate_coulomb_screening_quantity()
@@ -199,14 +203,17 @@ class SCBA:
             else:
                 self.coulomb_screening_energies = self.electron_energies
 
-            self.p_coulomb_screening = PCoulombScreening(...)
+            self.p_coulomb_screening = PCoulombScreening(
+                self.quatrex_config, self.coulomb_screening_energies
+            )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
                 self.compute_config,
                 self.coulomb_screening_energies,
-                ...,
             )
-            self.sigma_coulomb_screening = SigmaCoulombScreening(...)
+            self.sigma_coulomb_screening = SigmaCoulombScreening(
+                self.quatrex_config, self.electron_energies
+            )
 
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
@@ -345,7 +352,28 @@ class SCBA:
 
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
-        raise NotImplementedError
+        self.p_coulomb_screening.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+        )
+        self.coulomb_screening_solver.solve(
+            self.data.p_lesser,
+            self.data.p_greater,
+            self.data.p_retarded,
+            out=(self.data.w_lesser, self.data.w_greater, self.data.w_retarded),
+        )
+        self.sigma_coulomb_screening.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.w_lesser,
+            self.data.w_greater,
+            out=(
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ),
+        )
 
     def _compute_observables(self) -> None:
         """Computes observables."""

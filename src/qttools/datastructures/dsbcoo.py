@@ -185,10 +185,6 @@ class DSBCOO(DSBSparse):
         ]
         return
 
-        # raise IndexError(
-        #     f"Requested data not on this rank ({comm.rank}). It is on rank {rank}."
-        # )
-
     def _get_block_slice(self, row, col):
         """Gets the slice of data corresponding to a given block.
 

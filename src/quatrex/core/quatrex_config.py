@@ -150,6 +150,12 @@ class CoulombScreeningConfig(BaseModel):
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
+    eta: NonNegativeFloat = 1e-6  # eV
+
+    temperature: PositiveFloat = 300.0  # K
+
+    left_temperature: PositiveFloat | None = None
+    right_temperature: PositiveFloat | None = None
 
 
 class PhotonConfig(BaseModel):

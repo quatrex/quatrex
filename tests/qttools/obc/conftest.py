@@ -17,7 +17,7 @@ NEVP_SOLVERS = [
     pytest.param(Full(), id="Full"),
 ]
 
-X_II_FORMULAS = ["self-energy", "direct", "stabilized"]
+X_II_FORMULAS = ["self-energy", "direct"]
 
 BLOCK_SIZE = [
     pytest.param(21, id="21x21"),

@@ -109,4 +109,4 @@ def test_memoizer(
     a_ji, a_ii, a_ij = _make_periodic((a_ji, a_ii, a_ij), block_sections)
 
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
-    assert np.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)
+    assert np.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)

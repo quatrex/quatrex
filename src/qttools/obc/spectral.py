@@ -39,10 +39,9 @@ class Spectral(OBCSolver):
         Green's function.
     x_ii_formula : str, optional
         The formula to use for the calculation of the surface Green's
-        function. The default is via the boundary "self-energy". Other
-        options are "direct" and "stabilized". The "self-energy" formula
-        corresponds to Equation (13.1) in the paper [1]_, the "direct"
-        formula corresponds to Equation (13.2), and the "stabilized"
+        function. The default is via the boundary "self-energy". The
+        other option is "direct". The "self-energy" formula
+        corresponds to Equation (13.1) in the paper [1]_ and the "direct"
         formula corresponds to Equation (15).
 
     References
@@ -159,6 +158,7 @@ class Spectral(OBCSolver):
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
         ):  # Ignore division by zero.
+            # TODO: Replace this for loop with a faster implementation.
             for i in range(batchsize):
                 for j, w in enumerate(ws[i]):
                     a = -sum(
@@ -265,18 +265,6 @@ class Spectral(OBCSolver):
             return xp.linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
         if self.x_ii_formula == "direct":
-            # Equation (13.2).
-            x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                v = vs[i][:, m]
-                w = ws[i, m]
-                # Direct computation of the surface Green's function.
-                inverse = xp.linalg.inv(v.conj().T @ a_ij[i] @ v * w)
-                x_ii[i] = -v @ inverse @ v.conj().T
-
-            return x_ii
-
-        if self.x_ii_formula == "stabilized":
             # Equation (15).
             x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
             for i, m in enumerate(mask):
@@ -291,8 +279,7 @@ class Spectral(OBCSolver):
             return x_ii
 
         raise ValueError(
-            f"Unknown formula: {self.x_ii_formula}"
-            "Choose 'self-energy', 'direct' or 'stabilized'."
+            f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
         )
 
     def __call__(

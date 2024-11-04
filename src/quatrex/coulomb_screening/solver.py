@@ -5,7 +5,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
-from qttools.utils.stack_utils import scale_stack
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -18,21 +17,22 @@ from quatrex.coulomb_screening.utils.assemble_boundary_blocks import (
 
 
 def sparsity_pattern_of_product(
-    a: sparse.spmatrix, b: sparse.spmatrix
+    matrices: tuple[sparse.spmatrix, ...],
 ) -> tuple[xp.ndarray, xp.ndarray]:
-    """Computes the sparsity pattern of the product a @ b @ a of two sparse matrices."""
-    a_ones = sparse.coo_matrix(
-        # (xp.ones(a.nnz, dtype=xp.float32).get(), (a.row, a.col)), shape=a.shape
-        (xp.ones(a.nnz, dtype=xp.float32), (a.row, a.col)),
-        shape=a.shape,
-    )
-    b_ones = sparse.coo_matrix(
-        # (xp.ones(b.nnz, dtype=xp.float32).get(), (b.row, b.col)), shape=b.shape
-        (xp.ones(b.nnz, dtype=xp.float32), (b.row, b.col)),
-        shape=b.shape,
-    )
-    # product = (a_ones @ b_ones @ a_ones.T).tocoo()
-    product = (a_ones @ b_ones @ a_ones).tocoo()
+    """Computes the sparsity pattern of the product of a sequence of matrices."""
+    product = None
+    for matrix in matrices:
+        if matrix.shape[0] != matrix.shape[1]:
+            raise ValueError("Matrices must be square.")
+        mat_ones = sparse.coo_matrix(
+            (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
+            shape=matrix.shape,
+        )
+        if product is None:
+            product = mat_ones
+        else:
+            product = product @ mat_ones
+    product = product.tocoo()
     return (product.row, product.col)
 
 
@@ -56,8 +56,19 @@ def check_block_sizes(rows, columns, block_sizes):
     return rows.size == nnz_in_blocks
 
 
-def obc_multiply(buffer: DSBSparse, matrices: tuple[DSBSparse, ...]) -> None:
+def obc_multiply(
+    buffer: DSBSparse, matrices: tuple[DSBSparse, ...], block_sizes: xp.ndarray
+) -> None:
     """Multiply two DSBSparse matrices accounting for open-boundary conditions."""
+    for mat in matrices:
+        if not check_block_sizes(
+            mat.rows,
+            mat.cols,
+            block_sizes,
+        ):
+            raise ValueError(
+                "The matrix elements are not contained within the block-tridiagonal structure."
+            )
     if len(matrices) == 2:
         a, b = matrices
         p = a @ b
@@ -159,7 +170,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         # Compute new sparsity pattern
         rows, cols = sparsity_pattern_of_product(
-            self.coulomb_matrix_sparray, dummy_hamiltonian
+            (
+                self.coulomb_matrix_sparray,
+                dummy_hamiltonian,
+                self.coulomb_matrix_sparray,
+            )
         )
         # Load the overlap matrix.
         try:
@@ -205,7 +220,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             quatrex_config.coulomb_screening.temperature,
         )
         self.right_occupancies = bose_einstein(
-            self.local_energies - quatrex_config.electron.right_fermi_level,
+            self.local_energies,
             quatrex_config.coulomb_screening.temperature,
         )
         # Allocate memory for the OBC blocks.
@@ -248,6 +263,7 @@ class CoulombScreeningSolver(SubsystemSolver):
     def _set_block_sizes(self, block_sizes: xp.ndarray) -> None:
         """Sets the block sizes."""
         self.system_matrix.block_sizes = block_sizes
+        self.coulomb_matrix.block_sizes = block_sizes
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
@@ -255,57 +271,91 @@ class CoulombScreeningSolver(SubsystemSolver):
         """Applies the OBC algorithm."""
 
         # Compute surface Green's functions.
-        g_00 = self.obc(
-            # self.system_matrix.blocks[0, 0] + 1j * self.eta * s_00,
-            # self.system_matrix.blocks[0, 1] + 1j * self.eta * s_01,
-            # self.system_matrix.blocks[1, 0] + 1j * self.eta * s_10,
+        x_00 = self.obc(
             self.obc_blocks_left["diag"],
             self.obc_blocks_left["right"],
             self.obc_blocks_left["below"],
             "left",
         )
-        g_nn = self.obc(
-            # self.system_matrix.blocks[-1, -1] + 1j * self.eta * s_nn,
-            # self.system_matrix.blocks[-1, -1] + 1j * self.eta * s_nn,
-            # self.system_matrix.blocks[-1, -2] + 1j * self.eta * s_nm,
+        x_nn = self.obc(
             self.obc_blocks_right["diag"],
-            self.obc_blocks_right["above"],
             self.obc_blocks_right["left"],
+            self.obc_blocks_right["above"],
             "right",
         )
 
         # Apply the retarded boundary self-energy.
         self.system_matrix.blocks[0, 0] -= (
-            self.system_matrix.blocks[1, 0] @ g_00 @ self.system_matrix.blocks[0, 1]
+            self.system_matrix.blocks[1, 0] @ x_00 @ self.system_matrix.blocks[0, 1]
         )
         self.system_matrix.blocks[-1, -1] -= (
-            self.system_matrix.blocks[-2, -1] @ g_nn @ self.system_matrix.blocks[-1, -2]
+            self.system_matrix.blocks[-2, -1] @ x_nn @ self.system_matrix.blocks[-1, -2]
         )
 
         # Compute and apply the lesser boundary self-energy.
-        a_00 = g_00.conj().transpose(0, 2, 1) - g_00
-        a_nn = g_nn.conj().transpose(0, 2, 1) - g_nn
-        scale_stack(a_00, self.left_occupancies)
-        scale_stack(a_nn, self.right_occupancies)
-
-        l_lesser.blocks[0, 0] += (
-            self.system_matrix.blocks[1, 0] @ a_00 @ self.system_matrix.blocks[0, 1]
+        a_00 = self.system_matrix.blocks[1, 0] @ x_00 @ self.l_lesser.blocks[0, 1]
+        a_nn = self.system_matrix.blocks[-2, -1] @ x_nn @ self.l_lesser.blocks[-1, -2]
+        w_00 = self.lyapunov(
+            x_00 @ self.system_matrix.blocks[1, 0],
+            x_00
+            @ (l_lesser.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
+            @ x_00.conj().swapaxes(-1, -2),
+            "left",
         )
-        l_lesser.blocks[-1, -1] += (
-            self.system_matrix.blocks[-2, -1] @ a_nn @ self.system_matrix.blocks[-1, -2]
+        w_nn = self.lyapunov(
+            x_nn @ self.system_matrix.blocks[-2, -1],
+            x_nn
+            @ (l_lesser.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
+            @ x_nn.conj().swapaxes(-1, -2),
+            "right",
+        )
+        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        # scale_stack(w_00, self.left_occupancies)
+        # scale_stack(w_nn, self.right_occupancies)
+
+        l_lesser.blocks[0, 0] += self.system_matrix.blocks[
+            1, 0
+        ] @ w_00 @ self.system_matrix.blocks[1, 0].conj().swapaxes(-1, -2) - (
+            a_00 - a_00.conj().swapaxes(-1, -2)
+        )
+        l_lesser.blocks[-1, -1] += self.system_matrix.blocks[
+            -2, -1
+        ] @ w_nn @ self.system_matrix.blocks[-2, -1].conj().swapaxes(-1, -2) - (
+            a_nn - a_nn.conj().swapaxes(-1, -2)
         )
 
         # Compute and apply the greater boundary self-energy.
-        a_00 = g_00.conj().transpose(0, 2, 1) - g_00
-        a_nn = g_nn.conj().transpose(0, 2, 1) - g_nn
-        scale_stack(a_00, 1 - self.left_occupancies)
-        scale_stack(a_nn, 1 - self.right_occupancies)
-
-        l_greater.blocks[0, 0] -= (
-            self.system_matrix.blocks[1, 0] @ a_00 @ self.system_matrix.blocks[0, 1]
+        a_00 = self.system_matrix.blocks[1, 0] @ x_00 @ self.l_greater.blocks[0, 1]
+        a_nn = self.system_matrix.blocks[-2, -1] @ x_nn @ self.l_greater.blocks[-1, -2]
+        w_00 = self.lyapunov(
+            x_00 @ self.system_matrix.blocks[1, 0],
+            x_00
+            @ (l_greater.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
+            @ x_00.conj().swapaxes(-1, -2),
+            "left",
         )
-        l_greater.blocks[-1, -1] -= (
-            self.system_matrix.blocks[-2, -1] @ a_nn @ self.system_matrix.blocks[-1, -2]
+        w_nn = self.lyapunov(
+            x_nn @ self.system_matrix.blocks[-2, -1],
+            x_nn
+            @ (l_greater.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
+            @ x_nn.conj().swapaxes(-1, -2),
+            "right",
+        )
+        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        # scale_stack(w_00, 1 + self.left_occupancies)
+        # scale_stack(w_nn, 1 + self.right_occupancies)
+
+        l_greater.blocks[0, 0] += self.system_matrix.blocks[
+            1, 0
+        ] @ w_00 @ self.system_matrix.blocks[1, 0].conj().swapaxes(-1, -2) - (
+            a_00 - a_00.conj().swapaxes(-1, -2)
+        )
+        l_greater.blocks[-1, -1] += self.system_matrix.blocks[
+            -2, -1
+        ] @ w_nn @ self.system_matrix.blocks[-2, -1].conj().swapaxes(-1, -2) - (
+            a_nn - a_nn.conj().swapaxes(-1, -2)
         )
 
     def _assemble_system_matrix(self, v_times_p_retarded: DSBSparse) -> None:
@@ -328,13 +378,17 @@ class CoulombScreeningSolver(SubsystemSolver):
         obc_multiply(
             self.v_times_p_retarded,
             (self.coulomb_matrix, p_retarded, self.dummy_identity),
+            self.small_block_sizes,
         )
         obc_multiply(
-            self.l_lesser, (self.coulomb_matrix, p_lesser, self.coulomb_matrix)
+            self.l_lesser,
+            (self.coulomb_matrix, p_lesser, self.coulomb_matrix),
+            self.small_block_sizes,
         )
         obc_multiply(
             self.l_greater,
             (self.coulomb_matrix, p_greater, self.coulomb_matrix),
+            self.small_block_sizes,
         )
         t_obc_multiply = time.perf_counter() - times.pop()
 
@@ -374,6 +428,10 @@ class CoulombScreeningSolver(SubsystemSolver):
             return_retarded=True,
         )
         t_solve = time.perf_counter() - times.pop()
+
+        # Compute the retarded Screened interaction (mainly used for debugging).
+        # Currently doesn't work.
+        # obc_multiply(out[2], (out[2], self.coulomb_matrix), self.block_sizes)
 
         (
             print(

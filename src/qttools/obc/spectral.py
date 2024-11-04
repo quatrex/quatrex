@@ -39,10 +39,9 @@ class Spectral(OBCSolver):
         Green's function.
     x_ii_formula : str, optional
         The formula to use for the calculation of the surface Green's
-        function. The default is via the boundary "self-energy". Other
-        options are "direct" and "stabilized". The "self-energy" formula
-        corresponds to Equation (13.1) in the paper [1]_, the "direct"
-        formula corresponds to Equation (13.2), and the "stabilized"
+        function. The default is via the boundary "self-energy". The
+        other option is "direct". The "self-energy" formula
+        corresponds to Equation (13.1) in the paper [1]_ and the "direct"
         formula corresponds to Equation (15).
 
     References
@@ -98,12 +97,12 @@ class Spectral(OBCSolver):
 
         """
         # Construct layer of periodic matrix in semi-infinite lead.
-        layer = [a_ji, a_ii, a_ij]
+        layer = (a_ji, a_ii, a_ij)
         if self.block_sections == 1:
             return layer
 
         # Get a nested block view of the layer.
-        view = _block_view(xp.hstack(layer), -1, 3 * self.block_sections)
+        view = _block_view(xp.concatenate(layer, axis=-1), -1, 3 * self.block_sections)
         view = _block_view(view, -2, self.block_sections)
 
         # Make sure that the reduction leads to periodic sublayers.
@@ -122,8 +121,7 @@ class Spectral(OBCSolver):
         self,
         ws: xp.ndarray,
         vs: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_xx: list[xp.ndarray],
     ) -> tuple[xp.ndarray, xp.ndarray]:
         """Determines which eigenvalues correspond to reflected modes.
 
@@ -149,28 +147,26 @@ class Spectral(OBCSolver):
             reflected modes.
 
         """
-        # Allow for batched input.
-        if a_ij.ndim == 2:
-            a_ij = a_ij[xp.newaxis, :, :]
-            a_ji = a_ji[xp.newaxis, :, :]
+        batchsize = a_xx[0].shape[0]
+        b = len(a_xx) // 2
 
-        batchsize = a_ij.shape[0]
-
-        # Calculate the group velocity to select propgagation direction.
-        dEk_dk = xp.zeros_like(ws)
-
+        # Calculate the group velocity to select propagation direction.
+        # The formula can be derived by taking the derivative of the
+        # polynomial eigenvalue equation with respect to k.
         # NOTE: This is actually only correct if we have no overlap.
-        # phi.H d/dk (H00 + lambda * H01 + 1/lambda * H10) phi =
-        # phi.H d/dk energy (S00 + lambda * S01 + 1/lambda * S10) phi
+        dEk_dk = xp.zeros_like(ws)
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
         ):  # Ignore division by zero.
+            # TODO: Replace this for loop with a faster implementation.
             for i in range(batchsize):
                 for j, w in enumerate(ws[i]):
-                    a = -(1j * w * a_ij[i] - 1j / w * a_ji[i])
+                    a = -sum(
+                        (1j * n) * w**n * a_xn[i]
+                        for a_xn, n in zip(a_xx, range(-b, b + 1))
+                    )
                     phi = vs[i, :, j]
-                    phi_t = phi.conj().T
-                    dEk_dk[i, j] = (phi_t @ a @ phi) / (phi_t @ phi)
+                    dEk_dk[i, j] = (phi.conj().T @ a @ phi) / (phi.conj().T @ phi)
 
             ks = -1j * xp.log(ws)
 
@@ -180,6 +176,47 @@ class Spectral(OBCSolver):
         return ((dEk_dk.real < 0) & (xp.abs(ks.imag) < self.min_decay)) | (
             (ks.imag < -self.min_decay) & (ks.imag > -self.max_decay)
         )
+
+    def _upscale_eigenmodes(
+        self,
+        ws: xp.ndarray,
+        vs: xp.ndarray,
+    ) -> xp.ndarray:
+        """Upscales the eigenvectors to the full periodic matrix layer.
+
+        The extraction of subblocks and hence the solution of a higher-
+        ordere, but smaller, NEVP leads to eigenvectors that are only
+        defined on the reduced matrix layer. This function upscales the
+        eigenvectors back to the full periodic matrix layer.
+
+        Parameters
+        ----------
+        ws : xp.ndarray
+            The eigenvalues of the NEVP.
+        vs : xp.ndarray
+            The eigenvectors of the (potentially) higher order NEVP.
+
+        Returns
+        -------
+        vs : xp.ndarray
+            The upscaled eigenvectors.
+
+        """
+        if self.block_sections == 1:
+            return vs
+
+        batchsize, subblock_size, num_modes = vs.shape
+        block_size = subblock_size * self.block_sections
+
+        vs_upscaled = xp.zeros((batchsize, block_size, num_modes), dtype=vs.dtype)
+        for i in range(batchsize):
+            for j, w in enumerate(ws[i]):
+                vs_upscaled[i, :, j] = xp.kron(
+                    xp.array([w**n for n in range(self.block_sections)]), vs[i, :, j]
+                )
+                vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
+
+        return vs_upscaled
 
     def _compute_x_ii(
         self,
@@ -218,27 +255,16 @@ class Spectral(OBCSolver):
             # Equation (13.1).
             x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
             for i, m in enumerate(mask):
-                vs_ = vs[i][:, m]
+                v = vs[i][:, m]
+                w = ws[i, m]
                 # Moore-Penrose pseudoinverse.
-                vs_inv = xp.linalg.inv(vs_.T @ vs_) @ vs_.T
-                x_ii_a_ij[i] = vs_ / ws[i, m] @ vs_inv
+                v_inv = xp.linalg.inv(v.T @ v) @ v.T
+                x_ii_a_ij[i] = v / w @ v_inv
 
             # Calculate the surface Green's function.
             return xp.linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
         if self.x_ii_formula == "direct":
-            # Equation (13.2).
-            x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                v = vs[i][:, m]
-                w = ws[i, m]
-                # Direct computation of the surface Green's function.
-                inverse = xp.linalg.inv(v.conj().T @ a_ij[i] @ v * w)
-                x_ii[i] = -v @ inverse @ v.conj().T
-
-            return x_ii
-
-        if self.x_ii_formula == "stabilized":
             # Equation (15).
             x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
             for i, m in enumerate(mask):
@@ -253,8 +279,7 @@ class Spectral(OBCSolver):
             return x_ii
 
         raise ValueError(
-            f"Unknown formula: {self.x_ii_formula}"
-            "Choose 'self-energy', 'direct' or 'stabilized'."
+            f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
         )
 
     def __call__(
@@ -273,7 +298,8 @@ class Spectral(OBCSolver):
 
         blocks = self._extract_subblocks(a_ji, a_ii, a_ij)
         ws, vs = self.nevp(blocks)
-        mask = self._find_reflected_modes(ws, vs, a_ij, a_ji)
+        mask = self._find_reflected_modes(ws, vs, blocks)
+        vs = self._upscale_eigenmodes(ws, vs)
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask)
 
         # Perform a number of refinement iterations.

@@ -20,8 +20,8 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = [a_x[xp.newaxis, :, :] for a_x in a_xx]
 
-        # TODO: Batched inversion is not supported directly via CuPy.
-        inverse = xp.array([xp.linalg.inv(a) for a in sum(a_xx)])
+        inverse = xp.linalg.inv(sum(a_xx))
+
         # NOTE: CuPy does not expose a `block` function.
         row = xp.concatenate(
             [inverse @ sum(a_xx[:i]) for i in range(1, len(a_xx) - 1)]

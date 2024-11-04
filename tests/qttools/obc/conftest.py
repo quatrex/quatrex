@@ -17,11 +17,16 @@ NEVP_SOLVERS = [
     pytest.param(Full(), id="Full"),
 ]
 
-X_II_FORMULAS = ["self-energy", "direct", "stabilized"]
+X_II_FORMULAS = ["self-energy", "direct"]
 
 BLOCK_SIZE = [
-    pytest.param(20, id="20x20"),
-    pytest.param(17, id="17x17"),
+    pytest.param(21, id="21x21"),
+    pytest.param(18, id="18x18"),
+]
+
+BLOCK_SECTIONS = [
+    pytest.param(1, id="no-subblocks"),
+    pytest.param(3, id="three-subblocks"),
 ]
 
 CONTACTS = ["left", "right"]
@@ -36,6 +41,12 @@ def x_ii_formula(request) -> str:
 @pytest.fixture(params=NEVP_SOLVERS)
 def nevp(request) -> NEVP:
     """Returns a NEVP solver."""
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_SECTIONS)
+def block_sections(request) -> int:
+    """Returns the number of block sections."""
     return request.param
 
 

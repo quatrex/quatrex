@@ -47,7 +47,7 @@ def get_host(arr: ArrayLike) -> np.ndarray:
     return arr.get()
 
 
-def get_device(arr: ArrayLike):
+def get_device(arr: ArrayLike) -> xp.ndarray:
     """Returns the device array of the given array.
 
     Parameters

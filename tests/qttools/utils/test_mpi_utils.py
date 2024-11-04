@@ -37,28 +37,28 @@ def test_get_section_sizes(
 
 
 @pytest.mark.mpi(min_size=2)
-def test_distributed_load_npy(tmp_path: Path):
+def test_distributed_load_npy(mpi_tmp_path: Path):
     """Test the distributed_load function."""
     arr = None
     if comm.rank == 0:
         arr = xp.random.rand(10)
-        xp.save(tmp_path / "arr.npy", arr)
+        xp.save(mpi_tmp_path / "arr.npy", arr)
     arr = comm.bcast(arr, root=0)
 
-    loaded_arr = distributed_load(tmp_path / "arr.npy")
+    loaded_arr = distributed_load(mpi_tmp_path / "arr.npy")
     assert xp.allclose(arr, loaded_arr)
 
 
 @pytest.mark.mpi(min_size=2)
-def test_distributed_load_npz(tmp_path: Path):
+def test_distributed_load_npz(mpi_tmp_path: Path):
     """Test the distributed_load function."""
     coo = None
     if comm.rank == 0:
         coo = sps.random(10, 10, density=0.5)
-        sps.save_npz(tmp_path / "coo.npz", coo)
+        sps.save_npz(mpi_tmp_path / "coo.npz", coo)
     coo = xps.coo_matrix(comm.bcast(coo, root=0))
 
-    loaded_arr = distributed_load(tmp_path / "arr.npz")
+    loaded_arr = distributed_load(mpi_tmp_path / "coo.npz")
     assert xp.allclose(coo.toarray(), loaded_arr.toarray())
 
 

@@ -1,7 +1,7 @@
 import warnings
 
+from qttools import xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.utils.gpu_utils import xp
 
 
 class Doubling(LyapunovSolver):

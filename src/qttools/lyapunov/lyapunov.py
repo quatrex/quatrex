@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from qttools.utils.gpu_utils import xp
+from qttools import xp
 
 
 class LyapunovSolver(ABC):

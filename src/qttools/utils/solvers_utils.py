@@ -1,6 +1,6 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-from qttools.utils.gpu_utils import xp
+from qttools import xp
 from qttools.utils.mpi_utils import get_section_sizes
 
 

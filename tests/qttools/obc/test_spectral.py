@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
+from qttools import xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc import OBCMemoizer, Spectral
-from qttools.utils.gpu_utils import xp
 
 
 def _make_periodic(

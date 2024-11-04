@@ -3,12 +3,11 @@
 import copy
 from abc import ABC, abstractmethod
 
-import numpy as np
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy import sparse
 
-from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream, xp
+from qttools import sparse, xp
+from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
@@ -194,8 +193,8 @@ class DSBSparse(ABC):
         row = xp.asarray(row, dtype=int)
         col = xp.asarray(col, dtype=int)
 
-        row = np.where(row < 0, self.shape[-2] + row, row)
-        col = np.where(col < 0, self.shape[-1] + col, col)
+        row = xp.where(row < 0, self.shape[-2] + row, row)
+        col = xp.where(col < 0, self.shape[-1] + col, col)
         if not (
             ((0 <= row) & (row < self.shape[-2])).all()
             and ((0 <= col) & (col < self.shape[-1])).all()
@@ -488,7 +487,7 @@ class DSBSparse(ABC):
             self.distribution_state = "stack"
 
     @abstractmethod
-    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -522,7 +521,7 @@ class DSBSparse(ABC):
         """
         ...
 
-    def to_dense(self) -> np.ndarray:
+    def to_dense(self) -> xp.ndarray:
         """Converts the local data to a dense array.
 
         This is dumb, unless used for testing and debugging.
@@ -557,7 +556,7 @@ class DSBSparse(ABC):
     @abstractmethod
     def from_sparray(
         cls,
-        arr: sparse.sparray,
+        arr: sparse.spmatrix,
         block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,

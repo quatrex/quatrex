@@ -1,6 +1,6 @@
-import numpy as np
 import pytest
 
+from qttools import xp
 from qttools.lyapunov import Doubling, Spectral, Vectorize
 
 BLOCK_SIZE = [
@@ -16,14 +16,14 @@ LYAPUNOV_SOLVERS = [
 
 
 @pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def inputs(request) -> tuple[np.ndarray, np.ndarray]:
+def inputs(request) -> tuple[xp.ndarray, xp.ndarray]:
     """Returns some random complex matrices."""
     size = request.param
-    a = np.random.rand(size, size) + 1j * np.random.rand(size, size)
+    a = xp.random.rand(size, size) + 1j * xp.random.rand(size, size)
     a /= 10 * size  # Ensure that the spectral radius is less than 1.
-    np.fill_diagonal(a, np.sum(np.abs(a), axis=1))
+    xp.fill_diagonal(a, xp.sum(xp.abs(a), axis=1))
 
-    q = np.random.rand(size, size) + 1j * np.random.rand(size, size)
+    q = xp.random.rand(size, size) + 1j * xp.random.rand(size, size)
 
     return a, q
 

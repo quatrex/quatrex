@@ -1,9 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 
+from qttools import xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver
-from qttools.utils.gpu_utils import xp
 from qttools.utils.solvers_utils import get_batches
 
 

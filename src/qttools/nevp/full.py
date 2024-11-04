@@ -1,7 +1,8 @@
 import numpy as np
 
+from qttools import xp
 from qttools.nevp.nevp import NEVP
-from qttools.utils.gpu_utils import get_device, get_host, xp
+from qttools.utils.gpu_utils import get_device, get_host
 
 
 class Full(NEVP):

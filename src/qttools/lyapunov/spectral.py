@@ -1,7 +1,8 @@
 import numpy as np
 
+from qttools import xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.utils.gpu_utils import get_device, get_host, xp
+from qttools.utils.gpu_utils import get_device, get_host
 
 
 class Spectral(LyapunovSolver):

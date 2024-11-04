@@ -1,9 +1,8 @@
-import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy import sparse
 
+from qttools import sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.utils.gpu_utils import ArrayLike, get_device, xp
+from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import compute_block_sort_index
 
@@ -326,7 +325,7 @@ class DSBCOO(DSBSparse):
         if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
-    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCOO":
+    def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCOO":
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
@@ -338,7 +337,7 @@ class DSBCOO(DSBSparse):
         self.data[:] += other.data[:]
         return self
 
-    def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCOO":
+    def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCOO":
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
@@ -457,7 +456,7 @@ class DSBCOO(DSBSparse):
     @classmethod
     def from_sparray(
         cls,
-        arr: sparse.sparray,
+        arr: sparse.spmatrix,
         block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
@@ -491,10 +490,10 @@ class DSBCOO(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        coo: sparse.coo_array = arr.tocoo().copy()
+        coo: sparse.coo_matrix = arr.tocoo().copy()
 
         num_blocks = len(block_sizes)
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
 
         # Densify the selected blocks.
         for i, j in densify_blocks or []:
@@ -506,29 +505,27 @@ class DSBCOO(DSBSparse):
 
             indices = [
                 (m + block_offsets[i], n + block_offsets[j])
-                for m, n in np.ndindex(block_sizes[i], block_sizes[j])
+                for m, n in xp.ndindex(int(block_sizes[i]), int(block_sizes[j]))
             ]
-            coo.row = np.append(coo.row, [m for m, __ in indices])
-            coo.col = np.append(coo.col, [n for __, n in indices])
-            coo.data = np.append(coo.data, np.zeros(len(indices), dtype=coo.data.dtype))
+            coo.row = xp.append(coo.row, [m for m, __ in indices]).astype(xp.int32)
+            coo.col = xp.append(coo.col, [n for __, n in indices]).astype(xp.int32)
+            coo.data = xp.append(coo.data, xp.zeros(len(indices), dtype=coo.data.dtype))
 
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        block_sort_index = compute_block_sort_index(
-            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
-        )
+        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = get_device(coo.data)[block_sort_index]
-        rows = get_device(coo.row)[block_sort_index]
-        cols = get_device(coo.col)[block_sort_index]
+        data[..., :] = coo.data[block_sort_index]
+        rows = coo.row[block_sort_index]
+        cols = coo.col[block_sort_index]
 
         return cls(
             data=data,
             rows=rows,
             cols=cols,
-            block_sizes=get_device(block_sizes),
+            block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )

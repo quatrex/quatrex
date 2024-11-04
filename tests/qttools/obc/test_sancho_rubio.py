@@ -2,8 +2,8 @@
 
 import pytest
 
+from qttools import xp
 from qttools.obc import OBCMemoizer, SanchoRubio
-from qttools.utils.gpu_utils import xp
 
 
 def test_convergence(a_xx: tuple[xp.ndarray, ...], contact: str):

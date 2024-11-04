@@ -1,11 +1,10 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy import sparse
 
+from qttools import sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.utils.gpu_utils import ArrayLike, get_device, xp
+from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import compute_block_sort_index, compute_ptr_map
 
@@ -328,7 +327,7 @@ class DSBCSR(DSBSparse):
         if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
-    def __iadd__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
+    def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCSR":
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
@@ -343,7 +342,7 @@ class DSBCSR(DSBSparse):
         self.data[:] += other.data[:]
         return self
 
-    def __isub__(self, other: "DSBSparse | sparse.sparray") -> "DSBCSR":
+    def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCSR":
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
             lil = other.tolil()
@@ -444,7 +443,7 @@ class DSBCSR(DSBSparse):
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
 
-    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -469,8 +468,8 @@ class DSBCSR(DSBSparse):
     @classmethod
     def from_sparray(
         cls,
-        arr: sparse.sparray,
-        block_sizes: np.ndarray,
+        arr: sparse.spmatrix,
+        block_sizes: xp.ndarray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
@@ -503,10 +502,10 @@ class DSBCSR(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        coo: sparse.coo_array = arr.tocoo().copy()
+        coo: sparse.coo_matrix = arr.tocoo().copy()
 
         num_blocks = len(block_sizes)
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
 
         # Densify the selected blocks.
         for i, j in densify_blocks or []:
@@ -518,31 +517,27 @@ class DSBCSR(DSBSparse):
 
             indices = [
                 (m + block_offsets[i], n + block_offsets[j])
-                for m, n in xp.ndindex(block_sizes[i], block_sizes[j])
+                for m, n in xp.ndindex(int(block_sizes[i]), int(block_sizes[j]))
             ]
-            coo.row = np.append(coo.row, [m for m, __ in indices])
-            coo.col = np.append(coo.col, [n for __, n in indices])
-            coo.data = np.append(coo.data, np.zeros(len(indices), dtype=coo.data.dtype))
+            coo.row = xp.append(coo.row, [m for m, __ in indices]).astype(xp.int32)
+            coo.col = xp.append(coo.col, [n for __, n in indices]).astype(xp.int32)
+            coo.data = xp.append(coo.data, xp.zeros(len(indices), dtype=coo.data.dtype))
 
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
         # Compute the rowptr map.
-        rowptr_map = compute_ptr_map(
-            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
-        )
-        block_sort_index = compute_block_sort_index(
-            get_device(coo.row), get_device(coo.col), get_device(block_sizes)
-        )
+        rowptr_map = compute_ptr_map(coo.row, coo.col, block_sizes)
+        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = get_device(coo.data)[block_sort_index]
-        cols = get_device(coo.col)[block_sort_index]
+        data[:] = coo.data[block_sort_index]
+        cols = coo.col[block_sort_index]
 
         return cls(
             data=data,
             cols=cols,
             rowptr_map=rowptr_map,
-            block_sizes=get_device(block_sizes),
+            block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )

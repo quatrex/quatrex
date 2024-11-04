@@ -1,11 +1,10 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 from numpy.typing import ArrayLike
-from scipy import sparse
 
+from qttools import sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import GFSolver
-from qttools.utils.gpu_utils import get_host, xp
 
 
 def test_selected_solve(
@@ -18,12 +17,12 @@ def test_selected_solve(
     block_sizes: ArrayLike,
     global_stack_shape: int | tuple,
 ):
-    coo_A = sparse.coo_matrix(get_host(bt_dense))
+    coo_A = sparse.coo_matrix(bt_dense)
 
-    coo_Bl = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bl = sparse.coo_matrix(bt_dense)
     coo_Bl += -coo_Bl.conj().T
 
-    coo_Bg = sparse.coo_matrix(get_host(bt_dense))
+    coo_Bg = sparse.coo_matrix(bt_dense)
     coo_Bg += -coo_Bg.conj().T
 
     # Reference solution of:
@@ -36,7 +35,7 @@ def test_selected_solve(
     # (3) A * Xg * A^T = Bg
     ref_Xg = ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T
 
-    block_sizes = get_host(block_sizes)
+    block_sizes = block_sizes
     densify_blocks = [(i, i) for i in range(len(block_sizes))]
 
     A = dsbsparse_type.from_sparray(

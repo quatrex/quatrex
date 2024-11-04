@@ -1,15 +1,15 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-import numpy as np
 import pytest
 
+from qttools import xp
 from qttools.datastructures import DSBCOO, DSBCSR
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(np.array([2] * 10), id="constant-block-size"),
-    pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(xp.array([2] * 10), id="constant-block-size"),
+    pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
 DENSIFY_BLOCKS = [

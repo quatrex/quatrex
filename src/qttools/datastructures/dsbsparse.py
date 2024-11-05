@@ -9,7 +9,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import sparse, xp
 from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
-from qttools.utils.sparse_utils import compute_block_sort_index
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
@@ -363,26 +362,8 @@ class DSBSparse(ABC):
     def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
-            coo: sparse.coo_matrix = other.tocoo(copy=True)
-            # Canonicalizes the matrix.
-            coo.sum_duplicates()
-            # Not sorting by block messes up the indexing.
-            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
-            rows, cols, data = (
-                coo.row[sort_inds],
-                coo.col[sort_inds],
-                coo.data[sort_inds],
-            )
-            # Chunking the assignment to avoid memory issues.
-            # TODO: Rather than having to do this, we will need to write
-            # a kernel for the item assignment.
-            num_chunks = coo.nnz // 1_000 + 1
-            for rows_chunk, cols_chunk, data_chunk in zip(
-                xp.array_split(rows, num_chunks),
-                xp.array_split(cols, num_chunks),
-                xp.array_split(data, num_chunks),
-            ):
-                self[rows_chunk, cols_chunk] += data_chunk
+            csr = other.tocsr()
+            self.data[:] += csr[*self.spy()]
             return self
 
         self._check_commensurable(other)
@@ -392,26 +373,8 @@ class DSBSparse(ABC):
     def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
-            coo: sparse.coo_matrix = other.tocoo(copy=True)
-            # Canonicalizes the matrix.
-            coo.sum_duplicates()
-            # Not sorting by block messes up the indexing.
-            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
-            rows, cols, data = (
-                coo.row[sort_inds],
-                coo.col[sort_inds],
-                coo.data[sort_inds],
-            )
-            # Chunking the assignment to avoid memory issues.
-            # TODO: Rather than having to do this, we will need to write
-            # a kernel for the item assignment.
-            num_chunks = coo.nnz // 1_000 + 1
-            for rows_chunk, cols_chunk, data_chunk in zip(
-                xp.array_split(rows, num_chunks),
-                xp.array_split(cols, num_chunks),
-                xp.array_split(data, num_chunks),
-            ):
-                self[rows_chunk, cols_chunk] -= data_chunk
+            csr = other.tocsr()
+            self.data[:] -= csr[*self.spy()]
             return self
 
         self._check_commensurable(other)

@@ -9,6 +9,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import sparse, xp
 from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.sparse_utils import compute_block_sort_index
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
@@ -90,8 +91,8 @@ class DSBSparse(ABC):
     - `_get_block(stack_index, row, col)`: Gets a block the stack.
     - `_getitems(stack_index, row, col)`: Gets items from the data.
     - `_setitems(stack_index, row, col)`: Sets items in the data.
-    - `__iadd__(other)`: In-place addition.
-    - `__imul__(other)`: In-place multiplication.
+    - `_check_commensurable(other)`: Checks if two DSBSparse matrices
+        are commensurable.
     - `__imatmul__(other)`: In-place matrix multiplication.
     - `__neg__()`: In-place negation.
     - `ltranspose()`: Local transposition.
@@ -355,14 +356,73 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def __iadd__(self, other: "DSBSparse") -> "DSBSparse":
-        """In-place addition of two DSBSparse matrices."""
+    def _check_commensurable(self, other: "DSBSparse") -> None:
+        """Checks if two DSBSparse matrices are commensurable."""
         ...
 
-    @abstractmethod
+    def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
+        """In-place addition of two DSBSparse matrices."""
+        if sparse.issparse(other):
+            coo: sparse.coo_matrix = other.tocoo(copy=True)
+            # Canonicalizes the matrix.
+            coo.sum_duplicates()
+            # Not sorting by block messes up the indexing.
+            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
+            rows, cols, data = (
+                coo.row[sort_inds],
+                coo.col[sort_inds],
+                coo.data[sort_inds],
+            )
+            # Chunking the assignment to avoid memory issues.
+            # TODO: Rather than having to do this, we will need to write
+            # a kernel for the item assignment.
+            num_chunks = coo.nnz // 1_000 + 1
+            for rows_chunk, cols_chunk, data_chunk in zip(
+                xp.array_split(rows, num_chunks),
+                xp.array_split(cols, num_chunks),
+                xp.array_split(data, num_chunks),
+            ):
+                self[rows_chunk, cols_chunk] += data_chunk
+            return self
+
+        self._check_commensurable(other)
+        self.data[:] += other.data[:]
+        return self
+
+    def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
+        """In-place subtraction of two DSBSparse matrices."""
+        if sparse.issparse(other):
+            coo: sparse.coo_matrix = other.tocoo(copy=True)
+            # Canonicalizes the matrix.
+            coo.sum_duplicates()
+            # Not sorting by block messes up the indexing.
+            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
+            rows, cols, data = (
+                coo.row[sort_inds],
+                coo.col[sort_inds],
+                coo.data[sort_inds],
+            )
+            # Chunking the assignment to avoid memory issues.
+            # TODO: Rather than having to do this, we will need to write
+            # a kernel for the item assignment.
+            num_chunks = coo.nnz // 1_000 + 1
+            for rows_chunk, cols_chunk, data_chunk in zip(
+                xp.array_split(rows, num_chunks),
+                xp.array_split(cols, num_chunks),
+                xp.array_split(data, num_chunks),
+            ):
+                self[rows_chunk, cols_chunk] -= data_chunk
+            return self
+
+        self._check_commensurable(other)
+        self.data[:] -= other.data[:]
+        return self
+
     def __imul__(self, other: "DSBSparse") -> "DSBSparse":
         """In-place multiplication of two DSBSparse matrices."""
-        ...
+        self._check_commensurable(other)
+        self.data[:] *= other.data[:]
+        return self
 
     @abstractmethod
     def __neg__(self) -> "DSBSparse":

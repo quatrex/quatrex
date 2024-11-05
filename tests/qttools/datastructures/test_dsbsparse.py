@@ -455,6 +455,23 @@ class TestArithmetic:
 
         assert xp.allclose(dense + dense, dsbsparse.to_dense())
 
+    def test_iadd_coo(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: xp.ndarray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+    ):
+        """Tests the in-place addition of a DSBSparse matrix with a COO matrix."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks
+        )
+
+        dsbsparse += coo.copy()
+
+        assert xp.allclose(dsbsparse.to_dense(), 2 * coo.toarray())
+
     def test_isub(
         self,
         dsbsparse_type: DSBSparse,
@@ -478,6 +495,25 @@ class TestArithmetic:
         dsbsparse_1 -= dsbsparse_2
 
         assert xp.allclose(dense_1 - dense_2, dsbsparse_1.to_dense())
+
+    def test_isub_coo(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: xp.ndarray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+    ):
+        """Tests the in-place subtraction of a DSBSparse matrix with a COO matrix."""
+        coo = _create_coo(block_sizes)
+
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks
+        )
+        dense = dsbsparse.to_dense()
+
+        dsbsparse -= 2 * coo
+
+        assert xp.allclose(dense - 2 * coo.toarray(), dsbsparse.to_dense())
 
     def test_imul(
         self,

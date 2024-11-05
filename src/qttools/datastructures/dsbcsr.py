@@ -330,12 +330,26 @@ class DSBCSR(DSBSparse):
     def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCSR":
         """In-place addition of two DSBSparse matrices."""
         if sparse.issparse(other):
-            lil = other.tolil()
-
-            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
-            for i, (row, col) in enumerate(zip(*self.spy())):
-                sparray_data[i] = lil[row, col]
-            self.data[:] += sparray_data
+            coo: sparse.coo_matrix = other.tocoo(copy=True)
+            # Canonicalizes the matrix.
+            coo.sum_duplicates()
+            # Not sorting by block messes up the indexing.
+            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
+            rows, cols, data = (
+                coo.row[sort_inds],
+                coo.col[sort_inds],
+                coo.data[sort_inds],
+            )
+            # Chunking the assignment to avoid memory issues.
+            # TODO: Rather than having to do this, we will need to write
+            # a kernel for the item assignment.
+            num_chunks = coo.nnz // 1_000 + 1
+            for rows_chunk, cols_chunk, data_chunk in zip(
+                xp.array_split(rows, num_chunks),
+                xp.array_split(cols, num_chunks),
+                xp.array_split(data, num_chunks),
+            ):
+                self[rows_chunk, cols_chunk] += data_chunk
             return self
 
         self._check_commensurable(other)
@@ -345,12 +359,26 @@ class DSBCSR(DSBSparse):
     def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBCSR":
         """In-place subtraction of two DSBSparse matrices."""
         if sparse.issparse(other):
-            lil = other.tolil()
-
-            sparray_data = xp.zeros(self.nnz, dtype=self.dtype)
-            for i, (row, col) in enumerate(zip(*self.spy())):
-                sparray_data[i] = lil[row, col]
-            self.data[:] -= sparray_data
+            coo: sparse.coo_matrix = other.tocoo(copy=True)
+            # Canonicalizes the matrix.
+            coo.sum_duplicates()
+            # Not sorting by block messes up the indexing.
+            sort_inds = compute_block_sort_index(coo.row, coo.col, self.block_sizes)
+            rows, cols, data = (
+                coo.row[sort_inds],
+                coo.col[sort_inds],
+                coo.data[sort_inds],
+            )
+            # Chunking the assignment to avoid memory issues.
+            # TODO: Rather than having to do this, we will need to write
+            # a kernel for the item assignment.
+            num_chunks = coo.nnz // 1_000 + 1
+            for rows_chunk, cols_chunk, data_chunk in zip(
+                xp.array_split(rows, num_chunks),
+                xp.array_split(cols, num_chunks),
+                xp.array_split(data, num_chunks),
+            ):
+                self[rows_chunk, cols_chunk] -= data_chunk
             return self
 
         self._check_commensurable(other)

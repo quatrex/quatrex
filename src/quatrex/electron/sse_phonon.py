@@ -2,8 +2,8 @@
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.gpu_utils import xp
 
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -85,21 +85,23 @@ class SigmaPhonon(ScatteringSelfEnergy):
         # ==== Diagonal only ===========================================
         inds = xp.diag_indices(sigma_lesser.shape[-1])
 
-        sigma_lesser.stack[self.downshift : -self.upshift][
-            *inds
-        ] = self.deformation_potential**2 * (
-            self.occupancy
-            * np.roll(g_lesser[*inds], self.downshift, axis=0)[self.totalshift :]
-            + (self.occupancy + 1)
-            * np.roll(g_lesser[*inds], -self.upshift, axis=0)[: -self.totalshift]
+        sigma_lesser.stack[self.downshift : -self.upshift][*inds] = (
+            self.deformation_potential**2
+            * (
+                self.occupancy
+                * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.totalshift :]
+                + (self.occupancy + 1)
+                * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[: -self.totalshift]
+            )
         )
-        sigma_greater.stack[self.downshift : -self.upshift][
-            *inds
-        ] = self.deformation_potential**2 * (
-            self.occupancy
-            * np.roll(g_greater[*inds], -self.upshift, axis=0)[: -self.totalshift]
-            + (self.occupancy + 1)
-            * np.roll(g_greater[*inds], self.downshift, axis=0)[self.totalshift :]
+        sigma_greater.stack[self.downshift : -self.upshift][*inds] = (
+            self.deformation_potential**2
+            * (
+                self.occupancy
+                * xp.roll(g_greater[*inds], -self.upshift, axis=0)[: -self.totalshift]
+                + (self.occupancy + 1)
+                * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.totalshift :]
+            )
         )
 
         # ==== Full matrices ===========================================

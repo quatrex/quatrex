@@ -4,9 +4,9 @@ import os
 import time
 from dataclasses import dataclass, field
 
-import numpy as np
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import xp
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -115,48 +115,48 @@ class SCBAData:
 @dataclass
 class Observables:
     # --- Electrons ----------------------------------------------------
-    electron_ldos: np.ndarray = None
-    electron_density: np.ndarray = None
-    hole_density: np.ndarray = None
+    electron_ldos: xp.ndarray = None
+    electron_density: xp.ndarray = None
+    hole_density: xp.ndarray = None
     electron_current: dict = field(default_factory=dict)
 
-    electron_electron_scattering_rate: np.ndarray = None
-    electron_photon_scattering_rate: np.ndarray = None
-    electron_phonon_scattering_rate: np.ndarray = None
+    electron_electron_scattering_rate: xp.ndarray = None
+    electron_photon_scattering_rate: xp.ndarray = None
+    electron_phonon_scattering_rate: xp.ndarray = None
 
-    sigma_retarded_density: np.ndarray = None
-    sigma_lesser_density: np.ndarray = None
-    sigma_greater_density: np.ndarray = None
+    sigma_retarded_density: xp.ndarray = None
+    sigma_lesser_density: xp.ndarray = None
+    sigma_greater_density: xp.ndarray = None
 
     # --- Coulomb screening --------------------------------------------
-    w_retarded_density: np.ndarray = None
-    w_lesser_density: np.ndarray = None
-    w_greater_density: np.ndarray = None
+    w_retarded_density: xp.ndarray = None
+    w_lesser_density: xp.ndarray = None
+    w_greater_density: xp.ndarray = None
 
-    p_retarded_density: np.ndarray = None
-    p_lesser_density: np.ndarray = None
-    p_greater_density: np.ndarray = None
+    p_retarded_density: xp.ndarray = None
+    p_lesser_density: xp.ndarray = None
+    p_greater_density: xp.ndarray = None
 
     # --- Photons ------------------------------------------------------
-    pi_photon_retarded_density: np.ndarray = None
-    pi_photon_lesser_density: np.ndarray = None
-    pi_photon_greater_density: np.ndarray = None
+    pi_photon_retarded_density: xp.ndarray = None
+    pi_photon_lesser_density: xp.ndarray = None
+    pi_photon_greater_density: xp.ndarray = None
 
-    d_photon_retarded_density: np.ndarray = None
-    d_photon_lesser_density: np.ndarray = None
-    d_photon_greater_density: np.ndarray = None
+    d_photon_retarded_density: xp.ndarray = None
+    d_photon_lesser_density: xp.ndarray = None
+    d_photon_greater_density: xp.ndarray = None
 
-    photon_current_density: np.ndarray = None
+    photon_current_density: xp.ndarray = None
 
     # --- Phonons ------------------------------------------------------
-    pi_phonon_retarded_density: np.ndarray = None
-    pi_phonon_lesser_density: np.ndarray = None
-    pi_phonon_greater_density: np.ndarray = None
-    d_phonon_retarded_density: np.ndarray = None
-    d_phonon_lesser_density: np.ndarray = None
-    d_phonon_greater_density: np.ndarray = None
+    pi_phonon_retarded_density: xp.ndarray = None
+    pi_phonon_lesser_density: xp.ndarray = None
+    pi_phonon_greater_density: xp.ndarray = None
+    d_phonon_retarded_density: xp.ndarray = None
+    d_phonon_lesser_density: xp.ndarray = None
+    d_phonon_greater_density: xp.ndarray = None
 
-    thermal_current: np.ndarray = None
+    thermal_current: xp.ndarray = None
 
 
 class SCBA:
@@ -185,7 +185,7 @@ class SCBA:
         self.compute_config = compute_config
 
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = np.load(
+        self.electron_energies = xp.load(
             self.quatrex_config.input_dir / "electron_energies.npy"
         )
         self.electron_solver = ElectronSolver(
@@ -200,7 +200,7 @@ class SCBA:
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
             )
             if os.path.isfile(energies_path):
-                self.coulomb_screening_energies = np.load(energies_path)
+                self.coulomb_screening_energies = xp.load(energies_path)
             else:
                 self.coulomb_screening_energies = (
                     self.electron_energies - self.electron_energies[0]
@@ -226,7 +226,7 @@ class SCBA:
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
             energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
-            self.photon_energies = np.load(energies_path)
+            self.photon_energies = xp.load(energies_path)
             self.pi_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(
                 self.quatrex_config,
@@ -240,7 +240,7 @@ class SCBA:
         if self.quatrex_config.scba.phonon:
             if self.quatrex_config.phonon.model == "negf":
                 energies_path = self.quatrex_config.input_dir / "phonon_energies.npy"
-                self.phonon_energies = np.load(energies_path)
+                self.phonon_energies = xp.load(energies_path)
                 self.pi_phonon = PiPhonon(...)
                 self.phonon_solver = PhononSolver(
                     self.quatrex_config,
@@ -291,7 +291,7 @@ class SCBA:
         """Checks if the SCBA has converged."""
         # Relative infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        max_diff = np.max(np.abs(diff))
+        max_diff = xp.max(xp.abs(diff))
         # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
         max_diff = comm.allreduce(max_diff, op=MPI.MAX)
         (
@@ -303,10 +303,10 @@ class SCBA:
         #     return True
         # return False
         i_left, i_right = contact_currents(self.electron_solver)
-        change_left = np.linalg.norm(
+        change_left = xp.linalg.norm(
             i_left.real - self.observables.electron_current.get("left", 0.0)
         )
-        change_right = np.linalg.norm(
+        change_right = xp.linalg.norm(
             i_right.real - self.observables.electron_current.get("right", 0.0)
         )
         ave_change = 0.5 * (change_left + change_right)
@@ -315,8 +315,8 @@ class SCBA:
             if comm.rank == 0
             else None
         )
-        rel_change_left = change_left / np.linalg.norm(i_left.real)
-        rel_change_right = change_right / np.linalg.norm(i_right.real)
+        rel_change_left = change_left / xp.linalg.norm(i_left.real)
+        rel_change_right = change_right / xp.linalg.norm(i_right.real)
         rel_ave_change = 0.5 * (rel_change_left + rel_change_right)
         (
             print(f"Relative Average Current Change: {rel_ave_change}", flush=True)

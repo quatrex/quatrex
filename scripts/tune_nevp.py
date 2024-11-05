@@ -3,9 +3,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from qttools import xp
 from qttools.nevp import Beyn, Full
 from qttools.obc import Spectral
-from qttools.utils.gpu_utils import xp
 from scipy import sparse
 
 from quatrex.core.quatrex_config import QuatrexConfig, parse_config

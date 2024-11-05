@@ -1,12 +1,11 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 import pytest
-import scipy.sparse as sparse
 from numpy.typing import ArrayLike
 
+from qttools import sparse, xp
 from qttools.datastructures import DSBCOO
 from qttools.greens_function_solver import RGF, Inv
-from qttools.utils.gpu_utils import xp
 
 GFSOLVERS_TYPE = [Inv, RGF]
 
@@ -56,6 +55,13 @@ def dsbsparse_type(request):
     return request.param
 
 
+def _random_block(m: int, n: int):
+    """Generates a quasi-sparse random block of size m x n."""
+    coo = sparse.random(int(m), int(n), density=0.5, format="coo").astype(xp.complex128)
+    coo.data += 1j * xp.random.uniform(size=coo.nnz)
+    return coo.toarray()
+
+
 @pytest.fixture(scope="function", autouse=False)
 def bt_dense(
     block_sizes: ArrayLike,
@@ -68,15 +74,9 @@ def bt_dense(
 
     # Fill the block-tridiagonal blocks
     for i in range(num_blocks):
-        block = xp.asarray(
-            sparse.random(
-                block_sizes[i],
-                block_sizes[i],
-                density=0.5,
-                format="coo",
-                dtype=xp.complex128,
-            ).toarray()
-        ) + xp.identity(int(block_sizes[i]), dtype=xp.complex128)
+        block = _random_block(block_sizes[i], block_sizes[i]) + xp.identity(
+            int(block_sizes[i]), dtype=xp.complex128
+        )
 
         arr[
             block_offsets[i] : block_offsets[i + 1],
@@ -84,30 +84,14 @@ def bt_dense(
         ] = block
 
         if i > 0:
-            block = xp.asarray(
-                sparse.random(
-                    block_sizes[i],
-                    block_sizes[i - 1],
-                    density=0.5,
-                    format="coo",
-                    dtype=xp.complex128,
-                ).toarray()
-            )
+            block = _random_block(block_sizes[i], block_sizes[i - 1])
 
             arr[
                 block_offsets[i] : block_offsets[i + 1],
                 block_offsets[i - 1] : block_offsets[i],
             ] = block
 
-            block = xp.asarray(
-                sparse.random(
-                    block_sizes[i - 1],
-                    block_sizes[i],
-                    density=0.5,
-                    format="coo",
-                    dtype=xp.complex128,
-                ).toarray()
-            )
+            block = _random_block(block_sizes[i - 1], block_sizes[i])
 
             arr[
                 block_offsets[i - 1] : block_offsets[i],

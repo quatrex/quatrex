@@ -1,4 +1,4 @@
-from qttools.utils.gpu_utils import xp
+from qttools import xp
 
 
 def operator_inverse(

@@ -1,11 +1,10 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 from numpy.typing import ArrayLike
-from scipy import sparse
 
+from qttools import sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import GFSolver
-from qttools.utils.gpu_utils import get_host, xp
 
 
 def test_selected_inv(
@@ -20,9 +19,9 @@ def test_selected_inv(
     bt_mask = bt_dense.astype(bool)
     ref_inv = xp.linalg.inv(bt_dense) * bt_mask
 
-    coo = sparse.coo_matrix(get_host(bt_dense))
+    coo = sparse.coo_matrix(bt_dense)
 
-    block_sizes = get_host(block_sizes)
+    block_sizes = block_sizes
     densify_blocks = [(i, i) for i in range(len(block_sizes))]
     dsbsparse = dsbsparse_type.from_sparray(
         coo, block_sizes, global_stack_shape, densify_blocks

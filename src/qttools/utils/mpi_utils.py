@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-import numpy as np
+import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy import sparse
+
+from qttools import sparse as xps
+from qttools import xp
 
 
 def get_section_sizes(
@@ -62,7 +64,7 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
+def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
     """Loads an array from disk and distributes it to all ranks.
 
     Parameters
@@ -72,7 +74,7 @@ def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
 
     Returns
     -------
-    sparse.sparray | np.ndarray
+    sparse.sparray | xp.ndarray
         The loaded array.
 
     """
@@ -83,9 +85,10 @@ def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
 
     if comm.rank == 0:
         if path.suffix == ".npz":
-            arr = sparse.load_npz(path)
+            arr = sps.load_npz(path)
+            arr = xps.coo_matrix(arr)
         elif path.suffix == ".npy":
-            arr = np.load(path)
+            arr = xp.load(path)
 
     else:
         arr = None
@@ -95,25 +98,25 @@ def distributed_load(path: Path) -> sparse.sparray | np.ndarray:
     return arr
 
 
-def get_local_slice(global_array: np.ndarray) -> None:
+def get_local_slice(global_array: xp.ndarray) -> None:
     """Returns the local slice of a distributed array.
 
     Parameters
     ----------
-    global_array : np.ndarray
+    global_array : xp.ndarray
         The global array to slice.
 
     Returns
     -------
-    np.ndarray
+    xp.ndarray
         The local slice of the global array.
 
     """
     section_sizes, __ = get_section_sizes(global_array.shape[-1])
-    section_offsets = np.cumsum([0] + section_sizes)
+    section_offsets = xp.cumsum(xp.array([0] + section_sizes))
 
     return global_array[
-        ..., section_offsets[comm.rank] : section_offsets[comm.rank + 1]
+        ..., int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1])
     ]
 
 

@@ -1,10 +1,9 @@
-import numpy as np
 import pytest
 
+from qttools import xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc import OBCMemoizer, Spectral
-from qttools.utils.gpu_utils import xp
 
 
 def _make_periodic(
@@ -43,7 +42,7 @@ def _make_periodic(
     "block_sections",
 )
 def test_correctness(
-    a_xx: tuple[np.ndarray, ...],
+    a_xx: tuple[xp.ndarray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,
@@ -64,7 +63,7 @@ def test_correctness(
     "block_sections",
 )
 def test_correctness_batch(
-    a_xx: tuple[np.ndarray, ...],
+    a_xx: tuple[xp.ndarray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,
@@ -88,7 +87,7 @@ def test_correctness_batch(
     "block_sections",
 )
 def test_memoizer(
-    a_xx: tuple[np.ndarray, ...],
+    a_xx: tuple[xp.ndarray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,
@@ -101,7 +100,7 @@ def test_memoizer(
     spectral = OBCMemoizer(spectral)
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
-    assert np.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)
+    assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)
     # Add a little noise to the input matrices.
     a_ji += xp.random.randn(*a_ji.shape)
     a_ii += xp.random.randn(*a_ii.shape)
@@ -109,4 +108,4 @@ def test_memoizer(
     a_ji, a_ii, a_ij = _make_periodic((a_ji, a_ii, a_ij), block_sections)
 
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
-    assert np.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)
+    assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)

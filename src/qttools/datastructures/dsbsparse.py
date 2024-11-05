@@ -3,12 +3,11 @@
 import copy
 from abc import ABC, abstractmethod
 
-import numpy as np
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy import sparse
 
-from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream, xp
+from qttools import sparse, xp
+from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
@@ -89,8 +88,10 @@ class DSBSparse(ABC):
     DSBSparse implementations should provide the following methods:
     - `_set_block(stack_index, row, col, block)`: Sets a block.
     - `_get_block(stack_index, row, col)`: Gets a block the stack.
-    - `__iadd__(other)`: In-place addition.
-    - `__imul__(other)`: In-place multiplication.
+    - `_getitems(stack_index, row, col)`: Gets items from the data.
+    - `_setitems(stack_index, row, col)`: Sets items in the data.
+    - `_check_commensurable(other)`: Checks if two DSBSparse matrices
+        are commensurable.
     - `__imatmul__(other)`: In-place matrix multiplication.
     - `__neg__()`: In-place negation.
     - `ltranspose()`: Local transposition.
@@ -113,7 +114,7 @@ class DSBSparse(ABC):
         interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
-        Default is False.
+        Default is True.
 
     """
 
@@ -122,7 +123,7 @@ class DSBSparse(ABC):
         data: ArrayLike,
         block_sizes: ArrayLike,
         global_stack_shape: tuple | int,
-        return_dense: bool = False,
+        return_dense: bool = True,
     ) -> None:
         """Initializes the DBSparse matrix."""
         if isinstance(global_stack_shape, int):
@@ -179,15 +180,38 @@ class DSBSparse(ABC):
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
 
-    @abstractmethod
-    def __getitem__(self, index: tuple) -> ArrayLike:
-        """Gets the requested block from the data structure."""
-        ...
+    def _normalize_index(self, index: tuple) -> tuple:
+        """Adjusts the sign to allow negative indices and checks bounds."""
+        if not isinstance(index, tuple):
+            raise IndexError("Invalid index.")
 
-    @abstractmethod
+        if not len(index) == 2:
+            raise IndexError("Invalid index.")
+
+        row, col = index
+
+        row = xp.asarray(row, dtype=int)
+        col = xp.asarray(col, dtype=int)
+
+        row = xp.where(row < 0, self.shape[-2] + row, row)
+        col = xp.where(col < 0, self.shape[-1] + col, col)
+        if not (
+            ((0 <= row) & (row < self.shape[-2])).all()
+            and ((0 <= col) & (col < self.shape[-1])).all()
+        ):
+            raise IndexError("Index out of bounds.")
+
+        return row, col
+
+    def __getitem__(self, index: tuple) -> ArrayLike:
+        """Gets a single value accross the stack."""
+        index = self._normalize_index(index)
+        return self._get_items((Ellipsis,), *index)
+
     def __setitem__(self, index: tuple, value: ArrayLike) -> None:
-        """Sets the requested block in the data structure."""
-        ...
+        """Sets a single value in the matrix."""
+        index = self._normalize_index(index)
+        self._set_items((Ellipsis,), *index, value)
 
     @property
     def blocks(self) -> "_DSBlockIndexer":
@@ -227,6 +251,57 @@ class DSBSparse(ABC):
             f"global_stack_shape={self.global_stack_shape}, "
             f'distribution_state="{self.distribution_state}")'
         )
+
+    @abstractmethod
+    def _get_items(
+        self, stack_index: tuple, rows: int | ArrayLike, cols: int | ArrayLike
+    ) -> ArrayLike:
+        """Gets the requested items from the data structure.
+
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the __getitem__
+        method. The index is assumed to already be renormalized.
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        rows : int | array_like
+            The row indices of the items.
+        cols : int | array_like
+            The column indices of the items.
+
+        Returns
+        -------
+        items : array_like
+            The requested items.
+
+        """
+        ...
+
+    @abstractmethod
+    def _set_items(
+        self, stack_index: tuple, rows: int | list, cols: int | list, values: ArrayLike
+    ) -> None:
+        """Sets the requested items in the data structure.
+
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the __setitem__
+        method. The index is assumed to already be renormalized.
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        rows : int | array_like
+            The row indices of the items.
+        cols : int | array_like
+            The column indices of the items.
+        values : array_like
+            The values to set.
+
+        """
+        ...
 
     @abstractmethod
     def _set_block(
@@ -280,14 +355,37 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def __iadd__(self, other: "DSBSparse") -> "DSBSparse":
-        """In-place addition of two DSBSparse matrices."""
+    def _check_commensurable(self, other: "DSBSparse") -> None:
+        """Checks if two DSBSparse matrices are commensurable."""
         ...
 
-    @abstractmethod
+    def __iadd__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
+        """In-place addition of two DSBSparse matrices."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self.data[:] += csr[*self.spy()]
+            return self
+
+        self._check_commensurable(other)
+        self.data[:] += other.data[:]
+        return self
+
+    def __isub__(self, other: "DSBSparse | sparse.spmatrix") -> "DSBSparse":
+        """In-place subtraction of two DSBSparse matrices."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self.data[:] -= csr[*self.spy()]
+            return self
+
+        self._check_commensurable(other)
+        self.data[:] -= other.data[:]
+        return self
+
     def __imul__(self, other: "DSBSparse") -> "DSBSparse":
         """In-place multiplication of two DSBSparse matrices."""
-        ...
+        self._check_commensurable(other)
+        self.data[:] *= other.data[:]
+        return self
 
     @abstractmethod
     def __neg__(self) -> "DSBSparse":
@@ -412,7 +510,7 @@ class DSBSparse(ABC):
             self.distribution_state = "stack"
 
     @abstractmethod
-    def spy(self) -> tuple[np.ndarray, np.ndarray]:
+    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -446,7 +544,7 @@ class DSBSparse(ABC):
         """
         ...
 
-    def to_dense(self) -> np.ndarray:
+    def to_dense(self) -> xp.ndarray:
         """Converts the local data to a dense array.
 
         This is dumb, unless used for testing and debugging.
@@ -481,7 +579,7 @@ class DSBSparse(ABC):
     @abstractmethod
     def from_sparray(
         cls,
-        arr: sparse.sparray,
+        arr: sparse.spmatrix,
         block_sizes: ArrayLike,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
@@ -566,15 +664,47 @@ class _DStackView:
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse, index) -> None:
+    def __init__(self, dsbsparse: DSBSparse, stack_index) -> None:
         """Initializes the stack indexer."""
         self._dsbsparse = dsbsparse
-        self._index = index
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
+
+        # NOTE: This replacement of ellipsis is nicked from
+        # https://github.com/dask/dask/blob/main/dask/array/slicing.py
+        # See the license at
+        # https://github.com/dask/dask/blob/main/LICENSE.txt
+        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+        if is_ellipsis:
+            if len(is_ellipsis) > 1:
+                raise IndexError("an index can only have a single ellipsis ('...')")
+
+            loc = is_ellipsis[0]
+            extra_dimensions = (self._dsbsparse.data.ndim - 1) - (
+                len(stack_index) - sum(i is None for i in stack_index) - 1
+            )
+            stack_index = (
+                stack_index[:loc]
+                + (slice(None, None, None),) * extra_dimensions
+                + stack_index[loc + 1 :]
+            )
+
+        self._stack_index = stack_index
+
+    def __getitem__(self, index: tuple) -> ArrayLike:
+        """Gets the requested data from the substack."""
+        rows, cols = self._dsbsparse._normalize_index(index)
+        return self._dsbsparse._get_items(self._stack_index, rows, cols)
+
+    def __setitem__(self, index: tuple, values: ArrayLike) -> ArrayLike:
+        """Sets the requested data in the substack."""
+        rows, cols = self._dsbsparse._normalize_index(index)
+        self._dsbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer on the substack."""
-        return _DSBlockIndexer(self._dsbsparse, self._index)
+        return _DSBlockIndexer(self._dsbsparse, self._stack_index)
 
 
 class _DSBlockIndexer:

@@ -1,9 +1,9 @@
 import warnings
 
+from qttools import xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
-from qttools.utils.gpu_utils import xp
 
 
 class Spectral(OBCSolver):

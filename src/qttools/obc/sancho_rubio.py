@@ -2,8 +2,8 @@
 
 import warnings
 
+from qttools import xp
 from qttools.obc.obc import OBCSolver
-from qttools.utils.gpu_utils import xp
 
 
 class SanchoRubio(OBCSolver):

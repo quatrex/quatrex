@@ -24,6 +24,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         coulomb_screening_energies: xp.ndarray,
     ) -> None:
         self.energies = coulomb_screening_energies
+        self.ne = len(self.energies)
         self.prefactor = -1j / np.pi * (self.energies[1] - self.energies[0])
 
     def compute(
@@ -39,10 +40,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_l_full = -p_g_full[::-1].conj()
         p_lesser._data[
             p_lesser._stack_padding_mask, ..., : p_lesser.nnz_section_sizes[comm.rank]
-        ] = p_l_full[: g_lesser.shape[0]]
+        ] = p_l_full[: self.ne]
         p_greater._data[
             p_greater._stack_padding_mask, ..., : p_greater.nnz_section_sizes[comm.rank]
-        ] = p_g_full[: g_greater.shape[0]]
+        ] = p_g_full[: self.ne]
         p_retarded._data = (p_greater._data - p_lesser._data) / 2
 
         # Transpose the matrices to stack distribution.

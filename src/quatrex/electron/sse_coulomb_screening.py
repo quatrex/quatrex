@@ -41,6 +41,7 @@ def hilbert_transform(a: xp.ndarray, energies: xp.ndarray) -> xp.ndarray:
 class SigmaCoulombScreening(ScatteringSelfEnergy):
     def __init__(self, config: QuatrexConfig, electron_energies: xp.ndarray):
         self.energies = electron_energies
+        self.ne = len(self.energies)
         self.prefactor = 1j / np.pi * (self.energies[1] - self.energies[0])
 
     def compute(
@@ -80,16 +81,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             ...,
             : sigma_lesser.nnz_section_sizes[comm.rank],
         ] += self.prefactor * (
-            fft_convolve(g_lesser.data, w_lesser.data)[g_lesser.shape[0] - 1 :]
-            - fft_correlate(g_lesser.data, w_greater.data.conj())[: g_lesser.shape[0]]
+            fft_convolve(g_lesser.data, w_lesser.data)[self.ne - 1 :]
+            - fft_correlate(g_lesser.data, w_greater.data.conj())[: self.ne]
         )
         sigma_greater._data[
             sigma_greater._stack_padding_mask,
             ...,
             : sigma_greater.nnz_section_sizes[comm.rank],
         ] += self.prefactor * (
-            fft_convolve(g_greater.data, w_greater.data)[g_greater.shape[0] - 1 :]
-            - fft_correlate(g_greater.data, w_lesser.data.conj())[: g_greater.shape[0]]
+            fft_convolve(g_greater.data, w_greater.data)[self.ne - 1 :]
+            - fft_correlate(g_greater.data, w_lesser.data.conj())[: self.ne]
         )
 
         # Compute retarded self-energy with a Hilbert transform.

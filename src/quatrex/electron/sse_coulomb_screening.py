@@ -1,8 +1,8 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
 import numpy as np
-import qttools.datastructures as DSBSparse
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -27,7 +27,15 @@ def fft_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
 
 def hilbert_transform(a: xp.ndarray, energies: xp.ndarray) -> xp.ndarray:
     """Computes the Hilbert transform of the array a."""
-    return fft_convolve(a, 1 / energies)
+    energy_differences = (energies - energies[0]).reshape(-1, 1)
+    ne = len(energies)
+    eta = 1e-6
+    b = (
+        fft_convolve(a, 1 / (energy_differences + 1j * eta))[:ne]
+        + fft_convolve(a, 1 / (-energy_differences[::-1] + 1j * eta))[ne - 1 :]
+    )
+    # The factor 10*eta is a bit arbitrary (needed for identity sr-sa = sg-sl). Can probably be proved (principal value?).
+    return b * 10 * eta
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
@@ -44,6 +52,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         out: tuple[DSBSparse, ...],
     ) -> None:
         """Computes the GW self-energy."""
+
+        # If the w_lesser and w_greater don't have the same sparsity pattern as
+        # g_lesser and g_greater, we have to reduce them to the same sparsity pattern.
+        if w_lesser.nnz != g_lesser.nnz:
+            w_lesser.reduce_to(g_lesser.rows, g_lesser.cols, g_lesser.block_sizes)
+        if w_greater.nnz != g_greater.nnz:
+            w_greater.reduce_to(g_greater.rows, g_greater.cols, g_greater.block_sizes)
+
         sigma_lesser, sigma_greater, sigma_retarded = out
         # Transpose the matrices to nnz distribution.
         for m in (
@@ -58,43 +74,32 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         # Compute the full self-energy using the convolution theorem.
-        sigma_lesser_full = self.prefactor * fft_convolve(g_lesser.data, w_lesser.data)
-        sigma_greater_full = self.prefactor * fft_convolve(
-            g_greater.data, w_greater.data
-        )
-        # Corrections for negative frequencies that where cut off by the polarization calculation.
-        sigma_lesser_full -= self.prefactor * fft_correlate(
-            g_lesser.data, w_greater.data.conj()
-        )
-        sigma_greater_full -= self.prefactor * fft_correlate(
-            g_greater.data, w_lesser.data.conj()
-        )
-
-        # Compute retarded self-energy using the Kramer-Kronig relation with a Hilbert transform (Principle integral).
-        sigma_retarded_full = self.prefactor * hilbert_transform(
-            1j
-            * (
-                sigma_lesser_full[: g_lesser.shape[0]]
-                - sigma_greater_full[: g_greater.shape[0]]
-            ),
-            self.energies,
-        )
-
+        # Second term are corrections for positive frequencies that where cut off by the polarization calculation.
         sigma_lesser._data[
             sigma_lesser._stack_padding_mask,
             ...,
             : sigma_lesser.nnz_section_sizes[comm.rank],
-        ] = sigma_lesser_full[: g_lesser.shape[0]]
+        ] += self.prefactor * (
+            fft_convolve(g_lesser.data, w_lesser.data)[g_lesser.shape[0] - 1 :]
+            - fft_correlate(g_lesser.data, w_greater.data.conj())[: g_lesser.shape[0]]
+        )
         sigma_greater._data[
             sigma_greater._stack_padding_mask,
             ...,
             : sigma_greater.nnz_section_sizes[comm.rank],
-        ] = sigma_greater_full[: g_greater.shape[0]]
+        ] += self.prefactor * (
+            fft_convolve(g_greater.data, w_greater.data)[g_greater.shape[0] - 1 :]
+            - fft_correlate(g_greater.data, w_lesser.data.conj())[: g_greater.shape[0]]
+        )
+
+        # Compute retarded self-energy with a Hilbert transform.
         sigma_retarded._data[
             sigma_retarded._stack_padding_mask,
             ...,
             : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] = sigma_retarded_full[: g_lesser.shape[0]]
+        ] += self.prefactor * hilbert_transform(
+            sigma_greater.data - sigma_lesser.data, self.energies
+        )
 
         # Transpose the matrices to stack distribution.
         for m in (

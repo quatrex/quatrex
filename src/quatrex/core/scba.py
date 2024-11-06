@@ -16,6 +16,7 @@ from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
+    SigmaFock,
     SigmaPhonon,
     SigmaPhoton,
 )
@@ -207,6 +208,9 @@ class SCBA:
                 # Remove the zero energy to avoid division by zero.
                 self.coulomb_screening_energies[-1] = -1e-6
 
+            self.sigma_fock = SigmaFock(
+                self.quatrex_config, self.compute_config, self.electron_energies
+            )
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config, self.coulomb_screening_energies
             )
@@ -356,6 +360,10 @@ class SCBA:
 
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
+        self.sigma_fock.compute(
+            self.data.g_lesser,
+            out=(self.data.sigma_retarded,),
+        )
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,

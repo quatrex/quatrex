@@ -24,7 +24,7 @@ class SigmaFock(ScatteringSelfEnergy):
         self.coulomb_matrix = compute_config.dbsparse_type.from_sparray(
             coulomb_matrix_sparray,
             block_sizes,
-            (1,),
+            (comm.size,),
             densify_blocks=[
                 (i, j)
                 for i in range(len(block_sizes))
@@ -41,6 +41,7 @@ class SigmaFock(ScatteringSelfEnergy):
         (sigma_retarded,) = out
         for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
             m.dtranspose() if m.distribution_state != "nnz" else None
+        # Compute the electron density by summing over energies.
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded._data[
             sigma_retarded._stack_padding_mask,

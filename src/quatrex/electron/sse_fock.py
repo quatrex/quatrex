@@ -24,7 +24,7 @@ class SigmaFock(ScatteringSelfEnergy):
         self.coulomb_matrix = compute_config.dbsparse_type.from_sparray(
             coulomb_matrix_sparray,
             block_sizes,
-            (comm.size,),
+            (self.energies.size,),
             densify_blocks=[
                 (i, j)
                 for i in range(len(block_sizes))

@@ -5,6 +5,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.sparse_utils import sparsity_pattern_of_product
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -14,26 +15,6 @@ from quatrex.core.subsystem import SubsystemSolver
 from quatrex.coulomb_screening.utils.assemble_boundary_blocks import (
     assemble_boundary_blocks,
 )
-
-
-def sparsity_pattern_of_product(
-    matrices: tuple[sparse.spmatrix, ...],
-) -> tuple[xp.ndarray, xp.ndarray]:
-    """Computes the sparsity pattern of the product of a sequence of matrices."""
-    product = None
-    for matrix in matrices:
-        if matrix.shape[0] != matrix.shape[1]:
-            raise ValueError("Matrices must be square.")
-        mat_ones = sparse.coo_matrix(
-            (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
-            shape=matrix.shape,
-        )
-        if product is None:
-            product = mat_ones
-        else:
-            product = product @ mat_ones
-    product = product.tocoo()
-    return (product.row, product.col)
 
 
 def check_block_sizes(rows, columns, block_sizes):
@@ -262,8 +243,8 @@ class CoulombScreeningSolver(SubsystemSolver):
     # method for setting block sizes
     def _set_block_sizes(self, block_sizes: xp.ndarray) -> None:
         """Sets the block sizes."""
+        self.bare_system_matrix.block_sizes = block_sizes
         self.system_matrix.block_sizes = block_sizes
-        self.coulomb_matrix.block_sizes = block_sizes
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
@@ -293,17 +274,17 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Compute and apply the lesser boundary self-energy.
-        a_00 = self.system_matrix.blocks[1, 0] @ x_00 @ self.l_lesser.blocks[0, 1]
-        a_nn = self.system_matrix.blocks[-2, -1] @ x_nn @ self.l_lesser.blocks[-1, -2]
+        a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_lesser.blocks[0, 1]
+        a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_lesser.blocks[-1, -2]
         w_00 = self.lyapunov(
-            x_00 @ self.system_matrix.blocks[1, 0],
+            x_00 @ self.obc_blocks_left["below"],
             x_00
             @ (l_lesser.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
             @ x_00.conj().swapaxes(-1, -2),
             "left",
         )
         w_nn = self.lyapunov(
-            x_nn @ self.system_matrix.blocks[-2, -1],
+            x_nn @ self.obc_blocks_right["above"],
             x_nn
             @ (l_lesser.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
             @ x_nn.conj().swapaxes(-1, -2),
@@ -326,17 +307,17 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Compute and apply the greater boundary self-energy.
-        a_00 = self.system_matrix.blocks[1, 0] @ x_00 @ self.l_greater.blocks[0, 1]
-        a_nn = self.system_matrix.blocks[-2, -1] @ x_nn @ self.l_greater.blocks[-1, -2]
+        a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_greater.blocks[0, 1]
+        a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_greater.blocks[-1, -2]
         w_00 = self.lyapunov(
-            x_00 @ self.system_matrix.blocks[1, 0],
+            x_00 @ self.obc_blocks_left["below"],
             x_00
             @ (l_greater.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
             @ x_00.conj().swapaxes(-1, -2),
             "left",
         )
         w_nn = self.lyapunov(
-            x_nn @ self.system_matrix.blocks[-2, -1],
+            x_nn @ self.obc_blocks_right["above"],
             x_nn
             @ (l_greater.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
             @ x_nn.conj().swapaxes(-1, -2),
@@ -373,8 +354,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         """Solves the screened interaction."""
         times = []
 
-        # Compute the product of the Coulomb matrix with polarization.
+        # Compute the product of the Coulomb matrix with the polarization.
         times.append(time.perf_counter())
+        # Change the block sizes to match the Coulomb matrix.
+        self._set_block_sizes(self.small_block_sizes)
         obc_multiply(
             self.v_times_p_retarded,
             (self.coulomb_matrix, p_retarded, self.dummy_identity),
@@ -394,9 +377,6 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         # Assemble the matrices.
         times.append(time.perf_counter())
-        # Change the block sizes to match the Coulomb matrix.
-        self.system_matrix.block_sizes = self.small_block_sizes
-        self.bare_system_matrix.block_sizes = self.small_block_sizes
         # Assemble the system matrix.
         self._assemble_system_matrix(self.v_times_p_retarded)
         # Assemble the boundary blocks.

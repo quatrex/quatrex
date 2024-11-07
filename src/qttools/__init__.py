@@ -17,6 +17,10 @@ if ARRAY_MODULE is not None:
             import cupy as xp
             from cupyx.scipy import sparse
 
+            # Check if cupy is actually working. This could still raise
+            # a cudaErrorInsufficientDriver error or something.
+            xp.abs(1)
+
         except ImportError as e:
             warn(f"'cupy' is unavailable, defaulting to 'numpy'. ({e})")
             import numpy as xp

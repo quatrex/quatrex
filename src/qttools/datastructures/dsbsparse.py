@@ -175,10 +175,21 @@ class DSBSparse(ABC):
         self.nnz = data.shape[-1]
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
-        self.block_sizes = xp.asarray(block_sizes).astype(int)
+        self._block_sizes = xp.asarray(block_sizes).astype(int)
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
+    
+    @property
+    def block_sizes(self) -> ArrayLike:
+        """Returns the block sizes."""
+        return self._block_sizes
+    
+    @block_sizes.setter
+    @abstractmethod
+    def block_sizes(self, block_sizes: ArrayLike) -> None:
+        """Sets the block sizes."""
+        ...
 
     def _normalize_index(self, index: tuple) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
@@ -229,7 +240,7 @@ class DSBSparse(ABC):
 
         This does not return a copy of the data, but a view. This is
         also why we do not need a setter method (one can just set
-        `.data` directly).
+        `._data` directly).
 
         """
         if self.distribution_state == "stack":

@@ -384,6 +384,29 @@ class DSBCOO(DSBSparse):
             product.data[stack_index, :] = temp_product[product.rows, product.cols]
         return product
 
+    @DSBSparse.block_sizes.setter
+    def block_sizes(self, block_sizes: ArrayLike) -> None:
+        """Sets new block sizes for the matrix.
+
+        Parameters
+        ----------
+        block_sizes : array_like
+            The new block sizes.
+
+        """
+        if sum(block_sizes) != self.shape[-1]:
+            raise ValueError("Block sizes must sum to matrix shape.")
+        self._block_sizes = xp.asarray(block_sizes).astype(int)
+        self.block_offsets = xp.hstack(([0], xp.cumsum(self._block_sizes)))
+        self.num_blocks = len(self.block_sizes)
+        # Compute the block-sorting index.
+        block_sort_index = compute_block_sort_index(
+            self.rows, self.cols, self._block_sizes
+        )
+        self.data[..., :] = self.data[..., block_sort_index]
+        self.rows = self.rows[block_sort_index]
+        self.cols = self.cols[block_sort_index]
+
     def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.
 
@@ -542,4 +565,63 @@ class DSBCOO(DSBSparse):
             cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+        )
+    
+    def calc_reduce_to_mask(self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike) -> ArrayLike:
+        """Calculate the mask for reducing the matrix to the given rows and columns.
+
+        Parameters
+        ----------
+        rows : array_like
+            The rows to keep.
+        cols : array_like
+            The columns to keep.
+        block_sizes : array_like
+            The size of the blocks in the new matrix.
+
+        Returns
+        -------
+        array_like
+            The mask for reducing the matrix.
+
+        """
+        mask = xp.zeros(self.nnz, dtype=bool)
+        block_sort_index = compute_block_sort_index(
+            self.rows, self.cols, block_sizes
+        )
+        j = 0
+        for i, ii in enumerate(block_sort_index):
+            if self.rows[ii] == rows[j] and self.cols[ii] == cols[j]:
+                mask[i] = True
+                j += 1
+        return block_sort_index[mask]
+        
+
+    def reduce_to(
+        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
+    ) -> "DSBCOO":
+        """Create a reduced matrix to the given rows and columns.
+
+        Parameters
+        ----------
+        rows : array_like
+            The rows to keep.
+        cols : array_like
+            The columns to keep.
+        block_sizes : array_like
+            The size of the blocks in the new matrix.
+
+        Returns
+        -------
+        DSBCOO
+            The reduced matrix.
+
+        """
+        mask = self.calc_reduce_to_mask(rows, cols, block_sizes)
+        return DSBCOO(
+            data=self.data[..., mask],
+            rows=self.rows[mask],
+            cols=self.cols[mask],
+            block_sizes=block_sizes,
+            global_stack_shape=self.global_stack_shape,
         )

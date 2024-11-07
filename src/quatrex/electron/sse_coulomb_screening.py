@@ -28,20 +28,20 @@ def fft_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
 def hilbert_transform(a: xp.ndarray, energies: xp.ndarray) -> xp.ndarray:
     """Computes the Hilbert transform of the array a."""
     energy_differences = (energies - energies[0]).reshape(-1, 1)
-    ne = len(energies)
+    ne = energies.size
     eta = 1e-6
     b = (
         fft_convolve(a, 1 / (energy_differences + 1j * eta))[:ne]
         + fft_convolve(a, 1 / (-energy_differences[::-1] + 1j * eta))[ne - 1 :]
     )
-    # The factor 10*eta is a bit arbitrary (needed for identity sr-sa = sg-sl). Can probably be proved (principal value?).
-    return b * 10 * eta
+    # The factor 1j / 4 * eta is a bit arbitrary (needed for identity sr-sa = sg-sl). Can probably be proved (principal value?).
+    return 1j / 4 * eta * b
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
     def __init__(self, config: QuatrexConfig, electron_energies: xp.ndarray):
         self.energies = electron_energies
-        self.ne = len(self.energies)
+        self.ne = self.energies.size
         self.prefactor = 1j / np.pi * (self.energies[1] - self.energies[0])
 
     def compute(
@@ -57,17 +57,21 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         # If the w_lesser and w_greater don't have the same sparsity pattern as
         # g_lesser and g_greater, we have to reduce them to the same sparsity pattern.
         if w_lesser.nnz != g_lesser.nnz:
-            w_lesser.reduce_to(g_lesser.rows, g_lesser.cols, g_lesser.block_sizes)
+            w_lesser_reduced = w_lesser.reduce_to(
+                g_lesser.rows, g_lesser.cols, g_lesser.block_sizes
+            )
         if w_greater.nnz != g_greater.nnz:
-            w_greater.reduce_to(g_greater.rows, g_greater.cols, g_greater.block_sizes)
+            w_greater_reduced = w_greater.reduce_to(
+                g_greater.rows, g_greater.cols, g_greater.block_sizes
+            )
 
         sigma_lesser, sigma_greater, sigma_retarded = out
         # Transpose the matrices to nnz distribution.
         for m in (
             g_lesser,
             g_greater,
-            w_lesser,
-            w_greater,
+            w_lesser_reduced,
+            w_greater_reduced,
             sigma_lesser,
             sigma_greater,
             sigma_retarded,
@@ -81,16 +85,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             ...,
             : sigma_lesser.nnz_section_sizes[comm.rank],
         ] += self.prefactor * (
-            fft_convolve(g_lesser.data, w_lesser.data)[self.ne - 1 :]
-            - fft_correlate(g_lesser.data, w_greater.data.conj())[: self.ne]
+            fft_convolve(g_lesser.data, w_lesser_reduced.data)[self.ne - 1 :]
+            - fft_correlate(g_lesser.data, w_greater_reduced.data.conj())[: self.ne]
         )
         sigma_greater._data[
             sigma_greater._stack_padding_mask,
             ...,
             : sigma_greater.nnz_section_sizes[comm.rank],
         ] += self.prefactor * (
-            fft_convolve(g_greater.data, w_greater.data)[self.ne - 1 :]
-            - fft_correlate(g_greater.data, w_lesser.data.conj())[: self.ne]
+            fft_convolve(g_greater.data, w_greater_reduced.data)[self.ne - 1 :]
+            - fft_correlate(g_greater.data, w_lesser_reduced.data.conj())[: self.ne]
         )
 
         # Compute retarded self-energy with a Hilbert transform.
@@ -98,9 +102,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_retarded._stack_padding_mask,
             ...,
             : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] += self.prefactor * hilbert_transform(
-            sigma_greater.data - sigma_lesser.data, self.energies
-        )
+        ] += hilbert_transform(sigma_greater.data - sigma_lesser.data, self.energies)
 
         # Transpose the matrices to stack distribution.
         for m in (

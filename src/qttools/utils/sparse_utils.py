@@ -2,6 +2,8 @@
 
 from qttools import xp
 from qttools.utils.gpu_utils import ArrayLike
+from qttools.datastructures import DSBSparse
+from scipy import sparse
 
 
 def compute_block_sort_index(
@@ -100,3 +102,29 @@ def compute_ptr_map(
         offset += bnnz
 
     return rowptr_map
+
+
+def sparsity_pattern_of_product(
+    matrices: tuple[sparse.spmatrix, ...] | tuple[DSBSparse, ...]
+) -> tuple[xp.ndarray, xp.ndarray]:
+    """Computes the sparsity pattern of the product of a sequence of matrices."""
+    product = None
+    for matrix in matrices:
+        if isinstance(matrix, DSBSparse):
+            mat_ones = sparse.coo_matrix(
+                (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.rows, matrix.cols)),
+            )
+        elif sparse.issparse(matrix):
+            mat_ones = sparse.coo_matrix(
+                (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
+            )
+        else: 
+            raise ValueError("matrices must be either DSBSparse or sparse.spmatrix")
+        if product is None:
+            product = mat_ones
+        else:
+            product = product @ mat_ones
+    product = product.tocoo()
+    # Canonicalize
+    product.sum_duplicates()
+    return (product.row, product.col)

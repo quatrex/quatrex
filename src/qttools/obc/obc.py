@@ -54,7 +54,7 @@ class OBCMemoizer:
 
     Parameters
     ----------
-    obc : OBC
+    obc_solver : OBCSolver
         The OBC solver to wrap.
     num_ref_iterations : int, optional
         The maximum number of refinement iterations to do.

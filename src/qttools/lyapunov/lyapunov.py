@@ -9,6 +9,8 @@ class LyapunovSolver(ABC):
     The discrete-time Lyapunov equation is defined as:
     `x - a @ x a.conj().T = q`.
 
+    $X - A X A^H = Q$
+
     """
 
     @abstractmethod
@@ -25,7 +27,7 @@ class LyapunovSolver(ABC):
         ----------
         a : array_like
             The system matrix.
-        b : array_like
+        q : array_like
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.

@@ -86,12 +86,13 @@ class DSBSparse(ABC):
     barrier right before calling `dtranspose`.
 
     DSBSparse implementations should provide the following methods:
+
     - `_set_block(stack_index, row, col, block)`: Sets a block.
     - `_get_block(stack_index, row, col)`: Gets a block the stack.
     - `_getitems(stack_index, row, col)`: Gets items from the data.
     - `_setitems(stack_index, row, col)`: Sets items in the data.
     - `_check_commensurable(other)`: Checks if two DSBSparse matrices
-        are commensurable.
+       are commensurable.
     - `__imatmul__(other)`: In-place matrix multiplication.
     - `__neg__()`: In-place negation.
     - `ltranspose()`: Local transposition.
@@ -674,12 +675,12 @@ class _DStackView:
     ----------
     dsbsparse : DSBSparse
         The underlying datastructure.
-    index : tuple
+    stack_index : tuple
         The index of the substack to address.
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse, stack_index) -> None:
+    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple) -> None:
         """Initializes the stack indexer."""
         self._dsbsparse = dsbsparse
         if not isinstance(stack_index, tuple):

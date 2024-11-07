@@ -41,14 +41,12 @@ class Spectral(OBCSolver):
         The formula to use for the calculation of the surface Green's
         function. The default is via the boundary "self-energy". The
         other option is "direct". The "self-energy" formula
-        corresponds to Equation (13.1) in the paper [1]_ and the "direct"
+        corresponds to Equation (13.1) in the paper [^1] and the "direct"
         formula corresponds to Equation (15).
 
     References
     ----------
-    .. [1] S. Brück, et al., Efficient algorithms for large-scale
-       quantum transport calculations, The Journal of Chemical Physics,
-       2017.
+    [^1]: S. Brück, et al., Efficient algorithms for large-scale quantum transport calculations, The Journal of Chemical Physics, 2017.
 
     """
 
@@ -135,10 +133,8 @@ class Spectral(OBCSolver):
             The eigenvalues of the NEVP.
         vs : xp.ndarray
             The eigenvectors of the NEVP.
-        a_ij : xp.ndarray
-            The superdiagonal contact block.
-        a_ji : xp.ndarray
-            The subdiagonal contact block.
+        a_xx : list[xp.ndarray]
+            The blocks of the periodic matrix.
 
         Returns
         -------

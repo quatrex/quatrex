@@ -147,8 +147,8 @@ class DSBCOO(DSBSparse):
             The row indices of the items.
         cols : int | array_like
             The column indices of the items.
-        values : array_like
-            The values to set.
+        value : array_like
+            The value to set.
 
         """
         inds, value_inds, max_counts = dsbcoo_kernels.find_inds(

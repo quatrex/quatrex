@@ -6,10 +6,7 @@ from qttools import sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import (
-    compute_block_sort_index,
-    compute_ptr_map,
-)
+from qttools.utils.sparse_utils import compute_block_sort_index, compute_ptr_map
 
 
 class DSBCSR(DSBSparse):
@@ -362,7 +359,9 @@ class DSBCSR(DSBSparse):
         first_product = first_product.tocoo()
         first_product.sum_duplicates()
         block_sort_index = compute_block_sort_index(
-            get_device(first_product.row), get_device(first_product.col), get_device(self.block_sizes)
+            first_product.row,
+            first_product.col,
+            self.block_sizes,
         )
         # Loop through the stack and perform the multiplication.
         for stack_index in stack_indices:
@@ -374,7 +373,7 @@ class DSBCSR(DSBSparse):
             temp_product = temp_product.tocoo()
             temp_product.sum_duplicates()
             product.data[stack_index, :] = temp_product.data[block_sort_index]
-        
+
         return product
 
     def ltranspose(self, copy=False) -> "None | DSBCSR":

@@ -1,9 +1,10 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-from qttools import xp
-from qttools.utils.gpu_utils import ArrayLike
-from qttools.datastructures import DSBSparse
 from scipy import sparse
+
+from qttools import xp
+from qttools.datastructures import DSBSparse
+from qttools.utils.gpu_utils import ArrayLike
 
 
 def compute_block_sort_index(
@@ -118,7 +119,7 @@ def sparsity_pattern_of_product(
             mat_ones = sparse.coo_matrix(
                 (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
             )
-        else: 
+        else:
             raise ValueError("matrices must be either DSBSparse or sparse.spmatrix")
         if product is None:
             product = mat_ones

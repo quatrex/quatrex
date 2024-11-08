@@ -343,8 +343,27 @@ class DSBCOO(DSBSparse):
 
     def __matmul__(self, other: "DSBSparse") -> None:
         """Matrix multiplication of two DSBSparse matrices."""
-        stack_indices = xp.ndindex(self.data.shape[:-1])
-        product_rows, product_cols = sparsity_pattern_of_product((self, other))
+        if not isinstance(other, DSBSparse):
+            if sparse.isspmatrix(other):
+                raise NotImplementedError(
+                    "Matrix multiplication with sparse matrices  is not implemented."
+                )
+            raise TypeError("Can only multiply DSBSparse matrices.")
+        if self.shape[-1] != other.shape[-2]:
+            raise ValueError("Matrix shapes do not match.")
+        if xp.any(self.block_sizes != other.block_sizes):
+            raise ValueError("Block sizes do not match.")
+        product_rows, product_cols = sparsity_pattern_of_product(
+            (
+                sparse.coo_matrix(
+                    (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
+                ),
+                sparse.coo_matrix(
+                    (xp.ones(other.nnz), (other.rows, other.cols)),
+                    shape=other.shape[-2:],
+                ),
+            )
+        )
         block_sort_index = compute_block_sort_index(
             product_rows, product_cols, self.block_sizes
         )
@@ -355,10 +374,13 @@ class DSBCOO(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
-        for stack_index in stack_indices:
+        for stack_index in xp.ndindex(self.data.shape[:-1]):
             temp_product = sparse.csr_matrix(
-                (self.data[stack_index], (self.rows, self.cols))
-            ) @ sparse.csr_matrix((other.data[stack_index], (other.rows, other.cols)))
+                (self.data[stack_index], (self.rows, self.cols)), shape=self.shape[-2:]
+            ) @ sparse.csr_matrix(
+                (other.data[stack_index], (other.rows, other.cols)),
+                shape=other.shape[-2:],
+            )
             product.data[stack_index, :] = temp_product[product.rows, product.cols]
         return product
 

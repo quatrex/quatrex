@@ -6,7 +6,11 @@ from qttools import sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import compute_block_sort_index, compute_ptr_map
+from qttools.utils.sparse_utils import (
+    compute_block_sort_index,
+    compute_ptr_map,
+    sparsity_pattern_of_product,
+)
 
 
 class DSBCSR(DSBSparse):
@@ -338,42 +342,25 @@ class DSBCSR(DSBSparse):
             return_dense=self.return_dense,
         )
 
-    def __matmul__(self, other: "DSBSparse") -> "DSBCSR":
+    def __matmul__(self, other: "DSBSparse") -> None:
         """Matrix multiplication of two DSBSparse matrices."""
-        self._check_commensurable(other)
         stack_indices = xp.ndindex(self.data.shape[:-1])
-        first_index = next(stack_indices)
-        # Multiply the matrices in the first stack.
-        first_product = sparse.csr_matrix(
-            (self.data[first_index], self.spy()),
-        ) @ sparse.csr_matrix(
-            (other.data[first_index], other.spy()),
+        product_rows, product_cols = sparsity_pattern_of_product((self, other))
+        block_sort_index = compute_block_sort_index(
+            product_rows, product_cols, self.block_sizes
         )
-        # Create a new DSBCSR matrix for the product.
-        product = DSBCSR.from_sparray(
-            first_product,
+        product = DSBCSR(
+            data=xp.zeros(self.stack_shape + (product_rows.size,), dtype=self.dtype),
+            cols=product_cols[block_sort_index],
+            rowptr_map=compute_ptr_map(product_rows, product_cols, self.block_sizes),
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
-        # Compute the block-sorting index.
-        first_product = first_product.tocoo()
-        first_product.sum_duplicates()
-        block_sort_index = compute_block_sort_index(
-            first_product.row,
-            first_product.col,
-            self.block_sizes,
-        )
-        # Loop through the stack and perform the multiplication.
         for stack_index in stack_indices:
             temp_product = sparse.csr_matrix(
-                (self.data[stack_index], self.spy()),
-            ) @ sparse.csr_matrix(
-                (other.data[stack_index], other.spy()),
-            )
-            temp_product = temp_product.tocoo()
-            temp_product.sum_duplicates()
-            product.data[stack_index, :] = temp_product.data[block_sort_index]
-
+                (self.data[stack_index], (self.rows, self.cols))
+            ) @ sparse.csr_matrix((other.data[stack_index], (other.rows, other.cols)))
+            product.data[stack_index, :] = temp_product[product.rows, product.cols]
         return product
 
     def ltranspose(self, copy=False) -> "None | DSBCSR":

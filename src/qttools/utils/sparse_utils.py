@@ -1,9 +1,6 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-from scipy import sparse
-
-from qttools import xp
-from qttools.datastructures import DSBSparse
+from qttools import sparse, xp
 from qttools.utils.gpu_utils import ArrayLike
 
 
@@ -106,21 +103,18 @@ def compute_ptr_map(
 
 
 def sparsity_pattern_of_product(
-    matrices: tuple[sparse.spmatrix, ...] | tuple[DSBSparse, ...]
+    matrices: tuple[sparse.spmatrix, ...]
 ) -> tuple[xp.ndarray, xp.ndarray]:
     """Computes the sparsity pattern of the product of a sequence of matrices."""
     product = None
     for matrix in matrices:
-        if isinstance(matrix, DSBSparse):
-            mat_ones = sparse.coo_matrix(
-                (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.rows, matrix.cols)),
-            )
-        elif sparse.issparse(matrix):
+        if sparse.issparse(matrix):
             mat_ones = sparse.coo_matrix(
                 (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
+                shape=matrix.shape,
             )
         else:
-            raise ValueError("matrices must be either DSBSparse or sparse.spmatrix")
+            raise ValueError("matrices must be sparse.spmatrix")
         if product is None:
             product = mat_ones
         else:

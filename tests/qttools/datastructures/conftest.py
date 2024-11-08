@@ -57,27 +57,27 @@ BLOCK_CHANGE_FACTORS = [
 
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def block_sizes(request):
+def block_sizes(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request):
+def dsbsparse_type(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=DENSIFY_BLOCKS)
-def densify_blocks(request):
+def densify_blocks(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=ACCESSED_BLOCKS)
-def accessed_block(request):
+def accessed_block(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=ACCESSED_ELEMENTS)
-def accessed_element(request):
+def accessed_element(request: pytest.FixtureRequest):
     return request.param
 
 
@@ -87,12 +87,12 @@ def num_inds(request):
 
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
-def global_stack_shape(request):
+def global_stack_shape(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=STACK_INDICES)
-def stack_index(request):
+def stack_index(request: pytest.FixtureRequest):
     return request.param
 
 

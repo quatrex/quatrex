@@ -1,6 +1,6 @@
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.utils.gpu_utils import ArrayLike
@@ -17,7 +17,7 @@ class DSBCOO(DSBSparse):
 
     Parameters
     ----------
-    data : array_like
+    data : numpy.ndarray or cupy.ndarray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
@@ -39,26 +39,24 @@ class DSBCOO(DSBSparse):
 
     def __init__(
         self,
-        data: ArrayLike,
-        rows: ArrayLike,
-        cols: ArrayLike,
-        block_sizes: ArrayLike,
+        data: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.rows = xp.asarray(rows).astype(int)
-        self.cols = xp.asarray(cols).astype(int)
+        self.rows = rows.astype(int)
+        self.cols = cols.astype(int)
 
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
         self._block_slice_cache = {}
 
-    def _get_items(
-        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray
-    ) -> ArrayLike:
+    def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -120,7 +118,7 @@ class DSBCOO(DSBSparse):
         ]
 
     def _set_items(
-        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray, value: ArrayLike
+        self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
         """Sets the requested items in the data structure.
 
@@ -192,7 +190,7 @@ class DSBCOO(DSBSparse):
         ]
         return
 
-    def _get_block_slice(self, row, col):
+    def _get_block_slice(self, row: int, col: int) -> slice:
         """Gets the slice of data corresponding to a given block.
 
         This also handles the block slice cache. If there is no data in
@@ -224,7 +222,7 @@ class DSBCOO(DSBSparse):
         self._block_slice_cache[(row, col)] = block_slice
         return block_slice
 
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -278,7 +276,7 @@ class DSBCOO(DSBSparse):
         return block
 
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+        self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -503,7 +501,7 @@ class DSBCOO(DSBSparse):
     def from_sparray(
         cls,
         arr: sparse.spmatrix,
-        block_sizes: ArrayLike,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,

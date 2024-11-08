@@ -1,7 +1,7 @@
 import pytest
 
-from qttools import xp
-from qttools.lyapunov import Doubling, Spectral, Vectorize
+from qttools import NDArray, xp
+from qttools.lyapunov import Doubling, LyapunovSolver, Spectral, Vectorize
 
 BLOCK_SIZE = [
     pytest.param(11, id="11x11"),
@@ -16,7 +16,7 @@ LYAPUNOV_SOLVERS = [
 
 
 @pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def inputs(request) -> tuple[xp.ndarray, xp.ndarray]:
+def inputs(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray]:
     """Returns some random complex matrices."""
     size = request.param
     a = xp.random.rand(size, size) + 1j * xp.random.rand(size, size)
@@ -29,6 +29,6 @@ def inputs(request) -> tuple[xp.ndarray, xp.ndarray]:
 
 
 @pytest.fixture(params=LYAPUNOV_SOLVERS, autouse=True)
-def lyapunov_solver(request) -> Spectral | Doubling | Vectorize:
+def lyapunov_solver(request: pytest.FixtureRequest) -> LyapunovSolver:
     """Returns a Lyapunov solver."""
     return request.param

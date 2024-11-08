@@ -2,7 +2,7 @@
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
 from qttools.utils.gpu_utils import ArrayLike
@@ -42,17 +42,17 @@ class DSBCSR(DSBSparse):
 
     def __init__(
         self,
-        data: ArrayLike,
-        cols: ArrayLike,
+        data: NDArray,
+        cols: NDArray,
         rowptr_map: dict,
-        block_sizes: ArrayLike,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCSR matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.cols = xp.asarray(cols).astype(int)
+        self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
 
     def _get_items(
@@ -114,7 +114,7 @@ class DSBCSR(DSBSparse):
         ]
 
     def _set_items(
-        self, stack_index: tuple, rows: int | list, cols: int | list, value: ArrayLike
+        self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
         """Sets the requested items in the data structure.
 
@@ -171,7 +171,7 @@ class DSBCSR(DSBSparse):
         ]
         return
 
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -229,7 +229,7 @@ class DSBCSR(DSBSparse):
         return block
 
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+        self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -452,7 +452,7 @@ class DSBCSR(DSBSparse):
     def from_sparray(
         cls,
         arr: sparse.spmatrix,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,

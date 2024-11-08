@@ -2,11 +2,11 @@
 
 import pytest
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.obc import OBCMemoizer, SanchoRubio
 
 
-def test_convergence(a_xx: tuple[xp.ndarray, ...], contact: str):
+def test_convergence(a_xx: tuple[NDArray, ...], contact: str):
     """Tests that the OBC return the correct result."""
     sancho_rubio = SanchoRubio()
     a_ji, a_ii, a_ij = a_xx
@@ -14,7 +14,7 @@ def test_convergence(a_xx: tuple[xp.ndarray, ...], contact: str):
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij))
 
 
-def test_convergence_batch(a_xx: tuple[xp.ndarray, ...], contact: str):
+def test_convergence_batch(a_xx: tuple[NDArray, ...], contact: str):
     """Tests that the OBC return the correct result."""
     sancho_rubio = SanchoRubio()
     a_ji, a_ii, a_ij = a_xx
@@ -26,7 +26,7 @@ def test_convergence_batch(a_xx: tuple[xp.ndarray, ...], contact: str):
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij))
 
 
-def test_max_iterations(a_xx: tuple[xp.ndarray]):
+def test_max_iterations(a_xx: tuple[NDArray]):
     """Tests that Sancho-Rubio raises Exception after max_iterations."""
     sancho_rubio = SanchoRubio(max_iterations=1, convergence_tol=1e-8)
     a_ji, a_ii, a_ij = a_xx
@@ -34,7 +34,7 @@ def test_max_iterations(a_xx: tuple[xp.ndarray]):
         sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=None)
 
 
-def test_memoizer(a_xx: tuple[xp.ndarray, ...], contact: str):
+def test_memoizer(a_xx: tuple[NDArray, ...], contact: str):
     """Tests that the Memoization works."""
     spectral = SanchoRubio()
     spectral = OBCMemoizer(spectral)

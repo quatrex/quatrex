@@ -2,13 +2,10 @@
 
 import inspect
 
-import numpy as np
-from numpy.typing import ArrayLike
-
-from qttools import xp
+from qttools import NDArray, xp
 
 
-def get_array_module_name(arr: ArrayLike) -> str:
+def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
 
     This works for numpy even when cupy is not available.
@@ -28,7 +25,7 @@ def get_array_module_name(arr: ArrayLike) -> str:
     return submodule.__name__.split(".")[0]
 
 
-def get_host(arr: ArrayLike) -> np.ndarray:
+def get_host(arr: NDArray) -> NDArray:
     """Returns the host array of the given array.
 
     Parameters
@@ -47,7 +44,7 @@ def get_host(arr: ArrayLike) -> np.ndarray:
     return arr.get()
 
 
-def get_device(arr: ArrayLike) -> xp.ndarray:
+def get_device(arr: NDArray) -> NDArray:
     """Returns the device array of the given array.
 
     Parameters

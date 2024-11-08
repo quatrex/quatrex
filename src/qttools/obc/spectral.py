@@ -1,6 +1,6 @@
 import warnings
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
@@ -73,10 +73,10 @@ class Spectral(OBCSolver):
 
     def _extract_subblocks(
         self,
-        a_ji: xp.ndarray,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-    ) -> list[xp.ndarray]:
+        a_ji: NDArray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+    ) -> tuple[NDArray, ...]:
         """Extracts the coefficient blocks from the periodic matrix.
 
         Parameters
@@ -111,16 +111,14 @@ class Spectral(OBCSolver):
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
-        blocks = [block for block in blocks if xp.any(block)]
-
-        return blocks
+        return tuple(block for block in blocks if xp.any(block))
 
     def _find_reflected_modes(
         self,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-        a_xx: list[xp.ndarray],
-    ) -> tuple[xp.ndarray, xp.ndarray]:
+        ws: NDArray,
+        vs: NDArray,
+        a_xx: list[NDArray],
+    ) -> NDArray:
         """Determines which eigenvalues correspond to reflected modes.
 
         For the computation of the surface Green's function, only the
@@ -175,9 +173,9 @@ class Spectral(OBCSolver):
 
     def _upscale_eigenmodes(
         self,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-    ) -> xp.ndarray:
+        ws: NDArray,
+        vs: NDArray,
+    ) -> NDArray:
         """Upscales the eigenvectors to the full periodic matrix layer.
 
         The extraction of subblocks and hence the solution of a higher-
@@ -187,7 +185,7 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        ws : xp.ndarray
+        ws : NDArray
             The eigenvalues of the NEVP.
         vs : xp.ndarray
             The eigenvectors of the (potentially) higher order NEVP.
@@ -216,13 +214,13 @@ class Spectral(OBCSolver):
 
     def _compute_x_ii(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-        mask: xp.ndarray,
-    ) -> xp.ndarray:
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
+        ws: NDArray,
+        vs: NDArray,
+        mask: NDArray,
+    ) -> NDArray:
         """Computes the surface Green's function.
 
         Parameters
@@ -280,12 +278,12 @@ class Spectral(OBCSolver):
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
 
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]

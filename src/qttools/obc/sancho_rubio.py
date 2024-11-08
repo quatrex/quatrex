@@ -2,7 +2,7 @@
 
 import warnings
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.obc.obc import OBCSolver
 
 
@@ -33,12 +33,12 @@ class SanchoRubio(OBCSolver):
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
 
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()

@@ -1,6 +1,6 @@
 import numpy as np
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.nevp.nevp import NEVP
 from qttools.nevp.utils import operator_inverse
 from qttools.utils.gpu_utils import get_device, get_host
@@ -44,14 +44,14 @@ class Beyn(NEVP):
         self.c_hat = c_hat
         self.num_quad_points = num_quad_points
 
-    def __call__(self, a_xx: list[xp.ndarray]):
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
 
         d = a_xx[0].shape[-1]
         in_type = a_xx[0].dtype
 
         # Allow for batched input.
         if a_xx[0].ndim == 2:
-            a_xx = [a_x[xp.newaxis, :, :] for a_x in a_xx]
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         batchsize = a_xx[0].shape[0]
 
@@ -72,7 +72,7 @@ class Beyn(NEVP):
         z_i = z_i.reshape(1, -1, 1, 1)
         w = w.reshape(1, -1, 1, 1)
 
-        a_xx = [a_x[:, xp.newaxis, :, :] for a_x in a_xx]
+        a_xx = tuple(a_x[:, xp.newaxis, :, :] for a_x in a_xx)
         inv_Tz_o = operator_inverse(a_xx, z_o, in_type, in_type)
         inv_Tz_i = operator_inverse(a_xx, z_i, in_type, in_type)
 

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from qttools import xp
+from qttools import NDArray, xp
 
 
 class LyapunovSolver(ABC):
@@ -16,16 +16,16 @@ class LyapunovSolver(ABC):
     @abstractmethod
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
         Parameters
         ----------
-        a : array_like
+        a : cupy.ndarray or numpy.ndarray
             The system matrix.
         q : array_like
             The right-hand side matrix.
@@ -49,7 +49,7 @@ class LyapunovMemoizer:
 
     Parameters
     ----------
-    lyapunov : Lyapunov
+    lyapunov_solver : LyapunovSolver
         The Lyapunov solver to wrap.
     num_ref_iterations : int, optional
         The number of refinement iterations to do.
@@ -60,25 +60,25 @@ class LyapunovMemoizer:
 
     def __init__(
         self,
-        lyapunov: LyapunovSolver,
+        lyapunov_solver: LyapunovSolver,
         num_ref_iterations: int = 10,
         convergence_tol: float = 1e-6,
     ) -> None:
         """Initializes the memoizer."""
-        self.lyapunov = lyapunov
+        self.lyapunov_solver = lyapunov_solver
         self.num_ref_iterations = num_ref_iterations
         self.convergence_tol = convergence_tol
         self._cache = {}
 
     def _call_with_cache(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Calls the wrapped Lyapunov function with cache handling."""
-        x = self.lyapunov(a, q, contact, out=out)
+        x = self.lyapunov_solver(a, q, contact, out=out)
         if out is None:
             self._cache[contact] = x.copy()
             return x
@@ -88,11 +88,11 @@ class LyapunovMemoizer:
 
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation."""
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)

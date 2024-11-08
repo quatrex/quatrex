@@ -1,19 +1,18 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-from numpy.typing import ArrayLike
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import GFSolver
 
 
 def test_selected_inv(
-    bt_dense: ArrayLike,
+    bt_dense: NDArray,
     gfsolver_type: GFSolver,
     dsbsparse_type: DSBSparse,
     out: bool,
     max_batch_size: int,
-    block_sizes: ArrayLike,
+    block_sizes: NDArray,
     global_stack_shape: int | tuple,
 ):
     bt_mask = bt_dense.astype(bool)

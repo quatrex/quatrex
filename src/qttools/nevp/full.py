@@ -1,6 +1,6 @@
 import numpy as np
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.nevp.nevp import NEVP
 from qttools.utils.gpu_utils import get_device, get_host
 
@@ -10,16 +10,16 @@ class Full(NEVP):
 
     References
     ----------
-    .. [1] S. Brück, Ab-initio Quantum Transport Simulations for
-       Nanoelectronic Devices, ETH Zurich, 2017.
+    [1] S. Brück, Ab-initio Quantum Transport Simulations for
+    Nanoelectronic Devices, ETH Zurich, 2017.
 
     """
 
-    def __call__(self, a_xx: list[xp.ndarray]) -> tuple[xp.ndarray]:
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
 
         # Allow for batched input.
         if a_xx[0].ndim == 2:
-            a_xx = [a_x[xp.newaxis, :, :] for a_x in a_xx]
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         inverse = xp.linalg.inv(sum(a_xx))
 

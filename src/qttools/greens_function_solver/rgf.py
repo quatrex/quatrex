@@ -16,7 +16,7 @@ class RGF(GFSolver):
 
         Parameters
         ----------
-        a : DBSparse
+        a : DSBSparse
             Matrix to invert.
         out : _type_, optional
             Output matrix, by default None.
@@ -25,9 +25,9 @@ class RGF(GFSolver):
 
         Returns
         -------
-        None | DBSparse
+        None | DSBSparse
             If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DBSparse object.
+            as a DSBSparse object.
         """
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
@@ -91,11 +91,11 @@ class RGF(GFSolver):
 
         Parameters
         ----------
-        a : DBSparse
+        a : DSBSparse
             Matrix to invert.
-        sigma_lesser : DBSparse
+        sigma_lesser : DSBSparse
             Lesser matrix. This matrix is expected to be skewed-hermitian.
-        sigma_greater : DBSparse
+        sigma_greater : DSBSparse
             Greater matrix. This matrix is expected to be skewed-hermitian.
         out : tuple | None, optional
             Output matrix, by default None
@@ -109,7 +109,7 @@ class RGF(GFSolver):
         -------
         None | tuple
             If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DBSparse object. If `return_retarded` is True, returns a tuple with
+            as a DSBSparse object. If `return_retarded` is True, returns a tuple with
             the retarded Green's function as the last element.
         """
         # Get list of batches to perform

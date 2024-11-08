@@ -6,14 +6,14 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
-from qttools.utils.gpu_utils import ArrayLike, get_host, synchronize_current_stream
+from qttools import NDArray, sparse, xp, ArrayLike
+from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
-def _block_view(arr: ArrayLike, axis: int, num_blocks: int = comm.size) -> ArrayLike:
+def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
     """Gets a block view of an array along a given axis.
 
     This is a helper function to get a block view of an array along a
@@ -121,12 +121,12 @@ class DSBSparse(ABC):
 
     def __init__(
         self,
-        data: ArrayLike,
-        block_sizes: ArrayLike,
+        data: NDArray,
+        block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
     ) -> None:
-        """Initializes the DBSparse matrix."""
+        """Initializes the DSBSparse matrix."""
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
 
@@ -219,12 +219,12 @@ class DSBSparse(ABC):
 
         return row, col
 
-    def __getitem__(self, index: tuple) -> ArrayLike:
+    def __getitem__(self, index: tuple) -> NDArray:
         """Gets a single value accross the stack."""
         index = self._normalize_index(index)
         return self._get_items((Ellipsis,), *index)
 
-    def __setitem__(self, index: tuple, value: ArrayLike) -> None:
+    def __setitem__(self, index: tuple, value: NDArray) -> None:
         """Sets a single value in the matrix."""
         index = self._normalize_index(index)
         self._set_items((Ellipsis,), *index, value)
@@ -240,7 +240,7 @@ class DSBSparse(ABC):
         return _DStackIndexer(self)
 
     @property
-    def data(self) -> ArrayLike:
+    def data(self) -> NDArray:
         """Returns the local slice of the data, masking the padding.
 
         This does not return a copy of the data, but a view. This is
@@ -269,9 +269,7 @@ class DSBSparse(ABC):
         )
 
     @abstractmethod
-    def _get_items(
-        self, stack_index: tuple, rows: int | ArrayLike, cols: int | ArrayLike
-    ) -> ArrayLike:
+    def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -297,7 +295,7 @@ class DSBSparse(ABC):
 
     @abstractmethod
     def _set_items(
-        self, stack_index: tuple, rows: int | list, cols: int | list, values: ArrayLike
+        self, stack_index: tuple, rows: NDArray, cols: NDArray, values: NDArray
     ) -> None:
         """Sets the requested items in the data structure.
 
@@ -321,7 +319,7 @@ class DSBSparse(ABC):
 
     @abstractmethod
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+        self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -345,7 +343,7 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -413,7 +411,7 @@ class DSBSparse(ABC):
         """Matrix multiplication of two DSBSparse matrices."""
         ...
 
-    def block_diagonal(self, offset: int = 0) -> list[ArrayLike]:
+    def block_diagonal(self, offset: int = 0) -> list[NDArray]:
         """Returns the block diagonal of the matrix.
 
         Parameters
@@ -438,7 +436,7 @@ class DSBSparse(ABC):
 
         return blocks
 
-    def diagonal(self) -> ArrayLike:
+    def diagonal(self) -> NDArray:
         """Returns the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True.
@@ -526,7 +524,7 @@ class DSBSparse(ABC):
             self.distribution_state = "stack"
 
     @abstractmethod
-    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
+    def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -560,7 +558,7 @@ class DSBSparse(ABC):
         """
         ...
 
-    def to_dense(self) -> xp.ndarray:
+    def to_dense(self) -> NDArray:
         """Converts the local data to a dense array.
 
         This is dumb, unless used for testing and debugging.
@@ -596,7 +594,7 @@ class DSBSparse(ABC):
     def from_sparray(
         cls,
         arr: sparse.spmatrix,
-        block_sizes: ArrayLike,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned=False,
@@ -707,12 +705,12 @@ class _DStackView:
 
         self._stack_index = stack_index
 
-    def __getitem__(self, index: tuple) -> ArrayLike:
+    def __getitem__(self, index: tuple) -> NDArray:
         """Gets the requested data from the substack."""
         rows, cols = self._dsbsparse._normalize_index(index)
         return self._dsbsparse._get_items(self._stack_index, rows, cols)
 
-    def __setitem__(self, index: tuple, values: ArrayLike) -> ArrayLike:
+    def __setitem__(self, index: tuple, values: NDArray) -> NDArray:
         """Sets the requested data in the substack."""
         rows, cols = self._dsbsparse._normalize_index(index)
         self._dsbsparse._set_items(self._stack_index, rows, cols, values)
@@ -741,9 +739,7 @@ class _DSBlockIndexer:
 
     """
 
-    def __init__(
-        self, dsbsparse: DSBSparse, stack_index: int | slice | tuple = (Ellipsis,)
-    ) -> None:
+    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple = (Ellipsis,)) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
         self._num_blocks = dsbsparse.num_blocks
@@ -776,12 +772,12 @@ class _DSBlockIndexer:
         row, col = self._unsign_index(row, col)
         return row, col
 
-    def __getitem__(self, index: tuple) -> ArrayLike:
+    def __getitem__(self, index: tuple) -> NDArray:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
         return self._dsbsparse._get_block(self._stack_index, row, col)
 
-    def __setitem__(self, index: tuple, block: ArrayLike) -> None:
+    def __setitem__(self, index: tuple, block: NDArray) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
         self._dsbsparse._set_block(self._stack_index, row, col, block)

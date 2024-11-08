@@ -2,14 +2,14 @@
 
 from abc import ABC, abstractmethod
 
-from qttools import xp
+from qttools import NDArray
 
 
 class NEVP(ABC):
     """Abstract base class for the non-linear eigenvalue solvers."""
 
     @abstractmethod
-    def __call__(self, a_xx: list[xp.ndarray]) -> tuple[xp.ndarray, xp.ndarray]:
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by

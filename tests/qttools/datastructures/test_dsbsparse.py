@@ -5,12 +5,12 @@ from contextlib import nullcontext
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes) -> sparse.coo_matrix:
+def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
@@ -27,7 +27,7 @@ class TestCreation:
     def test_from_sparray(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -41,7 +41,7 @@ class TestCreation:
     def test_zeros_like(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -85,7 +85,7 @@ def _unsign_index(row: int, col: int, num_blocks) -> tuple:
     return row, col, in_bounds
 
 
-def _get_block_inds(block: tuple, block_sizes: xp.ndarray) -> tuple:
+def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     """Returns the equivalent dense indices for a block."""
     block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
     num_blocks = len(block_sizes)
@@ -106,7 +106,7 @@ class TestConversion:
     def test_to_dense(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests that we can convert a DSBSparse matrix to dense."""
@@ -124,7 +124,7 @@ class TestConversion:
     def test_ltranspose(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests that we can transpose a DSBSparse matrix."""
@@ -160,7 +160,7 @@ class TestAccess:
     def test_getitem(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):
@@ -208,7 +208,7 @@ class TestAccess:
     def test_setitem(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):
@@ -230,7 +230,7 @@ class TestAccess:
     def test_get_block(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_block: tuple,
     ):
@@ -253,7 +253,7 @@ class TestAccess:
     def test_get_sparse_block(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_block: tuple,
     ):
@@ -297,7 +297,7 @@ class TestAccess:
     def test_set_block(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
         accessed_block: tuple,
@@ -329,7 +329,7 @@ class TestAccess:
     def test_get_block_substack(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_block: tuple,
         stack_index: tuple,
@@ -359,7 +359,7 @@ class TestAccess:
     def test_get_sparse_block_substack(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_block: tuple,
         stack_index: tuple,
@@ -409,7 +409,7 @@ class TestAccess:
     def test_set_block_substack(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
         accessed_block: tuple,
@@ -478,7 +478,7 @@ class TestAccess:
     def test_spy(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests that we can get the correct sparsity pattern."""
@@ -501,7 +501,7 @@ class TestAccess:
     def test_diagonal(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests that we can get the correct diagonal elements."""
@@ -524,7 +524,7 @@ class TestArithmetic:
     def test_iadd(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -542,7 +542,7 @@ class TestArithmetic:
     def test_iadd_coo(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -559,7 +559,7 @@ class TestArithmetic:
     def test_isub(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -583,7 +583,7 @@ class TestArithmetic:
     def test_isub_coo(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -602,7 +602,7 @@ class TestArithmetic:
     def test_imul(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -620,7 +620,7 @@ class TestArithmetic:
     def test_neg(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -655,7 +655,7 @@ ARRAY_SHAPE = (12, 10, 30)
 
 
 @pytest.fixture(autouse=True)
-def array() -> xp.ndarray:
+def array() -> NDArray:
     """Returns a random dense array."""
     return xp.random.rand(*ARRAY_SHAPE)
 
@@ -675,7 +675,7 @@ def array() -> xp.ndarray:
         pytest.param(5, id="5-blocks"),
     ],
 )
-def test_block_view(array: xp.ndarray, axis: int, num_blocks: int):
+def test_block_view(array: NDArray, axis: int, num_blocks: int):
     """Tests the block view helper function."""
     with (
         pytest.raises(ValueError)
@@ -700,7 +700,7 @@ class TestDistribution:
     def test_from_sparray(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
@@ -721,7 +721,7 @@ class TestDistribution:
     def test_dtranspose(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests the distributed transpose method."""
@@ -749,7 +749,7 @@ class TestDistribution:
     def test_getitem_stack(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):
@@ -770,7 +770,7 @@ class TestDistribution:
     def test_setitem_stack(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):
@@ -790,7 +790,7 @@ class TestDistribution:
     def test_getitem_nnz(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):
@@ -823,7 +823,7 @@ class TestDistribution:
     def test_setitem_nnz(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
     ):

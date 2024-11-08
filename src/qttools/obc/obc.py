@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from qttools import xp
+from qttools import NDArray, xp
 
 
 class OBCSolver(ABC):
@@ -16,12 +16,12 @@ class OBCSolver(ABC):
     @abstractmethod
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Returns the surface Green's function.
 
         Parameters
@@ -77,12 +77,12 @@ class OBCMemoizer:
 
     def _call_with_cache(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Calls the wrapped obc function with cache handling."""
         x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact, out=out)
         if out is None:
@@ -94,12 +94,12 @@ class OBCMemoizer:
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Calls the wrapped function."""
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)

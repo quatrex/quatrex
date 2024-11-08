@@ -6,6 +6,7 @@ import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
+from qttools import NDArray
 from qttools import sparse as xps
 from qttools import xp
 
@@ -14,7 +15,7 @@ def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
     strategy: str = "balanced",
-) -> tuple:
+) -> tuple[list, int]:
     """Computes the number of un-evenly divided elements per section.
 
     Parameters
@@ -64,7 +65,7 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
+def distributed_load(path: Path) -> xps.spmatrix | NDArray:
     """Loads an array from disk and distributes it to all ranks.
 
     Parameters
@@ -98,7 +99,7 @@ def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
     return arr
 
 
-def get_local_slice(global_array: xp.ndarray) -> None:
+def get_local_slice(global_array: NDArray) -> NDArray:
     """Returns the local slice of a distributed array.
 
     Parameters
@@ -113,7 +114,7 @@ def get_local_slice(global_array: xp.ndarray) -> None:
 
     """
     section_sizes, __ = get_section_sizes(global_array.shape[-1])
-    section_offsets = xp.cumsum(xp.array([0] + section_sizes))
+    section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
     return global_array[
         ..., int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1])

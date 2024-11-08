@@ -1,4 +1,4 @@
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
 
 
@@ -7,11 +7,11 @@ class Vectorize(LyapunovSolver):
 
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation."""
         if a.ndim == 2:
             a = a[xp.newaxis, :, :]

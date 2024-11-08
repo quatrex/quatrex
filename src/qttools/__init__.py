@@ -1,7 +1,10 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 import os
+from typing import Any, TypeAlias, TypeVar
 from warnings import warn
+
+from numpy.typing import ArrayLike
 
 from qttools.__about__ import __version__
 
@@ -13,6 +16,7 @@ if ARRAY_MODULE is not None:
         from scipy import sparse
 
     elif ARRAY_MODULE == "cupy":
+        # Attempt to import cupy, defaulting to numpy if it fails.
         try:
             import cupy as xp
             from cupyx.scipy import sparse
@@ -21,8 +25,8 @@ if ARRAY_MODULE is not None:
             # a cudaErrorInsufficientDriver error or something.
             xp.abs(1)
 
-        except ImportError as e:
-            warn(f"'cupy' is unavailable, defaulting to 'numpy'. ({e})")
+        except Exception as e:
+            warn(f"'cupy' is unavailable or not working, defaulting to 'numpy'. ({e})")
             import numpy as xp
             from scipy import sparse
 
@@ -36,20 +40,19 @@ else:
         import cupy as xp
         from cupyx.scipy import sparse
 
-        try:
-            # Check if cupy is actually working. This could still raise
-            # a cudaErrorInsufficientDriver error or something.
-            xp.abs(1)
+        # Check if cupy is actually working. This could still raise
+        # a cudaErrorInsufficientDriver error or something.
+        xp.abs(1)
 
-        except Exception as e:
-            warn(f"'cupy' is unavailable, defaulting to 'numpy'. ({e})")
-            import numpy as xp
-            from scipy import sparse
-
-    except ImportError as e:
-        warn(f"'cupy' is unavailable, defaulting to 'numpy'. ({e})")
+    except Exception as e:
+        warn(f"'cupy' is unavailable or not working, defaulting to 'numpy'. ({e})")
         import numpy as xp
         from scipy import sparse
 
+# Some type aliases for the array module.
+_ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
+_DType = xp.dtype[_ScalarType]
+NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
-__all__ = ["__version__", "xp", "sparse"]
+
+__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]

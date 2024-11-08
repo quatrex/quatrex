@@ -1,9 +1,8 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
 import pytest
-from numpy.typing import ArrayLike
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBCOO
 from qttools.greens_function_solver import RGF, Inv
 
@@ -41,17 +40,17 @@ GLOBAL_STACK_SHAPES = [
 
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def block_sizes(request):
+def block_sizes(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
-def gfsolver_type(request):
+def gfsolver_type(request: pytest.FixtureRequest):
     return request.param
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request):
+def dsbsparse_type(request: pytest.FixtureRequest):
     return request.param
 
 
@@ -64,7 +63,7 @@ def _random_block(m: int, n: int):
 
 @pytest.fixture(scope="function", autouse=False)
 def bt_dense(
-    block_sizes: ArrayLike,
+    block_sizes: NDArray,
 ):
     block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
     num_blocks = len(block_sizes)
@@ -106,7 +105,7 @@ def bt_dense(
 
 
 @pytest.fixture(params=BATCHING_TYPE, autouse=True)
-def max_batch_size(request) -> int:
+def max_batch_size(request: pytest.FixtureRequest) -> int:
     batching_type = request.param
 
     if batching_type == "no-batching":
@@ -118,15 +117,15 @@ def max_batch_size(request) -> int:
 
 
 @pytest.fixture(params=OUT, autouse=True)
-def out(request) -> bool:
+def out(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
 @pytest.fixture(params=RETURN_RETARDED, autouse=True)
-def return_retarded(request) -> bool:
+def return_retarded(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
-def global_stack_shape(request):
+def global_stack_shape(request: pytest.FixtureRequest):
     return request.param

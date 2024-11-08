@@ -1,12 +1,12 @@
-from qttools import xp
+from qttools import NDArray, xp
 
 
 def operator_inverse(
-    a_xx: list[xp.ndarray],
-    z: xp.ndarray,
+    a_xx: tuple[NDArray, ...],
+    z: NDArray,
     contour_type: xp.dtype,
     in_type: xp.dtype,
-) -> xp.ndarray:
+) -> NDArray:
     """Computes the inverse of a matrix polynomial at sample points.
 
     Parameters
@@ -26,10 +26,7 @@ def operator_inverse(
         The inverse of the matrix polynomial.
 
     """
-    half_num_blocks = len(a_xx) // 2
-    tmp = [z ** (i - half_num_blocks) * a_x for i, a_x in enumerate(a_xx)]
-    sum = tmp[0]
-    for i in range(1, len(tmp)):
-        sum += tmp[i]
+    b = len(a_xx) // 2
+    operator = sum(z**n * a_xn for a_xn, n in zip(a_xx, range(-b, b + 1)))
 
-    return xp.linalg.inv(sum.astype(contour_type)).astype(in_type)
+    return xp.linalg.inv(operator.astype(contour_type)).astype(in_type)

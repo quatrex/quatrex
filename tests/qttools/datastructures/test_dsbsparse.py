@@ -549,6 +549,22 @@ class TestArithmetic:
 
         assert xp.allclose(-dense, (-dsbsparse).to_dense())
 
+    def test_matmul(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: xp.ndarray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+    ):
+        """Tests the matrix multiplication of a DSBSparse matrix."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks
+        )
+        dense = dsbsparse.to_dense()
+
+        assert xp.allclose(dense @ dense, (dsbsparse @ dsbsparse).to_dense())
+
 
 # Shape of the dense array.
 ARRAY_SHAPE = (12, 10, 30)

@@ -396,6 +396,8 @@ class DSBCOO(DSBSparse):
         """
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
+        # The coo matrix "must" be created to get the same ordering of the
+        # data as when the matrix is created with from sparray.
         coo = sparse.coo_matrix(
             (xp.arange(self.nnz, dtype=float), (self.rows, self.cols)),
             shape=self.shape[-2:],
@@ -495,6 +497,35 @@ class DSBCOO(DSBSparse):
         """
         return self.rows, self.cols
 
+    def reduce_to(
+        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
+    ) -> "DSBCOO":
+        """Create a reduced matrix to the given rows and columns.
+
+        Parameters
+        ----------
+        rows : array_like
+            The rows to keep.
+        cols : array_like
+            The columns to keep.
+        block_sizes : array_like
+            The size of the blocks in the new matrix.
+
+        Returns
+        -------
+        DSBCOO
+            The reduced matrix.
+
+        """
+        mask = self.calc_reduce_to_mask(rows, cols)
+        return DSBCOO(
+            data=self.data[..., mask],
+            rows=self.rows[mask],
+            cols=self.cols[mask],
+            block_sizes=block_sizes,
+            global_stack_shape=self.global_stack_shape,
+        )
+
     @classmethod
     def from_sparray(
         cls,
@@ -570,62 +601,4 @@ class DSBCOO(DSBSparse):
             cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
-        )
-
-    def calc_reduce_to_mask(
-        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
-    ) -> ArrayLike:
-        """Calculate the mask for reducing the matrix to the given rows and columns.
-
-        Parameters
-        ----------
-        rows : array_like
-            The rows to keep.
-        cols : array_like
-            The columns to keep.
-        block_sizes : array_like
-            The size of the blocks in the new matrix.
-
-        Returns
-        -------
-        array_like
-            The mask for reducing the matrix.
-
-        """
-        mask = xp.zeros(self.nnz, dtype=bool)
-        block_sort_index = compute_block_sort_index(self.rows, self.cols, block_sizes)
-        j = 0
-        for i, ii in enumerate(block_sort_index):
-            if self.rows[ii] == rows[j] and self.cols[ii] == cols[j]:
-                mask[i] = True
-                j += 1
-        return block_sort_index[mask]
-
-    def reduce_to(
-        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
-    ) -> "DSBCOO":
-        """Create a reduced matrix to the given rows and columns.
-
-        Parameters
-        ----------
-        rows : array_like
-            The rows to keep.
-        cols : array_like
-            The columns to keep.
-        block_sizes : array_like
-            The size of the blocks in the new matrix.
-
-        Returns
-        -------
-        DSBCOO
-            The reduced matrix.
-
-        """
-        mask = self.calc_reduce_to_mask(rows, cols, block_sizes)
-        return DSBCOO(
-            data=self.data[..., mask],
-            rows=self.rows[mask],
-            cols=self.cols[mask],
-            block_sizes=block_sizes,
-            global_stack_shape=self.global_stack_shape,
         )

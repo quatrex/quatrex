@@ -586,6 +586,49 @@ class DSBSparse(ABC):
 
         return arr
 
+    def calc_reduce_to_mask(self, rows: ArrayLike, cols: ArrayLike) -> ArrayLike:
+        """Calculate the mask for reducing the matrix to the given rows and columns.
+
+        Parameters
+        ----------
+        rows : array_like
+            The rows to keep.
+        cols : array_like
+            The columns to keep.
+
+        Returns
+        -------
+        array_like
+            The mask for reducing the matrix.
+
+        """
+        rows_self, cols_self = self.spy()
+        sort_index = xp.lexsort(xp.asarray((cols_self, rows_self)))
+        sort_index2 = xp.lexsort(xp.asarray((cols, rows)))
+        mask = xp.zeros(self.nnz, dtype=bool)
+        i = 0
+        j = 0
+        while i < self.nnz and j < len(rows):
+            if (
+                rows_self[sort_index[i]] == rows[sort_index2[j]]
+                and cols_self[sort_index[i]] == cols[sort_index2[j]]
+            ):
+                mask[sort_index[i]] = True
+                i += 1
+                j += 1
+            elif rows_self[sort_index[i]] < rows[sort_index2[j]] or (
+                rows_self[sort_index[i]] == rows[sort_index2[j]]
+                and cols_self[sort_index[i]] < cols[sort_index2[j]]
+            ):
+                i += 1
+            else:
+                j += 1
+        if sum(mask) != len(rows) and sum(mask) != len(cols):
+            # Assumes that all (rows, cols) indices are contained in the (self.rows, self.cols) indices.
+            # This makes it easier to check if the mask is correct.
+            raise ValueError("Invalid rows and cols.")
+        return mask
+
     @classmethod
     @abstractmethod
     def from_sparray(

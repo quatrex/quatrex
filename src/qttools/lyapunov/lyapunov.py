@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp

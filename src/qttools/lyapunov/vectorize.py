@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
 

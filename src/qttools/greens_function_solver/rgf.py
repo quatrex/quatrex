@@ -1,5 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
-
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import xp
 from qttools.datastructures.dsbsparse import DSBSparse

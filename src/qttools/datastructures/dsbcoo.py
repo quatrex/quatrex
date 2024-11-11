@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp

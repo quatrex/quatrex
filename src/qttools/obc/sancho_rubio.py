@@ -1,4 +1,5 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import warnings
 
 from qttools import NDArray, xp

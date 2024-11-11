@@ -384,6 +384,27 @@ class DSBCSR(DSBSparse):
             product.data[stack_index, :] = temp_product[product.spy()]
         return product
 
+    @DSBSparse.block_sizes.setter
+    def block_sizes(self, block_sizes: ArrayLike) -> None:
+        """Sets the block sizes."""
+        if sum(block_sizes) != self.shape[-1]:
+            raise ValueError("Block sizes do not match matrix shape.")
+        rows, cols = self.spy()
+        coo = sparse.coo_matrix(
+            (xp.arange(self.nnz, dtype=float), (rows, cols)), shape=self.shape[-2:]
+        )
+        # Canonicalizes the COO format.
+        coo.sum_duplicates()
+        # Compute the block-sorting index.
+        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
+        self.rowptr_map = compute_ptr_map(coo.row, coo.col, block_sizes)
+        block_sort_index = coo.data[block_sort_index].astype(int)
+        self.data[..., :] = self.data[..., block_sort_index]
+        self.cols = self.cols[block_sort_index]
+        self._block_sizes = xp.asarray(block_sizes).astype(int)
+        self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        self.num_blocks = len(block_sizes)
+
     def ltranspose(self, copy=False) -> "None | DSBCSR":
         """Performs a local transposition of the matrix.
 

@@ -126,6 +126,34 @@ class TestConversion:
 
         assert xp.allclose(dense, dsbsparse.to_dense())
 
+    def test_calc_reduce_to_mask(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: xp.ndarray,
+        global_stack_shape: tuple,
+    ):
+        """Tests that we can calculate a mask for a DSBSparse matrix."""
+        coo = _create_coo(block_sizes)
+        coo = coo + coo.T.conj()
+        coo += sparse.eye(coo.shape[0], dtype=coo.dtype)
+        coo_prod = coo@coo
+
+        dsbsparse1 = dsbsparse_type.from_sparray(
+            coo_prod,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dsbsparse2 = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        new_rows, new_cols = dsbsparse2.spy()
+        mask = dsbsparse1.calc_reduce_to_mask(new_rows, new_cols)
+
+        old_rows, old_cols = dsbsparse1.spy()
+        assert xp.allclose(old_rows[mask], new_rows)
+        assert xp.allclose(old_cols[mask], new_cols)
 
 class TestAccess:
     """Tests for the access methods of DSBSparse."""

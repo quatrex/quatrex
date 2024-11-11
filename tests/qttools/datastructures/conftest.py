@@ -43,6 +43,12 @@ STACK_INDICES = [
     pytest.param((Ellipsis,), id="ellipsis"),
 ]
 
+BLOCK_CHANGE_FACTORS = [
+    pytest.param(1.0, id="no-change"),
+    pytest.param(0.5, id="half-change"),
+    pytest.param(2.0, id="double-change"),
+]
+
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request):
@@ -76,4 +82,9 @@ def global_stack_shape(request):
 
 @pytest.fixture(params=STACK_INDICES)
 def stack_index(request):
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_CHANGE_FACTORS)
+def block_change_factor(request):
     return request.param

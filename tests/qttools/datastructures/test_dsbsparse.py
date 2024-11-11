@@ -391,6 +391,51 @@ class TestAccess:
             dense[inds][dense[inds].nonzero()] = 1
             assert xp.allclose(dense, dsbsparse.to_dense())
 
+    @pytest.mark.usefixtures("block_change_factor")
+    def test_block_sizes_setter(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: xp.ndarray,
+        global_stack_shape: tuple,
+        block_change_factor: float,
+    ):
+        """Tests that we can update the block sizes correctly."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        # Create new block sizes.
+        rest = 0
+        updated_block_sizes = xp.array([], dtype=int)
+        for bs in block_sizes:
+            if sum(updated_block_sizes) < sum(block_sizes):
+                el = (
+                    int(bs * block_change_factor) if bs * block_change_factor > 1 else 1
+                )
+                reps, rest = divmod(bs + rest, el) if bs + rest > el else (1, 0)
+                updated_block_sizes = xp.concatenate(
+                    (updated_block_sizes, xp.ones(int(reps), dtype=int) * el)
+                )
+            else:
+                updated_block_sizes[-1] -= sum(updated_block_sizes) - sum(block_sizes)
+                break
+        if sum(updated_block_sizes) != sum(block_sizes):
+            updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
+        # Create a new DSBSparse matrix with the updated block sizes.
+        dsbsparse_updated_block_sizes = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=updated_block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+
+        # Update the block sizes.
+        dsbsparse.block_sizes = updated_block_sizes
+
+        # Assert that the two DSBSparse matrices are equivalent.
+        assert (dsbsparse.data == dsbsparse_updated_block_sizes.data).all()
+
     def test_spy(
         self,
         dsbsparse_type: DSBSparse,

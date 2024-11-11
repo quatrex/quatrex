@@ -54,6 +54,28 @@ class TestCreation:
         assert (zeros.to_dense() == 0).all()
 
 
+def _create_new_block_sizes(
+    block_sizes: xp.ndarray, block_change_factor: float
+) -> xp.ndarray:
+    """Creates new block sizes based on the block change factor."""
+    # Create new block sizes.
+    rest = 0
+    updated_block_sizes = xp.array([], dtype=int)
+    for bs in block_sizes:
+        if sum(updated_block_sizes) < sum(block_sizes):
+            el = int(bs * block_change_factor) if bs * block_change_factor > 1 else 1
+            reps, rest = divmod(bs + rest, el) if bs + rest > el else (1, 0)
+            updated_block_sizes = xp.concatenate(
+                (updated_block_sizes, xp.ones(int(reps), dtype=int) * el)
+            )
+        else:
+            updated_block_sizes[-1] -= sum(updated_block_sizes) - sum(block_sizes)
+            break
+    if sum(updated_block_sizes) != sum(block_sizes):
+        updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
+    return updated_block_sizes
+
+
 def _unsign_index(row: int, col: int, num_blocks) -> tuple:
     """Adjusts the sign to allow negative indices and checks bounds."""
     row = num_blocks + row if row < 0 else row
@@ -136,7 +158,7 @@ class TestConversion:
         coo = _create_coo(block_sizes)
         coo = coo + coo.T.conj()
         coo += sparse.eye(coo.shape[0], dtype=coo.dtype)
-        coo_prod = coo@coo
+        coo_prod = coo @ coo
 
         dsbsparse1 = dsbsparse_type.from_sparray(
             coo_prod,
@@ -154,6 +176,7 @@ class TestConversion:
         old_rows, old_cols = dsbsparse1.spy()
         assert xp.allclose(old_rows[mask], new_rows)
         assert xp.allclose(old_cols[mask], new_cols)
+
 
 class TestAccess:
     """Tests for the access methods of DSBSparse."""
@@ -435,22 +458,7 @@ class TestAccess:
             global_stack_shape=global_stack_shape,
         )
         # Create new block sizes.
-        rest = 0
-        updated_block_sizes = xp.array([], dtype=int)
-        for bs in block_sizes:
-            if sum(updated_block_sizes) < sum(block_sizes):
-                el = (
-                    int(bs * block_change_factor) if bs * block_change_factor > 1 else 1
-                )
-                reps, rest = divmod(bs + rest, el) if bs + rest > el else (1, 0)
-                updated_block_sizes = xp.concatenate(
-                    (updated_block_sizes, xp.ones(int(reps), dtype=int) * el)
-                )
-            else:
-                updated_block_sizes[-1] -= sum(updated_block_sizes) - sum(block_sizes)
-                break
-        if sum(updated_block_sizes) != sum(block_sizes):
-            updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
+        updated_block_sizes = _create_new_block_sizes(block_sizes, block_change_factor)
         # Create a new DSBSparse matrix with the updated block sizes.
         dsbsparse_updated_block_sizes = dsbsparse_type.from_sparray(
             coo,

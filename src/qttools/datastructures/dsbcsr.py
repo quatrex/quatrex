@@ -20,16 +20,16 @@ class DSBCSR(DSBSparse):
 
     Parameters
     ----------
-    data : array_like
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    cols : array_like
+    cols : NDArray
         The column indices.
     rowptr_map : dict
         The row pointer map.
-    block_sizes : array_like
+    block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
@@ -79,14 +79,14 @@ class DSBCSR(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
 
         Returns
         -------
-        items : array_like
+        items : NDArray
             The requested items.
 
         """
@@ -126,11 +126,11 @@ class DSBCSR(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
-        value : array_like
+        value : NDArray
             The value to set.
 
         """
@@ -171,7 +171,7 @@ class DSBCSR(DSBSparse):
         ]
         return
 
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -189,9 +189,11 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        block : sparray | np.ndarray
+        block : NDArray | tuple[NDArray, NDArray, NDArray]
             The block at the requested index. This is an array of shape
-            `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])`
+            if `return_dense` is True, otherwise it is a tuple of three
+            arrays `(rowptr, cols, data)`.
 
         """
         data_stack = self.data[*stack_index]
@@ -243,7 +245,7 @@ class DSBCSR(DSBSparse):
             Row index of the block.
         col : int
             Column index of the block.
-        block : array_like
+        block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -435,9 +437,9 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        rows : np.ndarray
+        rows : NDArray
             Row indices of the non-zero elements.
-        cols : np.ndarray
+        cols : NDArray
             Column indices of the non-zero elements.
 
         """
@@ -455,15 +457,15 @@ class DSBCSR(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
-        pinned=False,
+        pinned: bool = False,
     ) -> "DSBCSR":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
         Parameters
         ----------
-        arr : sparse.sparray
+        arr : sparse.spmatrix
             The sparse array to convert.
-        block_sizes : np.ndarray
+        block_sizes : NDArray
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided

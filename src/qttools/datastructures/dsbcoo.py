@@ -17,20 +17,20 @@ class DSBCOO(DSBSparse):
 
     Parameters
     ----------
-    data : numpy.ndarray or cupy.ndarray
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    rows : array_like
-        The row indices.
-    cols : array_like
-        The column indices.
-    block_sizes : array_like
+    rows : NDArray
+        The row indices. This should be an array of shape `(nnz,)`.
+    cols : NDArray
+        The column indices. This should be an array of shape `(nnz,)`.
+    block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
-        The global shape of the stack. If this is an integer, it is
-        interpreted as a one-dimensional stack.
+        The global shape of the stack of sparse matrices. If this is an
+        integer, it is interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
@@ -43,7 +43,7 @@ class DSBCOO(DSBSparse):
         rows: NDArray,
         cols: NDArray,
         block_sizes: NDArray,
-        global_stack_shape: tuple,
+        global_stack_shape: tuple | int,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCOO matrix."""
@@ -78,14 +78,14 @@ class DSBCOO(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
 
         Returns
         -------
-        items : array_like
+        items : NDArray
             The requested items.
 
         """
@@ -141,11 +141,11 @@ class DSBCOO(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
-        value : array_like
+        value : NDArray
             The value to set.
 
         """
@@ -193,8 +193,8 @@ class DSBCOO(DSBSparse):
     def _get_block_slice(self, row: int, col: int) -> slice:
         """Gets the slice of data corresponding to a given block.
 
-        This also handles the block slice cache. If there is no data in
-        the block, an `slice(None)` is cached.
+        This handles the block slice cache. If there is no data in the
+        block, an `slice(None)` is cached.
 
         Parameters
         ----------
@@ -222,7 +222,7 @@ class DSBCOO(DSBSparse):
         self._block_slice_cache[(row, col)] = block_slice
         return block_slice
 
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -240,9 +240,11 @@ class DSBCOO(DSBSparse):
 
         Returns
         -------
-        block : array_like
+        block : NDArray | tuple[NDArray, NDArray, NDArray]
             The block at the requested index. This is an array of shape
-            `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])` if
+            `return_dense` is True, otherwise it is a tuple of arrays
+            `(rows, cols, data)`.
 
         """
         data_stack = self.data[*stack_index]
@@ -290,7 +292,7 @@ class DSBCOO(DSBSparse):
             Row index of the block.
         col : int
             Column index of the block.
-        block : array_like
+        block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -489,9 +491,9 @@ class DSBCOO(DSBSparse):
 
         Returns
         -------
-        rows : array_like
+        rows : NDArray
             Row indices of the non-zero elements.
-        cols : array_like
+        cols : NDArray
             Column indices of the non-zero elements.
 
         """
@@ -504,15 +506,15 @@ class DSBCOO(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
-        pinned=False,
+        pinned: bool = False,
     ) -> "DSBCOO":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
         Parameters
         ----------
-        arr : sparse.sparray
+        arr : sparse.spmatrix
             The sparse array to convert.
-        block_sizes : array_like
+        block_sizes : NDArray
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided

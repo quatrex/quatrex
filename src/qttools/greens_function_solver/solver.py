@@ -6,26 +6,25 @@ from qttools.datastructures import DSBSparse
 
 
 class GFSolver(ABC):
+    """Abstract base class for the Green's function solvers."""
+
     @abstractmethod
-    def selected_inv(
-        self, a: DSBSparse, out: DSBSparse = None, max_batch_size: int = 1
-    ) -> None | DSBSparse:
-        """Perform the selected inversion of a matrix in block-tridiagonal form.
+    def selected_inv(self, a: DSBSparse, out: DSBSparse = None) -> None | DSBSparse:
+        """Performs selected inversion of a block-tridiagonal matrix.
 
         Parameters
         ----------
         a : DSBSparse
             Matrix to invert.
         out : DSBSparse, optional
-            Output matrix, by default None.
-        max_batch_size : int, optional
-            Maximum batch size to use when inverting the matrix, by default 1.
+            Preallocated output matrix, by default None.
 
         Returns
         -------
         None | DSBSparse
-            If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DSBSparse object.
+            If `out` is None, returns None. Otherwise, returns the
+            inverted matrix as a DSBSparse object.
+
         """
         ...
 
@@ -37,30 +36,39 @@ class GFSolver(ABC):
         sigma_greater: DSBSparse,
         out: tuple | None = None,
         return_retarded: bool = False,
-        max_batch_size: int = 1,
     ) -> None | tuple:
-        """Perform a selected-solve of the congruence matrix equation: A * X * A^T = B.
+        """Produces elements of the solution to the congruence equation.
+
+        This method produces selected elements of the solution to the
+        relation:
+
+        \\[
+            X^{\lessgtr} = A^{-1} \Sigma^{\lessgtr} A^{-\dagger}
+        \\]
 
         Parameters
         ----------
         a : DSBSparse
             Matrix to invert.
         sigma_lesser : DSBSparse
-            Lesser matrix. This matrix is expected to be skewed-hermitian.
+            Lesser matrix. This matrix is expected to be
+            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         sigma_greater : DSBSparse
-            Greater matrix. This matrix is expected to be skewed-hermitian.
-        out : tuple | None, optional
-            Output matrix, by default None
+            Greater matrix. This matrix is expected to be
+            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        out : tuple[DSBSparse, ...] | None, optional
+            Preallocated output matrices, by default None
         return_retarded : bool, optional
-            Weither the retarded Green's functioln should be returned, by default False
-        max_batch_size : int, optional
-            Maximum batch size to use when inverting the matrix, by default 1
+            Wether the retarded Green's function should be returned
+            along with lesser and greater, by default False
 
         Returns
         -------
         None | tuple
-            If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DSBSparse object. If `return_retarded` is True, returns a tuple with
-            the retarded Green's function as the last element.
+            If `out` is None, returns None. Otherwise, the solutions are
+            returned as DSBParse matrices. If `return_retarded` is True,
+            returns a tuple with the retarded Green's function as the
+            last element.
+
         """
         ...

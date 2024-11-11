@@ -9,7 +9,15 @@ rng = xp.random.default_rng(42)
 
 
 class Beyn(NEVP):
-    """Beyn's integral method for solving NEVP.
+    """Beyn's integral method for solving NEVP.[^1]
+
+    This is implemented along the lines of what is described in [^2].
+
+    [^1]: W.-J. Beyn, An integral method for solving nonlinear
+    eigenvalue problems, Linear Algebra and its Applications, 2012.
+
+    [^2]: S. Brück, Ab-initio Quantum Transport Simulations for
+    Nanoelectronic Devices, ETH Zurich, 2017.
 
     Parameters
     ----------
@@ -18,16 +26,10 @@ class Beyn(NEVP):
     r_i : float
         The inner radius of the annulus for the contour integration.
     c_hat : int
-        Guess for the number of eigenvalues that lie in our subspace.
+        Guess for the number of eigenvalues that lie in the subspace.
     num_quad_points : int
-        The number of quadrature points for the contour integration.
-
-    References
-    ----------
-    .. [1] W.-J. Beyn, An integral method for solving nonlinear
-       eigenvalue problems, Linear Algebra and its Applications, 2012.
-    .. [2] S. Brück, Ab-initio Quantum Transport Simulations for
-       Nanoelectronic Devices, ETH Zurich, 2017.
+        The number of quadrature points to use for the contour
+        integration.
 
     """
 
@@ -45,7 +47,25 @@ class Beyn(NEVP):
         self.num_quad_points = num_quad_points
 
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+        """Solves the plynomial eigenvalue problem.
 
+        This method solves the non-linear eigenvalue problem defined by
+        the coefficient blocks `a_xx` from lowest to highest order.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The coefficient blocks of the non-linear eigenvalue problem
+            from lowest to highest order.
+
+        Returns
+        -------
+        ws : NDArray
+            The eigenvalues.
+        vs : NDArray
+            The eigenvectors.
+
+        """
         d = a_xx[0].shape[-1]
         in_type = a_xx[0].dtype
 

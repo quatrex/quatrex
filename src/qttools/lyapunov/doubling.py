@@ -30,7 +30,26 @@ class Doubling(LyapunovSolver):
         contact: str,
         out: None | NDArray = None,
     ) -> NDArray | None:
-        """Computes the solution of the discrete-time Lyapunov equation."""
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
 
         if a.ndim == 2:
             a = a[xp.newaxis, :, :]

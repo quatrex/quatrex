@@ -1,6 +1,5 @@
 # Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
 
-
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import GFSolver
@@ -15,6 +14,7 @@ def test_selected_inv(
     block_sizes: NDArray,
     global_stack_shape: int | tuple,
 ):
+    """Tests the selected inversion method of a Green's function solver."""
     bt_mask = bt_dense.astype(bool)
     ref_inv = xp.linalg.inv(bt_dense) * bt_mask
 
@@ -26,13 +26,13 @@ def test_selected_inv(
         coo, block_sizes, global_stack_shape, densify_blocks
     )
 
-    solver = gfsolver_type()
+    solver = gfsolver_type(max_batch_size=max_batch_size)
 
     if out:
         gf_inv = dsbsparse_type.zeros_like(dsbsparse)
-        solver.selected_inv(dsbsparse, out=gf_inv, max_batch_size=max_batch_size)
+        solver.selected_inv(dsbsparse, out=gf_inv)
     else:
-        gf_inv = solver.selected_inv(dsbsparse, max_batch_size=max_batch_size)
+        gf_inv = solver.selected_inv(dsbsparse)
 
     bt_mask_broadcasted = xp.broadcast_to(
         bt_mask, (*global_stack_shape, *bt_mask.shape)

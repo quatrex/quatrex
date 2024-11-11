@@ -5,7 +5,7 @@ from qttools import NDArray, xp
 from qttools.nevp import Beyn, Full
 
 
-def test_full(a_xx: tuple[NDArray]):
+def test_full(a_xx: tuple[NDArray, ...]):
     """Tests that the Full NEVP solver returns the correct result."""
     full_nevp = Full()
     ws, vs = full_nevp(a_xx)
@@ -19,7 +19,7 @@ def test_full(a_xx: tuple[NDArray]):
 
 
 @pytest.mark.usefixtures("subspace_nevp")
-def test_subspace(a_xx: tuple[NDArray], subspace_nevp: Beyn):
+def test_subspace(a_xx: tuple[NDArray, ...], subspace_nevp: Beyn):
     """Tests that the subspace NEVP solver returns the correct result."""
     ws, vs = subspace_nevp(a_xx)
 

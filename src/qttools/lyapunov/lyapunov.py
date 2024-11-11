@@ -7,9 +7,9 @@ class LyapunovSolver(ABC):
     """Solver interface for the discrete-time Lyapunov equation.
 
     The discrete-time Lyapunov equation is defined as:
-    `x - a @ x a.conj().T = q`.
-
-    $X - A X A^H = Q$
+    \\[
+        X - A X A^H = Q
+    \\]
 
     """
 
@@ -25,19 +25,19 @@ class LyapunovSolver(ABC):
 
         Parameters
         ----------
-        a : cupy.ndarray or numpy.ndarray
+        a : NDArray
             The system matrix.
-        q : array_like
+        q : NDArray
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : array_like, optional
+        out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
 
         Returns
         -------
-        x : array_like, optional
+        x : NDArray | None
             The solution of the discrete-time Lyapunov equation.
 
         """
@@ -77,7 +77,27 @@ class LyapunovMemoizer:
         contact: str,
         out: None | NDArray = None,
     ) -> NDArray | None:
-        """Calls the wrapped Lyapunov function with cache handling."""
+        """Calls the wrapped Lyapunov function with cache handling.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong. Used as a
+            key for the cache.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
         x = self.lyapunov_solver(a, q, contact, out=out)
         if out is None:
             self._cache[contact] = x.copy()
@@ -93,7 +113,28 @@ class LyapunovMemoizer:
         contact: str,
         out: None | NDArray = None,
     ) -> NDArray | None:
-        """Computes the solution of the discrete-time Lyapunov equation."""
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+        This is a memoized wrapper around a Lyapunov solver.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 

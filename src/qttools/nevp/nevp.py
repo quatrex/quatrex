@@ -10,23 +10,26 @@ class NEVP(ABC):
 
     @abstractmethod
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
-        """Solves the eigenvalue problem.
+        """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
 
+        \\[
+            \\left( \sum_{n=-b}^{b} a_n w^n \\right) v = 0
+        \\]
 
         Parameters
         ----------
-        a_xx : xp.ndarray
+        a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
 
         Returns
         -------
-        ws : xp.ndarray
+        ws : NDArray
             The eigenvalues.
-        vs : xp.ndarray
+        vs : NDArray
             The eigenvectors.
 
         """

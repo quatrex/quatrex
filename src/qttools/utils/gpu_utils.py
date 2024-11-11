@@ -12,7 +12,7 @@ def get_array_module_name(arr: NDArray) -> str:
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to check.
 
     Returns
@@ -30,7 +30,7 @@ def get_host(arr: NDArray) -> NDArray:
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to convert.
 
     Returns
@@ -49,12 +49,12 @@ def get_device(arr: NDArray) -> NDArray:
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to convert.
 
     Returns
     -------
-    ArrayLike
+    NDArray
         The equivalent cupy array.
 
     """

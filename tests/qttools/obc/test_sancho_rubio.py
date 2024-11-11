@@ -26,7 +26,7 @@ def test_convergence_batch(a_xx: tuple[NDArray, ...], contact: str):
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij))
 
 
-def test_max_iterations(a_xx: tuple[NDArray]):
+def test_max_iterations(a_xx: tuple[NDArray, ...]):
     """Tests that Sancho-Rubio raises Exception after max_iterations."""
     sancho_rubio = SanchoRubio(max_iterations=1, convergence_tol=1e-8)
     a_ji, a_ii, a_ij = a_xx

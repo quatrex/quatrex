@@ -11,9 +11,9 @@ def operator_inverse(
 
     Parameters
     ----------
-    a_xx : list[xp.ndarray]
+    a_xx : tuple[NDArray, ...]
         The coefficients of the matrix polynomial.
-    z : xp.ndarray
+    z : NDArray
         The sample points at which to compute the inverse.
     contour_type : xp.dtype
         The data type for the contour integration.
@@ -22,7 +22,7 @@ def operator_inverse(
 
     Returns
     -------
-    inv_sum : xp.ndarray
+    NDArray
         The inverse of the matrix polynomial.
 
     """

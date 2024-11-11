@@ -13,14 +13,14 @@ def _make_periodic(
 
     Parameters
     ----------
-    a_xx : tuple[xp.ndarray, ...]
+    a_xx : tuple[NDArray, ...]
         The boundary blocks.
     block_sections : int
         The number of block sections.
 
     Returns
     -------
-    a_xx : tuple[xp.ndarray, ...]
+    a_xx : tuple[NDArray, ...]
         The boundary blocks with periodic subblocks.
 
     """

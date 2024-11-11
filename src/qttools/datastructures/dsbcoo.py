@@ -396,16 +396,21 @@ class DSBCOO(DSBSparse):
         """
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
-        self._block_sizes = xp.asarray(block_sizes).astype(int)
-        self.block_offsets = xp.hstack(([0], xp.cumsum(self._block_sizes)))
-        self.num_blocks = len(self.block_sizes)
-        # Compute the block-sorting index.
-        block_sort_index = compute_block_sort_index(
-            self.rows, self.cols, self._block_sizes
+        coo = sparse.coo_matrix(
+            (xp.arange(self.nnz, dtype=float), (self.rows, self.cols)),
+            shape=self.shape[-2:],
         )
+        # Canonicalizes the COO format.
+        coo.sum_duplicates()
+        # Compute the block-sorting index.
+        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
+        block_sort_index = coo.data[block_sort_index].astype(int)
         self.data[..., :] = self.data[..., block_sort_index]
         self.rows = self.rows[block_sort_index]
         self.cols = self.cols[block_sort_index]
+        self._block_sizes = xp.asarray(block_sizes).astype(int)
+        self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        self.num_blocks = len(block_sizes)
 
     def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.
@@ -566,8 +571,10 @@ class DSBCOO(DSBSparse):
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-    
-    def calc_reduce_to_mask(self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike) -> ArrayLike:
+
+    def calc_reduce_to_mask(
+        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
+    ) -> ArrayLike:
         """Calculate the mask for reducing the matrix to the given rows and columns.
 
         Parameters
@@ -586,16 +593,13 @@ class DSBCOO(DSBSparse):
 
         """
         mask = xp.zeros(self.nnz, dtype=bool)
-        block_sort_index = compute_block_sort_index(
-            self.rows, self.cols, block_sizes
-        )
+        block_sort_index = compute_block_sort_index(self.rows, self.cols, block_sizes)
         j = 0
         for i, ii in enumerate(block_sort_index):
             if self.rows[ii] == rows[j] and self.cols[ii] == cols[j]:
                 mask[i] = True
                 j += 1
         return block_sort_index[mask]
-        
 
     def reduce_to(
         self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike

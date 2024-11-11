@@ -179,12 +179,12 @@ class DSBSparse(ABC):
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
-    
+
     @property
     def block_sizes(self) -> ArrayLike:
         """Returns the block sizes."""
         return self._block_sizes
-    
+
     @block_sizes.setter
     @abstractmethod
     def block_sizes(self, block_sizes: ArrayLike) -> None:

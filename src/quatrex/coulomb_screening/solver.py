@@ -5,16 +5,14 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
-from qttools.utils.sparse_utils import sparsity_pattern_of_product
+from qttools.utils.sparse_utils import product_sparsity_pattern
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.coulomb_screening.utils.assemble_boundary_blocks import (
-    assemble_boundary_blocks,
-)
+from quatrex.coulomb_screening.utils import assemble_boundary_blocks
 
 
 def check_block_sizes(rows, columns, block_sizes):
@@ -150,12 +148,10 @@ class CoulombScreeningSolver(SubsystemSolver):
             quatrex_config.input_dir / "hamiltonian.npz"
         )
         # Compute new sparsity pattern
-        rows, cols = sparsity_pattern_of_product(
-            (
-                self.coulomb_matrix_sparray,
-                dummy_hamiltonian,
-                self.coulomb_matrix_sparray,
-            )
+        rows, cols = product_sparsity_pattern(
+            self.coulomb_matrix_sparray,
+            dummy_hamiltonian,
+            self.coulomb_matrix_sparray,
         )
         # Load the overlap matrix.
         try:

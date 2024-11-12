@@ -240,7 +240,7 @@ class DSBSparse(ABC):
 
         This does not return a copy of the data, but a view. This is
         also why we do not need a setter method (one can just set
-        `._data` directly).
+        `.data` directly).
 
         """
         if self.distribution_state == "stack":

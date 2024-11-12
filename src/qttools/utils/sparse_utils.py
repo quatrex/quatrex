@@ -2,6 +2,7 @@
 
 from qttools import sparse, xp
 from qttools.utils.gpu_utils import ArrayLike
+import functools
 
 
 def compute_block_sort_index(
@@ -100,10 +101,6 @@ def compute_ptr_map(
         offset += bnnz
 
     return rowptr_map
-
-
-import functools
-
 
 def product_sparsity_pattern(
     *matrices: tuple[sparse.spmatrix, ...]

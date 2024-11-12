@@ -355,10 +355,10 @@ class DSBCOO(DSBSparse):
             raise ValueError("Block sizes do not match.")
         product_rows, product_cols = sparsity_pattern_of_product(
             (
-                sparse.coo_matrix(
+                sparse.csr_matrix(
                     (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
                 ),
-                sparse.coo_matrix(
+                sparse.csr_matrix(
                     (xp.ones(other.nnz), (other.rows, other.cols)),
                     shape=other.shape[-2:],
                 ),
@@ -374,6 +374,7 @@ class DSBCOO(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
+        # TODO: This is a naive implementation. Should be revisited.
         for stack_index in xp.ndindex(self.data.shape[:-1]):
             temp_product = sparse.csr_matrix(
                 (self.data[stack_index], (self.rows, self.cols)), shape=self.shape[-2:]

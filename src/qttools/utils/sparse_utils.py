@@ -105,13 +105,13 @@ def compute_ptr_map(
 
 
 def product_sparsity_pattern(
-    *matrices: tuple[sparse.spmatrix, ...]
+    *matrices: sparse.spmatrix,
 ) -> tuple[xp.ndarray, xp.ndarray]:
     """Computes the sparsity pattern of the product of a sequence of matrices.
 
     Parameters
     ----------
-    matrices : tuple[sparse.spmatrix, ...]
+    matrices : sparse.spmatrix
         A sequence of sparse matrices.
 
     Returns

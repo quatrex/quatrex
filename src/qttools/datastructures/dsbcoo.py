@@ -6,7 +6,7 @@ from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import (
     compute_block_sort_index,
-    sparsity_pattern_of_product,
+    product_sparsity_pattern,
 )
 
 
@@ -353,16 +353,14 @@ class DSBCOO(DSBSparse):
             raise ValueError("Matrix shapes do not match.")
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
-        product_rows, product_cols = sparsity_pattern_of_product(
-            (
-                sparse.csr_matrix(
-                    (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
-                ),
-                sparse.csr_matrix(
-                    (xp.ones(other.nnz), (other.rows, other.cols)),
-                    shape=other.shape[-2:],
-                ),
-            )
+        product_rows, product_cols = product_sparsity_pattern(
+            sparse.csr_matrix(
+                (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
+            ),
+            sparse.csr_matrix(
+                (xp.ones(other.nnz), (other.rows, other.cols)),
+                shape=other.shape[-2:],
+            ),
         )
         block_sort_index = compute_block_sort_index(
             product_rows, product_cols, self.block_sizes

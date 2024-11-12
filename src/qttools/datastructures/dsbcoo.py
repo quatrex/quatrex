@@ -388,30 +388,33 @@ class DSBCOO(DSBSparse):
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: ArrayLike) -> None:
         """Sets new block sizes for the matrix.
-
         Parameters
         ----------
         block_sizes : array_like
             The new block sizes.
-
         """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError(
+                "Cannot reassign block-sizes when distributed through nnz."
+            )
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
-        # The coo matrix "must" be created to get the same ordering of the
-        # data as when the matrix is created with from sparray.
-        coo = sparse.coo_matrix(
-            (xp.arange(self.nnz, dtype=float), (self.rows, self.cols)),
-            shape=self.shape[-2:],
+        # Compute canonical ordering of the matrix.
+        inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
+        canonical_rows = self.rows[inds_bcoo2canonical]
+        canonical_cols = self.cols[inds_bcoo2canonical]
+        # Compute the index for sorting by the new block-sizes.
+        inds_canonical2bcoo = compute_block_sort_index(
+            canonical_rows, canonical_cols, block_sizes
         )
-        # Canonicalizes the COO format.
-        coo.sum_duplicates()
-        # Compute the block-sorting index.
-        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
-        block_sort_index = coo.data[block_sort_index].astype(int)
-        self.data[..., :] = self.data[..., block_sort_index]
-        self.rows = self.rows[block_sort_index]
-        self.cols = self.cols[block_sort_index]
-        self._block_sizes = xp.asarray(block_sizes).astype(int)
+        # Mapping directly from original block-ordering to the new
+        # block-ordering is achieved by chaining the two mappings.
+        inds_bcoo2bcoo = inds_bcoo2canonical[inds_canonical2bcoo]
+        self.data[:] = self.data[..., inds_bcoo2bcoo]
+        self.rows = self.rows[inds_bcoo2bcoo]
+        self.cols = self.cols[inds_bcoo2bcoo]
+        # Update the block sizes and offsets.
+        self._block_sizes = xp.asarray(block_sizes, dtype=int)
         self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
         self.num_blocks = len(block_sizes)
         self._block_slice_cache = {}

@@ -386,22 +386,35 @@ class DSBCSR(DSBSparse):
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: ArrayLike) -> None:
-        """Sets the block sizes."""
+        """Sets new block sizes for the matrix.
+        Parameters
+        ----------
+        block_sizes : array_like
+            The new block sizes.
+        """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError(
+                "Cannot reassign block-sizes when distributed through nnz."
+            )
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes do not match matrix shape.")
         rows, cols = self.spy()
-        coo = sparse.coo_matrix(
-            (xp.arange(self.nnz, dtype=float), (rows, cols)), shape=self.shape[-2:]
+        # Compute canonical ordering of the matrix.
+        inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))
+        canonical_rows = rows[inds_bcsr2canonical]
+        canonical_cols = cols[inds_bcsr2canonical]
+        # Compute the index for sorting by the new block-sizes.
+        inds_canonical2bcsr = compute_block_sort_index(
+            canonical_rows, canonical_cols, block_sizes
         )
-        # Canonicalizes the COO format.
-        coo.sum_duplicates()
-        # Compute the block-sorting index.
-        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
-        self.rowptr_map = compute_ptr_map(coo.row, coo.col, block_sizes)
-        block_sort_index = coo.data[block_sort_index].astype(int)
-        self.data[..., :] = self.data[..., block_sort_index]
-        self.cols = self.cols[block_sort_index]
-        self._block_sizes = xp.asarray(block_sizes).astype(int)
+        # Mapping directly from original block-ordering to the new
+        # block-ordering is achieved by chaining the two mappings.
+        inds_bcsr2bcsr = inds_bcsr2canonical[inds_canonical2bcsr]
+        self.data[:] = self.data[..., inds_bcsr2bcsr]
+        self.cols = self.cols[inds_bcsr2bcsr]
+        # Compute the rowptr map for the new block-sizes.
+        self.rowptr_map = compute_ptr_map(canonical_rows, canonical_cols, block_sizes)
+        self._block_sizes = xp.asarray(block_sizes, dtype=int)
         self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
         self.num_blocks = len(block_sizes)
 

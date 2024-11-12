@@ -58,22 +58,23 @@ def _create_new_block_sizes(
     block_sizes: xp.ndarray, block_change_factor: float
 ) -> xp.ndarray:
     """Creates new block sizes based on the block change factor."""
-    # Create new block sizes.
     rest = 0
-    updated_block_sizes = xp.array([], dtype=int)
+    updated_block_sizes = []
     for bs in block_sizes:
         if sum(updated_block_sizes) < sum(block_sizes):
-            el = int(bs * block_change_factor) if bs * block_change_factor > 1 else 1
-            reps, rest = divmod(bs + rest, el) if bs + rest > el else (1, 0)
-            updated_block_sizes = xp.concatenate(
-                (updated_block_sizes, xp.ones(int(reps), dtype=int) * el)
-            )
+            # Calculate the new block size.
+            el = max(int(bs * block_change_factor), 1)
+            # Calculate the number of repetitions and the rest. The rest is added to the next block.
+            reps, rest = max(divmod(bs + rest, el), (1, 0))
+            # Add the new block size to the list.
+            updated_block_sizes = updated_block_sizes + [el] * int(reps)
         else:
-            updated_block_sizes[-1] -= sum(updated_block_sizes) - sum(block_sizes)
+            # Break if the sum of the updated block sizes is equal or greater than the sum of the original block sizes.
             break
     if sum(updated_block_sizes) != sum(block_sizes):
+        # Add the rest to the last block.
         updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
-    return updated_block_sizes
+    return xp.asarray(updated_block_sizes)
 
 
 def _unsign_index(row: int, col: int, num_blocks) -> tuple:

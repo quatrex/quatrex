@@ -8,7 +8,7 @@ from qttools import NDArray, xp
 def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
 
-    This works for numpy even when cupy is not available.
+    This works for `numpy` even when `cupy` is not available.
 
     Parameters
     ----------

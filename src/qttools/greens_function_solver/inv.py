@@ -84,14 +84,14 @@ class Inv(GFSolver):
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
     ) -> None | tuple:
-        """Produces elements of the solution to the congruence equation.
+        r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
         relation:
 
-        \\[
+        \[
             X^{\lessgtr} = A^{-1} \Sigma^{\lessgtr} A^{-\dagger}
-        \\]
+        \]
 
         Parameters
         ----------

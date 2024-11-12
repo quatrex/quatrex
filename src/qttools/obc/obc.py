@@ -6,13 +6,13 @@ from qttools import NDArray, xp
 
 
 class OBCSolver(ABC):
-    """Abstract base class for the open-boundary condition solver.
+    r"""Abstract base class for the open-boundary condition solver.
 
     The recursion relation for the surface Green's function is given by:
 
-    \\[
+    \[
         x_{ii} = (a_{ii} - a_{ji} x_{ii} a_{ij})^{-1}
-    \\]
+    \]
 
     """
 

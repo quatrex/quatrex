@@ -6,12 +6,13 @@ from qttools import NDArray, xp
 
 
 class LyapunovSolver(ABC):
-    """Solver interface for the discrete-time Lyapunov equation.
+    r"""Solver interface for the discrete-time Lyapunov equation.
 
     The discrete-time Lyapunov equation is defined as:
-    \\[
+
+    \[
         X - A X A^H = Q
-    \\]
+    \]
 
     """
 

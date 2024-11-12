@@ -343,11 +343,11 @@ class DSBCOO(DSBSparse):
 
     def __matmul__(self, other: "DSBSparse") -> None:
         """Matrix multiplication of two DSBSparse matrices."""
+        if sparse.isspmatrix(other):
+            raise NotImplementedError(
+                "Matrix multiplication with sparse matrices is not implemented."
+            )
         if not isinstance(other, DSBSparse):
-            if sparse.isspmatrix(other):
-                raise NotImplementedError(
-                    "Matrix multiplication with sparse matrices is not implemented."
-                )
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
@@ -413,6 +413,7 @@ class DSBCOO(DSBSparse):
         self._block_sizes = xp.asarray(block_sizes).astype(int)
         self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
         self.num_blocks = len(block_sizes)
+        self._block_slice_cache = {}
 
     def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.

@@ -102,24 +102,32 @@ def compute_ptr_map(
     return rowptr_map
 
 
-def sparsity_pattern_of_product(
-    matrices: tuple[sparse.spmatrix, ...]
+import functools
+
+
+def product_sparsity_pattern(
+    *matrices: tuple[sparse.spmatrix, ...]
 ) -> tuple[xp.ndarray, xp.ndarray]:
-    """Computes the sparsity pattern of the product of a sequence of matrices."""
-    product = None
-    for matrix in matrices:
-        if sparse.issparse(matrix):
-            mat_ones = sparse.coo_matrix(
-                (xp.ones(matrix.nnz, dtype=xp.float32), (matrix.row, matrix.col)),
-                shape=matrix.shape,
-            )
-        else:
-            raise ValueError("matrices must be sparse.spmatrix")
-        if product is None:
-            product = mat_ones
-        else:
-            product = product @ mat_ones
+    """Computes the sparsity pattern of the product of a sequence of matrices.
+
+    Parameters
+    ----------
+    matrices : tuple[sparse.spmatrix, ...]
+        A sequence of sparse matrices.
+
+    Returns
+    -------
+    rows : xp.ndarray
+        The row indices of the sparsity pattern.
+    cols : xp.ndarray
+        The column indices of the sparsity pattern.
+
+    """
+    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.
+    csrs = [matrix.tocsr().astype(xp.float32) for matrix in matrices]
+    product = functools.reduce(lambda x, y: x @ y, csrs)
     product = product.tocoo()
     # Canonicalize
     product.sum_duplicates()
-    return (product.row, product.col)
+
+    return product.row, product.col

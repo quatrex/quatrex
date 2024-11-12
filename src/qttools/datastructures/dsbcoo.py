@@ -346,7 +346,7 @@ class DSBCOO(DSBSparse):
         if not isinstance(other, DSBSparse):
             if sparse.isspmatrix(other):
                 raise NotImplementedError(
-                    "Matrix multiplication with sparse matrices  is not implemented."
+                    "Matrix multiplication with sparse matrices is not implemented."
                 )
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:

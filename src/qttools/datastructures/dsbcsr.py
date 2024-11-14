@@ -356,9 +356,7 @@ class DSBCSR(DSBSparse):
             raise ValueError("Block sizes do not match.")
         stack_indices = xp.ndindex(self.data.shape[:-1])
         product_rows, product_cols = product_sparsity_pattern(
-            sparse.coo_matrix(
-                (xp.ones(self.nnz), (self.spy())), shape=self.shape[-2:]
-            ),
+            sparse.coo_matrix((xp.ones(self.nnz), (self.spy())), shape=self.shape[-2:]),
             sparse.coo_matrix(
                 (xp.ones(other.nnz), (other.spy())), shape=other.shape[-2:]
             ),

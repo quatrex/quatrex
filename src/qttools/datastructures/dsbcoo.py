@@ -500,35 +500,6 @@ class DSBCOO(DSBSparse):
         """
         return self.rows, self.cols
 
-    def reduce_to(
-        self, rows: ArrayLike, cols: ArrayLike, block_sizes: ArrayLike
-    ) -> "DSBCOO":
-        """Create a reduced matrix to the given rows and columns.
-
-        Parameters
-        ----------
-        rows : array_like
-            The rows to keep.
-        cols : array_like
-            The columns to keep.
-        block_sizes : array_like
-            The size of the blocks in the new matrix.
-
-        Returns
-        -------
-        DSBCOO
-            The reduced matrix.
-
-        """
-        mask = self.calc_reduce_to_mask(rows, cols)
-        return DSBCOO(
-            data=self.data[..., mask],
-            rows=self.rows[mask],
-            cols=self.cols[mask],
-            block_sizes=block_sizes,
-            global_stack_shape=self.global_stack_shape,
-        )
-
     @classmethod
     def from_sparray(
         cls,

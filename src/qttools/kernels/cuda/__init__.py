@@ -1,0 +1,3 @@
+THREADS_PER_BLOCK = 1024
+
+__all__ = ["THREADS_PER_BLOCK"]

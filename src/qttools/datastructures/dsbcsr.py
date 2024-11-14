@@ -344,11 +344,11 @@ class DSBCSR(DSBSparse):
 
     def __matmul__(self, other: "DSBSparse") -> None:
         """Matrix multiplication of two DSBSparse matrices."""
+        if sparse.isspmatrix(other):
+            raise NotImplementedError(
+                "Matrix multiplication with sparse matrices  is not implemented."
+            )
         if not isinstance(other, DSBSparse):
-            if sparse.isspmatrix(other):
-                raise NotImplementedError(
-                    "Matrix multiplication with sparse matrices  is not implemented."
-                )
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
@@ -356,8 +356,8 @@ class DSBCSR(DSBSparse):
             raise ValueError("Block sizes do not match.")
         stack_indices = xp.ndindex(self.data.shape[:-1])
         product_rows, product_cols = product_sparsity_pattern(
-            sparse.coo_matrix((xp.ones(self.nnz), (self.spy())), shape=self.shape[-2:]),
-            sparse.coo_matrix(
+            sparse.csr_matrix((xp.ones(self.nnz), (self.spy())), shape=self.shape[-2:]),
+            sparse.csr_matrix(
                 (xp.ones(other.nnz), (other.spy())), shape=other.shape[-2:]
             ),
         )
@@ -371,6 +371,7 @@ class DSBCSR(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
+        # TODO: This is a naive implementation. Should be revisited. Same for dsbcoo.
         for stack_index in stack_indices:
             temp_product = sparse.csr_matrix(
                 (self.data[stack_index], (self.spy())), shape=self.shape[-2:]

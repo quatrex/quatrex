@@ -372,7 +372,7 @@ class DSBCOO(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
-        # TODO: This is a naive implementation. Should be revisited.
+        # TODO: This is a naive implementation. Should be revisited. Same for dsbcsr.
         for stack_index in xp.ndindex(self.data.shape[:-1]):
             temp_product = sparse.csr_matrix(
                 (self.data[stack_index], (self.rows, self.cols)), shape=self.shape[-2:]

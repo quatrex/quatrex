@@ -24,7 +24,7 @@ def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     ranks = np.zeros(inds.shape[0], dtype=np.int16)
     for i in nb.prange(inds.shape[0]):
         for j in range(nnz_section_offsets.shape[0]):
-            cond = int(nnz_section_offsets[j] < inds[i])
+            cond = int(nnz_section_offsets[j] <= inds[i])
             ranks[i] = ranks[i] * (1 - cond) + j * cond
 
     return ranks

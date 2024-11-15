@@ -41,99 +41,80 @@ def find_inds(
     return inds, value_inds
 
 
+@nb.njit(parallel=True, cache=True)
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
-) -> slice:
-    """Computes the slice of the block in the data.
-
-    Note
-    ----
-    This is not a jitted function. This vectorized version seems to be
-    faster than the jitted version.
+):
+    """Computes the slice in the data for the given block.
 
     Parameters
     ----------
     rows : NDArray
-        The row indices of the matrix.
+        The rows in the COO matrix.
     cols : NDArray
-        The column indices of the matrix.
+        The columns in the COO matrix.
     block_offsets : NDArray
-        The offsets of the blocks.
+        The block offsets.
     row : int
-        The block row to compute the slice for.
+        THe block row.
     col : int
-        The block column to compute the slice for.
+        The block column.
 
     Returns
     -------
-    slice
-        The slice of the block in the data.
+    start : int
+        The start index of the block.
+    stop : int
+        The stop index of the block.
 
     """
-    mask = (
-        (rows >= block_offsets[row])
-        & (rows < block_offsets[row + 1])
-        & (cols >= block_offsets[col])
-        & (cols < block_offsets[col + 1])
-    )
-    inds = mask.nonzero()[0]
-    if len(inds) == 0:
-        # No data in this block, cache an empty slice.
-        return slice(None)
+    mask = np.zeros(rows.shape[0], dtype=np.bool_)
+    row_start, row_stop = block_offsets[row], block_offsets[row + 1]
+    col_start, col_stop = block_offsets[col], block_offsets[col + 1]
+    for i in nb.prange(rows.shape[0]):
+        mask[i] = (
+            (rows[i] >= row_start)
+            & (rows[i] < row_stop)
+            & (cols[i] >= col_start)
+            & (cols[i] < col_stop)
+        )
+
+    if np.sum(mask) == 0:
+        # No data in this block, return an empty slice.
+        return None, None
 
     # NOTE: The data is sorted by block-row and -column, so
     # we can safely assume that the block is contiguous.
-    return slice(inds[0], inds[-1] + 1)
+    inds = np.nonzero(mask)[0]
+    return inds[0], inds[-1] + 1
 
 
 @nb.njit(parallel=True, cache=True)
-def _fill_block(
+def fill_block(
+    block: NDArray,
     rows: NDArray,
     cols: NDArray,
     data: NDArray,
-    block: NDArray,
 ):
     """Fills the dense block with the given data.
 
+    Note
+    ----
+    If the blocks to be densified get very small, the overhead of
+    starting the CPU threads can lead to worse performance in the jitted
+    version than in the bare API implementation.
+
     Parameters
     ----------
+    block : NDArray
+        Preallocated dense block. Should be filled with zeros.
     rows : NDArray
         The rows at which to fill the block.
     cols : NDArray
         The columns at which to fill the block.
     data : NDArray
         The data to fill the block with.
-    block : NDArray
-        Preallocated dense block. Should be filled with zeros.
 
     """
     for i in nb.prange(rows.shape[0]):
         block[..., rows[i], cols[i]] = data[..., i]
-
-
-def fill_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
-    """Fills the dense block with the given data.
-
-    Note
-    ----
-    This function follows two different paths depending on the number of
-    rows in the block. If the number of rows is greater than 256, the
-    block is densified using a parallelized numba function, which, in
-    that case seems to be faster than a numpy-vectorized version.
-
-    Parameters
-    ----------
-    rows : NDArray
-        The rows at which to fill the block.
-    cols : NDArray
-        The columns at which to fill the block.
-    data : NDArray
-        The data to fill the block with.
-    block : NDArray
-        Preallocated dense block. Should be filled with zeros.
-
-    """
-    if block.shape[-1] > 256:
-        return _fill_block(rows, cols, data, block)
-
-    block[..., rows, cols] = data[:]

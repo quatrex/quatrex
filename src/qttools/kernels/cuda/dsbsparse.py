@@ -24,7 +24,7 @@ def _find_ranks_kernel(
     i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
     if i < inds.shape[0]:
         for j in range(nnz_section_offsets.shape[0]):
-            cond = int(nnz_section_offsets[j] < inds[i])
+            cond = int(nnz_section_offsets[j] <= inds[i])
             ranks[i] = ranks[i] * (1 - cond) + j * cond
 
 

@@ -136,8 +136,10 @@ def compute_block_slice(
 
     Returns
     -------
-    slice
-        The slice of the block in the data.
+    start : int
+        The start index of the block.
+    stop : int
+        The stop index of the block.
 
     """
     mask = cp.zeros(rows.shape[0], dtype=cp.bool_)
@@ -150,14 +152,14 @@ def compute_block_slice(
         (THREADS_PER_BLOCK,),
         (rows, cols, row_start, row_stop, col_start, col_stop, mask),
     )
-    inds = mask.nonzero()[0]
-    if len(inds) == 0:
-        # No data in this block, cache an empty slice.
-        return slice(None)
+    if cp.sum(mask) == 0:
+        # No data in this block, return an empty slice.
+        return None, None
 
     # NOTE: The data is sorted by block-row and -column, so
     # we can safely assume that the block is contiguous.
-    return slice(inds[0], inds[-1] + 1)
+    inds = cp.nonzero(mask)[0]
+    return inds[0], inds[-1] + 1
 
 
 def fill_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
@@ -180,4 +182,9 @@ def fill_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLi
         Preallocated dense block. Should be filled with zeros.
 
     """
+    # TODO: The bare API implementation on the GPU is faster than the
+    # very simple, non-general kernel i came up with. Thus, for now i
+    # will just use the CuPy API directly. Since for very large blocks
+    # (10'000x10'000) this starts to break even, this needs to be
+    # revisited!
     block[..., rows, cols] = data[:]

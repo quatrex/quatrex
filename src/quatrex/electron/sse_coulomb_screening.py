@@ -59,7 +59,7 @@ def hilbert_transform(a: xp.ndarray, energies: xp.ndarray, eta=1e-8) -> xp.ndarr
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
-    def __init__(self, config: QuatrexConfig, electron_energies: xp.ndarray):
+    def __init__(self, electron_energies: xp.ndarray):
         self.energies = electron_energies
         self.ne = self.energies.size
         self.prefactor = 1j / (2 * np.pi) * (self.energies[1] - self.energies[0])

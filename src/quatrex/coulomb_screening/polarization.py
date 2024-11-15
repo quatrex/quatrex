@@ -5,7 +5,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 
-from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 
@@ -20,7 +19,6 @@ def fft_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
 class PCoulombScreening(ScatteringSelfEnergy):
     def __init__(
         self,
-        config: QuatrexConfig,
         coulomb_screening_energies: xp.ndarray,
     ) -> None:
         self.energies = coulomb_screening_energies

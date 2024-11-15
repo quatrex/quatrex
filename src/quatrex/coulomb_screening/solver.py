@@ -75,7 +75,8 @@ def obc_multiply(
         )
         p.blocks[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ c.blocks[-1, -2]
         p.blocks[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ c.blocks[-1, -2]
-        buffer.data[:] = p.data
+        # TODO: Very slow assignment
+        buffer.data[:] = p[*buffer.spy()]
     else:
         raise ValueError("Invalid number of matrices.")
 
@@ -149,9 +150,24 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         # Compute new sparsity pattern
         rows, cols = product_sparsity_pattern(
-            self.coulomb_matrix_sparray,
-            dummy_hamiltonian,
-            self.coulomb_matrix_sparray,
+            sparse.csr_matrix(
+                (
+                    xp.ones_like(self.coulomb_matrix_sparray.data),
+                    (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
+                )
+            ),
+            sparse.csr_matrix(
+                (
+                    xp.ones_like(dummy_hamiltonian.data),
+                    (dummy_hamiltonian.row, dummy_hamiltonian.col),
+                )
+            ),
+            sparse.csr_matrix(
+                (
+                    xp.ones_like(self.coulomb_matrix_sparray.data),
+                    (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
+                )
+            ),
         )
         # Load the overlap matrix.
         try:
@@ -226,9 +242,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                 ),
                 shape=(self.overlap_sparray.size, self.overlap_sparray.size),
             ),
-            block_sizes=self.small_block_sizes,
+            block_sizes=self.block_sizes,
             global_stack_shape=(self.energies.size,),
-            densify_blocks=[(i, i) for i in range(len(self.small_block_sizes))],
+            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dbsparse_type.zeros_like(self.v_times_p_retarded)
@@ -239,6 +255,7 @@ class CoulombScreeningSolver(SubsystemSolver):
     # method for setting block sizes
     def _set_block_sizes(self, block_sizes: xp.ndarray) -> None:
         """Sets the block sizes."""
+        self.v_times_p_retarded.block_sizes = block_sizes
         self.bare_system_matrix.block_sizes = block_sizes
         self.system_matrix.block_sizes = block_sizes
         self.l_lesser.block_sizes = block_sizes

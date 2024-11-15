@@ -175,3 +175,32 @@ def find_inds(
             inds.append(rowptr[r] + ind[0])
 
     return np.array(inds, dtype=int), np.array(value_inds, dtype=int)
+
+
+@nb.njit(parallel=True, cache=True)
+def fill_block(
+    block: NDArray,
+    block_offset: NDArray,
+    self_cols: NDArray,
+    rowptr: NDArray,
+    data: NDArray,
+):
+    """Fills the dense block with the given data.
+
+    Parameters
+    ----------
+    block : NDArray
+        Preallocated dense block. Should be filled with zeros.
+    block_offset : NDArray
+        The block offset.
+    self_cols : NDArray
+        The column indices of this matrix.
+    rowptr : NDArray
+        The row pointer of this matrix block.
+    data : NDArray
+        The data to fill the block with.
+
+    """
+    for i in nb.prange(int(block.shape[-1])):
+        cols = self_cols[rowptr[i] : rowptr[i + 1]]
+        block[..., i, cols - block_offset] = data[..., rowptr[i] : rowptr[i + 1]]

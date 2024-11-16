@@ -41,7 +41,7 @@ def compute_block_sort_index(
 
     Note
     ----
-    This method incurs some memory overhead compared to a naive
+    This method incurs a bit of memory overhead compared to a naive
     implementation. No assumptions on the sparsity pattern of the matrix
     are made here. See the source code for more details.
 
@@ -63,19 +63,21 @@ def compute_block_sort_index(
     num_blocks = block_sizes.shape[0]
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
-    bnnz_map = np.zeros((num_blocks, num_blocks), dtype=np.int32)
+    nnz_offset = 0
+    sort_index = np.zeros(len(coo_cols), dtype=np.int64)
 
-    # NOTE: This is a very generous estimate of the number of nonzeros
-    # in each row of blocks. No assumption on the sparsity pattern of
-    # the matrix is made here.
-    row_nnz_estimate = min(len(coo_cols), max(block_sizes) * sum(block_sizes))
-    inds = np.zeros((num_blocks, row_nnz_estimate), dtype=np.int32)
-
-    # Treat block rows in parallel.
-    for i in nb.prange(num_blocks):
-        row_nnz_offset = 0
+    # NOTE: This is a very generous estimate of the number of
+    # nonzeros in each row of blocks. No assumption on the sparsity
+    # pattern of the matrix is made here.
+    nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
+    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+    for i in range(num_blocks):
+        # Precompute the row mask.
         row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])
-        for j in range(num_blocks):
+
+        # Process in parallel.
+        for j in nb.prange(num_blocks):
             mask = (
                 row_mask
                 & (block_offsets[j] <= coo_cols)
@@ -83,22 +85,14 @@ def compute_block_sort_index(
             )
             nnz = np.sum(mask)
             if nnz > 0:
-                bnnz_map[i, j] = nnz
-                inds[i, row_nnz_offset : row_nnz_offset + nnz] = np.nonzero(mask)[0]
-                row_nnz_offset += nnz
+                block_nnz[j] = nnz
+                inds[j, :nnz] = np.nonzero(mask)[0]
 
-    # Construct the block-sorting index sequentially.
-    sort_index = np.zeros(len(coo_cols), dtype=np.int64)
-    nnz_offset = 0
-    for i in range(num_blocks):
-        row_nnz_offset = 0
+        # Reduce the indices sequentially.
         for j in range(num_blocks):
-            nnz = bnnz_map[i, j]
+            nnz = block_nnz[j]
             # Sort the data by block-row and -column.
-            sort_index[nnz_offset : nnz_offset + nnz] = inds[
-                i, row_nnz_offset : row_nnz_offset + nnz
-            ]
-            row_nnz_offset += nnz
+            sort_index[nnz_offset : nnz_offset + nnz] = inds[j, :nnz]
             nnz_offset += nnz
 
     return sort_index

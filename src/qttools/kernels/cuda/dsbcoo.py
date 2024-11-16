@@ -78,13 +78,13 @@ def find_inds(
 
 @jit.rawkernel()
 def _compute_block_mask_kernel(
-    rows,
-    cols,
-    row_start,
-    row_stop,
-    col_start,
-    col_stop,
-    mask,
+    rows: ArrayLike,
+    cols: ArrayLike,
+    row_start: int,
+    row_stop: int,
+    col_start: int,
+    col_stop: int,
+    mask: ArrayLike,
 ):
     """Computes the mask for the block.
 

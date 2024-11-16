@@ -182,3 +182,54 @@ def find_inds(
         value_inds.extend(mask_inds[valid])
 
     return cp.array(inds, dtype=int), cp.array(value_inds, dtype=int)
+
+
+@jit.rawkernel()
+def _expand_rows_kernel(rows: ArrayLike, rowptr: ArrayLike):
+    """Expands the rowptr into actual rows.
+
+    Parameters
+    ----------
+    rows : array_like
+        The rows to fill.
+    rowptr : array_like
+        The row pointer.
+
+    """
+    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+    if i < rowptr.shape[0] + 1:
+        for j in range(rowptr[i], rowptr[i + 1]):
+            rows[j] = i
+
+
+def fill_block(
+    block: ArrayLike,
+    block_offset: ArrayLike,
+    self_cols: ArrayLike,
+    rowptr: ArrayLike,
+    data: ArrayLike,
+):
+    """Fills the dense block with the given data.
+
+    Parameters
+    ----------
+    block : NDArray
+        Preallocated dense block. Should be filled with zeros.
+    block_offset : NDArray
+        The block offset.
+    self_cols : NDArray
+        The column indices of this matrix.
+    rowptr : NDArray
+        The row pointer of this matrix block.
+    data : NDArray
+        The data to fill the block with.
+
+    """
+    rows = cp.zeros(self_cols.shape[0], dtype=cp.int32)
+    blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
+    _expand_rows_kernel(
+        (blocks_per_grid,),
+        (THREADS_PER_BLOCK,),
+        (rows, rowptr),
+    )
+    block[..., rows, self_cols - block_offset] = data[:]

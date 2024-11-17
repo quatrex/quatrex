@@ -6,6 +6,63 @@ from qttools import sparse, xp
 from qttools.utils.gpu_utils import ArrayLike
 
 
+def densify_selected_blocks(
+    coo: sparse.coo_matrix,
+    block_sizes: ArrayLike,
+    blocks: list[tuple[int, int]],
+) -> sparse.coo_matrix:
+    """Densifies the selected blocks of a sparse coo matrix.
+
+    This adds indices to the selected blocks to make them dense.
+
+    Parameters
+    ----------
+    coo : sparse.coo_matrix
+        The sparse matrix in coordinate format.
+    block_sizes : array_like
+        The block sizes of the block-sparse matrix we want to construct.
+    blocks : list[tuple[int, int]]
+        A list of blocks to densify.
+
+    Returns
+    -------
+    coo : sparse.coo_matrix
+        The selectively densified sparse matrix in coordinate format.
+
+    """
+    num_blocks = len(block_sizes)
+    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+
+    added_nnz = int(xp.sum(xp.prod(block_sizes[blocks], axis=1)))
+    added_rows = xp.empty(added_nnz, dtype=xp.int32)
+    added_cols = xp.empty(added_nnz, dtype=xp.int32)
+
+    offset = 0
+    for i, j in blocks:
+        # Unsign the block indices.
+        i = num_blocks + i if i < 0 else i
+        j = num_blocks + j if j < 0 else j
+
+        row_size = int(block_sizes[i])
+        col_size = int(block_sizes[j])
+        nnz = row_size * col_size
+        added_rows[offset : offset + nnz] = (
+            xp.repeat(xp.arange(row_size), col_size) + block_offsets[i]
+        )
+        added_cols[offset : offset + nnz] = (
+            xp.tile(xp.arange(col_size), row_size) + block_offsets[j]
+        )
+        offset += nnz
+
+    coo.row = xp.append(coo.row, added_rows)
+    coo.col = xp.append(coo.col, added_cols)
+    coo.data = xp.append(coo.data, xp.zeros(added_nnz, dtype=coo.data.dtype))
+
+    coo.sum_duplicates()
+
+    return coo
+
+
 def compute_block_sort_index(
     coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
 ) -> ArrayLike:

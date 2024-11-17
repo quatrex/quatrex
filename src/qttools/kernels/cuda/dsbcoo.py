@@ -162,7 +162,7 @@ def compute_block_slice(
     return inds[0], inds[-1] + 1
 
 
-def fill_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
+def densify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
     """Fills the dense block with the given data.
 
     Note
@@ -188,3 +188,86 @@ def fill_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLi
     # (10'000x10'000) this starts to break even, this needs to be
     # revisited!
     block[..., rows, cols] = data[:]
+
+
+def sparsify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
+    """Fills the data with the given dense block.
+
+    Note
+    ----
+    This is not a raw kernel, as there seems to be no performance gain
+    for this operation on the GPU.
+
+    Parameters
+    ----------
+    block : ArrayLike
+        The dense block to sparsify.
+    rows : ArrayLike
+        The rows at which to fill the block.
+    cols : ArrayLike
+        The columns at which to fill the block.
+    data : ArrayLike
+        The data to be filled with the block.
+
+    """
+    # TODO: Test whether a custom kernel could be faster here.
+    data[:] = block[..., rows, cols]
+
+
+def compute_block_sort_index(
+    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
+) -> ArrayLike:
+    """Computes the block-sorting index for a sparse matrix.
+
+    Note
+    ----
+    Due to the Python for loop around the kernel, this method will
+    perform best for larger block sizes (>500).
+
+    Parameters
+    ----------
+    coo_rows : array_like
+        The row indices of the matrix in coordinate format.
+    coo_cols : array_like
+        The column indices of the matrix in coordinate format.
+    block_sizes : array_like
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : array_like
+        The indexing that sorts the data by block-row and -column.
+
+    """
+    num_blocks = block_sizes.shape[0]
+    block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
+
+    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
+    mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
+
+    blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
+    offset = 0
+    for i, j in cp.ndindex(num_blocks, num_blocks):
+        _compute_coo_block_mask_kernel(
+            (blocks_per_grid,),
+            (THREADS_PER_BLOCK,),
+            (
+                coo_rows,
+                coo_cols,
+                int(block_offsets[i]),
+                int(block_offsets[i + 1]),
+                int(block_offsets[j]),
+                int(block_offsets[j + 1]),
+                mask,
+            ),
+        )
+
+        bnnz = cp.sum(mask)
+
+        if bnnz != 0:
+            # Sort the data by block-row and -column.
+            sort_index[offset : offset + bnnz] = cp.nonzero(mask)[0]
+
+            offset += bnnz
+
+    return sort_index

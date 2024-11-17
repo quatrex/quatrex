@@ -90,7 +90,7 @@ def compute_block_slice(
 
 
 @nb.njit(parallel=True, cache=True)
-def fill_block(
+def densify_block(
     block: NDArray,
     rows: NDArray,
     cols: NDArray,
@@ -118,3 +118,90 @@ def fill_block(
     """
     for i in nb.prange(rows.shape[0]):
         block[..., rows[i], cols[i]] = data[..., i]
+
+
+@nb.njit(parallel=True, cache=True)
+def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
+    """Fills the data with the given dense block.
+
+    Parameters
+    ----------
+    block : NDArray
+        The dense block to sparsify.
+    rows : NDArray
+        The rows at which to fill the block.
+    cols : NDArray
+        The columns at which to fill the block.
+    data : NDArray
+        The data to be filled with the block.
+
+    """
+    for i in nb.prange(rows.shape[0]):
+        data[..., i] = block[..., rows[i], cols[i]]
+
+
+@nb.njit(parallel=True, cache=True)
+def compute_block_sort_index(
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> NDArray:
+    """Computes the block-sorting index for a sparse matrix.
+
+    Note
+    ----
+    This method incurs a bit of memory overhead compared to a naive
+    implementation. No assumptions on the sparsity pattern of the matrix
+    are made here. See the source code for more details.
+
+    Parameters
+    ----------
+    coo_rows : NDArray
+        The row indices of the matrix in coordinate format.
+    coo_cols : NDArray
+        The column indices of the matrix in coordinate format.
+    block_sizes : NDArray
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : NDArray
+        The indexing that sorts the data by block-row and -column.
+
+    """
+    num_blocks = block_sizes.shape[0]
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
+
+    sort_index = np.zeros(len(coo_cols), dtype=np.int32)
+
+    # NOTE: This is a very generous estimate of the number of
+    # nonzeros in each row of blocks. No assumption on the sparsity
+    # pattern of the matrix is made here.
+    nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+
+    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    nnz_offset = 0
+    for i in range(num_blocks):
+        # Precompute the row mask.
+        row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])
+
+        # Process in parallel.
+        for j in nb.prange(num_blocks):
+            mask = (
+                row_mask
+                & (block_offsets[j] <= coo_cols)
+                & (coo_cols < block_offsets[j + 1])
+            )
+            nnz = np.sum(mask)
+            block_nnz[j] = nnz
+            if nnz > 0:
+                inds[j, :nnz] = np.nonzero(mask)[0]
+
+        # Reduce the indices sequentially.
+        for j in range(num_blocks):
+            nnz = block_nnz[j]
+            if nnz > 0:
+                # Sort the data by block-row and -column.
+                sort_index[nnz_offset : nnz_offset + nnz] = inds[j, :nnz]
+                nnz_offset += nnz
+
+    return sort_index

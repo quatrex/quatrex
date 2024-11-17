@@ -89,7 +89,7 @@ def _find_block_inds(
     rr = rows[mask] - block_offsets[brow]
     cc = cols[mask]
 
-    inds = np.zeros(rr.shape[0], dtype=np.int32)
+    inds = np.zeros(rr.shape[0], dtype=np.int32) - 1
     for i in nb.prange(rr.shape[0]):
         r = rr[i]
         ind = np.nonzero(self_cols[rowptr[r] : rowptr[r + 1]] == cc[i])[0]
@@ -97,7 +97,7 @@ def _find_block_inds(
             continue
         inds[i] = rowptr[r] + ind[0]
 
-    valid = inds != 0
+    valid = inds != -1
     return inds[valid], mask_inds[valid]
 
 
@@ -154,31 +154,14 @@ def find_inds(
             rowptr=rowptr,
         )
 
-        inds.append(block_inds)
-        value_inds.append(block_value_inds)
-
-        mask = (brows == brow) & (bcols == bcol)
-        mask_inds = np.nonzero(mask)[0]
-
-        # Renormalize the row indices for this block.
-        rr = rows[mask] - block_offsets[brow]
-        cc = cols[mask]
-
-        # TODO: This could perhaps be done in an efficient way.
-        for i, (r, c) in enumerate(zip(rr, cc)):
-            ind = np.nonzero(self_cols[rowptr[r] : rowptr[r + 1]] == c)[0]
-
-            if len(ind) == 0:
-                continue
-
-            value_inds.append(mask_inds[i])
-            inds.append(rowptr[r] + ind[0])
+        inds.extend(block_inds)
+        value_inds.extend(block_value_inds)
 
     return np.array(inds, dtype=int), np.array(value_inds, dtype=int)
 
 
 @nb.njit(parallel=True, cache=True)
-def fill_block(
+def densify_block(
     block: NDArray,
     block_offset: NDArray,
     self_cols: NDArray,
@@ -201,12 +184,41 @@ def fill_block(
         The data to fill the block with.
 
     """
-    for i in nb.prange(int(block.shape[-1])):
-        cols = self_cols[rowptr[i] : rowptr[i + 1]]
-        block[..., i, cols - block_offset] = data[..., rowptr[i] : rowptr[i + 1]]
+    for i in nb.prange(rowptr.shape[0] - 1):
+        cols = self_cols[rowptr[i] : rowptr[i + 1]] - block_offset
+        block[..., i, cols] = data[..., rowptr[i] : rowptr[i + 1]]
 
 
 @nb.njit(parallel=True, cache=True)
+def sparsify_block(
+    block: NDArray,
+    block_offset: NDArray,
+    self_cols: NDArray,
+    rowptr: NDArray,
+    data: NDArray,
+):
+    """Fills the data with the given dense block.
+
+    Parameters
+    ----------
+    block : NDArray
+        The dense block to sparsify.
+    block_offset : NDArray
+        The block offset.
+    self_cols : NDArray
+        The column indices of this matrix.
+    rowptr : NDArray
+        The row pointer of this matrix block.
+    data : NDArray
+        The data to be filled with the block.
+
+    """
+    for i in nb.prange(rowptr.shape[0] - 1):
+        cols = self_cols[rowptr[i] : rowptr[i + 1]] - block_offset
+        data[..., rowptr[i] : rowptr[i + 1]] = block[..., i, cols]
+
+
+# @nb.njit(parallel=True, cache=True)
 def _compute_rowptr_map_kernel(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> nb.typed.Dict:
@@ -240,7 +252,7 @@ def _compute_rowptr_map_kernel(
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
     nnz_offset = 0
-    sort_index = np.zeros(len(coo_cols), dtype=np.int64)
+    sort_index = np.zeros(len(coo_cols), dtype=np.int32)
     rowptr_map = {}
 
     block_nnz = np.zeros(num_blocks, dtype=np.int32)
@@ -255,7 +267,7 @@ def _compute_rowptr_map_kernel(
         # Precompute the row mask.
         row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])
         hists = np.zeros((num_blocks, block_sizes[i]), dtype=np.int32)
-
+        bins = np.arange(block_sizes[i] + 1)
         # Process in parallel.
         for j in nb.prange(num_blocks):
             mask = (
@@ -264,15 +276,14 @@ def _compute_rowptr_map_kernel(
                 & (coo_cols < block_offsets[j + 1])
             )
             nnz = np.sum(mask)
+            block_nnz[j] = nnz
             if nnz > 0:
-                block_nnz[j] = nnz
-
                 # Compute the block-sorting index.
                 inds[j, :nnz] = np.nonzero(mask)[0]
 
                 # Compute the rowptr map.
                 hists[j, :] = np.histogram(
-                    coo_rows[mask] - block_offsets[i], block_sizes[i]
+                    coo_rows[mask] - block_offsets[i], bins=bins
                 )[0]
 
         # Reduce the indices sequentially.

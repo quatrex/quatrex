@@ -198,12 +198,12 @@ def _expand_rows_kernel(rows: ArrayLike, rowptr: ArrayLike):
 
     """
     i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < rowptr.shape[0] + 1:
+    if i < rowptr.shape[0] - 1:
         for j in range(rowptr[i], rowptr[i + 1]):
             rows[j] = i
 
 
-def fill_block(
+def densify_block(
     block: ArrayLike,
     block_offset: ArrayLike,
     self_cols: ArrayLike,
@@ -214,8 +214,42 @@ def fill_block(
 
     Parameters
     ----------
-    block : NDArray
+    block : array_like
         Preallocated dense block. Should be filled with zeros.
+    block_offset : array_like
+        The block offset.
+    self_cols : array_like
+        The column indices of this matrix.
+    rowptr : array_like
+        The row pointer of this matrix block.
+    data : array_like
+        The data to fill the block with.
+
+    """
+    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
+    rows = cp.zeros(cols.shape[0], dtype=cp.int32)
+    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK - 2) // THREADS_PER_BLOCK
+    _expand_rows_kernel(
+        (blocks_per_grid,),
+        (THREADS_PER_BLOCK,),
+        (rows, rowptr - rowptr[0]),
+    )
+    block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
+
+
+def sparsify_block(
+    block: ArrayLike,
+    block_offset: ArrayLike,
+    self_cols: ArrayLike,
+    rowptr: ArrayLike,
+    data: ArrayLike,
+):
+    """Fills the data with the given dense block.
+
+    Parameters
+    ----------
+    block : NDArray
+        The dense block to sparsify.
     block_offset : NDArray
         The block offset.
     self_cols : NDArray
@@ -223,17 +257,18 @@ def fill_block(
     rowptr : NDArray
         The row pointer of this matrix block.
     data : NDArray
-        The data to fill the block with.
+        The data to be filled with the block.
 
     """
-    rows = cp.zeros(self_cols.shape[0], dtype=cp.int32)
-    blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
+    cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
+    rows = cp.zeros(cols.shape[0], dtype=cp.int32)
+    blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK) // THREADS_PER_BLOCK
     _expand_rows_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (rows, rowptr),
+        (rows, rowptr - rowptr[0]),
     )
-    block[..., rows, self_cols - block_offset] = data[:]
+    data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
 
 
 def compute_rowptr_map(
@@ -296,7 +331,8 @@ def compute_rowptr_map(
 
             # Compute the rowptr map.
             hist, __ = cp.histogram(
-                coo_rows[mask] - block_offsets[i], int(block_sizes[i])
+                coo_rows[mask] - block_offsets[i],
+                bins=cp.arange(block_sizes[i] + 1),
             )
             rowptr = cp.hstack((cp.array([0]), cp.cumsum(hist))) + offset
             rowptr_map[(i, j)] = rowptr

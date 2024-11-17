@@ -204,6 +204,10 @@ class DSBSparse(ABC):
         row = xp.asarray(row, dtype=int)
         col = xp.asarray(col, dtype=int)
 
+        # Ensure that the indices are at least 1-D arrays.
+        row = xp.atleast_1d(row)
+        col = xp.atleast_1d(col)
+
         row = xp.where(row < 0, self.shape[-2] + row, row)
         col = xp.where(col < 0, self.shape[-1] + col, col)
         if not (

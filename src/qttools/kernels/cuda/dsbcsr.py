@@ -3,6 +3,7 @@ from cupy.typing import ArrayLike
 from cupyx import jit
 
 from qttools.kernels.cuda import THREADS_PER_BLOCK
+from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 
 
 @jit.rawkernel()
@@ -233,3 +234,73 @@ def fill_block(
         (rows, rowptr),
     )
     block[..., rows, self_cols - block_offset] = data[:]
+
+
+def compute_rowptr_map(
+    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
+) -> dict:
+    """Computes the block-sorting index and the rowptr map.
+
+    Note
+    ----
+    This is a combination of the bare block-sorting index computation
+    and the rowptr map computation.
+
+    Parameters
+    ----------
+    coo_rows : array_like
+        The row indices of the matrix in coordinate format.
+    coo_cols : array_like
+        The column indices of the matrix in coordinate format.
+    block_sizes : array_like
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : array_like
+        The block-sorting index for the sparse matrix.
+    rowptr_map : dict
+        The row pointer map, describing the block-sparse matrix in
+        blockwise column-sparse-row format.
+
+    """
+    num_blocks = block_sizes.shape[0]
+    block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
+
+    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
+    rowptr_map = {}
+    mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
+
+    blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
+    offset = 0
+    for i, j in cp.ndindex(num_blocks, num_blocks):
+        _compute_coo_block_mask_kernel(
+            (blocks_per_grid,),
+            (THREADS_PER_BLOCK,),
+            (
+                coo_rows,
+                coo_cols,
+                int(block_offsets[i]),
+                int(block_offsets[i + 1]),
+                int(block_offsets[j]),
+                int(block_offsets[j + 1]),
+                mask,
+            ),
+        )
+
+        bnnz = cp.sum(mask)
+
+        if bnnz != 0:
+            # Sort the data by block-row and -column.
+            sort_index[offset : offset + bnnz] = cp.nonzero(mask)[0]
+
+            # Compute the rowptr map.
+            hist, __ = cp.histogram(
+                coo_rows[mask] - block_offsets[i], int(block_sizes[i])
+            )
+            rowptr = cp.hstack((cp.array([0]), cp.cumsum(hist))) + offset
+            rowptr_map[(i, j)] = rowptr
+
+            offset += bnnz
+
+    return sort_index, rowptr_map

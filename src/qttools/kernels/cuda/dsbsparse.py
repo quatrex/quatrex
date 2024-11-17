@@ -3,7 +3,7 @@ from cupy.typing import ArrayLike
 from cupyx import jit
 
 from qttools.kernels.cuda import THREADS_PER_BLOCK
-from qttools.kernels.cuda.dsbcoo import _compute_block_mask_kernel
+from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 
 
 @jit.rawkernel()
@@ -85,13 +85,13 @@ def compute_block_sort_index(
     num_blocks = block_sizes.shape[0]
     block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
 
-    sort_index = cp.zeros(len(coo_cols), dtype=int)
-    mask = cp.zeros(len(coo_cols), dtype=bool)
+    sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
+    mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
     for i, j in cp.ndindex(num_blocks, num_blocks):
-        _compute_block_mask_kernel(
+        _compute_coo_block_mask_kernel(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
             (

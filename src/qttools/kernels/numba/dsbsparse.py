@@ -63,15 +63,16 @@ def compute_block_sort_index(
     num_blocks = block_sizes.shape[0]
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
 
-    nnz_offset = 0
     sort_index = np.zeros(len(coo_cols), dtype=np.int64)
 
     # NOTE: This is a very generous estimate of the number of
     # nonzeros in each row of blocks. No assumption on the sparsity
     # pattern of the matrix is made here.
     nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
-    block_nnz = np.zeros(num_blocks, dtype=np.int32)
     inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+
+    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+    nnz_offset = 0
     for i in range(num_blocks):
         # Precompute the row mask.
         row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])

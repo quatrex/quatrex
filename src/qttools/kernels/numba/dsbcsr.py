@@ -204,3 +204,113 @@ def fill_block(
     for i in nb.prange(int(block.shape[-1])):
         cols = self_cols[rowptr[i] : rowptr[i + 1]]
         block[..., i, cols - block_offset] = data[..., rowptr[i] : rowptr[i + 1]]
+
+
+@nb.njit(parallel=True, cache=True)
+def _compute_rowptr_map_kernel(
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> nb.typed.Dict:
+    """Computes the block-sorting index and the rowptr map.
+
+    Note
+    ----
+    This is a combination of the bare block-sorting index computation
+    and the rowptr map computation. This returns a Numba typed
+    dictionary (not a pure Python dictionary) so it has to be typecast.
+
+    Parameters
+    ----------
+    coo_rows : NDArray
+        The row indices of the matrix in coordinate format.
+    coo_cols : NDArray
+        The column indices of the matrix in coordinate format.
+    block_sizes : NDArray
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : NDArray
+        The block-sorting index for the sparse matrix.
+    rowptr_map : nb.typed.Dict
+        The row pointer map, describing the block-sparse matrix in
+        blockwise column-sparse-row format.
+
+    """
+    num_blocks = block_sizes.shape[0]
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)))
+
+    nnz_offset = 0
+    sort_index = np.zeros(len(coo_cols), dtype=np.int64)
+    rowptr_map = {}
+
+    block_nnz = np.zeros(num_blocks, dtype=np.int32)
+
+    # NOTE: This is a very generous estimate of the number of
+    # nonzeros in each row of blocks. No assumption on the sparsity
+    # pattern of the matrix is made here.
+    nnz_estimate = min(len(coo_cols), max(block_sizes) ** 2)
+    inds = np.zeros((num_blocks, nnz_estimate), dtype=np.int32)
+
+    for i in range(num_blocks):
+        # Precompute the row mask.
+        row_mask = (block_offsets[i] <= coo_rows) & (coo_rows < block_offsets[i + 1])
+        hists = np.zeros((num_blocks, block_sizes[i]), dtype=np.int32)
+
+        # Process in parallel.
+        for j in nb.prange(num_blocks):
+            mask = (
+                row_mask
+                & (block_offsets[j] <= coo_cols)
+                & (coo_cols < block_offsets[j + 1])
+            )
+            nnz = np.sum(mask)
+            if nnz > 0:
+                block_nnz[j] = nnz
+
+                # Compute the block-sorting index.
+                inds[j, :nnz] = np.nonzero(mask)[0]
+
+                # Compute the rowptr map.
+                hists[j, :] = np.histogram(
+                    coo_rows[mask] - block_offsets[i], block_sizes[i]
+                )[0]
+
+        # Reduce the indices sequentially.
+        for j in range(num_blocks):
+            nnz = block_nnz[j]
+            if nnz > 0:
+                sort_index[nnz_offset : nnz_offset + nnz] = inds[j, :nnz]
+
+                rowptr = np.hstack((np.array([0]), np.cumsum(hists[j]))) + nnz_offset
+                rowptr_map[(i, j)] = rowptr
+
+                nnz_offset += nnz
+
+    return sort_index, rowptr_map
+
+
+def compute_rowptr_map(
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> dict:
+    """Computes the rowptr map for a sparse matrix.
+
+    Parameters
+    ----------
+    coo_rows : NDArray
+        The row indices of the matrix in coordinate format.
+    coo_cols : NDArray
+        The column indices of the matrix in coordinate format.
+    block_sizes : NDArray
+        The block sizes of the block-sparse matrix we want to construct.
+
+    Returns
+    -------
+    sort_index : NDArray
+        The block-sorting index for the sparse matrix.
+    rowptr_map : dict
+        The row pointer map, describing the block-sparse matrix in
+        blockwise column-sparse-row format.
+
+    """
+    sort_index, rowptr_map = _compute_rowptr_map_kernel(coo_rows, coo_cols, block_sizes)
+    return sort_index, dict(rowptr_map)

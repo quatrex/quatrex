@@ -77,7 +77,7 @@ def find_inds(
 
 
 @jit.rawkernel()
-def _compute_block_mask_kernel(
+def _compute_coo_block_mask_kernel(
     rows: ArrayLike,
     cols: ArrayLike,
     row_start: int,
@@ -86,7 +86,7 @@ def _compute_block_mask_kernel(
     col_stop: int,
     mask: ArrayLike,
 ):
-    """Computes the mask for the block.
+    """Computes the mask for the block in the coordinates.
 
     Parameters
     ----------
@@ -147,7 +147,7 @@ def compute_block_slice(
     col_start, col_stop = int(block_offsets[col]), int(block_offsets[col + 1])
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    _compute_block_mask_kernel(
+    _compute_coo_block_mask_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (rows, cols, row_start, row_stop, col_start, col_stop, mask),

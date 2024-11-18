@@ -202,9 +202,9 @@ class SCBA:
             if os.path.isfile(energies_path):
                 self.coulomb_screening_energies = np.load(energies_path)
             else:
-                self.coulomb_screening_energies = -(
+                self.coulomb_screening_energies = (
                     self.electron_energies - self.electron_energies[0]
-                )[::-1]
+                )
                 # Remove the zero energy to avoid division by zero.
                 self.coulomb_screening_energies[-1] = -1e-6
 

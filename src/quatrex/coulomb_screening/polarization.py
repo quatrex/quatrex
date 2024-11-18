@@ -38,12 +38,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
         p_g_full = self.prefactor * fft_correlate(g_greater.data, -g_lesser.data.conj())
         p_l_full = -p_g_full[::-1].conj()
+        # Fill the matrices with the data. Take second part of the energy convolution.
         p_lesser._data[
             p_lesser._stack_padding_mask, ..., : p_lesser.nnz_section_sizes[comm.rank]
-        ] = p_l_full[: self.ne]
+        ] = p_l_full[self.ne - 1 :]
         p_greater._data[
             p_greater._stack_padding_mask, ..., : p_greater.nnz_section_sizes[comm.rank]
-        ] = p_g_full[: self.ne]
+        ] = p_g_full[self.ne - 1 :]
         p_retarded._data = (p_greater._data - p_lesser._data) / 2
 
         # Transpose the matrices to stack distribution.

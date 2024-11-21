@@ -37,6 +37,12 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
+FACTORS = [
+    pytest.param(0.0, id="no-densify"),
+    pytest.param(0.5, id="half-densify"),
+    pytest.param(1.0, id="full-densify"),
+]
+
 STACK_INDICES = [
     pytest.param((5,), id="single"),
     pytest.param((slice(1, 4),), id="slice"),
@@ -72,6 +78,11 @@ def accessed_block(request):
 
 @pytest.fixture(params=ACCESSED_ELEMENTS)
 def accessed_element(request):
+    return request.param
+
+
+@pytest.fixture(params=FACTORS)
+def factor(request):
     return request.param
 
 

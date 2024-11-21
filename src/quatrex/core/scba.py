@@ -206,13 +206,13 @@ class SCBA:
                     self.electron_energies - self.electron_energies[0]
                 )
                 # Remove the zero energy to avoid division by zero.
-                self.coulomb_screening_energies[-1] = -1e-6
+                self.coulomb_screening_energies += 1e-6
 
             self.sigma_fock = SigmaFock(
                 self.quatrex_config, self.compute_config, self.electron_energies
             )
             self.p_coulomb_screening = PCoulombScreening(
-                self.quatrex_config, self.coulomb_screening_energies
+                self.coulomb_screening_energies
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
@@ -220,7 +220,7 @@ class SCBA:
                 self.coulomb_screening_energies,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
-                self.quatrex_config, self.electron_energies
+                self.quatrex_config, self.compute_config, self.electron_energies
             )
 
         # ----- Photons ------------------------------------------------
@@ -360,21 +360,44 @@ class SCBA:
 
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
+        times = []
+        times.append(time.perf_counter())
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
         )
+        t_fock = time.perf_counter() - times.pop()
+        (
+            print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
+            if comm.rank == 0
+            else None
+        )
+        times.append(time.perf_counter())
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
+        t_polarization = time.perf_counter() - times.pop()
+        (
+            print(f"Time for polarization: {t_polarization:.2f} s", flush=True)
+            if comm.rank == 0
+            else None
+        )
+        times.append(time.perf_counter())
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
             self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater, self.data.w_retarded),
         )
+        t_solve = time.perf_counter() - times.pop()
+        (
+            print(f"Time for Coulomb screening solver: {t_solve:.2f} s", flush=True)
+            if comm.rank == 0
+            else None
+        )
+        times.append(time.perf_counter())
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -385,6 +408,14 @@ class SCBA:
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
             ),
+        )
+        t_sigma = time.perf_counter() - times.pop()
+        (
+            print(
+                f"Time for Coulomb screening self-energy: {t_sigma:.2f} s", flush=True
+            )
+            if comm.rank == 0
+            else None
         )
 
     def _compute_observables(self) -> None:
@@ -412,6 +443,7 @@ class SCBA:
         times = []
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
+            # append for iteration time
             times.append(time.perf_counter())
 
             times.append(time.perf_counter())
@@ -450,20 +482,30 @@ class SCBA:
             )
 
             if self.quatrex_config.scba.coulomb_screening:
+                times.append(time.perf_counter())
                 self._compute_coulomb_screening_interaction()
+                t_coulomb = time.perf_counter() - times.pop()
+                (
+                    print(
+                        f"Time for Coulomb screening interaction: {t_coulomb:.2f} s",
+                        flush=True,
+                    )
+                    if comm.rank == 0
+                    else None
+                )
 
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()
 
-            times.append(time.perf_counter())
             if self.quatrex_config.scba.phonon:
+                times.append(time.perf_counter())
                 self._compute_phonon_interaction()
-            t_phonon = time.perf_counter() - times.pop()
-            (
-                print(f"Time for phonon interaction: {t_phonon:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+                t_phonon = time.perf_counter() - times.pop()
+                (
+                    print(f"Time for phonon interaction: {t_phonon:.2f} s", flush=True)
+                    if comm.rank == 0
+                    else None
+                )
 
             self.observables.electron_current = dict(
                 zip(("left", "right"), contact_currents(self.electron_solver))

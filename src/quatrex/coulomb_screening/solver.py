@@ -75,8 +75,11 @@ def obc_multiply(
         )
         p.blocks[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ c.blocks[-1, -2]
         p.blocks[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ c.blocks[-1, -2]
-        # TODO: Very slow assignment
-        buffer.data[:] = p[*buffer.spy()]
+        try:
+            buffer.data[:] = p.data
+        except ValueError:
+            # TODO: Still slow
+            buffer.data[:] = p[*buffer.spy()]
     else:
         raise ValueError("Invalid number of matrices.")
 
@@ -152,8 +155,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         rows, cols = product_sparsity_pattern(
             sparse.csr_matrix(
                 (
-                    xp.ones_like(self.coulomb_matrix_sparray.data),
-                    (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
+                    xp.ones(self.coulomb_matrix.nnz),
+                    (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
                 )
             ),
             sparse.csr_matrix(
@@ -164,8 +167,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             ),
             sparse.csr_matrix(
                 (
-                    xp.ones_like(self.coulomb_matrix_sparray.data),
-                    (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
+                    xp.ones(self.coulomb_matrix.nnz),
+                    (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
                 )
             ),
         )
@@ -252,6 +255,18 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.v_times_p_retarded,
         )
 
+    def _get_block(self, lil: sparse.lil_array, index: tuple) -> xp.ndarray:
+        """Gets a block from a LIL matrix."""
+        row, col = index
+        row = row + len(self.block_sizes) if row < 0 else row
+        col = col + len(self.block_sizes) if col < 0 else col
+        block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
+        block = lil[
+            block_offsets[row] : block_offsets[row + 1],
+            block_offsets[col] : block_offsets[col + 1],
+        ].toarray()
+        return block
+
     # method for setting block sizes
     def _set_block_sizes(self, block_sizes: xp.ndarray) -> None:
         """Sets the block sizes."""
@@ -263,18 +278,25 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _apply_obc(self, l_lesser, l_greater) -> None:
         """Applies the OBC algorithm."""
+        # Extract the overlap matrix blocks.
+        s_00 = self._get_block(self.overlap_sparray, (0, 0))
+        s_01 = self._get_block(self.overlap_sparray, (0, 1))
+        s_10 = self._get_block(self.overlap_sparray, (1, 0))
+        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
+        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
+        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         x_00 = self.obc(
-            self.obc_blocks_left["diag"],
-            self.obc_blocks_left["right"],
-            self.obc_blocks_left["below"],
+            self.obc_blocks_left["diag"] + 1j * self.eta * s_00,
+            self.obc_blocks_left["right"] + 1j * self.eta * s_01,
+            self.obc_blocks_left["below"] + 1j * self.eta * s_10,
             "left",
         )
         x_nn = self.obc(
-            self.obc_blocks_right["diag"],
-            self.obc_blocks_right["left"],
-            self.obc_blocks_right["above"],
+            self.obc_blocks_right["diag"] + 1j * self.eta * s_nn,
+            self.obc_blocks_right["left"] + 1j * self.eta * s_nm,
+            self.obc_blocks_right["above"] + 1j * self.eta * s_mn,
             "right",
         )
 

@@ -100,12 +100,9 @@ class DSBCOO(DSBSparse):
         data_stack = self.data[*stack_index]
 
         if self.distribution_state == "stack":
-            if len(inds) != rows.size:
-                arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
-                arr[..., value_inds] = data_stack[..., inds]
-                return xp.squeeze(arr)
-
-            return xp.squeeze(data_stack[..., inds])
+            arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
+            arr[..., value_inds] = data_stack[..., inds]
+            return xp.squeeze(arr)
 
         if len(inds) != rows.size:
             # We cannot know which rank is supposed to hold an element

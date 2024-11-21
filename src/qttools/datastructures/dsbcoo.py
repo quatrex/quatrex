@@ -441,6 +441,7 @@ class DSBCOO(DSBSparse):
                 self.rows.copy(),
                 self.cols.copy(),
                 self.block_sizes,
+                self.global_stack_shape,
             )
 
         if not (
@@ -482,6 +483,8 @@ class DSBCOO(DSBSparse):
             self._block_slice_cache_t,
             self._block_slice_cache,
         )
+
+        return self if copy else None
 
     def spy(self) -> tuple[ArrayLike, ArrayLike]:
         """Returns the row and column indices of the non-zero elements.

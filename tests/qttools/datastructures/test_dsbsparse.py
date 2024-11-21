@@ -139,6 +139,9 @@ class TestConversion:
             global_stack_shape=global_stack_shape,
         )
 
+        # Test copy transpose
+        assert xp.allclose(reference, dsbsparse.ltranspose(copy=True).to_dense())
+
         # Transpose forth.
         dsbsparse.ltranspose()  # In-place transpose.
 

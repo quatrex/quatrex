@@ -173,15 +173,15 @@ class TestAccess:
         reference = dense[..., *accessed_element]
         assert xp.allclose(reference, dsbsparse[accessed_element])
 
-    @pytest.mark.usefixtures("factor")
+    @pytest.mark.usefixtures("num_inds")
     def test_getitem_with_array(
         self,
         dsbsparse_type: DSBSparse,
         block_sizes: xp.ndarray,
         global_stack_shape: tuple,
-        factor: float,
+        num_inds: int,
     ):
-        """Tests that we can get elements from a DSBSparse matrix using an tuple with arrays of row and column indices."""
+        """Tests that we can get elements from a DSBSparse matrix using a tuple with arrays of row and column indices."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -190,7 +190,9 @@ class TestAccess:
         )
 
         indices = xp.random.randint(
-            0, coo.shape[-1], size=(2, int(coo.shape[-1] * factor))
+            0,
+            coo.shape[-1],
+            size=(2, num_inds),
         )
         indices = tuple(indices)
         reference_data = coo.tocsr()[indices]

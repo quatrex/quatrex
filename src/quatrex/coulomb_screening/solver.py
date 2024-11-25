@@ -6,6 +6,7 @@ from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.sparse_utils import product_sparsity_pattern
+from qttools.utils.stack_utils import scale_stack
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -203,14 +204,16 @@ class CoulombScreeningSolver(SubsystemSolver):
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
         # Add the overlap matrix to the bare system matrix.
-        self.bare_system_matrix += self.overlap_sparray
+        self.eta = quatrex_config.coulomb_screening.eta
+        self.bare_system_matrix += (
+            self.overlap_sparray + 1j * self.eta * self.overlap_sparray
+        )
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dbsparse_type.zeros_like(
             self.bare_system_matrix
         )
 
         # Boundary conditions.
-        self.eta = quatrex_config.coulomb_screening.eta
         self.left_occupancies = bose_einstein(
             self.local_energies,
             quatrex_config.coulomb_screening.temperature,
@@ -278,25 +281,18 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _apply_obc(self, l_lesser, l_greater) -> None:
         """Applies the OBC algorithm."""
-        # Extract the overlap matrix blocks.
-        s_00 = self._get_block(self.overlap_sparray, (0, 0))
-        s_01 = self._get_block(self.overlap_sparray, (0, 1))
-        s_10 = self._get_block(self.overlap_sparray, (1, 0))
-        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
-        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         x_00 = self.obc(
-            self.obc_blocks_left["diag"] + 1j * self.eta * s_00,
-            self.obc_blocks_left["right"] + 1j * self.eta * s_01,
-            self.obc_blocks_left["below"] + 1j * self.eta * s_10,
+            self.obc_blocks_left["diag"],
+            self.obc_blocks_left["right"],
+            self.obc_blocks_left["below"],
             "left",
         )
         x_nn = self.obc(
-            self.obc_blocks_right["diag"] + 1j * self.eta * s_nn,
-            self.obc_blocks_right["left"] + 1j * self.eta * s_nm,
-            self.obc_blocks_right["above"] + 1j * self.eta * s_mn,
+            self.obc_blocks_right["diag"],
+            self.obc_blocks_right["left"],
+            self.obc_blocks_right["above"],
             "right",
         )
 
@@ -311,24 +307,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute and apply the lesser boundary self-energy.
         a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_lesser.blocks[0, 1]
         a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_lesser.blocks[-1, -2]
-        w_00 = self.lyapunov(
-            x_00 @ self.obc_blocks_left["below"],
-            x_00
-            @ (l_lesser.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
-            @ x_00.conj().swapaxes(-1, -2),
-            "left",
-        )
-        w_nn = self.lyapunov(
-            x_nn @ self.obc_blocks_right["above"],
-            x_nn
-            @ (l_lesser.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
-            @ x_nn.conj().swapaxes(-1, -2),
-            "right",
-        )
-        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        # scale_stack(w_00, self.left_occupancies)
-        # scale_stack(w_nn, self.right_occupancies)
+        w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        scale_stack(w_00, self.left_occupancies)
+        scale_stack(w_nn, self.right_occupancies)
 
         l_lesser.blocks[0, 0] += self.system_matrix.blocks[
             1, 0
@@ -344,24 +326,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute and apply the greater boundary self-energy.
         a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_greater.blocks[0, 1]
         a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_greater.blocks[-1, -2]
-        w_00 = self.lyapunov(
-            x_00 @ self.obc_blocks_left["below"],
-            x_00
-            @ (l_greater.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
-            @ x_00.conj().swapaxes(-1, -2),
-            "left",
-        )
-        w_nn = self.lyapunov(
-            x_nn @ self.obc_blocks_right["above"],
-            x_nn
-            @ (l_greater.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
-            @ x_nn.conj().swapaxes(-1, -2),
-            "right",
-        )
-        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        # scale_stack(w_00, 1 + self.left_occupancies)
-        # scale_stack(w_nn, 1 + self.right_occupancies)
+        w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        scale_stack(w_00, 1 + self.left_occupancies)
+        scale_stack(w_nn, 1 + self.right_occupancies)
 
         l_greater.blocks[0, 0] += self.system_matrix.blocks[
             1, 0

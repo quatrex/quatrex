@@ -85,7 +85,10 @@ class ElectronSolver(SubsystemSolver):
 
         self.bare_system_matrix += self.overlap_sparray
         scale_stack(self.bare_system_matrix.data[:], self.local_energies)
-        self.bare_system_matrix -= self.hamiltonian_sparray
+        self.eta = quatrex_config.electron.eta
+        self.bare_system_matrix -= (
+            self.hamiltonian_sparray - 1j * self.eta * self.overlap_sparray
+        )
 
         # Load the potential.
         try:
@@ -109,7 +112,6 @@ class ElectronSolver(SubsystemSolver):
         )
 
         # Boundary conditions.
-        self.eta = quatrex_config.electron.eta
         self.left_occupancies = fermi_dirac(
             self.local_energies - quatrex_config.electron.left_fermi_level,
             quatrex_config.electron.temperature,
@@ -151,25 +153,18 @@ class ElectronSolver(SubsystemSolver):
 
     def _apply_obc(self, sse_lesser, sse_greater) -> None:
         """Applies the OBC algorithm."""
-        # Extract the overlap matrix blocks.
-        s_00 = self._get_block(self.overlap_sparray, (0, 0))
-        s_01 = self._get_block(self.overlap_sparray, (0, 1))
-        s_10 = self._get_block(self.overlap_sparray, (1, 0))
-        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
-        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         g_00 = self.obc(
-            self.system_matrix.blocks[0, 0] + 1j * self.eta * s_00,
-            self.system_matrix.blocks[0, 1] + 1j * self.eta * s_01,
-            self.system_matrix.blocks[1, 0] + 1j * self.eta * s_10,
+            self.system_matrix.blocks[0, 0],
+            self.system_matrix.blocks[0, 1],
+            self.system_matrix.blocks[1, 0],
             "left",
         )
         g_nn = self.obc(
-            self.system_matrix.blocks[-1, -1] + 1j * self.eta * s_nn,
-            self.system_matrix.blocks[-1, -2] + 1j * self.eta * s_nm,
-            self.system_matrix.blocks[-2, -1] + 1j * self.eta * s_mn,
+            self.system_matrix.blocks[-1, -1],
+            self.system_matrix.blocks[-1, -2],
+            self.system_matrix.blocks[-2, -1],
             "right",
         )
 

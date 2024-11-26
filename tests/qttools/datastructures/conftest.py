@@ -37,6 +37,12 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
+NUM_INDS = [
+    pytest.param(5, id="5-inds"),
+    pytest.param(10, id="10-inds"),
+    pytest.param(20, id="20-inds"),
+]
+
 STACK_INDICES = [
     pytest.param((5,), id="single"),
     pytest.param((slice(1, 4),), id="slice"),
@@ -72,6 +78,11 @@ def accessed_block(request):
 
 @pytest.fixture(params=ACCESSED_ELEMENTS)
 def accessed_element(request):
+    return request.param
+
+
+@pytest.fixture(params=NUM_INDS)
+def num_inds(request):
     return request.param
 
 

@@ -91,7 +91,13 @@ class DSBCOO(DSBSparse):
             The requested items.
 
         """
-        inds, value_inds = dsbcoo_kernels.find_inds(self.rows, self.cols, rows, cols)
+        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            self.rows, self.cols, rows, cols
+        )
+        if max_counts not in (0, 1):
+            raise IndexError(
+                "Request contains repeated indices. Only unique indices are supported."
+            )
 
         data_stack = self.data[*stack_index]
 
@@ -145,7 +151,13 @@ class DSBCOO(DSBSparse):
             The values to set.
 
         """
-        inds, value_inds = dsbcoo_kernels.find_inds(self.rows, self.cols, rows, cols)
+        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            self.rows, self.cols, rows, cols
+        )
+        if max_counts not in (0, 1):
+            raise IndexError(
+                "Request contains repeated indices. Only unique indices are supported."
+            )
 
         if len(inds) == 0:
             # Nothing to do if the element is not in the matrix.

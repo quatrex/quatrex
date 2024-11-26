@@ -9,6 +9,9 @@ def find_inds(
 ) -> tuple[NDArray, NDArray]:
     """Finds the corresponding indices of the given rows and columns.
 
+    This also counts the number of matches found, which is used to check
+    if the indices contain duplicates.
+
     Parameters
     ----------
     self_rows : NDArray
@@ -26,19 +29,23 @@ def find_inds(
         The indices of the given rows and columns.
     value_inds : NDArray
         The matching indices of this matrix.
+    max_counts : int
+        The maximum number of matches found.
 
     """
-    full_inds = np.zeros(self_rows.shape[0], dtype=np.int32) - 1
+    full_inds = np.zeros(self_rows.shape[0], dtype=np.int32)
+    counts = np.zeros(self_rows.shape[0], dtype=np.int16)
     for i in nb.prange(self_rows.shape[0]):
         for j in range(rows.shape[0]):
             cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
             full_inds[i] = full_inds[i] * (1 - cond) + j * cond
+            counts[i] += cond
 
     # Find the valid indices.
-    inds = np.nonzero(full_inds + 1)[0]
+    inds = np.nonzero(counts)[0]
     value_inds = full_inds[inds]
 
-    return inds, value_inds
+    return inds, value_inds, np.max(counts)
 
 
 @nb.njit(parallel=True, cache=True)

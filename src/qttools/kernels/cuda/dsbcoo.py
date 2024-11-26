@@ -12,8 +12,12 @@ def _find_inds_kernel(
     rows: ArrayLike,
     cols: ArrayLike,
     full_inds: ArrayLike,
+    counts: ArrayLike,
 ):
     """Finds the corresponding indices of the given rows and columns.
+
+    This also counts the number of matches found, which is used to check
+    if the indices contain duplicates.
 
     Parameters
     ----------
@@ -27,6 +31,9 @@ def _find_inds_kernel(
         The columns to find the indices for.
     full_inds : array_like
         The indices of the given rows and columns.
+    counts : array_like
+        The number of matches found.
+
 
     """
     i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
@@ -34,6 +41,7 @@ def _find_inds_kernel(
         for j in range(rows.shape[0]):
             cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
             full_inds[i] = full_inds[i] * (1 - cond) + j * cond
+            counts[i] += cond
 
 
 def find_inds(
@@ -58,22 +66,25 @@ def find_inds(
         The indices of the given rows and columns.
     value_inds : ArrayLike
         The matching indices of this matrix.
+    max_counts : int
+        The maximum number of matches found.
 
     """
-    full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32) - 1
+    full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32)
+    counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     _find_inds_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (self_rows, self_cols, rows, cols, full_inds),
+        (self_rows, self_cols, rows, cols, full_inds, counts),
     )
 
     # Find the valid indices.
-    inds = cp.nonzero(full_inds + 1)[0]
+    inds = cp.nonzero(counts)[0]
     value_inds = full_inds[inds]
 
-    return inds, value_inds
+    return inds, value_inds, cp.max(counts)
 
 
 @jit.rawkernel()

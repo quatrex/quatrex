@@ -27,26 +27,29 @@ def fft_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
     return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
 
 
-# def hilbert_transform(a: xp.ndarray, energies: xp.ndarray) -> xp.ndarray:
-#    """Computes the Hilbert transform of the array a."""
-#    energy_differences = (energies - energies[0]).reshape(-1, 1)
-#    ne = energies.size
-#    eta = 1e-6
-#    b = (
-#        fft_convolve(a, 1 / (energy_differences + 1j * eta))[:ne]
-#        + fft_convolve(a, 1 / (-energy_differences[::-1] + 1j * eta))[ne - 1 :]
-#    )
-#    # The factor 1j / 4 * eta is a bit arbitrary (needed for identity sr-sa = sg-sl). Can probably be proved (principal value?).
-#    return 1j / 4 * eta * b
+def hilbert_transform(a: xp.ndarray, energies: xp.ndarray, eta=1e-8) -> xp.ndarray:
+    """Computes the Hilbert transform of the array a.
 
+    Assumes that the first axis corresponds to the energy axis.
 
-def hilbert_transform(a: xp.ndarray, energies: xp.ndarray) -> xp.ndarray:
-    """Computes the Hilbert transform of the array a."""
+    Parameters
+    ----------
+    a : xp.ndarray
+        The array to transform.
+    energies : xp.ndarray
+        The energy values corresponding to the first axis of a.
+    eta : float, optional
+        For the principle part. Small part to avoid singularity, by default 1e-8.
+
+    Returns
+    -------
+    xp.ndarray
+        The Hilbert transform of a.
+    """
     # Add a small imaginary part to avoid singularity.
     energy_differences = (energies - energies[0]).reshape(-1, 1)
     ne = energies.size
     # eta for removing the singularity. See Cauchy principal value.
-    eta = 1e-6
     b = (
         fft_convolve(a, 1 / (energy_differences + eta))[:ne]
         + fft_convolve(a, 1 / (-energy_differences[::-1] - eta))[ne - 1 :]

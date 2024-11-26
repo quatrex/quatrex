@@ -435,6 +435,7 @@ class DSBCSR(DSBSparse):
                 self.cols.copy(),
                 self.rowptr_map.copy(),
                 self.block_sizes,
+                self.global_stack_shape,
             )
 
         if not (
@@ -476,6 +477,8 @@ class DSBCSR(DSBSparse):
         self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
+
+        return self if copy else None
 
     def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
         """Returns the row and column indices of the non-zero elements.

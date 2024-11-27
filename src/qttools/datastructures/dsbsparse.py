@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp, ArrayLike
+from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 

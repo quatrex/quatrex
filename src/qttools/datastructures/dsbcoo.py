@@ -5,7 +5,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
-from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
@@ -382,12 +381,14 @@ class DSBCOO(DSBSparse):
         return product
 
     @DSBSparse.block_sizes.setter
-    def block_sizes(self, block_sizes: ArrayLike) -> None:
+    def block_sizes(self, block_sizes: NDArray) -> None:
         """Sets new block sizes for the matrix.
+
         Parameters
         ----------
-        block_sizes : array_like
+        block_sizes : NDArray
             The new block sizes.
+
         """
         if self.distribution_state == "nnz":
             raise NotImplementedError(
@@ -484,7 +485,7 @@ class DSBCOO(DSBSparse):
 
         return self if copy else None
 
-    def spy(self) -> tuple[ArrayLike, ArrayLike]:
+    def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern

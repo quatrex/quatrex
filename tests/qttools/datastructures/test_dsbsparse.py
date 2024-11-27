@@ -55,8 +55,8 @@ class TestCreation:
 
 
 def _create_new_block_sizes(
-    block_sizes: xp.ndarray, block_change_factor: float
-) -> xp.ndarray:
+    block_sizes: NDArray, block_change_factor: float
+) -> NDArray:
     """Creates new block sizes based on the block change factor."""
     rest = 0
     updated_block_sizes = []
@@ -180,7 +180,7 @@ class TestAccess:
     def test_getitem_with_array(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         num_inds: int,
     ):
@@ -197,7 +197,7 @@ class TestAccess:
         cols = xp.random.choice(coo.shape[1], size=num_inds, replace=False)
 
         reference_data = coo.tocsr()[rows, cols]
-        if not isinstance(reference_data, xp.ndarray):
+        if sparse.issparse(reference_data):
             reference_data = reference_data.toarray()
         reference = xp.broadcast_to(
             reference_data, global_stack_shape + reference_data.shape[1:]
@@ -449,7 +449,7 @@ class TestAccess:
     def test_block_sizes_setter(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         block_change_factor: float,
     ):
@@ -636,7 +636,7 @@ class TestArithmetic:
     def test_matmul(
         self,
         dsbsparse_type: DSBSparse,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):

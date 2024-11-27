@@ -27,6 +27,6 @@ def get_batches(num_sections: int, max_batch_size: int) -> tuple[list, NDArray]:
         num_elements=num_sections,
         num_sections=num_sections // min(max_batch_size, num_sections),
     )
-    batches_slices = xp.hstack(([0], xp.cumsum(batches_sizes)))
+    batches_slices = xp.hstack(([0], xp.cumsum(xp.array(batches_sizes))))
 
     return batches_sizes, batches_slices

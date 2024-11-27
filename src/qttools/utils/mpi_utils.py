@@ -112,7 +112,7 @@ def get_local_slice(global_array: NDArray) -> NDArray:
 
     """
     section_sizes, __ = get_section_sizes(global_array.shape[-1])
-    section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
+    section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
     return global_array[
         ..., int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1])

@@ -5,7 +5,6 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
-from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
@@ -55,9 +54,7 @@ class DSBCSR(DSBSparse):
         self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
 
-    def _get_items(
-        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray
-    ) -> ArrayLike:
+    def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -331,12 +328,14 @@ class DSBCSR(DSBSparse):
         return product
 
     @DSBSparse.block_sizes.setter
-    def block_sizes(self, block_sizes: ArrayLike) -> None:
+    def block_sizes(self, block_sizes: NDArray) -> None:
         """Sets new block sizes for the matrix.
+
         Parameters
         ----------
-        block_sizes : array_like
+        block_sizes : NDArray
             The new block sizes.
+
         """
         if self.distribution_state == "nnz":
             raise NotImplementedError(
@@ -428,7 +427,7 @@ class DSBCSR(DSBSparse):
 
         return self if copy else None
 
-    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
+    def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern

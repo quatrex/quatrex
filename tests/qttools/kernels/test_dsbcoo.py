@@ -1,27 +1,28 @@
-import pytest
-from numpy.typing import ArrayLike
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import sparse, xp
+import pytest
+
+from qttools import NDArray, sparse, xp
 from qttools.kernels import dsbcoo_kernels
 
 
 def _reference_compute_block_sort_index(
-    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
-) -> ArrayLike:
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> NDArray:
     """Computes the block-sorting index for a sparse matrix.
 
     Parameters
     ----------
-    coo_rows : array_like
+    coo_rows : NDArray
         The row indices of the matrix in coordinate format.
-    coo_cols : array_like
+    coo_cols : NDArray
         The column indices of the matrix in coordinate format.
-    block_sizes : array_like
+    block_sizes : NDArray
         The block sizes of the block-sparse matrix we want to construct.
 
     Returns
     -------
-    sort_index : array_like
+    sort_index : NDArray
         The indexing that sorts the data by block-row and -column.
 
     """
@@ -56,11 +57,11 @@ def _reference_compute_block_slice(rows, cols, block_offsets, row, col):
 
     Parameters
     ----------
-    rows : array_like
+    rows : NDArray
         The row indices of the matrix in coordinate format.
-    cols : array_like
+    cols : NDArray
         The column indices of the matrix in coordinate format.
-    block_offsets : array_like
+    block_offsets : NDArray
         The block offsets of the block-sparse matrix.
     row : int
         The row index of the block.

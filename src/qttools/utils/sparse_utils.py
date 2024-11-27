@@ -2,13 +2,12 @@
 
 import functools
 
-from qttools import sparse, xp
-from qttools.utils.gpu_utils import ArrayLike
+from qttools import NDArray, sparse, xp
 
 
 def densify_selected_blocks(
     coo: sparse.coo_matrix,
-    block_sizes: ArrayLike,
+    block_sizes: NDArray,
     blocks: list[tuple[int, int]],
 ) -> sparse.coo_matrix:
     """Densifies the selected blocks of a sparse coo matrix.
@@ -19,7 +18,7 @@ def densify_selected_blocks(
     ----------
     coo : sparse.coo_matrix
         The sparse matrix in coordinate format.
-    block_sizes : array_like
+    block_sizes : NDArray
         The block sizes of the block-sparse matrix we want to construct.
     blocks : list[tuple[int, int]]
         A list of blocks to densify.
@@ -65,7 +64,7 @@ def densify_selected_blocks(
 
 def product_sparsity_pattern(
     *matrices: sparse.spmatrix,
-) -> tuple[xp.ndarray, xp.ndarray]:
+) -> tuple[NDArray, NDArray]:
     """Computes the sparsity pattern of the product of a sequence of matrices.
 
     Parameters
@@ -75,9 +74,9 @@ def product_sparsity_pattern(
 
     Returns
     -------
-    rows : xp.ndarray
+    rows : NDArray
         The row indices of the sparsity pattern.
-    cols : xp.ndarray
+    cols : NDArray
         The column indices of the sparsity pattern.
 
     """

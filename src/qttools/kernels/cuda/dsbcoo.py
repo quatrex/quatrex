@@ -1,18 +1,20 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import cupy as cp
-from cupy.typing import ArrayLike
 from cupyx import jit
 
+from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 
 
 @jit.rawkernel()
 def _find_inds_kernel(
-    self_rows: ArrayLike,
-    self_cols: ArrayLike,
-    rows: ArrayLike,
-    cols: ArrayLike,
-    full_inds: ArrayLike,
-    counts: ArrayLike,
+    self_rows: NDArray,
+    self_cols: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    full_inds: NDArray,
+    counts: NDArray,
 ):
     """Finds the corresponding indices of the given rows and columns.
 
@@ -21,17 +23,17 @@ def _find_inds_kernel(
 
     Parameters
     ----------
-    self_rows : array_like
+    self_rows : NDArray
         The rows of this matrix.
-    self_cols : array_like
+    self_cols : NDArray
         The columns of this matrix.
-    rows : array_like
+    rows : NDArray
         The rows to find the indices for.
-    cols : array_like
+    cols : NDArray
         The columns to find the indices for.
-    full_inds : array_like
+    full_inds : NDArray
         The indices of the given rows and columns.
-    counts : array_like
+    counts : NDArray
         The number of matches found.
 
 
@@ -45,26 +47,26 @@ def _find_inds_kernel(
 
 
 def find_inds(
-    self_rows: ArrayLike, self_cols: ArrayLike, rows: ArrayLike, cols: ArrayLike
-) -> tuple[ArrayLike, ArrayLike]:
+    self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
+) -> tuple[NDArray, NDArray, int]:
     """Finds the corresponding indices of the given rows and columns.
 
     Parameters
     ----------
-    self_rows : ArrayLike
+    self_rows : NDArray
         The rows of this matrix.
-    self_cols : ArrayLike
+    self_cols : NDArray
         The columns of this matrix.
-    rows : ArrayLike
+    rows : NDArray
         The rows to find the indices for.
-    cols : ArrayLike
+    cols : NDArray
         The columns to find the indices for.
 
     Returns
     -------
-    inds : ArrayLike
+    inds : NDArray
         The indices of the given rows and columns.
-    value_inds : ArrayLike
+    value_inds : NDArray
         The matching indices of this matrix.
     max_counts : int
         The maximum number of matches found.
@@ -84,26 +86,26 @@ def find_inds(
     inds = cp.nonzero(counts)[0]
     value_inds = full_inds[inds]
 
-    return inds, value_inds, cp.max(counts)
+    return inds, value_inds, int(cp.max(counts))
 
 
 @jit.rawkernel()
 def _compute_coo_block_mask_kernel(
-    rows: ArrayLike,
-    cols: ArrayLike,
+    rows: NDArray,
+    cols: NDArray,
     row_start: int,
     row_stop: int,
     col_start: int,
     col_stop: int,
-    mask: ArrayLike,
+    mask: NDArray,
 ):
     """Computes the mask for the block in the coordinates.
 
     Parameters
     ----------
-    rows : array_like
+    rows : NDArray
         The row indices of the matrix.
-    cols : array_like
+    cols : NDArray
         The column indices of the matrix.
     row_start : int
         The start row index of the block.
@@ -113,7 +115,7 @@ def _compute_coo_block_mask_kernel(
         The start column index of the block.
     col_stop : int
         The stop column index of the block.
-    mask : array_like
+    mask : NDArray
         The mask to store the result.
 
     """
@@ -128,17 +130,17 @@ def _compute_coo_block_mask_kernel(
 
 
 def compute_block_slice(
-    rows: ArrayLike, cols: ArrayLike, block_offsets: ArrayLike, row: int, col: int
+    rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
 ) -> slice:
     """Computes the slice of the block in the data.
 
     Parameters
     ----------
-    rows : ArrayLike
+    rows : NDArray
         The row indices of the matrix.
-    cols : ArrayLike
+    cols : NDArray
         The column indices of the matrix.
-    block_offsets : ArrayLike
+    block_offsets : NDArray
         The offsets of the blocks.
     row : int
         The block row to compute the slice for.
@@ -173,7 +175,7 @@ def compute_block_slice(
     return inds[0], inds[-1] + 1
 
 
-def densify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
+def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the dense block with the given data.
 
     Note
@@ -183,13 +185,13 @@ def densify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: Arra
 
     Parameters
     ----------
-    rows : ArrayLike
+    rows : NDArray
         The rows at which to fill the block.
-    cols : ArrayLike
+    cols : NDArray
         The columns at which to fill the block.
-    data : ArrayLike
+    data : NDArray
         The data to fill the block with.
-    block : ArrayLike
+    block : NDArray
         Preallocated dense block. Should be filled with zeros.
 
     """
@@ -201,7 +203,7 @@ def densify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: Arra
     block[..., rows, cols] = data[:]
 
 
-def sparsify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: ArrayLike):
+def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
 
     Note
@@ -211,13 +213,13 @@ def sparsify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: Arr
 
     Parameters
     ----------
-    block : ArrayLike
+    block : NDArray
         The dense block to sparsify.
-    rows : ArrayLike
+    rows : NDArray
         The rows at which to fill the block.
-    cols : ArrayLike
+    cols : NDArray
         The columns at which to fill the block.
-    data : ArrayLike
+    data : NDArray
         The data to be filled with the block.
 
     """
@@ -226,8 +228,8 @@ def sparsify_block(block: ArrayLike, rows: ArrayLike, cols: ArrayLike, data: Arr
 
 
 def compute_block_sort_index(
-    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
-) -> ArrayLike:
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> NDArray:
     """Computes the block-sorting index for a sparse matrix.
 
     Note
@@ -237,16 +239,16 @@ def compute_block_sort_index(
 
     Parameters
     ----------
-    coo_rows : array_like
+    coo_rows : NDArray
         The row indices of the matrix in coordinate format.
-    coo_cols : array_like
+    coo_cols : NDArray
         The column indices of the matrix in coordinate format.
-    block_sizes : array_like
+    block_sizes : NDArray
         The block sizes of the block-sparse matrix we want to construct.
 
     Returns
     -------
-    sort_index : array_like
+    sort_index : NDArray
         The indexing that sorts the data by block-row and -column.
 
     """

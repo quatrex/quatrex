@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import numba as nb
 import numpy as np
 from numpy.typing import NDArray

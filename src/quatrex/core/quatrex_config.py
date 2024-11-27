@@ -151,8 +151,6 @@ class CoulombScreeningConfig(BaseModel):
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
-    eta_obc: NonNegativeFloat = 1e-6  # eV
-    eta: NonNegativeFloat = 1e-12  # eV
 
     temperature: PositiveFloat = 300.0  # K
 

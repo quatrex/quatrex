@@ -204,17 +204,13 @@ class CoulombScreeningSolver(SubsystemSolver):
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
         # Add the overlap matrix to the bare system matrix.
-        self.eta = quatrex_config.coulomb_screening.eta
-        self.bare_system_matrix += (
-            self.overlap_sparray + 1j * self.eta * self.overlap_sparray
-        )
+        self.bare_system_matrix += self.overlap_sparray
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dbsparse_type.zeros_like(
             self.bare_system_matrix
         )
 
         # Boundary conditions.
-        self.eta_obc = quatrex_config.coulomb_screening.eta_obc
         self.left_occupancies = bose_einstein(
             self.local_energies,
             quatrex_config.coulomb_screening.temperature,
@@ -282,25 +278,18 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _apply_obc(self, l_lesser, l_greater) -> None:
         """Applies the OBC algorithm."""
-        # Extract the overlap matrix blocks.
-        s_00 = self._get_block(self.overlap_sparray, (0, 0))
-        s_01 = self._get_block(self.overlap_sparray, (0, 1))
-        s_10 = self._get_block(self.overlap_sparray, (1, 0))
-        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
-        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         x_00 = self.obc(
-            self.obc_blocks_left["diag"] + 1j * self.eta_obc * s_00,
-            self.obc_blocks_left["right"] + 1j * self.eta_obc * s_01,
-            self.obc_blocks_left["below"] + 1j * self.eta_obc * s_10,
+            self.obc_blocks_left["diag"],
+            self.obc_blocks_left["right"],
+            self.obc_blocks_left["below"],
             "left",
         )
         x_nn = self.obc(
-            self.obc_blocks_right["diag"] + 1j * self.eta_obc * s_nn,
-            self.obc_blocks_right["left"] + 1j * self.eta_obc * s_nm,
-            self.obc_blocks_right["above"] + 1j * self.eta_obc * s_mn,
+            self.obc_blocks_right["diag"],
+            self.obc_blocks_right["left"],
+            self.obc_blocks_right["above"],
             "right",
         )
 

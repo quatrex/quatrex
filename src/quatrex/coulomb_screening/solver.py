@@ -214,6 +214,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Boundary conditions.
+        self.eta_obc = quatrex_config.coulomb_screening.eta_obc
         self.left_occupancies = bose_einstein(
             self.local_energies,
             quatrex_config.coulomb_screening.temperature,
@@ -281,18 +282,25 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _apply_obc(self, l_lesser, l_greater) -> None:
         """Applies the OBC algorithm."""
+        # Extract the overlap matrix blocks.
+        s_00 = self._get_block(self.overlap_sparray, (0, 0))
+        s_01 = self._get_block(self.overlap_sparray, (0, 1))
+        s_10 = self._get_block(self.overlap_sparray, (1, 0))
+        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
+        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
+        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         x_00 = self.obc(
-            self.obc_blocks_left["diag"],
-            self.obc_blocks_left["right"],
-            self.obc_blocks_left["below"],
+            self.obc_blocks_left["diag"] + 1j * self.eta_obc * s_00,
+            self.obc_blocks_left["right"] + 1j * self.eta_obc * s_01,
+            self.obc_blocks_left["below"] + 1j * self.eta_obc * s_10,
             "left",
         )
         x_nn = self.obc(
-            self.obc_blocks_right["diag"],
-            self.obc_blocks_right["left"],
-            self.obc_blocks_right["above"],
+            self.obc_blocks_right["diag"] + 1j * self.eta_obc * s_nn,
+            self.obc_blocks_right["left"] + 1j * self.eta_obc * s_nm,
+            self.obc_blocks_right["above"] + 1j * self.eta_obc * s_mn,
             "right",
         )
 

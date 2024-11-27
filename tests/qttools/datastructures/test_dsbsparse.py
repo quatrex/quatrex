@@ -184,7 +184,7 @@ class TestAccess:
         global_stack_shape: tuple,
         num_inds: int,
     ):
-        """Tests that we can get elements from a DSBSparse matrix using a tuple with arrays of row and column indices."""
+        """Tests that we can get multiple matrix elements at once."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -192,19 +192,17 @@ class TestAccess:
             global_stack_shape=global_stack_shape,
         )
 
-        indices = xp.random.randint(
-            0,
-            coo.shape[-1],
-            size=(2, num_inds),
-        )
-        indices = tuple(indices)
-        reference_data = coo.tocsr()[indices]
+        # Generate a number of unique indices.
+        rows = xp.random.choice(coo.shape[0], size=num_inds, replace=False)
+        cols = xp.random.choice(coo.shape[1], size=num_inds, replace=False)
+
+        reference_data = coo.tocsr()[rows, cols]
         if not isinstance(reference_data, xp.ndarray):
             reference_data = reference_data.toarray()
         reference = xp.broadcast_to(
             reference_data, global_stack_shape + reference_data.shape[1:]
         )
-        assert xp.allclose(reference, dsbsparse[indices])
+        assert xp.allclose(reference, dsbsparse[rows, cols])
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem(

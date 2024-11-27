@@ -139,175 +139,148 @@ class RGF(GFSolver):
             xl_ = xl.stack[stack_slice]
             xg_ = xg.stack[stack_slice]
 
-            xr_.blocks[0, 0] = xp.linalg.inv(a_.blocks[0, 0])
+            xr_00 = xp.linalg.inv(a_.blocks[0, 0])
+            xr_.blocks[0, 0] = xr_00
             xl_.blocks[0, 0] = (
-                xr_.blocks[0, 0]
-                @ sigma_lesser_.blocks[0, 0]
-                @ xr_.blocks[0, 0].conj().swapaxes(-2, -1)
+                xr_00 @ sigma_lesser_.blocks[0, 0] @ xr_00.conj().swapaxes(-2, -1)
             )
             xg_.blocks[0, 0] = (
-                xr_.blocks[0, 0]
-                @ sigma_greater_.blocks[0, 0]
-                @ xr_.blocks[0, 0].conj().swapaxes(-2, -1)
+                xr_00 @ sigma_greater_.blocks[0, 0] @ xr_00.conj().swapaxes(-2, -1)
             )
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
 
-                xr_.blocks[j, j] = xp.linalg.inv(
-                    a_.blocks[j, j]
-                    - a_.blocks[j, i] @ xr_.blocks[i, i] @ a_.blocks[i, j]
-                )
+                # Densify the blocks that are used multiple times.
+                a_ji = a_.blocks[j, i]
+                xr_ii = xr_.blocks[i, i]
+
+                xr_jj = xp.linalg.inv(a_.blocks[j, j] - a_ji @ xr_ii @ a_.blocks[i, j])
+                xr_.blocks[j, j] = xr_jj
+
+                # Precompute some terms that are used multiple times.
+                xr_ii_dagger_aji_dagger = xr_ii.conj().swapaxes(
+                    -2, -1
+                ) @ a_ji.conj().swapaxes(-2, -1)
+                a_ji_xr_ii = a_ji @ xr_ii
 
                 xl_.blocks[j, j] = (
-                    xr_.blocks[j, j]
+                    xr_jj
                     @ (
                         sigma_lesser_.blocks[j, j]
-                        + a_.blocks[j, i]
-                        @ xl_.blocks[i, i]
-                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                        - sigma_lesser_.blocks[j, i]
-                        @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
-                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                        - a_.blocks[j, i]
-                        @ xr_.blocks[i, i]
-                        @ sigma_lesser_.blocks[i, j]
+                        + a_ji @ xl_.blocks[i, i] @ a_ji.conj().swapaxes(-2, -1)
+                        - sigma_lesser_.blocks[j, i] @ xr_ii_dagger_aji_dagger
+                        - a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
                     )
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
+                    @ xr_jj.conj().swapaxes(-2, -1)
                 )
 
                 xg_.blocks[j, j] = (
-                    xr_.blocks[j, j]
+                    xr_jj
                     @ (
                         sigma_greater_.blocks[j, j]
-                        + a_.blocks[j, i]
-                        @ xg_.blocks[i, i]
-                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                        - sigma_greater_.blocks[j, i]
-                        @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
-                        @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                        - a_.blocks[j, i]
-                        @ xr_.blocks[i, i]
-                        @ sigma_greater_.blocks[i, j]
+                        + a_ji @ xg_.blocks[i, i] @ a_ji.conj().swapaxes(-2, -1)
+                        - sigma_greater_.blocks[j, i] @ xr_ii_dagger_aji_dagger
+                        - a_ji_xr_ii @ sigma_greater_.blocks[i, j]
                     )
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
+                    @ xr_jj.conj().swapaxes(-2, -1)
                 )
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
                 j = i + 1
 
+                # Densify the blocks that are used multiple times.
+                xr_ii = xr_.blocks[i, i]
+                xr_jj = xr_.blocks[j, j]
+                a_ij = a_.blocks[i, j]
+                a_ji = a_.blocks[j, i]
+                xl_ii = xl_.blocks[i, i]
+                xl_jj = xl_.blocks[j, j]
+                xg_ii = xg_.blocks[i, i]
+                xg_jj = xg_.blocks[j, j]
+                sigma_lesser_ij = sigma_lesser_.blocks[i, j]
+                sigma_lesser_ji = sigma_lesser_.blocks[j, i]
+                sigma_greater_ij = sigma_greater_.blocks[i, j]
+                sigma_greater_ji = sigma_greater_.blocks[j, i]
+
+                # Precompute the transposes that are used multiple times.
+                xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+                xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
+                a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
+
+                # Precompute the terms that are used multiple times.
+                xr_jj_dagger_aij_dagger = xr_jj_dagger @ a_ij_dagger
+                a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
+                a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
+                a_ij_xr_jj = a_ij @ xr_jj
+                xr_ii_a_ij = xr_ii @ a_ij
+                xr_jj_a_ji = xr_jj @ a_ji
+                xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
+                xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
+                xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
+
                 temp_1_l = (
-                    xr_.blocks[i, i]
+                    xr_ii
                     @ (
-                        sigma_lesser_.blocks[i, j]
-                        @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
-                        @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                        + a_.blocks[i, j]
-                        @ xr_.blocks[j, j]
-                        @ sigma_lesser_.blocks[j, i]
+                        sigma_lesser_ij @ xr_jj_dagger_aij_dagger
+                        + a_ij_xr_jj @ sigma_lesser_ji
                     )
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    @ xr_ii_dagger
                 )
 
                 temp_1_g = (
-                    xr_.blocks[i, i]
+                    xr_ii
                     @ (
-                        sigma_greater_.blocks[i, j]
-                        @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
-                        @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                        + a_.blocks[i, j]
-                        @ xr_.blocks[j, j]
-                        @ sigma_greater_.blocks[j, i]
+                        sigma_greater_ij @ xr_jj_dagger_aij_dagger
+                        + a_ij_xr_jj @ sigma_greater_ji
                     )
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    @ xr_ii_dagger
                 )
 
-                temp_2_l = (
-                    xr_.blocks[i, i]
-                    @ a_.blocks[i, j]
-                    @ xr_.blocks[j, j]
-                    @ a_.blocks[j, i]
-                    @ xl_.blocks[i, i]
-                )
+                temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
 
-                temp_2_g = (
-                    xr_.blocks[i, i]
-                    @ a_.blocks[i, j]
-                    @ xr_.blocks[j, j]
-                    @ a_.blocks[j, i]
-                    @ xg_.blocks[i, i]
-                )
+                temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
 
                 xl_.blocks[i, j] = (
-                    -xr_.blocks[i, i] @ a_.blocks[i, j] @ xl_.blocks[j, j]
-                    - xl_.blocks[i, i]
-                    @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
-                    + xr_.blocks[i, i]
-                    @ sigma_lesser_.blocks[i, j]
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
-                )
-
-                xl_.blocks[j, i] = (
-                    -xl_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
-                    - xr_.blocks[j, j] @ a_.blocks[j, i] @ xl_.blocks[i, i]
-                    + xr_.blocks[j, j]
-                    @ sigma_lesser_.blocks[j, i]
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    -xr_ii_a_ij_xl_jj
+                    - xl_ii @ a_ji_dagger_xr_jj_dagger
+                    + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
                 )
 
                 xg_.blocks[i, j] = (
-                    -xr_.blocks[i, i] @ a_.blocks[i, j] @ xg_.blocks[j, j]
-                    - xg_.blocks[i, i]
-                    @ a_.blocks[j, i].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
-                    + xr_.blocks[i, i]
-                    @ sigma_greater_.blocks[i, j]
-                    @ xr_.blocks[j, j].conj().swapaxes(-2, -1)
+                    -xr_ii_a_ij_xg_jj
+                    - xg_ii @ a_ji_dagger_xr_jj_dagger
+                    + xr_ii @ sigma_greater_ij @ xr_jj_dagger
+                )
+
+                xl_.blocks[j, i] = (
+                    -xl_jj @ a_ij_dagger_xr_ii_dagger
+                    - xr_jj_a_ji @ xl_ii
+                    + xr_jj @ sigma_lesser_ji @ xr_ii_dagger
                 )
 
                 xg_.blocks[j, i] = (
-                    -xg_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
-                    - xr_.blocks[j, j] @ a_.blocks[j, i] @ xg_.blocks[i, i]
-                    + xr_.blocks[j, j]
-                    @ sigma_greater_.blocks[j, i]
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    -xg_jj @ a_ij_dagger_xr_ii_dagger
+                    - xr_jj_a_ji @ xg_ii
+                    + xr_jj @ sigma_greater_ji @ xr_ii_dagger
                 )
 
                 xl_.blocks[i, i] = (
-                    xl_.blocks[i, i]
-                    + xr_.blocks[i, i]
-                    @ a_.blocks[i, j]
-                    @ xl_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    xl_ii
+                    + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_l
                     + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
                 )
                 xg_.blocks[i, i] = (
-                    xg_.blocks[i, i]
-                    + xr_.blocks[i, i]
-                    @ a_.blocks[i, j]
-                    @ xg_.blocks[j, j]
-                    @ a_.blocks[i, j].conj().swapaxes(-2, -1)
-                    @ xr_.blocks[i, i].conj().swapaxes(-2, -1)
+                    xg_ii
+                    + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_g
                     + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
                 )
-                xr_.blocks[i, i] = (
-                    xr_.blocks[i, i]
-                    + xr_.blocks[i, i]
-                    @ a_.blocks[i, j]
-                    @ xr_.blocks[j, j]
-                    @ a_.blocks[j, i]
-                    @ xr_.blocks[i, i]
-                )
+
+                xr_.blocks[i, i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
 
         if out is None:
             if return_retarded:

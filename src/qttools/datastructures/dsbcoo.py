@@ -2,12 +2,10 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import (
-    compute_block_sort_index,
-    product_sparsity_pattern,
-)
+from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
 
 class DSBCOO(DSBSparse):
@@ -93,9 +91,13 @@ class DSBCOO(DSBSparse):
             The requested items.
 
         """
-        inds, value_inds = (
-            (self.rows[:, xp.newaxis] == rows) & (self.cols[:, xp.newaxis] == cols)
-        ).nonzero()
+        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            self.rows, self.cols, rows, cols
+        )
+        if max_counts not in (0, 1):
+            raise IndexError(
+                "Request contains repeated indices. Only unique indices are supported."
+            )
 
         data_stack = self.data[*stack_index]
 
@@ -111,7 +113,7 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        ranks = (self.nnz_section_offsets <= inds[:, xp.newaxis]).sum(-1) - 1
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         return data_stack[
             ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
@@ -149,9 +151,13 @@ class DSBCOO(DSBSparse):
             The values to set.
 
         """
-        inds, value_inds = (
-            (self.rows[:, xp.newaxis] == rows) & (self.cols[:, xp.newaxis] == cols)
-        ).nonzero()
+        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            self.rows, self.cols, rows, cols
+        )
+        if max_counts not in (0, 1):
+            raise IndexError(
+                "Request contains repeated indices. Only unique indices are supported."
+            )
 
         if len(inds) == 0:
             # Nothing to do if the element is not in the matrix.
@@ -168,7 +174,7 @@ class DSBCOO(DSBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        ranks = (self.nnz_section_offsets <= inds[:, xp.newaxis]).sum(-1) - 1
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
         stack_inds, nnz_inds = xp.ix_(
@@ -209,20 +215,11 @@ class DSBCOO(DSBSparse):
 
         if block_slice is None:
             # Cache miss, compute the slice.
-            mask = (
-                (self.rows >= self.block_offsets[row])
-                & (self.rows < self.block_offsets[row + 1])
-                & (self.cols >= self.block_offsets[col])
-                & (self.cols < self.block_offsets[col + 1])
+            block_slice = slice(
+                *dsbcoo_kernels.compute_block_slice(
+                    self.rows, self.cols, self.block_offsets, row, col
+                )
             )
-            inds = mask.nonzero()[0]
-            if len(inds) == 0:
-                # No data in this block, cache an empty slice.
-                block_slice = slice(None)
-            else:
-                # NOTE: The data is sorted by block-row and -column, so
-                # we can safely assume that the block is contiguous.
-                block_slice = slice(inds[0], inds[-1] + 1)
 
         self._block_slice_cache[(row, col)] = block_slice
         return block_slice
@@ -271,11 +268,12 @@ class DSBCOO(DSBSparse):
             # No data in this block, return an empty block.
             return block
 
-        block[
-            ...,
+        dsbcoo_kernels.densify_block(
+            block,
             self.rows[block_slice] - self.block_offsets[row],
             self.cols[block_slice] - self.block_offsets[col],
-        ] = data_stack[..., block_slice]
+            data_stack[..., block_slice],
+        )
 
         return block
 
@@ -304,11 +302,12 @@ class DSBCOO(DSBSparse):
             # No data in this block, nothing to do.
             return
 
-        self.data[*stack_index][..., block_slice] = block[
-            ...,
+        dsbcoo_kernels.sparsify_block(
+            block,
             self.rows[block_slice] - self.block_offsets[row],
             self.cols[block_slice] - self.block_offsets[col],
-        ]
+            self.data[*stack_index][..., block_slice],
+        )
 
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
@@ -359,7 +358,7 @@ class DSBCOO(DSBSparse):
                 shape=other.shape[-2:],
             ),
         )
-        block_sort_index = compute_block_sort_index(
+        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
             product_rows, product_cols, self.block_sizes
         )
         product = DSBCOO(
@@ -399,7 +398,7 @@ class DSBCOO(DSBSparse):
         canonical_rows = self.rows[inds_bcoo2canonical]
         canonical_cols = self.cols[inds_bcoo2canonical]
         # Compute the index for sorting by the new block-sizes.
-        inds_canonical2bcoo = compute_block_sort_index(
+        inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
             canonical_rows, canonical_cols, block_sizes
         )
         # Mapping directly from original block-ordering to the new
@@ -456,7 +455,7 @@ class DSBCOO(DSBSparse):
             canonical_cols_t = cols_t[inds_bcoo2canonical_t]
 
             # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = compute_block_sort_index(
+            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
@@ -539,30 +538,16 @@ class DSBCOO(DSBSparse):
 
         coo: sparse.coo_matrix = arr.tocoo().copy()
 
-        num_blocks = len(block_sizes)
-        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-
-        # Densify the selected blocks.
-        for i, j in densify_blocks or []:
-            # Unsign the block indices.
-            i = num_blocks + i if i < 0 else i
-            j = num_blocks + j if j < 0 else j
-            if not (0 <= i < num_blocks and 0 <= j < num_blocks):
-                raise IndexError("Block index out of bounds.")
-
-            indices = [
-                (m + block_offsets[i], n + block_offsets[j])
-                for m, n in xp.ndindex(int(block_sizes[i]), int(block_sizes[j]))
-            ]
-            coo.row = xp.append(coo.row, [m for m, __ in indices]).astype(xp.int32)
-            coo.col = xp.append(coo.col, [n for __, n in indices]).astype(xp.int32)
-            coo.data = xp.append(coo.data, xp.zeros(len(indices), dtype=coo.data.dtype))
+        if densify_blocks is not None:
+            coo = densify_selected_blocks(coo, block_sizes, densify_blocks)
 
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
-        # Compute the rowptr map.
-        block_sort_index = compute_block_sort_index(coo.row, coo.col, block_sizes)
+        # Compute the block-sorting index.
+        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+            coo.row, coo.col, block_sizes
+        )
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
         data[..., :] = coo.data[block_sort_index]

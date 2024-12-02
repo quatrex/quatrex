@@ -6,7 +6,6 @@ from qttools.datastructures import DSBSparse
 from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.sparse_utils import product_sparsity_pattern
-from qttools.utils.stack_utils import scale_stack
 from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -14,6 +13,8 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.coulomb_screening.utils import assemble_boundary_blocks
+
+# from qttools.utils.stack_utils import scale_stack
 
 
 def check_block_sizes(rows, columns, block_sizes):
@@ -304,10 +305,24 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute and apply the lesser boundary self-energy.
         a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_lesser.blocks[0, 1]
         a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_lesser.blocks[-1, -2]
-        w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        scale_stack(w_00, self.left_occupancies)
-        scale_stack(w_nn, self.right_occupancies)
+        w_00 = self.lyapunov(
+            x_00 @ self.obc_blocks_left["below"],
+            x_00
+            @ (l_lesser.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
+            @ x_00.conj().swapaxes(-1, -2),
+            "left",
+        )
+        w_nn = self.lyapunov(
+            x_nn @ self.obc_blocks_right["above"],
+            x_nn
+            @ (l_lesser.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
+            @ x_nn.conj().swapaxes(-1, -2),
+            "right",
+        )
+        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        # scale_stack(w_00, self.left_occupancies)
+        # scale_stack(w_nn, self.right_occupancies)
 
         l_lesser.blocks[0, 0] += self.system_matrix.blocks[
             1, 0
@@ -323,10 +338,24 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute and apply the greater boundary self-energy.
         a_00 = self.obc_blocks_left["below"] @ x_00 @ self.l_greater.blocks[0, 1]
         a_nn = self.obc_blocks_right["above"] @ x_nn @ self.l_greater.blocks[-1, -2]
-        w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        scale_stack(w_00, 1 + self.left_occupancies)
-        scale_stack(w_nn, 1 + self.right_occupancies)
+        w_00 = self.lyapunov(
+            x_00 @ self.obc_blocks_left["below"],
+            x_00
+            @ (l_greater.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
+            @ x_00.conj().swapaxes(-1, -2),
+            "left",
+        )
+        w_nn = self.lyapunov(
+            x_nn @ self.obc_blocks_right["above"],
+            x_nn
+            @ (l_greater.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
+            @ x_nn.conj().swapaxes(-1, -2),
+            "right",
+        )
+        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+        # scale_stack(w_00, 1 + self.left_occupancies)
+        # scale_stack(w_nn, 1 + self.right_occupancies)
 
         l_greater.blocks[0, 0] += self.system_matrix.blocks[
             1, 0

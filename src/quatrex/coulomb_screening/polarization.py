@@ -1,9 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
-import numpy as np
+
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.gpu_utils import xp
 
 from quatrex.core.sse import ScatteringSelfEnergy
 
@@ -23,7 +23,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
     ) -> None:
         self.energies = coulomb_screening_energies
         self.ne = len(self.energies)
-        self.prefactor = -1j / np.pi * (self.energies[1] - self.energies[0])
+        self.prefactor = -1j / xp.pi * (self.energies[1] - self.energies[0])
 
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]

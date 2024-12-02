@@ -2,11 +2,10 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import sparse, xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.sparse_utils import product_sparsity_pattern
-from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -163,7 +162,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             ),
             sparse.csr_matrix(
                 (
-                    xp.ones_like(dummy_hamiltonian.data),
+                    xp.ones_like(dummy_hamiltonian.data, dtype=xp.float64),
                     (dummy_hamiltonian.row, dummy_hamiltonian.col),
                 )
             ),
@@ -186,7 +185,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 format="coo",
                 dtype=self.coulomb_matrix_sparray.dtype,
             )
-        self.overlap_sparray = self.overlap_sparray.tolil()
+        self.overlap_sparray = self.overlap_sparray.tocoo()
         # Check that the overlap matrix and Coulomb matrix match.
         if self.overlap_sparray.shape != self.coulomb_matrix_sparray.shape:
             raise ValueError("Overlap matrix and Coulomb matrix have different shapes.")
@@ -255,18 +254,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_greater = compute_config.dbsparse_type.zeros_like(
             self.v_times_p_retarded,
         )
-
-    def _get_block(self, lil: sparse.lil_array, index: tuple) -> xp.ndarray:
-        """Gets a block from a LIL matrix."""
-        row, col = index
-        row = row + len(self.block_sizes) if row < 0 else row
-        col = col + len(self.block_sizes) if col < 0 else col
-        block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
-        block = lil[
-            block_offsets[row] : block_offsets[row + 1],
-            block_offsets[col] : block_offsets[col + 1],
-        ].toarray()
-        return block
 
     # method for setting block sizes
     def _set_block_sizes(self, block_sizes: xp.ndarray) -> None:

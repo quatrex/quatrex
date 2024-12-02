@@ -1,5 +1,5 @@
+from qttools import xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.gpu_utils import xp
 
 
 def assemble_boundary_blocks(

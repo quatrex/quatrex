@@ -50,7 +50,17 @@ class SigmaPhonon(ScatteringSelfEnergy):
                 )
                 - 1
             )
-            self.totalshift = self.upshift + self.downshift
+
+            self.valid_slice = (
+                slice(self.downshift, -self.upshift)
+                if self.upshift != 0
+                else slice(None)
+            )
+
+            totalshift = self.upshift + self.downshift
+
+            self.upslice = slice(None) if totalshift == 0 else slice(-totalshift)
+            self.downslice = slice(totalshift, None)
 
             return
 
@@ -85,23 +95,19 @@ class SigmaPhonon(ScatteringSelfEnergy):
         # ==== Diagonal only ===========================================
         inds = xp.diag_indices(sigma_lesser.shape[-1])
 
-        sigma_lesser.stack[self.downshift : -self.upshift][*inds] = (
-            self.deformation_potential**2
-            * (
-                self.occupancy
-                * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.totalshift :]
-                + (self.occupancy + 1)
-                * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[: -self.totalshift]
-            )
+        sigma_lesser.stack[self.valid_slice][*inds] += self.deformation_potential**2 * (
+            self.occupancy
+            * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.downslice]
+            + (self.occupancy + 1)
+            * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[self.upslice]
         )
-        sigma_greater.stack[self.downshift : -self.upshift][*inds] = (
-            self.deformation_potential**2
-            * (
-                self.occupancy
-                * xp.roll(g_greater[*inds], -self.upshift, axis=0)[: -self.totalshift]
-                + (self.occupancy + 1)
-                * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.totalshift :]
-            )
+        sigma_greater.stack[self.valid_slice][
+            *inds
+        ] += self.deformation_potential**2 * (
+            self.occupancy
+            * xp.roll(g_greater[*inds], -self.upshift, axis=0)[self.upslice]
+            + (self.occupancy + 1)
+            * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.downslice]
         )
 
         # ==== Full matrices ===========================================
@@ -136,7 +142,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             sigma_retarded._stack_padding_mask,
             ...,
             : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] = 0.5 * (sigma_greater.data - sigma_lesser.data)
+        ] += 0.5 * (sigma_greater.data - sigma_lesser.data)
 
         # Transpose the matrices back to the original stack distribution.
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):

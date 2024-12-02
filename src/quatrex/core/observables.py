@@ -45,14 +45,14 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> np.ndarray:
         ).copy()
         if i < x.num_blocks - 1:
             overlap_upper = get_block(
-                overlap, x.block_sizes, x.block_offsets, (i, i + 1)
+                overlap, x.block_sizes, x.block_offsets, (i + 1, i)
             )
             local_density_slice += np.diagonal(
                 x.blocks[i, i + 1] @ overlap_upper, axis1=-2, axis2=-1
             )
         if i > 0:
             overlap_lower = get_block(
-                overlap, x.block_sizes, x.block_offsets, (i, i - 1)
+                overlap, x.block_sizes, x.block_offsets, (i - 1, i)
             )
             local_density_slice += np.diagonal(
                 x.blocks[i, i - 1] @ overlap_lower, axis1=-2, axis2=-1

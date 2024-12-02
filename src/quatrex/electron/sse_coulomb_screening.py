@@ -1,11 +1,9 @@
 # Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
-import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import sparse, xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.gpu_utils import xp
 from qttools.utils.mpi_utils import distributed_load
-from scipy import sparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -56,7 +54,7 @@ def hilbert_transform(a: xp.ndarray, energies: xp.ndarray, eta=1e-8) -> xp.ndarr
         + fft_convolve(a, 1 / (-energy_differences[::-1] - eta))[ne - 1 :]
     )
     # Not sure about the prefactor. Currently gives the same value as the old code.
-    return b / (2 * np.pi) * (energies[1] - energies[0])
+    return b / (2 * xp.pi) * (energies[1] - energies[0])
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
@@ -68,7 +66,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
     ):
         self.energies = electron_energies
         self.ne = self.energies.size
-        self.prefactor = 1j / (2 * np.pi) * (self.energies[1] - self.energies[0])
+        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
         # Load the Hamiltonian and block sizes for sparsity pattern.
         hamiltonian_sparray = distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"

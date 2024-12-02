@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+
 from qttools import xp
 from qttools.datastructures import DSBSparse
 

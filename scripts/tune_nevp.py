@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+
 import multiprocessing as mp
 import sys
 from pathlib import Path

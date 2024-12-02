@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 from quatrex.electron.solver import ElectronSolver
 from quatrex.electron.sse_coulomb_screening import SigmaCoulombScreening, SigmaFock

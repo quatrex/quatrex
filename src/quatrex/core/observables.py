@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import sparse, xp

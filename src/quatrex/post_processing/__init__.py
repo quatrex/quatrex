@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 from quatrex.post_processing.plot_ldos import get_averages, spectral_plot
 

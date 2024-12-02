@@ -45,7 +45,7 @@ class SubsystemSolver(ABC):
 
         self.obc = self._configure_obc(getattr(quatrex_config, self.system).obc)
         self.lyapunov = self._configure_lyapunov(
-            getattr(quatrex_config, self.system).obc
+            getattr(quatrex_config, self.system).lyapunov
         )
         self.solver = self._configure_solver(
             getattr(quatrex_config, self.system).solver
@@ -122,6 +122,7 @@ class SubsystemSolver(ABC):
                 lyapunov_config.memoizer.num_ref_iterations,
                 lyapunov_config.memoizer.convergence_tol,
             )
+        return lyapunov_solver
 
     def _configure_solver(self, solver: str) -> GFSolver:
         """Configures the solver algorithm from the config."""

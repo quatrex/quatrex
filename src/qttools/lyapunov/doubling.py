@@ -1,6 +1,8 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import warnings
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
 
 
@@ -25,12 +27,31 @@ class Doubling(LyapunovSolver):
 
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
-        """Computes the solution of the discrete-time Lyapunov equation."""
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
 
         if a.ndim == 2:
             a = a[xp.newaxis, :, :]

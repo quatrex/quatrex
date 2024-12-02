@@ -1,10 +1,12 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from pathlib import Path
 
 import pytest
 import scipy.sparse as sps
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse as xps
+from qttools import sparse as sparse
 from qttools import xp
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 
@@ -56,7 +58,7 @@ def test_distributed_load_npz(mpi_tmp_path: Path):
     if comm.rank == 0:
         coo = sps.random(10, 10, density=0.5)
         sps.save_npz(mpi_tmp_path / "coo.npz", coo)
-    coo = xps.coo_matrix(comm.bcast(coo, root=0))
+    coo = sparse.coo_matrix(comm.bcast(coo, root=0))
 
     loaded_arr = distributed_load(mpi_tmp_path / "coo.npz")
     assert xp.allclose(coo.toarray(), loaded_arr.toarray())

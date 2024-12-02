@@ -1,41 +1,46 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from abc import ABC, abstractmethod
 
-from qttools import xp
+from qttools import NDArray, xp
 
 
 class LyapunovSolver(ABC):
-    """Solver interface for the discrete-time Lyapunov equation.
+    r"""Solver interface for the discrete-time Lyapunov equation.
 
     The discrete-time Lyapunov equation is defined as:
-    `x - a @ x a.conj().T = q`.
+
+    \[
+        X - A X A^H = Q
+    \]
 
     """
 
     @abstractmethod
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
         Parameters
         ----------
-        a : array_like
+        a : NDArray
             The system matrix.
-        b : array_like
+        q : NDArray
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : array_like, optional
+        out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
 
         Returns
         -------
-        x : array_like, optional
+        x : NDArray | None
             The solution of the discrete-time Lyapunov equation.
 
         """
@@ -47,7 +52,7 @@ class LyapunovMemoizer:
 
     Parameters
     ----------
-    lyapunov : Lyapunov
+    lyapunov_solver : LyapunovSolver
         The Lyapunov solver to wrap.
     num_ref_iterations : int, optional
         The number of refinement iterations to do.
@@ -58,25 +63,45 @@ class LyapunovMemoizer:
 
     def __init__(
         self,
-        lyapunov: LyapunovSolver,
+        lyapunov_solver: LyapunovSolver,
         num_ref_iterations: int = 10,
         convergence_tol: float = 1e-6,
     ) -> None:
         """Initializes the memoizer."""
-        self.lyapunov = lyapunov
+        self.lyapunov_solver = lyapunov_solver
         self.num_ref_iterations = num_ref_iterations
         self.convergence_tol = convergence_tol
         self._cache = {}
 
     def _call_with_cache(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
-        """Calls the wrapped Lyapunov function with cache handling."""
-        x = self.lyapunov(a, q, contact, out=out)
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Calls the wrapped Lyapunov function with cache handling.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong. Used as a
+            key for the cache.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
+        x = self.lyapunov_solver(a, q, contact, out=out)
         if out is None:
             self._cache[contact] = x.copy()
             return x
@@ -86,12 +111,33 @@ class LyapunovMemoizer:
 
     def __call__(
         self,
-        a: xp.ndarray,
-        q: xp.ndarray,
+        a: NDArray,
+        q: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
-        """Computes the solution of the discrete-time Lyapunov equation."""
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+        This is a memoized wrapper around a Lyapunov solver.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 

@@ -1,11 +1,10 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
-from qttools.utils.gpu_utils import ArrayLike
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
@@ -20,16 +19,16 @@ class DSBCSR(DSBSparse):
 
     Parameters
     ----------
-    data : array_like
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    cols : array_like
+    cols : NDArray
         The column indices.
     rowptr_map : dict
         The row pointer map.
-    block_sizes : array_like
+    block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
@@ -42,22 +41,20 @@ class DSBCSR(DSBSparse):
 
     def __init__(
         self,
-        data: ArrayLike,
-        cols: ArrayLike,
+        data: NDArray,
+        cols: NDArray,
         rowptr_map: dict,
-        block_sizes: ArrayLike,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         return_dense: bool = True,
     ) -> None:
         """Initializes the DBCSR matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.cols = xp.asarray(cols).astype(int)
+        self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
 
-    def _get_items(
-        self, stack_index: tuple, rows: xp.ndarray, cols: xp.ndarray
-    ) -> ArrayLike:
+    def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -79,14 +76,14 @@ class DSBCSR(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
 
         Returns
         -------
-        items : array_like
+        items : NDArray
             The requested items.
 
         """
@@ -114,7 +111,7 @@ class DSBCSR(DSBSparse):
         ]
 
     def _set_items(
-        self, stack_index: tuple, rows: int | list, cols: int | list, value: ArrayLike
+        self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
         """Sets the requested items in the data structure.
 
@@ -126,12 +123,12 @@ class DSBCSR(DSBSparse):
         ----------
         stack_index : tuple
             The index in the stack.
-        rows : int | array_like
+        rows : NDArray
             The row indices of the items.
-        cols : int | array_like
+        cols : NDArray
             The column indices of the items.
-        values : array_like
-            The values to set.
+        value : NDArray
+            The value to set.
 
         """
         inds, value_inds = dsbcsr_kernels.find_inds(
@@ -171,7 +168,7 @@ class DSBCSR(DSBSparse):
         ]
         return
 
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> ArrayLike:
+    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -189,9 +186,11 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        block : sparray | np.ndarray
+        block : NDArray | tuple[NDArray, NDArray, NDArray]
             The block at the requested index. This is an array of shape
-            `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])`
+            if `return_dense` is True, otherwise it is a tuple of three
+            arrays `(rowptr, cols, data)`.
 
         """
         data_stack = self.data[*stack_index]
@@ -229,7 +228,7 @@ class DSBCSR(DSBSparse):
         return block
 
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: ArrayLike
+        self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -243,7 +242,7 @@ class DSBCSR(DSBSparse):
             Row index of the block.
         col : int
             Column index of the block.
-        block : array_like
+        block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
@@ -329,12 +328,14 @@ class DSBCSR(DSBSparse):
         return product
 
     @DSBSparse.block_sizes.setter
-    def block_sizes(self, block_sizes: ArrayLike) -> None:
+    def block_sizes(self, block_sizes: NDArray) -> None:
         """Sets new block sizes for the matrix.
+
         Parameters
         ----------
-        block_sizes : array_like
+        block_sizes : NDArray
             The new block sizes.
+
         """
         if self.distribution_state == "nnz":
             raise NotImplementedError(
@@ -426,7 +427,7 @@ class DSBCSR(DSBSparse):
 
         return self if copy else None
 
-    def spy(self) -> tuple[xp.ndarray, xp.ndarray]:
+    def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
         This is essentially the same as converting the sparsity pattern
@@ -435,9 +436,9 @@ class DSBCSR(DSBSparse):
 
         Returns
         -------
-        rows : np.ndarray
+        rows : NDArray
             Row indices of the non-zero elements.
-        cols : np.ndarray
+        cols : NDArray
             Column indices of the non-zero elements.
 
         """
@@ -452,18 +453,18 @@ class DSBCSR(DSBSparse):
     def from_sparray(
         cls,
         arr: sparse.spmatrix,
-        block_sizes: xp.ndarray,
+        block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
-        pinned=False,
+        pinned: bool = False,
     ) -> "DSBCSR":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
         Parameters
         ----------
-        arr : sparse.sparray
+        arr : sparse.spmatrix
             The sparse array to convert.
-        block_sizes : np.ndarray
+        block_sizes : NDArray
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided

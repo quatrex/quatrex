@@ -1,6 +1,8 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import numpy as np
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.nevp.nevp import NEVP
 from qttools.utils.gpu_utils import get_device, get_host
 
@@ -8,18 +10,42 @@ from qttools.utils.gpu_utils import get_device, get_host
 class Full(NEVP):
     """An NEVP solver based on linearization.
 
-    References
-    ----------
-    .. [1] S. Brück, Ab-initio Quantum Transport Simulations for
-       Nanoelectronic Devices, ETH Zurich, 2017.
+    Warning
+    -------
+    This solver will create very large matrices and should only be used
+    for very small problems. It is intended as a reference
+    implementation and should probably not be used in production code.
+
+    Implemented along the lines of what is described in [^1].
+
+    [^1]: S. Brück, Ab-initio Quantum Transport Simulations for
+    Nanoelectronic Devices, ETH Zurich, 2017.
 
     """
 
-    def __call__(self, a_xx: list[xp.ndarray]) -> tuple[xp.ndarray]:
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+        """Solves the plynomial eigenvalue problem.
 
+        This method solves the non-linear eigenvalue problem defined by
+        the coefficient blocks `a_xx` from lowest to highest order.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The coefficient blocks of the non-linear eigenvalue problem
+            from lowest to highest order.
+
+        Returns
+        -------
+        ws : NDArray
+            The eigenvalues.
+        vs : NDArray
+            The eigenvectors.
+
+        """
         # Allow for batched input.
         if a_xx[0].ndim == 2:
-            a_xx = [a_x[xp.newaxis, :, :] for a_x in a_xx]
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         inverse = xp.linalg.inv(sum(a_xx))
 

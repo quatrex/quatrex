@@ -1,6 +1,8 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import pytest
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn
 
 BLOCK_SIZE = [
@@ -24,7 +26,7 @@ SUBSPACE_NEVP_SOLVERS = [
 # allows us to choose when the subspace solvers should find the chosen
 # eigenvalues and eigenvectors.
 @pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def a_xx(request) -> xp.ndarray:
+def a_xx(request: pytest.FixtureRequest) -> NDArray:
     """Returns some random complex boundary blocks."""
     size = request.param
     a_xx = tuple(
@@ -34,6 +36,6 @@ def a_xx(request) -> xp.ndarray:
 
 
 @pytest.fixture(params=SUBSPACE_NEVP_SOLVERS)
-def subspace_nevp(request) -> NEVP:
+def subspace_nevp(request: pytest.FixtureRequest) -> NEVP:
     """Returns a NEVP solver."""
     return request.param

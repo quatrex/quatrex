@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from pathlib import Path
 
@@ -6,15 +6,14 @@ import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import sparse as xps
-from qttools import xp
+from qttools import NDArray, sparse, xp
 
 
 def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
     strategy: str = "balanced",
-) -> tuple:
+) -> tuple[list, int]:
     """Computes the number of un-evenly divided elements per section.
 
     Parameters
@@ -64,7 +63,7 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
+def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """Loads an array from disk and distributes it to all ranks.
 
     Parameters
@@ -74,7 +73,7 @@ def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
 
     Returns
     -------
-    sparse.sparray | xp.ndarray
+    sparse.spmatrix | NDArray
         The loaded array.
 
     """
@@ -86,7 +85,7 @@ def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
     if comm.rank == 0:
         if path.suffix == ".npz":
             arr = sps.load_npz(path)
-            arr = xps.coo_matrix(arr)
+            arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
 
@@ -98,22 +97,22 @@ def distributed_load(path: Path) -> xps.spmatrix | xp.ndarray:
     return arr
 
 
-def get_local_slice(global_array: xp.ndarray) -> None:
+def get_local_slice(global_array: NDArray) -> NDArray:
     """Returns the local slice of a distributed array.
 
     Parameters
     ----------
-    global_array : xp.ndarray
+    global_array : NDArray
         The global array to slice.
 
     Returns
     -------
-    xp.ndarray
+    NDArray
         The local slice of the global array.
 
     """
     section_sizes, __ = get_section_sizes(global_array.shape[-1])
-    section_offsets = xp.cumsum(xp.array([0] + section_sizes))
+    section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
     return global_array[
         ..., int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1])
@@ -124,7 +123,10 @@ def check_gpu_aware_mpi() -> bool:
     """Checks if the MPI implementation is GPU-aware.
 
     This is done by inspecting the MPI info object for the presence of
-    the "gpu" memory allocation kind. See [1]_ for more info.
+    the "gpu" memory allocation kind.
+
+    See [here](https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report/node279.htm)
+    for more info.
 
     On Cray systems, the check is done by inspecting the MPI library
     version string.
@@ -134,10 +136,6 @@ def check_gpu_aware_mpi() -> bool:
     bool
         True if the MPI implementation is GPU-aware on all ranks, False
         otherwise.
-
-    References
-    ----------
-    .. [1] https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report/node279.htm
 
     """
     info = comm.Get_info()

@@ -1,6 +1,8 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import warnings
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
@@ -40,15 +42,13 @@ class Spectral(OBCSolver):
     x_ii_formula : str, optional
         The formula to use for the calculation of the surface Green's
         function. The default is via the boundary "self-energy". The
-        other option is "direct". The "self-energy" formula
-        corresponds to Equation (13.1) in the paper [1]_ and the "direct"
-        formula corresponds to Equation (15).
+        other option is "direct". The "self-energy" formula corresponds
+        to Equation (13.1) in the paper [^1] and the "direct" formula
+        corresponds to Equation (15).
 
-    References
-    ----------
-    .. [1] S. Brück, et al., Efficient algorithms for large-scale
-       quantum transport calculations, The Journal of Chemical Physics,
-       2017.
+        [^1]: S. Brück, et al., Efficient algorithms for large-scale
+        quantum transport calculations, The Journal of Chemical Physics,
+        2017.
 
     """
 
@@ -75,24 +75,24 @@ class Spectral(OBCSolver):
 
     def _extract_subblocks(
         self,
-        a_ji: xp.ndarray,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-    ) -> list[xp.ndarray]:
+        a_ji: NDArray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+    ) -> tuple[NDArray, ...]:
         """Extracts the coefficient blocks from the periodic matrix.
 
         Parameters
         ----------
-        a_ji : xp.ndarray
+        a_ji : NDArray
             The subdiagonal block of the periodic matrix.
-        a_ii : xp.ndarray
+        a_ii : NDArray
             The diagonal block of the periodic matrix.
-        a_ij : xp.ndarray
+        a_ij : NDArray
             The superdiagonal block of the periodic matrix.
 
         Returns
         -------
-        blocks : list[xp.ndarray]
+        blocks : tuple[NDArray, ...]
             The non-zero blocks making up the matrix layer.
 
         """
@@ -113,16 +113,14 @@ class Spectral(OBCSolver):
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
-        blocks = [block for block in blocks if xp.any(block)]
-
-        return blocks
+        return tuple(block for block in blocks if xp.any(block))
 
     def _find_reflected_modes(
         self,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-        a_xx: list[xp.ndarray],
-    ) -> tuple[xp.ndarray, xp.ndarray]:
+        ws: NDArray,
+        vs: NDArray,
+        a_xx: list[NDArray],
+    ) -> NDArray:
         """Determines which eigenvalues correspond to reflected modes.
 
         For the computation of the surface Green's function, only the
@@ -131,18 +129,16 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        ws : xp.ndarray
+        ws : NDArray
             The eigenvalues of the NEVP.
-        vs : xp.ndarray
+        vs : NDArray
             The eigenvectors of the NEVP.
-        a_ij : xp.ndarray
-            The superdiagonal contact block.
-        a_ji : xp.ndarray
-            The subdiagonal contact block.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
 
         Returns
         -------
-        mask : xp.ndarray
+        mask : NDArray
             A boolean mask indicating which eigenvalues correspond to
             reflected modes.
 
@@ -179,9 +175,9 @@ class Spectral(OBCSolver):
 
     def _upscale_eigenmodes(
         self,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-    ) -> xp.ndarray:
+        ws: NDArray,
+        vs: NDArray,
+    ) -> NDArray:
         """Upscales the eigenvectors to the full periodic matrix layer.
 
         The extraction of subblocks and hence the solution of a higher-
@@ -191,14 +187,14 @@ class Spectral(OBCSolver):
 
         Parameters
         ----------
-        ws : xp.ndarray
+        ws : NDArray
             The eigenvalues of the NEVP.
-        vs : xp.ndarray
+        vs : NDArray
             The eigenvectors of the (potentially) higher order NEVP.
 
         Returns
         -------
-        vs : xp.ndarray
+        vs : NDArray
             The upscaled eigenvectors.
 
         """
@@ -220,34 +216,34 @@ class Spectral(OBCSolver):
 
     def _compute_x_ii(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
-        ws: xp.ndarray,
-        vs: xp.ndarray,
-        mask: xp.ndarray,
-    ) -> xp.ndarray:
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
+        ws: NDArray,
+        vs: NDArray,
+        mask: NDArray,
+    ) -> NDArray:
         """Computes the surface Green's function.
 
         Parameters
         ----------
-        a_ii : xp.ndarray
+        a_ii : NDArray
             The diagonal block of the periodic matrix.
-        a_ij : xp.ndarray
+        a_ij : NDArray
             The superdiagonal block of the periodic matrix.
-        a_ji : xp.ndarray
+        a_ji : NDArray
             The subdiagonal block of the periodic matrix.
-        ws : xp.ndarray
+        ws : NDArray
             The eigenvalues of the NEVP.
-        vs : xp.ndarray
+        vs : NDArray
             The eigenvectors of the NEVP.
-        mask : xp.ndarray
+        mask : NDArray
             A boolean mask indicating which eigenvalues correspond to
             reflected modes.
 
         Returns
         -------
-        x_ii : xp.ndarray
+        x_ii : NDArray
             The surface Green's function.
 
         """
@@ -284,13 +280,34 @@ class Spectral(OBCSolver):
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Returns the surface Green's function.
 
+        Parameters
+        ----------
+        a_ii : NDArray
+            Diagonal boundary block of a system matrix.
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function.
+
+        """
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
             a_ij = a_ij[xp.newaxis, :, :]

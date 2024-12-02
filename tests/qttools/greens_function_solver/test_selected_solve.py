@@ -1,22 +1,21 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from numpy.typing import ArrayLike
-
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import GFSolver
 
 
 def test_selected_solve(
-    bt_dense: ArrayLike,
+    bt_dense: NDArray,
     gfsolver_type: GFSolver,
     dsbsparse_type: DSBSparse,
     out: bool,
     return_retarded: bool,
     max_batch_size: int,
-    block_sizes: ArrayLike,
+    block_sizes: NDArray,
     global_stack_shape: int | tuple,
 ):
+    """Tests the selected solve method of a Green's function solver."""
     coo_A = sparse.coo_matrix(bt_dense)
 
     coo_Bl = sparse.coo_matrix(bt_dense)
@@ -48,7 +47,7 @@ def test_selected_solve(
         coo_Bg, block_sizes, global_stack_shape, densify_blocks
     )
 
-    solver = gfsolver_type()
+    solver = gfsolver_type(max_batch_size=max_batch_size)
 
     if out:
         Xr = dsbsparse_type.zeros_like(A)
@@ -61,7 +60,6 @@ def test_selected_solve(
             Bg,
             out=[Xl, Xg, Xr],
             return_retarded=return_retarded,
-            max_batch_size=max_batch_size,
         )
     else:
         if return_retarded:
@@ -70,7 +68,6 @@ def test_selected_solve(
                 Bl,
                 Bg,
                 return_retarded=return_retarded,
-                max_batch_size=max_batch_size,
             )
         else:
             Xl, Xg = solver.selected_solve(
@@ -78,7 +75,6 @@ def test_selected_solve(
                 Bl,
                 Bg,
                 return_retarded=return_retarded,
-                max_batch_size=max_batch_size,
             )
 
     if return_retarded:

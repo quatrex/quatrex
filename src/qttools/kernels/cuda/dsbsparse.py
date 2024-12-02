@@ -1,23 +1,24 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
+
 import cupy as cp
-from cupy.typing import ArrayLike
 from cupyx import jit
 
+from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 
 
 @jit.rawkernel()
-def _find_ranks_kernel(
-    nnz_section_offsets: ArrayLike, inds: ArrayLike, ranks: ArrayLike
-):
+def _find_ranks_kernel(nnz_section_offsets: NDArray, inds: NDArray, ranks: NDArray):
     """Finds the ranks of the indices in the offsets.
 
     Parameters
     ----------
-    nnz_section_offsets : array_like
+    nnz_section_offsets : NDArray
         The offsets of the non-zero sections.
-    inds : array_like
+    inds : NDArray
         The indices to find the ranks for.
-    ranks : array_like
+    ranks : NDArray
         The ranks of the indices in the offsets.
 
     """
@@ -28,19 +29,19 @@ def _find_ranks_kernel(
             ranks[i] = ranks[i] * (1 - cond) + j * cond
 
 
-def find_ranks(nnz_section_offsets: ArrayLike, inds: ArrayLike) -> ArrayLike:
+def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Finds the ranks of the indices in the offsets.
 
     Parameters
     ----------
-    nnz_section_offsets : array_like
+    nnz_section_offsets : NDArray
         The offsets of the non-zero sections.
-    inds : array_like
+    inds : NDArray
         The indices to find the ranks for.
 
     Returns
     -------
-    ranks : array_like
+    ranks : NDArray
         The ranks of the indices in the offsets.
 
     """

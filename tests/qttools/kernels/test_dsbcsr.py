@@ -1,13 +1,14 @@
-import pytest
-from numpy.typing import ArrayLike, NDArray
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import sparse, xp
+import pytest
+
+from qttools import NDArray, sparse, xp
 from qttools.kernels import dsbcsr_kernels
 
 
 def _reference_compute_rowptr_map(
-    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
-) -> tuple[ArrayLike, dict]:
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
+) -> tuple[NDArray, dict]:
     """Computes the rowptr map for a sparse matrix.
 
     Parameters

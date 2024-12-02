@@ -1,10 +1,10 @@
-from qttools import xp
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
+from qttools import NDArray, xp
 from qttools.lyapunov import LyapunovMemoizer, LyapunovSolver
 
 
-def test_correctness(
-    inputs: tuple[xp.ndarray, xp.ndarray], lyapunov_solver: LyapunovSolver
-):
+def test_correctness(inputs: tuple[NDArray, NDArray], lyapunov_solver: LyapunovSolver):
     """Tests that the Lyapunov solver returns the correct result."""
     a, q = inputs
     x = lyapunov_solver(a, q, "contact")
@@ -13,7 +13,7 @@ def test_correctness(
 
 
 def test_correctness_batch(
-    inputs: tuple[xp.ndarray, xp.ndarray], lyapunov_solver: LyapunovSolver
+    inputs: tuple[NDArray, NDArray], lyapunov_solver: LyapunovSolver
 ):
     """Tests that the batched Lyapunov solver returns the correct result."""
     a, q = inputs
@@ -25,9 +25,7 @@ def test_correctness_batch(
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
 
-def test_memoizer(
-    inputs: tuple[xp.ndarray, xp.ndarray], lyapunov_solver: LyapunovSolver
-):
+def test_memoizer(inputs: tuple[NDArray, NDArray], lyapunov_solver: LyapunovSolver):
     """Tests that the Lyapunov memoizer works."""
     a, q = inputs
     lyapunov_solver = LyapunovMemoizer(lyapunov_solver)

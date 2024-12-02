@@ -1,15 +1,14 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import pytest
-from numpy.typing import ArrayLike
 
-from qttools import sparse, xp
-from qttools.datastructures import DSBCOO
-from qttools.greens_function_solver import RGF, Inv
+from qttools import NDArray, sparse, xp
+from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.greens_function_solver import RGF, GFSolver, Inv
 
 GFSOLVERS_TYPE = [Inv, RGF]
 
-DSBSPARSE_TYPES = [DSBCOO]
+DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
 
 BLOCK_SIZES = [
     pytest.param(xp.array([2] * 10), id="constant-block-size"),
@@ -18,9 +17,9 @@ BLOCK_SIZES = [
 
 
 BATCHING_TYPE = [
-    pytest.param("no-batching"),
-    pytest.param("2-batching"),
-    pytest.param("all-batching"),
+    pytest.param(1, id="no-batching"),
+    pytest.param(2, id="2-batching"),
+    pytest.param(100, id="all-batching"),
 ]
 
 OUT = [
@@ -41,21 +40,21 @@ GLOBAL_STACK_SHAPES = [
 
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
-def block_sizes(request):
+def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
 @pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
-def gfsolver_type(request):
+def gfsolver_type(request: pytest.FixtureRequest) -> GFSolver:
     return request.param
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request):
+def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 
-def _random_block(m: int, n: int):
+def _random_block(m: int, n: int) -> NDArray:
     """Generates a quasi-sparse random block of size m x n."""
     coo = sparse.random(int(m), int(n), density=0.5, format="coo").astype(xp.complex128)
     coo.data += 1j * xp.random.uniform(size=coo.nnz)
@@ -63,9 +62,8 @@ def _random_block(m: int, n: int):
 
 
 @pytest.fixture(scope="function", autouse=False)
-def bt_dense(
-    block_sizes: ArrayLike,
-):
+def bt_dense(block_sizes: NDArray) -> NDArray:
+    """Generates a random block-tridiagonal matrix."""
     block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
     num_blocks = len(block_sizes)
     size = int(xp.sum(block_sizes))
@@ -106,27 +104,20 @@ def bt_dense(
 
 
 @pytest.fixture(params=BATCHING_TYPE, autouse=True)
-def max_batch_size(request) -> int:
-    batching_type = request.param
-
-    if batching_type == "no-batching":
-        return 1
-    elif batching_type == "2-batching":
-        return 2
-    elif batching_type == "all-batching":
-        return 100
+def max_batch_size(request: pytest.FixtureRequest) -> int:
+    return request.param
 
 
 @pytest.fixture(params=OUT, autouse=True)
-def out(request) -> bool:
+def out(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
 @pytest.fixture(params=RETURN_RETARDED, autouse=True)
-def return_retarded(request) -> bool:
+def return_retarded(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
-def global_stack_shape(request):
+def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param

@@ -1,26 +1,28 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import pytest
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc import OBCMemoizer, Spectral
 
 
 def _make_periodic(
-    a_xx: tuple[xp.ndarray, ...], block_sections: int
-) -> tuple[xp.ndarray, ...]:
+    a_xx: tuple[NDArray, ...], block_sections: int
+) -> tuple[NDArray, ...]:
     """Enforces that the layer has periodic subblocks.
 
     Parameters
     ----------
-    a_xx : tuple[xp.ndarray, ...]
+    a_xx : tuple[NDArray, ...]
         The boundary blocks.
     block_sections : int
         The number of block sections.
 
     Returns
     -------
-    a_xx : tuple[xp.ndarray, ...]
+    a_xx : tuple[NDArray, ...]
         The boundary blocks with periodic subblocks.
 
     """
@@ -42,7 +44,7 @@ def _make_periodic(
     "block_sections",
 )
 def test_correctness(
-    a_xx: tuple[xp.ndarray, ...],
+    a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,
@@ -63,7 +65,7 @@ def test_correctness(
     "block_sections",
 )
 def test_correctness_batch(
-    a_xx: tuple[xp.ndarray, ...],
+    a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,
@@ -87,7 +89,7 @@ def test_correctness_batch(
     "block_sections",
 )
 def test_memoizer(
-    a_xx: tuple[xp.ndarray, ...],
+    a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
     x_ii_formula: str,

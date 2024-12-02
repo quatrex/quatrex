@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import xp
 from qttools.datastructures.dsbsparse import DSBSparse
@@ -7,32 +7,51 @@ from qttools.utils.solvers_utils import get_batches
 
 
 class Inv(GFSolver):
-    def selected_inv(
-        self, a: DSBSparse, out: DSBSparse = None, max_batch_size: int = 1
-    ) -> None | DSBSparse:
-        """Perform the selected inversion of a matrix in block-tridiagonal form using
-        batching through the first dimmension matrix stack.
+    """Selected inversion solver based on dense matrix inversion.
 
-        This method will invert the matrix as dense and then select the elements
-        to keep by matching the sparse structure of the input matrix.
+    Warning
+    -------
+    This solver will densify the matrix to invert it. It is intended as
+    a reference implementation and should not be used in production
+    code.
+
+    Parameters
+    ----------
+    max_batch_size : int, optional
+        Maximum batch size to use when inverting the matrix, by default
+        1.
+
+    """
+
+    def __init__(self, max_batch_size: int = 1) -> None:
+        """Initializes the selected inversion solver."""
+        self.max_batch_size = max_batch_size
+
+    def selected_inv(
+        self, a: DSBSparse, out: DSBSparse | None = None
+    ) -> None | DSBSparse:
+        """Performs selected inversion of a block-tridiagonal matrix.
+
+        This method will densify the matrix, invert it, and then select
+        the elements to keep by matching the sparse structure of the
+        input matrix.
 
         Parameters
         ----------
-        a : DBSparse
+        a : DSBSparse
             Matrix to invert.
         out : DSBSparse, optional
-            Output matrix, by default None.
-        max_batch_size : int, optional
-            Maximum batch size to use when inverting the matrix, by default 1.
+            Preallocated output matrix, by default None.
 
         Returns
         -------
-        None | DBSparse
-            If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DBSparse object.
+        None | DSBSparse
+            If `out` is None, returns None. Otherwise, returns the
+            inverted matrix as a DSBSparse object.
+
         """
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
+        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
         # Allocate batching buffer
         inv_a = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
@@ -64,34 +83,44 @@ class Inv(GFSolver):
         sigma_greater: DSBSparse,
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
-        max_batch_size: int = 1,
     ) -> None | tuple:
-        """Solve the congruence matrix equation: A * X * A^T = B.
+        r"""Produces elements of the solution to the congruence equation.
+
+        This method produces selected elements of the solution to the
+        relation:
+
+        \[
+            X^{\lessgtr} = A^{-1} \Sigma^{\lessgtr} A^{-\dagger}
+        \]
 
         Parameters
         ----------
-        a : DBSparse
+        a : DSBSparse
             Matrix to invert.
-        sigma_lesser : DBSparse
-            Lesser matrix. This matrix is expected to be skewed-hermitian.
-        sigma_greater : DBSparse
-            Greater matrix. This matrix is expected to be skewed-hermitian.
-        out : tuple | None, optional
-            Output matrix, by default None
+        sigma_lesser : DSBSparse
+            Lesser matrix. This matrix is expected to be
+            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        sigma_greater : DSBSparse
+            Greater matrix. This matrix is expected to be
+            skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        out : tuple[DSBSparse, ...] | None, optional
+            Preallocated output matrices, by default None
         return_retarded : bool, optional
-            Weither the retarded Green's functioln should be returned, by default False
-        max_batch_size : int, optional
-            Maximum batch size to use when inverting the matrix, by default 1
+            Wether the retarded Green's function should be returned
+            along with lesser and greater, by default False
+
 
         Returns
         -------
         None | tuple
-            If `out` is None, returns None. Otherwise, returns the inverted matrix
-            as a DBSparse object. If `return_retarded` is True, returns a tuple with
-            the retarded Green's function as the last element.
+            If `out` is None, returns None. Otherwise, the solutions are
+            returned as DSBParse matrices. If `return_retarded` is True,
+            returns a tuple with the retarded Green's function as the
+            last element.
+
         """
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], max_batch_size)
+        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
         # Allocate batching buffer
         x_r = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)

@@ -1,3 +1,5 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from qttools import xp
 
 if xp.__name__ == "numpy":

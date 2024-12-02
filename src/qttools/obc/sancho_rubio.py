@@ -1,13 +1,17 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import warnings
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.obc.obc import OBCSolver
 
 
 class SanchoRubio(OBCSolver):
-    """Calculates the surface Green's function iteratively.
+    """Calculates the surface Green's function iteratively.[^1].
+
+    [^1]: M P Lopez Sancho et al., "Highly convergent schemes for the
+    calculation of bulk and surface Green functions", 1985 J. Phys. F:
+    Met. Phys. 15 851
 
     Parameters
     ----------
@@ -18,12 +22,6 @@ class SanchoRubio(OBCSolver):
         criterion for convergence is that the average Frobenius norm of
         the update matrices `alpha` and `beta` is less than this value.
 
-    References
-    ----------
-    .. [1] M.P. López-Sancho, Jose Lopez Sancho, Jessy Rubio. (2000).
-       Highly convergent schemes for the calculation of bulk and surface
-       Green-Functions. Journal of Physics F: Metal Physics. 15. 851.
-
     """
 
     def __init__(self, max_iterations: int = 1000, convergence_tol: float = 1e-7):
@@ -33,13 +31,34 @@ class SanchoRubio(OBCSolver):
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Returns the surface Green's function.
 
+        Parameters
+        ----------
+        a_ii : NDArray
+            Diagonal boundary block of a system matrix.
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function.
+
+        """
         epsilon = a_ii.copy()
         epsilon_s = a_ii.copy()
         alpha = a_ji.copy()

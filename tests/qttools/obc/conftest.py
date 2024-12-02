@@ -1,7 +1,8 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import pytest
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP, Beyn, Full
 
@@ -32,25 +33,25 @@ CONTACTS = ["left", "right"]
 
 
 @pytest.fixture(params=X_II_FORMULAS)
-def x_ii_formula(request) -> str:
+def x_ii_formula(request: pytest.FixtureRequest) -> str:
     """Returns a NEVP solver."""
     return request.param
 
 
 @pytest.fixture(params=NEVP_SOLVERS)
-def nevp(request) -> NEVP:
+def nevp(request: pytest.FixtureRequest) -> NEVP:
     """Returns a NEVP solver."""
     return request.param
 
 
 @pytest.fixture(params=BLOCK_SECTIONS)
-def block_sections(request) -> int:
+def block_sections(request: pytest.FixtureRequest) -> int:
     """Returns the number of block sections."""
     return request.param
 
 
 @pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def a_xx(request) -> tuple[xp.ndarray, ...]:
+def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     """Returns some random complex boundary blocks."""
     size = request.param * 2
     # Generate a decaying random complex array.
@@ -70,6 +71,6 @@ def a_xx(request) -> tuple[xp.ndarray, ...]:
 
 
 @pytest.fixture(params=CONTACTS, autouse=True)
-def contact(request) -> str:
+def contact(request: pytest.FixtureRequest) -> str:
     """Returns a contact."""
     return request.param

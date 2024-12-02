@@ -1,32 +1,34 @@
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 import cupy as cp
-from cupy.typing import ArrayLike
 from cupyx import jit
 
+from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 
 
 @jit.rawkernel()
 def _find_bcoords_kernel(
-    block_offsets: ArrayLike,
-    rows: ArrayLike,
-    cols: ArrayLike,
-    brows: ArrayLike,
-    bcols: ArrayLike,
+    block_offsets: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    brows: NDArray,
+    bcols: NDArray,
 ):
     """Finds the block coordinates of the given rows and columns.
 
     Parameters
     ----------
-    block_offsets : array_like
+    block_offsets : NDArray
         The offsets of the blocks.
-    rows : array_like
+    rows : NDArray
         The row indices.
-    cols : array_like
+    cols : NDArray
         The column indices.
-    brows : array_like
+    brows : NDArray
         The block row indices.
-    bcols : array_like
+    bcols : NDArray
         The block column indices.
 
     """
@@ -41,25 +43,25 @@ def _find_bcoords_kernel(
 
 @jit.rawkernel()
 def _compute_block_mask_kernel(
-    brows: ArrayLike,
-    bcols: ArrayLike,
+    brows: NDArray,
+    bcols: NDArray,
     brow: int,
     bcol: int,
-    mask: ArrayLike,
+    mask: NDArray,
 ):
     """Computes the mask for the given block coordinates.
 
     Parameters
     ----------
-    brows : array_like
+    brows : NDArray
         The block row indices.
-    bcols : array_like
+    bcols : NDArray
         The block column indices.
     brow : int
         The block row.
     bcol : int
         The block column.
-    mask : array_like
+    mask : NDArray
         The mask for the given block coordinates.
 
     """
@@ -70,25 +72,25 @@ def _compute_block_mask_kernel(
 
 @jit.rawkernel()
 def _compute_block_inds_kernel(
-    rr: ArrayLike,
-    cc: ArrayLike,
-    self_cols: ArrayLike,
-    rowptr: ArrayLike,
-    block_inds: ArrayLike,
+    rr: NDArray,
+    cc: NDArray,
+    self_cols: NDArray,
+    rowptr: NDArray,
+    block_inds: NDArray,
 ):
     """Finds the indices of the given block.
 
     Parameters
     ----------
-    rr : array_like
+    rr : NDArray
         The row indices.
-    cc : array_like
+    cc : NDArray
         The column indices.
-    self_cols : array_like
+    self_cols : NDArray
         The columns of this matrix.
-    rowptr : array_like
+    rowptr : NDArray
         The row pointer.
-    block_inds : array_like
+    block_inds : NDArray
         The indices of the given block
 
     """
@@ -105,31 +107,31 @@ def _compute_block_inds_kernel(
 
 def find_inds(
     rowptr_map: dict,
-    block_offsets: ArrayLike,
-    self_cols: ArrayLike,
-    rows: ArrayLike,
-    cols: ArrayLike,
-) -> tuple[ArrayLike, ArrayLike]:
+    block_offsets: NDArray,
+    self_cols: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+) -> tuple[NDArray, NDArray]:
     """Finds the corresponding indices of the given rows and columns.
 
     Parameters
     ----------
     rowptr_map : dict
         The row pointer map.
-    block_offsets : ArrayLike
+    block_offsets : NDArray
         The block offsets.
-    self_cols : ArrayLike
+    self_cols : NDArray
         The columns of this matrix.
-    rows : ArrayLike
+    rows : NDArray
         The rows to find the indices for.
-    cols : ArrayLike
+    cols : NDArray
         The columns to find the indices for.
 
     Returns
     -------
-    inds : ArrayLike
+    inds : NDArray
         The indices of the given rows and columns.
-    value_inds : ArrayLike
+    value_inds : NDArray
         The matching indices of this matrix.
 
     """
@@ -186,14 +188,14 @@ def find_inds(
 
 
 @jit.rawkernel()
-def _expand_rows_kernel(rows: ArrayLike, rowptr: ArrayLike):
+def _expand_rows_kernel(rows: NDArray, rowptr: NDArray):
     """Expands the rowptr into actual rows.
 
     Parameters
     ----------
-    rows : array_like
+    rows : NDArray
         The rows to fill.
-    rowptr : array_like
+    rowptr : NDArray
         The row pointer.
 
     """
@@ -204,25 +206,25 @@ def _expand_rows_kernel(rows: ArrayLike, rowptr: ArrayLike):
 
 
 def densify_block(
-    block: ArrayLike,
-    block_offset: ArrayLike,
-    self_cols: ArrayLike,
-    rowptr: ArrayLike,
-    data: ArrayLike,
+    block: NDArray,
+    block_offset: NDArray,
+    self_cols: NDArray,
+    rowptr: NDArray,
+    data: NDArray,
 ):
     """Fills the dense block with the given data.
 
     Parameters
     ----------
-    block : array_like
+    block : NDArray
         Preallocated dense block. Should be filled with zeros.
-    block_offset : array_like
+    block_offset : NDArray
         The block offset.
-    self_cols : array_like
+    self_cols : NDArray
         The column indices of this matrix.
-    rowptr : array_like
+    rowptr : NDArray
         The row pointer of this matrix block.
-    data : array_like
+    data : NDArray
         The data to fill the block with.
 
     """
@@ -238,11 +240,11 @@ def densify_block(
 
 
 def sparsify_block(
-    block: ArrayLike,
-    block_offset: ArrayLike,
-    self_cols: ArrayLike,
-    rowptr: ArrayLike,
-    data: ArrayLike,
+    block: NDArray,
+    block_offset: NDArray,
+    self_cols: NDArray,
+    rowptr: NDArray,
+    data: NDArray,
 ):
     """Fills the data with the given dense block.
 
@@ -272,7 +274,7 @@ def sparsify_block(
 
 
 def compute_rowptr_map(
-    coo_rows: ArrayLike, coo_cols: ArrayLike, block_sizes: ArrayLike
+    coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> dict:
     """Computes the block-sorting index and the rowptr map.
 
@@ -283,16 +285,16 @@ def compute_rowptr_map(
 
     Parameters
     ----------
-    coo_rows : array_like
+    coo_rows : NDArray
         The row indices of the matrix in coordinate format.
-    coo_cols : array_like
+    coo_cols : NDArray
         The column indices of the matrix in coordinate format.
-    block_sizes : array_like
+    block_sizes : NDArray
         The block sizes of the block-sparse matrix we want to construct.
 
     Returns
     -------
-    sort_index : array_like
+    sort_index : NDArray
         The block-sorting index for the sparse matrix.
     rowptr_map : dict
         The row pointer map, describing the block-sparse matrix in

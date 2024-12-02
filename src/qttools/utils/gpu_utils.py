@@ -1,21 +1,18 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import inspect
 
-import numpy as np
-from numpy.typing import ArrayLike
-
-from qttools import xp
+from qttools import NDArray, xp
 
 
-def get_array_module_name(arr: ArrayLike) -> str:
+def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
 
-    This works for numpy even when cupy is not available.
+    This works for `numpy` even when `cupy` is not available.
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to check.
 
     Returns
@@ -28,12 +25,12 @@ def get_array_module_name(arr: ArrayLike) -> str:
     return submodule.__name__.split(".")[0]
 
 
-def get_host(arr: ArrayLike) -> np.ndarray:
+def get_host(arr: NDArray) -> NDArray:
     """Returns the host array of the given array.
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to convert.
 
     Returns
@@ -47,17 +44,17 @@ def get_host(arr: ArrayLike) -> np.ndarray:
     return arr.get()
 
 
-def get_device(arr: ArrayLike) -> xp.ndarray:
+def get_device(arr: NDArray) -> NDArray:
     """Returns the device array of the given array.
 
     Parameters
     ----------
-    arr : ArrayLike
+    arr : NDArray
         The array to convert.
 
     Returns
     -------
-    ArrayLike
+    NDArray
         The equivalent cupy array.
 
     """

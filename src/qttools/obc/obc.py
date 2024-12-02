@@ -1,48 +1,49 @@
-# Copyright 2023-2024 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from abc import ABC, abstractmethod
 
-from qttools import xp
+from qttools import NDArray, xp
 
 
 class OBCSolver(ABC):
-    """Abstract base class for the open-boundary condition solver.
+    r"""Abstract base class for the open-boundary condition solver.
 
     The recursion relation for the surface Green's function is given by:
-    `x_ii = xp.inv(a_ii - a_ji @ x_ij @ a_ij)`.
+
+    \[
+        x_{ii} = (a_{ii} - a_{ji} x_{ii} a_{ij})^{-1}
+    \]
 
     """
 
     @abstractmethod
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
+        out: None | NDArray = None,
+    ) -> NDArray | None:
         """Returns the surface Green's function.
 
         Parameters
         ----------
-        a_ii : array_like
+        a_ii : NDArray
             Diagonal boundary block of a system matrix.
-        a_ij : array_like
-            Off-diagonal boundary block of a system matrix, connecting
-            lead (i) to system (j).
-        a_ji : array_like
-            Off-diagonal boundary block of a system matrix, connecting
-            system (j) to lead (i).
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : array_like, optional
+        out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
 
         Returns
         -------
-        x_ii : array_like, optional
+        x_ii : NDArray
             The system's surface Green's function.
 
         """
@@ -54,7 +55,7 @@ class OBCMemoizer:
 
     Parameters
     ----------
-    obc : OBC
+    obc_solver : OBCSolver
         The OBC solver to wrap.
     num_ref_iterations : int, optional
         The maximum number of refinement iterations to do.
@@ -77,13 +78,34 @@ class OBCMemoizer:
 
     def _call_with_cache(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
-        """Calls the wrapped obc function with cache handling."""
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Calls the wrapped OBC solver with cache handling.
+
+        Parameters
+        ----------
+        a_ii : NDArray
+            Diagonal boundary block of a system matrix.
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function.
+
+        """
         x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact, out=out)
         if out is None:
             self._cache[contact] = x_ii.copy()
@@ -94,13 +116,36 @@ class OBCMemoizer:
 
     def __call__(
         self,
-        a_ii: xp.ndarray,
-        a_ij: xp.ndarray,
-        a_ji: xp.ndarray,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
         contact: str,
-        out: None | xp.ndarray = None,
-    ) -> xp.ndarray | None:
-        """Calls the wrapped function."""
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Returns the surface Green's function.
+
+        This is a memoized wrapper around an OBC solver.
+
+        Parameters
+        ----------
+        a_ii : NDArray
+            Diagonal boundary block of a system matrix.
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function.
+
+        """
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)
 

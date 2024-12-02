@@ -3,7 +3,7 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.stack_utils import scale_stack
@@ -15,7 +15,7 @@ from quatrex.core.subsystem import SubsystemSolver
 
 
 class ElectronSolver(SubsystemSolver):
-    """Solves for the lesser electron Green's function.
+    """Solves the electron dynamics.
 
     Parameters
     ----------
@@ -34,7 +34,7 @@ class ElectronSolver(SubsystemSolver):
         self,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
-        energies: xp.ndarray,
+        energies: NDArray,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -135,14 +135,21 @@ class ElectronSolver(SubsystemSolver):
         self.i_left = None
         self.i_right = None
 
-    def update_potential(self, new_potential: xp.ndarray) -> None:
-        """Updates the potential matrix."""
+    def update_potential(self, new_potential: NDArray) -> None:
+        """Updates the potential matrix.
+
+        Parameters
+        ----------
+        new_potential : NDArray
+            The new potential matrix.
+
+        """
         potential_diff_matrix = sparse.diags(new_potential - self.potential)
         self.bare_system_matrix -= potential_diff_matrix
         self.potential = new_potential
 
-    def _get_block(self, coo: sparse.coo_matrix, index: tuple) -> xp.ndarray:
-        """Gets a block from a LIL matrix."""
+    def _get_block(self, coo: sparse.coo_matrix, index: tuple) -> NDArray:
+        """Gets a block from a COO matrix."""
         row, col = index
         row = row + len(self.block_sizes) if row < 0 else row
         col = col + len(self.block_sizes) if col < 0 else col
@@ -162,8 +169,17 @@ class ElectronSolver(SubsystemSolver):
 
         return block
 
-    def _apply_obc(self, sse_lesser, sse_greater) -> None:
-        """Applies the OBC algorithm."""
+    def _apply_obc(self, sse_lesser: DSBSparse, sse_greater: DSBSparse) -> None:
+        """Applies open boundary conditions.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser scattering self-energy.
+        sse_greater : DSBSparse
+            The greater scattering self-energy.
+
+        """
 
         # Extract the overlap matrix blocks.
         s_00 = self._get_block(self.overlap_sparray, (0, 0))
@@ -222,7 +238,14 @@ class ElectronSolver(SubsystemSolver):
         )
 
     def _assemble_system_matrix(self, sse_retarded: DSBSparse) -> None:
-        """Assembles the system matrix."""
+        """Assembles the system matrix.
+
+        Parameters
+        ----------
+        sse_retarded : DSBSparse
+            The retarded scattering self-energy.
+
+        """
         self.system_matrix.data[:] = self.bare_system_matrix.data
         self.system_matrix -= sse_retarded
 
@@ -232,7 +255,18 @@ class ElectronSolver(SubsystemSolver):
         sse_greater: DSBSparse,
         sse_retarded: DSBSparse,
     ):
-        """Stashes the contact OBC blocks."""
+        """Stashes the contact OBC blocks.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser self-energy.
+        sse_greater : DSBSparse
+            The greater self-energy.
+        sse_retarded : DSBSparse
+            The retarded self-energy.
+
+        """
         self.obc_blocks_retarded_left[:] = sse_retarded.blocks[0, 0]
         self.obc_blocks_retarded_right[:] = sse_retarded.blocks[-1, -1]
         self.obc_blocks_lesser_left[:] = sse_lesser.blocks[0, 0]
@@ -243,7 +277,18 @@ class ElectronSolver(SubsystemSolver):
     def _compute_contact_current(
         self, sse_lesser: DSBSparse, sse_greater: DSBSparse, g_: tuple[DSBSparse, ...]
     ) -> None:
-        """Computes the contact current."""
+        """Computes the contact current.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser self-energy.
+        sse_greater : DSBSparse
+            The greater self-energy.
+        g_ : tuple[DSBSparse, ...]
+            The Green's function tuple. In the order (lesser, greater,
+            retarded).
+        """
         g_lesser, g_greater, __ = g_
 
         self.i_left = xp.trace(
@@ -269,7 +314,18 @@ class ElectronSolver(SubsystemSolver):
         sse_greater: DSBSparse,
         sse_retarded: DSBSparse,
     ):
-        """Recovers the contact OBC blocks."""
+        """Recovers the stashed contact OBC blocks.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser self-energy.
+        sse_greater : DSBSparse
+            The greater self-energy.
+        sse_retarded : DSBSparse
+            The retarded self-energy.
+
+        """
         sse_retarded.blocks[0, 0] = self.obc_blocks_retarded_left[:]
         sse_retarded.blocks[-1, -1] = self.obc_blocks_retarded_right[:]
         sse_lesser.blocks[0, 0] = self.obc_blocks_lesser_left[:]
@@ -284,7 +340,21 @@ class ElectronSolver(SubsystemSolver):
         sse_retarded: DSBSparse,
         out: tuple[DSBSparse, ...],
     ):
-        """Solves for the lesser electron Green's function."""
+        """Solves for the electron Green's function.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser self-energy.
+        sse_greater : DSBSparse
+            The greater self-energy.
+        sse_retarded : DSBSparse
+            The retarded self-energy.
+        out : tuple[DSBSparse, ...]
+            The output matrices. The order is (lesser, greater,
+            retarded).
+
+        """
         times = []
         self._stash_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 

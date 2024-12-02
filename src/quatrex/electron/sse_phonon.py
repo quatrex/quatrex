@@ -2,7 +2,7 @@
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -11,12 +11,21 @@ from quatrex.core.statistics import bose_einstein
 
 
 class SigmaPhonon(ScatteringSelfEnergy):
-    """Computes the lesser electron-photon self-energy."""
+    """Computes the electron-photon self-energy.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The configuration object.
+    electron_energies : NDArray, optional
+        The electron energies.
+
+    """
 
     def __init__(
         self,
         config: QuatrexConfig,
-        electron_energies: xp.ndarray | None = None,
+        electron_energies: NDArray | None = None,
     ) -> None:
         """Initializes the self-energy."""
 
@@ -69,7 +78,19 @@ class SigmaPhonon(ScatteringSelfEnergy):
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
     ) -> None:
-        """Computes the electron-phonon self-energy."""
+        """Computes the electron-phonon self-energy.
+
+        Parameters
+        ----------
+        g_lesser : DSBSparse
+            The lesser Green's function.
+        g_greater : DSBSparse
+            The greater Green's function.
+        out : tuple[DSBSparse, ...]
+            The output matrices for the self-energy. The order is
+            sigma_lesser, sigma_greater, sigma_retarded.
+
+        """
         return self._compute_pseudo_scattering(g_lesser, g_greater, out)
 
     def _compute_pseudo_scattering(

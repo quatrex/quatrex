@@ -1,12 +1,14 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -24,7 +26,9 @@ from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
 
-def _get_allocator(dsbsparse_type: DSBSparse, system_matrix: DSBSparse) -> DSBSparse:
+def _get_allocator(
+    dsbsparse_type: DSBSparse, system_matrix: DSBSparse
+) -> Callable[[], DSBSparse]:
     """Returns an allocation factory for the given DSBSparse type.
 
     Parameters
@@ -35,6 +39,11 @@ def _get_allocator(dsbsparse_type: DSBSparse, system_matrix: DSBSparse) -> DSBSp
         The system matrix to allocate the DSBSparse type for. The
         sparsity pattern of the system matrix is used to allocate
         the DSBSparse matrix.
+
+    Returns
+    -------
+    Callable[[], DSBSparse]
+        The allocation function.
 
     """
 
@@ -56,6 +65,8 @@ class SCBAData:
 
     def __init__(self, scba: "SCBA") -> None:
         """Initializes the SCBA data."""
+        # TODO: This needs to be rewritten, to take interaction cutoffs
+        # into account.
 
         allocate_electron_quantity = _get_allocator(
             scba.compute_config.dbsparse_type,
@@ -114,49 +125,53 @@ class SCBAData:
 
 @dataclass
 class Observables:
+    """Observable quantities for the SCBA."""
+
     # --- Electrons ----------------------------------------------------
-    electron_ldos: xp.ndarray = None
-    electron_density: xp.ndarray = None
-    hole_density: xp.ndarray = None
+    electron_ldos: NDArray = None
+    electron_density: NDArray = None
+    hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
 
-    electron_electron_scattering_rate: xp.ndarray = None
-    electron_photon_scattering_rate: xp.ndarray = None
-    electron_phonon_scattering_rate: xp.ndarray = None
+    excess_charge_density: NDArray = None
 
-    sigma_retarded_density: xp.ndarray = None
-    sigma_lesser_density: xp.ndarray = None
-    sigma_greater_density: xp.ndarray = None
+    electron_electron_scattering_rate: NDArray = None
+    electron_photon_scattering_rate: NDArray = None
+    electron_phonon_scattering_rate: NDArray = None
+
+    sigma_retarded_density: NDArray = None
+    sigma_lesser_density: NDArray = None
+    sigma_greater_density: NDArray = None
 
     # --- Coulomb screening --------------------------------------------
-    w_retarded_density: xp.ndarray = None
-    w_lesser_density: xp.ndarray = None
-    w_greater_density: xp.ndarray = None
+    w_retarded_density: NDArray = None
+    w_lesser_density: NDArray = None
+    w_greater_density: NDArray = None
 
-    p_retarded_density: xp.ndarray = None
-    p_lesser_density: xp.ndarray = None
-    p_greater_density: xp.ndarray = None
+    p_retarded_density: NDArray = None
+    p_lesser_density: NDArray = None
+    p_greater_density: NDArray = None
 
     # --- Photons ------------------------------------------------------
-    pi_photon_retarded_density: xp.ndarray = None
-    pi_photon_lesser_density: xp.ndarray = None
-    pi_photon_greater_density: xp.ndarray = None
+    pi_photon_retarded_density: NDArray = None
+    pi_photon_lesser_density: NDArray = None
+    pi_photon_greater_density: NDArray = None
 
-    d_photon_retarded_density: xp.ndarray = None
-    d_photon_lesser_density: xp.ndarray = None
-    d_photon_greater_density: xp.ndarray = None
+    d_photon_retarded_density: NDArray = None
+    d_photon_lesser_density: NDArray = None
+    d_photon_greater_density: NDArray = None
 
-    photon_current_density: xp.ndarray = None
+    photon_current_density: NDArray = None
 
     # --- Phonons ------------------------------------------------------
-    pi_phonon_retarded_density: xp.ndarray = None
-    pi_phonon_lesser_density: xp.ndarray = None
-    pi_phonon_greater_density: xp.ndarray = None
-    d_phonon_retarded_density: xp.ndarray = None
-    d_phonon_lesser_density: xp.ndarray = None
-    d_phonon_greater_density: xp.ndarray = None
+    pi_phonon_retarded_density: NDArray = None
+    pi_phonon_lesser_density: NDArray = None
+    pi_phonon_greater_density: NDArray = None
+    d_phonon_retarded_density: NDArray = None
+    d_phonon_lesser_density: NDArray = None
+    d_phonon_greater_density: NDArray = None
 
-    thermal_current: xp.ndarray = None
+    thermal_current: NDArray = None
 
 
 class SCBA:
@@ -167,14 +182,16 @@ class SCBA:
     quatrex_config : Path
         Quatrex configuration file.
     compute_config : Path, optional
-        Compute configuration file.
+        Compute configuration file, by default None. If None, the
+        default compute parameters are used.
 
     """
 
+    @time_range()
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig = None,
+        compute_config: ComputeConfig | None = None,
     ) -> None:
         """Initializes an SCBA instance."""
         self.quatrex_config = quatrex_config
@@ -423,19 +440,35 @@ class SCBA:
         self.observables.electron_ldos = -density(
             self.data.g_retarded,
             self.electron_solver.overlap_sparray,
-        )
+        ) / (2 * xp.pi)
         self.observables.electron_density = density(
             self.data.g_lesser,
             self.electron_solver.overlap_sparray,
-        )
+        ) / (2 * xp.pi)
         self.observables.hole_density = -density(
             self.data.g_greater,
             self.electron_solver.overlap_sparray,
-        )
+        ) / (2 * xp.pi)
 
         self.observables.electron_current = dict(
             zip(("left", "right"), contact_currents(self.electron_solver))
         )
+
+        average_fermi_level = (
+            self.quatrex_config.electron.left_fermi_level
+            + self.quatrex_config.electron.right_fermi_level
+        ) / 2
+        fermi_level_index = xp.argmin(
+            xp.abs(self.electron_energies - average_fermi_level)
+        )
+        dE = self.electron_energies[1] - self.electron_energies[0]
+        electron_density = (
+            xp.sum(self.observables.electron_density[fermi_level_index:], axis=0) * dE
+        )
+        hole_density = (
+            xp.sum(self.observables.hole_density[:fermi_level_index], axis=0) * dE
+        )
+        self.observables.excess_charge_density = electron_density - hole_density
 
     def run(self) -> None:
         """Runs the SCBA to convergence."""
@@ -518,6 +551,7 @@ class SCBA:
                     if comm.rank == 0
                     else None
                 )
+                self._compute_observables()
                 break
             t_convergence = time.perf_counter() - times.pop()
             (

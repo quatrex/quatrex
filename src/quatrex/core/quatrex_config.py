@@ -1,4 +1,4 @@
-# Copyright 2023-2025 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import os
 import tomllib
@@ -18,6 +18,10 @@ from typing_extensions import Self
 
 
 class SCSPConfig(BaseModel):
+    """Options for the self-consistent Schrödinger-Poisson loop."""
+
+    model_config = ConfigDict(extra="forbid")
+
     min_iterations: PositiveInt = 1
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
@@ -26,6 +30,10 @@ class SCSPConfig(BaseModel):
 
 
 class SCBAConfig(BaseModel):
+    """Options for the self-consistent Born approximation."""
+
+    model_config = ConfigDict(extra="forbid")
+
     min_iterations: PositiveInt = 1
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
@@ -40,16 +48,25 @@ class SCBAConfig(BaseModel):
 
 
 class PoissonConfig(BaseModel):
+    """Options for the Poisson solver."""
+
     model_config = ConfigDict(extra="forbid")
+
     model: Literal["point-charge", "orbital"] = "point-charge"
     max_iterations: PositiveInt = 100
     convergence_tol: PositiveFloat = 1e-5
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
+    rho_shift: NonNegativeFloat = 1e-8
+    cg_tol: PositiveFloat = 1e-5
+    cg_max_iter: PositiveInt = 100
+
     num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
 
 
 class MemoizerConfig(BaseModel):
+    """Options for memoizing wrappers."""
+
     model_config = ConfigDict(extra="forbid")
 
     enable: bool = True
@@ -58,6 +75,8 @@ class MemoizerConfig(BaseModel):
 
 
 class OBCConfig(BaseModel):
+    """Options for open-boundary condition (OBC) solvers."""
+
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
@@ -68,7 +87,7 @@ class OBCConfig(BaseModel):
     min_decay: PositiveFloat = 1e-6
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = 2
-    x_ii_formula: Literal["self-energy", "direct", "stabilized"] = "self-energy"
+    x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 1000
@@ -86,6 +105,8 @@ class OBCConfig(BaseModel):
 
 
 class LyapunovConfig(BaseModel):
+    """Options for solving the Lyapunov equation."""
+
     model_config = ConfigDict(extra="forbid")
     algorithm: Literal["spectral", "doubling", "vectorize"] = "spectral"
 
@@ -97,6 +118,8 @@ class LyapunovConfig(BaseModel):
 
 
 class ElectronConfig(BaseModel):
+    """Options for the electronic subsystem solver."""
+
     model_config = ConfigDict(extra="forbid")
     solver: Literal["rgf", "inv"] = "rgf"
 
@@ -118,6 +141,7 @@ class ElectronConfig(BaseModel):
 
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
+        """Sets the left and right Fermi levels if not already set."""
         if (self.left_fermi_level is None) != (self.right_fermi_level is None):
             raise ValueError(
                 "Either both left and right Fermi levels must be set or neither."
@@ -134,6 +158,7 @@ class ElectronConfig(BaseModel):
 
     @model_validator(mode="after")
     def set_left_right_temperatures(self) -> Self:
+        """Sets the left and right temperatures if not already set."""
         if (self.left_temperature is None) != (self.right_temperature is None):
             raise ValueError(
                 "Either both left and right temperatures must be set or neither."
@@ -147,6 +172,8 @@ class ElectronConfig(BaseModel):
 
 
 class CoulombScreeningConfig(BaseModel):
+    """Options for the Coulomb screening solver."""
+
     model_config = ConfigDict(extra="forbid")
 
     solver: Literal["rgf", "inv"] = "rgf"
@@ -160,6 +187,8 @@ class CoulombScreeningConfig(BaseModel):
 
 
 class PhotonConfig(BaseModel):
+    """Options for the optical degrees of freedom."""
+
     model_config = ConfigDict(extra="forbid")
 
     solver: Literal["rgf", "inv"] = "rgf"
@@ -168,6 +197,8 @@ class PhotonConfig(BaseModel):
 
 
 class PhononConfig(BaseModel):
+    """Options for the thermal degrees of freedom."""
+
     model_config = ConfigDict(extra="forbid")
 
     solver: Literal["rgf", "inv"] = "rgf"
@@ -181,6 +212,7 @@ class PhononConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
+        """Check if 'phonon_energy' and 'deformation_potential' are set."""
         if self.model == "pseudo-scattering" and (
             self.phonon_energy is None or self.deformation_potential is None
         ):
@@ -190,6 +222,8 @@ class PhononConfig(BaseModel):
 
 
 class QuatrexConfig(BaseModel):
+    """Top-level simulation configuration."""
+
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
@@ -209,21 +243,36 @@ class QuatrexConfig(BaseModel):
 
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:
+        """Resolves the config directory path."""
         self.config_dir = Path(self.config_dir).resolve()
         return self
 
     @model_validator(mode="after")
     def resolve_simulation_dir(self):
+        """Resolves the simulation directory path."""
         self.simulation_dir = (self.config_dir / self.simulation_dir).resolve()
         return self
 
     @property
     def input_dir(self) -> Path:
+        """Returns the input directory path."""
         return self.simulation_dir / "inputs/"
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:
-    """Reads the TOML config file."""
+    """Reads the TOML config file.
+
+    Parameters
+    ----------
+    config_file : Path
+        Path to the TOML configuration file.
+
+    Returns
+    -------
+    QuatrexConfig
+        The parsed configuration object.
+
+    """
 
     config_file = Path(config_file).resolve()
 

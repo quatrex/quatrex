@@ -1,8 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 
 from quatrex.electron import ElectronSolver
@@ -10,11 +9,29 @@ from quatrex.electron import ElectronSolver
 
 def get_block(
     coo: sparse.coo_matrix,
-    block_sizes: xp.ndarray,
-    block_offsets: xp.ndarray,
+    block_sizes: NDArray,
+    block_offsets: NDArray,
     index: tuple,
-) -> xp.ndarray:
-    """Gets a block from a COO matrix."""
+) -> NDArray:
+    """Gets a block from a COO matrix.
+
+    Parameters
+    ----------
+    coo : sparse.coo_matrix
+        The COO matrix.
+    block_sizes : NDArray
+        The block sizes.
+    block_offsets : NDArray
+        The block offsets.
+    index : tuple
+        The index of the block to extract.
+
+    Returns
+    -------
+    block : NDArray
+        The requested, dense block.
+
+    """
     row, col = index
 
     mask = (
@@ -32,41 +49,68 @@ def get_block(
     return block
 
 
-def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> np.ndarray:
-    """Computes the density from the Green's function."""
+def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
+    """Computes the density from Green's function and overlap matrix.
+
+    Parameters
+    ----------
+    x : DSBSparse
+        The Green's function.
+    overlap : sparse.spmatrix, optional
+        The overlap matrix, by default None.
+
+    Returns
+    -------
+    NDArray
+        The density, i.e. the imaginary part of the diagonal of the
+        Green's function.
+
+    """
     if overlap is None:
         local_density = x.diagonal().imag
-        return np.vstack(comm.allgather(local_density))
+        return xp.vstack(comm.allgather(local_density))
 
     local_density = []
     overlap = overlap.tocoo()
     for i in range(x.num_blocks):
         overlap_diag = get_block(overlap, x.block_sizes, x.block_offsets, (i, i))
-        local_density_slice = np.diagonal(
+        local_density_slice = xp.diagonal(
             x.blocks[i, i] @ overlap_diag, axis1=-2, axis2=-1
         ).copy()
         if i < x.num_blocks - 1:
             overlap_upper = get_block(
                 overlap, x.block_sizes, x.block_offsets, (i + 1, i)
             )
-            local_density_slice += np.diagonal(
+            local_density_slice += xp.diagonal(
                 x.blocks[i, i + 1] @ overlap_upper, axis1=-2, axis2=-1
             )
         if i > 0:
             overlap_lower = get_block(
                 overlap, x.block_sizes, x.block_offsets, (i - 1, i)
             )
-            local_density_slice += np.diagonal(
+            local_density_slice += xp.diagonal(
                 x.blocks[i, i - 1] @ overlap_lower, axis1=-2, axis2=-1
             )
 
         local_density.append(local_density_slice.imag)
 
-    return np.vstack(comm.allgather(np.hstack(local_density)))
+    return xp.vstack(comm.allgather(xp.hstack(local_density)))
 
 
-def contact_currents(solver: ElectronSolver) -> np.ndarray:
-    """Computes the contact currents."""
-    i_left = np.hstack(comm.allgather(solver.i_left))
-    i_right = np.hstack(comm.allgather(solver.i_right))
+def contact_currents(solver: ElectronSolver) -> tuple[NDArray, NDArray]:
+    """Computes the contact currents.
+
+    Parameters
+    ----------
+    solver : ElectronSolver
+        The electron solver.
+
+    Returns
+    -------
+    NDArray
+        The contact currents, gathered across all participating ranks.
+
+    """
+    i_left = xp.hstack(comm.allgather(solver.i_left))
+    i_right = xp.hstack(comm.allgather(solver.i_right))
     return i_left, i_right

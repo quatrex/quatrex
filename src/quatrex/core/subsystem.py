@@ -2,8 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-import numpy as np
-from qttools import lyapunov, obc
+from qttools import NDArray, lyapunov, obc
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 from qttools.nevp import NEVP, Beyn, Full
@@ -37,7 +36,7 @@ class SubsystemSolver(ABC):
         self,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
-        energies: np.ndarray,
+        energies: NDArray,
     ) -> None:
         """Initializes the solver."""
         self.energies = energies
@@ -52,7 +51,19 @@ class SubsystemSolver(ABC):
         )
 
     def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
-        """Configures the NEVP solver from the config."""
+        """Configures the NEVP solver from the config.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            The OBC configuration.
+
+        Returns
+        -------
+        NEVP
+            The configured NEVP solver.
+
+        """
         if obc_config.nevp_solver == "beyn":
             return Beyn(
                 r_o=obc_config.r_o,
@@ -68,7 +79,19 @@ class SubsystemSolver(ABC):
         )
 
     def _configure_obc(self, obc_config: OBCConfig) -> obc.OBCSolver:
-        """Configures the OBC algorithm from the config."""
+        """Configures the OBC algorithm from the config.
+
+        Parameters
+        ----------
+        obc_config : OBCConfig
+            The OBC configuration.
+
+        Returns
+        -------
+        obc.OBCSolver
+            The configured OBC solver.
+
+        """
         if obc_config.algorithm == "sancho-rubio":
             obc_solver = obc.SanchoRubio(
                 obc_config.max_iterations, obc_config.convergence_tol
@@ -102,7 +125,19 @@ class SubsystemSolver(ABC):
     def _configure_lyapunov(
         self, lyapunov_config: LyapunovConfig
     ) -> lyapunov.LyapunovSolver:
-        """Configures the Lyapunov solver from the config."""
+        """Configures the Lyapunov solver from the config.
+
+        Parameters
+        ----------
+        lyapunov_config : LyapunovConfig
+            The Lyapunov configuration.
+
+        Returns
+        -------
+        lyapunov.LyapunovSolver
+            The configured Lyapunov solver.
+
+        """
         if lyapunov_config.algorithm == "spectral":
             lyapunov_solver = lyapunov.Spectral()
         elif lyapunov_config.algorithm == "doubling":
@@ -125,7 +160,19 @@ class SubsystemSolver(ABC):
         return lyapunov_solver
 
     def _configure_solver(self, solver: str) -> GFSolver:
-        """Configures the solver algorithm from the config."""
+        """Configures the solver algorithm from the config.
+
+        Parameters
+        ----------
+        solver : str
+            The solver algorithm.
+
+        Returns
+        -------
+        GFSolver
+            The configured solver.
+
+        """
         if solver == "rgf":
             return RGF()
 
@@ -142,5 +189,19 @@ class SubsystemSolver(ABC):
         sse_retarded: DSBSparse,
         out: tuple[DSBSparse, ...],
     ) -> None:
-        """Solves the system for a given energy."""
+        """Solves the system.
+
+        Parameters
+        ----------
+        sse_lesser : DSBSparse
+            The lesser self-energy.
+        sse_greater : DSBSparse
+            The greater self-energy.
+        sse_retarded : DSBSparse
+            The retarded self-energy.
+        out : tuple[DSBSparse, ...]
+            The output matrices. The order is (lesser, greater,
+            retarded).
+
+        """
         ...

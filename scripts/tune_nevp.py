@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from qttools import xp
 from qttools.nevp import Beyn, Full
 from qttools.obc import Spectral
 from scipy import sparse
@@ -22,6 +21,11 @@ class BeynTuner:
         The quatrex config file.
     num_energy_samples : int, optional
         The number of energy samples to use for tuning. Defaults to 100.
+    min_num_quad_points : int, optional
+        The minimum number of quadrature points to use. Defaults to 5.
+    max_num_quad_points : int, optional
+        The maximum number of quadrature points to use. Defaults to 40.
+
     """
 
     def __init__(
@@ -46,14 +50,14 @@ class BeynTuner:
 
         hamiltonian = (
             sparse.load_npz(config.input_dir / "hamiltonian.npz")
-            .astype(xp.complex128)
+            .astype(np.complex128)
             .tolil()
         )
         block_sizes = np.load(config.input_dir / "block_sizes.npy")
         try:
             overlap = (
                 sparse.load_npz(config.input_dir / "overlap.npz")
-                .astype(xp.complex128)
+                .astype(np.complex128)
                 .tolil()
             )
         except FileNotFoundError:

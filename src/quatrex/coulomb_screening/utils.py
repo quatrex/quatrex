@@ -1,19 +1,38 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
 
 def assemble_boundary_blocks(
-    diag_left: xp.ndarray,
-    right: xp.ndarray,
-    below: xp.ndarray,
-    diag_right: xp.ndarray,
-    above: xp.ndarray,
-    left: xp.array,
-    mat: "DSBSparse",
+    diag_left: NDArray,
+    right: NDArray,
+    below: NDArray,
+    diag_right: NDArray,
+    above: NDArray,
+    left: NDArray,
+    mat: DSBSparse,
 ) -> None:
-    """Assembles the boundary blocks from the smaller blocks of input Hamiltonian."""
+    """Assembles boundary blocks from the small system matrix blocks.
+
+    Parameters
+    ----------
+    diag_left : NDArray
+        The diagonal left block.
+    right : NDArray
+        The right block.
+    below : NDArray
+        The below block.
+    diag_right : NDArray
+        The diagonal right block.
+    above : NDArray
+        The above block.
+    left : NDArrays
+        The left block.
+    mat : DSBSparse
+        The small system matrix.
+
+    """
     diag_left[:] = xp.concatenate(
         (
             xp.concatenate(

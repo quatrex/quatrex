@@ -1,7 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-import numpy as np
-from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
@@ -44,16 +42,16 @@ class SigmaPhonon(ScatteringSelfEnergy):
             )
 
             # energy + hbar * omega
-            # <=> np.roll(self.electron_energies, -upshift)[:-upshift]
-            self.upshift = np.argmin(
-                np.abs(electron_energies - (electron_energies[0] + self.phonon_energy))
+            # <=> xp.roll(self.electron_energies, -upshift)[:-upshift]
+            self.upshift = xp.argmin(
+                xp.abs(electron_energies - (electron_energies[0] + self.phonon_energy))
             )
             # energy - hbar * omega
-            # <=> np.roll(self.electron_energies, downshift)[downshift:]
+            # <=> xp.roll(self.electron_energies, downshift)[downshift:]
             self.downshift = (
                 electron_energies.size
-                - np.argmin(
-                    np.abs(
+                - xp.argmin(
+                    xp.abs(
                         electron_energies - (electron_energies[-1] - self.phonon_energy)
                     )
                 )
@@ -140,18 +138,18 @@ class SigmaPhonon(ScatteringSelfEnergy):
         #     self.deformation_potential**2
         #     * (
         #         self.occupancy
-        #         * np.roll(g_lesser.data, self.downshift, axis=0)[self.totalshift :]
+        #         * xp.roll(g_lesser.data, self.downshift, axis=0)[self.totalshift :]
         #         + (self.occupancy + 1)
-        #         * np.roll(g_lesser.data, -self.upshift, axis=0)[: -self.totalshift]
+        #         * xp.roll(g_lesser.data, -self.upshift, axis=0)[: -self.totalshift]
         #     )
         # )
         # sigma_greater._data[stack_padding_inds, ..., :nnz_stop] = (
         #     self.deformation_potential**2
         #     * (
         #         self.occupancy
-        #         * np.roll(g_greater.data, -self.upshift, axis=0)[: -self.totalshift]
+        #         * xp.roll(g_greater.data, -self.upshift, axis=0)[: -self.totalshift]
         #         + (self.occupancy + 1)
-        #         * np.roll(g_greater.data, self.downshift, axis=0)[self.totalshift :]
+        #         * xp.roll(g_greater.data, self.downshift, axis=0)[self.totalshift :]
         #     )
         # )
 
@@ -159,11 +157,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
         sigma_lesser._data.real = 0.0
         sigma_greater._data.real = 0.0
 
-        sigma_retarded._data[
-            sigma_retarded._stack_padding_mask,
-            ...,
-            : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] += 0.5 * (sigma_greater.data - sigma_lesser.data)
+        sigma_retarded.data += 0.5 * (sigma_greater.data - sigma_lesser.data)
 
         # Transpose the matrices back to the original stack distribution.
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):

@@ -1,6 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.utils.mpi_utils import distributed_load
@@ -180,21 +179,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         # Compute the full self-energy using the convolution theorem.
         # Second term are corrections for negative frequencies that
         # where cut off by the polarization calculation.
-        sigma_lesser._data[
-            sigma_lesser._stack_padding_mask,
-            ...,
-            : sigma_lesser.nnz_section_sizes[comm.rank],
-        ] += self.prefactor * (
+        sigma_lesser.data += self.prefactor * (
             fft_convolve(g_lesser.data, self.w_lesser_reduced.data)[: self.ne]
             - fft_correlate(g_lesser.data, self.w_greater_reduced.data.conj())[
                 self.ne - 1 :
             ]
         )
-        sigma_greater._data[
-            sigma_greater._stack_padding_mask,
-            ...,
-            : sigma_greater.nnz_section_sizes[comm.rank],
-        ] += self.prefactor * (
+        sigma_greater.data += self.prefactor * (
             fft_convolve(g_greater.data, self.w_greater_reduced.data)[: self.ne]
             - fft_correlate(g_greater.data, self.w_lesser_reduced.data.conj())[
                 self.ne - 1 :
@@ -204,13 +195,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         # Compute retarded self-energy with a Hilbert transform.
         sigma_antihermitian = sigma_greater.data - sigma_lesser.data
         sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-        sigma_retarded._data[
-            sigma_retarded._stack_padding_mask,
-            ...,
-            : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] += (
-            1j * sigma_hermitian + sigma_antihermitian / 2
-        )
+        sigma_retarded.data += 1j * sigma_hermitian + sigma_antihermitian / 2
 
         # Transpose the matrices to stack distribution.
         for m in (
@@ -291,12 +276,6 @@ class SigmaFock(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
         # Compute the electron density by summing over energies.
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-        sigma_retarded._data[
-            sigma_retarded._stack_padding_mask,
-            ...,
-            : sigma_retarded.nnz_section_sizes[comm.rank],
-        ] += (
-            gl_density * self.coulomb_matrix.data
-        )
+        sigma_retarded.data += gl_density * self.coulomb_matrix.data
         for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
             m.dtranspose() if m.distribution_state != "stack" else None

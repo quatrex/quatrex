@@ -14,8 +14,8 @@ class ComputeConfig(BaseModel):
 
     dsbsparse_type: DSBSparse = DSBCOO
 
-    @field_validator("dbsparse_type", mode="before")
-    def set_dbsparse(cls, value) -> DSBSparse:
+    @field_validator("dsbsparse_type", mode="before")
+    def set_dsbsparse(cls, value) -> DSBSparse:
         """Converts the string value to the corresponding DSBSparse object."""
         if value == "DSBCSR":
             return DSBCSR

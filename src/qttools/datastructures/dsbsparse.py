@@ -241,13 +241,7 @@ class DSBSparse(ABC):
 
     @property
     def data(self) -> NDArray:
-        """Returns the local slice of the data, masking the padding.
-
-        This does not return a copy of the data, but a view. This is
-        also why we do not need a setter method (one can just set
-        `.data` directly).
-
-        """
+        """Returns the local slice of the data, masking the padding."""
         if self.distribution_state == "stack":
             return self._data[
                 : self.stack_section_sizes[comm.rank],
@@ -257,6 +251,20 @@ class DSBSparse(ABC):
         return self._data[
             self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
         ]
+
+    @data.setter
+    def data(self, value: NDArray) -> None:
+        """Sets the local slice of the data."""
+        if self.distribution_state == "stack":
+            self._data[
+                : self.stack_section_sizes[comm.rank],
+                ...,
+                : sum(self.nnz_section_sizes),
+            ] = value
+        else:
+            self._data[
+                self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
+            ] = value
 
     def __repr__(self) -> str:
         """Returns a string representation of the object."""

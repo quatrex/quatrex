@@ -75,7 +75,7 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Construct the bare system matrix.
-        self.bare_system_matrix = compute_config.dbsparse_type.from_sparray(
+        self.bare_system_matrix = compute_config.dsbsparse_type.from_sparray(
             self.hamiltonian_sparray,
             block_sizes=self.block_sizes,
             global_stack_shape=(self.energies.size,),
@@ -107,7 +107,7 @@ class ElectronSolver(SubsystemSolver):
 
         self.bare_system_matrix -= sparse.diags(self.potential)
 
-        self.system_matrix = compute_config.dbsparse_type.zeros_like(
+        self.system_matrix = compute_config.dsbsparse_type.zeros_like(
             self.bare_system_matrix
         )
 

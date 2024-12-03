@@ -116,13 +116,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             quatrex_config.input_dir / "hamiltonian.npz"
         )
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        self.w_lesser_reduced = compute_config.dbsparse_type.from_sparray(
+        self.w_lesser_reduced = compute_config.dsbsparse_type.from_sparray(
             hamiltonian_sparray,
             block_sizes,
             (self.ne,),
             densify_blocks=[(i, i) for i in range(len(block_sizes))],
         )
-        self.w_greater_reduced = compute_config.dbsparse_type.zeros_like(
+        self.w_greater_reduced = compute_config.dsbsparse_type.zeros_like(
             self.w_lesser_reduced
         )
 
@@ -258,7 +258,7 @@ class SigmaFock(ScatteringSelfEnergy):
             quatrex_config.input_dir / "hamiltonian.npz"
         )
         # Create the DSBSparse object.
-        self.coulomb_matrix = compute_config.dbsparse_type.from_sparray(
+        self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             sparse.coo_matrix(
                 (
                     xp.asarray(

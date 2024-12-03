@@ -169,7 +169,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 f"{self.small_block_sizes.sum()} != {self.coulomb_matrix_sparray.shape[0]}"
             )
         # Create DBSparse matrix from the Coulomb matrix.
-        self.coulomb_matrix = compute_config.dbsparse_type.from_sparray(
+        self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             self.coulomb_matrix_sparray,
             block_sizes=self.small_block_sizes,
             global_stack_shape=(self.energies.size,),
@@ -186,7 +186,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
             ),
         )
-        self.dummy_identity = compute_config.dbsparse_type.from_sparray(
+        self.dummy_identity = compute_config.dsbsparse_type.from_sparray(
             dummy_identity_sparray,
             block_sizes=self.small_block_sizes,
             global_stack_shape=(self.energies.size,),
@@ -235,7 +235,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             raise ValueError("Overlap matrix and Coulomb matrix have different shapes.")
 
         # Construct the bare system matrix.
-        self.bare_system_matrix = compute_config.dbsparse_type.from_sparray(
+        self.bare_system_matrix = compute_config.dsbsparse_type.from_sparray(
             sparse.coo_matrix(
                 (
                     xp.zeros(len(rows), dtype=self.coulomb_matrix_sparray.dtype),
@@ -250,7 +250,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Add the overlap matrix to the bare system matrix.
         self.bare_system_matrix += self.overlap_sparray
         # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dbsparse_type.zeros_like(
+        self.system_matrix = compute_config.dsbsparse_type.zeros_like(
             self.bare_system_matrix
         )
 
@@ -281,7 +281,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.obc_blocks_right["diag"],
         )
         # Allocate memory for the Coulomb matrix times polarization.
-        self.v_times_p_retarded = compute_config.dbsparse_type.from_sparray(
+        self.v_times_p_retarded = compute_config.dsbsparse_type.from_sparray(
             sparse.coo_matrix(
                 (
                     xp.zeros(len(rows), dtype=self.coulomb_matrix_sparray.dtype),
@@ -294,8 +294,10 @@ class CoulombScreeningSolver(SubsystemSolver):
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
         # Allocate memory for the L_lesser and L_greater matrices.
-        self.l_lesser = compute_config.dbsparse_type.zeros_like(self.v_times_p_retarded)
-        self.l_greater = compute_config.dbsparse_type.zeros_like(
+        self.l_lesser = compute_config.dsbsparse_type.zeros_like(
+            self.v_times_p_retarded
+        )
+        self.l_greater = compute_config.dsbsparse_type.zeros_like(
             self.v_times_p_retarded,
         )
 

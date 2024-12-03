@@ -12,7 +12,7 @@ class ComputeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    dbsparse_type: DSBSparse = DSBCOO
+    dsbsparse_type: DSBSparse = DSBCOO
 
     @field_validator("dbsparse_type", mode="before")
     def set_dbsparse(cls, value) -> DSBSparse:

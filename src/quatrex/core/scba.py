@@ -69,7 +69,7 @@ class SCBAData:
         # into account.
 
         allocate_electron_quantity = _get_allocator(
-            scba.compute_config.dbsparse_type,
+            scba.compute_config.dsbsparse_type,
             scba.electron_solver.system_matrix,
         )
         self.sigma_retarded_prev = allocate_electron_quantity()
@@ -84,14 +84,14 @@ class SCBAData:
 
         if hasattr(scba, "coulomb_screening_solver"):
             allocate_polarization_quantity = _get_allocator(
-                scba.compute_config.dbsparse_type,
+                scba.compute_config.dsbsparse_type,
                 scba.electron_solver.system_matrix,
             )
             self.p_retarded = allocate_polarization_quantity()
             self.p_lesser = allocate_polarization_quantity()
             self.p_greater = allocate_polarization_quantity()
             allocate_coulomb_screening_quantity = _get_allocator(
-                scba.compute_config.dbsparse_type,
+                scba.compute_config.dsbsparse_type,
                 scba.coulomb_screening_solver.system_matrix,
             )
             self.w_retarded = allocate_coulomb_screening_quantity()
@@ -100,7 +100,7 @@ class SCBAData:
 
         if hasattr(scba, "photon_solver"):
             allocate_photon_quantity = _get_allocator(
-                scba.compute_config.dbsparse_type,
+                scba.compute_config.dsbsparse_type,
                 scba.photon_solver.system_matrix,
             )
             self.pi_photon_retarded = allocate_photon_quantity()
@@ -112,7 +112,7 @@ class SCBAData:
 
         if hasattr(scba, "phonon_solver"):
             allocate_phonon_quantity = _get_allocator(
-                scba.compute_config.dbsparse_type,
+                scba.compute_config.dsbsparse_type,
                 scba.phonon_solver.system_matrix,
             )
             self.pi_phonon_retarded = allocate_phonon_quantity()

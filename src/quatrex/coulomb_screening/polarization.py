@@ -2,9 +2,9 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
-
+from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
-
+from quatrex.core.utils import homogenize
 
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
@@ -33,16 +33,21 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     Parameters
     ----------
+    quatrex_config : Path
+        Quatrex configuration file.
     coulomb_screening_energies : NDArray
         The energies for the Coulomb screening
 
     """
 
-    def __init__(self, coulomb_screening_energies: NDArray) -> None:
+    def __init__(
+        self, quatrex_config: QuatrexConfig, coulomb_screening_energies: NDArray
+    ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
         self.ne = len(self.energies)
         self.prefactor = -1j / xp.pi * (self.energies[1] - self.energies[0])
+        self.homogenize = quatrex_config.electron.homogenize_polarization
 
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
@@ -62,7 +67,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         """
         p_lesser, p_greater, p_retarded = out
         # Transpose the matrices to nnz distribution.
-        for m in (g_lesser, g_greater, p_lesser, p_greater, p_retarded):
+        for m in (g_lesser, g_greater, p_lesser, p_greater):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         p_g_full = self.prefactor * fft_correlate(g_greater.data, -g_lesser.data.conj())
@@ -70,8 +75,23 @@ class PCoulombScreening(ScatteringSelfEnergy):
         # Fill the matrices with the data. Take second part of the energy convolution.
         p_lesser.data = p_l_full[self.ne - 1 :]
         p_greater.data = p_g_full[self.ne - 1 :]
-        p_retarded.data = (p_greater.data - p_lesser.data) / 2
 
         # Transpose the matrices to stack distribution.
-        for m in (g_lesser, g_greater, p_lesser, p_greater, p_retarded):
+        for m in (g_lesser, g_greater, p_lesser, p_greater):
             m.dtranspose() if m.distribution_state != "stack" else None
+
+        # Enforce anti-Hermitian symmetry and calculate Pr.
+        p_lesser.data = (p_lesser.data - p_lesser.ltranspose(copy=True).data.conj()) / 2
+        p_greater.data = (
+            p_greater.data - p_greater.ltranspose(copy=True).data.conj()
+        ) / 2
+        p_retarded.data = (p_greater.data - p_lesser.data) / 2
+
+        # Homogenize in case of flatband.
+        if self.homogenize:
+            from mpi4py.MPI import COMM_WORLD as comm
+            if comm.rank == 0:
+                print("Homogenizing polarization", flush=True)
+            homogenize(p_lesser)
+            homogenize(p_greater)
+            homogenize(p_retarded)

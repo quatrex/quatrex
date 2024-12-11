@@ -229,6 +229,7 @@ class SCBA:
                 self.quatrex_config, self.compute_config, self.electron_energies
             )
             self.p_coulomb_screening = PCoulombScreening(
+                self.quatrex_config,
                 self.coulomb_screening_energies
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(

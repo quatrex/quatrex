@@ -163,11 +163,17 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.small_block_sizes,
         ):
             raise ValueError("Block sizes do not match Coulomb matrix.")
-        if len(self.small_block_sizes) % 3 != 0:
+        self.new_block_size_factor = 3
+        if len(self.small_block_sizes) % self.new_block_size_factor != 0:
             # Not implemented yet.
-            raise ValueError("Number of blocks must be divisible by 3.")
+            raise ValueError(
+                f"Number of blocks must be divisible by {self.new_block_size_factor}."
+            )
         self.block_sizes = (
-            self.small_block_sizes[: len(self.small_block_sizes) // 3] * 3
+            self.small_block_sizes[
+                : len(self.small_block_sizes) // self.new_block_size_factor
+            ]
+            * self.new_block_size_factor
         )
         # Check that the provided block sizes match the coulomb matrix.
         if self.small_block_sizes.sum() != self.coulomb_matrix_sparray.shape[0]:
@@ -496,6 +502,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.obc_blocks_right["above"],
             self.obc_blocks_right["left"],
             self.system_matrix,
+            self.new_block_size_factor,
         )
         # Go back to normal block sizes.
         self._set_block_sizes(self.block_sizes)

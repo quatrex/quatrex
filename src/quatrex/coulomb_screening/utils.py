@@ -37,24 +37,27 @@ def assemble_boundary_blocks(
     """
     # TODO: Below is not fault-tolerant. Add checks.
     bs = diag_left.shape[1] // nbc
+    num_blocks = mat.block_sizes.size
     for i in range(nbc):
         for j in range(nbc):
             k = i - j
             diag_left[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
                 max(0, k), -min(0, k)
             ]
-            right[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
-                0, -k + nbc
-            ]
-            below[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
-                k + nbc, 0
-            ]
             diag_right[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
                 min(0, k) - 1, -max(0, k) - 1
             ]
-            above[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
-                k - nbc - 1, -1
-            ]
-            left[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
-                -1, -k - nbc - 1
-            ]
+            if -k + nbc < num_blocks:
+                right[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    0, -k + nbc
+                ]
+                above[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    k - nbc - 1, -1
+                ]
+            if k + nbc < num_blocks:
+                below[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    k + nbc, 0
+                ]
+                left[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    -1, -k - nbc - 1
+                ]

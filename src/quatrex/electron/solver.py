@@ -22,7 +22,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import get_periodic_superblocks, homogenize
+from quatrex.core.utils import assemble_kpoint_dsb, get_periodic_superblocks, homogenize
 
 profiler = Profiler()
 
@@ -123,12 +123,20 @@ class ElectronSolver(SubsystemSolver):
             )
 
         else:
-            hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
-            ).astype(xp.complex128)
+            try:
+                self.hamiltonian_sparray = distributed_load(
+                    quatrex_config.input_dir / "hamiltonian.npz"
+                ).astype(xp.complex128)
+                self.hamiltonian_dict = None
+            except FileNotFoundError:
+                self.hamiltonian_dict = distributed_load(
+                    quatrex_config.input_dir / "hamiltonian.pkl"
+                )
+                self.hamiltonian_sparray = sum(self.hamiltonian_dict.values())
             self.block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
+        number_of_kpoints = quatrex_config.electron.number_of_kpoints
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
@@ -178,7 +186,8 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape,
+            global_stack_shape=self.energies.shape
+            + tuple([k for k in number_of_kpoints if k > 1]),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -237,6 +246,7 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the Hamiltonian and overlap matrices are
         # Hermitian.
+        # TODO: Not implemented for k-points yet.
         if not self.hamiltonian.symmetry:
             self.hamiltonian.symmetrize()
         self.overlap_sparray = (
@@ -575,13 +585,29 @@ class ElectronSolver(SubsystemSolver):
 
         """
         self.system_matrix.data = 0.0
+        # TODO: prove that k-points don't matter here.
         self.system_matrix += self.overlap_sparray
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
-
-        self.system_matrix -= sparse.diags(self.potential, format="csr")
+        if self.hamiltonian_dict is None:
+            self.system_matrix -= sparse.diags(
+                self.potential, format="csr"
+            )
+        else:
+            number_of_kpoints = xp.array(
+                [
+                    1 if k <= 1 else k
+                    for k in self.quatrex_config.electron.number_of_kpoints
+                ]
+            )
+            assemble_kpoint_dsb(
+                self.system_matrix,
+                self.hamiltonian_dict,
+                number_of_kpoints,
+                0,
+            )
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 

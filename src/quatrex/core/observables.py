@@ -108,7 +108,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
 
         local_density.append(local_density_slice.imag)
 
-    local_density = xp.hstack(local_density)
+    local_density = xp.concatenate(local_density, axis=-1)
 
     return comm.stack.all_gather_v(
         local_density,

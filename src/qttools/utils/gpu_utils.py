@@ -89,9 +89,9 @@ def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
         return out
     if out is None:
         out = xp.empty_like(arr)
-        out.set(arr)
+        out[:] = arr
         return out
-    out.set(arr)
+    out = arr
     return out
 
 

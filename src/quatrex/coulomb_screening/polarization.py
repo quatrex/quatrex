@@ -2,9 +2,11 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
+
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.utils import homogenize
+
 
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
@@ -46,8 +48,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
         self.ne = len(self.energies)
-        self.prefactor = -1j / xp.pi * (self.energies[1] - self.energies[0])
-        self.homogenize = quatrex_config.electron.homogenize_polarization
+        self.prefactor = -1j / xp.pi * xp.abs(self.energies[1] - self.energies[0])
+        self.flatband = quatrex_config.electron.flatband
 
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
@@ -88,10 +90,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
 
         # Homogenize in case of flatband.
-        if self.homogenize:
-            from mpi4py.MPI import COMM_WORLD as comm
-            if comm.rank == 0:
-                print("Homogenizing polarization", flush=True)
+        if self.flatband:
             homogenize(p_lesser)
             homogenize(p_greater)
             homogenize(p_retarded)

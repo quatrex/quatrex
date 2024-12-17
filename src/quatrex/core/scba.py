@@ -229,8 +229,7 @@ class SCBA:
                 self.quatrex_config, self.compute_config, self.electron_energies
             )
             self.p_coulomb_screening = PCoulombScreening(
-                self.quatrex_config,
-                self.coulomb_screening_energies
+                self.quatrex_config, self.coulomb_screening_energies
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
@@ -303,6 +302,24 @@ class SCBA:
         self.data.sigma_retarded.data[:] = (
             (1 - mixing_factor) * self.data.sigma_retarded_prev.data
             + mixing_factor * self.data.sigma_retarded.data
+        )
+
+        # Symmetrization.
+        self.data.sigma_lesser.data = 0.5 * (
+            self.data.sigma_lesser.data
+            - self.data.sigma_lesser.ltranspose(copy=True).data.conj()
+        )
+        self.data.sigma_greater.data = 0.5 * (
+            self.data.sigma_greater.data
+            - self.data.sigma_greater.ltranspose(copy=True).data.conj()
+        )
+        self.data.sigma_retarded._data.imag = 0.0
+        self.data.sigma_retarded.data += 0.5 * (
+            self.data.sigma_greater.data - self.data.sigma_lesser.data
+        )
+        self.observables.sigma_retarded_density = -density(
+            self.data.sigma_retarded,
+            self.electron_solver.overlap_sparray,
         )
 
     def _has_converged(self) -> bool:

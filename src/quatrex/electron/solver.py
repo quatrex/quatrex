@@ -135,6 +135,8 @@ class ElectronSolver(SubsystemSolver):
         self.i_left = None
         self.i_right = None
 
+        self.fladband = quatrex_config.electron.flatband
+
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 
@@ -202,6 +204,9 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.blocks[-2, -1] + 1j * self.eta_obc * s_mn,
             "right",
         )
+
+        # NOTE: Here we should try to update the left and right fermi
+        # levels by doing peak detection on the contact DOS.
 
         # Apply the retarded boundary self-energy.
         self.system_matrix.blocks[0, 0] -= (
@@ -378,6 +383,25 @@ class ElectronSolver(SubsystemSolver):
 
         self._compute_contact_current(sse_lesser, sse_greater, out)
         self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
+
+        # NOTE: This filtering only works in flatband systems.
+        # Otherwise, the dos and charge densities should be summed per
+        # transport cell (in thw old code the trace is taken during
+        # RGF).
+        # TODO: make parameters settable.
+        if self.fladband:
+            g_lesser, g_greater, g_retarded = out
+            dos = -g_retarded.diagonal().imag.sum(1)
+            ne = g_lesser.diagonal().imag.sum(1)
+            nh = -g_greater.diagonal().imag.sum(1)
+            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
+            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
+            mask = (f1 > 1e-1) | (f2 > 1e-1)
+
+            assert g_lesser.distribution_state == "stack"
+            g_lesser.data[mask] = 0.0
+            g_greater.data[mask] = 0.0
+            g_retarded.data[mask] = 0.0
 
         (
             print(

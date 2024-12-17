@@ -223,7 +223,7 @@ class Spectral(OBCSolver):
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
 
             products = sum(
-                a_x @ vs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
+                a_x @ vs * ws[..., xp.newaxis, :] ** (i - len(a_xx) // 2)
                 for i, a_x in enumerate(a_xx)
             )
 
@@ -319,16 +319,20 @@ class Spectral(OBCSolver):
         if self.block_sections == 1:
             return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
 
-        batchsize, subblock_size, num_modes = vs.shape
+        # batchsize, subblock_size, num_modes = vs.shape
+        batchsize = vs.shape[:-2]
+        ndim_batch = len(batchsize)
+        subblock_size = vs.shape[-2]
+        num_modes = vs.shape[-1]
         block_size = subblock_size * self.block_sections
 
-        ws_upscaled = xp.array([ws**n for n in range(self.block_sections)]).swapaxes(
-            0, 1
+        ws_upscaled = xp.moveaxis(
+            xp.array([ws**n for n in range(self.block_sections)]), 0, ndim_batch
         )
 
         vs_upscaled = (
-            ws_upscaled[:, :, xp.newaxis, :] * vs[:, xp.newaxis, :, :]
-        ).reshape(batchsize, block_size, num_modes)
+            ws_upscaled[..., :, xp.newaxis, :] * vs[..., xp.newaxis, :, :]
+        ).reshape(*batchsize, block_size, num_modes)
 
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
@@ -373,10 +377,11 @@ class Spectral(OBCSolver):
 
         """
         # Equation (13.1).
-        x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-        for i, m in enumerate(mask):
+        x_ii_a_ij = xp.zeros(mask.shape[:-1] + a_ij.shape[-2:], dtype=a_ij.dtype)
+        for i in xp.ndindex(mask.shape[:-1]):
+            m = mask[i]
             vr = vs[i][:, m]
-            w = ws[i, m]
+            w = ws[i][m]
             # Moore-Penrose pseudoinverse.
             v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
             x_ii_a_ij[i] = vr / w @ v_inv

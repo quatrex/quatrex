@@ -21,7 +21,7 @@ if xp.__name__ == "cupy":
 
 
 @profiler.profile(level="api")
-def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
+def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 
     Parameters
@@ -37,10 +37,21 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
         The cross-correlation of the two arrays.
 
     """
-    n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fft(a.T, n, axis=1)
-    b_fft = xp.fft.fft(b[::-1].T, n, axis=1)
-    return xp.fft.ifft(a_fft * b_fft, axis=1).T
+    ne = a.shape[0] + b.shape[0] - 1
+    nka = a.shape[1:-1]
+    nkb = b.shape[1:-1]
+    a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
+    b_fft = xp.fft.fftn(
+        xp.flip(b, axis=(0,) + tuple(range(1, len(nkb) + 1))),
+        (ne,) + nkb,
+        axes=(0,) + tuple(range(1, len(nkb) + 1)),
+    )
+    # Don't really know why I have to roll the result, but it works.
+    return xp.roll(
+        xp.fft.ifftn(a_fft * b_fft, axes=(0,) + tuple(range(1, len(nka) + 1))),
+        shift=1,
+        axis=tuple(range(1, len(nka) + 1)),
+    )
 
 
 class PCoulombScreening(ScatteringSelfEnergy):
@@ -60,11 +71,17 @@ class PCoulombScreening(ScatteringSelfEnergy):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         coulomb_screening_energies: NDArray,
+        number_of_kpoints: xp.ndarray,
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
         self.ne = len(self.energies)
-        self.prefactor = -1j / xp.pi * xp.abs(self.energies[1] - self.energies[0])
+        self.prefactor = (
+            -1j
+            / xp.pi
+            * xp.abs(self.energies[1] - self.energies[0])
+            / xp.prod(number_of_kpoints)
+        )
         self.batch_size = compute_config.convolve.batch_size
 
     @profiler.profile(level="api")
@@ -154,8 +171,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    p_g_full = self.prefactor * fft_correlate(
-                        g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+                    p_g_full = self.prefactor * fft_correlate_kpoints(
+                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
                     )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the

@@ -177,7 +177,7 @@ class RGF(GFSolver):
 
         if return_current:
             # Allocate a buffer for the current.
-            current = xp.zeros((a.shape[0], a.num_blocks - 1), dtype=a.dtype)
+            current = xp.zeros((*a.shape[:-2], a.num_blocks - 1), dtype=a.dtype)
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
@@ -384,7 +384,7 @@ class RGF(GFSolver):
                         + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sg_ij
                     )
-                    current[stack_slice, i] = xp.trace(
+                    current[stack_slice, ..., i] = xp.trace(
                         sigma_greater_tilde @ xl_diag_blocks[j]
                         - xg_diag_blocks[j] @ sigma_lesser_tilde,
                         axis1=-2,

@@ -74,7 +74,7 @@ class Full(NEVP):
         )
         A = xp.concatenate([row] * (len(a_xx) - 1), axis=-2)
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
-        A[:, : B.shape[0], : B.shape[1]] -= B
+        A[..., : B.shape[0], : B.shape[1]] -= B
 
         w, v = linalg.eig(
             A,
@@ -85,7 +85,7 @@ class Full(NEVP):
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
         w = 1 / w + 1
-        v = v[:, : a_xx[0].shape[-1]]
+        v = v[..., : a_xx[0].shape[-1]]
 
         return w, v
 

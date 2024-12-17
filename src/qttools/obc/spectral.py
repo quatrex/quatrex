@@ -193,14 +193,15 @@ class Spectral(OBCSolver):
         """
 
         # match modes to the most opposite ones
-        diff = xp.abs(dEk_dk[:, :, xp.newaxis] + dEk_dk[:, xp.newaxis, :])
+        diff = xp.abs(dEk_dk[..., :, xp.newaxis] + dEk_dk[..., xp.newaxis, :])
         match_indices = xp.argmin(diff, axis=-1)
+
         ks_match = xp.array(
-            [batch[indices] for batch, indices in zip(ks, match_indices)]
-        )
+            [ks[i][match_indices[i]] for i in xp.ndindex(match_indices.shape[:-1])]
+        ).reshape(*match_indices.shape[:-1], ks.shape[-1])
         dEk_dk_match = xp.array(
-            [batch[indices] for batch, indices in zip(dEk_dk, match_indices)]
-        )
+            [dEk_dk[i][match_indices[i]] for i in xp.ndindex(match_indices.shape[:-1])]
+        ).reshape(*match_indices.shape[:-1], dEk_dk.shape[-1])
 
         # pair of modes decay slowly
         mask_pairwise_propagating = (
@@ -318,7 +319,7 @@ class Spectral(OBCSolver):
                 # NOTE: This consumes a lot of memory since
                 # the operators are explicitly calculated.
                 operators = sum(
-                    a_x[:, xp.newaxis, :, :]
+                    a_x[..., xp.newaxis, :, :]
                     * ws[..., xp.newaxis, xp.newaxis] ** (i - len(a_xx) // 2)
                     for i, a_x in enumerate(a_xx)
                 )
@@ -328,7 +329,7 @@ class Spectral(OBCSolver):
                 or self.residual_normalization is None
             ):
                 products = sum(
-                    a_x @ vrs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
+                    a_x @ vrs * ws[..., xp.newaxis, :] ** (i - len(a_xx) // 2)
                     for i, a_x in enumerate(a_xx)
                 ).swapaxes(-1, -2)[..., xp.newaxis]
             else:
@@ -440,16 +441,20 @@ class Spectral(OBCSolver):
         if self.block_sections == 1:
             return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
 
-        batchsize, subblock_size, num_modes = vs.shape
+        # batchsize, subblock_size, num_modes = vs.shape
+        batchsize = vs.shape[:-2]
+        ndim_batch = len(batchsize)
+        subblock_size = vs.shape[-2]
+        num_modes = vs.shape[-1]
         block_size = subblock_size * self.block_sections
 
-        ws_upscaled = xp.array([ws**n for n in range(self.block_sections)]).swapaxes(
-            0, 1
+        ws_upscaled = xp.moveaxis(
+            xp.array([ws**n for n in range(self.block_sections)]), 0, ndim_batch
         )
 
         vs_upscaled = (
-            ws_upscaled[:, :, xp.newaxis, :] * vs[:, xp.newaxis, :, :]
-        ).reshape(batchsize, block_size, num_modes)
+            ws_upscaled[..., :, xp.newaxis, :] * vs[..., xp.newaxis, :, :]
+        ).reshape(*batchsize, block_size, num_modes)
 
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
@@ -501,12 +506,13 @@ class Spectral(OBCSolver):
 
         if self.x_ii_formula == "self-energy":
             # Equation (13.1).
-            x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
+            x_ii_a_ij = xp.zeros(mask.shape[:-1] + a_ij.shape[-2:], dtype=a_ij.dtype)
+            for i in xp.ndindex(mask.shape[:-1]):
+                m = mask[i]
                 vr = vrs[i][:, m]
                 if self.two_sided:
                     vl = vls[i][:, m]
-                w = ws[i, m]
+                w = ws[i][m]
                 # Moore-Penrose pseudoinverse.
                 if self.two_sided:
                     v_inv = inv(vl.conj().T @ vr) @ vl.conj().T
@@ -519,10 +525,11 @@ class Spectral(OBCSolver):
 
         if self.x_ii_formula == "direct":
             # Equation (15).
-            x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
+            x_ii = xp.zeros((*mask.shape[:-1], *a_ij.shape[-2:]), dtype=a_ij.dtype)
+            for i in xp.ndindex(mask.shape[:-1]):
+                m = mask[i]
                 vr = vrs[i][:, m]
-                w = ws[i, m]
+                w = ws[i][m]
                 # "More stable" computation of the surface Green's function.
                 inverse = inv(
                     vr.conj().T @ a_ii[i] @ vr + vr.conj().T @ a_ji[i] @ vr / w

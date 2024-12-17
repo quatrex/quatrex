@@ -1,8 +1,8 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import pickle
 from pathlib import Path
 
-import pickle
 import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm

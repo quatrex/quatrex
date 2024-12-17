@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pickle
 import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
@@ -91,7 +92,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix not in [".npz", ".npy"]:
+    if path.suffix not in [".npz", ".npy", ".pkl"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
     if comm.rank == 0:
@@ -100,6 +101,9 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
+        elif path.suffix == ".pkl":
+            with open(path, "rb") as f:
+                arr = pickle.load(f)
 
     else:
         arr = None

@@ -122,7 +122,7 @@ class Beyn(NEVP):
             The projectors.
 
         """
-        batchsize = P_0.shape[0]
+        batchsize = P_0.shape[:-2]
         d = P_0.shape[-1]
 
         # Perform an SVD on the linear subspace projector.
@@ -136,7 +136,7 @@ class Beyn(NEVP):
         a = []
         u_out = []
         v_out = []
-        for i in range(batchsize):
+        for i in xp.ndindex(batchsize):
 
             ui, si, vhi = u[i], s[i], vh[i]
 
@@ -202,6 +202,7 @@ class Beyn(NEVP):
         """
 
         in_type = a_xx[0].dtype
+        stack_dimension = a_xx[0].ndim - 2
 
         # Determine quadrature points and weights.
         zeta = xp.arange(self.num_quad_points) + 1
@@ -211,13 +212,13 @@ class Beyn(NEVP):
         w = xp.ones(self.num_quad_points) / self.num_quad_points
 
         # Reshape to broadcast over batch dimension.
-        z_o = z_o.reshape(1, -1, 1, 1)
-        z_i = z_i.reshape(1, -1, 1, 1)
-        w = w.reshape(1, -1, 1, 1)
+        z_o = z_o.reshape(*(stack_dimension * (1,)), -1, 1, 1)
+        z_i = z_i.reshape(*(stack_dimension * (1,)), -1, 1, 1)
+        w = w.reshape(*(stack_dimension * (1,)), -1, 1, 1)
 
         q0 = xp.zeros_like(a_xx[0])
         q1 = xp.zeros_like(a_xx[0])
-        a_xx = [a_x[:, xp.newaxis, :, :] for a_x in a_xx]
+        a_xx = [a_x[..., xp.newaxis, :, :] for a_x in a_xx]
 
         for j in range(len(self.contour_displacements) - 1):
 
@@ -238,8 +239,13 @@ class Beyn(NEVP):
                 a_xx, z_ij, in_type, in_type, self.num_threads_contour
             )
 
-            q0 += xp.sum(w_j * z_oj * inv_Tz_o - w_j * z_ij * inv_Tz_i, axis=1)
-            q1 += xp.sum(w_j * z_oj**2 * inv_Tz_o - w_j * z_ij**2 * inv_Tz_i, axis=1)
+            q0 += xp.sum(
+                w_j * z_oj * inv_Tz_o - w_j * z_ij * inv_Tz_i, axis=stack_dimension
+            )
+            q1 += xp.sum(
+                w_j * z_oj**2 * inv_Tz_o - w_j * z_ij**2 * inv_Tz_i,
+                axis=stack_dimension,
+            )
 
         return q0, q1
 
@@ -270,7 +276,7 @@ class Beyn(NEVP):
         if isinstance(a, list):
             batchsize = len(a)
         else:
-            batchsize = a.shape[0]
+            batchsize = a.shape[:-2]
 
         # solve the reduced system
         w, v = linalg.eig(
@@ -317,11 +323,11 @@ class Beyn(NEVP):
         """
         d = a_xx[0].shape[-1]
 
-        batchsize = a_xx[0].shape[0]
+        batchsize = a_xx[0].shape[:-2]
 
         # NOTE: Here we could also use a good initial guess.
-        Y = rng.random((batchsize, d, self.m_0)) + 1j * rng.random(
-            (batchsize, d, self.m_0)
+        Y = rng.random((*batchsize, d, self.m_0)) + 1j * rng.random(
+            (*batchsize, d, self.m_0)
         )
 
         # Compute the contour integral.
@@ -333,6 +339,7 @@ class Beyn(NEVP):
 
         # project the system
         if self.use_qr:
+            # TODO: Not sure the shape is same as svd.
             a, p_back = self._project_qr(P_0, P_1)
         else:
             a, p_back = self._project_svd(P_0, P_1)

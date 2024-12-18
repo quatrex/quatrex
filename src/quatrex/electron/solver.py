@@ -13,6 +13,13 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 
+if xp.__name__ == "numpy":
+    from scipy.signal import find_peaks
+elif xp.__name__ == "cupy":
+    from cupyx.scipy.signal import find_peaks
+else:
+    raise ImportError("Unknown backend.")
+
 
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
@@ -209,37 +216,32 @@ class ElectronSolver(SubsystemSolver):
         # levels by doing peak detection on the contact DOS.
 
         # Apply the retarded boundary self-energy.
-        self.system_matrix.blocks[0, 0] -= (
+        sigma_00 = (
             self.system_matrix.blocks[1, 0] @ g_00 @ self.system_matrix.blocks[0, 1]
         )
-        self.system_matrix.blocks[-1, -1] -= (
+        sigma_nn = (
             self.system_matrix.blocks[-2, -1] @ g_nn @ self.system_matrix.blocks[-1, -2]
         )
+        self.system_matrix.blocks[0, 0] -= sigma_00
+        self.system_matrix.blocks[-1, -1] -= sigma_nn
+
+        gamma_00 = 1j * (sigma_00 - sigma_00.conj().transpose(0, 2, 1))
+        gamma_nn = 1j * (sigma_nn - sigma_nn.conj().transpose(0, 2, 1))
 
         # Compute and apply the lesser boundary self-energy.
-        a_00 = g_00.conj().transpose(0, 2, 1) - g_00
-        a_nn = g_nn.conj().transpose(0, 2, 1) - g_nn
-        scale_stack(a_00, self.left_occupancies)
-        scale_stack(a_nn, self.right_occupancies)
-
-        sse_lesser.blocks[0, 0] += (
-            self.system_matrix.blocks[1, 0] @ a_00 @ self.system_matrix.blocks[0, 1]
+        sse_lesser.blocks[0, 0] += 1j * scale_stack(
+            gamma_00.copy(), self.left_occupancies
         )
-        sse_lesser.blocks[-1, -1] += (
-            self.system_matrix.blocks[-2, -1] @ a_nn @ self.system_matrix.blocks[-1, -2]
+        sse_lesser.blocks[-1, -1] += 1j * scale_stack(
+            gamma_nn.copy(), self.right_occupancies
         )
 
         # Compute and apply the greater boundary self-energy.
-        a_00 = g_00.conj().transpose(0, 2, 1) - g_00
-        a_nn = g_nn.conj().transpose(0, 2, 1) - g_nn
-        scale_stack(a_00, 1 - self.left_occupancies)
-        scale_stack(a_nn, 1 - self.right_occupancies)
-
-        sse_greater.blocks[0, 0] -= (
-            self.system_matrix.blocks[1, 0] @ a_00 @ self.system_matrix.blocks[0, 1]
+        sse_greater.blocks[0, 0] += 1j * scale_stack(
+            gamma_00.copy(), self.left_occupancies - 1
         )
-        sse_greater.blocks[-1, -1] -= (
-            self.system_matrix.blocks[-2, -1] @ a_nn @ self.system_matrix.blocks[-1, -2]
+        sse_greater.blocks[-1, -1] += 1j * scale_stack(
+            gamma_nn.copy(), self.right_occupancies - 1
         )
 
     def _assemble_system_matrix(self, sse_retarded: DSBSparse) -> None:
@@ -313,6 +315,41 @@ class ElectronSolver(SubsystemSolver):
             axis2=-1,
         )
 
+    def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
+        """Filters out peaks in the Green's functions.
+
+        Parameters
+        ----------
+        out : tuple[DSBSparse, ...]
+            The Green's function tuple. In the order (lesser, greater,
+        """
+
+        # NOTE: This filtering only works in flatband systems.
+        # Otherwise, the dos and charge densities should be summed per
+        # transport cell (in thw old code the trace is taken during
+        # RGF).
+        # TODO: make parameters settable.
+        if self.fladband:
+            g_lesser, g_greater, g_retarded = out
+            dos = -g_retarded.diagonal().imag.sum(1)
+            ne = g_lesser.diagonal().imag.sum(1)
+            nh = -g_greater.diagonal().imag.sum(1)
+            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
+            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
+
+            # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
+            # # TODO: Should communicate boundary energies to correctly filter
+            # # makes arrays of bools
+            # f3 = xp.zeros_like(f1, dtype=bool)
+            # f3[peaks] = True
+
+            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
+
+            assert g_lesser.distribution_state == "stack"
+            g_lesser.data[mask] = 0.0
+            g_greater.data[mask] = 0.0
+            g_retarded.data[mask] = 0.0
+
     def _recover_contact_blocks(
         self,
         sse_lesser: DSBSparse,
@@ -384,24 +421,7 @@ class ElectronSolver(SubsystemSolver):
         self._compute_contact_current(sse_lesser, sse_greater, out)
         self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 
-        # NOTE: This filtering only works in flatband systems.
-        # Otherwise, the dos and charge densities should be summed per
-        # transport cell (in thw old code the trace is taken during
-        # RGF).
-        # TODO: make parameters settable.
-        if self.fladband:
-            g_lesser, g_greater, g_retarded = out
-            dos = -g_retarded.diagonal().imag.sum(1)
-            ne = g_lesser.diagonal().imag.sum(1)
-            nh = -g_greater.diagonal().imag.sum(1)
-            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
-            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
-            mask = (f1 > 1e-1) | (f2 > 1e-1)
-
-            assert g_lesser.distribution_state == "stack"
-            g_lesser.data[mask] = 0.0
-            g_greater.data[mask] = 0.0
-            g_retarded.data[mask] = 0.0
+        self._filter_peaks(out)
 
         (
             print(

@@ -85,7 +85,7 @@ def obc_multiply(
         # have open ends.
         p.blocks[0, 0] += a.blocks[1, 0] @ b.blocks[0, 1]
         p.blocks[-1, -1] += a.blocks[-2, -1] @ b.blocks[-1, -2]
-        buffer.data[:] = p.data
+        buffer.data = p.data
     elif len(matrices) == 3:
         a, b, c = matrices
         p = a @ b @ c
@@ -108,10 +108,10 @@ def obc_multiply(
         p.blocks[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ c.blocks[-1, -2]
         p.blocks[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ c.blocks[-1, -2]
         try:
-            buffer.data[:] = p.data
+            buffer.data = p.data
         except ValueError:
             # TODO: Still slow
-            buffer.data[:] = p[*buffer.spy()]
+            buffer.data = p[*buffer.spy()]
     else:
         raise ValueError("Invalid number of matrices.")
 
@@ -367,10 +367,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             @ x_nn.conj().swapaxes(-1, -2),
             "right",
         )
-        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        # scale_stack(w_00, self.left_occupancies)
-        # scale_stack(w_nn, self.right_occupancies)
 
         l_lesser.blocks[0, 0] += self.system_matrix.blocks[
             1, 0
@@ -400,10 +396,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             @ x_nn.conj().swapaxes(-1, -2),
             "right",
         )
-        # w_00 = x_00 - x_00.conj().swapaxes(-1, -2)
-        # w_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
-        # scale_stack(w_00, 1 + self.left_occupancies)
-        # scale_stack(w_nn, 1 + self.right_occupancies)
 
         l_greater.blocks[0, 0] += self.system_matrix.blocks[
             1, 0
@@ -418,7 +410,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _assemble_system_matrix(self, v_times_p_retarded: DSBSparse) -> None:
         """Assembles the system matrix."""
-        self.system_matrix.data[:] = self.bare_system_matrix.data
+        self.system_matrix.data = self.bare_system_matrix.data
         self.system_matrix -= v_times_p_retarded
 
     def solve(
@@ -503,6 +495,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute the retarded Screened interaction (mainly used for debugging).
         # Currently doesn't work.
         # obc_multiply(out[2], (out[2], self.coulomb_matrix), self.block_sizes)
+
+        w_lesser, w_greater, _ = out
+        w_lesser.data = 0.5 * (w_lesser.data - w_lesser.ltranspose(copy=True).data.conj())
+        w_greater.data = 0.5 * (w_greater.data - w_greater.ltranspose(copy=True).data.conj())
+
+        # if comm.rank == 0:
+        #     w_greater.data[0,:] = 0.0
+        #     w_lesser.data[0,:] = 0.0
 
         (
             print(

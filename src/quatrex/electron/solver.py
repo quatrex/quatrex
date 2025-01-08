@@ -88,10 +88,10 @@ class ElectronSolver(SubsystemSolver):
             global_stack_shape=(self.energies.size,),
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
-        self.bare_system_matrix.data[:] = 0.0
+        self.bare_system_matrix.data = 0.0
 
         self.bare_system_matrix += self.overlap_sparray
-        scale_stack(self.bare_system_matrix.data[:], self.local_energies)
+        scale_stack(self.bare_system_matrix.data, self.local_energies)
         self.eta = quatrex_config.electron.eta
         self.bare_system_matrix -= (
             self.hamiltonian_sparray - 1j * self.eta * self.overlap_sparray
@@ -253,7 +253,7 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
-        self.system_matrix.data[:] = self.bare_system_matrix.data
+        self.system_matrix.data = self.bare_system_matrix.data
         self.system_matrix -= sse_retarded
 
     def _stash_contact_blocks(
@@ -329,26 +329,26 @@ class ElectronSolver(SubsystemSolver):
         # transport cell (in thw old code the trace is taken during
         # RGF).
         # TODO: make parameters settable.
-        if self.fladband:
-            g_lesser, g_greater, g_retarded = out
-            dos = -g_retarded.diagonal().imag.sum(1)
-            ne = g_lesser.diagonal().imag.sum(1)
-            nh = -g_greater.diagonal().imag.sum(1)
-            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
-            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
+        # if self.fladband:
+        #     g_lesser, g_greater, g_retarded = out
+        #     dos = -g_retarded.diagonal().imag.sum(1)
+        #     ne = g_lesser.diagonal().imag.sum(1)
+        #     nh = -g_greater.diagonal().imag.sum(1)
+        #     f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
+        #     f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
 
-            # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
-            # # TODO: Should communicate boundary energies to correctly filter
-            # # makes arrays of bools
-            # f3 = xp.zeros_like(f1, dtype=bool)
-            # f3[peaks] = True
+        #     # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
+        #     # # TODO: Should communicate boundary energies to correctly filter
+        #     # # makes arrays of bools
+        #     # f3 = xp.zeros_like(f1, dtype=bool)
+        #     # f3[peaks] = True
 
-            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
+        #     mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
 
-            assert g_lesser.distribution_state == "stack"
-            g_lesser.data[mask] = 0.0
-            g_greater.data[mask] = 0.0
-            g_retarded.data[mask] = 0.0
+        #     assert g_lesser.distribution_state == "stack"
+        #     g_lesser.data[mask] = 0.0
+        #     g_greater.data[mask] = 0.0
+        #     g_retarded.data[mask] = 0.0
 
     def _recover_contact_blocks(
         self,
@@ -420,6 +420,11 @@ class ElectronSolver(SubsystemSolver):
 
         self._compute_contact_current(sse_lesser, sse_greater, out)
         self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
+
+        # anti symmetrize
+        g_lesser, g_greater, _ = out
+        g_lesser.data = 0.5 * (g_lesser.data - g_lesser.ltranspose(copy=True).data.conj())
+        g_greater.data = 0.5 * (g_greater.data - g_greater.ltranspose(copy=True).data.conj())
 
         self._filter_peaks(out)
 

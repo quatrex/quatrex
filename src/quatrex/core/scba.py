@@ -24,6 +24,7 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
+from quatrex.core.utils import homogenize
 
 
 def _get_allocator(
@@ -273,35 +274,41 @@ class SCBA:
         self.data = SCBAData(self)
         self.observables = Observables()
 
-    def _swap_sigma(self) -> None:
-        """Swaps the current and previous self-energy buffers."""
-        self.data.sigma_lesser._data[:], self.data.sigma_lesser_prev._data[:] = (
-            self.data.sigma_lesser_prev._data,
-            self.data.sigma_lesser._data,
-        )
-        self.data.sigma_greater._data[:], self.data.sigma_greater_prev._data[:] = (
-            self.data.sigma_greater_prev._data,
-            self.data.sigma_greater._data,
-        )
-        self.data.sigma_retarded._data[:], self.data.sigma_retarded_prev._data[:] = (
-            self.data.sigma_retarded_prev._data,
-            self.data.sigma_retarded._data,
-        )
+    def _stash_sigma(self) -> None:
+        """Stash the current into the previous self-energy buffers."""
+        self.data.sigma_lesser_prev._data[:] = self.data.sigma_lesser._data
+        self.data.sigma_greater_prev._data[:] = self.data.sigma_greater._data
+        self.data.sigma_retarded_prev._data[:] = self.data.sigma_retarded._data
+
+        self.data.sigma_retarded._data[:] = 0.0
+        self.data.sigma_lesser._data[:] = 0.0
+        self.data.sigma_greater._data[:] = 0.0
 
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
         mixing_factor = self.quatrex_config.scba.mixing_factor
-        self.data.sigma_lesser.data[:] = (
-            (1 - mixing_factor) * self.data.sigma_lesser_prev.data
-            + mixing_factor * self.data.sigma_lesser.data
+        self.data.sigma_lesser._data[:] = (
+            (1 - mixing_factor) * self.data.sigma_lesser_prev._data
+            + mixing_factor * self.data.sigma_lesser._data
         )
-        self.data.sigma_greater.data[:] = (
-            (1 - mixing_factor) * self.data.sigma_greater_prev.data
-            + mixing_factor * self.data.sigma_greater.data
+        self.data.sigma_greater._data[:] = (
+            (1 - mixing_factor) * self.data.sigma_greater_prev._data
+            + mixing_factor * self.data.sigma_greater._data
         )
-        self.data.sigma_retarded.data[:] = (
-            (1 - mixing_factor) * self.data.sigma_retarded_prev.data
-            + mixing_factor * self.data.sigma_retarded.data
+        self.data.sigma_retarded._data[:] = (
+            (1 - mixing_factor) * self.data.sigma_retarded_prev._data
+            + mixing_factor * self.data.sigma_retarded._data
+        )
+
+        # Relative infinity norm of the self-energy update.
+        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        max_diff = xp.max(xp.abs(diff))
+        # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
+        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+        (
+            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
+            if comm.rank == 0
+            else None
         )
 
         # Symmetrization.
@@ -317,23 +324,23 @@ class SCBA:
         self.data.sigma_retarded.data += 0.5 * (
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
-        self.observables.sigma_retarded_density = -density(
-            self.data.sigma_retarded,
-            self.electron_solver.overlap_sparray,
-        )
+        if self.quatrex_config.electron.flatband:
+            homogenize(self.data.sigma_lesser)
+            homogenize(self.data.sigma_greater)
+            homogenize(self.data.sigma_retarded)
 
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
-        # Relative infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        max_diff = xp.max(xp.abs(diff))
-        # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
-        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        (
-            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
-            if comm.rank == 0
-            else None
-        )
+        # # Relative infinity norm of the self-energy update.
+        # diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        # max_diff = xp.max(xp.abs(diff))
+        # # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
+        # max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+        # (
+        #     print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
+        #     if comm.rank == 0
+        #     else None
+        # )
         # if max_diff < self.quatrex_config.scba.convergence_tol:
         #     return True
         # return False
@@ -397,17 +404,6 @@ class SCBA:
         """Computes the Coulomb screening interaction."""
         times = []
         times.append(time.perf_counter())
-        self.sigma_fock.compute(
-            self.data.g_lesser,
-            out=(self.data.sigma_retarded,),
-        )
-        t_fock = time.perf_counter() - times.pop()
-        (
-            print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
-        )
-        times.append(time.perf_counter())
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -429,6 +425,17 @@ class SCBA:
         t_solve = time.perf_counter() - times.pop()
         (
             print(f"Time for Coulomb screening solver: {t_solve:.2f} s", flush=True)
+            if comm.rank == 0
+            else None
+        )
+        times.append(time.perf_counter())
+        self.sigma_fock.compute(
+            self.data.g_lesser,
+            out=(self.data.sigma_retarded,),
+        )
+        t_fock = time.perf_counter() - times.pop()
+        (
+            print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
             if comm.rank == 0
             else None
         )
@@ -510,24 +517,13 @@ class SCBA:
                 if comm.rank == 0
                 else None
             )
-            # Swap current with previous self-energy buffer.
+
+            # Stash current into previous self-energy buffer.
             times.append(time.perf_counter())
-            self._swap_sigma()
+            self._stash_sigma()
             t_swap = time.perf_counter() - times.pop()
             (
                 print(f"Time for swapping: {t_swap:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
-
-            # Reset current self-energy.
-            times.append(time.perf_counter())
-            self.data.sigma_retarded._data[:] = 0.0
-            self.data.sigma_lesser._data[:] = 0.0
-            self.data.sigma_greater._data[:] = 0.0
-            t_reset = time.perf_counter() - times.pop()
-            (
-                print(f"Time for resetting: {t_reset:.2f} s", flush=True)
                 if comm.rank == 0
                 else None
             )

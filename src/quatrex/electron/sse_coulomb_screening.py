@@ -45,6 +45,17 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 
 
 @profiler.profile(level="api")
+def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
+    """Computes the circular convolution of two arrays using the FFT."""
+    # Extract the shapes of the arrays along the axes as tuples.
+    nka = tuple(a.shape[i] for i in axes)
+    nkb = tuple(b.shape[i] for i in axes)
+    a_fft = xp.fft.fftn(a, nka, axes=axes)
+    b_fft = xp.fft.fftn(b, nkb, axes=axes)
+    return xp.fft.ifftn(a_fft * b_fft, axes=axes)
+
+
+@profiler.profile(level="api")
 def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
     """Computes the convolution of two arrays using the FFT."""
     ne = a.shape[0] + b.shape[0] - 1

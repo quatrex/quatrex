@@ -56,10 +56,13 @@ class Spectral(OBCSolver):
         self,
         nevp: NEVP,
         block_sections: int = 1,
-        min_decay: float = 1e-6,
+        min_decay: float = 1e-3,
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
         x_ii_formula: str = "self-energy",
+        filter_pairwise: bool = False,
+        matching_threshold: float = 0.25,
+        min_propagation: float = 0.01,
     ) -> None:
         """Initializes the spectral OBC solver."""
         self.nevp = nevp
@@ -72,6 +75,10 @@ class Spectral(OBCSolver):
         self.num_ref_iterations = num_ref_iterations
         self.block_sections = block_sections
         self.x_ii_formula = x_ii_formula
+
+        self.filter_pairwise = filter_pairwise
+        self.matching_threshold = matching_threshold
+        self.min_propagation = min_propagation
 
     def _extract_subblocks(
         self,
@@ -114,6 +121,55 @@ class Spectral(OBCSolver):
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
         return tuple(block for block in blocks if xp.any(block))
+
+    def _filter_pairwise(
+        self,
+        dEk_dk: NDArray,
+        ks: NDArray,
+    ):
+        """Filter propagating modes that are opposite.
+
+        Parameters
+        ----------
+        dEk_dk : NDArray
+            The group velocity of the modes.
+        ks : NDArray
+            The wavevector of the modes.
+
+        Returns
+        -------
+        mask_pairwise_propagating : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            matched modes that propagate.
+
+        """
+
+        # match modes to the most opposite ones
+        diff = xp.abs(dEk_dk[:, :, xp.newaxis] + dEk_dk[:, xp.newaxis, :])
+        match_indices = xp.argmin(diff, axis=-1)
+        ks_match = xp.array(
+            [batch[indices] for batch, indices in zip(ks, match_indices)]
+        )
+        dEk_dk_match = xp.array(
+            [batch[indices] for batch, indices in zip(dEk_dk, match_indices)]
+        )
+
+        # pair of modes decay slowly
+        mask_pairwise_propagating = (
+            xp.abs(ks_match.imag) + xp.abs(ks.imag)
+        ) / 2 < self.min_decay
+
+        # modes opposite enough (0 would be perfect opposite)
+        eta = xp.finfo(dEk_dk.dtype).eps
+        mask_pairwise_propagating &= (
+            xp.abs(dEk_dk + dEk_dk_match) / (xp.abs(dEk_dk) + eta)
+            < self.matching_threshold
+        )
+        mask_pairwise_propagating &= (
+            xp.abs(ks + ks_match) / (xp.abs(ks) + eta) < self.matching_threshold
+        )
+
+        return mask_pairwise_propagating
 
     def _find_reflected_modes(
         self,
@@ -166,12 +222,40 @@ class Spectral(OBCSolver):
 
             ks = -1j * xp.log(ws)
 
+        # replace nan and infs with 0 due to zero eigenvalues
+        dEk_dk = xp.nan_to_num(dEk_dk, nan=0, posinf=0, neginf=0)
+        ks = xp.nan_to_num(ks, nan=0, posinf=0, neginf=0)
+
         # Find eigenvalues that correspond to reflected modes. These are
         # modes that either propagate into the leads or decay away from
         # the system.
-        return ((dEk_dk.real < 0) & (xp.abs(ks.imag) < self.min_decay)) | (
-            (ks.imag < -self.min_decay) & (ks.imag > -self.max_decay)
+        if self.filter_pairwise:
+            # either matched modes with slow enough decay
+            mask_propagating = self._filter_pairwise(dEk_dk, ks)
+            # modes not matched
+            mask_decaying = ~mask_propagating
+        else:
+            # slow enough decay
+            mask_propagating = xp.abs(ks.imag) < self.min_decay
+
+        # fast enough decay
+        mask_decaying = (
+            mask_decaying if self.filter_pairwise else xp.ones_like(dEk_dk, dtype=bool)
         )
+        mask_decaying &= ks.imag < -self.min_decay
+
+        # fast enough propagation (group velocity)
+        eta = xp.finfo(dEk_dk.dtype).eps
+        mask_propagating &= self.min_propagation < abs(dEk_dk.real) / (
+            abs(dEk_dk.imag) + eta
+        )
+        # propgation direction
+        mask_propagating &= dEk_dk.real < 0
+
+        # ingore modes that decay incredibly fast
+        mask_decaying &= ks.imag > -self.max_decay
+
+        return mask_propagating | mask_decaying
 
     def _upscale_eigenmodes(
         self,
@@ -254,7 +338,7 @@ class Spectral(OBCSolver):
                 v = vs[i][:, m]
                 w = ws[i, m]
                 # Moore-Penrose pseudoinverse.
-                v_inv = xp.linalg.inv(v.T @ v) @ v.T
+                v_inv = xp.linalg.inv(v.conj().T @ v) @ v.conj().T
                 x_ii_a_ij[i] = v / w @ v_inv
 
             # Calculate the surface Green's function.

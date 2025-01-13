@@ -60,8 +60,8 @@ class Spectral(OBCSolver):
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
         x_ii_formula: str = "self-energy",
-        filter_pairwise: bool = False,
-        matching_threshold: float = 0.25,
+        treat_pairwise: bool = False,
+        pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -76,8 +76,8 @@ class Spectral(OBCSolver):
         self.block_sections = block_sections
         self.x_ii_formula = x_ii_formula
 
-        self.filter_pairwise = filter_pairwise
-        self.matching_threshold = matching_threshold
+        self.treat_pairwise = treat_pairwise
+        self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
 
     def _extract_subblocks(
@@ -122,7 +122,7 @@ class Spectral(OBCSolver):
         blocks = view[0, : -self.block_sections + 1]
         return tuple(block for block in blocks if xp.any(block))
 
-    def _filter_pairwise(
+    def _find_pairwise_propagating(
         self,
         dEk_dk: NDArray,
         ks: NDArray,
@@ -163,10 +163,10 @@ class Spectral(OBCSolver):
         eta = xp.finfo(dEk_dk.dtype).eps
         mask_pairwise_propagating &= (
             xp.abs(dEk_dk + dEk_dk_match) / (xp.abs(dEk_dk) + eta)
-            < self.matching_threshold
+            < self.pairing_threshold
         )
         mask_pairwise_propagating &= (
-            xp.abs(ks + ks_match) / (xp.abs(ks) + eta) < self.matching_threshold
+            xp.abs(ks + ks_match) / (xp.abs(ks) + eta) < self.pairing_threshold
         )
 
         return mask_pairwise_propagating
@@ -231,13 +231,13 @@ class Spectral(OBCSolver):
         # the system.
         # Determine (matched) modes that decay slow enough to be
         # considered propagating.
-        if self.filter_pairwise:
-            mask_propagating = self._filter_pairwise(dEk_dk, ks)
+        if self.treat_pairwise:
+            mask_propagating = self._find_pairwise_propagating(dEk_dk, ks)
             mask_decaying = ~mask_propagating
         else:
             mask_propagating = xp.abs(ks.imag) < self.min_decay
             mask_decaying = xp.ones_like(dEk_dk, dtype=bool)
-        
+
         # Make sure decaying modes decay fast enough.
         mask_decaying &= ks.imag < -self.min_decay
 

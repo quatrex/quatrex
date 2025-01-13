@@ -229,19 +229,16 @@ class Spectral(OBCSolver):
         # Find eigenvalues that correspond to reflected modes. These are
         # modes that either propagate into the leads or decay away from
         # the system.
+        # Determine (matched) modes that decay slow enough to be
+        # considered propagating.
         if self.filter_pairwise:
-            # either matched modes with slow enough decay
             mask_propagating = self._filter_pairwise(dEk_dk, ks)
-            # modes not matched
             mask_decaying = ~mask_propagating
         else:
-            # slow enough decay
             mask_propagating = xp.abs(ks.imag) < self.min_decay
-
-        # fast enough decay
-        mask_decaying = (
-            mask_decaying if self.filter_pairwise else xp.ones_like(dEk_dk, dtype=bool)
-        )
+            mask_decaying = xp.ones_like(dEk_dk, dtype=bool)
+        
+        # Make sure decaying modes decay fast enough.
         mask_decaying &= ks.imag < -self.min_decay
 
         # fast enough propagation (group velocity)

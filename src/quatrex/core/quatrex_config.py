@@ -1,5 +1,6 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright 2023-2025 ETH Zurich and the QuaTrEx authors. All rights reserved.
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -214,5 +215,12 @@ def parse_config(config_file: Path) -> QuatrexConfig:
     """Reads the TOML config file."""
     with open(config_file, "rb") as f:
         config = tomllib.load(f)
+    
+    if 'simulation_dir' in config:
+        simulation_dir = config['simulation_dir']
+        if not os.path.isabs(simulation_dir):
+            parent_dir = os.path.dirname(os.path.abspath(config_file))
+            simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
+            config['simulation_dir'] = simulation_dir
 
     return QuatrexConfig(**config)

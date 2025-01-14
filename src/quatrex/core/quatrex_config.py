@@ -89,6 +89,9 @@ class OBCConfig(BaseModel):
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = 2
     x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
+    treat_pairwise: bool = True
+    pairing_threshold: PositiveFloat = 0.25
+    min_propagation: PositiveFloat = 1e-2
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 1000
@@ -131,6 +134,8 @@ class ElectronConfig(BaseModel):
     eta: NonNegativeFloat = 1e-12  # eV
 
     fermi_level: float | None = None
+    conduction_band_edge: float | None = None
+    valence_band_edge: float | None = None
 
     left_fermi_level: float | None = None
     right_fermi_level: float | None = None
@@ -292,13 +297,13 @@ def parse_config(config_file: Path) -> QuatrexConfig:
 
     with open(config_file, "rb") as f:
         config = tomllib.load(f)
-    
-    if 'simulation_dir' in config:
-        simulation_dir = config['simulation_dir']
+
+    if "simulation_dir" in config:
+        simulation_dir = config["simulation_dir"]
         if not os.path.isabs(simulation_dir):
             parent_dir = os.path.dirname(os.path.abspath(config_file))
             simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
-            config['simulation_dir'] = simulation_dir
+            config["simulation_dir"] = simulation_dir
 
     config["config_dir"] = config_file.parent
 

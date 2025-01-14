@@ -106,6 +106,9 @@ class SubsystemSolver(ABC):
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
                 x_ii_formula=obc_config.x_ii_formula,
+                treat_pairwise=obc_config.treat_pairwise,
+                pairing_threshold=obc_config.pairing_threshold,
+                min_propagation=obc_config.min_propagation,
             )
 
         else:

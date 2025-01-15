@@ -12,7 +12,7 @@ from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.observables import contact_currents, density
+from quatrex.core.observables import contact_currents, density  # band_edges
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -24,7 +24,13 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
-from quatrex.core.utils import homogenize
+
+# if xp.__name__ == "numpy":
+#     from scipy.signal import find_peaks
+# elif xp.__name__ == "cupy":
+#     from cupyx.scipy.signal import find_peaks
+# else:
+#     raise ImportError("Unknown backend.")
 
 
 def _get_allocator(
@@ -133,6 +139,9 @@ class Observables:
     electron_density: NDArray = None
     hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
+
+    valence_band_edges: NDArray = None
+    conduction_band_edges: NDArray = None
 
     excess_charge_density: NDArray = None
 
@@ -287,28 +296,17 @@ class SCBA:
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
         mixing_factor = self.quatrex_config.scba.mixing_factor
-        self.data.sigma_lesser._data[:] = (
-            (1 - mixing_factor) * self.data.sigma_lesser_prev._data
-            + mixing_factor * self.data.sigma_lesser._data
+        self.data.sigma_lesser.data = (
+            (1 - mixing_factor) * self.data.sigma_lesser_prev.data
+            + mixing_factor * self.data.sigma_lesser.data
         )
-        self.data.sigma_greater._data[:] = (
-            (1 - mixing_factor) * self.data.sigma_greater_prev._data
-            + mixing_factor * self.data.sigma_greater._data
+        self.data.sigma_greater.data = (
+            (1 - mixing_factor) * self.data.sigma_greater_prev.data
+            + mixing_factor * self.data.sigma_greater.data
         )
-        self.data.sigma_retarded._data[:] = (
-            (1 - mixing_factor) * self.data.sigma_retarded_prev._data
-            + mixing_factor * self.data.sigma_retarded._data
-        )
-
-        # Relative infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        max_diff = xp.max(xp.abs(diff))
-        # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
-        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        (
-            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
-            if comm.rank == 0
-            else None
+        self.data.sigma_retarded.data = (
+            (1 - mixing_factor) * self.data.sigma_retarded_prev.data
+            + mixing_factor * self.data.sigma_retarded.data
         )
 
         # Symmetrization.
@@ -320,27 +318,26 @@ class SCBA:
             self.data.sigma_greater.data
             - self.data.sigma_greater.ltranspose(copy=True).data.conj()
         )
+        self.data.sigma_lesser._data.real = 0
+        self.data.sigma_greater._data.real = 0
+
         self.data.sigma_retarded._data.imag = 0.0
+
         self.data.sigma_retarded.data += 0.5 * (
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
-        if self.quatrex_config.electron.flatband:
-            homogenize(self.data.sigma_lesser)
-            homogenize(self.data.sigma_greater)
-            homogenize(self.data.sigma_retarded)
 
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
-        # # Relative infinity norm of the self-energy update.
-        # diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        # max_diff = xp.max(xp.abs(diff))
-        # # # rel_max_diff = max_diff / np.max(np.abs(self.data.sigma_retarded.data))
-        # max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        # (
-        #     print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
-        #     if comm.rank == 0
-        #     else None
-        # )
+        # Infinity norm of the self-energy update.
+        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        max_diff = xp.max(xp.abs(diff))
+        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+        (
+            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
+            if comm.rank == 0
+            else None
+        )
         # if max_diff < self.quatrex_config.scba.convergence_tol:
         #     return True
         # return False
@@ -378,7 +375,8 @@ class SCBA:
 
         # if ave_change < self.quatrex_config.scba.convergence_tol:
         #     return True
-        return False
+
+        return False  # TODO: :-)
 
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
@@ -479,21 +477,158 @@ class SCBA:
             zip(("left", "right"), contact_currents(self.electron_solver))
         )
 
-        average_fermi_level = (
-            self.quatrex_config.electron.left_fermi_level
-            + self.quatrex_config.electron.right_fermi_level
-        ) / 2
-        fermi_level_index = xp.argmin(
-            xp.abs(self.electron_energies - average_fermi_level)
+        if self.quatrex_config.scba.coulomb_screening:
+            self.observables.p_retarded_density = -density(
+                self.data.p_retarded,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.p_lesser_density = density(
+                self.data.p_lesser,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.p_greater_density = -density(
+                self.data.p_greater,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+
+            self.observables.w_retarded_density = -density(
+                self.data.w_retarded,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.w_lesser_density = density(
+                self.data.w_lesser,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.w_greater_density = -density(
+                self.data.w_greater,
+                self.coulomb_screening_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+
+        self.observables.sigma_retarded_density = -density(
+            self.data.sigma_retarded,
+            self.electron_solver.overlap_sparray,
+        ) / (2 * xp.pi)
+        self.observables.sigma_lesser_density = density(
+            self.data.sigma_lesser,
+            self.electron_solver.overlap_sparray,
+        ) / (2 * xp.pi)
+        self.observables.sigma_greater_density = -density(
+            self.data.sigma_greater,
+            self.electron_solver.overlap_sparray,
+        ) / (2 * xp.pi)
+
+        # average_fermi_level = (
+        #     self.quatrex_config.electron.left_fermi_level
+        #     + self.quatrex_config.electron.right_fermi_level
+        # ) / 2
+        # fermi_level_index = xp.argmin(
+        #     xp.abs(self.electron_energies - average_fermi_level)
+        # )
+        # dE = self.electron_energies[1] - self.electron_energies[0]
+        # electron_density = (
+        #     xp.sum(self.observables.electron_density[fermi_level_index:], axis=0) * dE
+        # )
+        # hole_density = (
+        #     xp.sum(self.observables.hole_density[:fermi_level_index], axis=0) * dE
+        # )
+        # self.observables.excess_charge_density = electron_density - hole_density
+
+        # if (
+        #     self.observables.valence_band_edges is None
+        #     or self.observables.conduction_band_edges is None
+        # ):
+        #     self.observables.valence_band_edges = (
+        #         xp.ones(self.observables.electron_ldos.shape[1])
+        #         * self.quatrex_config.electron.valence_band_edge
+        #     )
+        #     self.observables.conduction_band_edges = (
+        #         xp.ones(self.observables.electron_ldos.shape[1])
+        #         * self.quatrex_config.electron.conduction_band_edge
+        #     )
+
+        # mid_gap_energies = (
+        #     self.observables.valence_band_edges + self.observables.conduction_band_edges
+        # ) / 2
+
+        # self.observables.valence_band_edges, self.observables.conduction_band_edges = (
+        #     band_edges(
+        #         self.observables.electron_ldos,
+        #         self.electron_energies,
+        #         mid_gap_energies,
+        #     )
+        # )
+
+    def _write_iteration_outputs(self, iteration: int):
+        """Writes output for the current iteration on rank zero."""
+
+        if comm.rank != 0:
+            return
+
+        print(f"Writing output for iteration {iteration}...", flush=True)
+
+        output_dir = self.quatrex_config.simulation_dir / "outputs"
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)
+
+        xp.save(
+            f"{output_dir}/electron_ldos_{iteration}.npy",
+            self.observables.electron_ldos,
         )
-        dE = self.electron_energies[1] - self.electron_energies[0]
-        electron_density = (
-            xp.sum(self.observables.electron_density[fermi_level_index:], axis=0) * dE
+        xp.save(
+            f"{output_dir}/electron_density_{iteration}.npy",
+            self.observables.electron_density,
         )
-        hole_density = (
-            xp.sum(self.observables.hole_density[:fermi_level_index], axis=0) * dE
+        xp.save(
+            f"{output_dir}/hole_density_{iteration}.npy", self.observables.hole_density
         )
-        self.observables.excess_charge_density = electron_density - hole_density
+        xp.save(
+            f"{output_dir}/i_left_{iteration}.npy",
+            self.observables.electron_current["left"],
+        )
+        xp.save(
+            f"{output_dir}/i_right_{iteration}.npy",
+            self.observables.electron_current["right"],
+        )
+
+        if self.quatrex_config.scba.coulomb_screening:
+            xp.save(
+                f"{output_dir}/p_lesser_density_{iteration}.npy",
+                self.observables.p_lesser_density,
+            )
+            xp.save(
+                f"{output_dir}/p_greater_density_{iteration}.npy",
+                self.observables.p_greater_density,
+            )
+            xp.save(
+                f"{output_dir}/p_retarded_density_{iteration}.npy",
+                self.observables.p_retarded_density,
+            )
+
+            xp.save(
+                f"{output_dir}/w_lesser_density_{iteration}.npy",
+                self.observables.w_lesser_density,
+            )
+            xp.save(
+                f"{output_dir}/w_greater_density_{iteration}.npy",
+                self.observables.w_greater_density,
+            )
+            xp.save(
+                f"{output_dir}/w_retarded_density_{iteration}.npy",
+                self.observables.w_retarded_density,
+            )
+
+        xp.save(
+            f"{output_dir}/sigma_retarded_density_{iteration}.npy",
+            self.observables.sigma_retarded_density,
+        )
+        xp.save(
+            f"{output_dir}/sigma_lesser_density_{iteration}.npy",
+            self.observables.sigma_lesser_density,
+        )
+        xp.save(
+            f"{output_dir}/sigma_greater_density_{iteration}.npy",
+            self.observables.sigma_greater_density,
+        )
 
     def run(self) -> None:
         """Runs the SCBA to convergence."""
@@ -583,6 +718,14 @@ class SCBA:
                 if comm.rank == 0
                 else None
             )
+            self._compute_observables()
+
+            # Update the electron Fermi levels.
+            # self.electron_solver.update_fermi_levels(
+            #     self.observables.conduction_band_edges
+            # )
+            if i % self.quatrex_config.scba.output_interval == 0:
+                self._write_iteration_outputs(i)
 
             t_iteration = time.perf_counter() - times.pop()
             (

@@ -41,7 +41,7 @@ class SCBAConfig(BaseModel):
 
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
-    observables_interval: PositiveInt | None = None
+    output_interval: PositiveInt = 1
 
     coulomb_screening: bool = False
     photon: bool = False

@@ -4,9 +4,10 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
+from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels, banded_kernels
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
+import torch
 
 
 class DSBCOO(DSBSparse):
@@ -46,6 +47,7 @@ class DSBCOO(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        allow_band_matmul: bool = True,
     ) -> None:
         """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
@@ -56,6 +58,7 @@ class DSBCOO(DSBSparse):
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
         self._block_slice_cache = {}
+        self.allow_band_matmul = allow_band_matmul
 
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -350,35 +353,99 @@ class DSBCOO(DSBSparse):
             raise ValueError("Matrix shapes do not match.")
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
-        product_rows, product_cols = product_sparsity_pattern(
-            sparse.csr_matrix(
-                (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
-            ),
-            sparse.csr_matrix(
-                (xp.ones(other.nnz), (other.rows, other.cols)),
-                shape=other.shape[-2:],
-            ),
-        )
-        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-            product_rows, product_cols, self.block_sizes
-        )
-        product = DSBCOO(
-            data=xp.zeros(self.stack_shape + (product_rows.size,), dtype=self.dtype),
-            rows=product_rows[block_sort_index],
-            cols=product_cols[block_sort_index],
-            block_sizes=self.block_sizes,
-            global_stack_shape=self.global_stack_shape,
-        )
-        # TODO: This is a naive implementation. Should be revisited. Same for dsbcsr.
-        for stack_index in xp.ndindex(self.data.shape[:-1]):
-            temp_product = sparse.csr_matrix(
-                (self.data[stack_index], (self.rows, self.cols)), shape=self.shape[-2:]
-            ) @ sparse.csr_matrix(
-                (other.data[stack_index], (other.rows, other.cols)),
-                shape=other.shape[-2:],
+
+        if self.allow_band_matmul:
+            return self.__band_matmul__(other)
+        else:
+            product_rows, product_cols = product_sparsity_pattern(
+                sparse.csr_matrix(
+                    (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
+                ),
+                sparse.csr_matrix(
+                    (xp.ones(other.nnz), (other.rows, other.cols)),
+                    shape=other.shape[-2:],
+                ),
             )
-            product.data[stack_index, :] = temp_product[product.rows, product.cols]
-        return product
+            block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+                product_rows, product_cols, self.block_sizes
+            )
+            product = DSBCOO(
+                data=xp.zeros(
+                    self.stack_shape + (product_rows.size,), dtype=self.dtype
+                ),
+                rows=product_rows[block_sort_index],
+                cols=product_cols[block_sort_index],
+                block_sizes=self.block_sizes,
+                global_stack_shape=self.global_stack_shape,
+            )
+            # TODO: This is a naive implementation. Should be revisited. Same for dsbcsr.
+            for stack_index in xp.ndindex(self.data.shape[:-1]):
+                temp_product = sparse.csr_matrix(
+                    (self.data[stack_index], (self.rows, self.cols)),
+                    shape=self.shape[-2:],
+                ) @ sparse.csr_matrix(
+                    (other.data[stack_index], (other.rows, other.cols)),
+                    shape=other.shape[-2:],
+                )
+                product.data[stack_index, :] = temp_product[product.rows, product.cols]
+            return product
+
+    def __calculate_bandwidth__(self) -> None:
+        """Calculates the bandwidth of the matrix."""
+        self.band = dsbcoo_kernels.calculate_bandwidth(self.rows, self.cols)
+
+    def __band_matmul__(self, other: "DSBSparse") -> None:
+        BLK_M = 128
+        BLK_N = 128
+        BLK_K = 32
+        source_dtype = xp.float32
+        dest_dtype = xp.float32
+        a = self.blocks
+        b = other.blocks
+        N = a.shape[0]
+        band = self.band
+        allow_tf32 = self.allow_tf32
+        A_tallNSkinnyBand = (
+            banded_kernels.dense_banded_to_blkTallNSkinny(a, band, BLK_M)
+            .to("cuda")
+            .to(source_dtype)
+        )
+        B_shortAndFat = (
+            banded_kernels.dense_banded_to_blkShortNFat(b, band, BLK_N)
+            .to("cuda")
+            .to(source_dtype)
+        )
+
+        band_a, _ = banded_kernels.get_num_blocks(band, BLK_M)
+        band_b, _ = banded_kernels.get_num_blocks(band, BLK_N)
+
+        diag_dist_a = band_a // 2
+        diag_dist_b = band_b // 2
+        diag_dist_c = diag_dist_a + diag_dist_b
+        band_c = 2 * diag_dist_c + 1
+
+        c_blkTallNSkinny = torch.zeros(
+            (N, BLK_M * band_c),
+            device=A_tallNSkinnyBand.device,
+            dtype=dest_dtype,
+        )
+
+        c_blkTallNSkinny = banded_kernels.matmul_band_mixed_precision(
+            A_tallNSkinnyBand,
+            B_shortAndFat,
+            c_blkTallNSkinny,
+            band_a=band,
+            band_b=band,
+            dest_dtype=dest_dtype,
+            allow_tf32=allow_tf32,
+            BLK_M=BLK_M,
+            BLK_N=BLK_N,
+            BLK_K=BLK_K,
+        )
+        c = banded_kernels.blkTallNSkinny_to_dense(
+            c_blkTallNSkinny, BLK_M, band_a=band, band_b=band
+        ).to(source_dtype)
+        return c
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:

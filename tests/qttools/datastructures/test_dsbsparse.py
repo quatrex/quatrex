@@ -849,3 +849,69 @@ class TestDistribution:
         dsbsparse.dtranspose()
 
         assert xp.allclose(dense, dsbsparse.to_dense())
+
+
+def run_standalone_matmul_test():
+    # create an instance of the test class
+    from qttools import NDArray, xp
+    from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+
+    DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
+
+    BLOCK_SIZES = [xp.array([2] * 10), xp.array([2] * 3 + [4] * 2 + [2] * 3)]
+
+    DENSIFY_BLOCKS = [
+        None,
+        [(0, 0), (-1, -1)],
+        [(2, 4)],
+    ]
+
+    ACCESSED_BLOCKS = [
+        (0, 0),
+        (-1, -1),
+        (2, 4),
+        (-9, 3),
+    ]
+
+    ACCESSED_ELEMENTS = [
+        (0, 0),
+        (-1, -1),
+        (2, -7),
+    ]
+
+    GLOBAL_STACK_SHAPES = [
+        (10,),
+        (7, 2),
+        (9, 2, 4),
+    ]
+
+    NUM_INDS = [
+        5,
+        10,
+        20,
+    ]
+
+    STACK_INDICES = [
+        (5,),
+        (slice(1, 4),),
+        (Ellipsis,),
+    ]
+
+    BLOCK_CHANGE_FACTORS = [
+        1.0,
+        0.5,
+        2.0,
+    ]
+
+    for dbsparse_type in DSBSPARSE_TYPES:
+        for block_size in BLOCK_SIZES:
+            for global_stack_shape in GLOBAL_STACK_SHAPES:
+                for densify_blocks in DENSIFY_BLOCKS:
+                    TestArithmetic().test_matmul(
+                        dbsparse_type, block_size, global_stack_shape, densify_blocks
+                    )
+
+
+if __name__ == "__main__":
+    # Run the standalone tests
+    run_standalone_matmul_test()

@@ -13,12 +13,14 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 
-if xp.__name__ == "numpy":
-    from scipy.signal import find_peaks
-elif xp.__name__ == "cupy":
-    from cupyx.scipy.signal import find_peaks
-else:
-    raise ImportError("Unknown backend.")
+# TODO: The peak detection should happen while preparing boundary
+# self-energies.
+# if xp.__name__ == "numpy":
+#     from scipy.signal import find_peaks
+# elif xp.__name__ == "cupy":
+#     from cupyx.scipy.signal import find_peaks
+# else:
+#     raise ImportError("Unknown backend.")
 
 
 class ElectronSolver(SubsystemSolver):
@@ -91,11 +93,11 @@ class ElectronSolver(SubsystemSolver):
         self.bare_system_matrix.data = 0.0
 
         self.bare_system_matrix += self.overlap_sparray
-        scale_stack(self.bare_system_matrix.data, self.local_energies)
-        self.eta = quatrex_config.electron.eta
-        self.bare_system_matrix -= (
-            self.hamiltonian_sparray - 1j * self.eta * self.overlap_sparray
+        scale_stack(
+            self.bare_system_matrix.data,
+            self.local_energies + 1j * quatrex_config.electron.eta,
         )
+        self.bare_system_matrix -= self.hamiltonian_sparray
 
         # Load the potential.
         try:
@@ -117,6 +119,12 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix = compute_config.dsbsparse_type.zeros_like(
             self.bare_system_matrix
         )
+
+        # self.delta_fermi_level_conduction_band = (
+        #     quatrex_config.electron.conduction_band_edge
+        #     - quatrex_config.electron.fermi_level
+        # )
+        self.temperature = quatrex_config.electron.temperature
 
         # Boundary conditions.
         self.eta_obc = quatrex_config.electron.eta_obc
@@ -142,7 +150,49 @@ class ElectronSolver(SubsystemSolver):
         self.i_left = None
         self.i_right = None
 
-        self.fladband = quatrex_config.electron.flatband
+        self.flatband = quatrex_config.electron.flatband
+
+    def update_fermi_levels(self, conduction_band_edges: NDArray) -> None:
+        """Updates the Fermi levels.
+
+        Parameters
+        ----------
+        conduction_band_edges : NDArray
+            The conduction band edges through the device.
+
+        """
+        left_conduction_band_edge = xp.mean(
+            conduction_band_edges[: self.bare_system_matrix.block_sizes[0]]
+        )
+        right_conduction_band_edge = xp.mean(
+            conduction_band_edges[-self.bare_system_matrix.block_sizes[-1] :]
+        )
+
+        (
+            print(
+                f"Updating conduction band edges: "
+                f"{left_conduction_band_edge}, {right_conduction_band_edge}",
+                flush=True,
+            )
+            if comm.rank == 0
+            else None
+        )
+
+        left_fermi_level = (
+            left_conduction_band_edge - self.delta_fermi_level_conduction_band
+        )
+        right_fermi_level = (
+            right_conduction_band_edge - self.delta_fermi_level_conduction_band
+        )
+
+        self.left_occupancies = fermi_dirac(
+            self.local_energies - left_fermi_level,
+            self.temperature,
+        )
+        self.right_occupancies = fermi_dirac(
+            self.local_energies - right_fermi_level,
+            self.temperature,
+        )
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -326,29 +376,29 @@ class ElectronSolver(SubsystemSolver):
 
         # NOTE: This filtering only works in flatband systems.
         # Otherwise, the dos and charge densities should be summed per
-        # transport cell (in thw old code the trace is taken during
+        # transport cell (in the old code the trace is taken during
         # RGF).
         # TODO: make parameters settable.
-        # if self.fladband:
-        #     g_lesser, g_greater, g_retarded = out
-        #     dos = -g_retarded.diagonal().imag.sum(1)
-        #     ne = g_lesser.diagonal().imag.sum(1)
-        #     nh = -g_greater.diagonal().imag.sum(1)
-        #     f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
-        #     f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
+        if self.flatband:
+            g_lesser, g_greater, g_retarded = out
+            dos = -g_retarded.diagonal().imag.sum(1)
+            ne = g_lesser.diagonal().imag.sum(1)
+            nh = -g_greater.diagonal().imag.sum(1)
+            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
+            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
 
-        #     # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
-        #     # # TODO: Should communicate boundary energies to correctly filter
-        #     # # makes arrays of bools
-        #     # f3 = xp.zeros_like(f1, dtype=bool)
-        #     # f3[peaks] = True
+            # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
+            # # TODO: Should communicate boundary energies to correctly filter
+            # # makes arrays of bools
+            # f3 = xp.zeros_like(f1, dtype=bool)
+            # f3[peaks] = True
 
-        #     mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
+            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
 
-        #     assert g_lesser.distribution_state == "stack"
-        #     g_lesser.data[mask] = 0.0
-        #     g_greater.data[mask] = 0.0
-        #     g_retarded.data[mask] = 0.0
+            assert g_lesser.distribution_state == "stack"
+            g_lesser.data[mask] = 0.0
+            g_greater.data[mask] = 0.0
+            g_retarded.data[mask] = 0.0
 
     def _recover_contact_blocks(
         self,
@@ -423,8 +473,12 @@ class ElectronSolver(SubsystemSolver):
 
         # anti symmetrize
         g_lesser, g_greater, _ = out
-        g_lesser.data = 0.5 * (g_lesser.data - g_lesser.ltranspose(copy=True).data.conj())
-        g_greater.data = 0.5 * (g_greater.data - g_greater.ltranspose(copy=True).data.conj())
+        g_lesser.data = 0.5 * (
+            g_lesser.data - g_lesser.ltranspose(copy=True).data.conj()
+        )
+        g_greater.data = 0.5 * (
+            g_greater.data - g_greater.ltranspose(copy=True).data.conj()
+        )
 
         self._filter_peaks(out)
 

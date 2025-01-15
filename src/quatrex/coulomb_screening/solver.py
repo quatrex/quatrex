@@ -85,7 +85,11 @@ def obc_multiply(
         # have open ends.
         p.blocks[0, 0] += a.blocks[1, 0] @ b.blocks[0, 1]
         p.blocks[-1, -1] += a.blocks[-2, -1] @ b.blocks[-1, -2]
-        buffer.data = p.data
+        try:
+            buffer.data = p.data
+        except ValueError:
+            # TODO: Still slow
+            buffer.data = p[*buffer.spy()]
     elif len(matrices) == 3:
         a, b, c = matrices
         p = a @ b @ c
@@ -497,8 +501,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         # obc_multiply(out[2], (out[2], self.coulomb_matrix), self.block_sizes)
 
         w_lesser, w_greater, _ = out
-        w_lesser.data = 0.5 * (w_lesser.data - w_lesser.ltranspose(copy=True).data.conj())
-        w_greater.data = 0.5 * (w_greater.data - w_greater.ltranspose(copy=True).data.conj())
+        w_lesser.data = 0.5 * (
+            w_lesser.data - w_lesser.ltranspose(copy=True).data.conj()
+        )
+        w_greater.data = 0.5 * (
+            w_greater.data - w_greater.ltranspose(copy=True).data.conj()
+        )
 
         # if comm.rank == 0:
         #     w_greater.data[0,:] = 0.0

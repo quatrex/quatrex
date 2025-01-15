@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
-from qttools.datastructures import DSBSparse
 from qttools import xp
+from qttools.datastructures import DSBSparse
 
 
 def homogenize(matrix: DSBSparse) -> None:

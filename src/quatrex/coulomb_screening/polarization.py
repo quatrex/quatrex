@@ -87,6 +87,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_greater.data = (
             p_greater.data - p_greater.ltranspose(copy=True).data.conj()
         ) / 2
+
+        p_lesser._data.real = 0
+        p_greater._data.real = 0
+
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
 
         # Homogenize in case of flatband.

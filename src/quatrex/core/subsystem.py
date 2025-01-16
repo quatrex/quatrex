@@ -142,13 +142,13 @@ class SubsystemSolver(ABC):
 
         """
         if lyapunov_config.algorithm == "spectral":
-            lyapunov_solver = lyapunov.Spectral()
+            lyapunov_solver = lyapunov.Spectral(
+                num_ref_iterations=lyapunov_config.num_ref_iterations
+            )
         elif lyapunov_config.algorithm == "doubling":
             lyapunov_solver = lyapunov.Doubling(
                 lyapunov_config.max_iterations, lyapunov_config.convergence_tol
             )
-        elif lyapunov_config.algorithm == "vectorize":
-            lyapunov_solver = lyapunov.Vectorize()
         else:
             raise NotImplementedError(
                 f"Lyapunov algorithm '{lyapunov_config.algorithm}' not implemented."

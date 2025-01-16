@@ -112,11 +112,14 @@ class LyapunovConfig(BaseModel):
     """Options for solving the Lyapunov equation."""
 
     model_config = ConfigDict(extra="forbid")
-    algorithm: Literal["spectral", "doubling", "vectorize"] = "spectral"
+    algorithm: Literal["spectral", "doubling"] = "spectral"
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 1000
     convergence_tol: PositiveFloat = 1e-7
+
+    # Parameter for spectral Lyapunov solver.
+    num_ref_iterations: PositiveInt = 3
 
     memoizer: MemoizerConfig = MemoizerConfig()
 

@@ -228,6 +228,7 @@ def densify_block(
         The data to fill the block with.
 
     """
+    # print("we are in densify block")
     cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
     rows = cp.zeros(cols.shape[0], dtype=cp.int32)
     blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK - 2) // THREADS_PER_BLOCK

@@ -10,6 +10,33 @@ from einops import rearrange
 has_gpu = torch.cuda.is_available()
 
 
+def calculate_bandwidth(A: torch.Tensor) -> int:
+    """
+    Calculate the bandwidth `b` of a given band matrix A using parallelized tensor operations.
+
+    Args:
+        A (torch.Tensor): A square matrix of size (n, n).
+
+    Returns:
+        int: The bandwidth `b`.
+    """
+    if A.shape[0] != A.shape[1]:
+        raise ValueError("Input matrix A must be square.")
+
+    # Get the indices of all non-zero elements
+    non_zero_indices = torch.nonzero(A, as_tuple=True)
+
+    # Calculate the row and column differences
+    row_indices, col_indices = non_zero_indices
+    abs_diff = torch.abs(row_indices - col_indices)
+
+    # Find the maximum difference
+    max_band = torch.max(abs_diff).item()
+
+    # Calculate the bandwidth
+    return 2 * max_band + 1
+
+
 def cdiv(a: torch.Tensor, b: torch.Tensor):
     return int(torch.div(a - 1, b, rounding_mode="floor") + 1)
 
@@ -71,40 +98,45 @@ def tallNskinny_to_blkTallNSkinny(
     """
     Convert a tall and skinny matrix to a block tall and skinny matrix.
     """
-    m, band = a_band.shape
+    B, m, band = a_band.shape
 
     num_blocks, block_offset = get_num_blocks(band, blk_size)
     num_blocks_offdiag = num_blocks // 2
 
     # Create a tensor to store the result
     A_blk = torch.zeros(
-        (m, blk_size * num_blocks),
+        (B, m, blk_size * num_blocks),
         device=a_band.device,
         dtype=a_band.dtype,
     )
     # copy the bands
-    for blk_row in range(0, m, blk_size):
-        for row_in_blk in range(blk_size):
-            A_blk[
-                blk_row + row_in_blk,
-                (block_offset + row_in_blk) : (block_offset + row_in_blk + band),
-            ] = a_band[blk_row + row_in_blk, :]
-
-    if zero_out:
-        for b_i in range(num_blocks_offdiag):
-            for b_j in range(num_blocks_offdiag - b_i):
+    for b in range(B):
+        for blk_row in range(0, m, blk_size):
+            for row_in_blk in range(blk_size):
+                # print(f"b={b}, blk_row={blk_row}, row_in_blk={row_in_blk}")
                 A_blk[
-                    b_i * blk_size : (b_i + 1) * blk_size,
-                    b_j * blk_size : (b_j + 1) * blk_size,
-                ] = 0
+                    b,
+                    blk_row + row_in_blk,
+                    (block_offset + row_in_blk) : (block_offset + row_in_blk + band),
+                ] = a_band[b, blk_row + row_in_blk, :]
 
-                b_lrow = m // blk_size - b_i - 1
-                b_lcol = num_blocks - b_j - 1
-                # print(f"b_i={b_i}, b_j={b_j}, b_lrow={b_lrow}, b_lcol={b_lcol}")
-                A_blk[
-                    b_lrow * blk_size : (b_lrow + 1) * blk_size,
-                    b_lcol * blk_size : (b_lcol + 1) * blk_size,
-                ] = 0
+        if zero_out:
+            for b_i in range(num_blocks_offdiag):
+                for b_j in range(num_blocks_offdiag - b_i):
+                    A_blk[
+                        b,
+                        b_i * blk_size : (b_i + 1) * blk_size,
+                        b_j * blk_size : (b_j + 1) * blk_size,
+                    ] = 0
+
+                    b_lrow = m // blk_size - b_i - 1
+                    b_lcol = num_blocks - b_j - 1
+                    # print(f"b_i={b_i}, b_j={b_j}, b_lrow={b_lrow}, b_lcol={b_lcol}")
+                    A_blk[
+                        b,
+                        b_lrow * blk_size : (b_lrow + 1) * blk_size,
+                        b_lcol * blk_size : (b_lcol + 1) * blk_size,
+                    ] = 0
 
         # # zero out the first and last block rows
         # if blk_row < num_blocks_offdiag * blk_size:
@@ -126,42 +158,46 @@ def shortNfat_to_blkShortNFat(b_band: torch.tensor, blk_size: int = 1, zero_out=
     """
     Convert a short and fat matrix to a block short and fat matrix.
     """
-    band, n = b_band.shape
+    B, band, n = b_band.shape
 
     num_blocks, block_offset = get_num_blocks(band, blk_size)
     num_blocks_offdiag = num_blocks // 2
 
     # Create a tensor to store the result
     B_blk = torch.zeros(
-        (blk_size * num_blocks, n),
+        (B, blk_size * num_blocks, n),
         device=b_band.device,
         dtype=b_band.dtype,
     )
 
     # copy the bands
-    for blk_col in range(0, n, blk_size):
-        for col_in_blk in range(blk_size):
-            B_blk[
-                (block_offset + col_in_blk) : (block_offset + col_in_blk + band),
-                blk_col + col_in_blk,
-            ] = b_band[:, blk_col + col_in_blk]
-
-    # zero out the first and last block cols
-    if zero_out:
-        for b_i in range(num_blocks_offdiag):
-            for b_j in range(num_blocks_offdiag - b_i):
+    for b in range(B):
+        for blk_col in range(0, n, blk_size):
+            for col_in_blk in range(blk_size):
                 B_blk[
-                    b_i * blk_size : (b_i + 1) * blk_size,
-                    b_j * blk_size : (b_j + 1) * blk_size,
-                ] = 0
+                    b,
+                    (block_offset + col_in_blk) : (block_offset + col_in_blk + band),
+                    blk_col + col_in_blk,
+                ] = b_band[b, :, blk_col + col_in_blk]
 
-                b_lrow = num_blocks - b_i - 1
-                b_lcol = n // blk_size - b_j - 1
-                # print(f"b_i={b_i}, b_j={b_j}, b_lrow={b_lrow}, b_lcol={b_lcol}")
-                B_blk[
-                    b_lrow * blk_size : (b_lrow + 1) * blk_size,
-                    b_lcol * blk_size : (b_lcol + 1) * blk_size,
-                ] = 0
+        # zero out the first and last block cols
+        if zero_out:
+            for b_i in range(num_blocks_offdiag):
+                for b_j in range(num_blocks_offdiag - b_i):
+                    B_blk[
+                        b,
+                        b_i * blk_size : (b_i + 1) * blk_size,
+                        b_j * blk_size : (b_j + 1) * blk_size,
+                    ] = 0
+
+                    b_lrow = num_blocks - b_i - 1
+                    b_lcol = n // blk_size - b_j - 1
+                    # print(f"b_i={b_i}, b_j={b_j}, b_lrow={b_lrow}, b_lcol={b_lcol}")
+                    B_blk[
+                        b,
+                        b_lrow * blk_size : (b_lrow + 1) * blk_size,
+                        b_lcol * blk_size : (b_lcol + 1) * blk_size,
+                    ] = 0
 
         # if blk_col < num_blocks_offdiag * blk_size:
         #     B_blk[
@@ -185,28 +221,39 @@ def blkTallNSkinny_to_tallNskinny(
     """
     Convert a block tall and skinny matrix to a tall and skinny matrix.
     """
-    m, _ = a_blk.shape
+    batch, m, _ = a_blk.shape
     # assert m % blk_size == 0, "Block size must divide the band size"
 
     # Create a tensor to store the result
-    A_band = torch.zeros(m, band, device=a_blk.device, dtype=a_blk.dtype)
+    A_band = torch.zeros(batch, m, band, device=a_blk.device, dtype=a_blk.dtype)
 
-    # print(f"m={m}, band={band}, blk_size={blk_size}")
-    # print(f"a_blk\n{a_blk}")
+    # print(
+    #     f"batch={batch}, m={m}, band={band}, blk_size={blk_size}, a_blk.shape={a_blk.shape}\n"
+    # )
+    # print(f"a_blk\n{a_blk[0].detach().cpu().numpy()}\n")
     # copy the bands
-    for blk_row in range(0, m, blk_size):
-        for row_in_blk in range(blk_size):
-            A_blk_band_row = a_blk[blk_row + row_in_blk, row_in_blk : row_in_blk + band]
-            # print(f"A_blk_band_row\n{A_blk_band_row}")
-            A_band[blk_row + row_in_blk, :] = F.pad(
-                A_blk_band_row, (0, band - A_blk_band_row.shape[0])
-            )
+    for b in range(batch):
+        for blk_row in range(0, m, blk_size):
+            for row_in_blk in range(blk_size):
+                A_blk_band_row = a_blk[
+                    b, blk_row + row_in_blk, row_in_blk : row_in_blk + band
+                ]
+                # print(
+                #     f"A_blk_band_row\n{A_blk_band_row}\nshape: {A_blk_band_row.shape}"
+                # )
+                # print(f"A_band row shape: {A_band[b, blk_row + row_in_blk, :].shape}")
+                # print(
+                #     f"b={b}, blk_row={blk_row}, row_in_blk={row_in_blk}\nA_band shape: {A_band.shape}"
+                # )
+                A_band[b, blk_row + row_in_blk, :] = F.pad(
+                    A_blk_band_row, (0, band - A_blk_band_row.shape[0])
+                )
 
-    # print(f"A_band\n{A_band}")
-    # exit()
+        # print(f"A_band\n{A_band}")
+        # exit()
 
-    # remove last blk_size - 1 columns
-    A_band = A_band[:, : -blk_size + 1]
+        # remove last blk_size - 1 columns
+    A_band = A_band[:, :, : -blk_size + 1]
 
     return A_band
 
@@ -299,7 +346,7 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
     """
     Convert a tall and skinny banded matrix back to a dense banded matrix.
     """
-    m, band = a_band.shape
+    batch, m, band = a_band.shape
     if not dist_from_diag:
         dist_from_diag = band // 2
     # dist_from_diag = band // 2
@@ -326,29 +373,32 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
     valid_mask = (cols >= 0) & (cols < m)
 
     # Initialize dense matrix
-    A_dense = torch.zeros((m, m), device=a_band.device, dtype=a_band.dtype)
+    A_dense = torch.zeros((batch, m, m), device=a_band.device, dtype=a_band.dtype)
 
     # print(f"tallNskinny_to_dense_banded.\nA_band:\n{a_band.detach().cpu().numpy()}\n")
     # print(
     #     f"rows:\n{rows.detach().cpu().numpy()}\ncols:\n{cols.detach().cpu().numpy()}\nvalid_mask:\n{valid_mask.detach().cpu().numpy()}\nrows[valid_mask]:\n{rows[valid_mask].detach().cpu().numpy()}\ncols[valid_mask]:\n{cols[valid_mask].detach().cpu().numpy()}\na_band[valid_mask]:\n{a_band[valid_mask].detach().cpu().numpy()}\nA_dense:\n{A_dense.detach().cpu().numpy()}\n\n"
     # )
     # Use scatter_add_ to populate the dense matrix
-    A_dense.index_put_((rows[valid_mask], cols[valid_mask]), a_band[valid_mask])
+    for b in range(batch):
+        A_dense[b].index_put_(
+            (rows[valid_mask], cols[valid_mask]), a_band[b, valid_mask]
+        )
 
-    # somehow, the last column of A_dense is not populated. This corresponds to the last diagonal of a_band
-    # This diagonal starts at [m-1, dist_from_diag] and ends at [m-1-dist_from_diag, band - 1]
-    # We need to populate the last column of A_dense with this diagonal
-    # print(f"Populating the last column of A_dense")
-    last_diag = torch.flip(extract_last_diagonal(a_band), dims=[0])
-    # last_diag = last_diag[::-1]
-    # print(f"last_diag:\n{last_diag.detach().cpu().numpy()}\nshape: {last_diag.shape}")
-    # reshape last_diag to a column vector
-    # last_diag = last_diag.reshape(-1, 1)
-    A_dense[-dist_from_diag:m, -1] = last_diag
+        # somehow, the last column of A_dense is not populated. This corresponds to the last diagonal of a_band
+        # This diagonal starts at [m-1, dist_from_diag] and ends at [m-1-dist_from_diag, band - 1]
+        # We need to populate the last column of A_dense with this diagonal
+        # print(f"Populating the last column of A_dense")
+        last_diag = torch.flip(extract_last_diagonal(a_band[b]), dims=[0])
+        # last_diag = last_diag[::-1]
+        # print(f"last_diag:\n{last_diag.detach().cpu().numpy()}\nshape: {last_diag.shape}")
+        # reshape last_diag to a column vector
+        # last_diag = last_diag.reshape(-1, 1)
+        A_dense[b, -dist_from_diag:m, -1] = last_diag
 
-    # It seems that the first column of A_dense is also incorrectly populated.
-    first_diag = extract_first_diagonal(a_band)
-    A_dense[:dist_from_diag, 0] = first_diag
+        # It seems that the first column of A_dense is also incorrectly populated.
+        first_diag = extract_first_diagonal(a_band[b])
+        A_dense[b, :dist_from_diag, 0] = first_diag
     # exit()
 
     return A_dense
@@ -426,7 +476,7 @@ def blkTallNskinny_to_denseBlock(
 
 
 def dense_banded_to_shortAndFat(b: torch.tensor, band: int):
-    m, n = b.shape
+    B, m, n = b.shape
     dist_from_diag = band // 2
 
     # Calculate indices for bands and columns
@@ -440,11 +490,14 @@ def dense_banded_to_shortAndFat(b: torch.tensor, band: int):
     rows = rows.clamp(0, m - 1)
 
     # Gather elements
-    B_band = b[rows, cols]
+    B_band = b[:, rows, cols]
     return B_band
 
 
 def dense_banded_to_blkTallNSkinny(a: torch.tensor, band: int, blk_size: int = 1):
+    # if a is 2D, add the batch dimension b = 1 and convert it to 3D
+    if len(a.shape) == 2:
+        a = a.unsqueeze(0)
     A_tallNSkinny = dense_banded_to_tallNskinny(a, band)
     # print(f"a_tallNSkinny: {A_tallNSkinny.detach().cpu().numpy()}\n")
     A_blk = tallNskinny_to_blkTallNSkinny(A_tallNSkinny, blk_size, zero_out=True)
@@ -452,6 +505,10 @@ def dense_banded_to_blkTallNSkinny(a: torch.tensor, band: int, blk_size: int = 1
 
 
 def dense_banded_to_blkShortNFat(b: torch.tensor, band: int, blk_size: int = 1):
+
+    # if a is 2D, add the batch dimension b = 1 and convert it to 3D
+    if len(b.shape) == 2:
+        b = b.unsqueeze(0)
     B_shortNFat = dense_banded_to_shortAndFat(b, band)
     B_blk = shortNfat_to_blkShortNFat(B_shortNFat, blk_size, zero_out=True)
     return B_blk
@@ -503,7 +560,7 @@ def csr_banded_to_blkShortNFat(
 
 #     return A_band
 def dense_banded_to_tallNskinny(a: torch.tensor, band: int):
-    m, n = a.shape
+    b, m, n = a.shape
     dist_from_diag = band // 2
 
     # Calculate indices for rows and bands
@@ -514,7 +571,7 @@ def dense_banded_to_tallNskinny(a: torch.tensor, band: int):
     cols = cols.clamp(0, n - 1)
 
     # Gather elements
-    A_band = a[rows, cols]
+    A_band = a[:, rows, cols]
     return A_band
 
 
@@ -981,10 +1038,13 @@ if has_gpu:
         diag_dist_c,
         num_pids_row,
         num_pids_col,
+        stride_ab,
         stride_am,
         stride_ak,  #
+        stride_bb,
         stride_bk,
         stride_bn,  #
+        stride_cb,
         stride_cm,
         stride_cn,
         variant: tl.constexpr,  #
@@ -996,24 +1056,18 @@ if has_gpu:
         GROUP_SIZE_M: tl.constexpr,  #
         log,
     ):
-        """Kernel for computing the matmul C = A x B.
-        A has shape (M, K), B has shape (K, N) and C has shape (M, N)
-        """
-        # -----------------------------------------------------------
-        # Map program ids `pid` to the block of C it should compute.
-        # This is done in a grouped ordering to promote L2 data reuse.
-        # See above `L2 Cache Optimizations` section for details.
-        pid = tl.program_id(axis=0)
-        # num_pid_in_group = GROUP_SIZE_M * num_pid_n # 9
-        # group_id = pid // num_pid_in_group # 0
-        # first_pid_m = group_id * GROUP_SIZE_M # 0
-        # group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-        # bandC_row = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-        # bandC_col = (pid % num_pid_in_group) // group_size_m
+        batch_pid = tl.program_id(axis=0)
+
+        # move the pointers of a_ptr, b_ptr, c_ptr to the current batch
+        a_ptr += batch_pid * stride_ab
+        b_ptr += batch_pid * stride_bb
+        c_ptr += batch_pid * stride_cb
+
+        pid = tl.program_id(axis=1)
         bandC_row = pid // num_pids_col
         bandC_col = pid % num_pids_col
 
-        # (pid_m, pid_n) is the coordinate of block in bandC that this program is responsible for.
+        # (bandC_row, bandC_col) is the coordinate of block in bandC that this program is responsible for.
         # the corresponding coordinate of bloack in "dense" matrix C is:
         denseC_row = bandC_row
         denseC_col = bandC_row + bandC_col - diag_dist_c
@@ -1200,18 +1254,20 @@ if has_gpu:
                 b_ptrs += BLK_K * stride_bk
             c = accumulator.to(tl.float16)
         else:
-            for k in range(0, tl.cdiv(num_blocks * BLK_M, BLK_K)):
+            a_ptrs += BLK_K * stride_ak
+            b_ptrs += BLK_K * stride_bk
+            for k in range(0, 1):  # tl.cdiv(num_blocks * BLK_M, BLK_K)):
                 # Load the next block of A and B, generate a mask by checking the K dimension.
                 # If it is out of bounds, set it to 0.
-                a = tl.load(
-                    a_ptrs
+                a = (
+                    tl.load(a_ptrs) + 1
                 )  # , mask=offs_k[None, :] < band_a - k * BLK_K, other=0.0)
                 b = tl.load(
                     b_ptrs
                 )  # , mask=offs_k[:, None] < band_b - k * BLK_K, other=0.0)
                 # We accumulate along the K dimension.
-                accumulator = tl.dot(a, b, accumulator, allow_tf32=allow_tf32)
-                # accumulator = b.to(tl.float32)
+                accumulator = tl.dot(a, b, accumulator)  # , allow_tf32=allow_tf32) + 1
+                # accumulator = accumulator + b.to(tl.float32)
                 # Advance the ptrs to the next K block.
                 a_ptrs += BLK_K * stride_ak
                 b_ptrs += BLK_K * stride_bk
@@ -1515,7 +1571,7 @@ if has_gpu:
     ):
         if band_b is None:
             band_b = band_a
-        M, _ = a.shape
+        batch_size, M, _ = a.shape
         # band_b, N = b.shape
 
         band_a, _ = get_num_blocks(band_a, BLK_M)
@@ -1527,158 +1583,81 @@ if has_gpu:
         band_c = 2 * diag_dist_c + 1
 
         num_block_rows = cdiv(M, BLK_M)
-        # band_c, _ = get_num_blocks(band_c, BLK_N)
+        grid = (
+            batch_size,
+            num_block_rows * band_c,
+        )
+        grid = (
+            1,
+            band_c,
+        )
 
-        # Check constraints.
-        # assert a.shape[1] == b.shape[0], "Incompatible dimensions"
-        # assert a.is_contiguous(), "Matrix A must be contiguous"
+        # for batch in range(batch_size):
+        if True:
+            if dest_dtype == torch.float64:
+                matmul_band_FP64_kernel[grid](
+                    a,
+                    b,
+                    c,  #
+                    M=M,
+                    band_a=band_a,
+                    band_b=band_b,
+                    band_c=band_c,
+                    diag_dist_a=diag_dist_a,
+                    diag_dist_b=diag_dist_b,
+                    diag_dist_c=diag_dist_c,
+                    num_pids_row=num_block_rows,
+                    num_pids_col=band_c,
+                    stride_am=a.stride(0),
+                    stride_ak=a.stride(1),  #
+                    stride_bk=b.stride(0),
+                    stride_bn=b.stride(1),  #
+                    stride_cm=c.stride(0),
+                    stride_cn=c.stride(1),  #
+                    BLK_M=BLK_M,
+                    BLK_N=BLK_N,
+                    BLK_K=BLK_K,  #
+                    GROUP_SIZE_M=1,  #
+                    log=None,
+                )
+            else:
+                # print(f"option 2, variant: {variants[(a.dtype, dest_dtype)]}\n\n")
+                # print(f"a:\n{a.detach().cpu().numpy()[32:48, :]}")
+                # print(f"b:\n{b.detach().cpu().numpy()[:, 0:16]}")
+                matmul_band_mixed_precision_kernel[grid](
+                    a,
+                    b,
+                    c,  #
+                    # a[batch],
+                    # b[batch],
+                    # c[batch],  #
+                    M=M,
+                    band_a=band_a,
+                    band_b=band_b,
+                    band_c=band_c,
+                    diag_dist_a=diag_dist_a,
+                    diag_dist_b=diag_dist_b,
+                    diag_dist_c=diag_dist_c,
+                    num_pids_row=num_block_rows,
+                    num_pids_col=band_c,
+                    stride_ab=a.stride(0),
+                    stride_am=a.stride(1),
+                    stride_ak=a.stride(2),  #
+                    stride_bb=b.stride(0),
+                    stride_bk=b.stride(1),
+                    stride_bn=b.stride(2),  #
+                    stride_cb=c.stride(0),
+                    stride_cm=c.stride(1),
+                    stride_cn=c.stride(2),  #
+                    variant=variants[(a.dtype, dest_dtype)],
+                    allow_tf32=allow_tf32,
+                    BLK_M=BLK_M,
+                    BLK_N=BLK_N,
+                    BLK_K=BLK_K,  #
+                    GROUP_SIZE_M=1,  #
+                    log=None,
+                )
 
-        # Allocates output.
-        # c = torch.empty(
-        #     (M, min(BLK_M * cdiv(band_c + BLK_M - 1, BLK_M), M)),
-        #     device=a.device,
-        #     dtype=a.dtype,
-        # )
-
-        # c = torch.zeros(
-        #     (M, BLK_M * band_c),
-        #     device=a.device,
-        #     dtype=dest_dtype,
-        # )
-        # 1D launch kernel where each block gets its own program.
-        # grid = (cdiv(M, BLK_M) * cdiv(band_c, BLK_N),)
-        grid = (num_block_rows * band_c,)
-
-        # print(
-        #     f"triton matmul_band. Params: M={M}, band_a={band_a}, band_b={band_b}, band_c={band_c}"
-        # )
-        # print(f"BLK_M={BLK_M}, BLK_N={BLK_N}, BLK_K={BLK_K}")
-        # # print(f"Matrices:\na (shape {a.shape})\n{a}\nb (shape {b.shape})\n{b}")
-        # print(f"Grid: {grid} = {num_block_rows} * {band_c}")
-        # # exit()
-        # log = torch.zeros(grid[0] * 16, dtype=torch.int32, device=a.device)
-        if dest_dtype == torch.float64:
-            matmul_band_FP64_kernel[grid](
-                a,
-                b,
-                c,  #
-                M=M,
-                band_a=band_a,
-                band_b=band_b,
-                band_c=band_c,
-                diag_dist_a=diag_dist_a,
-                diag_dist_b=diag_dist_b,
-                diag_dist_c=diag_dist_c,
-                num_pids_row=num_block_rows,
-                num_pids_col=band_c,
-                stride_am=a.stride(0),
-                stride_ak=a.stride(1),  #
-                stride_bk=b.stride(0),
-                stride_bn=b.stride(1),  #
-                stride_cm=c.stride(0),
-                stride_cn=c.stride(1),  #
-                BLK_M=BLK_M,
-                BLK_N=BLK_N,
-                BLK_K=BLK_K,  #
-                GROUP_SIZE_M=1,  #
-                log=None,
-            )
-        else:
-            # print(f"option 2, variant: {variants[(a.dtype, dest_dtype)]}\n\n")
-            # print(f"a:\n{a.detach().cpu().numpy()[32:48, :]}")
-            # print(f"b:\n{b.detach().cpu().numpy()[:, 0:16]}")
-            matmul_band_mixed_precision_kernel[grid](
-                a,
-                b,
-                c,  #
-                M=M,
-                band_a=band_a,
-                band_b=band_b,
-                band_c=band_c,
-                diag_dist_a=diag_dist_a,
-                diag_dist_b=diag_dist_b,
-                diag_dist_c=diag_dist_c,
-                num_pids_row=num_block_rows,
-                num_pids_col=band_c,
-                stride_am=a.stride(0),
-                stride_ak=a.stride(1),  #
-                stride_bk=b.stride(0),
-                stride_bn=b.stride(1),  #
-                stride_cm=c.stride(0),
-                stride_cn=c.stride(1),  #
-                variant=variants[(a.dtype, dest_dtype)],
-                allow_tf32=allow_tf32,
-                BLK_M=BLK_M,
-                BLK_N=BLK_N,
-                BLK_K=BLK_K,  #
-                GROUP_SIZE_M=1,  #
-                log=None,
-            )
-        # log = log.reshape(grid[0], 16)
-        # log = log[:, :11]
-        # # print(
-        # #     [
-        # #         "pid",
-        # #         "bandC_row",
-        # #         "bandC_col",
-        # #         "bandA_col_start",
-        # #         "bandB_row_start",
-        # #         "num_blocks",
-        # #         "denseC_row",
-        # #         "denseC_col",
-        # #     ]
-        # # )
-        # import pandas as pd
-
-        # # set pandas display options, set the maximum number of rows to display
-        # pd.set_option("display.max_rows", 1000)
-
-        # df = pd.DataFrame(
-        #     log.cpu().numpy(),
-        #     columns=[
-        #         "pid",
-        #         "bandC_row",
-        #         "bandC_col",
-        #         "bandA_col_start",
-        #         "bandB_row_start",
-        #         "num_blocks",
-        #         "denseC_row",
-        #         "denseC_col",
-        #         "doing_work",
-        #         "c_row_offset",
-        #         "c_col_offset",
-        #     ],
-        # )
-        # print(df)
-        # exit()
-
-        # num_blocks_M = cdiv(M, BLK_M)
-        # num_blocks_N = band_c
-        # reshaped_c = rearrange(
-        #     c,
-        #     "(m_b b_m) (n_b b_n) -> m_b n_b b_m b_n",
-        #     m_b=num_blocks_M,
-        #     n_b=num_blocks_N,
-        #     b_m=BLK_M,
-        #     b_n=BLK_N,
-        # )
-
-        # c_diag = blkTallNSkinny_to_tallNskinny(c, BLK_M, BLK_M * band_c)
-        # c_dense = tallNskinny_to_dense_banded(
-        #     c_diag, dist_from_diag=diag_dist_c * BLK_M
-        # )
-        # print(f"c_diag:\n{c_diag}")
-        # print(f"c_dense:\n{c_dense}")
-        # print(f"Result:\nc\n{c_dense}?")
-        # # print(f"Result shape: {reshaped_c.shape}")
-        # for b_m in range(num_blocks_M):
-        #     for b_n in range(num_blocks_N):
-        #         print(f"Block {b_m}, {b_n}")
-        #         print(reshaped_c[b_m, b_n])
-        # # print(f"\n\nfull:\n{c}")
-        # print(f"\nfirst block cols:\n{c[:, :BLK_M]}")
-        # print(f"\nlast block cols:\n{c[:, -BLK_M:]}")
-        # exit()
         return c
 
     def band_mm(A, B, band, band_out=None):

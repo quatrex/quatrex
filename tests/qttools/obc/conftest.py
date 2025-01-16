@@ -13,7 +13,7 @@ from qttools.nevp import NEVP, Beyn, Full
 # quadrature points is set such that non-spurious eigenvalues get
 # approximated accurately enough.
 NEVP_SOLVERS = [
-    pytest.param(Beyn(r_o=200, r_i=0.9, c_hat=23, num_quad_points=13), id="Beyn"),
+    pytest.param(Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13), id="Beyn"),
     pytest.param(Full(), id="Full"),
 ]
 
@@ -30,6 +30,10 @@ BLOCK_SECTIONS = [
 ]
 
 CONTACTS = ["left", "right"]
+
+TWO_SIDED = [True, False]
+
+TREAT_PAIRWISE = [True, False]
 
 
 @pytest.fixture(params=X_II_FORMULAS)
@@ -73,4 +77,16 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
 @pytest.fixture(params=CONTACTS, autouse=True)
 def contact(request: pytest.FixtureRequest) -> str:
     """Returns a contact."""
+    return request.param
+
+
+@pytest.fixture(params=TWO_SIDED)
+def two_sided(request: pytest.FixtureRequest) -> bool:
+    """Whether only right eigenvectors or both are used."""
+    return request.param
+
+
+@pytest.fixture(params=TREAT_PAIRWISE)
+def treat_pairwise(request: pytest.FixtureRequest) -> bool:
+    """Whether the eigenvalues are pairwise filtered."""
     return request.param

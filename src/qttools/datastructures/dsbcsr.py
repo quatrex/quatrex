@@ -152,6 +152,11 @@ class DSBCSR(DSBSparse):
         # rank that holds the data.
         ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
+        # If the rank does not hold any of the requested elements, we do
+        # nothing.
+        if not any(ranks == comm.rank):
+            return
+
         stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
         stack_inds, nnz_inds = xp.ix_(
             stack_padding_inds,

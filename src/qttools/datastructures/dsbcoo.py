@@ -4,10 +4,21 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels, banded_kernels
+from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
-import torch
+
+cuda_avail = False
+import sys
+
+if "torch" in sys.modules:
+    import torch
+
+    if torch.cuda.is_available():
+        cuda_avail = True
+
+if cuda_avail:
+    from qttools.kernels import banded_kernels
 
 
 class DSBCOO(DSBSparse):
@@ -377,7 +388,7 @@ class DSBCOO(DSBSparse):
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if self.allow_band_matmul and torch.cuda.is_available():
+        if self.allow_band_matmul and cuda_avail:
             return self.__band_matmul__(other)
         else:
             product_rows, product_cols = product_sparsity_pattern(
@@ -416,7 +427,7 @@ class DSBCOO(DSBSparse):
     @property
     def band(self) -> int:
         """Returns the bandwidth of the matrix."""
-        if self._band is None:
+        if self._band is None and cuda_avail:
             self._band = banded_kernels.calculate_bandwidth(self.dense[0])
         return self._band
 

@@ -60,37 +60,6 @@ def get_num_blocks(band, blk_size) -> (int, int):
     return num_blocks, first_block_offset
 
 
-# def tallNskinny_to_blkTallNSkinny(a_band: torch.tensor, blk_size: int = 1):
-#     """
-#     Convert a tall and skinny matrix to a block tall and skinny matrix.
-#     """
-#     m, band = a_band.shape
-
-#     num_blocks, first_block_offset = get_num_blocks(band, blk_size)
-#     num_blocks_left = num_blocks // 2
-
-#     first_block_offset = 0
-
-#     # Create a tensor to store the result
-#     A_blk = torch.zeros(
-#         (m, blk_size * num_blocks),
-#         device=a_band.device,
-#         dtype=a_band.dtype,
-#     )
-
-#     # copy the bands
-#     for blk_row in range(0, m, blk_size):
-#         block_offset = max(0, num_blocks_left * blk_size - blk_row)
-#         for row_in_blk in range(blk_size):
-#             A_blk[
-#                 blk_row + row_in_blk,
-#                 (first_block_offset + block_offset + row_in_blk) : (
-#                     first_block_offset + block_offset + row_in_blk + band
-#                 ),
-#             ] = a_band[blk_row + row_in_blk, :]
-
-#     return A_blk
-
 
 def tallNskinny_to_blkTallNSkinny(
     a_band: torch.tensor, blk_size: int = 1, zero_out=False
@@ -113,7 +82,6 @@ def tallNskinny_to_blkTallNSkinny(
     for b in range(B):
         for blk_row in range(0, m, blk_size):
             for row_in_blk in range(blk_size):
-                # print(f"b={b}, blk_row={blk_row}, row_in_blk={row_in_blk}")
                 A_blk[
                     b,
                     blk_row + row_in_blk,
@@ -131,25 +99,11 @@ def tallNskinny_to_blkTallNSkinny(
 
                     b_lrow = m // blk_size - b_i - 1
                     b_lcol = num_blocks - b_j - 1
-                    # print(f"b_i={b_i}, b_j={b_j}, b_lrow={b_lrow}, b_lcol={b_lcol}")
                     A_blk[
                         b,
                         b_lrow * blk_size : (b_lrow + 1) * blk_size,
                         b_lcol * blk_size : (b_lcol + 1) * blk_size,
                     ] = 0
-
-        # # zero out the first and last block rows
-        # if blk_row < num_blocks_offdiag * blk_size:
-        #     A_blk[
-        #         blk_row : blk_row + blk_size, : num_blocks_offdiag * blk_size - blk_row
-        #     ] = 0
-
-        # rows_from_end = m - blk_row
-        # if rows_from_end <= num_blocks_offdiag * blk_size:
-        #     A_blk[
-        #         blk_row : blk_row + blk_size,
-        #         (num_blocks_offdiag + 2) * blk_size - rows_from_end :,
-        #     ] = 0
 
     return A_blk
 
@@ -199,19 +153,6 @@ def shortNfat_to_blkShortNFat(b_band: torch.tensor, blk_size: int = 1, zero_out=
                         b_lcol * blk_size : (b_lcol + 1) * blk_size,
                     ] = 0
 
-        # if blk_col < num_blocks_offdiag * blk_size:
-        #     B_blk[
-        #         : num_blocks_offdiag * blk_size - blk_col,
-        #         blk_col : blk_col + blk_size,
-        #     ] = 0
-
-        # cols_from_end = n - blk_col
-        # if cols_from_end <= num_blocks_offdiag * blk_size:
-        #     B_blk[
-        #         (num_blocks_offdiag + 2) * blk_size - cols_from_end :,
-        #         blk_col : blk_col + blk_size,
-        #     ] = 0
-
     return B_blk
 
 
@@ -227,10 +168,6 @@ def blkTallNSkinny_to_tallNskinny(
     # Create a tensor to store the result
     A_band = torch.zeros(batch, m, band, device=a_blk.device, dtype=a_blk.dtype)
 
-    # print(
-    #     f"batch={batch}, m={m}, band={band}, blk_size={blk_size}, a_blk.shape={a_blk.shape}\n"
-    # )
-    # print(f"a_blk\n{a_blk[0].detach().cpu().numpy()}\n")
     # copy the bands
     for b in range(batch):
         for blk_row in range(0, m, blk_size):
@@ -238,19 +175,9 @@ def blkTallNSkinny_to_tallNskinny(
                 A_blk_band_row = a_blk[
                     b, blk_row + row_in_blk, row_in_blk : row_in_blk + band
                 ]
-                # print(
-                #     f"A_blk_band_row\n{A_blk_band_row}\nshape: {A_blk_band_row.shape}"
-                # )
-                # print(f"A_band row shape: {A_band[b, blk_row + row_in_blk, :].shape}")
-                # print(
-                #     f"b={b}, blk_row={blk_row}, row_in_blk={row_in_blk}\nA_band shape: {A_band.shape}"
-                # )
                 A_band[b, blk_row + row_in_blk, :] = F.pad(
                     A_blk_band_row, (0, band - A_blk_band_row.shape[0])
                 )
-
-        # print(f"A_band\n{A_band}")
-        # exit()
 
         # remove last blk_size - 1 columns
     A_band = A_band[:, :, : -blk_size + 1]
@@ -261,8 +188,6 @@ def blkTallNSkinny_to_tallNskinny(
 def blkTallNSkinny_to_dense(
     c_blk: torch.tensor, blk_size: int = 1, band_a: int = 1, band_b: int = 1
 ):
-    # print(f"blkTallNSkinny_to_dense: c_blk.shape={c_blk.shape}")
-    # print(f"band_a={band_a}, band_b={band_b}, blk_size={blk_size}")
     band_a, _ = get_num_blocks(band_a, blk_size)
     band_b, _ = get_num_blocks(band_b, blk_size)
 
@@ -270,38 +195,11 @@ def blkTallNSkinny_to_dense(
     diag_dist_b = band_b // 2
     diag_dist_c = diag_dist_a + diag_dist_b
     band_c = 2 * diag_dist_c + 1
-    # print(
-    #     f"After block refinement. band_a={band_a}, band_b={band_b}, band_c={band_c}, c_blk.shape={c_blk.shape}"
-    # )
+    
     c_diag = blkTallNSkinny_to_tallNskinny(c_blk, blk_size, blk_size * band_c)
-    # print(f"\nc_diag:\n{c_diag.detach().cpu().numpy()}\n\n")
-    # print(
-    #     f"c_blk.shape={c_blk.shape}, blk_size= {blk_size}, band= { blk_size * band_c},  c_diag.shape={c_diag.shape}"
-    # )
-    c_dense = tallNskinny_to_dense_banded(c_diag)  # , dist_from_diag=band_c * blk_size)
+    
+    c_dense = tallNskinny_to_dense_banded(c_diag) 
     return c_dense
-
-
-# def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None):
-#     """
-#     Convert a banded matrix to a tall and skinny matrix.
-#     """
-#     m, band = a_band.shape
-
-#     # Create a tensor to store the result
-#     A_dense = torch.zeros((m, m), device=a_band.device, dtype=a_band.dtype)
-
-#     if not dist_from_diag:
-#         dist_from_diag = band // 2
-#     print(f"m={m}, band={band}, dist_from_diag={dist_from_diag}")
-#     # copy the bands
-#     for i in range(m):
-#         for j in range(band):
-#             j_dense = j + i - dist_from_diag
-#             if j_dense >= 0 and j_dense < m:
-#                 A_dense[i, j + i - dist_from_diag] = a_band[i, j]
-#             # A_dense[i, j] = a_band[i, j - i + dist_from_diag]
-#     return A_dense
 
 
 def extract_last_diagonal(A):
@@ -349,21 +247,9 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
     batch, m, band = a_band.shape
     if not dist_from_diag:
         dist_from_diag = band // 2
-    # dist_from_diag = band // 2
-
-    # print all shapes and parameters
-    # print(f"m={m}, band={band}, dist_from_diag={dist_from_diag}")
-    # print(f"shape of a_band: {a_band.shape}")
 
     # Create indices for rows and columns in the dense matrix
     rows = torch.arange(m).repeat(band, 1).T  # m x band
-    # print(f"rows shape: {rows.shape}")
-    # print(
-    #     f" torch.arange(-dist_from_diag, dist_from_diag + 1) shape: {torch.arange(-dist_from_diag, dist_from_diag + 1).shape}"
-    # )
-    # print(
-    #     f"torch.arange(-dist_from_diag, dist_from_diag + 1).repeat(m, 1) shape: {torch.arange(-dist_from_diag, dist_from_diag + 1).repeat(m, 1).shape}"
-    # )
     cols = torch.arange(-dist_from_diag, dist_from_diag + 1).repeat(m, 1) + rows
 
     # Clip column indices to ensure they're valid
@@ -375,10 +261,6 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
     # Initialize dense matrix
     A_dense = torch.zeros((batch, m, m), device=a_band.device, dtype=a_band.dtype)
 
-    # print(f"tallNskinny_to_dense_banded.\nA_band:\n{a_band.detach().cpu().numpy()}\n")
-    # print(
-    #     f"rows:\n{rows.detach().cpu().numpy()}\ncols:\n{cols.detach().cpu().numpy()}\nvalid_mask:\n{valid_mask.detach().cpu().numpy()}\nrows[valid_mask]:\n{rows[valid_mask].detach().cpu().numpy()}\ncols[valid_mask]:\n{cols[valid_mask].detach().cpu().numpy()}\na_band[valid_mask]:\n{a_band[valid_mask].detach().cpu().numpy()}\nA_dense:\n{A_dense.detach().cpu().numpy()}\n\n"
-    # )
     # Use scatter_add_ to populate the dense matrix
     for b in range(batch):
         A_dense[b].index_put_(
@@ -388,10 +270,8 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
         # somehow, the last column of A_dense is not populated. This corresponds to the last diagonal of a_band
         # This diagonal starts at [m-1, dist_from_diag] and ends at [m-1-dist_from_diag, band - 1]
         # We need to populate the last column of A_dense with this diagonal
-        # print(f"Populating the last column of A_dense")
         last_diag = torch.flip(extract_last_diagonal(a_band[b]), dims=[0])
         # last_diag = last_diag[::-1]
-        # print(f"last_diag:\n{last_diag.detach().cpu().numpy()}\nshape: {last_diag.shape}")
         # reshape last_diag to a column vector
         # last_diag = last_diag.reshape(-1, 1)
         A_dense[b, -dist_from_diag:m, -1] = last_diag
@@ -399,7 +279,6 @@ def tallNskinny_to_dense_banded(a_band: torch.tensor, dist_from_diag: int = None
         # It seems that the first column of A_dense is also incorrectly populated.
         first_diag = extract_first_diagonal(a_band[b])
         A_dense[b, :dist_from_diag, 0] = first_diag
-    # exit()
 
     return A_dense
 
@@ -443,36 +322,10 @@ def blkTallNskinny_to_denseBlock(
         # correspond to a "negative" column indices. We shift the first diag_dist_c
         # block rows to the left to remove the empty blocks.
         for i in range(diag_dist_c):
-            # print shapes
-            # print(
-            #     f"reshaped_c[{i}, :, :, :]\n{reshaped_c[i, :, :, :].shape}, RHS: {torch.concat((
-            #     reshaped_c[i, diag_dist_c - i :], reshaped_c[i, : diag_dist_c - i]
-            # )).shape}"
-            # )
             reshaped_c[i, :] = torch.concat(
                 (reshaped_c[i, diag_dist_c - i :], reshaped_c[i, : diag_dist_c - i])
             )
     return reshaped_c
-
-
-# def dense_banded_to_shortAndFat(b: torch.tensor, band: int):
-#     """
-#     Convert a banded matrix to a tall and skinny matrix.
-#     """
-#     m, n = b.shape
-#     assert m == n, "Input matrix must be square"
-#     assert m > 2 * band, "Matrix must be larger than 2*band"
-
-#     # Create a tensor to store the result
-#     B_band = torch.zeros((band, n), device=b.device, dtype=b.dtype)
-
-#     dist_from_diag = band // 2
-#     # copy the bands
-#     for i in range(band):
-#         for j in range(n):
-#             B_band[i, j] = b[i + j - dist_from_diag, j]
-
-#     return B_band
 
 
 def dense_banded_to_shortAndFat(b: torch.tensor, band: int):
@@ -499,13 +352,11 @@ def dense_banded_to_blkTallNSkinny(a: torch.tensor, band: int, blk_size: int = 1
     if len(a.shape) == 2:
         a = a.unsqueeze(0)
     A_tallNSkinny = dense_banded_to_tallNskinny(a, band)
-    # print(f"a_tallNSkinny: {A_tallNSkinny.detach().cpu().numpy()}\n")
     A_blk = tallNskinny_to_blkTallNSkinny(A_tallNSkinny, blk_size, zero_out=True)
     return A_blk
 
 
 def dense_banded_to_blkShortNFat(b: torch.tensor, band: int, blk_size: int = 1):
-
     # if a is 2D, add the batch dimension b = 1 and convert it to 3D
     if len(b.shape) == 2:
         b = b.unsqueeze(0)
@@ -517,9 +368,7 @@ def dense_banded_to_blkShortNFat(b: torch.tensor, band: int, blk_size: int = 1):
 def csr_banded_to_blkTallNSkinny(
     a_sparse: sp.sparse.csr_matrix, band: int, blk_size: int = 1
 ):
-    print(f"start csr_banded_to_blkTallNSkinny, band={band}, blk_size={blk_size}")
     A_tallNSkinny = csr_banded_to_tallNskinny(a_sparse, band)
-    print("start tallNskinny_to_blkTallNSkinny")
     A_blk = tallNskinny_to_blkTallNSkinny(A_tallNSkinny, blk_size)
     return A_blk
 
@@ -529,36 +378,9 @@ def csr_banded_to_blkShortNFat(
 ):
     B_shortNFat = csr_banded_to_shortAndFat(b_sparse, band)
     B_blk = shortNfat_to_blkShortNFat(B_shortNFat, blk_size)
-    # print(
-    #     f"B_shortNFat: \n{B_shortNFat.detach().cpu().numpy()}\n, B_blk\n{B_blk.detach().cpu().numpy()}"
-    # )
-    # exit()
     return B_blk
 
 
-# def dense_banded_to_tallNskinny(a: torch.tensor, band: int):
-#     """
-#     Convert a banded matrix to a tall and skinny matrix.
-#     """
-#     m, n = a.shape
-#     assert m == n, "Input matrix must be square"
-#     assert m > 2 * band, "Matrix must be larger than 2*band"
-
-#     # Create a tensor to store the result
-#     A_band = torch.zeros(m, band)
-
-#     dist_from_diag = band // 2
-
-#     # copy the bands
-#     for i in range(m):
-#         for j in range(band):
-#             A_band[i, j] = a[i, j + i - dist_from_diag]
-#         # for j in range(m):
-#         #     if abs(i - j) <= band:
-#         #         A_band[i, j - i + dist_from_diag] = a[i, j]
-
-
-#     return A_band
 def dense_banded_to_tallNskinny(a: torch.tensor, band: int):
     b, m, n = a.shape
     dist_from_diag = band // 2
@@ -581,7 +403,6 @@ def csr_banded_to_tallNskinny(a_csr: sp.sparse.csr_matrix, band: int):
     """
     m, n = a_csr.shape
     assert m == n, "Input matrix must be square"
-    # assert m > 2 * band, "Matrix must be larger than 2*band"
 
     # Create a tensor to store the result
     A_band = torch.zeros(m, band)
@@ -637,9 +458,7 @@ def csr_banded_to_shortAndFat(b_csr: sp.sparse.csr_matrix, band: int):
     return B_band
 
 
-# has_gpu = False
 if has_gpu:
-
     def is_cuda():
         return triton.runtime.driver.active.get_current_target().backend == "cuda"
 
@@ -877,11 +696,6 @@ if has_gpu:
         else:
             return get_hip_autotune_config()
 
-    # `triton.jit`'ed functions can be auto-tuned by using the `triton.autotune` decorator, which consumes:
-    #   - A list of `triton.Config` objects that define different configurations of
-    #       meta-parameters (e.g., `BLOCK_SIZE_M`) and compilation options (e.g., `num_warps`) to try
-    #   - An auto-tuning *key* whose change in values will trigger evaluation of all the
-    #       provided configs
     @triton.autotune(
         configs=get_autotune_config(),
         key=["M", "N", "K"],
@@ -896,9 +710,6 @@ if has_gpu:
         M,
         N,
         K,
-        # The stride variables represent how much to increase the ptr by when moving by 1
-        # element in a particular dimension. E.g. `stride_am` is how much to increase `a_ptr`
-        # by to get the element one row down (A has M rows).
         stride_am,
         stride_ak,  #
         stride_bk,
@@ -1169,8 +980,8 @@ if has_gpu:
         # bandC_col_data += bandC_col * BLK_N * stride_cn
         # tl.store(bandC_col_ptr, bandC_col_data)
 
-        # # if pid != 20:
-        # #     return
+        # if pid != 2:
+        #     return
         # ##################
         # # END OF LOGGING #
         # ##################
@@ -1254,13 +1065,13 @@ if has_gpu:
                 b_ptrs += BLK_K * stride_bk
             c = accumulator.to(tl.float16)
         else:
-            a_ptrs += BLK_K * stride_ak
-            b_ptrs += BLK_K * stride_bk
-            for k in range(0, 1):  # tl.cdiv(num_blocks * BLK_M, BLK_K)):
+            # a_ptrs += BLK_K * stride_ak
+            # b_ptrs += BLK_K * stride_bk
+            for k in range(tl.cdiv(num_blocks * BLK_M, BLK_K)):
                 # Load the next block of A and B, generate a mask by checking the K dimension.
                 # If it is out of bounds, set it to 0.
-                a = (
-                    tl.load(a_ptrs) + 1
+                a = tl.load(
+                    a_ptrs
                 )  # , mask=offs_k[None, :] < band_a - k * BLK_K, other=0.0)
                 b = tl.load(
                     b_ptrs
@@ -1586,10 +1397,6 @@ if has_gpu:
         grid = (
             batch_size,
             num_block_rows * band_c,
-        )
-        grid = (
-            1,
-            band_c,
         )
 
         # for batch in range(batch_size):

@@ -49,9 +49,17 @@ class DSBCOO(DSBSparse):
         return_dense: bool = True,
         allow_band_matmul: bool = True,
         allow_tf32: bool = True,
+        BLK_M=16,
+        BLK_N=16,
+        BLK_K=16,
     ) -> None:
         """Initializes the DBCOO matrix."""
-        super().__init__(data, block_sizes, global_stack_shape, return_dense)
+        super().__init__(
+            data,
+            block_sizes,
+            global_stack_shape,
+            return_dense,
+        )
 
         self.rows = rows.astype(int)
         self.cols = cols.astype(int)
@@ -60,8 +68,12 @@ class DSBCOO(DSBSparse):
         # *slices* for faster access.
         self._block_slice_cache = {}
         self.allow_band_matmul = allow_band_matmul
-        self.band = None
+        self._band = None
+        self._dense = None
         self.allow_tf32 = allow_tf32
+        self.BLK_M = BLK_M
+        self.BLK_N = BLK_N
+        self.BLK_K = BLK_K
 
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -365,7 +377,7 @@ class DSBCOO(DSBSparse):
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if self.allow_band_matmul:
+        if self.allow_band_matmul and torch.cuda.is_available():
             return self.__band_matmul__(other)
         else:
             product_rows, product_cols = product_sparsity_pattern(
@@ -401,30 +413,47 @@ class DSBCOO(DSBSparse):
                 product.data[stack_index, :] = temp_product[product.rows, product.cols]
             return product
 
-    def __calculate_bandwidth__(self) -> None:
-        """Calculates the bandwidth of the matrix."""
-        a = torch.tensor(self.to_dense())
+    @property
+    def band(self) -> int:
+        """Returns the bandwidth of the matrix."""
+        if self._band is None:
+            self._band = banded_kernels.calculate_bandwidth(self.dense[0])
+        return self._band
 
-        # max_band = 0
-        # for e in range(a.shape[0]):
-        #     a_e = a[e]
-        #     band =
-        #     max_band = max(max_band, band)
-        self.band = banded_kernels.calculate_bandwidth(a[0])
+    @property
+    def dense(self) -> NDArray:
+        """Returns the dense representation of the matrix."""
+        if self._dense is None:
+            self._dense = torch.tensor(self.to_dense(), device="cuda")
+            # self._dense is expected to be a 3D tensor: (batch, N, N)
+            # if there are only 2 dimensions, we add a dummy dimension
+            # if there are more than 3 dimensions, we concatenate (flatten) the first batch dimensions
+            if len(self._dense.shape) == 2:
+                self._dense = self._dense.unsqueeze(0)
+            elif len(self._dense.shape) > 3:
+                self._dense = self._dense.view(
+                    -1, self._dense.shape[-2], self._dense.shape[-1]
+                )
+
+            N = self._dense.shape[-1]
+            # if N is not divisible by BLK_M, we pad the matrix with zeros
+            if N % self.BLK_M != 0:
+                self._dense = torch.nn.functional.pad(
+                    self._dense,
+                    (0, self.BLK_M - N % self.BLK_M, 0, self.BLK_M - N % self.BLK_M),
+                )
+        return self._dense
 
     def __band_matmul__(self, other: "DSBSparse") -> None:
-        BLK_M = 16
-        BLK_N = 16
-        BLK_K = 16
         source_dtype = torch.float32
         dest_dtype = torch.float32
-        a = torch.tensor(self.to_dense(), device="cuda")
-        b = torch.tensor(other.to_dense(), device="cuda")
+        a = self.dense
+        b = other.dense
         batch, N = a.shape[0], a.shape[1]
-        if self.band is None:
-            self.__calculate_bandwidth__()
         band = self.band
         allow_tf32 = self.allow_tf32
+
+        BLK_M, BLK_N, BLK_K = self.BLK_M, self.BLK_N, self.BLK_K
 
         A_tallNSkinnyBand = (
             banded_kernels.dense_banded_to_blkTallNSkinny(a, band, BLK_M)
@@ -465,11 +494,14 @@ class DSBCOO(DSBSparse):
             BLK_N=BLK_N,
             BLK_K=BLK_K,
         )
-        print(f"c_blkTallNSkinny: \n{c_blkTallNSkinny[0].detach().cpu().numpy()}")
+        # print(f"c_blkTallNSkinny: \n{c_blkTallNSkinny[0].detach().cpu().numpy()}")
         # exit()
         c = banded_kernels.blkTallNSkinny_to_dense(
             c_blkTallNSkinny, BLK_M, band_a=band, band_b=band
         ).to(source_dtype)
+
+        N_not_padded = self.shape[-1]
+        c = c[:, :N_not_padded, :N_not_padded]
         return c
 
     @DSBSparse.block_sizes.setter

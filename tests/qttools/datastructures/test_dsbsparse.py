@@ -10,6 +10,8 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 import torch
 
+DEBUG_PRINTS = False
+
 
 def _create_coo(sizes: NDArray, dtype=xp.complex128) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
@@ -38,7 +40,6 @@ def create_dense_band_matrix(
     if fixed_val is not None:
         A = torch.full((N, N), fixed_val, device=device, dtype=dtype) * mask
     else:
-        # rng = torch.random.default_rng(seed)
         A = torch.randn(N, N, device=device, dtype=dtype) * mask
 
     if dtype == torch.complex128:
@@ -46,7 +47,7 @@ def create_dense_band_matrix(
     A_np = A.detach().cpu().numpy()
     A_cupy = xp.array(A_np)
 
-    return sparse.coo_matrix(A_cupy)  # torch_to_coo(A)
+    return sparse.coo_matrix(A_cupy)
 
 
 @pytest.mark.usefixtures("densify_blocks")
@@ -668,44 +669,75 @@ class TestArithmetic:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
-        banded_matrix: bool = False,
-        band_r: int = 2,
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
-        print(
-            f"Test parameters: \nblock_sizes: {block_sizes}, global_stack_shape: {global_stack_shape}, densify_blocks: {densify_blocks}\n"
-        )
-
-        if banded_matrix:
-            band_N = int(sum(block_sizes))
-            coo = create_dense_band_matrix(
-                band_N, band_r, dtype=torch.float32, fixed_val=1
-            )
-            # coo = sparse.coo_matrix(dense_banded.detach().cpu().numpy())
-        else:
-            coo = _create_coo(block_sizes, dtype=xp.float32)
+        coo = _create_coo(block_sizes)
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
         dense = dsbsparse.to_dense()
-        # print(f"block_sizes: {block_sizes}, global_stack_shape: {global_stack_shape}")
-        # print(f"dense shape: {dense.shape}")
-        # print(f"coo shape: {coo.shape}")
-        # import numpy as np
 
-        # np.set_printoptions(threshold=np.inf, linewidth=np.inf, precision=2)
-        # print(f"dense:\n{np.array(dense[0].get())}")
-        # exit()
-        ref_result = dense @ dense
+        assert xp.allclose(dense @ dense, (dsbsparse @ dsbsparse).to_dense())
+
+    def test_matmul_banded(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+        band_r: int = 2,
+    ):
+        """
+        Tests the banded matrix multiplication of a DSBCOO matrix.
+        It currently works ONLY for:
+        - DBSCOO format (no support for DSBCSR. A minor thing, can be easily
+            implemented)
+        - square matrices
+        - needs pytorch and CUDA
+        """
+
+        if "COO" not in dsbsparse_type.__name__:
+            return
+        if not torch.cuda.is_available():
+            return
+        band_N = int(sum(block_sizes))
+        coo = create_dense_band_matrix(band_N, band_r, dtype=torch.float32)
+
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks
+        )
+        dense = dsbsparse.to_dense()
+        ref_result = torch.tensor(dense @ dense)
+
+        if ref_result.ndim > 3:
+            batch_dims = torch.prod(torch.tensor(ref_result.shape[:-2]))
+            ref_result = ref_result.view(
+                batch_dims, ref_result.shape[-2], ref_result.shape[-1]
+            )
+
         sparse_result = (dsbsparse @ dsbsparse).to_dense()
 
-        if xp.allclose(ref_result, sparse_result):
-            print("Verification passed!")
+        if DEBUG_PRINTS:
+            # print test parameters
+            print(
+                f"dsbsparse_type: {dsbsparse_type}, block_sizes: {block_sizes}, \
+                global_stack_shape: {global_stack_shape}, \
+                densify_blocks: {densify_blocks}, band_r: {band_r}"
+            )
+
+            if xp.allclose(ref_result, sparse_result, rtol=1e-2, atol=1e-2):
+                print("Verification passed!")
+            else:
+                print("Verification failed!")
+                print("ref_result:\n", ref_result[0].detach().cpu().numpy()[:16, :16])
+                print(
+                    "sparse_result:\n",
+                    sparse_result[0].detach().cpu().numpy()[:16, :16],
+                )
+                exit()
         else:
-            print("Verification failed!")
-            print("ref_result:\n", ref_result[0].get())
-            print("sparse_result:\n", sparse_result[0].detach().cpu().numpy())
-            exit()
+            # smaller required precision, since band matmul is in mixed precision
+            assert xp.allclose(ref_result, sparse_result, rtol=1e-2, atol=1e-2)
 
 
 # Shape of the dense array.
@@ -914,9 +946,13 @@ def run_standalone_matmul_test():
     from qttools import NDArray, xp
     from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 
-    DSBSPARSE_TYPES = [DSBCOO]  # [DSBCSR, DSBCOO]
+    DSBSPARSE_TYPES = [DSBCOO]
 
-    BLOCK_SIZES = [xp.array([2] * 16), xp.array([2] * 3 + [4] * 2 + [2] * 3)]
+    BLOCK_SIZES = [
+        xp.array([2] * 16),
+        xp.array([2] * 3 + [4] * 2 + [2] * 3),
+        xp.array([2] * 64),
+    ]
 
     DENSIFY_BLOCKS = [
         None,
@@ -966,23 +1002,19 @@ def run_standalone_matmul_test():
         for block_size in BLOCK_SIZES:
             for global_stack_shape in GLOBAL_STACK_SHAPES:
                 for densify_blocks in DENSIFY_BLOCKS:
-                    TestArithmetic().test_matmul(
+                    TestArithmetic().test_matmul_banded(
                         dbsparse_type,
                         block_size,
                         global_stack_shape,
                         densify_blocks,
-                        banded_matrix=True,
                     )
 
-
-print(f"name: {__name__}")
 
 if __name__ == "__main__":
     import numpy as np
 
-    np.set_printoptions(threshold=np.inf, linewidth=np.inf, precision=2)
     # setup print options for numpy and torch
-    xp.set_printoptions(precision=2, suppress=True, linewidth=500)
+    np.set_printoptions(threshold=np.inf, linewidth=np.inf, precision=2)
     torch.set_printoptions(precision=2, sci_mode=False, linewidth=500)
     # Run the standalone tests
     run_standalone_matmul_test()

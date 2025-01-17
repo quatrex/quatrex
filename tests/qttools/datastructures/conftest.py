@@ -5,7 +5,7 @@ import pytest
 from qttools import NDArray, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 
-DSBSPARSE_TYPES = [DSBCOO]
+DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
 
 BLOCK_SIZES = [
     pytest.param(xp.array([2] * 10), id="constant-block-size"),

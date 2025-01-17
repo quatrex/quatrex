@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import sys
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
@@ -9,8 +10,6 @@ from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
 cuda_avail = False
-import sys
-
 if "torch" in sys.modules:
     import torch
 

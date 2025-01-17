@@ -1,14 +1,20 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from contextlib import nullcontext
-
+import sys
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
-import torch
+
+cuda_avail = False
+if "torch" in sys.modules:
+    import torch
+
+    if torch.cuda.is_available():
+        cuda_avail = True
 
 DEBUG_PRINTS = False
 
@@ -698,7 +704,7 @@ class TestArithmetic:
 
         if "COO" not in dsbsparse_type.__name__:
             return
-        if not torch.cuda.is_available():
+        if not cuda_avail:
             return
         band_N = int(sum(block_sizes))
         coo = create_dense_band_matrix(band_N, band_r, dtype=torch.float32)

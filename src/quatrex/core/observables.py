@@ -6,13 +6,6 @@ from qttools.datastructures.dsbsparse import DSBSparse
 
 from quatrex.electron import ElectronSolver
 
-if xp.__name__ == "numpy":
-    from scipy.signal import find_peaks
-elif xp.__name__ == "cupy":
-    from cupyx.scipy.signal import find_peaks
-else:
-    raise ImportError("Unknown backend.")
-
 
 def get_block(
     coo: sparse.coo_matrix,
@@ -121,39 +114,3 @@ def contact_currents(solver: ElectronSolver) -> tuple[NDArray, NDArray]:
     i_left = xp.hstack(comm.allgather(solver.i_left))
     i_right = xp.hstack(comm.allgather(solver.i_right))
     return i_left, i_right
-
-
-def band_edges(
-    electron_ldos: NDArray, energies: NDArray, mid_gap_energies: NDArray
-) -> tuple[NDArray, NDArray]:
-    """Computes the band edges from the local density of states.
-
-    Parameters
-    ----------
-    ldos : NDArray
-        The local density of states.
-    energies : NDArray
-        The energies corresponding to the LDOS.
-    mid_gap_energies : NDArray
-        The mid-gap energies through the whole device.
-
-    Returns
-    -------
-    valence_band_edges : NDArray
-        The valence band edges.
-    conduction_band_edges : NDArray
-        The conduction band edges.
-
-    """
-
-    conduction_band_edges = xp.zeros_like(mid_gap_energies)
-    valence_band_edges = xp.zeros_like(mid_gap_energies)
-    for i in range(electron_ldos.shape[1]):
-        peaks = find_peaks(xp.abs(electron_ldos[:, i]), height=1e-8)[0]
-        peak_energies = energies[peaks]
-        mid_gap_energy = mid_gap_energies[i]
-        mask = (peak_energies - mid_gap_energy) < 0
-        valence_band_edges[i] = peak_energies[mask].max()
-        conduction_band_edges[i] = peak_energies[~mask].min()
-
-    return valence_band_edges, conduction_band_edges

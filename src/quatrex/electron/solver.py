@@ -8,19 +8,15 @@ from qttools.datastructures import DSBSparse
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.stack_utils import scale_stack
 
+from quatrex.bandstructure.band_edges import (
+    find_band_edges,
+    find_dos_peaks,
+    find_renormalized_eigenvalues,
+)
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-
-# TODO: The peak detection should happen while preparing boundary
-# self-energies.
-# if xp.__name__ == "numpy":
-#     from scipy.signal import find_peaks
-# elif xp.__name__ == "cupy":
-#     from cupyx.scipy.signal import find_peaks
-# else:
-#     raise ImportError("Unknown backend.")
 
 
 class ElectronSolver(SubsystemSolver):
@@ -120,21 +116,34 @@ class ElectronSolver(SubsystemSolver):
             self.bare_system_matrix
         )
 
-        # self.delta_fermi_level_conduction_band = (
-        #     quatrex_config.electron.conduction_band_edge
-        #     - quatrex_config.electron.fermi_level
-        # )
+        # Contacts.
+        self.flatband = quatrex_config.electron.flatband
+        self.eta_obc = quatrex_config.electron.eta_obc
+
+        # Band edges and Fermi levels.
+        # TODO: This only works for small potential variations accross
+        # the device.
+        # TODO: During this initialization we should compute the contact
+        # band structures and extract the correct fermi levels & band
+        # edges from there.
+        self.band_edge_tracking = quatrex_config.electron.band_edge_tracking
+        self.delta_fermi_level_conduction_band = (
+            quatrex_config.electron.conduction_band_edge
+            - quatrex_config.electron.fermi_level
+        )
+        self.left_mid_gap_energy = quatrex_config.electron.left_fermi_level
+        self.right_mid_gap_energy = quatrex_config.electron.right_fermi_level
+
         self.temperature = quatrex_config.electron.temperature
 
-        # Boundary conditions.
-        self.eta_obc = quatrex_config.electron.eta_obc
+        self.left_fermi_level = quatrex_config.electron.left_fermi_level
+        self.right_fermi_level = quatrex_config.electron.right_fermi_level
+
         self.left_occupancies = fermi_dirac(
-            self.local_energies - quatrex_config.electron.left_fermi_level,
-            quatrex_config.electron.temperature,
+            self.local_energies - self.left_fermi_level, self.temperature
         )
         self.right_occupancies = fermi_dirac(
-            self.local_energies - quatrex_config.electron.right_fermi_level,
-            quatrex_config.electron.temperature,
+            self.local_energies - self.right_fermi_level, self.temperature
         )
 
         # Allocate memory for the OBC blocks.
@@ -150,50 +159,6 @@ class ElectronSolver(SubsystemSolver):
         self.i_left = None
         self.i_right = None
 
-        self.flatband = quatrex_config.electron.flatband
-
-    def update_fermi_levels(self, conduction_band_edges: NDArray) -> None:
-        """Updates the Fermi levels.
-
-        Parameters
-        ----------
-        conduction_band_edges : NDArray
-            The conduction band edges through the device.
-
-        """
-        left_conduction_band_edge = xp.mean(
-            conduction_band_edges[: self.bare_system_matrix.block_sizes[0]]
-        )
-        right_conduction_band_edge = xp.mean(
-            conduction_band_edges[-self.bare_system_matrix.block_sizes[-1] :]
-        )
-
-        (
-            print(
-                f"Updating conduction band edges: "
-                f"{left_conduction_band_edge}, {right_conduction_band_edge}",
-                flush=True,
-            )
-            if comm.rank == 0
-            else None
-        )
-
-        left_fermi_level = (
-            left_conduction_band_edge - self.delta_fermi_level_conduction_band
-        )
-        right_fermi_level = (
-            right_conduction_band_edge - self.delta_fermi_level_conduction_band
-        )
-
-        self.left_occupancies = fermi_dirac(
-            self.local_energies - left_fermi_level,
-            self.temperature,
-        )
-        self.right_occupancies = fermi_dirac(
-            self.local_energies - right_fermi_level,
-            self.temperature,
-        )
-
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 
@@ -206,6 +171,51 @@ class ElectronSolver(SubsystemSolver):
         potential_diff_matrix = sparse.diags(new_potential - self.potential)
         self.bare_system_matrix -= potential_diff_matrix
         self.potential = new_potential
+
+    def _update_fermi_levels(self, e_0_left: NDArray, e_0_right: NDArray) -> None:
+        """Updates the Fermi levels.
+
+        Parameters
+        ----------
+        out : tuple[DSBSparse, ...]
+            The Green's function tuple. In the order (lesser, greater,
+            retarded).
+
+        """
+        left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
+        right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
+
+        self.left_mid_gap_energy = xp.mean(left_band_edges)
+        self.right_mid_gap_energy = xp.mean(right_band_edges)
+
+        __, left_conduction_band_edge = left_band_edges
+        __, right_conduction_band_edge = right_band_edges
+
+        (
+            print(
+                f"Updating conduction band edges: "
+                f"{left_conduction_band_edge}, {right_conduction_band_edge}",
+                flush=True,
+            )
+            if comm.rank == 0
+            else None
+        )
+
+        self.left_fermi_level = (
+            left_conduction_band_edge - self.delta_fermi_level_conduction_band
+        )
+        self.right_fermi_level = (
+            right_conduction_band_edge - self.delta_fermi_level_conduction_band
+        )
+
+        self.left_occupancies = fermi_dirac(
+            self.local_energies - self.left_fermi_level,
+            self.temperature,
+        )
+        self.right_occupancies = fermi_dirac(
+            self.local_energies - self.right_fermi_level,
+            self.temperature,
+        )
 
     def _get_block(self, coo: sparse.coo_matrix, index: tuple) -> NDArray:
         """Gets a block from a COO matrix."""
@@ -228,7 +238,9 @@ class ElectronSolver(SubsystemSolver):
 
         return block
 
-    def _apply_obc(self, sse_lesser: DSBSparse, sse_greater: DSBSparse) -> None:
+    def _apply_obc(
+        self, sse_lesser: DSBSparse, sse_greater: DSBSparse, sse_retarded: DSBSparse
+    ) -> None:
         """Applies open boundary conditions.
 
         Parameters
@@ -237,6 +249,8 @@ class ElectronSolver(SubsystemSolver):
             The lesser scattering self-energy.
         sse_greater : DSBSparse
             The greater scattering self-energy.
+        sse_retarded : DSBSparse
+            The retarded scattering self-energy.
 
         """
 
@@ -262,8 +276,8 @@ class ElectronSolver(SubsystemSolver):
             "right",
         )
 
-        # NOTE: Here we should try to update the left and right fermi
-        # levels by doing peak detection on the contact DOS.
+        # NOTE: Here we could possibly do peak/discontinuity detection
+        # on the surface Green's function DOS.
 
         # Apply the retarded boundary self-energy.
         sigma_00 = (
@@ -275,8 +289,8 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix.blocks[0, 0] -= sigma_00
         self.system_matrix.blocks[-1, -1] -= sigma_nn
 
-        gamma_00 = 1j * (sigma_00 - sigma_00.conj().transpose(0, 2, 1))
-        gamma_nn = 1j * (sigma_nn - sigma_nn.conj().transpose(0, 2, 1))
+        gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
+        gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
 
         # Compute and apply the lesser boundary self-energy.
         sse_lesser.blocks[0, 0] += 1j * scale_stack(
@@ -454,8 +468,23 @@ class ElectronSolver(SubsystemSolver):
         self._assemble_system_matrix(sse_retarded)
         t_assemble = time.perf_counter() - times.pop()
 
+        if self.band_edge_tracking == "eigenvalues":
+            e_0_left, e_0_right = find_renormalized_eigenvalues(
+                self.hamiltonian_sparray,
+                self.overlap_sparray,
+                self.potential,
+                sse_retarded,
+                self.energies,
+                (
+                    self.left_fermi_level + self.delta_fermi_level_conduction_band,
+                    self.right_fermi_level + self.delta_fermi_level_conduction_band,
+                ),
+                (self.left_mid_gap_energy, self.right_mid_gap_energy),
+            )
+            self._update_fermi_levels(e_0_left, e_0_right)
+
         times.append(time.perf_counter())
-        self._apply_obc(sse_lesser, sse_greater)
+        self._apply_obc(sse_lesser, sse_greater, sse_retarded)
         t_obc = time.perf_counter() - times.pop()
 
         times.append(time.perf_counter())
@@ -472,7 +501,7 @@ class ElectronSolver(SubsystemSolver):
         self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 
         # anti symmetrize
-        g_lesser, g_greater, _ = out
+        g_lesser, g_greater, g_retarded = out
         g_lesser.data = 0.5 * (
             g_lesser.data - g_lesser.ltranspose(copy=True).data.conj()
         )
@@ -481,6 +510,26 @@ class ElectronSolver(SubsystemSolver):
         )
 
         self._filter_peaks(out)
+
+        if self.band_edge_tracking == "dos-peaks":
+            s_00 = self._get_block(self.overlap_sparray, (0, 0))
+            s_nn = self._get_block(self.overlap_sparray, (-1, -1))
+            g_00 = g_retarded.blocks[0, 0]
+            g_nn = g_retarded.blocks[-1, -1]
+
+            local_left_dos = -xp.mean(
+                xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
+            )
+            local_right_dos = -xp.mean(
+                xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
+            )
+            left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
+            right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
+
+            e_0_left = find_dos_peaks(left_dos, self.energies)
+            e_0_right = find_dos_peaks(right_dos, self.energies)
+
+            self._update_fermi_levels(e_0_left, e_0_right)
 
         (
             print(

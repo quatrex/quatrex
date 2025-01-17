@@ -12,7 +12,7 @@ from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.observables import contact_currents, density  # band_edges
+from quatrex.core.observables import contact_currents, density
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -24,13 +24,6 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
-
-# if xp.__name__ == "numpy":
-#     from scipy.signal import find_peaks
-# elif xp.__name__ == "cupy":
-#     from cupyx.scipy.signal import find_peaks
-# else:
-#     raise ImportError("Unknown backend.")
 
 
 def _get_allocator(
@@ -517,47 +510,6 @@ class SCBA:
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
 
-        # average_fermi_level = (
-        #     self.quatrex_config.electron.left_fermi_level
-        #     + self.quatrex_config.electron.right_fermi_level
-        # ) / 2
-        # fermi_level_index = xp.argmin(
-        #     xp.abs(self.electron_energies - average_fermi_level)
-        # )
-        # dE = self.electron_energies[1] - self.electron_energies[0]
-        # electron_density = (
-        #     xp.sum(self.observables.electron_density[fermi_level_index:], axis=0) * dE
-        # )
-        # hole_density = (
-        #     xp.sum(self.observables.hole_density[:fermi_level_index], axis=0) * dE
-        # )
-        # self.observables.excess_charge_density = electron_density - hole_density
-
-        # if (
-        #     self.observables.valence_band_edges is None
-        #     or self.observables.conduction_band_edges is None
-        # ):
-        #     self.observables.valence_band_edges = (
-        #         xp.ones(self.observables.electron_ldos.shape[1])
-        #         * self.quatrex_config.electron.valence_band_edge
-        #     )
-        #     self.observables.conduction_band_edges = (
-        #         xp.ones(self.observables.electron_ldos.shape[1])
-        #         * self.quatrex_config.electron.conduction_band_edge
-        #     )
-
-        # mid_gap_energies = (
-        #     self.observables.valence_band_edges + self.observables.conduction_band_edges
-        # ) / 2
-
-        # self.observables.valence_band_edges, self.observables.conduction_band_edges = (
-        #     band_edges(
-        #         self.observables.electron_ldos,
-        #         self.electron_energies,
-        #         mid_gap_energies,
-        #     )
-        # )
-
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
 
@@ -720,10 +672,6 @@ class SCBA:
             )
             self._compute_observables()
 
-            # Update the electron Fermi levels.
-            # self.electron_solver.update_fermi_levels(
-            #     self.observables.conduction_band_edges
-            # )
             if i % self.quatrex_config.scba.output_interval == 0:
                 self._write_iteration_outputs(i)
 

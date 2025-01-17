@@ -30,30 +30,34 @@ def _create_coo(sizes: NDArray, dtype=xp.complex128) -> sparse.coo_matrix:
     return coo
 
 
-def create_dense_band_matrix(
-    N, r, device="cuda", dtype=torch.float64, seed: int = 0, fixed_val=None
-):
+if cuda_avail:
 
-    # Create indices for all positions
-    i, j = torch.meshgrid(
-        torch.arange(N, device=device), torch.arange(N, device=device), indexing="ij"
-    )
+    def create_dense_band_matrix(
+        N, r, device="cuda", dtype=torch.float64, seed: int = 0, fixed_val=None
+    ):
 
-    # Create band mask
-    mask = torch.abs(i - j) <= r
+        # Create indices for all positions
+        i, j = torch.meshgrid(
+            torch.arange(N, device=device),
+            torch.arange(N, device=device),
+            indexing="ij",
+        )
 
-    # Create random matrix and apply mask
-    if fixed_val is not None:
-        A = torch.full((N, N), fixed_val, device=device, dtype=dtype) * mask
-    else:
-        A = torch.randn(N, N, device=device, dtype=dtype) * mask
+        # Create band mask
+        mask = torch.abs(i - j) <= r
 
-    if dtype == torch.complex128:
-        A += 1j * A
-    A_np = A.detach().cpu().numpy()
-    A_cupy = xp.array(A_np)
+        # Create random matrix and apply mask
+        if fixed_val is not None:
+            A = torch.full((N, N), fixed_val, device=device, dtype=dtype) * mask
+        else:
+            A = torch.randn(N, N, device=device, dtype=dtype) * mask
 
-    return sparse.coo_matrix(A_cupy)
+        if dtype == torch.complex128:
+            A += 1j * A
+        A_np = A.detach().cpu().numpy()
+        A_cupy = xp.array(A_np)
+
+        return sparse.coo_matrix(A_cupy)
 
 
 @pytest.mark.usefixtures("densify_blocks")

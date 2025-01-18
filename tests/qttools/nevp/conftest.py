@@ -17,8 +17,9 @@ BLOCK_SIZE = [
 # a very large number to ensure that the non-spurious eigenvalues get
 # approximated very accurately.
 SUBSPACE_NEVP_SOLVERS = [
-    pytest.param(Beyn(r_o=1.2, r_i=0.9, c_hat=60, num_quad_points=200), id="Beyn")
+    pytest.param(Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200), id="Beyn")
 ]
+LEFT = [pytest.param(True, id="both"), pytest.param(False, id="right")]
 
 
 # TODO: It's a good idea to generalize the tests with input data
@@ -38,4 +39,10 @@ def a_xx(request: pytest.FixtureRequest) -> NDArray:
 @pytest.fixture(params=SUBSPACE_NEVP_SOLVERS)
 def subspace_nevp(request: pytest.FixtureRequest) -> NEVP:
     """Returns a NEVP solver."""
+    return request.param
+
+
+@pytest.fixture(params=LEFT)
+def left(request: pytest.FixtureRequest) -> bool:
+    """Whether to solve for the left eigenvectors."""
     return request.param

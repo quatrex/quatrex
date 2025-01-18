@@ -23,7 +23,7 @@ class Full(NEVP):
 
     """
 
-    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+    def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -40,13 +40,9 @@ class Full(NEVP):
         ws : NDArray
             The eigenvalues.
         vs : NDArray
-            The eigenvectors.
+            The right eigenvectors.
 
         """
-        # Allow for batched input.
-        if a_xx[0].ndim == 2:
-            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
-
         inverse = xp.linalg.inv(sum(a_xx))
 
         # NOTE: CuPy does not expose a `block` function.
@@ -68,3 +64,47 @@ class Full(NEVP):
         v = v[:, : a_xx[0].shape[-1]]
 
         return w, v
+
+    def __call__(self, a_xx: tuple[NDArray, ...], left: bool = False) -> tuple:
+        """Solves the plynomial eigenvalue problem.
+
+        This method solves the non-linear eigenvalue problem defined by
+        the coefficient blocks `a_xx` from lowest to highest order.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The coefficient blocks of the non-linear eigenvalue problem
+            from lowest to highest order.
+        left : bool, optional
+            Whether to solve additionally for the left eigenvectors.
+
+        Returns
+        -------
+        ws : NDArray
+            The right eigenvalues.
+        vs : NDArray
+            The right eigenvectors.
+        wl : NDArray, optional
+            The left eigenvalues.
+            Returned only if `left` is `True`.
+        vl : NDArray, optional
+            The left eigenvectors.
+            Returned only if `left` is `True`.
+
+        """
+        # Allow for batched input.
+        if a_xx[0].ndim == 2:
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
+
+        wrs, vrs = self._solve(a_xx)
+
+        if left:
+            # solve for the left eigenvectors
+            # by solving the right eigenvectors of the adjoint problem
+            wls, vls = self._solve(tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx))
+            wls = wls.conj()
+
+            return wrs, vrs, wls, vls
+
+        return wrs, vrs

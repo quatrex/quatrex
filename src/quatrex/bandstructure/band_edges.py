@@ -165,6 +165,7 @@ def find_renormalized_eigenvalues(
     left_mid_gap_energy, right_mid_gap_energy = mid_gap_energies
 
     section_sizes, __ = get_section_sizes(energies.size, comm.size)
+    section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
     e_0_left = None

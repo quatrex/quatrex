@@ -1,5 +1,5 @@
 from qttools import NDArray, sparse, xp
-from qttools.datastructures import DSBSparse, btd_matmul, btd_sandwich
+from qttools.datastructures import DSBSparse, btd_matmul, btd_sandwich, bd_matmul, bd_sandwich
 
 
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
@@ -62,5 +62,42 @@ def test_btd_sandwich(
     out = dsbsparse_type.from_sparray(coo @ coo @ coo, block_sizes, global_stack_shape)
 
     btd_sandwich(dsbsparse, dsbsparse, out)
+
+    assert xp.allclose(dense @ dense @ dense, out.to_dense())
+
+
+def test_bd_matmul(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
+
+    bd_matmul(dsbsparse, dsbsparse, out)
+
+    assert xp.allclose(dense @ dense, out.to_dense())
+
+
+def test_bd_sandwich(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+
+    # Initalize the output matrix with the correct sparsity pattern.
+    out = dsbsparse_type.from_sparray(coo @ coo @ coo, block_sizes, global_stack_shape)
+
+    bd_sandwich(dsbsparse, dsbsparse, out)
 
     assert xp.allclose(dense @ dense @ dense, out.to_dense())

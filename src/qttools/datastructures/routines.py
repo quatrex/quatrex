@@ -120,9 +120,13 @@ def bd_sandwich(
                             a_i, a_m = correct_out_range_index(i, m, num_blocks)
                             b_m, b_k = correct_out_range_index(m, k, num_blocks)
                             a_k, a_j = correct_out_range_index(k, j, num_blocks)
-                    out.blocks[i, j] += (
-                        a.blocks[a_i, a_m] @ b.blocks[b_m, b_k] @ a.blocks[a_k, a_j]
-                    )
+                            out.blocks[i, j] += (
+                                a.blocks[a_i, a_m] @ b.blocks[b_m, b_k] @ a.blocks[a_k, a_j]
+                            )
+                        else:
+                            out.blocks[i, j] += (
+                                a.blocks[i, m] @ b.blocks[m, k] @ a.blocks[k, j]
+                            )
 
     return
 

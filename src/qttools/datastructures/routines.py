@@ -51,16 +51,24 @@ def bd_matmul(
     out.data = 0
 
     for i in range(num_blocks):
-        for j in range(i - out_num_diag // 2, i + out_num_diag // 2 + 1):
+        for j in range(
+            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            tmp = out.blocks[i, j]
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
-                out_range = (j < 0) or (j >= num_blocks) or (k < 0) or (k >= num_blocks)
-                if (not out_range) or (out_range and spillover_correction):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
                     if out_range:
                         i_a, k_a = correct_out_range_index(i, k, num_blocks)
                         k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        out.blocks[i, j] += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
                     else:
-                        out.blocks[i, j] += a.blocks[i, k] @ b.blocks[k, j]
+                        tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i, j] = tmp
 
     return
 
@@ -104,29 +112,36 @@ def bd_sandwich(
     out.data = 0
 
     for i in range(num_blocks):
-        for j in range(i - out_num_diag // 2, i + out_num_diag // 2 + 1):
+        for j in range(
+            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            tmp = out.blocks[i, j]
             for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
+                    if abs(j - k) > in_num_diag // 2:
+                        continue
                     out_range = (
-                        (j < 0)
-                        or (j >= num_blocks)
-                        or (k < 0)
-                        or (k >= num_blocks)
-                        or (m < 0)
-                        or (m >= num_blocks)
+                        (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
                     )
-                    if (not out_range) or (out_range and spillover_correction):
+                    if out_range and (not spillover_correction):
+                        continue
+                    else:
                         if out_range:
                             a_i, a_m = correct_out_range_index(i, m, num_blocks)
                             b_m, b_k = correct_out_range_index(m, k, num_blocks)
                             a_k, a_j = correct_out_range_index(k, j, num_blocks)
-                            out.blocks[i, j] += (
-                                a.blocks[a_i, a_m] @ b.blocks[b_m, b_k] @ a.blocks[a_k, a_j]
+                            print(i, m, k, j)
+                            print(a_i, a_m)
+                            print(b_m, b_k)
+                            print(a_k, a_j)
+                            tmp += (
+                                a.blocks[a_i, a_m]
+                                @ b.blocks[b_m, b_k]
+                                @ a.blocks[a_k, a_j]
                             )
                         else:
-                            out.blocks[i, j] += (
-                                a.blocks[i, m] @ b.blocks[m, k] @ a.blocks[k, j]
-                            )
+                            tmp += a.blocks[i, m] @ b.blocks[m, k] @ a.blocks[k, j]
+            out.blocks[i, j] = tmp
 
     return
 

@@ -107,3 +107,112 @@ def test_bd_sandwich(
     bd_sandwich(dsbsparse, dsbsparse, out)
 
     assert xp.allclose(dense @ dense @ dense, out.to_dense())
+
+
+def test_bd_matmul_spillover(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+    dense_shape = list(dense.shape)
+    NBC = 1
+    left_obc = sum(block_sizes[0:NBC])
+    right_obc = sum(block_sizes[-NBC:])
+    dense_shape[-2:] += left_obc + right_obc
+    dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
+    dense_exp[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ] = dense
+    # simply repeat the boundaries slices
+    dense_exp[..., :left_obc, :-left_obc] = dense_exp[
+        ..., left_obc : 2 * left_obc, left_obc:
+    ]
+    dense_exp[..., :-left_obc, :left_obc] = dense_exp[
+        ..., left_obc:, left_obc : 2 * left_obc
+    ]
+    dense_exp[..., -right_obc:, right_obc:] = dense_exp[
+        ..., -2 * right_obc : -right_obc, :-right_obc
+    ]
+    dense_exp[..., right_obc:, -right_obc:] = dense_exp[
+        ..., :-right_obc, -2 * right_obc : -right_obc
+    ]
+
+    expended_product = dense_exp @ dense_exp
+    ref = expended_product[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ]
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
+    )
+
+    bd_matmul(dsbsparse, dsbsparse, out, spillover_correction=True)
+
+    assert xp.allclose(ref, out.to_dense())
+
+
+def test_bd_sandwich_spillover(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+    dense_shape = list(dense.shape)
+    NBC = 1
+    left_obc = sum(block_sizes[0:NBC])
+    right_obc = sum(block_sizes[-NBC:])
+    dense_shape[-2:] += left_obc + right_obc
+    dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
+    dense_exp[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ] = dense
+    # simply repeat the boundaries slices
+    dense_exp[..., :left_obc, :-left_obc] = dense_exp[
+        ..., left_obc : 2 * left_obc, left_obc:
+    ]
+    dense_exp[..., :-left_obc, :left_obc] = dense_exp[
+        ..., left_obc:, left_obc : 2 * left_obc
+    ]
+    dense_exp[..., -right_obc:, right_obc:] = dense_exp[
+        ..., -2 * right_obc : -right_obc, :-right_obc
+    ]
+    dense_exp[..., right_obc:, -right_obc:] = dense_exp[
+        ..., :-right_obc, -2 * right_obc : -right_obc
+    ]
+
+    expended_product = dense_exp @ dense_exp @ dense_exp
+    ref = expended_product[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ]
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
+    )
+
+    bd_sandwich(dsbsparse, dsbsparse, out, spillover_correction=True)
+
+    assert xp.allclose(ref, out.to_dense())
+
+
+def _get_last_2d(x):
+    m, n = x.shape[-2:]
+    return x.flat[: m * n].reshape(m, n)

@@ -1,16 +1,17 @@
 from qttools.datastructures import DSBSparse
 
 
-def correct_out_range_index(i: int,k: int,num_blocks: int):
+def correct_out_range_index(i: int, k: int, num_blocks: int):
     # find the index of block in the matrix being repeated into open-end
     # based on the difference of row and col, ie diagonal
-    diag = k-i     
-    k_1 = min(max(k,0), num_blocks-1) 
-    i_1 = k_1 - diag # keep the same diag
-    i_2 = min(max(i_1,0), num_blocks-1) 
-    k_2 = i_2 + diag # keep the same diag
+    diag = k - i
+    k_1 = min(max(k, 0), num_blocks - 1)
+    i_1 = k_1 - diag  # keep the same diag
+    i_2 = min(max(i_1, 0), num_blocks - 1)
+    k_2 = i_2 + diag  # keep the same diag
     return (i_2, k_2)
-    
+
+
 def bd_matmul(
     a: DSBSparse,
     b: DSBSparse,
@@ -49,19 +50,18 @@ def bd_matmul(
     # Make sure the output matrix is initialized to zero.
     out.data = 0
 
-    for i in range(num_blocks):        
-        for j in range(i - out_num_diag//2, i + out_num_diag//2 + 1):              
-            for k in range(i - in_num_diag//2, i + in_num_diag//2 + 1):                
-                out_range = ((j<0) or (j>=num_blocks) or
-                             (k<0) or (k>=num_blocks))
+    for i in range(num_blocks):
+        for j in range(i - out_num_diag // 2, i + out_num_diag // 2 + 1):
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                out_range = (j < 0) or (j >= num_blocks) or (k < 0) or (k >= num_blocks)
                 if (not out_range) or (out_range and spillover_correction):
-                    if (out_range):
-                        i_a, k_a = correct_out_range_index(i,k,num_blocks)
-                        k_b, j_b = correct_out_range_index(k,j,num_blocks)     
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
                         out.blocks[i, j] += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
                     else:
                         out.blocks[i, j] += a.blocks[i, k] @ b.blocks[k, j]
-    
+
     return
 
 
@@ -104,21 +104,27 @@ def bd_sandwich(
     out.data = 0
 
     for i in range(num_blocks):
-        for j in range(i - out_num_diag//2, i + out_num_diag//2 + 1):            
-            for m in range(i - in_num_diag//2, i + in_num_diag//2 + 1):
-                for k in range(m - in_num_diag//2, m + in_num_diag//2 + 1):
-                    out_range = ((j<0) or (j>=num_blocks) or
-                                 (k<0) or (k>=num_blocks) or 
-                                 (m<0) or (m>=num_blocks))
+        for j in range(i - out_num_diag // 2, i + out_num_diag // 2 + 1):
+            for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
+                    out_range = (
+                        (j < 0)
+                        or (j >= num_blocks)
+                        or (k < 0)
+                        or (k >= num_blocks)
+                        or (m < 0)
+                        or (m >= num_blocks)
+                    )
                     if (not out_range) or (out_range and spillover_correction):
-                        if (out_range):
-                            a_i,a_m=correct_out_range_index(i,m,num_blocks)
-                            b_m,b_k=correct_out_range_index(m,k,num_blocks)
-                            a_k,a_j=correct_out_range_index(k,j,num_blocks)
-                    out.blocks[i, j] += a.blocks[a_i, a_m] @ b.blocks[b_m, b_k] @ a.blocks[a_k, a_j]
+                        if out_range:
+                            a_i, a_m = correct_out_range_index(i, m, num_blocks)
+                            b_m, b_k = correct_out_range_index(m, k, num_blocks)
+                            a_k, a_j = correct_out_range_index(k, j, num_blocks)
+                    out.blocks[i, j] += (
+                        a.blocks[a_i, a_m] @ b.blocks[b_m, b_k] @ a.blocks[a_k, a_j]
+                    )
 
     return
-    
 
 
 def btd_matmul(

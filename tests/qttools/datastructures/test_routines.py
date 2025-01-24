@@ -1,5 +1,11 @@
 from qttools import NDArray, sparse, xp
-from qttools.datastructures import DSBSparse, btd_matmul, btd_sandwich, bd_matmul, bd_sandwich
+from qttools.datastructures import (
+    DSBSparse,
+    bd_matmul,
+    bd_sandwich,
+    btd_matmul,
+    btd_sandwich,
+)
 
 
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:

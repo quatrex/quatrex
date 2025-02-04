@@ -176,8 +176,10 @@ def btd_matmul(
 
     for i in range(num_blocks):
         for j in range(max(0, i - 2), min(num_blocks, i + 3)):
+            out_ij = out.blocks[i, j]
             for k in range(max(0, i - 1), min(num_blocks, i + 2)):
-                out.blocks[i, j] += a.blocks[i, k] @ b.blocks[k, j]
+                out_ij += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i, j] = a.blocks[i, k] @ b.blocks[k, j]
 
     if not spillover_correction:
         return
@@ -222,9 +224,12 @@ def btd_sandwich(
 
     for i in range(num_blocks):
         for j in range(max(0, i - 3), min(num_blocks, i + 4)):
+            out_ij = out.blocks[i, j]
             for k in range(max(0, i - 2), min(num_blocks, i + 3)):
+                a_kj = a.blocks[k, j]
                 for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    out.blocks[i, j] += a.blocks[i, m] @ b.blocks[m, k] @ a.blocks[k, j]
+                    out_ij += a.blocks[i, m] @ b.blocks[m, k] @ a_kj
+            out.blocks[i, j] = out_ij
 
     if not spillover_correction:
         return

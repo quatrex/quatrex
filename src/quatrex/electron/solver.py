@@ -40,6 +40,7 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
+        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -48,7 +49,6 @@ class ElectronSolver(SubsystemSolver):
         self.hamiltonian_sparray = distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"
         ).astype(xp.complex128)
-
         self.block_sizes = distributed_load(
             quatrex_config.input_dir / "block_sizes.npy"
         )
@@ -81,9 +81,9 @@ class ElectronSolver(SubsystemSolver):
 
         # Construct the bare system matrix.
         self.bare_system_matrix = compute_config.dsbsparse_type.from_sparray(
-            self.hamiltonian_sparray,
+            sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=(self.energies.size,),
+            global_stack_shape=self.energies.shape,
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
         self.bare_system_matrix.data = 0.0

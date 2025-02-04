@@ -5,14 +5,16 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
+from qttools.datastructures.routines import btd_matmul, btd_sandwich
 from qttools.utils.mpi_utils import distributed_load
-from qttools.utils.sparse_utils import product_sparsity_pattern
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.coulomb_screening.utils import assemble_boundary_blocks
+
+# from qttools.utils.sparse_utils import product_sparsity_pattern
 
 
 def check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) -> bool:
@@ -141,6 +143,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
+        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -174,85 +177,103 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
         # Create DBSparse matrix from the Coulomb matrix.
         self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
-            self.coulomb_matrix_sparray,
+            sparsity_pattern.astype(xp.complex128),
             block_sizes=self.small_block_sizes,
-            global_stack_shape=(self.energies.size,),
+            global_stack_shape=self.energies.shape,
             densify_blocks=[(i, i) for i in range(len(self.small_block_sizes))],
         )
-        # Create a dummy identity matrix.
-        dummy_identity_data = xp.ones_like(self.coulomb_matrix_sparray.data) * 1e-16
-        dummy_identity_data[
-            self.coulomb_matrix_sparray.row == self.coulomb_matrix_sparray.col
-        ] = 1.0
-        dummy_identity_sparray = sparse.coo_matrix(
-            (
-                dummy_identity_data,
-                (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
-            ),
-        )
-        self.dummy_identity = compute_config.dsbsparse_type.from_sparray(
-            dummy_identity_sparray,
-            block_sizes=self.small_block_sizes,
-            global_stack_shape=(self.energies.size,),
-            densify_blocks=[(i, i) for i in range(len(self.small_block_sizes))],
-        )
-        # Load the device Hamiltonian for finding new sparsity pattern
-        dummy_hamiltonian = distributed_load(
-            quatrex_config.input_dir / "hamiltonian.npz"
-        )
-        # Compute new sparsity pattern
-        rows, cols = product_sparsity_pattern(
-            sparse.csr_matrix(
-                (
-                    xp.ones(self.coulomb_matrix.nnz),
-                    (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
-                )
-            ),
-            sparse.csr_matrix(
-                (
-                    xp.ones_like(dummy_hamiltonian.data, dtype=xp.float64),
-                    (dummy_hamiltonian.row, dummy_hamiltonian.col),
-                )
-            ),
-            sparse.csr_matrix(
-                (
-                    xp.ones(self.coulomb_matrix.nnz),
-                    (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
-                )
-            ),
-        )
-        # Load the overlap matrix.
-        try:
-            self.overlap_sparray = distributed_load(
-                quatrex_config.input_dir / "overlap.npz"
-            ).astype(xp.complex128)
-        except FileNotFoundError:
-            # No overlap provided. Assume orthonormal basis.
-            self.overlap_sparray = sparse.eye(
-                self.coulomb_matrix_sparray.shape[0],
-                format="coo",
-                dtype=self.coulomb_matrix_sparray.dtype,
-            )
-        self.overlap_sparray = self.overlap_sparray.tocoo()
-        # Check that the overlap matrix and Coulomb matrix match.
-        if self.overlap_sparray.shape != self.coulomb_matrix_sparray.shape:
-            raise ValueError("Overlap matrix and Coulomb matrix have different shapes.")
+        self.coulomb_matrix.data = 0.0
+        self.coulomb_matrix += self.coulomb_matrix_sparray
 
-        # Construct the bare system matrix.
-        self.bare_system_matrix = compute_config.dsbsparse_type.from_sparray(
-            sparse.coo_matrix(
-                (
-                    xp.zeros(len(rows), dtype=self.coulomb_matrix_sparray.dtype),
-                    (rows, cols),
-                ),
-                shape=(self.overlap_sparray.size, self.overlap_sparray.size),
-            ),
+        # Create a dummy identity matrix.
+        # dummy_identity_data = xp.ones_like(self.coulomb_matrix_sparray.data) * 1e-16
+        # dummy_identity_data[
+        #     self.coulomb_matrix_sparray.row == self.coulomb_matrix_sparray.col
+        # ] = 1.0
+        # dummy_identity_sparray = sparse.coo_matrix(
+        #     (
+        #         dummy_identity_data,
+        #         (self.coulomb_matrix_sparray.row, self.coulomb_matrix_sparray.col),
+        #     ),
+        # )
+        # self.dummy_identity = compute_config.dsbsparse_type.from_sparray(
+        #     dummy_identity_sparray,
+        #     block_sizes=self.small_block_sizes,
+        #     global_stack_shape=self.energies.shape,
+        #     densify_blocks=[(i, i) for i in range(len(self.small_block_sizes))],
+        # )
+
+        # Load the device Hamiltonian for finding new sparsity pattern
+        # dummy_hamiltonian = distributed_load(
+        #     quatrex_config.input_dir / "hamiltonian.npz"
+        # )
+
+        sparsity_pattern = sparsity_pattern.tocsr()
+
+        v_times_p_sparsity_pattern = sparsity_pattern @ sparsity_pattern
+        # Allocate memory for the Coulomb matrix times polarization.
+        self.v_times_p_retarded = compute_config.dsbsparse_type.from_sparray(
+            v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=(self.energies.size,),
+            global_stack_shape=self.energies.shape,
             densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
         )
+
+        l_sparsity_pattern = v_times_p_sparsity_pattern @ sparsity_pattern
+        # Allocate memory for the L_lesser and L_greater matrices.
+        self.l_lesser = compute_config.dsbsparse_type.from_sparray(
+            l_sparsity_pattern.astype(xp.complex128),
+            block_sizes=self.block_sizes,
+            global_stack_shape=self.energies.shape,
+            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
+        )
+        self.l_greater = compute_config.dsbsparse_type.zeros_like(self.l_lesser)
+
+        # Compute new sparsity pattern.
+        # rows, cols = product_sparsity_pattern(
+        #     sparse.csr_matrix(
+        #         (
+        #             xp.ones(self.coulomb_matrix.nnz),
+        #             (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
+        #         )
+        #     ),
+        #     sparse.csr_matrix(
+        #         (
+        #             xp.ones_like(dummy_hamiltonian.data, dtype=xp.float64),
+        #             (dummy_hamiltonian.row, dummy_hamiltonian.col),
+        #         )
+        #     ),
+        #     sparse.csr_matrix(
+        #         (
+        #             xp.ones(self.coulomb_matrix.nnz),
+        #             (self.coulomb_matrix.rows, self.coulomb_matrix.cols),
+        #         )
+        #     ),
+        # )
+
+        # Load the overlap matrix.
+        # try:
+        #     self.overlap_sparray = distributed_load(
+        #         quatrex_config.input_dir / "overlap.npz"
+        #     ).astype(xp.complex128)
+        # except FileNotFoundError:
+        #     # No overlap provided. Assume orthonormal basis.
+        #     self.overlap_sparray = sparse.eye(
+        #         self.coulomb_matrix_sparray.shape[0],
+        #         format="coo",
+        #         dtype=self.coulomb_matrix_sparray.dtype,
+        #     )
+        # self.overlap_sparray = self.overlap_sparray.tocoo()
+        # # Check that the overlap matrix and Coulomb matrix match.
+        # if self.overlap_sparray.shape != self.coulomb_matrix_sparray.shape:
+        #     raise ValueError("Overlap matrix and Coulomb matrix have different shapes.")
+
+        # Construct the bare system matrix.
+        self.bare_system_matrix = compute_config.dsbsparse_type.zeros_like(
+            self.v_times_p_retarded
+        )
         # Add the overlap matrix to the bare system matrix.
-        self.bare_system_matrix += self.overlap_sparray
+        self.bare_system_matrix += sparse.eye(sparsity_pattern.shape[0])
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsbsparse_type.zeros_like(
             self.bare_system_matrix
@@ -283,26 +304,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.obc_blocks_right["left"] = xp.zeros_like(
             self.obc_blocks_right["diag"],
-        )
-        # Allocate memory for the Coulomb matrix times polarization.
-        self.v_times_p_retarded = compute_config.dsbsparse_type.from_sparray(
-            sparse.coo_matrix(
-                (
-                    xp.zeros(len(rows), dtype=self.coulomb_matrix_sparray.dtype),
-                    (rows, cols),
-                ),
-                shape=(self.overlap_sparray.size, self.overlap_sparray.size),
-            ),
-            block_sizes=self.block_sizes,
-            global_stack_shape=(self.energies.size,),
-            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
-        )
-        # Allocate memory for the L_lesser and L_greater matrices.
-        self.l_lesser = compute_config.dsbsparse_type.zeros_like(
-            self.v_times_p_retarded
-        )
-        self.l_greater = compute_config.dsbsparse_type.zeros_like(
-            self.v_times_p_retarded,
         )
 
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
@@ -445,21 +446,41 @@ class CoulombScreeningSolver(SubsystemSolver):
         times.append(time.perf_counter())
         # Change the block sizes to match the Coulomb matrix.
         self._set_block_sizes(self.small_block_sizes)
-        obc_multiply(
-            self.v_times_p_retarded,
-            (self.coulomb_matrix, p_retarded, self.dummy_identity),
-            self.small_block_sizes,
+        # obc_multiply(
+        #     self.v_times_p_retarded,
+        #     (self.coulomb_matrix, p_retarded, self.dummy_identity),
+        #     self.small_block_sizes,
+        # )
+        # obc_multiply(
+        #     self.l_lesser,
+        #     (self.coulomb_matrix, p_lesser, self.coulomb_matrix),
+        #     self.small_block_sizes,
+        # )
+        # obc_multiply(
+        #     self.l_greater,
+        #     (self.coulomb_matrix, p_greater, self.coulomb_matrix),
+        #     self.small_block_sizes,
+        # )
+
+        btd_matmul(
+            self.coulomb_matrix,
+            p_retarded,
+            out=self.v_times_p_retarded,
+            spillover_correction=True,
         )
-        obc_multiply(
-            self.l_lesser,
-            (self.coulomb_matrix, p_lesser, self.coulomb_matrix),
-            self.small_block_sizes,
+        btd_sandwich(
+            self.coulomb_matrix,
+            p_lesser,
+            out=self.l_lesser,
+            spillover_correction=True,
         )
-        obc_multiply(
-            self.l_greater,
-            (self.coulomb_matrix, p_greater, self.coulomb_matrix),
-            self.small_block_sizes,
+        btd_sandwich(
+            self.coulomb_matrix,
+            p_greater,
+            out=self.l_greater,
+            spillover_correction=True,
         )
+
         t_obc_multiply = time.perf_counter() - times.pop()
 
         # Assemble the matrices.

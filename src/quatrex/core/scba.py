@@ -2,14 +2,13 @@
 
 import os
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, xp
-from qttools.datastructures import DSBSparse
+from qttools import NDArray, sparse, xp
+from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import contact_currents, density
@@ -26,31 +25,55 @@ from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
 
-def _get_allocator(
-    dsbsparse_type: DSBSparse, system_matrix: DSBSparse
-) -> Callable[[], DSBSparse]:
-    """Returns an allocation factory for the given DSBSparse type.
+def _compute_sparsity_pattern(
+    positions: NDArray,
+    cutoff_distance: float,
+    strategy: str = "box",
+) -> sparse.coo_matrix:
+    """Computes the sparsity pattern for the interaction matrix.
 
     Parameters
     ----------
-    dsbsparse_type : DSBSparse
-        The DSBSparse type to allocate.
-    system_matrix : DSBSparse
-        The system matrix to allocate the DSBSparse type for. The
-        sparsity pattern of the system matrix is used to allocate
-        the DSBSparse matrix.
+    grid : NDArray
+        The grid points.
+    interaction_cutoff : float
+        The interaction cutoff.
+    strategy : str, optional
+        The strategy to use, by default "box", where only the distance
+        along the transport direction is considered. The other option is
+        "sphere", where the usual Euclidean distance between points
+        matters.
 
     Returns
     -------
-    Callable[[], DSBSparse]
-        The allocation function.
+    sparse.coo_matrix
+        The sparsity pattern.
 
     """
+    if strategy == "sphere":
 
-    def _allocator() -> DSBSparse:
-        return dsbsparse_type.zeros_like(system_matrix)
+        def distance(x, y):
+            """Euclidean distance."""
+            return xp.linalg.norm(x - y, axis=-1)
 
-    return _allocator
+    elif strategy == "box":
+
+        def distance(x, y):
+            """Distance along transport direction."""
+            return xp.abs(x[..., 0] - y[..., 0])
+
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+    rows, cols = [], []
+    for i, position in enumerate(positions):
+        distances = distance(positions, position)
+        interacting = xp.where(distances < cutoff_distance)[0]
+        cols.extend(interacting)
+        rows.extend([i] * len(interacting))
+
+    rows, cols = xp.array(rows), xp.array(cols)
+    return sparse.coo_matrix((xp.ones_like(rows, dtype=bool), (rows, cols)))
 
 
 class SCBAData:
@@ -58,69 +81,108 @@ class SCBAData:
 
     Parameters
     ----------
-    scba : SCBA
-        The SCBA instance.
+    quatrex_config : QuatrexConfig
+        The Quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
 
     """
 
-    def __init__(self, scba: "SCBA") -> None:
+    def __init__(
+        self,
+        quatrex_config: QuatrexConfig,
+        compute_config: ComputeConfig,
+    ) -> None:
         """Initializes the SCBA data."""
-        # TODO: This needs to be rewritten, to take interaction cutoffs
-        # into account.
-
-        allocate_electron_quantity = _get_allocator(
-            scba.compute_config.dsbsparse_type,
-            scba.electron_solver.system_matrix,
+        # Load orbital positions, energy vector and block-sizes.
+        grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+        electron_energies = distributed_load(
+            quatrex_config.input_dir / "electron_energies.npy"
         )
-        self.sigma_retarded_prev = allocate_electron_quantity()
-        self.sigma_lesser_prev = allocate_electron_quantity()
-        self.sigma_greater_prev = allocate_electron_quantity()
-        self.sigma_retarded = allocate_electron_quantity()
-        self.sigma_lesser = allocate_electron_quantity()
-        self.sigma_greater = allocate_electron_quantity()
-        self.g_retarded = allocate_electron_quantity()
-        self.g_lesser = allocate_electron_quantity()
-        self.g_greater = allocate_electron_quantity()
+        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
 
-        if hasattr(scba, "coulomb_screening_solver"):
-            allocate_polarization_quantity = _get_allocator(
-                scba.compute_config.dsbsparse_type,
-                scba.electron_solver.system_matrix,
+        # Find the maximum interaction cutoff.
+        max_interaction_cutoff = 0.0
+        if quatrex_config.scba.coulomb_screening:
+            max_interaction_cutoff = max(
+                max_interaction_cutoff,
+                quatrex_config.coulomb_screening.interaction_cutoff,
             )
-            self.p_retarded = allocate_polarization_quantity()
-            self.p_lesser = allocate_polarization_quantity()
-            self.p_greater = allocate_polarization_quantity()
-            allocate_coulomb_screening_quantity = _get_allocator(
-                scba.compute_config.dsbsparse_type,
-                scba.coulomb_screening_solver.system_matrix,
+        if quatrex_config.scba.photon:
+            max_interaction_cutoff = max(
+                max_interaction_cutoff,
+                quatrex_config.photon.interaction_cutoff,
             )
-            self.w_retarded = allocate_coulomb_screening_quantity()
-            self.w_lesser = allocate_coulomb_screening_quantity()
-            self.w_greater = allocate_coulomb_screening_quantity()
+        if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
+            max_interaction_cutoff = max(
+                max_interaction_cutoff,
+                quatrex_config.phonon.interaction_cutoff,
+            )
 
-        if hasattr(scba, "photon_solver"):
-            allocate_photon_quantity = _get_allocator(
-                scba.compute_config.dsbsparse_type,
-                scba.photon_solver.system_matrix,
-            )
-            self.pi_photon_retarded = allocate_photon_quantity()
-            self.pi_photon_lesser = allocate_photon_quantity()
-            self.pi_photon_greater = allocate_photon_quantity()
-            self.d_photon_retarded = allocate_photon_quantity()
-            self.d_photon_lesser = allocate_photon_quantity()
-            self.d_photon_greater = allocate_photon_quantity()
+        (
+            print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
+            if comm.rank == 0
+            else None
+        )
+        self.sparsity_pattern = _compute_sparsity_pattern(grid, max_interaction_cutoff)
+        # self.sparsity_pattern = distributed_load(
+        #     quatrex_config.input_dir / "hamiltonian.npz"
+        # ).astype(xp.complex128)
 
-        if hasattr(scba, "phonon_solver"):
-            allocate_phonon_quantity = _get_allocator(
-                scba.compute_config.dsbsparse_type,
-                scba.phonon_solver.system_matrix,
+        dsbsparse_type = compute_config.dsbsparse_type
+
+        # TODO: Rethink if all of these quantities actually need dense
+        # diagonal blocks.
+        # --> System matrix does not need dense diagonal blocks, but all
+        # the outputs do.
+        self.g_retarded = dsbsparse_type.from_sparray(
+            self.sparsity_pattern.astype(xp.complex128),
+            block_sizes=block_sizes,
+            global_stack_shape=electron_energies.shape,
+            densify_blocks=[(i, i) for i in range(len(block_sizes))],
+        )
+        self.g_retarded._data[:] = 0.0  # Initialize to zero.
+        self.g_lesser = dsbsparse_type.zeros_like(self.g_retarded)
+        self.g_greater = dsbsparse_type.zeros_like(self.g_retarded)
+
+        self.sigma_retarded_prev = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_lesser_prev = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_greater_prev = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_retarded = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_lesser = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_greater = dsbsparse_type.zeros_like(self.g_retarded)
+
+        if quatrex_config.scba.coulomb_screening:
+            # NOTE: The polarization has the same sparsity pattern as
+            # the electronic system (the interactions are local in real
+            # space). However, we need to change the block sizes of the
+            # screened Coulomb interaction and densify those.
+            self.p_retarded = dsbsparse_type.zeros_like(self.g_retarded)
+            self.p_lesser = dsbsparse_type.zeros_like(self.g_retarded)
+            self.p_greater = dsbsparse_type.zeros_like(self.g_retarded)
+
+            # TODO: Only multiples of three are supported for now.
+            coulomb_screening_block_sizes = block_sizes[: len(block_sizes) // 3] * 3
+
+            self.w_retarded = dsbsparse_type.from_sparray(
+                self.sparsity_pattern.astype(xp.complex128),
+                block_sizes=coulomb_screening_block_sizes,
+                global_stack_shape=electron_energies.shape,
+                densify_blocks=[
+                    (i, i) for i in range(len(coulomb_screening_block_sizes))
+                ],
             )
-            self.pi_phonon_retarded = allocate_phonon_quantity()
-            self.pi_phonon_lesser = allocate_phonon_quantity()
-            self.pi_phonon_greater = allocate_phonon_quantity()
-            self.d_phonon_retarded = allocate_phonon_quantity()
-            self.d_phonon_lesser = allocate_phonon_quantity()
-            self.d_phonon_greater = allocate_phonon_quantity()
+            self.w_retarded._data[:] = 0.0  # Initialize to zero.
+            self.w_lesser = dsbsparse_type.zeros_like(self.w_retarded)
+            self.w_greater = dsbsparse_type.zeros_like(self.w_retarded)
+
+        # TODO: The interactions with photons and phonons are not yet
+        # implemented.
+        if quatrex_config.scba.photon:
+            raise NotImplementedError
+
+        if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
+            raise NotImplementedError
 
 
 @dataclass
@@ -204,14 +266,18 @@ class SCBA:
 
         self.compute_config = compute_config
 
+        self.data = SCBAData(quatrex_config, compute_config)
+        self.observables = Observables()
+
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = xp.load(
+        self.electron_energies = distributed_load(
             self.quatrex_config.input_dir / "electron_energies.npy"
         )
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
             self.compute_config,
             self.electron_energies,
+            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -220,7 +286,7 @@ class SCBA:
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
             )
             if os.path.isfile(energies_path):
-                self.coulomb_screening_energies = xp.load(energies_path)
+                self.coulomb_screening_energies = distributed_load(energies_path)
             else:
                 self.coulomb_screening_energies = (
                     self.electron_energies - self.electron_energies[0]
@@ -229,24 +295,33 @@ class SCBA:
                 self.coulomb_screening_energies += 1e-6
 
             self.sigma_fock = SigmaFock(
-                self.quatrex_config, self.compute_config, self.electron_energies
+                self.quatrex_config,
+                self.compute_config,
+                self.electron_energies,
+                sparsity_pattern=self.data.sparsity_pattern,
             )
+            # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
-                self.quatrex_config, self.coulomb_screening_energies
+                self.quatrex_config,
+                self.coulomb_screening_energies,
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
                 self.compute_config,
                 self.coulomb_screening_energies,
+                sparsity_pattern=self.data.sparsity_pattern,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
-                self.quatrex_config, self.compute_config, self.electron_energies
+                self.quatrex_config,
+                self.compute_config,
+                self.electron_energies,
+                sparsity_pattern=self.data.sparsity_pattern,
             )
 
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
             energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
-            self.photon_energies = xp.load(energies_path)
+            self.photon_energies = distributed_load(energies_path)
             self.pi_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(
                 self.quatrex_config,
@@ -260,7 +335,7 @@ class SCBA:
         if self.quatrex_config.scba.phonon:
             if self.quatrex_config.phonon.model == "negf":
                 energies_path = self.quatrex_config.input_dir / "phonon_energies.npy"
-                self.phonon_energies = xp.load(energies_path)
+                self.phonon_energies = distributed_load(energies_path)
                 self.pi_phonon = PiPhonon(...)
                 self.phonon_solver = PhononSolver(
                     self.quatrex_config,
@@ -272,9 +347,6 @@ class SCBA:
 
             elif self.quatrex_config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
-
-        self.data = SCBAData(self)
-        self.observables = Observables()
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -471,31 +543,25 @@ class SCBA:
         )
 
         if self.quatrex_config.scba.coulomb_screening:
-            self.observables.p_retarded_density = -density(
-                self.data.p_retarded,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
-            self.observables.p_lesser_density = density(
-                self.data.p_lesser,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
-            self.observables.p_greater_density = -density(
-                self.data.p_greater,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
+            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
+                2 * xp.pi
+            )
+            self.observables.p_lesser_density = density(self.data.p_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.p_greater_density = -density(self.data.p_greater) / (
+                2 * xp.pi
+            )
 
-            self.observables.w_retarded_density = -density(
-                self.data.w_retarded,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
-            self.observables.w_lesser_density = density(
-                self.data.w_lesser,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
-            self.observables.w_greater_density = -density(
-                self.data.w_greater,
-                self.coulomb_screening_solver.overlap_sparray,
-            ) / (2 * xp.pi)
+            self.observables.w_retarded_density = -density(self.data.w_retarded) / (
+                2 * xp.pi
+            )
+            self.observables.w_lesser_density = density(self.data.w_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.w_greater_density = -density(self.data.w_greater) / (
+                2 * xp.pi
+            )
 
         self.observables.sigma_retarded_density = -density(
             self.data.sigma_retarded,

@@ -89,6 +89,7 @@ class OBCConfig(BaseModel):
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = 2
     x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
+    two_sided: bool = False
     treat_pairwise: bool = True
     pairing_threshold: PositiveFloat = 0.25
     min_propagation: PositiveFloat = 1e-2
@@ -100,7 +101,7 @@ class OBCConfig(BaseModel):
     # Parameters for subspace NEVP solvers.
     r_o: PositiveFloat = 10.0
     r_i: PositiveFloat = 0.9
-    c_hat: PositiveInt = 10
+    m_0: PositiveInt = 10
     num_quad_points: PositiveInt = 20
 
     # Parameters for reusing surface Green's functions from previous
@@ -200,6 +201,8 @@ class CoulombScreeningConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    interaction_cutoff: PositiveFloat = 10.0  # Angstrom
+
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
@@ -215,6 +218,8 @@ class PhotonConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    interaction_cutoff: PositiveFloat = 10.0  # Angstrom
+
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
@@ -224,6 +229,8 @@ class PhononConfig(BaseModel):
     """Options for the thermal degrees of freedom."""
 
     model_config = ConfigDict(extra="forbid")
+
+    interaction_cutoff: PositiveFloat = 10.0  # Angstrom
 
     solver: Literal["rgf", "inv"] = "rgf"
     obc: OBCConfig = OBCConfig()

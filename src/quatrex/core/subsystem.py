@@ -50,6 +50,9 @@ class SubsystemSolver(ABC):
             getattr(quatrex_config, self.system).solver
         )
 
+        self.quatrex_config = quatrex_config
+        self.compute_config = compute_config
+
     def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
         """Configures the NEVP solver from the config.
 
@@ -68,7 +71,7 @@ class SubsystemSolver(ABC):
             return Beyn(
                 r_o=obc_config.r_o,
                 r_i=obc_config.r_i,
-                c_hat=obc_config.c_hat,
+                m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
             )
         if obc_config.nevp_solver == "full":
@@ -106,6 +109,7 @@ class SubsystemSolver(ABC):
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
                 x_ii_formula=obc_config.x_ii_formula,
+                two_sided=obc_config.two_sided,
                 treat_pairwise=obc_config.treat_pairwise,
                 pairing_threshold=obc_config.pairing_threshold,
                 min_propagation=obc_config.min_propagation,

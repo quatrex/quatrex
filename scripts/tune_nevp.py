@@ -73,7 +73,11 @@ class BeynTuner:
         overlap = overlap[s, s].toarray()
         hamiltonian = hamiltonian[s, s].toarray()
 
-        system_matrix = self.energies[:, np.newaxis, np.newaxis] * overlap - hamiltonian
+        eta = config.electron.eta + config.electron.eta_obc
+
+        system_matrix = (
+            self.energies[:, np.newaxis, np.newaxis] + 1j * eta
+        ) * overlap - hamiltonian
 
         i_ = slice(None, block_sizes[0])
         j_ = slice(block_sizes[0], sum(block_sizes[:2]))
@@ -87,6 +91,11 @@ class BeynTuner:
             "min_decay": config.electron.obc.min_decay,
             "max_decay": config.electron.obc.max_decay,
             "num_ref_iterations": config.electron.obc.num_ref_iterations,
+            "x_ii_formula": config.electron.obc.x_ii_formula,
+            "two_sided": config.electron.obc.two_sided,
+            "treat_pairwise": config.electron.obc.treat_pairwise,
+            "pairing_threshold": config.electron.obc.pairing_threshold,
+            "min_propagation": config.electron.obc.min_propagation,
         }
 
         # Extract the NEVP parameters that will not change.
@@ -118,13 +127,13 @@ class BeynTuner:
         mask = (np.abs(ws) < self.nevp_kwargs["r_o"]) & (
             np.abs(ws) > self.nevp_kwargs["r_i"]
         )
-        c_hat = np.sum(mask, axis=1).max()
+        m_0 = np.sum(mask, axis=1).max()
 
-        print(f"Computed subspace dimension: {c_hat}")
+        print(f"Computed subspace dimension: {m_0}")
 
-        return c_hat
+        return m_0
 
-    def _tune_subspace_solver(self, c_hat: int) -> None:
+    def _tune_subspace_solver(self, m_0: int, processes: int) -> None:
         """Tunes the subspace NEVP solver for the given problem.
 
         This varies the number of quadrature points and finds the
@@ -132,8 +141,11 @@ class BeynTuner:
 
         Parameters
         ----------
-        c_hat : int
+        m_0 : int
             The number of eigenvalues to target in the subspace.
+        processes : int
+            The number of processes to use for the evaluation of
+            different numbers of quadrature points.
 
         """
         global _evaluate
@@ -141,43 +153,54 @@ class BeynTuner:
         def _evaluate(num_quad_points: int) -> float:
             """Evaluates the subspace NEVP solver."""
             nevp = Beyn(
-                c_hat=c_hat,
+                m_0=m_0,
                 num_quad_points=num_quad_points,
                 **self.nevp_kwargs,
             )
             ws, vs = nevp(self.a_xx)
-            res = np.zeros_like(vs)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                for i in range(ws.shape[1]):
-                    w = ws[:, i][:, None, None]
-                    v = vs[:, :, i]
-                    res[..., i] = np.einsum(
+
+            residuals = np.zeros_like(ws)
+            for i in range(ws.shape[1]):
+                w = ws[:, i][:, None, None]
+                v = vs[:, :, i] / np.linalg.norm(vs[:, :, i], axis=1)[:, None]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    residual = np.einsum(
                         "eij,ej->ei", self.a_ji / w + self.a_ii + self.a_ij * w, v
                     )
-            # Check that most of the residuals are small.
-            res = np.nan_to_num(res, posinf=0, neginf=0)
-            spurious_mask = (np.mean(res) < res) | (np.isnan(res))
-            res = np.linalg.norm(res[~spurious_mask])
-            print(f"{num_quad_points:15} | {res}")
+                    residuals[:, i] = np.linalg.norm(residual, axis=1)
+
+            residuals = np.nan_to_num(residuals, posinf=0, neginf=0)
+
+            # Filter outlier eigenmodes (robust Z-score method).
+            medians = np.median(residuals, axis=-1)[..., None]
+            median_abs_deviations = np.median(np.abs(residuals - medians), axis=-1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_scores = (
+                    0.6745 * (residuals - medians) / median_abs_deviations[..., None]
+                )
+            spurious_mask = np.abs(z_scores) > 30  # Very generous threshold.
+
+            res = np.abs(np.mean(residuals[~spurious_mask]))
+            print(f"{num_quad_points:15} | {res:.5e}")
             return res
 
         num_quad_points = np.arange(self.min_num_quad_points, self.max_num_quad_points)
         print("Starting brute-force search for optimal number of quadrature points.")
-        print("num_quad_points | residual norm")
-        with mp.Pool(processes=1) as pool:
+        print("num_quad_points | average residual")
+        with mp.Pool(processes=processes) as pool:
             results = pool.map(_evaluate, num_quad_points)
 
         opt_ind = np.argmin(results)
         opt_num_quad_points = num_quad_points[opt_ind]
         print(f"Determined optimal number of quadrature points: {opt_num_quad_points}")
-        print(f"Minimum residual norm: {results[opt_ind]}")
+        print(f"Minimum average residual: {results[opt_ind]}")
 
         return opt_num_quad_points
 
-    def _validate_tuning(self, c_hat: int, num_quad_points: int) -> None:
+    def _validate_tuning(self, m_0: int, num_quad_points: int) -> None:
         """Validates the tuning of the subspace NEVP solver."""
         nevp = Beyn(
-            c_hat=c_hat,
+            m_0=m_0,
             num_quad_points=num_quad_points,
             **self.nevp_kwargs,
         )
@@ -186,19 +209,36 @@ class BeynTuner:
             x_ii = obc(a_ii=self.a_ii, a_ij=self.a_ij, a_ji=self.a_ji, contact="left")
 
         abs_rec_error = np.linalg.norm(
-            x_ii - np.linalg.inv(x_ii - self.a_ji @ x_ii @ self.a_ij), axis=(1, 2)
+            x_ii - np.linalg.inv(self.a_ii - self.a_ji @ x_ii @ self.a_ij), axis=(1, 2)
         )
         rel_rec_error = abs_rec_error / np.linalg.norm(x_ii, axis=(1, 2))
 
         print(f"Average absolute recursion error: {abs_rec_error.mean()}")
         print(f"Average relative recursion error: {rel_rec_error.mean()}")
 
-    def tune(self) -> None:
+        nevp = Full()
+        obc = Spectral(nevp, **self.obc_kwargs)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_ii = obc(a_ii=self.a_ii, a_ij=self.a_ij, a_ji=self.a_ji, contact="left")
+
+        abs_rec_error = np.linalg.norm(
+            x_ii - np.linalg.inv(self.a_ii - self.a_ji @ x_ii @ self.a_ij), axis=(1, 2)
+        )
+        rel_rec_error = abs_rec_error / np.linalg.norm(x_ii, axis=(1, 2))
+
+        print(
+            f"Full reference; average absolute recursion error: {abs_rec_error.mean()}"
+        )
+        print(
+            f"Full reference; average relative recursion error: {rel_rec_error.mean()}"
+        )
+
+    def tune(self, processes: int = 1) -> None:
         """Tunes the subspace NEVP solver for the given problem."""
-        c_hat = int(self._compute_subspace_dimension() * 1.5)
-        print(f"Tuning for subspace dimension: {c_hat}")
-        num_quad_points = self._tune_subspace_solver(c_hat)
-        self._validate_tuning(c_hat, num_quad_points)
+        m_0 = int(self._compute_subspace_dimension() * 1.5)
+        print(f"Tuning for subspace dimension: {m_0}")
+        num_quad_points = self._tune_subspace_solver(m_0, processes=processes)
+        self._validate_tuning(m_0, num_quad_points)
 
 
 if __name__ == "__main__":

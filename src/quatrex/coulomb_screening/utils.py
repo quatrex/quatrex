@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-from qttools import NDArray, xp
+from qttools import NDArray
 from qttools.datastructures import DSBSparse
 
 
@@ -12,198 +12,52 @@ def assemble_boundary_blocks(
     above: NDArray,
     left: NDArray,
     mat: DSBSparse,
+    nbc: int,
 ) -> None:
-    """Assembles boundary blocks from the small system matrix blocks.
+    """Assembles the boundary blocks from the smaller blocks of input Hamiltonian.
 
     Parameters
     ----------
     diag_left : NDArray
         The diagonal left block.
     right : NDArray
-        The right block.
+        The right block of the diagonal left block.
     below : NDArray
-        The below block.
+        The below block of the diagonal left block.
     diag_right : NDArray
         The diagonal right block.
     above : NDArray
-        The above block.
-    left : NDArrays
-        The left block.
+        The above block of the diagonal right block.
+    left : NDArray
+        The left block of the diagonal right block.
     mat : DSBSparse
-        The small system matrix.
-
+        The boundary system matrix.
+    nbc : int
+        The number of small blocks used for the boundary blocks.
     """
-    diag_left[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[0, 0],
-                    mat.blocks[0, 1],
-                    mat.blocks[0, 2],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[1, 0],
-                    mat.blocks[0, 0],
-                    mat.blocks[0, 1],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[2, 0],
-                    mat.blocks[1, 0],
-                    mat.blocks[0, 0],
-                ),
-                axis=2,
-            ),
-        ),
-        axis=1,
-    )
-    right[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[0, 3],
-                    xp.zeros_like(mat.blocks[0, 3]),
-                    xp.zeros_like(mat.blocks[0, 3]),
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[0, 2],
-                    mat.blocks[0, 3],
-                    xp.zeros_like(mat.blocks[0, 2]),
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[0, 1],
-                    mat.blocks[0, 2],
-                    mat.blocks[0, 3],
-                ),
-                axis=2,
-            ),
-        ),
-        axis=1,
-    )
-    below[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[3, 0],
-                    xp.zeros_like(mat.blocks[3, 0]),
-                    xp.zeros_like(mat.blocks[3, 0]),
-                ),
-                axis=1,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[2, 0],
-                    mat.blocks[3, 0],
-                    xp.zeros_like(mat.blocks[2, 0]),
-                ),
-                axis=1,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[1, 0],
-                    mat.blocks[2, 0],
-                    mat.blocks[3, 0],
-                ),
-                axis=1,
-            ),
-        ),
-        axis=2,
-    )
-    diag_right[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[-1, -1],
-                    mat.blocks[-2, -1],
-                    mat.blocks[-3, -1],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[-1, -2],
-                    mat.blocks[-1, -1],
-                    mat.blocks[-2, -1],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[-1, -3],
-                    mat.blocks[-1, -2],
-                    mat.blocks[-1, -1],
-                ),
-                axis=2,
-            ),
-        ),
-        axis=1,
-    )
-    above[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[-4, -1],
-                    xp.zeros_like(mat.blocks[-4, -1]),
-                    xp.zeros_like(mat.blocks[-4, -1]),
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[-3, -1],
-                    mat.blocks[-4, -1],
-                    xp.zeros_like(mat.blocks[-3, -1]),
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    mat.blocks[-2, -1],
-                    mat.blocks[-3, -1],
-                    mat.blocks[-4, -1],
-                ),
-                axis=2,
-            ),
-        ),
-        axis=1,
-    )
-    left[:] = xp.concatenate(
-        (
-            xp.concatenate(
-                (
-                    mat.blocks[-1, -4],
-                    mat.blocks[-1, -3],
-                    mat.blocks[-1, -2],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    xp.zeros_like(mat.blocks[-1, -3]),
-                    mat.blocks[-1, -4],
-                    mat.blocks[-1, -3],
-                ),
-                axis=2,
-            ),
-            xp.concatenate(
-                (
-                    xp.zeros_like(mat.blocks[-1, -4]),
-                    xp.zeros_like(mat.blocks[-1, -4]),
-                    mat.blocks[-1, -4],
-                ),
-                axis=2,
-            ),
-        ),
-        axis=1,
-    )
+    # TODO: Below is not fault-tolerant. Add checks.
+    bs = diag_left.shape[1] // nbc
+    num_blocks = mat.block_sizes.size
+    for i in range(nbc):
+        for j in range(nbc):
+            k = i - j
+            diag_left[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                max(0, k), -min(0, k)
+            ]
+            diag_right[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                min(0, k) - 1, -max(0, k) - 1
+            ]
+            if -k + nbc < num_blocks:
+                right[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    0, -k + nbc
+                ]
+                above[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    k - nbc - 1, -1
+                ]
+            if k + nbc < num_blocks:
+                below[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    k + nbc, 0
+                ]
+                left[..., i * bs : (i + 1) * bs, j * bs : (j + 1) * bs] = mat.blocks[
+                    -1, -k - nbc - 1
+                ]

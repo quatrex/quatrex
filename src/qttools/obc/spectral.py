@@ -73,8 +73,8 @@ class Spectral(OBCSolver):
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
         x_ii_formula: str = "self-energy",
-        two_sided: bool = True,
-        treat_pairwise: bool = False,
+        two_sided: bool = False,
+        treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
     ) -> None:
@@ -284,7 +284,7 @@ class Spectral(OBCSolver):
         self,
         ws: NDArray,
         vs: NDArray,
-    ) -> NDArray:
+    ) -> tuple[NDArray, NDArray]:
         """Upscales the eigenvectors to the full periodic matrix layer.
 
         The extraction of subblocks and hence the solution of a higher-
@@ -301,6 +301,8 @@ class Spectral(OBCSolver):
 
         Returns
         -------
+        ws : NDArray
+            The upscaled eigenvalues.
         vs : NDArray
             The upscaled eigenvectors.
 
@@ -319,7 +321,7 @@ class Spectral(OBCSolver):
                 )
                 vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
 
-        return vs_upscaled
+        return ws**self.block_sections, vs_upscaled
 
     def _compute_x_ii(
         self,
@@ -482,9 +484,10 @@ class Spectral(OBCSolver):
 
         mask = self._find_reflected_modes(wrs, vrs, blocks, vls=vls)
 
-        vrs = self._upscale_eigenmodes(wrs, vrs)
+        wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
+
         if self.two_sided:
-            vls = self._upscale_eigenmodes(wrs, vls)
+            wls, vls = self._upscale_eigenmodes(wrs, vls)
 
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask, vls=vls)
 

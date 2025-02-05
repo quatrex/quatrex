@@ -172,11 +172,11 @@ def find_renormalized_eigenvalues(
     e_0_right = None
 
     for __ in range(num_ref_iterations):
-        ind_left = int(xp.argmin(xp.abs(energies - left_conduction_band_guess)))
-        rank_left = int(xp.digitize(ind_left, section_offsets)) - 1
+        ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
+        rank_left = xp.digitize(ind_left, section_offsets) - 1
 
-        ind_right = int(xp.argmin(xp.abs(energies - right_conduction_band_guess)))
-        rank_right = int(xp.digitize(ind_right, section_offsets)) - 1
+        ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
+        rank_right = xp.digitize(ind_right, section_offsets) - 1
 
         if rank_left == comm.rank:
             local_ind = ind_left - section_offsets[rank_left]
@@ -213,7 +213,7 @@ def find_renormalized_eigenvalues(
     return e_0_left, e_0_right
 
 
-def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> tuple[float, float]:
+def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
     """Partitions the band edges into valence and conduction bands.
 
     Parameters
@@ -227,16 +227,14 @@ def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> tuple[float, float]:
 
     Returns
     -------
-    valence_band_edge : float
-        The valence band edge.
-    conduction_band_edge : float
-        The conduction band edge.
+    band_edges : NDArray
+        The valence and conduction band edges.
 
     """
     mask = (e_0 - mid_gap_energy) < 0
     valence_band_edge = e_0[mask].max()
     conduction_band_edge = e_0[~mask].min()
-    return valence_band_edge, conduction_band_edge
+    return xp.array([valence_band_edge, conduction_band_edge])
 
 
 def local_band_edges(

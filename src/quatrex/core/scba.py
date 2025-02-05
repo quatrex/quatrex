@@ -73,7 +73,7 @@ def _compute_sparsity_pattern(
         rows.extend([i] * len(interacting))
 
     rows, cols = xp.array(rows), xp.array(cols)
-    return sparse.coo_matrix((xp.ones_like(rows, dtype=bool), (rows, cols)))
+    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
 
 
 class SCBAData:

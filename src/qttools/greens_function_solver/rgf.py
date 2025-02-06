@@ -40,6 +40,9 @@ class RGF(GFSolver):
             inverted matrix as a DSBSparse object.
 
         """
+        # Initialize dense temporary buffers for the diagonal blocks.
+        x_diag_blocks = [None] * a.num_blocks
+
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
@@ -54,29 +57,34 @@ class RGF(GFSolver):
             a_ = a.stack[stack_slice]
             x_ = x.stack[stack_slice]
 
-            x_.blocks[0, 0] = xp.linalg.inv(a_.blocks[0, 0])
+            x_diag_blocks[0] = xp.linalg.inv(a_.blocks[0, 0])
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
-                x_.blocks[j, j] = xp.linalg.inv(
+
+                x_diag_blocks[j] = xp.linalg.inv(
                     a_.blocks[j, j]
-                    - a_.blocks[j, i] @ x_.blocks[i, i] @ a_.blocks[i, j]
+                    - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
                 )
+
+            # We need to write the last diagonal block to the output.
+            x_.blocks[j, j] = x_diag_blocks[j]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
                 j = i + 1
 
-                x_ii = x_.blocks[i, i]
-                x_jj = x_.blocks[j, j]
+                x_ii = x_diag_blocks[i]
+                x_jj = x_diag_blocks[j]
                 a_ij = a_.blocks[i, j]
 
                 x_ji = -x_jj @ a_.blocks[j, i] @ x_ii
                 x_.blocks[j, i] = x_ji
                 x_.blocks[i, j] = -x_ii @ a_ij @ x_jj
 
-                x_.blocks[i, i] = x_ii - x_ii @ a_ij @ x_ji
+                # NOTE: Cursed Python multiple assignment syntax.
+                x_.blocks[i, i] = x_diag_blocks[i] = x_ii - x_ii @ a_ij @ x_ji
 
         if out is None:
             return x
@@ -97,14 +105,6 @@ class RGF(GFSolver):
         \[
             X^{\lessgtr} = A^{-1} \Sigma^{\lessgtr} A^{-\dagger}
         \]
-
-        Note
-        ----
-        If the diagonal blocks of the input matrix `a` are not dense,
-        this selected-solve will not be performed correctly. During the
-        forwards sweep, only the elements of the inverse that match the
-        sparsity pattern of the input diagonal blocks will be stored.
-        This, in turn, leads to incomplete matrix-multiplications.
 
         Parameters
         ----------
@@ -131,6 +131,11 @@ class RGF(GFSolver):
             last element.
 
         """
+        # Initialize dense temporary buffers for the diagonal blocks.
+        xr_diag_blocks = [None] * a.num_blocks
+        xl_diag_blocks = [None] * a.num_blocks
+        xg_diag_blocks = [None] * a.num_blocks
+
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
@@ -159,66 +164,70 @@ class RGF(GFSolver):
             xg_ = xg.stack[stack_slice]
 
             xr_00 = xp.linalg.inv(a_.blocks[0, 0])
-            xr_.blocks[0, 0] = xr_00
-            xl_.blocks[0, 0] = (
-                xr_00 @ sigma_lesser_.blocks[0, 0] @ xr_00.conj().swapaxes(-2, -1)
-            )
-            xg_.blocks[0, 0] = (
-                xr_00 @ sigma_greater_.blocks[0, 0] @ xr_00.conj().swapaxes(-2, -1)
-            )
+            xr_00_dagger = xr_00.conj().swapaxes(-2, -1)
+            xr_diag_blocks[0] = xr_00
+            xl_diag_blocks[0] = xr_00 @ sigma_lesser_.blocks[0, 0] @ xr_00_dagger
+            xg_diag_blocks[0] = xr_00 @ sigma_greater_.blocks[0, 0] @ xr_00_dagger
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
 
-                # Densify the blocks that are used multiple times.
+                # Get the blocks that are used multiple times.
                 a_ji = a_.blocks[j, i]
-                xr_ii = xr_.blocks[i, i]
+                xr_ii = xr_diag_blocks[i]
 
-                xr_jj = xp.linalg.inv(a_.blocks[j, j] - a_ji @ xr_ii @ a_.blocks[i, j])
-                xr_.blocks[j, j] = xr_jj
+                # Precompute the transposes that are used multiple times.
+                a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
 
                 # Precompute some terms that are used multiple times.
-                xr_ii_dagger_aji_dagger = xr_ii.conj().swapaxes(
-                    -2, -1
-                ) @ a_ji.conj().swapaxes(-2, -1)
+                xr_ii_dagger_aji_dagger = xr_ii.conj().swapaxes(-2, -1) @ a_ji_dagger
                 a_ji_xr_ii = a_ji @ xr_ii
 
-                xl_.blocks[j, j] = (
+                xr_jj = xp.linalg.inv(a_.blocks[j, j] - a_ji @ xr_ii @ a_.blocks[i, j])
+                xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+                xr_diag_blocks[j] = xr_jj
+
+                xl_diag_blocks[j] = (
                     xr_jj
                     @ (
                         sigma_lesser_.blocks[j, j]
-                        + a_ji @ xl_.blocks[i, i] @ a_ji.conj().swapaxes(-2, -1)
+                        + a_ji @ xl_diag_blocks[i] @ a_ji_dagger
                         - sigma_lesser_.blocks[j, i] @ xr_ii_dagger_aji_dagger
                         - a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
                     )
-                    @ xr_jj.conj().swapaxes(-2, -1)
+                    @ xr_jj_dagger
                 )
 
-                xg_.blocks[j, j] = (
+                xg_diag_blocks[j] = (
                     xr_jj
                     @ (
                         sigma_greater_.blocks[j, j]
-                        + a_ji @ xg_.blocks[i, i] @ a_ji.conj().swapaxes(-2, -1)
+                        + a_ji @ xg_diag_blocks[i] @ a_ji_dagger
                         - sigma_greater_.blocks[j, i] @ xr_ii_dagger_aji_dagger
                         - a_ji_xr_ii @ sigma_greater_.blocks[i, j]
                     )
-                    @ xr_jj.conj().swapaxes(-2, -1)
+                    @ xr_jj_dagger
                 )
+
+            # We need to write the last diagonal blocks to the output.
+            xr_.blocks[j, j] = xr_diag_blocks[j]
+            xl_.blocks[j, j] = xl_diag_blocks[j]
+            xg_.blocks[j, j] = xg_diag_blocks[j]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
                 j = i + 1
 
-                # Densify the blocks that are used multiple times.
-                xr_ii = xr_.blocks[i, i]
-                xr_jj = xr_.blocks[j, j]
+                # Get the blocks that are used multiple times.
+                xr_ii = xr_diag_blocks[i]
+                xr_jj = xr_diag_blocks[j]
                 a_ij = a_.blocks[i, j]
                 a_ji = a_.blocks[j, i]
-                xl_ii = xl_.blocks[i, i]
-                xl_jj = xl_.blocks[j, j]
-                xg_ii = xg_.blocks[i, i]
-                xg_jj = xg_.blocks[j, j]
+                xl_ii = xl_diag_blocks[i]
+                xl_jj = xl_diag_blocks[j]
+                xg_ii = xg_diag_blocks[i]
+                xg_jj = xg_diag_blocks[j]
                 sigma_lesser_ij = sigma_lesser_.blocks[i, j]
                 sigma_lesser_ji = sigma_lesser_.blocks[j, i]
                 sigma_greater_ij = sigma_greater_.blocks[i, j]
@@ -286,20 +295,23 @@ class RGF(GFSolver):
                     + xr_jj @ sigma_greater_ji @ xr_ii_dagger
                 )
 
-                xl_.blocks[i, i] = (
+                # NOTE: Cursed Python multiple assignment syntax.
+                xl_.blocks[i, i] = xl_diag_blocks[i] = (
                     xl_ii
                     + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_l
                     + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
                 )
-                xg_.blocks[i, i] = (
+                xg_.blocks[i, i] = xg_diag_blocks[i] = (
                     xg_ii
                     + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_g
                     + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
                 )
 
-                xr_.blocks[i, i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
+                xr_.blocks[i, i] = xr_diag_blocks[i] = (
+                    xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
+                )
 
         if out is None:
             if return_retarded:

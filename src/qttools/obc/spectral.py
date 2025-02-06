@@ -308,7 +308,7 @@ class Spectral(OBCSolver):
 
         """
         if self.block_sections == 1:
-            return vs
+            return ws, vs
 
         batchsize, subblock_size, num_modes = vs.shape
         block_size = subblock_size * self.block_sections

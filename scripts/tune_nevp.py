@@ -107,8 +107,8 @@ class BeynTuner:
         self.min_num_quad_points = min_num_quad_points
         self.max_num_quad_points = max_num_quad_points
 
-        obc = Spectral(Full(), **self.obc_kwargs)
-        self.a_xx = obc._extract_subblocks(self.a_ji, self.a_ii, self.a_ij)
+        self.obc = Spectral(Full(), **self.obc_kwargs)
+        self.a_xx = self.obc._extract_subblocks(self.a_ji, self.a_ii, self.a_ij)
 
     def _compute_subspace_dimension(self) -> int:
         """Determines the number of eigenvalues to target in the subspace.
@@ -158,6 +158,7 @@ class BeynTuner:
                 **self.nevp_kwargs,
             )
             ws, vs = nevp(self.a_xx)
+            ws, vs = self.obc._upscale_eigenmodes(ws, vs)
 
             residuals = np.zeros_like(ws)
             for i in range(ws.shape[1]):

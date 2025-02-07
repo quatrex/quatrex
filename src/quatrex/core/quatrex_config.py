@@ -75,6 +75,17 @@ class MemoizerConfig(BaseModel):
     convergence_tol: PositiveFloat = 1e-5
 
 
+class SolverConfig(BaseModel):
+    """Options for the system solver."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    algorithm: Literal["rgf", "inv"] = "rgf"
+
+    # The maximum number of energies per batch.
+    max_batch_size: PositiveInt = 1
+
+
 class OBCConfig(BaseModel):
     """Options for open-boundary condition (OBC) solvers."""
 
@@ -113,6 +124,7 @@ class LyapunovConfig(BaseModel):
     """Options for solving the Lyapunov equation."""
 
     model_config = ConfigDict(extra="forbid")
+
     algorithm: Literal["spectral", "doubling"] = "spectral"
 
     # Parameters for iterative Lyapunov algorithms.
@@ -129,8 +141,8 @@ class ElectronConfig(BaseModel):
     """Options for the electronic subsystem solver."""
 
     model_config = ConfigDict(extra="forbid")
-    solver: Literal["rgf", "inv"] = "rgf"
 
+    solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 
@@ -203,7 +215,7 @@ class CoulombScreeningConfig(BaseModel):
 
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
 
-    solver: Literal["rgf", "inv"] = "rgf"
+    solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 
@@ -220,7 +232,7 @@ class PhotonConfig(BaseModel):
 
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
 
-    solver: Literal["rgf", "inv"] = "rgf"
+    solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 
@@ -232,7 +244,7 @@ class PhononConfig(BaseModel):
 
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
 
-    solver: Literal["rgf", "inv"] = "rgf"
+    solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 

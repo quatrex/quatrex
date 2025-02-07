@@ -84,7 +84,7 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.bare_system_matrix.data = 0.0
 

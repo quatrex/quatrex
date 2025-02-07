@@ -113,11 +113,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
 
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        # TODO: This is pretty wasteful memory-wise.
         self.w_lesser_reduced = compute_config.dsbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.w_greater_reduced = compute_config.dsbsparse_type.zeros_like(
             self.w_lesser_reduced
@@ -250,11 +251,12 @@ class SigmaFock(ScatteringSelfEnergy):
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
 
         # Create the DSBSparse object.
+        # TODO: This is pretty wasteful memory-wise.
         self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += coulomb_matrix_sparray
@@ -271,6 +273,8 @@ class SigmaFock(ScatteringSelfEnergy):
             sigma_retarded.
 
         """
+        # TODO: Check again if we really need to transpose the matrices
+        # here.
         (sigma_retarded,) = out
         for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
             m.dtranspose() if m.distribution_state != "nnz" else None

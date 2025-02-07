@@ -182,11 +182,11 @@ class CoulombScreeningSolver(SubsystemSolver):
                 f"{self.small_block_sizes.sum()} != {self.coulomb_matrix_sparray.shape[0]}"
             )
         # Create DBSparse matrix from the Coulomb matrix.
+        # TODO: Waste of memory. Not an energy-dependent matrix.
         self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.small_block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(self.small_block_sizes))],
         )
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += self.coulomb_matrix_sparray
@@ -222,7 +222,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
 
         l_sparsity_pattern = v_times_p_sparsity_pattern @ sparsity_pattern
@@ -231,9 +231,12 @@ class CoulombScreeningSolver(SubsystemSolver):
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(i, i) for i in range(len(self.block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.l_greater = compute_config.dsbsparse_type.zeros_like(self.l_lesser)
+        self.system_matrix = compute_config.dsbsparse_type.zeros_like(
+            self.v_times_p_retarded
+        )
 
         # Compute new sparsity pattern.
         # rows, cols = product_sparsity_pattern(
@@ -275,15 +278,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         #     raise ValueError("Overlap matrix and Coulomb matrix have different shapes.")
 
         # Construct the bare system matrix.
-        self.bare_system_matrix = compute_config.dsbsparse_type.zeros_like(
-            self.v_times_p_retarded
-        )
+        # self.bare_system_matrix = compute_config.dsbsparse_type.zeros_like(
+        #     self.v_times_p_retarded
+        # )
         # Add the overlap matrix to the bare system matrix.
-        self.bare_system_matrix += sparse.eye(sparsity_pattern.shape[0])
+        # self.bare_system_matrix += sparse.eye(sparsity_pattern.shape[0])
         # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dsbsparse_type.zeros_like(
-            self.bare_system_matrix
-        )
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
@@ -322,7 +322,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
         self.v_times_p_retarded.block_sizes = block_sizes
-        self.bare_system_matrix.block_sizes = block_sizes
+        # self.bare_system_matrix.block_sizes = block_sizes
         self.system_matrix.block_sizes = block_sizes
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
@@ -421,7 +421,8 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _assemble_system_matrix(self, v_times_p_retarded: DSBSparse) -> None:
         """Assembles the system matrix."""
-        self.system_matrix.data = self.bare_system_matrix.data
+        self.system_matrix.data = 0.0
+        self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
         self.system_matrix -= v_times_p_retarded
 
     def solve(

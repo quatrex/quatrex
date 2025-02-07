@@ -131,15 +131,11 @@ class SCBAData:
 
         dsbsparse_type = compute_config.dsbsparse_type
 
-        # TODO: Rethink if all of these quantities actually need dense
-        # diagonal blocks.
-        # --> System matrix does not need dense diagonal blocks, but all
-        # the outputs do.
         self.g_retarded = dsbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
-            densify_blocks=[(i, i) for i in range(len(block_sizes))],
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.g_retarded._data[:] = 0.0  # Initialize to zero.
         self.g_lesser = dsbsparse_type.zeros_like(self.g_retarded)
@@ -168,9 +164,7 @@ class SCBAData:
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
-                densify_blocks=[
-                    (i, i) for i in range(len(coulomb_screening_block_sizes))
-                ],
+                densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
             )
             self.w_retarded._data[:] = 0.0  # Initialize to zero.
             self.w_lesser = dsbsparse_type.zeros_like(self.w_retarded)

@@ -9,7 +9,12 @@ from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import LyapunovConfig, OBCConfig, QuatrexConfig
+from quatrex.core.quatrex_config import (
+    LyapunovConfig,
+    OBCConfig,
+    QuatrexConfig,
+    SolverConfig,
+)
 
 
 class SubsystemSolver(ABC):
@@ -166,13 +171,13 @@ class SubsystemSolver(ABC):
             )
         return lyapunov_solver
 
-    def _configure_solver(self, solver: str) -> GFSolver:
+    def _configure_solver(self, solver_config: SolverConfig) -> GFSolver:
         """Configures the solver algorithm from the config.
 
         Parameters
         ----------
-        solver : str
-            The solver algorithm.
+        solver : SolverConfig
+            The solver configuration.
 
         Returns
         -------
@@ -180,13 +185,15 @@ class SubsystemSolver(ABC):
             The configured solver.
 
         """
-        if solver == "rgf":
-            return RGF()
+        if solver_config.algorithm == "rgf":
+            return RGF(max_batch_size=solver_config.max_batch_size)
 
-        if solver == "inv":
-            return Inv()
+        if solver_config.algorithm == "inv":
+            return Inv(max_batch_size=solver_config.max_batch_size)
 
-        raise NotImplementedError(f"Solver '{solver}' not implemented.")
+        raise NotImplementedError(
+            f"Solver '{solver_config.algorithm}' not implemented."
+        )
 
     @abstractmethod
     def solve(

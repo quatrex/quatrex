@@ -35,17 +35,10 @@ def test_selected_solve(
     ref_Xg = ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T
 
     block_sizes = block_sizes
-    densify_blocks = [(i, i) for i in range(len(block_sizes))]
 
-    A = dsbsparse_type.from_sparray(
-        coo_A, block_sizes, global_stack_shape, densify_blocks
-    )
-    Bl = dsbsparse_type.from_sparray(
-        coo_Bl, block_sizes, global_stack_shape, densify_blocks
-    )
-    Bg = dsbsparse_type.from_sparray(
-        coo_Bg, block_sizes, global_stack_shape, densify_blocks
-    )
+    A = dsbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
+    Bl = dsbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
+    Bg = dsbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 

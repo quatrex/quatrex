@@ -58,6 +58,16 @@ class Spectral(OBCSolver):
         The minimum ratio between the real and imaginary part of the
         group velocity of a mode. This ratio is used to determine how
         clearly a mode propagates.
+    residual_tolerance : float, optional
+        The tolerance for the residual of the NEVP.
+    residual_normalization_formula : str, optional
+        The formula to use for the normalization of the residual. The
+        default is the "operator_norm" formula. The other options are
+        "abs_eigenvalue" and "no_normalization".The "operator_norm"
+        formula corresponds to normalization by the frobenius norm of
+        the operator, the "abs_eigenvalue" formula corresponds to
+        normalization by the absolute of the eigenvalues, and
+        "no_normalization" results in no normalization.
 
         [^1]: S. Brück, et al., Efficient algorithms for large-scale
         quantum transport calculations, The Journal of Chemical Physics,
@@ -77,6 +87,8 @@ class Spectral(OBCSolver):
         treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
+        residual_tolerance: float = 1e-3,
+        residual_normalization_formula: str = "operator_norm",
         warning_threshold: float = 1e-1,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -95,6 +107,8 @@ class Spectral(OBCSolver):
         self.treat_pairwise = treat_pairwise
         self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
+        self.residual_tolerance = residual_tolerance
+        self.residual_normalization_formula = residual_normalization_formula
         self.warning_threshold = warning_threshold
 
     def _extract_subblocks(
@@ -278,6 +292,39 @@ class Spectral(OBCSolver):
         if self.two_sided and vls is None:
             raise ValueError("Two-sided calculation requires left eigenvectors.")
 
+        # Calculate the residual
+        with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
+            # NOTE: This consumes a lot of memory since
+            # the operators are explicitly calculated.
+            operators = sum(
+                a_x[:, xp.newaxis, :, :]
+                * ws[..., xp.newaxis, xp.newaxis] ** (i - len(a_xx) // 2)
+                for i, a_x in enumerate(a_xx)
+            )
+            products = operators @ vrs.swapaxes(-1, -2)[..., xp.newaxis]
+
+            residuals = xp.linalg.norm(products, axis=(-1, -2))
+
+            # eigenvectors are not necessarily normalized
+            eigenvector_norm = xp.linalg.norm(vrs, axis=-2)
+            residuals /= eigenvector_norm
+
+            if self.residual_normalization_formula == "operator_norm":
+                operator_norm = xp.linalg.norm(operators, axis=(-1, -2))
+                residuals /= operator_norm
+            elif self.residual_normalization_formula == "abs_eigenvalue":
+                residuals /= xp.abs(ws)
+            elif self.residual_normalization_formula == "no_normalization":
+                pass
+            else:
+                raise ValueError(
+                    f"Unknown formula: {self.residual_normalization_formula}"
+                    "Choose 'operator_norm', 'abs_eigenvalue', or 'no_normalization'."
+                )
+
+            if xp.any(residuals > self.residual_tolerance):
+                print("Warning: Residuals are larger than the tolerance.")
+
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
         # polynomial eigenvalue equation with respect to k.
@@ -320,7 +367,9 @@ class Spectral(OBCSolver):
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay
 
-        return mask_propagating | mask_decaying
+        return (mask_propagating | mask_decaying) & (
+            residuals < self.residual_tolerance
+        )
 
     def _upscale_eigenmodes(
         self,

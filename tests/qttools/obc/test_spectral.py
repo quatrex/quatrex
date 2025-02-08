@@ -44,6 +44,7 @@ def _make_periodic(
     "block_sections",
     "two_sided",
     "treat_pairwise",
+    "residual_normalization_formula",
 )
 def test_correctness(
     a_xx: tuple[NDArray, ...],
@@ -53,6 +54,7 @@ def test_correctness(
     contact: str,
     two_sided: bool,
     treat_pairwise: bool,
+    residual_normalization_formula: str,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
@@ -61,6 +63,7 @@ def test_correctness(
         x_ii_formula=x_ii_formula,
         two_sided=two_sided,
         treat_pairwise=treat_pairwise,
+        residual_normalization_formula=residual_normalization_formula,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
@@ -73,6 +76,7 @@ def test_correctness(
     "block_sections",
     "two_sided",
     "treat_pairwise",
+    "residual_normalization_formula",
 )
 def test_correctness_batch(
     a_xx: tuple[NDArray, ...],
@@ -82,6 +86,7 @@ def test_correctness_batch(
     contact: str,
     two_sided: bool,
     treat_pairwise: bool,
+    residual_normalization_formula: str,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
@@ -90,6 +95,7 @@ def test_correctness_batch(
         x_ii_formula=x_ii_formula,
         two_sided=two_sided,
         treat_pairwise=treat_pairwise,
+        residual_normalization_formula=residual_normalization_formula,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji = xp.stack([a_ji for __ in range(10)])

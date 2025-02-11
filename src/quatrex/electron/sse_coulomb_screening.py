@@ -220,6 +220,124 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "stack" else None
 
 
+class SigmaCoulombScreening_X(ScatteringSelfEnergy):
+    """Computes the scattering self-energy from the Coulomb screening.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The Quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+    electron_energies : NDArray
+        The energies for the electron system.
+
+    """
+
+    def __init__(
+        self,
+        quatrex_config: QuatrexConfig,
+        compute_config: ComputeConfig,
+        energies: NDArray,
+        energies_x: NDArray,
+        number_of_energies_lesser: int,
+        number_of_overlap_energies: int,
+        sparsity_pattern: sparse.coo_matrix,
+    ):
+        """Initializes the scattering self-energy."""
+        self.energies = energies
+        self.prefactor = 1j / (2 * xp.pi) * (energies_x[1] - energies_x[0])
+        self.nel = number_of_energies_lesser
+        self.neg = len(energies_x) - number_of_energies_lesser
+        self.noe = number_of_overlap_energies
+        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        # TODO: This is pretty wasteful memory-wise.
+        self.w_lesser_reduced = compute_config.dsbsparse_type.from_sparray(
+            sparsity_pattern.astype(xp.complex128),
+            block_sizes=block_sizes,
+            global_stack_shape=energies_x.shape,
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
+        )
+
+    def compute(
+        self,
+        g_x: DSBSparse,
+        w_lesser: DSBSparse,
+        out: tuple[DSBSparse, ...],
+    ) -> None:
+        """Computes the GW self-energy.
+
+        Parameters
+        ----------
+        g_x : DSBSparse
+            The combines lesser/greater Green's function.
+        w_x : DSBSparse
+            The greater screened Coulomb interaction.
+        out : tuple[DSBSparse, ...]
+            The output matrices for the self-energy. The order is
+            sigma_x, sigma_retarded.
+
+        """
+        nel = self.nel
+        neg = self.neg
+        noe = self.noe
+        # If the w_x don't have the same sparsity
+        # pattern as g_x, we have to reduce them to
+        # the same sparsity pattern.
+        if w_lesser.nnz != self.w_lesser_reduced.nnz:
+            num_blocks = len(self.w_lesser_reduced.block_sizes)
+            original_block_sizes = w_lesser.block_sizes
+            w_lesser.block_sizes = self.w_lesser_reduced.block_sizes
+            for i in range(num_blocks):
+                for j in range(max(0, i - 1), min(num_blocks, i + 2)):
+                    self.w_lesser_reduced.blocks[i, j] = w_lesser.blocks[i, j]
+
+            w_lesser.block_sizes = original_block_sizes
+        else:
+            self.w_lesser_reduced.data = w_lesser.data
+
+        sigma_x, sigma_retarded = out
+        # Transpose the matrices to nnz distribution.
+        for m in (
+            g_x,
+            self.w_lesser_reduced,
+            sigma_x,
+            sigma_retarded,
+        ):
+            m.dtranspose() if m.distribution_state != "nnz" else None
+
+        # Compute the full self-energy using the convolution theorem.
+        sigma_x.data[:nel] += self.prefactor * (
+            fft_convolve(g_x.data[:nel], self.w_lesser_reduced.data)[:nel]
+        )
+        sigma_x.data[nel:] += self.prefactor * (
+            -fft_correlate(g_x.data[nel:], self.w_lesser_reduced.data.conj())[-neg:]
+        )
+
+        # Compute retarded self-energy with a Hilbert transform.
+        sigma_antihermitian = xp.zeros(
+            (len(self.energies), sigma_retarded.data.shape[-1]), dtype=xp.complex128
+        )
+        sigma_antihermitian[nel - noe :] = 1j * xp.imag(sigma_x.data[nel:])
+        sigma_antihermitian[:nel] -= 1j * xp.imag(sigma_x.data[:nel])
+        sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
+        sigma_retarded.data[:nel] += (
+            1j * sigma_hermitian[:nel] + sigma_antihermitian[:nel] / 2
+        )
+        sigma_retarded.data[nel:] += (
+            1j * sigma_hermitian[nel - noe :] + sigma_antihermitian[nel - noe :] / 2
+        )
+
+        # Transpose the matrices to stack distribution.
+        for m in (
+            g_x,
+            self.w_lesser_reduced,
+            sigma_x,
+            sigma_retarded,
+        ):
+            m.dtranspose() if m.distribution_state != "stack" else None
+
+
 class SigmaFock(ScatteringSelfEnergy):
     """Computes the bare Fock self-energy.
 
@@ -282,4 +400,74 @@ class SigmaFock(ScatteringSelfEnergy):
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix.data)
         for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
+            m.dtranspose() if m.distribution_state != "stack" else None
+
+
+class SigmaFock_X(ScatteringSelfEnergy):
+    """Computes the bare Fock self-energy.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The Quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+    electron_energies : NDArray
+        The energies for the electron system.
+
+    """
+
+    def __init__(
+        self,
+        quatrex_config: QuatrexConfig,
+        compute_config: ComputeConfig,
+        number_of_energies_lesser: int,
+        electron_energies: NDArray,
+        sparsity_pattern: sparse.coo_matrix,
+    ):
+        """Initializes the bare Fock self-energy."""
+        self.nel = number_of_energies_lesser
+        self.energies = electron_energies
+        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        coulomb_matrix_sparray = distributed_load(
+            quatrex_config.input_dir / "coulomb_matrix.npz"
+        ).astype(xp.complex128)
+        # Load block sizes for the coulomb matrix.
+        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+
+        # Create the DSBSparse object.
+        # TODO: This is pretty wasteful memory-wise.
+        self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
+            sparsity_pattern.astype(xp.complex128),
+            block_sizes=block_sizes,
+            global_stack_shape=self.energies.shape,
+            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
+        )
+        self.coulomb_matrix.data = 0.0
+        self.coulomb_matrix += coulomb_matrix_sparray
+
+    def compute(self, g_x: DSBSparse, out: tuple[DSBSparse, ...]) -> None:
+        """Computes the Fock self-energy.
+
+        Parameters
+        ----------
+        g_x : DSBSparse
+            The combined lesser/greater Green's function.
+        out : tuple[DSBSparse, ...]
+            The output matrices for the self-energy. The order is
+            sigma_retarded.
+
+        """
+        # TODO: Check again if we really need to transpose the matrices
+        # here.
+        nel = self.nel
+        (sigma_retarded,) = out
+        for m in (g_x, sigma_retarded, self.coulomb_matrix):
+            m.dtranspose() if m.distribution_state != "nnz" else None
+        # Compute the electron density by summing over energies.
+        gl_density = self.prefactor * g_x.data[:nel].sum(axis=0)
+        sigma_fock = xp.real(gl_density * self.coulomb_matrix.data[0])
+        sigma_retarded.data += sigma_fock
+
+        for m in (g_x, sigma_retarded, self.coulomb_matrix):
             m.dtranspose() if m.distribution_state != "stack" else None

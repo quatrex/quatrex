@@ -371,6 +371,7 @@ class SCBA:
                 self.p_coulomb_screening = PCoulombScreening_X(
                     self.quatrex_config,
                     energies_lesser,
+                    number_of_overlap_energies,
                 )
                 coulomb_screening_energies_x = (
                     electron_energies_x - electron_energies_x[-1]

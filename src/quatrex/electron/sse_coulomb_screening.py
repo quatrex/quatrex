@@ -307,11 +307,15 @@ class SigmaCoulombScreening_X(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         # Compute the full self-energy using the convolution theorem.
-        sigma_x.data[:nel] += self.prefactor * (
-            fft_convolve(g_x.data[:nel], self.w_lesser_reduced.data)[:nel]
+        sigma_x._data[:nel] += self.prefactor * (
+            fft_convolve(g_x.data[:nel], self.w_lesser_reduced.data)[
+                -nel - noe + 1 : -noe + 1
+            ]
         )
-        sigma_x.data[nel:] += self.prefactor * (
-            -fft_correlate(g_x.data[nel:], self.w_lesser_reduced.data.conj())[-neg:]
+        sigma_x._data[nel:] += self.prefactor * (
+            -fft_correlate(g_x.data[nel:], self.w_lesser_reduced.data.conj())[
+                noe - 1 : neg + noe - 1
+            ]
         )
 
         # Compute retarded self-energy with a Hilbert transform.
@@ -321,10 +325,10 @@ class SigmaCoulombScreening_X(ScatteringSelfEnergy):
         sigma_antihermitian[nel - noe :] = 1j * xp.imag(sigma_x.data[nel:])
         sigma_antihermitian[:nel] -= 1j * xp.imag(sigma_x.data[:nel])
         sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-        sigma_retarded.data[:nel] += (
+        sigma_retarded._data[:nel] += (
             1j * sigma_hermitian[:nel] + sigma_antihermitian[:nel] / 2
         )
-        sigma_retarded.data[nel:] += (
+        sigma_retarded._data[nel:] += (
             1j * sigma_hermitian[nel - noe :] + sigma_antihermitian[nel - noe :] / 2
         )
 

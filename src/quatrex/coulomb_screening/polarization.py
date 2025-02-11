@@ -112,9 +112,15 @@ class PCoulombScreening_X(ScatteringSelfEnergy):
 
     """
 
-    def __init__(self, quatrex_config: QuatrexConfig, energies_lesser: NDArray) -> None:
+    def __init__(
+        self,
+        quatrex_config: QuatrexConfig,
+        energies_lesser: NDArray,
+        number_of_overlap_energies: int,
+    ) -> None:
         """Initializes the polarization."""
         self.energies_lesser = energies_lesser
+        self.noe = number_of_overlap_energies
         self.prefactor = (
             -1j / xp.pi * xp.abs(self.energies_lesser[1] - self.energies_lesser[0])
         )
@@ -139,7 +145,7 @@ class PCoulombScreening_X(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         # TODO: Maybe make the p_lesser buffer 1 element smaller
-        p_lesser.data[1:] = self.prefactor * fft_correlate(
+        p_lesser._data[1:] = self.prefactor * fft_correlate(
             g_x.data[:nel], -g_x.data[nel:].conj()
         )
 
@@ -151,7 +157,9 @@ class PCoulombScreening_X(ScatteringSelfEnergy):
         p_lesser.data = (p_lesser.data - p_lesser.ltranspose(copy=True).data.conj()) / 2
         p_lesser._data.real = 0
 
-        p_retarded.data = -(p_lesser.data + p_lesser.data[::-1].conj()) / 2
+        p_retarded.data = -(p_lesser.data) / 2
+        # TODO: How to do the below operation?
+        # p_retarded.data[-self.noe:] -= p_lesser.data[:-self.noe-1:-1].conj()
 
         # Homogenize in case of flatband.
         if self.flatband:

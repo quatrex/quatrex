@@ -818,18 +818,11 @@ class CoulombScreeningSolver_X(SubsystemSolver):
 
         # Solve the system
         times.append(time.perf_counter())
-        # TODO: Implement solve_x
-        # self.solver.selected_solve_x(
-        #     a=self.system_matrix,
-        #     sigma_lesser=self.l_lesser,
-        #     out=out,
-        #     return_retarded=True,
-        # )
+        # NOTE: This only has one self-energy
         self.solver.selected_solve(
             a=self.system_matrix,
             sigma_lesser=self.l_lesser,
-            sigma_greater=self.l_lesser,
-            out=(out[0], out[0], out[1]),
+            out=out,
             return_retarded=True,
         )
         t_solve = time.perf_counter() - times.pop()

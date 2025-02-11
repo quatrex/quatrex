@@ -914,8 +914,8 @@ class ElectronSolver_X(SubsystemSolver):
         if comm.size > 1:
             # TODO: Eack rank only have either lesser or greater
             # quantities. So to compute the current we need to
-            # communicate the overlap energies. The current is
-            # only non-zero for the overlap energies.
+            # communicate. The current is only non-zero for the
+            # overlap energies, so ideally we should only communicate those.
             pass
         else:
             i_left = xp.trace(
@@ -1033,18 +1033,11 @@ class ElectronSolver_X(SubsystemSolver):
         t_obc = time.perf_counter() - times.pop()
 
         times.append(time.perf_counter())
-        # TODO: Implement selected_solve_x
-        # self.solver.selected_solve_x(
-        #     a=self.system_matrix,
-        #     sigma_x=sse_x,
-        #     out=out,
-        #     return_retarded=True,
-        # )
+        # NOTE: This only has one self-energy
         self.solver.selected_solve(
             a=self.system_matrix,
             sigma_lesser=sse_x,
-            sigma_greater=sse_x,
-            out=(out[0], out[0], out[1]),
+            out=out,
             return_retarded=True,
         )
         t_solve = time.perf_counter() - times.pop()

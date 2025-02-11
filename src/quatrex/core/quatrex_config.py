@@ -149,6 +149,8 @@ class ElectronConfig(BaseModel):
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
 
+    use_energy_x: bool = False
+
     fermi_level: float | None = None
     conduction_band_edge: float | None = None
     valence_band_edge: float | None = None

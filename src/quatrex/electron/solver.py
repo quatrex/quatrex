@@ -675,10 +675,10 @@ class ElectronSolver_X(SubsystemSolver):
                 fermi_dirac(
                     self.energies_lesser - self.left_fermi_level, self.temperature
                 ),
-                1
-                - fermi_dirac(
+                fermi_dirac(
                     self.energies_greater - self.left_fermi_level, self.temperature
-                ),
+                )
+                - 1,
             )
         )
         self.left_occupancies = get_local_slice(left_occupancies)
@@ -687,10 +687,10 @@ class ElectronSolver_X(SubsystemSolver):
                 fermi_dirac(
                     self.energies_lesser - self.right_fermi_level, self.temperature
                 ),
-                1
-                - fermi_dirac(
+                fermi_dirac(
                     self.energies_greater - self.right_fermi_level, self.temperature
-                ),
+                )
+                - 1,
             )
         )
         self.right_occupancies = get_local_slice(right_occupancies)
@@ -757,28 +757,30 @@ class ElectronSolver_X(SubsystemSolver):
             right_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
 
-        self.left_occupancies = xp.concatenate(
+        left_occupancies = xp.concatenate(
             (
                 fermi_dirac(
                     self.energies_lesser - self.left_fermi_level, self.temperature
                 ),
-                1
-                - fermi_dirac(
+                fermi_dirac(
                     self.energies_greater - self.left_fermi_level, self.temperature
-                ),
+                )
+                - 1,
             )
         )
-        self.right_occupancies = xp.concatenate(
+        self.left_occupancies = get_local_slice(left_occupancies)
+        right_occupancies = xp.concatenate(
             (
                 fermi_dirac(
                     self.energies_lesser - self.right_fermi_level, self.temperature
                 ),
-                1
-                - fermi_dirac(
+                fermi_dirac(
                     self.energies_greater - self.right_fermi_level, self.temperature
-                ),
+                )
+                - 1,
             )
         )
+        self.right_occupancies = get_local_slice(right_occupancies)
 
     def _get_block(self, coo: sparse.coo_matrix, index: tuple) -> NDArray:
         """Gets a block from a COO matrix."""
@@ -908,25 +910,32 @@ class ElectronSolver_X(SubsystemSolver):
         noe = self.number_of_overlap_energies
 
         self.i_left = xp.zeros_like(self.energies, dtype=xp.complex128)
-        i_left = xp.trace(
-            (sse_x.blocks[0, 0] - self.obc_blocks_x_left)[nel : nel + noe]
-            @ g_x.blocks[0, 0][nel - noe : nel]
-            - g_x.blocks[0, 0][nel : nel + noe]
-            @ (sse_x.blocks[0, 0] - self.obc_blocks_x_left)[nel - noe : nel],
-            axis1=-2,
-            axis2=-1,
-        )
-        self.i_left[nel - noe : nel] = i_left
         self.i_right = xp.zeros_like(self.energies, dtype=xp.complex128)
-        i_right = xp.trace(
-            (sse_x.blocks[-1, -1] - self.obc_blocks_x_right)[nel : nel + noe]
-            @ g_x.blocks[-1, -1][nel - noe : nel]
-            - g_x.blocks[-1, -1][nel : nel + noe]
-            @ (sse_x.blocks[-1, -1] - self.obc_blocks_x_right)[nel - noe : nel],
-            axis1=-2,
-            axis2=-1,
-        )
-        self.i_right[nel - noe : nel] = i_right
+        if comm.size > 1:
+            # TODO: Eack rank only have either lesser or greater
+            # quantities. So to compute the current we need to
+            # communicate the overlap energies. The current is
+            # only non-zero for the overlap energies.
+            pass
+        else:
+            i_left = xp.trace(
+                (sse_x.blocks[0, 0] - self.obc_blocks_x_left)[nel : nel + noe]
+                @ g_x.blocks[0, 0][nel - noe : nel]
+                - g_x.blocks[0, 0][nel : nel + noe]
+                @ (sse_x.blocks[0, 0] - self.obc_blocks_x_left)[nel - noe : nel],
+                axis1=-2,
+                axis2=-1,
+            )
+            self.i_left[nel - noe : nel] = i_left
+            i_right = xp.trace(
+                (sse_x.blocks[-1, -1] - self.obc_blocks_x_right)[nel : nel + noe]
+                @ g_x.blocks[-1, -1][nel - noe : nel]
+                - g_x.blocks[-1, -1][nel : nel + noe]
+                @ (sse_x.blocks[-1, -1] - self.obc_blocks_x_right)[nel - noe : nel],
+                axis1=-2,
+                axis2=-1,
+            )
+            self.i_right[nel - noe : nel] = i_right
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -941,22 +950,16 @@ class ElectronSolver_X(SubsystemSolver):
         # Otherwise, the dos and charge densities should be summed per
         # transport cell (in the old code the trace is taken during
         # RGF).
+        # Also, for the energy_x we probably have to extract the lesser
+        # and greater Green's functions and do as in ElectronSolver.
         # TODO: make parameters settable.
         if self.flatband:
+            # TODO: Below does not work
             g_x, g_retarded = out
-            nel = len(self.energies_lesser)
-            noe = self.number_of_overlap_energies
-            dos = xp.zeros_like(self.energies)
             dos_x = -g_retarded.diagonal().imag.sum(1)
-            dos[:nel] = dos_x[:nel]
-            dos[nel:] = dos_x[nel + noe :]
-            ne = g_x.diagonal().imag.sum(1)[:nel]
-            nh = -g_x.diagonal().imag.sum(1)[nel:]
-            charge = xp.zeros_like(self.energies)
-            charge[:nel] = ne
-            charge[nel - noe :] += nh
-            f1 = xp.abs(dos - charge) / (xp.abs(dos) + 1e-6)
-            f2 = xp.abs(dos - charge) / (xp.abs(charge) + 1e-6)
+            nx = g_x.diagonal().imag.sum(1)
+            f1 = xp.abs(self.left_occupancies * dos_x - nx) / (xp.abs(dos_x) + 1e-6)
+            f2 = xp.abs(self.right_occupancies * dos_x - nx) / (xp.abs(nx) + 1e-6)
 
             # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
             # # TODO: Should communicate boundary energies to correctly filter
@@ -964,13 +967,11 @@ class ElectronSolver_X(SubsystemSolver):
             # f3 = xp.zeros_like(f1, dtype=bool)
             # f3[peaks] = True
 
-            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
+            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos_x < 0)
 
             assert g_x.distribution_state == "stack"
-            g_x.data[:nel][mask[:nel]] = 0.0
-            g_x.data[nel:][mask[nel - noe :]] = 0.0
-            g_retarded.data[:nel][mask[:nel]] = 0.0
-            g_retarded.data[nel:][mask[nel - noe :]] = 0.0
+            g_x.data[mask] = 0.0
+            g_retarded.data[mask] = 0.0
 
     def _recover_contact_blocks_x(self, sse_x: DSBSparse, sse_retarded: DSBSparse):
         """Recovers the stashed contact OBC blocks.
@@ -1048,6 +1049,7 @@ class ElectronSolver_X(SubsystemSolver):
         )
         t_solve = time.perf_counter() - times.pop()
 
+        # TODO: Does not function properly yet.
         self._compute_contact_current_x(sse_x, out)
         self._recover_contact_blocks_x(sse_x, sse_retarded)
 
@@ -1055,7 +1057,8 @@ class ElectronSolver_X(SubsystemSolver):
         g_x, g_retarded = out
         g_x.data = 0.5 * (g_x.data - g_x.ltranspose(copy=True).data.conj())
 
-        self._filter_peaks(out)
+        # TODO: Does not function properly yet.
+        # self._filter_peaks(out)
 
         if self.band_edge_tracking == "dos-peaks":
             s_00 = self._get_block(self.overlap_sparray, (0, 0))

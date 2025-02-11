@@ -98,3 +98,62 @@ class PCoulombScreening(ScatteringSelfEnergy):
             homogenize(p_lesser)
             homogenize(p_greater)
             homogenize(p_retarded)
+
+
+class PCoulombScreening_X(ScatteringSelfEnergy):
+    """Computes the dynamic polarization from the electronic system.
+
+    Parameters
+    ----------
+    quatrex_config : Path
+        Quatrex configuration file.
+    coulomb_screening_energies : NDArray
+        The energies for the Coulomb screening
+
+    """
+
+    def __init__(self, quatrex_config: QuatrexConfig, energies_lesser: NDArray) -> None:
+        """Initializes the polarization."""
+        self.energies_lesser = energies_lesser
+        self.prefactor = (
+            -1j / xp.pi * xp.abs(self.energies_lesser[1] - self.energies_lesser[0])
+        )
+        self.flatband = quatrex_config.electron.flatband
+
+    def compute(self, g_x: DSBSparse, out: tuple[DSBSparse, ...]) -> None:
+        """Computes the polarization.
+
+        Parameters
+        ----------
+        g_x : DSBSparse
+            Combined lesser and greater Green's function.
+        out : tuple[DSBSparse, ...]
+            The output matrices for the polarization. The order is
+            p_lesser, p_retarded.
+
+        """
+        p_lesser, p_retarded = out
+        nel = len(self.energies_lesser)
+        # Transpose the matrices to nnz distribution.
+        for m in (g_x, p_lesser):
+            m.dtranspose() if m.distribution_state != "nnz" else None
+
+        # TODO: Maybe make the p_lesser buffer 1 element smaller
+        p_lesser.data[1:] = self.prefactor * fft_correlate(
+            g_x.data[:nel], -g_x.data[nel:].conj()
+        )
+
+        # Transpose the matrices to stack distribution.
+        for m in (g_x, p_lesser):
+            m.dtranspose() if m.distribution_state != "stack" else None
+
+        # Enforce anti-Hermitian symmetry and calculate Pr.
+        p_lesser.data = (p_lesser.data - p_lesser.ltranspose(copy=True).data.conj()) / 2
+        p_lesser._data.real = 0
+
+        p_retarded.data = -(p_lesser.data + p_lesser.data[::-1].conj()) / 2
+
+        # Homogenize in case of flatband.
+        if self.flatband:
+            homogenize(p_lesser)
+            homogenize(p_retarded)

@@ -323,10 +323,11 @@ class SCBA:
             energies_greater = self.electron_energies[
                 self.electron_energies > mid_fermi_energy - overlap_energy
             ]
-            number_of_overlap_energies = sum(
+            self.number_of_overlap_energies = sum(
                 (self.electron_energies < mid_fermi_energy + overlap_energy)
                 & (self.electron_energies > mid_fermi_energy - overlap_energy)
             )
+            self.number_of_lesser_energies = len(energies_lesser)
             electron_energies_x = xp.concatenate([energies_lesser, energies_greater])
             self.electron_solver = ElectronSolver_X(
                 self.quatrex_config,
@@ -334,7 +335,7 @@ class SCBA:
                 self.electron_energies,
                 energies_lesser,
                 energies_greater,
-                number_of_overlap_energies,
+                self.number_of_overlap_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
         else:
@@ -371,7 +372,7 @@ class SCBA:
                 self.p_coulomb_screening = PCoulombScreening_X(
                     self.quatrex_config,
                     energies_lesser,
-                    number_of_overlap_energies,
+                    self.number_of_overlap_energies,
                 )
                 coulomb_screening_energies_x = (
                     electron_energies_x - electron_energies_x[-1]
@@ -389,7 +390,7 @@ class SCBA:
                     self.electron_energies,
                     electron_energies_x,
                     len(energies_lesser),
-                    number_of_overlap_energies,
+                    self.number_of_overlap_energies,
                     sparsity_pattern=self.data.sparsity_pattern,
                 )
             else:
@@ -730,16 +731,29 @@ class SCBA:
 
     def _compute_observables_x(self) -> None:
         """Computes observables."""
+        nle = self.number_of_lesser_energies
+        noe = self.number_of_overlap_energies
         self.observables.electron_ldos = -density(
             self.data.g_retarded,
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
+        self.observables.electron_ldos = xp.concatenate(
+            (
+                self.observables.electron_ldos[:nle],
+                self.observables.electron_ldos[nle + noe :],
+            )
+        )
+        self.observables.electron_density = xp.zeros_like(
+            self.observables.electron_ldos
+        )
+        self.observables.hole_density = xp.zeros_like(self.observables.electron_ldos)
         # NOTE: This is not the electron density, but the x density (combination of lesser and greater).
-        # TODO: Compute observables correctly.
-        self.observables.electron_density = density(
+        x_density = density(
             self.data.g_x,
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
+        self.observables.electron_density[:nle] = x_density[:nle]
+        self.observables.hole_density[nle - noe :] = x_density[nle:]
 
         self.observables.electron_current = dict(
             zip(("left", "right"), contact_currents(self.electron_solver))
@@ -764,12 +778,25 @@ class SCBA:
             self.data.sigma_retarded,
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
+        self.observables.sigma_retarded_density = xp.concatenate(
+            (
+                self.observables.sigma_retarded_density[:nle],
+                self.observables.sigma_retarded_density[nle + noe :],
+            )
+        )
+        self.observables.sigma_lesser_density = xp.zeros_like(
+            self.observables.sigma_retarded_density
+        )
+        self.observables.sigma_greater_density = xp.zeros_like(
+            self.observables.sigma_retarded_density
+        )
         # NOTE: This is not the lesser density, but the x density (combination of lesser and greater).
-        # TODO: Compute observables correctly.
-        self.observables.sigma_lesser_density = density(
+        sigma_x_density = density(
             self.data.sigma_x,
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
+        self.observables.sigma_lesser_density[:nle] = sigma_x_density[:nle]
+        self.observables.sigma_greater_density[nle - noe :] = sigma_x_density[nle:]
 
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
@@ -808,10 +835,11 @@ class SCBA:
                 f"{output_dir}/p_lesser_density_{iteration}.npy",
                 self.observables.p_lesser_density,
             )
-            xp.save(
-                f"{output_dir}/p_greater_density_{iteration}.npy",
-                self.observables.p_greater_density,
-            )
+            if not self.quatrex_config.electron.use_energy_x:
+                xp.save(
+                    f"{output_dir}/p_greater_density_{iteration}.npy",
+                    self.observables.p_greater_density,
+                )
             xp.save(
                 f"{output_dir}/p_retarded_density_{iteration}.npy",
                 self.observables.p_retarded_density,
@@ -821,10 +849,11 @@ class SCBA:
                 f"{output_dir}/w_lesser_density_{iteration}.npy",
                 self.observables.w_lesser_density,
             )
-            xp.save(
-                f"{output_dir}/w_greater_density_{iteration}.npy",
-                self.observables.w_greater_density,
-            )
+            if not self.quatrex_config.electron.use_energy_x:
+                xp.save(
+                    f"{output_dir}/w_greater_density_{iteration}.npy",
+                    self.observables.w_greater_density,
+                )
             xp.save(
                 f"{output_dir}/w_retarded_density_{iteration}.npy",
                 self.observables.w_retarded_density,
@@ -841,64 +870,6 @@ class SCBA:
         xp.save(
             f"{output_dir}/sigma_greater_density_{iteration}.npy",
             self.observables.sigma_greater_density,
-        )
-
-    def _write_iteration_outputs_x(self, iteration: int):
-        """Writes output for the current iteration on rank zero."""
-        # TODO: This is a hack. Ideally one write method should be enough.
-
-        if comm.rank != 0:
-            return
-
-        print(f"Writing output for iteration {iteration}...", flush=True)
-
-        output_dir = self.quatrex_config.simulation_dir / "outputs"
-        if not os.path.exists(output_dir):
-            os.mkdir(output_dir)
-
-        xp.save(
-            f"{output_dir}/electron_ldos_{iteration}.npy",
-            self.observables.electron_ldos,
-        )
-        xp.save(
-            f"{output_dir}/x_density_{iteration}.npy",
-            self.observables.electron_density,
-        )
-        xp.save(
-            f"{output_dir}/i_left_{iteration}.npy",
-            self.observables.electron_current["left"],
-        )
-        xp.save(
-            f"{output_dir}/i_right_{iteration}.npy",
-            self.observables.electron_current["right"],
-        )
-
-        if self.quatrex_config.scba.coulomb_screening:
-            xp.save(
-                f"{output_dir}/p_lesser_density_{iteration}.npy",
-                self.observables.p_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/p_retarded_density_{iteration}.npy",
-                self.observables.p_retarded_density,
-            )
-
-            xp.save(
-                f"{output_dir}/w_lesser_density_{iteration}.npy",
-                self.observables.w_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/w_retarded_density_{iteration}.npy",
-                self.observables.w_retarded_density,
-            )
-
-        xp.save(
-            f"{output_dir}/sigma_retarded_density_{iteration}.npy",
-            self.observables.sigma_retarded_density,
-        )
-        xp.save(
-            f"{output_dir}/sigma_x_density_{iteration}.npy",
-            self.observables.sigma_lesser_density,
         )
 
     def run(self) -> None:
@@ -1010,10 +981,7 @@ class SCBA:
                 self._compute_observables()
 
             if i % self.quatrex_config.scba.output_interval == 0:
-                if self.quatrex_config.electron.use_energy_x:
-                    self._write_iteration_outputs_x(i)
-                else:
-                    self._write_iteration_outputs(i)
+                self._write_iteration_outputs(i)
 
             t_iteration = time.perf_counter() - times.pop()
             (

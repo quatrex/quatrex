@@ -10,6 +10,10 @@ from qttools.utils.gpu_utils import get_device, get_host
 class Spectral(LyapunovSolver):
     """A solver for the Lyapunov equation by using the matrix spectrum."""
 
+    def __init__(self, num_ref_iterations: int = 3):
+        """Initializes the spectral Lyapunov solver."""
+        self.num_ref_iterations = num_ref_iterations
+
     def __call__(
         self,
         a: NDArray,
@@ -50,8 +54,14 @@ class Spectral(LyapunovSolver):
         phi = xp.ones_like(a) - xp.einsum("e...i, e...j -> e...ij", ws, ws.conj())
         x_tilde = 1 / phi * gamma
 
+        x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
+
+        # Perform a number of refinement iterations.
+        for __ in range(self.num_ref_iterations):
+            x = q + a @ x @ a.conj().swapaxes(-2, -1)
+
         if out is not None:
-            out[...] = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
+            out[...] = x
             return
 
-        return vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
+        return x

@@ -42,6 +42,8 @@ def _make_periodic(
     "nevp",
     "x_ii_formula",
     "block_sections",
+    "two_sided",
+    "treat_pairwise",
 )
 def test_correctness(
     a_xx: tuple[NDArray, ...],
@@ -49,10 +51,16 @@ def test_correctness(
     block_sections: int,
     x_ii_formula: str,
     contact: str,
+    two_sided: bool,
+    treat_pairwise: bool,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
-        nevp=nevp, block_sections=block_sections, x_ii_formula=x_ii_formula
+        nevp=nevp,
+        block_sections=block_sections,
+        x_ii_formula=x_ii_formula,
+        two_sided=two_sided,
+        treat_pairwise=treat_pairwise,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
@@ -63,6 +71,8 @@ def test_correctness(
     "nevp",
     "x_ii_formula",
     "block_sections",
+    "two_sided",
+    "treat_pairwise",
 )
 def test_correctness_batch(
     a_xx: tuple[NDArray, ...],
@@ -70,10 +80,16 @@ def test_correctness_batch(
     block_sections: int,
     x_ii_formula: str,
     contact: str,
+    two_sided: bool,
+    treat_pairwise: bool,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
-        nevp=nevp, block_sections=block_sections, x_ii_formula=x_ii_formula
+        nevp=nevp,
+        block_sections=block_sections,
+        x_ii_formula=x_ii_formula,
+        two_sided=two_sided,
+        treat_pairwise=treat_pairwise,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji = xp.stack([a_ji for __ in range(10)])

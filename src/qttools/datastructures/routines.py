@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import itertools
+
 torch_cuda_avail = False
 try:
     import torch
@@ -44,8 +46,10 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
         raise NotImplementedError("Banded matrix multiplication requires PyTorch and a CUDA-enabled device.")
     
     # Keyword arguments
-    source_dtype = kwargs.get("source_dtype", torch.float32)
-    dest_dtype = kwargs.get("dest_dtype", torch.float32)
+    # NOTE: Using float16 as default to enable testing (local machine with a T4).
+    # NOTE: See https://github.com/triton-lang/triton/issues/3787
+    source_dtype = kwargs.get("source_dtype", torch.float16)
+    dest_dtype = kwargs.get("dest_dtype", torch.float16)
     allow_tf32 = kwargs.get("allow_tf32", True)
     BLK_M = kwargs.get("BLK_M", 16)
     BLK_N = kwargs.get("BLK_N", 16)
@@ -56,8 +60,8 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
     b_dense = _dense(b, **kwargs)
     
     batch, N = a.shape[0], a.shape[1]
-    bw_a = banded_kernels.calculate_bandwidth(a[0])
-    bw_b = banded_kernels.calculate_bandwidth(b[0])
+    bw_a = banded_kernels.calculate_bandwidth(a_dense[0])
+    bw_b = banded_kernels.calculate_bandwidth(b_dense[0])
 
     A_tallNSkinnyBand = (
         banded_kernels.dense_banded_to_blkTallNSkinny(a_dense, bw_a, BLK_M)
@@ -104,5 +108,9 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
         c_blkTallNSkinny, BLK_M, band_a=bw_a, band_b=bw_b
     ).to(source_dtype)
 
-    N_not_padded = out.shape[-1]
-    out[:] = c_dense[:, :N_not_padded, :N_not_padded]
+    offsets = out.block_offsets.get()
+    sizes = out.block_sizes.get()
+    out_ = out.stack[:]
+    for brow, (row, rsz) in enumerate(zip(offsets, sizes)):
+        for bcol, (col, csz) in enumerate(zip(offsets, sizes)):
+            out_.blocks[brow, bcol] = c_dense[:, row:row+rsz, col:col+csz]

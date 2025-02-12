@@ -755,9 +755,22 @@ class SCBA:
         self.observables.electron_density[:nle] = x_density[:nle]
         self.observables.hole_density[nle - noe :] = x_density[nle:]
 
-        self.observables.electron_current = dict(
-            zip(("left", "right"), contact_currents(self.electron_solver))
+        # self.observables.electron_current = dict(
+        #    zip(("left", "right"), contact_currents(self.electron_solver))
+        # )
+        i_left_x, i_right_x = contact_currents(self.electron_solver)
+
+        self.observables.electron_current["left"] = xp.zeros(
+            len(self.electron_energies), dtype=xp.complex128
         )
+        self.observables.electron_current["left"][nle - noe :] = i_left_x[nle:]
+        self.observables.electron_current["left"][:nle] -= i_left_x[:nle]
+
+        self.observables.electron_current["right"] = xp.zeros(
+            len(self.electron_energies), dtype=xp.complex128
+        )
+        self.observables.electron_current["right"][nle - noe :] = i_right_x[nle:]
+        self.observables.electron_current["right"][:nle] -= i_right_x[:nle]
 
         if self.quatrex_config.scba.coulomb_screening:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (

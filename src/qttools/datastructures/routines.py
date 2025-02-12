@@ -4,6 +4,7 @@ import itertools
 
 torch_cuda_avail = False
 try:
+    import cupy as cp
     import torch
     if torch.cuda.is_available():
         from qttools.kernels import banded_kernels
@@ -59,7 +60,7 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
     a_dense = _dense(a, **kwargs)
     b_dense = _dense(b, **kwargs)
     
-    batch, N = a.shape[0], a.shape[1]
+    batch, N = a_dense.shape[0], a_dense.shape[1]
     bw_a = banded_kernels.calculate_bandwidth(a_dense[0])
     bw_b = banded_kernels.calculate_bandwidth(b_dense[0])
 
@@ -107,10 +108,12 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
     c_dense = banded_kernels.blkTallNSkinny_to_dense(
         c_blkTallNSkinny, BLK_M, band_a=bw_a, band_b=bw_b
     ).to(source_dtype)
+    c_dense = cp.asarray(c_dense)
+    c_dense = c_dense.reshape(*a.shape[:-2], *c_dense.shape[-2:])
 
-    offsets = out.block_offsets.get()
-    sizes = out.block_sizes.get()
+    offsets = out.block_offsets
+    sizes = out.block_sizes
     out_ = out.stack[:]
     for brow, (row, rsz) in enumerate(zip(offsets, sizes)):
         for bcol, (col, csz) in enumerate(zip(offsets, sizes)):
-            out_.blocks[brow, bcol] = c_dense[:, row:row+rsz, col:col+csz]
+            out_.blocks[brow, bcol] = c_dense[..., row:row+rsz, col:col+csz]

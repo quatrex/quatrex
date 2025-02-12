@@ -719,12 +719,6 @@ class TestArithmetic:
         dense = dsbsparse.to_dense()
         ref_result = torch.tensor(dense @ dense)
 
-        if ref_result.ndim > 3:
-            batch_dims = torch.prod(torch.tensor(ref_result.shape[:-2]))
-            ref_result = ref_result.view(
-                batch_dims, ref_result.shape[-2], ref_result.shape[-1]
-            )
-
         sparse_result = (dsbsparse @ dsbsparse).to_dense()
 
         if DEBUG_PRINTS:

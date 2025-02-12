@@ -341,7 +341,7 @@ class DSBCOO(DSBSparse):
 
         """
         block_slice = self._get_block_slice(row, col)
-        if block_slice == slice(None):
+        if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
 

@@ -146,7 +146,7 @@ class PCoulombScreening_X(ScatteringSelfEnergy):
 
         # TODO: Maybe make the p_lesser buffer 1 element smaller
         p_lesser._data[1:] = self.prefactor * fft_correlate(
-            g_x.data[:nel], -g_x.data[nel:].conj()
+            g_x.data[:nel], g_x.data[nel:].conj()
         )
 
         # Transpose the matrices to stack distribution.

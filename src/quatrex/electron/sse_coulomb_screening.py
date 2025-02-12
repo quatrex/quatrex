@@ -322,7 +322,7 @@ class SigmaCoulombScreening_X(ScatteringSelfEnergy):
         sigma_antihermitian = xp.zeros(
             (len(self.energies), sigma_retarded.data.shape[-1]), dtype=xp.complex128
         )
-        sigma_antihermitian[nel - noe :] = 1j * xp.imag(sigma_x.data[nel:])
+        sigma_antihermitian[nel - noe :] = -1j * xp.imag(sigma_x.data[nel:])
         sigma_antihermitian[:nel] -= 1j * xp.imag(sigma_x.data[:nel])
         sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
         sigma_retarded._data[:nel] += (

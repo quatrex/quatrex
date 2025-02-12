@@ -113,7 +113,6 @@ def banded_matmul(a: DSBSparse, b: DSBSparse, out: DSBSparse, **kwargs) -> None:
 
     offsets = out.block_offsets
     sizes = out.block_sizes
-    out_ = out.stack[:]
     for brow, (row, rsz) in enumerate(zip(offsets, sizes)):
         for bcol, (col, csz) in enumerate(zip(offsets, sizes)):
-            out_.blocks[brow, bcol] = c_dense[..., row:row+rsz, col:col+csz]
+            out.blocks[brow, bcol] = c_dense[..., row:row+rsz, col:col+csz]

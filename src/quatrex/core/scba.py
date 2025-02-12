@@ -329,6 +329,10 @@ class SCBA:
             )
             self.number_of_lesser_energies = len(energies_lesser)
             electron_energies_x = xp.concatenate([energies_lesser, energies_greater])
+            if len(electron_energies_x) % comm.size != 0:
+                raise ValueError(
+                    f"The number of electron energies_x [{len(electron_energies_x)}] must be divisible by the number of processes [{comm.size}]."
+                )
             self.electron_solver = ElectronSolver_X(
                 self.quatrex_config,
                 self.compute_config,

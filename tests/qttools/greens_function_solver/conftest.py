@@ -32,6 +32,11 @@ RETURN_RETARDED = [
     pytest.param(False, id="not_return_retarded"),
 ]
 
+ONLY_LESSER = [
+    pytest.param(True, id="only_lesser"),
+    pytest.param(False, id="lesser_and_greater"),
+]
+
 GLOBAL_STACK_SHAPES = [
     pytest.param((10,), id="1D-stack"),
     pytest.param((7, 2), id="2D-stack"),
@@ -117,6 +122,9 @@ def out(request: pytest.FixtureRequest) -> bool:
 def return_retarded(request: pytest.FixtureRequest) -> bool:
     return request.param
 
+@pytest.fixture(params=ONLY_LESSER, autouse=True)
+def only_lesser(request: pytest.FixtureRequest) -> bool:
+    return request.param
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:

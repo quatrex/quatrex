@@ -11,6 +11,7 @@ def test_selected_solve(
     dsbsparse_type: DSBSparse,
     out: bool,
     return_retarded: bool,
+    only_lesser: bool,
     max_batch_size: int,
     block_sizes: NDArray,
     global_stack_shape: int | tuple,
@@ -46,29 +47,50 @@ def test_selected_solve(
         Xr = dsbsparse_type.zeros_like(A)
         Xl = dsbsparse_type.zeros_like(A)
         Xg = dsbsparse_type.zeros_like(A)
-
-        solver.selected_solve(
-            A,
-            Bl,
-            Bg,
-            out=[Xl, Xg, Xr],
-            return_retarded=return_retarded,
-        )
-    else:
-        if return_retarded:
-            Xl, Xg, Xr = solver.selected_solve(
+        if only_lesser:
+            solver.selected_solve(
                 A,
                 Bl,
-                Bg,
+                out=[Xl, Xr],
                 return_retarded=return_retarded,
             )
         else:
-            Xl, Xg = solver.selected_solve(
+            solver.selected_solve(
                 A,
                 Bl,
                 Bg,
+                out=[Xl, Xg, Xr],
                 return_retarded=return_retarded,
             )
+    else:
+        if return_retarded:
+            if only_lesser:
+                Xl, Xr = solver.selected_solve(
+                    A,
+                    Bl,
+                    return_retarded=return_retarded,
+                )
+            else:
+                Xl, Xg, Xr = solver.selected_solve(
+                    A,
+                    Bl,
+                    Bg,
+                    return_retarded=return_retarded,
+                )
+        else:
+            if only_lesser:
+                Xl = solver.selected_solve(
+                    A,
+                    Bl,
+                    return_retarded=return_retarded,
+                )
+            else:
+                Xl, Xg = solver.selected_solve(
+                    A,
+                    Bl,
+                    Bg,
+                    return_retarded=return_retarded,
+                )
 
     if return_retarded:
         xr_mask = Xr.to_dense().astype(bool)
@@ -82,9 +104,9 @@ def test_selected_solve(
         xp.broadcast_to(ref_Xl, (*global_stack_shape, *ref_Xl.shape)) * xl_mask,
         Xl.to_dense() * xl_mask,
     )
-
-    xg_mask = Xg.to_dense().astype(bool)
-    assert xp.allclose(
-        xp.broadcast_to(ref_Xg, (*global_stack_shape, *ref_Xg.shape)) * xg_mask,
-        Xg.to_dense() * xg_mask,
-    )
+    if not only_lesser:
+        xg_mask = Xg.to_dense().astype(bool)
+        assert xp.allclose(
+            xp.broadcast_to(ref_Xg, (*global_stack_shape, *ref_Xg.shape)) * xg_mask,
+            Xg.to_dense() * xg_mask,
+        )

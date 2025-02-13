@@ -15,7 +15,7 @@ except (ImportError, ModuleNotFoundError):
 from qttools.datastructures.dsbsparse import DSBSparse
 
 
-def _dense(arr: DSBSparse, **kwargs) -> torch.Tensor:
+def _dense(arr: DSBSparse, **kwargs) -> "torch.Tensor":
     """Returns the dense representation of a DSBSparse array."""
 
     # Keyword arguments

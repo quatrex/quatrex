@@ -1,22 +1,24 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from contextlib import nullcontext
-import sys
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.datastructures.dsbcoo import DSBCOO
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
+from qttools.datastructures.routines import banded_matmul
+from qttools.kernels import dsbcoo_kernels
 from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.sparse_utils import product_sparsity_pattern
 
-cuda_avail = False
-if "torch" in sys.modules:
+torch_cuda_avail = False
+try:
     import torch
-
     if torch.cuda.is_available():
-        cuda_avail = True
-
-DEBUG_PRINTS = False
+        torch_cuda_avail = True
+except (ImportError, ModuleNotFoundError):
+    pass
 
 
 def _create_coo(sizes: NDArray, dtype=xp.complex128) -> sparse.coo_matrix:
@@ -30,34 +32,30 @@ def _create_coo(sizes: NDArray, dtype=xp.complex128) -> sparse.coo_matrix:
     return coo
 
 
-if cuda_avail:
+def create_dense_band_matrix(N, r, device="cuda", dtype=torch.float64, seed: int = 0, fixed_val=None):
 
-    def create_dense_band_matrix(
-        N, r, device="cuda", dtype=torch.float64, seed: int = 0, fixed_val=None
-    ):
+    # Create indices for all positions
+    i, j = torch.meshgrid(
+        torch.arange(N, device=device),
+        torch.arange(N, device=device),
+        indexing="ij",
+    )
 
-        # Create indices for all positions
-        i, j = torch.meshgrid(
-            torch.arange(N, device=device),
-            torch.arange(N, device=device),
-            indexing="ij",
-        )
+    # Create band mask
+    mask = torch.abs(i - j) <= r
 
-        # Create band mask
-        mask = torch.abs(i - j) <= r
+    # Create random matrix and apply mask
+    if fixed_val is not None:
+        A = torch.full((N, N), fixed_val, device=device, dtype=dtype) * mask
+    else:
+        A = torch.randn(N, N, device=device, dtype=dtype) * mask
 
-        # Create random matrix and apply mask
-        if fixed_val is not None:
-            A = torch.full((N, N), fixed_val, device=device, dtype=dtype) * mask
-        else:
-            A = torch.randn(N, N, device=device, dtype=dtype) * mask
+    if dtype == torch.complex128:
+        A += 1j * A
+    A_np = A.detach().cpu().numpy()
+    A_cupy = xp.array(A_np)
 
-        if dtype == torch.complex128:
-            A += 1j * A
-        A_np = A.detach().cpu().numpy()
-        A_cupy = xp.array(A_np)
-
-        return sparse.coo_matrix(A_cupy)
+    return sparse.coo_matrix(A_cupy)
 
 
 @pytest.mark.usefixtures("densify_blocks")
@@ -696,6 +694,7 @@ class TestArithmetic:
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
         band_r: int = 2,
+        debug_prints: bool = False,
     ):
         """
         Tests the banded matrix multiplication of a DSBCOO matrix.
@@ -706,9 +705,9 @@ class TestArithmetic:
         - needs pytorch and CUDA
         """
 
-        if "COO" not in dsbsparse_type.__name__:
+        if dsbsparse_type != DSBCOO:
             return
-        if not cuda_avail:
+        if not torch_cuda_avail:
             return
         band_N = int(sum(block_sizes))
         coo = create_dense_band_matrix(band_N, band_r, dtype=torch.float32)
@@ -719,9 +718,32 @@ class TestArithmetic:
         dense = dsbsparse.to_dense()
         ref_result = torch.tensor(dense @ dense)
 
-        sparse_result = (dsbsparse @ dsbsparse).to_dense()
+        product_rows, product_cols = product_sparsity_pattern(coo, coo)
+        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+            product_rows, product_cols, dsbsparse.block_sizes
+        )
+        product = DSBCOO(
+            data=xp.zeros(
+                dsbsparse.stack_shape + (product_rows.size,), dtype=dsbsparse.dtype
+            ),
+            rows=product_rows[block_sort_index],
+            cols=product_cols[block_sort_index],
+            block_sizes=dsbsparse.block_sizes,
+            global_stack_shape=dsbsparse.global_stack_shape,
+        )
 
-        if DEBUG_PRINTS:
+        kwargs = {
+            "source_dtype": torch.float16,
+            "dest_dtype": torch.float16,
+            "allow_tf32": True,
+            "BLK_M": 16,
+            "BLK_N": 16,
+            "BLK_K": 16,
+        }
+        banded_matmul(dsbsparse, dsbsparse, product, **kwargs)
+        sparse_result = product.to_dense()
+
+        if debug_prints:
             # print test parameters
             print(
                 f"dsbsparse_type: {dsbsparse_type}, block_sizes: {block_sizes}, \
@@ -945,7 +967,7 @@ class TestDistribution:
         assert xp.allclose(dense, dsbsparse.to_dense())
 
 
-def run_standalone_matmul_test():
+def run_standalone_matmul_test(debug_prints: bool = False):
     # create an instance of the test class
     from qttools import NDArray, xp
     from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
@@ -1011,6 +1033,7 @@ def run_standalone_matmul_test():
                         block_size,
                         global_stack_shape,
                         densify_blocks,
+                        debug_prints=debug_prints
                     )
 
 
@@ -1021,4 +1044,4 @@ if __name__ == "__main__":
     np.set_printoptions(threshold=np.inf, linewidth=np.inf, precision=2)
     torch.set_printoptions(precision=2, sci_mode=False, linewidth=500)
     # Run the standalone tests
-    run_standalone_matmul_test()
+    run_standalone_matmul_test(debug_prints=True)

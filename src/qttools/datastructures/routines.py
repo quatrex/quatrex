@@ -1,7 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import itertools
-
 torch_cuda_avail = False
 try:
     import cupy as cp

@@ -2,7 +2,7 @@
 
 from qttools import xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.greens_function_solver.solver import GFSolver
+from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.utils.solvers_utils import get_batches
 
 
@@ -19,16 +19,19 @@ class Inv(GFSolver):
     ----------
     max_batch_size : int, optional
         Maximum batch size to use when inverting the matrix, by default
-        1.
+        100.
 
     """
 
-    def __init__(self, max_batch_size: int = 1) -> None:
+    def __init__(self, max_batch_size: int = 100) -> None:
         """Initializes the selected inversion solver."""
         self.max_batch_size = max_batch_size
 
     def selected_inv(
-        self, a: DSBSparse, out: DSBSparse | None = None
+        self,
+        a: DSBSparse,
+        obc_blocks: OBCBlocks | None = None,
+        out: DSBSparse | None = None,
     ) -> None | DSBSparse:
         """Performs selected inversion of a block-tridiagonal matrix.
 
@@ -40,6 +43,9 @@ class Inv(GFSolver):
         ----------
         a : DSBSparse
             Matrix to invert.
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
         out : DSBSparse, optional
             Preallocated output matrix, by default None.
 
@@ -52,6 +58,9 @@ class Inv(GFSolver):
         """
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+
+        if obc_blocks is None:
+            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
 
         # Allocate batching buffer
         inv_a = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
@@ -68,10 +77,18 @@ class Inv(GFSolver):
         # Perform the inversion in batches
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+            a_dense = a.to_dense()[stack_slice]
 
-            inv_a[: batches_sizes[i]] = xp.linalg.inv(a.to_dense())[stack_slice, ...]
+            # Assemble the OBC blocks.
+            for j, block in enumerate(obc_blocks.retarded):
+                if block is None:
+                    continue
+                b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
+                a_dense[:, b_, b_] -= block[stack_slice]
 
-            out.data[stack_slice,] = inv_a[: batches_sizes[i], ..., rows, cols]
+            inv_a[: batches_sizes[i]] = xp.linalg.inv(a_dense)
+
+            out.data[stack_slice] = inv_a[: batches_sizes[i], ..., rows, cols]
 
         if return_out:
             return out
@@ -81,8 +98,10 @@ class Inv(GFSolver):
         a: DSBSparse,
         sigma_lesser: DSBSparse,
         sigma_greater: DSBSparse,
+        obc_blocks: OBCBlocks | None = None,
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
+        return_current: bool = False,
     ) -> None | tuple:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -103,12 +122,18 @@ class Inv(GFSolver):
         sigma_greater : DSBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
         out : tuple[DSBSparse, ...] | None, optional
             Preallocated output matrices, by default None
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
-
+        return_current : bool, optional
+            Whether to compute and return the current for each layer via
+            the Meir-Wingreen formula. By default False. This option is
+            not implemented.
 
         Returns
         -------
@@ -119,8 +144,16 @@ class Inv(GFSolver):
             last element.
 
         """
+        if return_current:
+            raise NotImplementedError(
+                "The computation of the current is not implemented."
+            )
+
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+
+        if obc_blocks is None:
+            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
 
         # Allocate batching buffer
         x_r = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
@@ -151,16 +184,31 @@ class Inv(GFSolver):
         # Perform the inversion in batches
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+            a_dense = a.to_dense()[stack_slice]
+            sigma_lesser_dense = sigma_lesser.to_dense()[stack_slice]
+            sigma_greater_dense = sigma_greater.to_dense()[stack_slice]
 
-            x_r[: batches_sizes[i]] = xp.linalg.inv(a.to_dense())[stack_slice, ...]
+            # Assemble the OBC blocks.
+            for j, (block_r, block_l, block_g) in enumerate(
+                zip(obc_blocks.retarded, obc_blocks.lesser, obc_blocks.greater)
+            ):
+                b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
+                if block_r is not None:
+                    a_dense[:, b_, b_] -= block_r[stack_slice]
+                if block_l is not None:
+                    sigma_lesser_dense[:, b_, b_] -= block_l[stack_slice]
+                if block_g is not None:
+                    sigma_greater_dense[:, b_, b_] -= block_g[stack_slice]
+
+            x_r[: batches_sizes[i]] = xp.linalg.inv(a_dense)
             x_l[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
-                @ sigma_lesser.to_dense()[: batches_sizes[i]]
+                @ sigma_lesser_dense
                 @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
             )
             x_g[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
-                @ sigma_greater.to_dense()[: batches_sizes[i]]
+                @ sigma_greater_dense
                 @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
             )
 

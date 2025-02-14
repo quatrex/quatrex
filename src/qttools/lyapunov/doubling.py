@@ -19,7 +19,7 @@ class Doubling(LyapunovSolver):
     """
 
     def __init__(
-        self, max_iterations: int = 1000, convergence_tol: float = 1e-7
+        self, max_iterations: int = 100, convergence_tol: float = 1e-6
     ) -> None:
         """Initializes the solver."""
         self.max_iterations = max_iterations

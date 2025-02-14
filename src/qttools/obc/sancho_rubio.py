@@ -24,7 +24,7 @@ class SanchoRubio(OBCSolver):
 
     """
 
-    def __init__(self, max_iterations: int = 1000, convergence_tol: float = 1e-7):
+    def __init__(self, max_iterations: int = 100, convergence_tol: float = 1e-6):
         """Initializes the Sancho-Rubio OBC."""
         self.max_iterations = max_iterations
         self.convergence_tol = convergence_tol

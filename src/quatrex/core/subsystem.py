@@ -118,6 +118,7 @@ class SubsystemSolver(ABC):
                 treat_pairwise=obc_config.treat_pairwise,
                 pairing_threshold=obc_config.pairing_threshold,
                 min_propagation=obc_config.min_propagation,
+                warning_threshold=obc_config.warning_threshold,
             )
 
         else:
@@ -152,7 +153,8 @@ class SubsystemSolver(ABC):
         """
         if lyapunov_config.algorithm == "spectral":
             lyapunov_solver = lyapunov.Spectral(
-                num_ref_iterations=lyapunov_config.num_ref_iterations
+                num_ref_iterations=lyapunov_config.num_ref_iterations,
+                warning_threshold=lyapunov_config.warning_threshold,
             )
         elif lyapunov_config.algorithm == "doubling":
             lyapunov_solver = lyapunov.Doubling(

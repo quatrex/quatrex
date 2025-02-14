@@ -26,9 +26,9 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 
     """
     n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fftn(a, (n,), axes=(0,))
-    b_fft = xp.fft.fftn(b, (n,), axes=(0,))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
+    a_fft = xp.fft.fft(a, n, axis=0)
+    b_fft = xp.fft.fft(b, n, axis=0)
+    return xp.fft.ifft(a_fft * b_fft, axis=0)
 
 
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
@@ -48,9 +48,9 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
 
     """
     n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fftn(a, (n,), axes=(0,))
-    b_fft = xp.fft.fftn(b[::-1], (n,), axes=(0,))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
+    a_fft = xp.fft.fft(a, n, axis=0)
+    b_fft = xp.fft.fft(b[::-1], n, axis=0)
+    return xp.fft.ifft(a_fft * b_fft, axis=0)
 
 
 def hilbert_transform(a: NDArray, energies: NDArray, eta=1e-8) -> NDArray:
@@ -105,7 +105,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         electron_energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
     ):
         """Initializes the scattering self-energy."""
         self.energies = electron_energies
@@ -113,16 +112,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
 
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        # TODO: This is pretty wasteful memory-wise.
-        self.w_lesser_reduced = compute_config.dsbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
-            block_sizes=block_sizes,
-            global_stack_shape=self.energies.shape,
-            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
-        )
-        self.w_greater_reduced = compute_config.dsbsparse_type.zeros_like(
-            self.w_lesser_reduced
-        )
+        self.big_block_sizes = block_sizes[: len(block_sizes) // 2] * 2
 
     def compute(
         self,
@@ -149,35 +139,24 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_lesser, sigma_greater, sigma_retarded.
 
         """
-        # If the w_lesser and w_greater don't have the same sparsity
-        # pattern as g_lesser and g_greater, we have to reduce them to
-        # the same sparsity pattern.
-        if w_lesser.nnz != self.w_lesser_reduced.nnz:
-            num_blocks = len(self.w_lesser_reduced.block_sizes)
-            original_block_sizes = w_lesser.block_sizes
-            w_lesser.block_sizes = self.w_lesser_reduced.block_sizes
-            w_greater.block_sizes = self.w_greater_reduced.block_sizes
-            for i in range(num_blocks):
-                for j in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    self.w_lesser_reduced.blocks[i, j] = w_lesser.blocks[i, j]
-                    self.w_greater_reduced.blocks[i, j] = w_greater.blocks[i, j]
+        if w_lesser.nnz != g_lesser.nnz:
+            raise ValueError(
+                "The sparsity pattern of w_lesser and g_lesser must match."
+                "Something went horribly wrong."
+            )
 
-            w_lesser.block_sizes = original_block_sizes
-            w_greater.block_sizes = original_block_sizes
-
-            # self.w_lesser_reduced.data = w_lesser[*self.w_lesser_reduced.spy()]
-            # self.w_greater_reduced.data = w_greater[*self.w_greater_reduced.spy()]
-        else:
-            self.w_lesser_reduced.data = w_lesser.data
-            self.w_greater_reduced.data = w_greater.data
+        # Enforce that the block sizes are the same. NOTE: This triggers
+        # a block-reordering in the DSBSparse object.
+        w_lesser.block_sizes = g_lesser.block_sizes
+        w_greater.block_sizes = g_greater.block_sizes
 
         sigma_lesser, sigma_greater, sigma_retarded = out
         # Transpose the matrices to nnz distribution.
         for m in (
             g_lesser,
             g_greater,
-            self.w_lesser_reduced,
-            self.w_greater_reduced,
+            w_lesser,
+            w_greater,
             sigma_lesser,
             sigma_greater,
             sigma_retarded,
@@ -188,16 +167,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         # Second term are corrections for negative frequencies that
         # where cut off by the polarization calculation.
         sigma_lesser.data += self.prefactor * (
-            fft_convolve(g_lesser.data, self.w_lesser_reduced.data)[: self.num_energies]
-            - fft_correlate(g_lesser.data, self.w_greater_reduced.data.conj())[
+            fft_convolve(g_lesser.data, w_lesser.data)[: self.num_energies]
+            - fft_correlate(g_lesser.data, w_greater.data.conj())[
                 self.num_energies - 1 :
             ]
         )
         sigma_greater.data += self.prefactor * (
-            fft_convolve(g_greater.data, self.w_greater_reduced.data)[
-                : self.num_energies
-            ]
-            - fft_correlate(g_greater.data, self.w_lesser_reduced.data.conj())[
+            fft_convolve(g_greater.data, w_greater.data)[: self.num_energies]
+            - fft_correlate(g_greater.data, w_lesser.data.conj())[
                 self.num_energies - 1 :
             ]
         )
@@ -211,13 +188,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         for m in (
             g_lesser,
             g_greater,
-            self.w_lesser_reduced,
-            self.w_greater_reduced,
+            w_lesser,
+            w_greater,
             sigma_lesser,
             sigma_greater,
             sigma_retarded,
         ):
             m.dtranspose() if m.distribution_state != "stack" else None
+
+        # Recover original block sizes.
+        w_lesser.block_sizes = self.big_block_sizes
+        w_greater.block_sizes = self.big_block_sizes
 
 
 class SigmaFock(ScatteringSelfEnergy):
@@ -247,6 +228,7 @@ class SigmaFock(ScatteringSelfEnergy):
         coulomb_matrix_sparray = distributed_load(
             quatrex_config.input_dir / "coulomb_matrix.npz"
         ).astype(xp.complex128)
+
         # Load block sizes for the coulomb matrix.
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
 
@@ -256,7 +238,6 @@ class SigmaFock(ScatteringSelfEnergy):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += coulomb_matrix_sparray

@@ -25,9 +25,9 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
 
     """
     n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fftn(a, (n,), axes=(0,))
-    b_fft = xp.fft.fftn(b[::-1], (n,), axes=(0,))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
+    a_fft = xp.fft.fft(a, n, axis=0)
+    b_fft = xp.fft.fft(b[::-1], n, axis=0)
+    return xp.fft.ifft(a_fft * b_fft, axis=0)
 
 
 class PCoulombScreening(ScatteringSelfEnergy):

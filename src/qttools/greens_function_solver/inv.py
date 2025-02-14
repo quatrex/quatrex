@@ -64,7 +64,6 @@ class Inv(GFSolver):
 
         # Allocate batching buffer
         inv_a = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
-        obc = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
 
         # Prepare output
         return_out = False
@@ -78,20 +77,16 @@ class Inv(GFSolver):
         # Perform the inversion in batches
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
-            obc[:] = 0  # Reset the OBC blocks.
+            a_dense = a.to_dense()[stack_slice]
 
             # Assemble the OBC blocks.
             for j, block in enumerate(obc_blocks.retarded):
                 if block is None:
                     continue
-                block_slice = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
-                obc[: batches_sizes[i], block_slice, block_slice] = block.retarded[
-                    stack_slice
-                ]
+                b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
+                a_dense[:, b_, b_] -= block[stack_slice]
 
-            inv_a[: batches_sizes[i]] = xp.linalg.inv(
-                a.to_dense()[stack_slice] - obc[: batches_sizes[i]]
-            )
+            inv_a[: batches_sizes[i]] = xp.linalg.inv(a_dense)
 
             out.data[stack_slice] = inv_a[: batches_sizes[i], ..., rows, cols]
 
@@ -165,10 +160,6 @@ class Inv(GFSolver):
         x_l = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
         x_g = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
 
-        obc_r = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
-        obc_l = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
-        obc_g = xp.zeros((max(batches_sizes), *a.shape[1:]), dtype=a.dtype)
-
         # Prepare output
         if out is None:
             # Allocate output datastructures
@@ -193,6 +184,9 @@ class Inv(GFSolver):
         # Perform the inversion in batches
         for i in range(len(batches_sizes)):
             stack_slice = slice(batches_slices[i], batches_slices[i + 1], 1)
+            a_dense = a.to_dense()[stack_slice]
+            sigma_lesser_dense = sigma_lesser.to_dense()[stack_slice]
+            sigma_greater_dense = sigma_greater.to_dense()[stack_slice]
 
             # Assemble the OBC blocks.
             for j, (block_r, block_l, block_g) in enumerate(
@@ -200,23 +194,21 @@ class Inv(GFSolver):
             ):
                 b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
                 if block_r is not None:
-                    obc_r[: batches_sizes[i], b_, b_] = block_r[stack_slice]
+                    a_dense[:, b_, b_] -= block_r[stack_slice]
                 if block_l is not None:
-                    obc_l[: batches_sizes[i], b_, b_] = block_l[stack_slice]
+                    sigma_lesser_dense[:, b_, b_] -= block_l[stack_slice]
                 if block_g is not None:
-                    obc_g[: batches_sizes[i], b_, b_] = block_g[stack_slice]
+                    sigma_greater_dense[:, b_, b_] -= block_g[stack_slice]
 
-            x_r[: batches_sizes[i]] = xp.linalg.inv(
-                a.to_dense()[stack_slice] - obc_r[: batches_sizes[i]]
-            )
+            x_r[: batches_sizes[i]] = xp.linalg.inv(a_dense)
             x_l[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
-                @ (sigma_lesser.to_dense()[stack_slice] + obc_l[: batches_sizes[i]])
+                @ sigma_lesser_dense
                 @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
             )
             x_g[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
-                @ (sigma_greater.to_dense()[stack_slice] + obc_g[: batches_sizes[i]])
+                @ sigma_greater_dense
                 @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
             )
 

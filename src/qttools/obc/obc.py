@@ -2,6 +2,9 @@
 
 from abc import ABC, abstractmethod
 
+from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, xp
 
 
@@ -68,7 +71,7 @@ class OBCMemoizer:
         self,
         obc_solver: "OBCSolver",
         num_ref_iterations: int = 2,
-        convergence_tol: float = 1e-6,
+        convergence_tol: float = 1e-4,
     ) -> None:
         """Initalizes the memoizer."""
         self.obc_solver = obc_solver
@@ -158,12 +161,15 @@ class OBCMemoizer:
 
         x_ii_ref = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        # Check for convergence.
-        rel_diff = xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1)) / xp.linalg.norm(
-            x_ii, axis=(-2, -1)
+        # Check for convergence accross all MPI ranks.
+        recursion_error = xp.mean(
+            xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+            / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
         )
-        mean_rel_diff = xp.mean(rel_diff)
-        if mean_rel_diff < self.convergence_tol:
+        converged = recursion_error < self.convergence_tol
+        converged = comm.allreduce(converged, op=MPI.LAND)
+
+        if converged:
             self._cache[contact] = x_ii_ref.copy()
             if out is None:
                 return x_ii_ref

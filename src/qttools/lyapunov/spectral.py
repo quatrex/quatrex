@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import warnings
+
 import numpy as np
 
 from qttools import NDArray, xp
@@ -10,9 +12,12 @@ from qttools.utils.gpu_utils import get_device, get_host
 class Spectral(LyapunovSolver):
     """A solver for the Lyapunov equation by using the matrix spectrum."""
 
-    def __init__(self, num_ref_iterations: int = 3):
+    def __init__(
+        self, num_ref_iterations: int = 3, warning_threshold: float = 1e-1
+    ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
+        self.warning_threshold = warning_threshold
 
     def __call__(
         self,
@@ -57,11 +62,24 @@ class Spectral(LyapunovSolver):
         x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
 
         # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations):
+        for __ in range(self.num_ref_iterations - 1):
             x = q + a @ x @ a.conj().swapaxes(-2, -1)
 
+        x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
+
+        # Check the batch average recursion error.
+        recursion_error = xp.mean(
+            xp.linalg.norm(x_ref - x, axis=(-2, -1))
+            / xp.linalg.norm(x_ref, axis=(-2, -1))
+        )
+        if recursion_error > self.warning_threshold:
+            warnings.warn(
+                f"High relative recursion error: {recursion_error:.2e}",
+                RuntimeWarning,
+            )
+
         if out is not None:
-            out[...] = x
+            out[...] = x_ref
             return
 
-        return x
+        return x_ref

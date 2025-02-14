@@ -77,13 +77,14 @@ class Spectral(OBCSolver):
         treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
+        warning_threshold: float = 1e-1,
     ) -> None:
         """Initializes the spectral OBC solver."""
         self.nevp = nevp
 
         self.min_decay = min_decay
         if max_decay is None:
-            max_decay = xp.log(getattr(nevp, "r_o", 1000.0))
+            max_decay = 1.5 * xp.log(getattr(nevp, "r_o", 1000.0))
         self.max_decay = max_decay
 
         self.num_ref_iterations = num_ref_iterations
@@ -94,6 +95,7 @@ class Spectral(OBCSolver):
         self.treat_pairwise = treat_pairwise
         self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
+        self.warning_threshold = warning_threshold
 
     def _extract_subblocks(
         self,
@@ -129,9 +131,19 @@ class Spectral(OBCSolver):
 
         # Make sure that the reduction leads to periodic sublayers.
         # NOTE: I'm not 100% sure that this is really necessary.
-        for i in range(self.block_sections):
-            if not xp.allclose(view[0, :], xp.roll(view[i, :], -i, axis=0)):
-                raise ValueError("Requested block sectioning is not periodic.")
+        relative_errors = xp.zeros(self.block_sections - 1)
+        first_block_norm = xp.linalg.norm(view[0, :])
+        for i in range(1, self.block_sections):
+            relative_errors[i - 1] = (
+                xp.linalg.norm(view[0, :] - xp.roll(view[i, :], -i, axis=0))
+                / first_block_norm
+            )
+
+        if xp.max(relative_errors) > 1e-3:
+            warnings.warn(
+                f"Requested block sectioning is not periodic. ({xp.max(relative_errors):.2e})",
+                RuntimeWarning,
+            )
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
@@ -308,7 +320,7 @@ class Spectral(OBCSolver):
 
         """
         if self.block_sections == 1:
-            return ws, vs
+            return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
 
         batchsize, subblock_size, num_modes = vs.shape
         block_size = subblock_size * self.block_sections
@@ -319,7 +331,10 @@ class Spectral(OBCSolver):
                 vs_upscaled[i, :, j] = xp.kron(
                     xp.array([w**n for n in range(self.block_sections)]), vs[i, :, j]
                 )
-                vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
+                with warnings.catch_warnings(
+                    action="ignore", category=RuntimeWarning
+                ):  # Ignore division by zero.
+                    vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
 
         return ws**self.block_sections, vs_upscaled
 
@@ -482,22 +497,34 @@ class Spectral(OBCSolver):
             wrs, vrs = self.nevp(blocks, left=False)
             vls = None
 
-        mask = self._find_reflected_modes(wrs, vrs, blocks, vls=vls)
-
         wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
-
         if self.two_sided:
             wls, vls = self._upscale_eigenmodes(wrs, vls)
+
+        mask = self._find_reflected_modes(wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls)
 
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask, vls=vls)
 
         # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations):
+        for __ in range(self.num_ref_iterations - 1):
             x_ii = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+        x_ii_ref = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+        # Check the batch average recursion error.
+        recursion_error = xp.mean(
+            xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+            / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+        )
+        if recursion_error > self.warning_threshold:
+            warnings.warn(
+                f"High relative recursion error: {recursion_error:.2e}",
+                RuntimeWarning,
+            )
 
         # Return the surface Green's function.
         if out is not None:
-            out[...] = x_ii
+            out[...] = x_ii_ref
             return
 
-        return x_ii
+        return x_ii_ref

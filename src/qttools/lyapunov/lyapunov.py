@@ -2,6 +2,9 @@
 
 from abc import ABC, abstractmethod
 
+from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, xp
 
 
@@ -65,7 +68,7 @@ class LyapunovMemoizer:
         self,
         lyapunov_solver: LyapunovSolver,
         num_ref_iterations: int = 10,
-        convergence_tol: float = 1e-6,
+        convergence_tol: float = 1e-4,
     ) -> None:
         """Initializes the memoizer."""
         self.lyapunov_solver = lyapunov_solver
@@ -150,12 +153,15 @@ class LyapunovMemoizer:
 
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
-        # Check for convergence.
-        rel_diff = xp.linalg.norm(x_ref - x, axis=(-2, -1)) / xp.linalg.norm(
-            x, axis=(-2, -1)
+        # Check for convergence accross all MPI ranks.
+        recursion_error = xp.mean(
+            xp.linalg.norm(x_ref - x, axis=(-2, -1))
+            / xp.linalg.norm(x_ref, axis=(-2, -1))
         )
-        mean_rel_diff = xp.mean(rel_diff)
-        if mean_rel_diff < self.convergence_tol:
+        converged = recursion_error < self.convergence_tol
+        converged = comm.allreduce(converged, op=MPI.LAND)
+
+        if converged:
             self._cache[contact] = x_ref.copy()
             if out is None:
                 return x_ref

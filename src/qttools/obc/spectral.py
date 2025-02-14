@@ -627,9 +627,14 @@ class Spectral(OBCSolver):
         if self.two_sided:
             wls, vls = self._upscale_eigenmodes(wrs, vls)
 
-        mask, mask_inj, dE_dK_list = self._find_reflected_modes(
-            wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
-        )
+        if return_inj:
+            mask, mask_inj, dE_dK_list = self._find_reflected_modes(
+                wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls, find_injected=return_inj
+            )
+        else:
+            mask = self._find_reflected_modes(
+                wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
+            )
 
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask, vls=vls)
 

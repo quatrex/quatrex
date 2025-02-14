@@ -7,12 +7,13 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
     ElectronSolver,
@@ -23,57 +24,6 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
-
-
-def _compute_sparsity_pattern(
-    positions: NDArray,
-    cutoff_distance: float,
-    strategy: str = "box",
-) -> sparse.coo_matrix:
-    """Computes the sparsity pattern for the interaction matrix.
-
-    Parameters
-    ----------
-    grid : NDArray
-        The grid points.
-    interaction_cutoff : float
-        The interaction cutoff.
-    strategy : str, optional
-        The strategy to use, by default "box", where only the distance
-        along the transport direction is considered. The other option is
-        "sphere", where the usual Euclidean distance between points
-        matters.
-
-    Returns
-    -------
-    sparse.coo_matrix
-        The sparsity pattern.
-
-    """
-    if strategy == "sphere":
-
-        def distance(x, y):
-            """Euclidean distance."""
-            return xp.linalg.norm(x - y, axis=-1)
-
-    elif strategy == "box":
-
-        def distance(x, y):
-            """Distance along transport direction."""
-            return xp.abs(x[..., 0] - y[..., 0])
-
-    else:
-        raise ValueError(f"Unknown strategy: {strategy}")
-
-    rows, cols = [], []
-    for i, position in enumerate(positions):
-        distances = distance(positions, position)
-        interacting = xp.where(distances < cutoff_distance)[0]
-        cols.extend(interacting)
-        rows.extend([i] * len(interacting))
-
-    rows, cols = xp.array(rows), xp.array(cols)
-    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
 
 
 class SCBAData:
@@ -124,7 +74,7 @@ class SCBAData:
             if comm.rank == 0
             else None
         )
-        self.sparsity_pattern = _compute_sparsity_pattern(grid, max_interaction_cutoff)
+        self.sparsity_pattern = compute_sparsity_pattern(grid, max_interaction_cutoff)
         # self.sparsity_pattern = distributed_load(
         #     quatrex_config.input_dir / "hamiltonian.npz"
         # ).astype(xp.complex128)
@@ -156,8 +106,22 @@ class SCBAData:
             self.p_lesser = dsbsparse_type.zeros_like(self.g_retarded)
             self.p_greater = dsbsparse_type.zeros_like(self.g_retarded)
 
-            # TODO: Only multiples of three are supported for now.
-            coulomb_screening_block_sizes = block_sizes[: len(block_sizes) // 2] * 2
+            num_connected_blocks = quatrex_config.coulomb_screening.num_connected_blocks
+            if num_connected_blocks == "auto":
+                num_connected_blocks = compute_num_connected_blocks(
+                    self.sparsity_pattern, block_sizes
+                )
+            (
+                print(f"Number of connected blocks: {num_connected_blocks}", flush=True)
+                if comm.rank == 0
+                else None
+            )
+
+            # TODO: This only works for constant block sizes.
+            coulomb_screening_block_sizes = (
+                block_sizes[: len(block_sizes) // num_connected_blocks]
+                * num_connected_blocks
+            )
 
             self.w_retarded = dsbsparse_type.from_sparray(
                 self.sparsity_pattern.astype(xp.complex128),

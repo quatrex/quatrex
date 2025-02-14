@@ -111,8 +111,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.num_energies = self.energies.size
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
 
-        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        self.big_block_sizes = block_sizes[: len(block_sizes) // 2] * 2
+        self.big_block_sizes = None
 
     def compute(
         self,
@@ -144,6 +143,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 "The sparsity pattern of w_lesser and g_lesser must match."
                 "Something went horribly wrong."
             )
+
+        # Save the block sizes for later.
+        if self.big_block_sizes is None:
+            self.big_block_sizes = w_lesser.block_sizes
 
         # Enforce that the block sizes are the same. NOTE: This triggers
         # a block-reordering in the DSBSparse object.

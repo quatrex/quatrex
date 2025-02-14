@@ -229,6 +229,9 @@ class CoulombScreeningConfig(BaseModel):
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
 
+    # How many blocks should be merged into a single block.
+    num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
+
 
 class PhotonConfig(BaseModel):
     """Options for the optical degrees of freedom."""

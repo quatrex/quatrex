@@ -13,10 +13,11 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
+from quatrex.core.utils import compute_num_connected_blocks
 from quatrex.coulomb_screening.utils import assemble_boundary_blocks
 
 
-def check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) -> bool:
+def _check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) -> bool:
     """Checks if matrix elements lie within the block-tridiagonal.
 
     Parameters
@@ -111,19 +112,32 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.small_block_sizes = distributed_load(
             quatrex_config.input_dir / "block_sizes.npy"
         ).astype(xp.int32)
-        if not check_block_sizes(
+        if not _check_block_sizes(
             self.coulomb_matrix_sparray.row,
             self.coulomb_matrix_sparray.col,
             self.small_block_sizes,
         ):
             raise ValueError("Block sizes do not match Coulomb matrix.")
-        # if len(self.small_block_sizes) % self.new_block_size_factor != 0:
-        #     # Not implemented yet.
-        #     raise ValueError(
-        #         f"Number of blocks must be divisible by {self.new_block_size_factor}."
-        #     )
+
+        self.num_connected_blocks = (
+            quatrex_config.coulomb_screening.num_connected_blocks
+        )
+        if self.num_connected_blocks == "auto":
+            self.num_connected_blocks = compute_num_connected_blocks(
+                sparsity_pattern, self.small_block_sizes
+            )
+
+        if len(self.small_block_sizes) % self.num_connected_blocks != 0:
+            # Not implemented yet.
+            raise ValueError(
+                f"Number of blocks must be divisible by {self.num_connected_blocks}."
+            )
+
         self.block_sizes = (
-            self.small_block_sizes[: len(self.small_block_sizes) // 2] * 2
+            self.small_block_sizes[
+                : len(self.small_block_sizes) // self.num_connected_blocks
+            ]
+            * self.num_connected_blocks
         )
         # Check that the provided block sizes match the coulomb matrix.
         if self.small_block_sizes.sum() != self.coulomb_matrix_sparray.shape[0]:
@@ -361,7 +375,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.boundary_blocks_right["above"],
             self.boundary_blocks_right["left"],
             self.system_matrix,
-            nbc=2,
+            nbc=self.num_connected_blocks,
         )
         # Go back to normal block sizes.
         self._set_block_sizes(self.block_sizes)

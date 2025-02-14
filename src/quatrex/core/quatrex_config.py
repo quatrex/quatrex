@@ -70,9 +70,9 @@ class MemoizerConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enable: bool = True
-    num_ref_iterations: PositiveInt = 2
-    convergence_tol: PositiveFloat = 1e-5
+    enable: bool = False
+    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
+    convergence_tol: PositiveFloat = 1e-4
 
 
 class SolverConfig(BaseModel):
@@ -83,7 +83,10 @@ class SolverConfig(BaseModel):
     algorithm: Literal["rgf", "inv"] = "rgf"
 
     # The maximum number of energies per batch.
-    max_batch_size: PositiveInt = 1
+    max_batch_size: PositiveInt = 100
+
+    # Whether to compute the current via the Meir-Wingreen formula.
+    compute_current: bool = False
 
 
 class OBCConfig(BaseModel):
@@ -96,9 +99,10 @@ class OBCConfig(BaseModel):
 
     # Parameters for spectral OBC algorithms.
     block_sections: PositiveInt = 1
-    min_decay: PositiveFloat = 1e-6
+    min_decay: PositiveFloat = 1e-3
     max_decay: PositiveFloat | None = None
-    num_ref_iterations: PositiveInt = 2
+    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
+    warning_threshold: PositiveFloat = 1e-1
     x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
     two_sided: bool = False
     treat_pairwise: bool = True
@@ -106,12 +110,12 @@ class OBCConfig(BaseModel):
     min_propagation: PositiveFloat = 1e-2
 
     # Parameters for iterative OBC algorithms.
-    max_iterations: PositiveInt = 1000
-    convergence_tol: PositiveFloat = 1e-7
+    max_iterations: PositiveInt = 100
+    convergence_tol: PositiveFloat = 1e-6
 
     # Parameters for subspace NEVP solvers.
     r_o: PositiveFloat = 10.0
-    r_i: PositiveFloat = 0.9
+    r_i: PositiveFloat = 0.8
     m_0: PositiveInt = 10
     num_quad_points: PositiveInt = 20
 
@@ -128,11 +132,12 @@ class LyapunovConfig(BaseModel):
     algorithm: Literal["spectral", "doubling"] = "spectral"
 
     # Parameters for iterative Lyapunov algorithms.
-    max_iterations: PositiveInt = 1000
-    convergence_tol: PositiveFloat = 1e-7
+    max_iterations: PositiveInt = 100
+    convergence_tol: PositiveFloat = 1e-6
 
     # Parameter for spectral Lyapunov solver.
-    num_ref_iterations: PositiveInt = 3
+    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
+    warning_threshold: PositiveFloat = 1e-1
 
     memoizer: MemoizerConfig = MemoizerConfig()
 

@@ -130,7 +130,6 @@ class Spectral(OBCSolver):
         view = _block_view(view, -2, self.block_sections)
 
         # Make sure that the reduction leads to periodic sublayers.
-        # NOTE: I'm not 100% sure that this is really necessary.
         relative_errors = xp.zeros(self.block_sections - 1)
         first_block_norm = xp.linalg.norm(view[0, :])
         for i in range(1, self.block_sections):

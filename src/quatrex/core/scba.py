@@ -11,7 +11,7 @@ from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.observables import contact_currents, density
+from quatrex.core.observables import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -113,7 +113,7 @@ class SCBAData:
                 max_interaction_cutoff,
                 quatrex_config.photon.interaction_cutoff,
             )
-        if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
+        if quatrex_config.scba.phonon:
             max_interaction_cutoff = max(
                 max_interaction_cutoff,
                 quatrex_config.phonon.interaction_cutoff,
@@ -135,7 +135,6 @@ class SCBAData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
-            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.g_retarded._data[:] = 0.0  # Initialize to zero.
         self.g_lesser = dsbsparse_type.zeros_like(self.g_retarded)
@@ -152,19 +151,18 @@ class SCBAData:
             # NOTE: The polarization has the same sparsity pattern as
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
-            # screened Coulomb interaction and densify those.
+            # screened Coulomb interaction.
             self.p_retarded = dsbsparse_type.zeros_like(self.g_retarded)
             self.p_lesser = dsbsparse_type.zeros_like(self.g_retarded)
             self.p_greater = dsbsparse_type.zeros_like(self.g_retarded)
 
             # TODO: Only multiples of three are supported for now.
-            coulomb_screening_block_sizes = block_sizes[: len(block_sizes) // 3] * 3
+            coulomb_screening_block_sizes = block_sizes[: len(block_sizes) // 2] * 2
 
             self.w_retarded = dsbsparse_type.from_sparray(
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
-                densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
             )
             self.w_retarded._data[:] = 0.0  # Initialize to zero.
             self.w_lesser = dsbsparse_type.zeros_like(self.w_retarded)
@@ -305,11 +303,11 @@ class SCBA:
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
+            # NOTE: No sparsity information required here.
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.quatrex_config,
                 self.compute_config,
                 self.electron_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
             )
 
         # ----- Photons ------------------------------------------------
@@ -397,10 +395,12 @@ class SCBA:
             if comm.rank == 0
             else None
         )
-        # if max_diff < self.quatrex_config.scba.convergence_tol:
-        #     return True
-        # return False
-        i_left, i_right = contact_currents(self.electron_solver)
+
+        i_left, i_right = contact_currents(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.electron_solver.obc_blocks,
+        )
         change_left = xp.linalg.norm(
             i_left.real - self.observables.electron_current.get("left", 0.0)
         )
@@ -533,8 +533,24 @@ class SCBA:
         ) / (2 * xp.pi)
 
         self.observables.electron_current = dict(
-            zip(("left", "right"), contact_currents(self.electron_solver))
+            zip(
+                ("left", "right"),
+                contact_currents(
+                    self.data.g_lesser,
+                    self.data.g_greater,
+                    self.electron_solver.obc_blocks,
+                ),
+            )
         )
+
+        self.observables.electron_current["device"] = device_current(
+            self.data.g_lesser, self.electron_solver.hamiltonian_sparray
+        )
+
+        if self.quatrex_config.electron.solver.compute_current:
+            self.observables.electron_current["meir-wingreen"] = xp.vstack(
+                comm.allgather(self.electron_solver.meir_wingreen_current)
+            )
 
         if self.quatrex_config.scba.coulomb_screening:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (
@@ -601,6 +617,17 @@ class SCBA:
             f"{output_dir}/i_right_{iteration}.npy",
             self.observables.electron_current["right"],
         )
+
+        xp.save(
+            f"{output_dir}/device_current_{iteration}.npy",
+            self.observables.electron_current["device"],
+        )
+
+        if self.quatrex_config.electron.solver.compute_current:
+            xp.save(
+                f"{output_dir}/meir_wingreen_current_{iteration}.npy",
+                self.observables.electron_current["meir-wingreen"],
+            )
 
         if self.quatrex_config.scba.coulomb_screening:
             xp.save(
@@ -702,7 +729,14 @@ class SCBA:
                 )
 
             self.observables.electron_current = dict(
-                zip(("left", "right"), contact_currents(self.electron_solver))
+                zip(
+                    ("left", "right"),
+                    contact_currents(
+                        self.data.g_lesser,
+                        self.data.g_greater,
+                        self.electron_solver.obc_blocks,
+                    ),
+                )
             )
 
             times.append(time.perf_counter())

@@ -5,6 +5,7 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
+from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.stack_utils import scale_stack
 
@@ -72,7 +73,6 @@ class ElectronSolver(SubsystemSolver):
                 dtype=self.hamiltonian_sparray.dtype,
             )
 
-        self.overlap_sparray = self.overlap_sparray.tocoo()
         # Check that the overlap matrix and Hamiltonian matrix match.
         if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:
             raise ValueError(
@@ -84,7 +84,6 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
-            densify_blocks=[(0, 0), (-1, -1)],  # Densify for OBC.
         )
         self.bare_system_matrix.data = 0.0
 
@@ -120,6 +119,10 @@ class ElectronSolver(SubsystemSolver):
         self.flatband = quatrex_config.electron.flatband
         self.eta_obc = quatrex_config.electron.eta_obc
 
+        self.compute_meir_wingreen_current = (
+            quatrex_config.electron.solver.compute_current
+        )
+
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
         # the device.
@@ -146,18 +149,8 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies - self.right_fermi_level, self.temperature
         )
 
-        # Allocate memory for the OBC blocks.
-        self.obc_blocks_retarded_left = xp.zeros_like(self.system_matrix.blocks[0, 0])
-        self.obc_blocks_retarded_right = xp.zeros_like(
-            self.system_matrix.blocks[-1, -1]
-        )
-        self.obc_blocks_lesser_left = xp.zeros_like(self.system_matrix.blocks[0, 0])
-        self.obc_blocks_lesser_right = xp.zeros_like(self.system_matrix.blocks[-1, -1])
-        self.obc_blocks_greater_left = xp.zeros_like(self.system_matrix.blocks[0, 0])
-        self.obc_blocks_greater_right = xp.zeros_like(self.system_matrix.blocks[-1, -1])
-
-        self.i_left = None
-        self.i_right = None
+        # Prepare Buffers for OBC.
+        self.obc_blocks = OBCBlocks(num_blocks=self.block_sizes.size)
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -238,46 +231,35 @@ class ElectronSolver(SubsystemSolver):
 
         return block
 
-    def _apply_obc(
-        self, sse_lesser: DSBSparse, sse_greater: DSBSparse, sse_retarded: DSBSparse
-    ) -> None:
-        """Applies open boundary conditions.
-
-        Parameters
-        ----------
-        sse_lesser : DSBSparse
-            The lesser scattering self-energy.
-        sse_greater : DSBSparse
-            The greater scattering self-energy.
-        sse_retarded : DSBSparse
-            The retarded scattering self-energy.
-
-        """
+    def _compute_obc(self) -> None:
+        """Computes open boundary conditions."""
 
         # Extract the overlap matrix blocks.
-        s_00 = self._get_block(self.overlap_sparray, (0, 0))
-        s_01 = self._get_block(self.overlap_sparray, (0, 1))
-        s_10 = self._get_block(self.overlap_sparray, (1, 0))
-        s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-        s_nm = self._get_block(self.overlap_sparray, (-1, -2))
-        s_mn = self._get_block(self.overlap_sparray, (-2, -1))
+        s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
+        s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
+        s_10 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (1, 0))
+        s_nn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -1))
+        s_nm = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -2))
+        s_mn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-2, -1))
 
         # Compute surface Green's functions.
         g_00 = self.obc(
-            self.system_matrix.blocks[0, 0] + 1j * self.eta_obc * s_00,
-            self.system_matrix.blocks[0, 1] + 1j * self.eta_obc * s_01,
-            self.system_matrix.blocks[1, 0] + 1j * self.eta_obc * s_10,
+            self.system_matrix.blocks[0, 0] + s_00,
+            self.system_matrix.blocks[0, 1] + s_01,
+            self.system_matrix.blocks[1, 0] + s_10,
             "left",
         )
+        # Twist it, flip it, bop it.
         g_nn = self.obc(
-            self.system_matrix.blocks[-1, -1] + 1j * self.eta_obc * s_nn,
-            self.system_matrix.blocks[-1, -2] + 1j * self.eta_obc * s_nm,
-            self.system_matrix.blocks[-2, -1] + 1j * self.eta_obc * s_mn,
+            xp.flip(self.system_matrix.blocks[-1, -1] + s_nn, axis=(-2, -1)),
+            xp.flip(self.system_matrix.blocks[-1, -2] + s_nm, axis=(-2, -1)),
+            xp.flip(self.system_matrix.blocks[-2, -1] + s_mn, axis=(-2, -1)),
             "right",
         )
+        g_nn = xp.flip(g_nn, axis=(-2, -1))
 
         # NOTE: Here we could possibly do peak/discontinuity detection
-        # on the surface Green's function DOS.
+        # on the surface Green's function DOS (not same as actual DOS).
 
         # Apply the retarded boundary self-energy.
         sigma_00 = (
@@ -286,25 +268,26 @@ class ElectronSolver(SubsystemSolver):
         sigma_nn = (
             self.system_matrix.blocks[-2, -1] @ g_nn @ self.system_matrix.blocks[-1, -2]
         )
-        self.system_matrix.blocks[0, 0] -= sigma_00
-        self.system_matrix.blocks[-1, -1] -= sigma_nn
+
+        self.obc_blocks.retarded[0] = sigma_00
+        self.obc_blocks.retarded[-1] = sigma_nn
 
         gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
         gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
 
         # Compute and apply the lesser boundary self-energy.
-        sse_lesser.blocks[0, 0] += 1j * scale_stack(
+        self.obc_blocks.lesser[0] = 1j * scale_stack(
             gamma_00.copy(), self.left_occupancies
         )
-        sse_lesser.blocks[-1, -1] += 1j * scale_stack(
+        self.obc_blocks.lesser[-1] = 1j * scale_stack(
             gamma_nn.copy(), self.right_occupancies
         )
 
         # Compute and apply the greater boundary self-energy.
-        sse_greater.blocks[0, 0] += 1j * scale_stack(
+        self.obc_blocks.greater[0] = 1j * scale_stack(
             gamma_00.copy(), self.left_occupancies - 1
         )
-        sse_greater.blocks[-1, -1] += 1j * scale_stack(
+        self.obc_blocks.greater[-1] = 1j * scale_stack(
             gamma_nn.copy(), self.right_occupancies - 1
         )
 
@@ -319,65 +302,6 @@ class ElectronSolver(SubsystemSolver):
         """
         self.system_matrix.data = self.bare_system_matrix.data
         self.system_matrix -= sse_retarded
-
-    def _stash_contact_blocks(
-        self,
-        sse_lesser: DSBSparse,
-        sse_greater: DSBSparse,
-        sse_retarded: DSBSparse,
-    ):
-        """Stashes the contact OBC blocks.
-
-        Parameters
-        ----------
-        sse_lesser : DSBSparse
-            The lesser self-energy.
-        sse_greater : DSBSparse
-            The greater self-energy.
-        sse_retarded : DSBSparse
-            The retarded self-energy.
-
-        """
-        self.obc_blocks_retarded_left[:] = sse_retarded.blocks[0, 0]
-        self.obc_blocks_retarded_right[:] = sse_retarded.blocks[-1, -1]
-        self.obc_blocks_lesser_left[:] = sse_lesser.blocks[0, 0]
-        self.obc_blocks_lesser_right[:] = sse_lesser.blocks[-1, -1]
-        self.obc_blocks_greater_left[:] = sse_greater.blocks[0, 0]
-        self.obc_blocks_greater_right[:] = sse_greater.blocks[-1, -1]
-
-    def _compute_contact_current(
-        self, sse_lesser: DSBSparse, sse_greater: DSBSparse, g_: tuple[DSBSparse, ...]
-    ) -> None:
-        """Computes the contact current.
-
-        Parameters
-        ----------
-        sse_lesser : DSBSparse
-            The lesser self-energy.
-        sse_greater : DSBSparse
-            The greater self-energy.
-        g_ : tuple[DSBSparse, ...]
-            The Green's function tuple. In the order (lesser, greater,
-            retarded).
-        """
-        g_lesser, g_greater, __ = g_
-
-        self.i_left = xp.trace(
-            (sse_greater.blocks[0, 0] - self.obc_blocks_greater_left)
-            @ g_lesser.blocks[0, 0]
-            - g_greater.blocks[0, 0]
-            @ (sse_lesser.blocks[0, 0] - self.obc_blocks_lesser_left),
-            axis1=-2,
-            axis2=-1,
-        )
-        self.i_right = xp.trace(
-            (sse_greater.blocks[-1, -1] - self.obc_blocks_greater_right)
-            @ g_lesser.blocks[-1, -1]
-            - g_greater.blocks[-1, -1]
-            @ (sse_lesser.blocks[-1, -1] - self.obc_blocks_lesser_right),
-            axis1=-2,
-            axis2=-1,
-        )
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -402,8 +326,8 @@ class ElectronSolver(SubsystemSolver):
             f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
 
             # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
-            # # TODO: Should communicate boundary energies to correctly filter
-            # # makes arrays of bools
+            # TODO: Should communicate boundary energies to correctly
+            # filter makes arrays of bools
             # f3 = xp.zeros_like(f1, dtype=bool)
             # f3[peaks] = True
 
@@ -413,31 +337,6 @@ class ElectronSolver(SubsystemSolver):
             g_lesser.data[mask] = 0.0
             g_greater.data[mask] = 0.0
             g_retarded.data[mask] = 0.0
-
-    def _recover_contact_blocks(
-        self,
-        sse_lesser: DSBSparse,
-        sse_greater: DSBSparse,
-        sse_retarded: DSBSparse,
-    ):
-        """Recovers the stashed contact OBC blocks.
-
-        Parameters
-        ----------
-        sse_lesser : DSBSparse
-            The lesser self-energy.
-        sse_greater : DSBSparse
-            The greater self-energy.
-        sse_retarded : DSBSparse
-            The retarded self-energy.
-
-        """
-        sse_retarded.blocks[0, 0] = self.obc_blocks_retarded_left[:]
-        sse_retarded.blocks[-1, -1] = self.obc_blocks_retarded_right[:]
-        sse_lesser.blocks[0, 0] = self.obc_blocks_lesser_left[:]
-        sse_lesser.blocks[-1, -1] = self.obc_blocks_lesser_right[:]
-        sse_greater.blocks[0, 0] = self.obc_blocks_greater_left[:]
-        sse_greater.blocks[-1, -1] = self.obc_blocks_greater_right[:]
 
     def solve(
         self,
@@ -462,7 +361,6 @@ class ElectronSolver(SubsystemSolver):
 
         """
         times = []
-        self._stash_contact_blocks(sse_lesser, sse_greater, sse_retarded)
 
         times.append(time.perf_counter())
         self._assemble_system_matrix(sse_retarded)
@@ -484,24 +382,23 @@ class ElectronSolver(SubsystemSolver):
             self._update_fermi_levels(e_0_left, e_0_right)
 
         times.append(time.perf_counter())
-        self._apply_obc(sse_lesser, sse_greater, sse_retarded)
+        self._compute_obc()
         t_obc = time.perf_counter() - times.pop()
 
         times.append(time.perf_counter())
-        self.solver.selected_solve(
+        self.meir_wingreen_current = self.solver.selected_solve(
             a=self.system_matrix,
             sigma_lesser=sse_lesser,
             sigma_greater=sse_greater,
+            obc_blocks=self.obc_blocks,
             out=out,
             return_retarded=True,
+            return_current=self.compute_meir_wingreen_current,
         )
         t_solve = time.perf_counter() - times.pop()
-
-        self._compute_contact_current(sse_lesser, sse_greater, out)
-        self._recover_contact_blocks(sse_lesser, sse_greater, sse_retarded)
-
-        # anti symmetrize
         g_lesser, g_greater, g_retarded = out
+
+        # Make sure the Green's functions are skew-Hermitian.
         g_lesser.data = 0.5 * (
             g_lesser.data - g_lesser.ltranspose(copy=True).data.conj()
         )

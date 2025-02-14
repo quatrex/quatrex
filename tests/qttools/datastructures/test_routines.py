@@ -120,9 +120,11 @@ def test_bd_matmul_spillover(
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
     NBC = 1
-    left_obc = sum(block_sizes[0:NBC])
-    right_obc = sum(block_sizes[-NBC:])
-    dense_shape[-2:] += left_obc + right_obc
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    dense_shape[-2] += left_obc + right_obc
+    dense_shape[-1] += left_obc + right_obc
+
     dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
     dense_exp[
         ...,
@@ -172,9 +174,10 @@ def test_bd_sandwich_spillover(
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
     NBC = 1
-    left_obc = sum(block_sizes[0:NBC])
-    right_obc = sum(block_sizes[-NBC:])
-    dense_shape[-2:] += left_obc + right_obc
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    dense_shape[-2] += left_obc + right_obc
+    dense_shape[-1] += left_obc + right_obc
     dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
     dense_exp[
         ...,

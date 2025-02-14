@@ -68,9 +68,9 @@ class RGF(GFSolver):
 
             # See if there is an OBC block for the current layer.
             obc = obc_blocks.retarded[0]
-            obc = obc[stack_slice] if obc is not None else 0.0
+            a_00 = a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc
 
-            x_diag_blocks[0] = xp.linalg.inv(a_.blocks[0, 0] - obc)
+            x_diag_blocks[0] = xp.linalg.inv(a_00)
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -78,11 +78,10 @@ class RGF(GFSolver):
 
                 # See if there is an OBC block for the current layer.
                 obc = obc_blocks.retarded[j]
-                obc = obc[stack_slice] if obc is not None else 0.0
+                a_jj = a_.blocks[j, j] if obc is None else a_.blocks[j, j] - obc
 
                 x_diag_blocks[j] = xp.linalg.inv(
-                    (a_.blocks[j, j] - obc)
-                    - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
+                    a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
                 )
 
             # We need to write the last diagonal block to the output.
@@ -203,21 +202,25 @@ class RGF(GFSolver):
 
             # Check if there are OBC blocks for the current layer.
             obc_r = obc_blocks.retarded[0]
-            obc_r = obc_r[stack_slice] if obc_r is not None else 0.0
+            a_00 = a_.blocks[0, 0] if obc_r is None else a_.blocks[0, 0] - obc_r
             obc_l = obc_blocks.lesser[0]
-            obc_l = obc_l[stack_slice] if obc_l is not None else 0.0
+            sl_00 = (
+                sigma_lesser_.blocks[0, 0]
+                if obc_l is None
+                else sigma_lesser_.blocks[0, 0] + obc_l
+            )
             obc_g = obc_blocks.greater[0]
-            obc_g = obc_g[stack_slice] if obc_g is not None else 0.0
+            sg_00 = (
+                sigma_greater_.blocks[0, 0]
+                if obc_g is None
+                else sigma_greater_.blocks[0, 0] + obc_g
+            )
 
-            xr_00 = xp.linalg.inv(a_.blocks[0, 0] - obc_r)
+            xr_00 = xp.linalg.inv(a_00)
             xr_00_dagger = xr_00.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_00
-            xl_diag_blocks[0] = (
-                xr_00 @ (sigma_lesser_.blocks[0, 0] + obc_l) @ xr_00_dagger
-            )
-            xg_diag_blocks[0] = (
-                xr_00 @ (sigma_greater_.blocks[0, 0] + obc_g) @ xr_00_dagger
-            )
+            xl_diag_blocks[0] = xr_00 @ sl_00 @ xr_00_dagger
+            xg_diag_blocks[0] = xr_00 @ sg_00 @ xr_00_dagger
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -225,11 +228,19 @@ class RGF(GFSolver):
 
                 # Check if there are OBC blocks for the current layer.
                 obc_r = obc_blocks.retarded[j]
-                obc_r = obc_r[stack_slice] if obc_r is not None else 0.0
+                a_jj = a_.blocks[j, j] if obc_r is None else a_.blocks[j, j] - obc_r
                 obc_l = obc_blocks.lesser[j]
-                obc_l = obc_l[stack_slice] if obc_l is not None else 0.0
+                sl_jj = (
+                    sigma_lesser_.blocks[j, j]
+                    if obc_l is None
+                    else sigma_lesser_.blocks[j, j] + obc_l
+                )
                 obc_g = obc_blocks.greater[j]
-                obc_g = obc_g[stack_slice] if obc_g is not None else 0.0
+                sg_jj = (
+                    sigma_greater_.blocks[j, j]
+                    if obc_g is None
+                    else sigma_greater_.blocks[j, j] + obc_g
+                )
 
                 # Get the blocks that are used multiple times.
                 a_ji = a_.blocks[j, i]
@@ -243,16 +254,14 @@ class RGF(GFSolver):
                 a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
                 a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
 
-                xr_jj = xp.linalg.inv(
-                    (a_.blocks[j, j] - obc_r) - a_ji @ xr_ii @ a_.blocks[i, j]
-                )
+                xr_jj = xp.linalg.inv(a_jj - a_ji @ xr_ii @ a_.blocks[i, j])
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 
                 xl_diag_blocks[j] = (
                     xr_jj
                     @ (
-                        (sigma_lesser_.blocks[j, j] + obc_l)
+                        sl_jj
                         + a_ji @ xl_diag_blocks[i] @ a_ji_dagger
                         + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sl_ij
@@ -263,7 +272,7 @@ class RGF(GFSolver):
                 xg_diag_blocks[j] = (
                     xr_jj
                     @ (
-                        (sigma_greater_.blocks[j, j] + obc_g)
+                        sg_jj
                         + a_ji @ xg_diag_blocks[i] @ a_ji_dagger
                         + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sg_ij

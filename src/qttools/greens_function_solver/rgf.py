@@ -1,8 +1,8 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.greens_function_solver.solver import GFSolver
+from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.utils.solvers_utils import get_batches
 
 
@@ -13,16 +13,19 @@ class RGF(GFSolver):
     ----------
     max_batch_size : int, optional
         Maximum batch size to use when inverting the matrix, by default
-        1.
+        100.
 
     """
 
-    def __init__(self, max_batch_size: int = 1) -> None:
+    def __init__(self, max_batch_size: int = 100) -> None:
         """Initializes the selected inversion solver."""
         self.max_batch_size = max_batch_size
 
     def selected_inv(
-        self, a: DSBSparse, out: DSBSparse | None = None
+        self,
+        a: DSBSparse,
+        obc_blocks: OBCBlocks | None = None,
+        out: DSBSparse | None = None,
     ) -> None | DSBSparse:
         """Performs selected inversion of a block-tridiagonal matrix.
 
@@ -30,6 +33,9 @@ class RGF(GFSolver):
         ----------
         a : DSBSparse
             Matrix to invert.
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
         out : DSBSparse, optional
             Preallocated output matrix, by default None.
 
@@ -41,7 +47,10 @@ class RGF(GFSolver):
 
         """
         # Initialize dense temporary buffers for the diagonal blocks.
-        x_diag_blocks = [None] * a.num_blocks
+        x_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+
+        if obc_blocks is None:
+            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
@@ -57,14 +66,22 @@ class RGF(GFSolver):
             a_ = a.stack[stack_slice]
             x_ = x.stack[stack_slice]
 
-            x_diag_blocks[0] = xp.linalg.inv(a_.blocks[0, 0])
+            # See if there is an OBC block for the current layer.
+            obc = obc_blocks.retarded[0]
+            obc = obc[stack_slice] if obc is not None else 0.0
+
+            x_diag_blocks[0] = xp.linalg.inv(a_.blocks[0, 0] - obc)
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
 
+                # See if there is an OBC block for the current layer.
+                obc = obc_blocks.retarded[j]
+                obc = obc[stack_slice] if obc is not None else 0.0
+
                 x_diag_blocks[j] = xp.linalg.inv(
-                    a_.blocks[j, j]
+                    (a_.blocks[j, j] - obc)
                     - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
                 )
 
@@ -94,9 +111,11 @@ class RGF(GFSolver):
         a: DSBSparse,
         sigma_lesser: DSBSparse,
         sigma_greater: DSBSparse,
+        obc_blocks: OBCBlocks | None = None,
         out: tuple[DSBSparse, ...] | None = None,
         return_retarded: bool = False,
-    ) -> None | tuple:
+        return_current: bool = False,
+    ) -> None | tuple | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
         This method produces selected elements of the solution to the
@@ -116,36 +135,55 @@ class RGF(GFSolver):
         sigma_greater : DSBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
         out : tuple[DSBSparse, ...] | None, optional
             Preallocated output matrices, by default None
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
+        return_current : bool, optional
+            Whether to compute and return the current for each layer via
+            the Meir-Wingreen formula. By default False.
 
         Returns
         -------
-        None | tuple
+        None | tuple | NDArray
             If `out` is None, returns None. Otherwise, the solutions are
             returned as DSBParse matrices. If `return_retarded` is True,
             returns a tuple with the retarded Green's function as the
-            last element.
+            last element. If `return_current` is True, returns the
+            current for each layer.
 
         """
-        # Initialize dense temporary buffers for the diagonal blocks.
-        xr_diag_blocks = [None] * a.num_blocks
-        xl_diag_blocks = [None] * a.num_blocks
-        xg_diag_blocks = [None] * a.num_blocks
+        # Initialize empty lists for the dense diagonal blocks.
+        xr_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+        xl_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+        xg_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+
+        if obc_blocks is None:
+            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
+
+        if return_current:
+            # Allocate a buffer for the current.
+            current = xp.zeros((a.shape[0], a.num_blocks - 1), dtype=a.dtype)
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
 
-        # If out is not none, xr will be the last element of the tuple.
+        # If out is not none, xr will be the third element of the tuple.
         if out is not None:
             xl, xg, *xr = out
             if len(xr) == 0:
+                # Allocate the retarded Green's function.
                 xr = a.__class__.zeros_like(a)
-            else:
+            elif len(xr) == 1:
+                # Unpack the tuple.
                 xr = xr[0]
+            else:
+                raise ValueError("Invalid number of output matrices.")
+
         else:
             xr = a.__class__.zeros_like(a)
             xl = a.__class__.zeros_like(a)
@@ -163,15 +201,35 @@ class RGF(GFSolver):
             xl_ = xl.stack[stack_slice]
             xg_ = xg.stack[stack_slice]
 
-            xr_00 = xp.linalg.inv(a_.blocks[0, 0])
+            # Check if there are OBC blocks for the current layer.
+            obc_r = obc_blocks.retarded[0]
+            obc_r = obc_r[stack_slice] if obc_r is not None else 0.0
+            obc_l = obc_blocks.lesser[0]
+            obc_l = obc_l[stack_slice] if obc_l is not None else 0.0
+            obc_g = obc_blocks.greater[0]
+            obc_g = obc_g[stack_slice] if obc_g is not None else 0.0
+
+            xr_00 = xp.linalg.inv(a_.blocks[0, 0] - obc_r)
             xr_00_dagger = xr_00.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_00
-            xl_diag_blocks[0] = xr_00 @ sigma_lesser_.blocks[0, 0] @ xr_00_dagger
-            xg_diag_blocks[0] = xr_00 @ sigma_greater_.blocks[0, 0] @ xr_00_dagger
+            xl_diag_blocks[0] = (
+                xr_00 @ (sigma_lesser_.blocks[0, 0] + obc_l) @ xr_00_dagger
+            )
+            xg_diag_blocks[0] = (
+                xr_00 @ (sigma_greater_.blocks[0, 0] + obc_g) @ xr_00_dagger
+            )
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
                 j = i + 1
+
+                # Check if there are OBC blocks for the current layer.
+                obc_r = obc_blocks.retarded[j]
+                obc_r = obc_r[stack_slice] if obc_r is not None else 0.0
+                obc_l = obc_blocks.lesser[j]
+                obc_l = obc_l[stack_slice] if obc_l is not None else 0.0
+                obc_g = obc_blocks.greater[j]
+                obc_g = obc_g[stack_slice] if obc_g is not None else 0.0
 
                 # Get the blocks that are used multiple times.
                 a_ji = a_.blocks[j, i]
@@ -181,20 +239,23 @@ class RGF(GFSolver):
                 a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
 
                 # Precompute some terms that are used multiple times.
-                xr_ii_dagger_aji_dagger = xr_ii.conj().swapaxes(-2, -1) @ a_ji_dagger
                 a_ji_xr_ii = a_ji @ xr_ii
+                a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
+                a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
 
-                xr_jj = xp.linalg.inv(a_.blocks[j, j] - a_ji @ xr_ii @ a_.blocks[i, j])
+                xr_jj = xp.linalg.inv(
+                    (a_.blocks[j, j] - obc_r) - a_ji @ xr_ii @ a_.blocks[i, j]
+                )
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 
                 xl_diag_blocks[j] = (
                     xr_jj
                     @ (
-                        sigma_lesser_.blocks[j, j]
+                        (sigma_lesser_.blocks[j, j] + obc_l)
                         + a_ji @ xl_diag_blocks[i] @ a_ji_dagger
-                        - sigma_lesser_.blocks[j, i] @ xr_ii_dagger_aji_dagger
-                        - a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
+                        + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sl_ij
                     )
                     @ xr_jj_dagger
                 )
@@ -202,18 +263,18 @@ class RGF(GFSolver):
                 xg_diag_blocks[j] = (
                     xr_jj
                     @ (
-                        sigma_greater_.blocks[j, j]
+                        (sigma_greater_.blocks[j, j] + obc_g)
                         + a_ji @ xg_diag_blocks[i] @ a_ji_dagger
-                        - sigma_greater_.blocks[j, i] @ xr_ii_dagger_aji_dagger
-                        - a_ji_xr_ii @ sigma_greater_.blocks[i, j]
+                        + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sg_ij
                     )
                     @ xr_jj_dagger
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xr_.blocks[j, j] = xr_diag_blocks[j]
-            xl_.blocks[j, j] = xl_diag_blocks[j]
-            xg_.blocks[j, j] = xg_diag_blocks[j]
+            xr_.blocks[-1, -1] = xr_diag_blocks[-1]
+            xl_.blocks[-1, -1] = xl_diag_blocks[-1]
+            xg_.blocks[-1, -1] = xg_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
@@ -229,14 +290,14 @@ class RGF(GFSolver):
                 xg_ii = xg_diag_blocks[i]
                 xg_jj = xg_diag_blocks[j]
                 sigma_lesser_ij = sigma_lesser_.blocks[i, j]
-                sigma_lesser_ji = sigma_lesser_.blocks[j, i]
                 sigma_greater_ij = sigma_greater_.blocks[i, j]
-                sigma_greater_ji = sigma_greater_.blocks[j, i]
 
                 # Precompute the transposes that are used multiple times.
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
                 a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
+                sigma_greater_ji = -sigma_greater_ij.conj().swapaxes(-2, -1)
+                sigma_lesser_ji = -sigma_lesser_ij.conj().swapaxes(-2, -1)
 
                 # Precompute the terms that are used multiple times.
                 xr_jj_dagger_aij_dagger = xr_jj_dagger @ a_ij_dagger
@@ -295,6 +356,26 @@ class RGF(GFSolver):
                     + xr_jj @ sigma_greater_ji @ xr_ii_dagger
                 )
 
+                if return_current:
+                    a_ji_xr_ii_sl_ij = a_ji @ xr_ii @ sigma_lesser_ij
+                    a_ji_xr_ii_sg_ij = a_ji @ xr_ii @ sigma_greater_ij
+                    sigma_lesser_tilde = (
+                        a_ji @ xl_ii @ a_ji_dagger
+                        + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sl_ij
+                    )
+                    sigma_greater_tilde = (
+                        a_ji @ xg_ii @ a_ji_dagger
+                        + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sg_ij
+                    )
+                    current[stack_slice, i] = xp.trace(
+                        sigma_greater_tilde @ xl_diag_blocks[j]
+                        - xg_diag_blocks[j] @ sigma_lesser_tilde,
+                        axis1=-2,
+                        axis2=-1,
+                    )
+
                 # NOTE: Cursed Python multiple assignment syntax.
                 xl_.blocks[i, i] = xl_diag_blocks[i] = (
                     xl_ii
@@ -315,5 +396,10 @@ class RGF(GFSolver):
 
         if out is None:
             if return_retarded:
+                if return_current:
+                    return xl, xg, xr, current
                 return xl, xg, xr
             return xl, xg
+
+        if return_current:
+            return current

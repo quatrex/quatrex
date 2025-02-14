@@ -256,15 +256,18 @@ class Spectral(OBCSolver):
                 )
                 * ws**n
                 for a_x, n in zip(a_xx, range(-b, b + 1))
-            ) / xp.diagonal(
-                phi_left.conj().swapaxes(-1, -2) @ phi_right, axis1=-2, axis2=-1
             )
 
         return dEk_dk
 
     def _find_reflected_modes(
-        self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray], vls: NDArray | None = None
-    ) -> NDArray:
+        self,
+        ws: NDArray,
+        vrs: NDArray,
+        a_xx: list[NDArray],
+        vls: NDArray | None = None,
+        find_injected: bool = False,
+    ) -> tuple[NDArray, NDArray, NDArray]:
         """Determines which eigenvalues correspond to reflected modes.
 
         For the computation of the surface Green's function, only the
@@ -281,16 +284,25 @@ class Spectral(OBCSolver):
             The blocks of the periodic matrix.
         vls : NDArray, optional
             The left eigenvectors of the NEVP. Required for two-sided
+        find_injected: bool, optional
+            Whether to find the injected eigenvector
 
         Returns
         -------
-        mask : NDArray
+        mask_reflected : NDArray
             A boolean mask indicating which eigenvalues correspond to
             reflected modes.
+        mask_injected : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            injected modes.
+        dEk_dK_injected : NDArray
+            List of dEk_dK values corresponding to injected modes
 
         """
         if self.two_sided and vls is None:
             raise ValueError("Two-sided calculation requires left eigenvectors.")
+
+        batchsize = a_xx[0].shape[0]
 
         # Calculate the residual
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
@@ -329,6 +341,11 @@ class Spectral(OBCSolver):
 
             if self.residual_normalization == "eigenvalue":
                 residuals /= xp.abs(ws)
+
+        if batchsize != 1 and find_injected == True:
+            raise ValueError(
+                "The injection vector can only be calculated with batchsize = 1"
+            )
 
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
@@ -371,6 +388,15 @@ class Spectral(OBCSolver):
 
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay
+
+        # Calulate injecting modes
+        if find_injected:
+
+            mask_injected = dEk_dk.real > 0
+            mask_injected &= xp.abs(ks.imag) < self.min_decay
+            inj_dEk_dk = dEk_dk[mask_injected]
+
+            return mask_propagating | mask_decaying, mask_injected, inj_dEk_dk
 
         return (mask_propagating | mask_decaying) & (
             residuals < self.residual_tolerance
@@ -549,7 +575,8 @@ class Spectral(OBCSolver):
         a_ji: NDArray,
         contact: str,
         out: None | NDArray = None,
-    ) -> NDArray | None:
+        return_inj: bool = False,
+    ) -> tuple[NDArray | None, NDArray]:
         """Returns the surface Green's function.
 
         Parameters
@@ -565,13 +592,24 @@ class Spectral(OBCSolver):
         out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
+        return_inj: bool, optional
+            Whether to return the injection vector
 
         Returns
         -------
         x_ii : NDArray
-            The system's surface Green's function.
+            The system's surface Green's function. (if return_inj = True, the boundary self energy is returned instead)
+        inj: NDArray
+            The Injection vector (only compatible with batchsize = 1)
 
         """
+
+        if a_ii.ndim != 2 and return_inj == True:
+            raise NotImplementedError
+
+        if return_inj == True and out is not None:
+            raise NotImplementedError
+
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
             a_ij = a_ij[xp.newaxis, :, :]
@@ -589,7 +627,9 @@ class Spectral(OBCSolver):
         if self.two_sided:
             wls, vls = self._upscale_eigenmodes(wrs, vls)
 
-        mask = self._find_reflected_modes(wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls)
+        mask, mask_inj, dE_dK_list = self._find_reflected_modes(
+            wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
+        )
 
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask, vls=vls)
 
@@ -609,6 +649,24 @@ class Spectral(OBCSolver):
                 f"High relative recursion error: {recursion_error:.2e}",
                 RuntimeWarning,
             )
+
+        # Calculate the injection vector and return it together with the boundary self-energy
+        if return_inj:
+
+            mask_inj = mask_inj[0, :]
+            vrs_inj = vrs[0][:, mask_inj]
+            wrs_inj = xp.diag(wrs[0, mask_inj])
+
+            # Flux normalization
+            vrs_inj = vrs_inj / xp.sqrt(dE_dK_list[None, :])
+
+            # Compute boundary self energy
+            sig = a_ji[0, :, :] @ x_ii[0, :, :] @ a_ij[0, :, :]
+
+            # Compute injection vector
+            inj_vec = -a_ji[0, :, :] @ vrs_inj @ xp.linalg.inv(wrs_inj) - sig @ vrs_inj
+
+            return sig, inj_vec
 
         # Return the surface Green's function.
         if out is not None:

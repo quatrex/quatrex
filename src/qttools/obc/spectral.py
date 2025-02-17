@@ -324,16 +324,20 @@ class Spectral(OBCSolver):
         batchsize, subblock_size, num_modes = vs.shape
         block_size = subblock_size * self.block_sections
 
-        vs_upscaled = xp.zeros((batchsize, block_size, num_modes), dtype=vs.dtype)
-        for i in range(batchsize):
-            for j, w in enumerate(ws[i]):
-                vs_upscaled[i, :, j] = xp.kron(
-                    xp.array([w**n for n in range(self.block_sections)]), vs[i, :, j]
-                )
-                with warnings.catch_warnings(
-                    action="ignore", category=RuntimeWarning
-                ):  # Ignore division by zero.
-                    vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
+        ws_upscaled = xp.array([ws**n for n in range(self.block_sections)]).swapaxes(
+            0, 1
+        )
+
+        vs_upscaled = (
+            ws_upscaled[:, :, xp.newaxis, :] * vs[:, xp.newaxis, :, :]
+        ).reshape(batchsize, block_size, num_modes)
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+            vs_upscaled = vs_upscaled / xp.linalg.norm(
+                vs_upscaled, axis=-2, keepdims=True
+            )
 
         return ws**self.block_sections, vs_upscaled
 

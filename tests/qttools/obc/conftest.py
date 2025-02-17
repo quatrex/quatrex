@@ -29,6 +29,11 @@ BLOCK_SECTIONS = [
     pytest.param(3, id="three-subblocks"),
 ]
 
+BATCH_SIZE = [
+    pytest.param(1, id="single-batch"),
+    pytest.param(3, id="three-batches"),
+]
+
 CONTACTS = ["left", "right"]
 
 TWO_SIDED = [True, False]
@@ -48,9 +53,21 @@ def nevp(request: pytest.FixtureRequest) -> NEVP:
     return request.param
 
 
+@pytest.fixture(params=BLOCK_SIZE)
+def block_size(request: pytest.FixtureRequest) -> int:
+    """Returns the block size."""
+    return request.param
+
+
 @pytest.fixture(params=BLOCK_SECTIONS)
 def block_sections(request: pytest.FixtureRequest) -> int:
     """Returns the number of block sections."""
+    return request.param
+
+
+@pytest.fixture(params=BATCH_SIZE)
+def batch_size(request: pytest.FixtureRequest) -> int:
+    """Returns the block size."""
     return request.param
 
 

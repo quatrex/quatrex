@@ -127,3 +127,42 @@ def test_memoizer(
 
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)
+
+
+@pytest.mark.usefixtures(
+    "block_size",
+    "batch_size",
+    "nevp",
+    "block_sections",
+)
+def test_upscaling(
+    block_size: int,
+    batch_size: int,
+    nevp: NEVP,
+    block_sections: int,
+):
+    """Tests that the eigenmode upscaling works."""
+
+    spectral = Spectral(nevp=nevp, block_sections=block_sections)
+
+    rng = xp.random.default_rng()
+
+    ws = rng.random((batch_size, block_size)) + 1j * rng.random(
+        (batch_size, block_size)
+    )
+
+    vs = rng.random(
+        (batch_size, block_size // block_sections, block_size)
+    ) + 1j * rng.random((batch_size, block_size // block_sections, block_size))
+
+    _, vs_upscaled = spectral._upscale_eigenmodes(ws, vs)
+
+    vs_upscaled_ref = xp.zeros((batch_size, block_size, block_size), dtype=vs.dtype)
+    for i in range(batch_size):
+        for j, w in enumerate(ws[i]):
+            vs_upscaled_ref[i, :, j] = xp.kron(
+                xp.array([w**n for n in range(block_sections)]), vs[i, :, j]
+            )
+            vs_upscaled_ref[i, :, j] /= xp.linalg.norm(vs_upscaled_ref[i, :, j])
+
+    assert xp.allclose(vs_upscaled, vs_upscaled_ref)

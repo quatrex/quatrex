@@ -3,8 +3,8 @@
 import numpy as np
 
 from qttools import NDArray, xp
+from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
-from qttools.nevp.utils import operator_inverse
 from qttools.utils.gpu_utils import get_device, get_host
 
 rng = xp.random.default_rng(42)

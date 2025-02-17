@@ -35,6 +35,21 @@ BLOCK_COORDS = [
     pytest.param((3, 4), id="20x20"),
 ]
 
+BATCHSIZE = [
+    pytest.param(1, id="1"),
+    pytest.param(3, id="3"),
+]
+
+BLOCKSIZE = [
+    pytest.param(5, id="5"),
+    pytest.param(10, id="10"),
+]
+
+NUM_QUATRATURE_POINTS = [
+    pytest.param(5, id="5"),
+    pytest.param(10, id="10"),
+]
+
 
 @pytest.fixture(params=NUM_INDS)
 def num_inds(request: pytest.FixtureRequest):
@@ -63,4 +78,19 @@ def num_blocks(request: pytest.FixtureRequest):
 
 @pytest.fixture(params=BLOCK_COORDS)
 def block_coords(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=BATCHSIZE)
+def batchsize(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=BLOCKSIZE)
+def blocksize(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=NUM_QUATRATURE_POINTS)
+def num_quatrature_points(request: pytest.FixtureRequest):
     return request.param

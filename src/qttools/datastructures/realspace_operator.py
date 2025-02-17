@@ -493,19 +493,12 @@ def _compute_pair_sparsity_pattern(
     lil = sparsity.tolil()
     pair_rows, pair_cols = [], []    
     for i, a in enumerate(sparsity.row):        
-        b = sparsity.col[i]        
-        cs = xp.where(lil[a,:] != 0)
-        ds = xp.where(lil[b,:] != 0)
-        
-        interactions = xp.where((lil[a, sparsity.row].todense() != 0) & (lil[b, sparsity.col].todense() != 0))
-        pair_rows.extend([i]* len(interactions))
-        pair_cols.extend(interactions)
-        # for j, c in enumerate(sparsity.row):   
-        #     d = sparsity.col[j]
-        #     if (lil[a, c] != 0) and (lil[b,d] != 0):
-        #         pair_cols.append(i)
-        #         pair_rows.append(j)                      
-    
+        b = sparsity.col[i]                
+        for j, c in enumerate(sparsity.row):   
+            d = sparsity.col[j]
+            if (lil[a, c] != 0) and (lil[b,d] != 0):
+                pair_cols.append(i)
+                pair_rows.append(j)                          
     rows, cols = xp.array(pair_rows), xp.array(pair_cols)
     return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
 

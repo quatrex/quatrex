@@ -78,7 +78,7 @@ def read_hr_dat(path: Path, return_all: bool = False, dtype: _DType = xp.complex
     return hR
 
 
-def create_hamiltonian(hR: NDArray, num_transport_cells: int) -> list[NDArray]:
+def create_hamiltonian(hR: NDArray, num_transport_cells: int, cutoff: float = xp.inf, coords: NDArray = None) -> list[NDArray]:
 
     connections = hR.shape[2] // 2
     num_unit_cells_per_supercell = connections + 1
@@ -102,6 +102,29 @@ def create_hamiltonian(hR: NDArray, num_transport_cells: int) -> list[NDArray]:
         for j in range(num_unit_cells_per_supercell, i + connections + 1):
             sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
             upper_block[sl_i, sl_j] = hR[0, 0, j - i]
+    
+    # Enforce cutoff.
+    # NOTE: Assuming single transport direction and coordinate.
+    if coords is not None and cutoff < xp.inf:
+        unit_cell_dist = xp.abs(xp.subtract.outer(coords, coords))
+        unit_cell_width = unit_cell_dist.max()  # NOTE: Can be constant.
+        diag_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
+        upper_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
+        lower_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
+        for i in range(num_unit_cells_per_supercell):
+            sl_i = slice(i * wann_rows, (i + 1) * wann_rows)
+            for j in range(i - connections, 0):
+                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
+                lower_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
+            for j in range(0, num_unit_cells_per_supercell):
+                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
+                diag_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
+            for j in range(num_unit_cells_per_supercell, i + connections + 1):
+                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
+                upper_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
+        diag_block[diag_dist > cutoff] = 0
+        upper_block[upper_dist > cutoff] = 0
+        lower_block[lower_dist > cutoff] = 0
     
     # Create the block-tridiagonal matrix.
     diag = xp.repeat(diag_block, num_transport_cells, axis=0)

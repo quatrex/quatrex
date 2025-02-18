@@ -88,7 +88,7 @@ class Spectral(OBCSolver):
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
-        residual_normalization_formula: str = "operator_norm",
+        residual_normalization_formula: str = "abs_eigenvalue",
         warning_threshold: float = 1e-1,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -294,14 +294,28 @@ class Spectral(OBCSolver):
 
         # Calculate the residual
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
-            # NOTE: This consumes a lot of memory since
-            # the operators are explicitly calculated.
-            operators = sum(
-                a_x[:, xp.newaxis, :, :]
-                * ws[..., xp.newaxis, xp.newaxis] ** (i - len(a_xx) // 2)
-                for i, a_x in enumerate(a_xx)
-            )
-            products = operators @ vrs.swapaxes(-1, -2)[..., xp.newaxis]
+            if self.residual_normalization_formula == "operator_norm":
+                # NOTE: This consumes a lot of memory since
+                # the operators are explicitly calculated.
+                operators = sum(
+                    a_x[:, xp.newaxis, :, :]
+                    * ws[..., xp.newaxis, xp.newaxis] ** (i - len(a_xx) // 2)
+                    for i, a_x in enumerate(a_xx)
+                )
+                products = operators @ vrs.swapaxes(-1, -2)[..., xp.newaxis]
+            elif self.residual_normalization_formula in [
+                "abs_eigenvalue",
+                "no_normalization",
+            ]:
+                products = sum(
+                    a_x @ vrs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
+                    for i, a_x in enumerate(a_xx)
+                ).swapaxes(-1, -2)[..., xp.newaxis]
+            else:
+                raise ValueError(
+                    f"Unknown formula: {self.residual_normalization_formula}"
+                    "Choose 'operator_norm', 'abs_eigenvalue', or 'no_normalization'."
+                )
 
             residuals = xp.linalg.norm(products, axis=(-1, -2))
 

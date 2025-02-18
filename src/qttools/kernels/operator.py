@@ -56,6 +56,7 @@ def operator_inverse(
     z: NDArray,
     contour_type: xp.dtype,
     in_type: xp.dtype,
+    num_threads: int = 1024,
 ) -> NDArray:
     """Computes the inverse of a matrix polynomial at sample points.
 
@@ -69,6 +70,9 @@ def operator_inverse(
         The data type for the contour integration.
     in_type : xp.dtype
         The data type for the input matrices.
+    num_threads : int, optional
+        The number of cuda threads to use for the kernel.
+        Only relevant for GPU computations.
 
     Returns
     -------
@@ -92,7 +96,6 @@ def operator_inverse(
             dtype=a_xx[0].dtype,
         )
 
-        num_threads = 1024
         num_blocks = (
             batchsize * num_quatrature_points * blocksize * blocksize + num_threads - 1
         ) // num_threads

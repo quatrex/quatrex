@@ -16,6 +16,7 @@ else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{xp.__name__}'")
 
 import qttools.kernels.operator as operator
+import qttools.kernels.eig as eig
 
 __all__ = [
     "dsbsparse_kernels",
@@ -23,4 +24,5 @@ __all__ = [
     "dsbcsr_kernels",
     "obc_kernels",
     "operator",
+    "eig",
 ]

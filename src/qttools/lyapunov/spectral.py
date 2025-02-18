@@ -2,22 +2,36 @@
 
 import warnings
 
-import numpy as np
-
 from qttools import NDArray, xp
+from qttools.kernels.eig import eig
 from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.utils.gpu_utils import get_device, get_host
 
 
 class Spectral(LyapunovSolver):
-    """A solver for the Lyapunov equation by using the matrix spectrum."""
+    """A solver for the Lyapunov equation by using the matrix spectrum.
+
+    Parameters
+    ----------
+    num_ref_iterations : int, optional
+        The number of refinement iterations to perform.
+    warning_threshold : float, optional
+        The threshold for the relative recursion error to issue a warning.
+    eig_compute_location : str, optional
+        The location where to compute the eigenvalues and eigenvectors.
+        Can be either "device" or "host". Only relevant if cupy is used.
+
+    """
 
     def __init__(
-        self, num_ref_iterations: int = 3, warning_threshold: float = 1e-1
+        self,
+        num_ref_iterations: int = 3,
+        warning_threshold: float = 1e-1,
+        eig_compute_location: str = "host",
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
         self.warning_threshold = warning_threshold
+        self.eig_compute_location = eig_compute_location
 
     def __call__(
         self,
@@ -51,7 +65,7 @@ class Spectral(LyapunovSolver):
             a = a[xp.newaxis, ...]
             q = q[xp.newaxis, ...]
 
-        ws, vs = map(get_device, np.linalg.eig(get_host(a)))
+        ws, vs = eig(a, compute_location=self.eig_compute_location)
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

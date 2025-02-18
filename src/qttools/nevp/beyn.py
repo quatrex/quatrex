@@ -1,11 +1,9 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import numpy as np
-
 from qttools import NDArray, xp
+from qttools.kernels.eig import eig
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
-from qttools.utils.gpu_utils import get_device, get_host
 
 rng = xp.random.default_rng(42)
 
@@ -35,6 +33,9 @@ class Beyn(NEVP):
     num_threads_contour : int, optional
         The number of cuda threads to use for the contour integration kernel.
         Only relevant for GPU computations.
+    eig_compute_location : str, optional
+        The location where to compute the eigenvalues and eigenvectors.
+        Can be either "device" or "host". Only relevant if cupy is used.
 
     """
 
@@ -45,6 +46,7 @@ class Beyn(NEVP):
         m_0: int,
         num_quad_points: int,
         num_threads_contour: int = 1024,
+        eig_compute_location: str = "host",
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -52,6 +54,7 @@ class Beyn(NEVP):
         self.m_0 = m_0
         self.num_quad_points = num_quad_points
         self.num_threads_contour = num_threads_contour
+        self.eig_compute_location = eig_compute_location
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
@@ -126,13 +129,13 @@ class Beyn(NEVP):
 
             u, s, vh = u[:, inds], s[inds], vh[inds, :]
 
-            # Probe second moment. No eigenvalues on the GPU :(
-            a = get_host(u.conj().T @ P_1[i] @ vh.conj().T / s)
-            w, v = np.linalg.eig(a)
+            # Probe second moment.
+            a = u.conj().T @ P_1[i] @ vh.conj().T / s
+            w, v = eig(a, compute_location=self.eig_compute_location)
 
             # Recover the full eigenvectors from the subspace.
-            ws[i, : len(inds)] = get_device(w)
-            vs[i, :, : len(inds)] = u @ get_device(v)
+            ws[i, : len(inds)] = w
+            vs[i, :, : len(inds)] = u @ v
 
         return ws, vs
 
@@ -236,20 +239,17 @@ class Beyn(NEVP):
             )
 
             # Probe second moment.
-            a = get_host(u.conj().T @ P_1[i] @ vh.conj().T / s)
+            a = u.conj().T @ P_1[i] @ vh.conj().T / s
             # NOTE: xp.diag is unnecessary, should be removed
-            a_hat = get_host(
-                xp.diag(1 / s_hat) @ u_hat.conj().T @ P_1_hat[i] @ vh_hat.conj().T
-            )
+            a_hat = xp.diag(1 / s_hat) @ u_hat.conj().T @ P_1_hat[i] @ vh_hat.conj().T
 
-            w, v = np.linalg.eig(a)
-            w_hat, v_hat = np.linalg.eig(a_hat)
+            w, v = eig(a, compute_location=self.eig_compute_location)
+            w_hat, v_hat = eig(a_hat, compute_location=self.eig_compute_location)
 
             # Recover the full eigenvectors from the subspace.
-            wrs[i, : len(inds)] = get_device(w)
-            wls[i, : len(inds_hat)] = get_device(w_hat)
+            wrs[i, : len(inds)] = w
+            wls[i, : len(inds_hat)] = w_hat
 
-            v, v_hat = get_device(v), get_device(v_hat)
             vrs[i, :, : len(inds)] = u @ v
             vls[i, :, : len(inds_hat)] = xp.linalg.solve(v_hat, vh_hat).conj().T
 

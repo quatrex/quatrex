@@ -22,7 +22,6 @@ __all__ = [
     "dsbsparse_kernels",
     "dsbcoo_kernels",
     "dsbcsr_kernels",
-    "obc_kernels",
     "operator",
     "eig",
 ]

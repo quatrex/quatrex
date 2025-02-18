@@ -1,10 +1,8 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import numpy as np
-
 from qttools import NDArray, xp
+from qttools.kernels.eig import eig
 from qttools.nevp.nevp import NEVP
-from qttools.utils.gpu_utils import get_device, get_host
 
 
 class Full(NEVP):
@@ -23,7 +21,9 @@ class Full(NEVP):
 
     """
 
-    def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+    def _solve(
+        self, a_xx: tuple[NDArray, ...], eig_compute_location: str = "host"
+    ) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -34,6 +34,9 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
+        eig_compute_location : str, optional
+            The location where to compute the eigenvalues and eigenvectors.
+            Can be either "device" or "host". Only relevant if cupy is used.
 
         Returns
         -------
@@ -55,8 +58,7 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        w, v = np.linalg.eig(get_host(A))
-        w, v = get_device(w), get_device(v)
+        w, v = eig(A, compute_location=eig_compute_location)
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
@@ -65,7 +67,12 @@ class Full(NEVP):
 
         return w, v
 
-    def __call__(self, a_xx: tuple[NDArray, ...], left: bool = False) -> tuple:
+    def __call__(
+        self,
+        a_xx: tuple[NDArray, ...],
+        left: bool = False,
+        eig_compute_location: str = "host",
+    ) -> tuple:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -78,6 +85,9 @@ class Full(NEVP):
             from lowest to highest order.
         left : bool, optional
             Whether to solve additionally for the left eigenvectors.
+        eig_compute_location : str, optional
+            The location where to compute the eigenvalues and eigenvectors.
+            Can be either "device" or "host". Only relevant if cupy is used.
 
         Returns
         -------
@@ -97,12 +107,15 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
-        wrs, vrs = self._solve(a_xx)
+        wrs, vrs = self._solve(a_xx, eig_compute_location=eig_compute_location)
 
         if left:
             # solve for the left eigenvectors
             # by solving the right eigenvectors of the adjoint problem
-            wls, vls = self._solve(tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx))
+            wls, vls = self._solve(
+                tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
+                eig_compute_location=eig_compute_location,
+            )
             wls = wls.conj()
 
             return wrs, vrs, wls, vls

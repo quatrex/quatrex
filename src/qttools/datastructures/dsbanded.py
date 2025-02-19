@@ -449,7 +449,7 @@ class DSBanded(DSBSparse):
         requested_dense_col_end = (big_block_j + 1) * BIG_BLOCK_SIZE
 
         blk_row_start = requested_dense_row_start // BLK_SIZE
-        blk_row_end = requested_dense_row_end // BLK_SIZE
+        blk_row_end = (requested_dense_row_end + BLK_SIZE - 1) // BLK_SIZE
 
         # iterate over the block rows
         for blk_i in range(blk_row_start, blk_row_end):
@@ -476,9 +476,11 @@ class DSBanded(DSBSparse):
             right_offset = max(0, dense_col_end - requested_dense_col_end)
 
             # get the block row from the dense matrix
+            start_block = (blk_i - blk_row_start) * BLK_SIZE
+            end_block = min(BIG_BLOCK_SIZE, (blk_i + 1 - blk_row_start) * BLK_SIZE)
             blk_row = A_dense_block[
                 :,
-                (blk_i - blk_row_start) * BLK_SIZE : (blk_i + 1 - blk_row_start) * BLK_SIZE,
+                start_block : end_block,
                 :,
             ]
 
@@ -488,9 +490,11 @@ class DSBanded(DSBSparse):
                 blk_row = blk_row[:, :, left_offset : r - right_offset]
 
             # copy the block row to the tall and skinny matrix
+            start_banded = max(blk_i * BLK_SIZE, requested_dense_row_start)
+            end_banded = min((blk_i + 1) * BLK_SIZE, requested_dense_row_end)
             A_blk_tallNSkinny[
                 :,
-                blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE,
+                start_banded : end_banded,
                 left_offset : r - right_offset,
             ] = blk_row
 
@@ -501,15 +505,12 @@ class DSBanded(DSBSparse):
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
-
-        if xp.any(self.block_sizes != other.block_sizes):
-            raise ValueError("Block sizes do not match.")
-
-        if xp.any(self.rows != other.rows):
-            raise ValueError("Row indices do not match.")
-
-        if xp.any(self.cols != other.cols):
-            raise ValueError("Column indices do not match.")
+        
+        if self.banded_type != other.banded_type:
+            raise ValueError("Banded types do not match.")
+        
+        if self.banded_block_size != other.banded_block_size:
+            raise ValueError("Banded block sizes do not match.")
 
     def __neg__(self) -> "DSBanded":
         """Negation of the data."""
@@ -584,20 +585,6 @@ class DSBanded(DSBSparse):
             )
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
-        # Compute canonical ordering of the matrix.
-        inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
-        canonical_rows = self.rows[inds_bcoo2canonical]
-        canonical_cols = self.cols[inds_bcoo2canonical]
-        # Compute the index for sorting by the new block-sizes.
-        inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
-            canonical_rows, canonical_cols, block_sizes
-        )
-        # Mapping directly from original block-ordering to the new
-        # block-ordering is achieved by chaining the two mappings.
-        inds_bcoo2bcoo = inds_bcoo2canonical[inds_canonical2bcoo]
-        self.data[:] = self.data[..., inds_bcoo2bcoo]
-        self.rows = self.rows[inds_bcoo2bcoo]
-        self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
         self._block_sizes = xp.asarray(block_sizes, dtype=int)
         self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))

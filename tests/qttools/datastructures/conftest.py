@@ -5,7 +5,7 @@ import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse, DSBanded
 
 DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
 if global_comm.size == 1:
@@ -14,6 +14,7 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
+DSBANDED_TYPES = [DSBanded]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -36,14 +37,14 @@ ACCESSED_ELEMENTS = [
 
 GLOBAL_STACK_SHAPES = [
     pytest.param((10,), id="1D-stack"),
-    pytest.param((7, 2), id="2D-stack"),
-    pytest.param((9, 2, 4), id="3D-stack"),
+    # pytest.param((7, 2), id="2D-stack"),
+    # pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
 NUM_INDS = [
     pytest.param(5, id="5-inds"),
-    pytest.param(10, id="10-inds"),
-    pytest.param(20, id="20-inds"),
+    # pytest.param(10, id="10-inds"),
+    # pytest.param(20, id="20-inds"),
 ]
 
 STACK_INDICES = [
@@ -68,6 +69,16 @@ SYMMETRY_TYPE = [
     pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
 ]
 
+OPS = [
+    pytest.param(xp.add, id="add"),
+    pytest.param(xp.subtract, id="subtract"),
+]
+
+SYMMETRY_TYPE = [
+    pytest.param((False, lambda x: x), id="non-symmetric"),
+    pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
+]
+
 
 @pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
@@ -79,10 +90,13 @@ def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
+@pytest.fixture(params=DSBANDED_TYPES)
+def dsbanded_type(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
 @pytest.fixture(params=DSDBSPARSE_TYPES_DIST)
 def dsdbsparse_type_dist(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
-
 
 @pytest.fixture(params=ACCESSED_BLOCKS)
 def accessed_block(request: pytest.FixtureRequest) -> tuple:

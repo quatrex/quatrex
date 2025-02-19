@@ -44,12 +44,15 @@ class DSBanded(DSBSparse):
         return_dense: bool = True,
     ) -> None:
         """Initializes the DSBanded matrix."""
-        super().__init__(data, block_sizes, global_stack_shape, return_dense)
+        sparse_data = xp.reshape(data, (data.shape[0], -1))
+        super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
 
         self.half_bandwidth = half_bandwidth
         self.banded_block_size = banded_block_size
         self.half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size  # @czox's r_blk
         assert data.shape[-1] == (2 * self.half_block_bandwidth + 1) * banded_block_size
+
+        self.banded_shape = data.shape[-2:]
 
         assert banded_type in (0, 1)
         self.banded_type = banded_type
@@ -90,18 +93,25 @@ class DSBanded(DSBSparse):
             The requested items.
 
         """
-
-        raise NotImplementedError
-    
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-            self.rows, self.cols, rows, cols
-        )
-        if max_counts not in (0, 1):
-            raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
-            )
+        # inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+        #     self.rows, self.cols, rows, cols
+        # )
+        # if max_counts not in (0, 1):
+        #     raise IndexError(
+        #         "Request contains repeated indices. Only unique indices are supported."
+        #     )
 
         data_stack = self.data[*stack_index]
+
+        value_inds = xp.arange(len(rows), dtype=xp.int32)
+
+        block_rows = rows // self.banded_block_size
+        block_cols = cols // self.banded_block_size
+        block_dist = block_rows - block_cols
+        block_colidx = block_dist + self.half_block_bandwidth
+        block_coloff = cols % self.banded_block_size
+
+        inds = rows * self.banded_shape[1] + block_colidx * self.banded_block_size + block_coloff
 
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
@@ -154,15 +164,23 @@ class DSBanded(DSBSparse):
 
         """
 
-        raise NotImplementedError
+        # inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+        #     self.rows, self.cols, rows, cols
+        # )
+        # if max_counts not in (0, 1):
+        #     raise IndexError(
+        #         "Request contains repeated indices. Only unique indices are supported."
+        #     )
 
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-            self.rows, self.cols, rows, cols
-        )
-        if max_counts not in (0, 1):
-            raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
-            )
+        value_inds = xp.arange(len(rows), dtype=xp.int32)
+
+        block_rows = rows // self.banded_block_size
+        block_cols = cols // self.banded_block_size
+        block_dist = block_rows - block_cols
+        block_colidx = block_dist + self.half_block_bandwidth
+        block_coloff = cols % self.banded_block_size
+
+        inds = rows * self.banded_shape[1] + block_colidx * self.banded_block_size + block_coloff
 
         if len(inds) == 0:
             # Nothing to do if the element is not in the matrix.
@@ -290,6 +308,11 @@ class DSBanded(DSBSparse):
         #     data_stack[..., block_slice],
         # )
 
+        # if data_stack.ndim > 1:
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
+        # else:
+        #     data_stack = xp.reshape(data_stack, (1, *self.banded_shape))
+
         if not self.banded_type == 0:
             raise NotImplementedError
 
@@ -302,7 +325,9 @@ class DSBanded(DSBSparse):
         A_dense_block = block
 
         if len(A_blk_tallNSkinny.shape) == 2:
-            A_blk_tallNSkinny = A_blk_tallNSkinny.unsqueeze(0)
+            A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
+        if A_dense_block.ndim == 2:
+            A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
         batch, M, r = A_blk_tallNSkinny.shape
 
         # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
@@ -313,7 +338,7 @@ class DSBanded(DSBSparse):
         requested_dense_col_end = (big_block_j + 1) * BIG_BLOCK_SIZE
 
         blk_row_start = requested_dense_row_start // BLK_SIZE
-        blk_row_end = requested_dense_row_end // BLK_SIZE
+        blk_row_end = (requested_dense_row_end + BLK_SIZE - 1) // BLK_SIZE
 
         # iterate over the block rows
         for blk_i in range(blk_row_start, blk_row_end):
@@ -340,21 +365,25 @@ class DSBanded(DSBSparse):
             right_offset = max(0, dense_col_end - requested_dense_col_end)
 
             # get the block row from the tallAndSkinny matrix
+            start_banded = max(blk_i * BLK_SIZE, requested_dense_row_start)
+            end_banded = min((blk_i + 1) * BLK_SIZE, requested_dense_row_end)
             blk_row = A_blk_tallNSkinny[
                 :,
-                blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE,
+                start_banded : end_banded,
                 left_offset : r - right_offset,
             ]
 
             # apply padding if needed
             if left_padding > 0 or right_padding > 0:
                 # blk_row = torch.nn.functional.pad(blk_row, (left_padding, right_padding))
-                blk_row = xp.pad(blk_row, (left_padding, right_padding), 'constant', constant_values=0)
+                blk_row = xp.pad(blk_row, ((0, 0), (0, 0), (left_padding, right_padding)), 'constant', constant_values=0)
 
             # copy the block row to the big block matrix
+            start_block = (blk_i - blk_row_start) * BLK_SIZE
+            end_block = min(BIG_BLOCK_SIZE, (blk_i + 1 - blk_row_start) * BLK_SIZE)
             A_dense_block[
                 :,
-                (blk_i - blk_row_start) * BLK_SIZE : (blk_i + 1 - blk_row_start) * BLK_SIZE,
+                start_block: end_block,
                 :,
             ] = blk_row
 
@@ -396,6 +425,7 @@ class DSBanded(DSBSparse):
             raise NotImplementedError
         
         data_stack = self.data[*stack_index]
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
 
         big_block_i = row
         big_block_j = col
@@ -406,7 +436,9 @@ class DSBanded(DSBSparse):
         A_dense_block = block
 
         if len(A_blk_tallNSkinny.shape) == 2:
-            A_blk_tallNSkinny = A_blk_tallNSkinny.unsqueeze(0)
+            A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
+        if A_dense_block.ndim == 2:
+            A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
         batch, M, r = A_blk_tallNSkinny.shape
 
         # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
@@ -697,8 +729,6 @@ class DSBanded(DSBSparse):
 
         """
 
-        raise NotImplementedError
-
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         section_size = stack_section_sizes[comm.rank]
@@ -712,20 +742,71 @@ class DSBanded(DSBSparse):
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
-        # Compute the block-sorting index.
-        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-            coo.row, coo.col, block_sizes
-        )
+        # # Compute the block-sorting index.
+        # block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+        #     coo.row, coo.col, block_sizes
+        # )
 
-        data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = coo.data[block_sort_index]
-        rows = coo.row[block_sort_index]
-        cols = coo.col[block_sort_index]
+        half_bandwidth = int(xp.abs(coo.row - coo.col).max())
+        banded_block_size = 16
+        banded_type = 0
+        half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
+        banded_rows = ((coo.shape[0] + banded_block_size - 1) // banded_block_size) * banded_block_size
+        banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
+        banded_shape = (banded_rows, banded_cols)
+
+        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.data.dtype)
+        dense[coo.row, coo.col] = coo.data
+        data = xp.zeros(local_stack_shape + banded_shape, dtype=coo.data.dtype)
+        # data[..., :] = coo.data[block_sort_index]
+        # rows = coo.row[block_sort_index]
+        # cols = coo.col[block_sort_index]
+
+        A = dense
+        A_blk_tallNSkinny = data
+        BLK_SIZE = banded_block_size
+        r_block = half_block_bandwidth
+
+        if len(A.shape) == 2:
+            A = xp.reshape(A, (1,) + A.shape)
+        batch, M, N = A.shape
+        # allocate memory for the compressed matrix
+        # A_blk_tallNSkinny = torch.zeros(
+        #     (batch, M, (2 * r_block + 1) * BLK_SIZE), dtype=A.dtype, device=A.device
+        # )
+
+        # iterate over the block rows
+        for blk_i in range(0, M // BLK_SIZE):
+            # copy the block row from the dense matrix to the tall and skinny matrix
+            # while shifting the elements to the correct positions
+            blk_col_start = blk_i - r_block
+            blk_col_end = blk_i + r_block + 1
+
+            col_start = blk_col_start * BLK_SIZE
+            col_end = blk_col_end * BLK_SIZE
+
+            # calculate the valid range of columns for the current block row and, if needed, pad with zeros
+            left_padding = max(0, -col_start)
+            right_padding = max(0, col_end - N)
+            col_start = max(0, col_start)
+            col_end = min(N, col_end)
+
+            # get the block row from the dense matrix
+            blk_row = A[:, blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, col_start:col_end]
+
+            # apply padding if needed
+            if left_padding > 0 or right_padding > 0:
+                # blk_row = torch.nn.functional.pad(blk_row, (left_padding, right_padding))
+                blk_row = xp.pad(blk_row, ((0, 0), (0, 0), (left_padding, right_padding)), 'constant', constant_values=0)
+
+            # copy the block row to the tall and skinny matrix
+            A_blk_tallNSkinny[:, blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row
 
         return cls(
             data=data,
-            rows=rows,
-            cols=cols,
+            half_bandwidth=half_bandwidth,
+            banded_block_size=banded_block_size,
+            banded_type=banded_type,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )

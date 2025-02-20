@@ -4,7 +4,9 @@ from pathlib import Path
 from qttools import NDArray, _DType, xp
 
 
-def read_hr_dat(path: Path, return_all: bool = False, dtype: _DType = xp.complex128) -> tuple[NDArray, ...]:
+def read_hr_dat(
+    path: Path, return_all: bool = False, dtype: _DType = xp.complex128, read_fast=False
+) -> tuple[NDArray, ...]:
     """Parses the contents of a `seedname_hr.dat` file.
 
     The first line gives the date and time at which the file was
@@ -29,6 +31,12 @@ def read_hr_dat(path: Path, return_all: bool = False, dtype: _DType = xp.complex
         localized basis. When `True`, the degeneracies and the
         Wigner-Seitz cell indices are also returned. Defaults to
         `False`.
+    dtype : dtype, optional
+        The data type of the Hamiltonian matrix elements. Defaults to
+        `numpy.complex128`.
+    read_fast : bool, optional
+        Whether to asume that the file is well-formed and all the
+        data is sorted correctly. Defaults to `False`.
 
     Returns
     -------
@@ -40,41 +48,37 @@ def read_hr_dat(path: Path, return_all: bool = False, dtype: _DType = xp.complex
         The Wigner-Seitz cell indices.
 
     """
-    with open(path, "r") as f:
-        lines = f.readlines()
 
     # Strip info from header.
-    num_wann = int(lines[1])
-    nrpts = int(lines[2])
-    num_elements = num_wann**2 * nrpts
+    num_wann, nrpts = xp.loadtxt(path, skiprows=1, max_rows=2, dtype=int)
 
-    # Read degeneracy info.
-    deg = xp.ndarray([])
+    # Read wannier data (skipping degeneracy info).
     deg_rows = int(xp.ceil(nrpts / 15.0))
-    for i in range(deg_rows):
-        xp.append(deg, list(map(int, lines[i + 3].split())))
+    wann_dat = xp.loadtxt(path, skiprows=3 + deg_rows)
 
-    # Preliminary pass to find number of Wigner-Seitz cells in all
-    # directions.
-    R = xp.zeros((num_elements, 3), dtype=xp.int8)
-    for i in range(num_elements):
-        entries = lines[3 + deg_rows + i].split()
-        R[i, :] = list(map(int, entries[:3]))
-
+    # Assign R
+    if read_fast:
+        R = wann_dat[:: num_wann**2, :3].astype(int)
+    else:
+        R = wann_dat[:, :3].astype(int)
     Rs = xp.subtract(R, R.min(axis=0))
     N1, N2, N3 = Rs.max(axis=0) + 1
 
     # Obtain Hamiltonian elements.
-    hR = xp.zeros((N1, N2, N3, num_wann, num_wann), dtype=dtype)
-    for i in range(num_elements):
-        entries = lines[3 + deg_rows + i].split()
-        R1, R2, R3 = map(int, entries[:3])
-        m, n = map(int, entries[3:5])
-        hR_mn_real, hR_mn_imag = map(float, entries[5:])
-        hR[R1, R2, R3, m - 1, n - 1] = hR_mn_real + 1j * hR_mn_imag
+    if read_fast:
+        hR = wann_dat[:, 5] + 1j * wann_dat[:, 6]
+        hR = hR.reshape(N1, N2, N3, num_wann, num_wann).swapaxes(-2, -1)
+        hR = xp.roll(hR, shift=(N1 // 2 + 1, N2 // 2 + 1, N3 // 2 + 1), axis=(0, 1, 2))
+    else:
+        hR = xp.zeros((N1, N2, N3, num_wann, num_wann), dtype=dtype)
+        for line in wann_dat:
+            R1, R2, R3 = line[:3].astype(int)
+            m, n = line[3:5].astype(int)
+            hR_mn_real, hR_mn_imag = line[5:]
+            hR[R1, R2, R3, m - 1, n - 1] = hR_mn_real + 1j * hR_mn_imag
 
     if return_all:
-        return hR, deg, xp.unique(R, axis=0)
+        return hR, xp.unique(R, axis=0)
     return hR
 
 

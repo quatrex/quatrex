@@ -28,7 +28,39 @@ from quatrex.core.quatrex_config import (
     QuatrexConfig,
 )
 
-def read_xyz(filename):
+
+def load_contact(filename):
+
+    corner1 = []
+    corner2 = []
+
+    direction = []
+    name = []
+
+    with open(filename, "rt") as myfile:
+        
+        n = int(myfile.readline())
+        for i in range(n):
+            name.append(myfile.readline().rstrip('\n'))
+            corner1.append(xp.asarray(myfile.readline().split(),dtype=float))
+            corner2.append(xp.asarray(myfile.readline().split(),dtype=float))
+            direction.append(xp.asarray(myfile.readline().split(),dtype=float))
+
+    return n,name, corner1, corner2, direction
+
+def distributed_read_orbitals(filename):
+
+
+    if comm.rank == 0:
+        orbitals = xp.reshape(xp.loadtxt(filename,dtype=xp.int32),(1,-1))
+    else:
+        orbitals = None
+    
+    orbitals = comm.bcast(orbitals, root=0)
+
+    return orbitals
+
+def distributed_read_xyz(filename):
     ''' 
     Reads data from xyz files
 
@@ -47,36 +79,43 @@ def read_xyz(filename):
     coordsType = []
     lattice = []
 
-    with open(filename, "rt") as myfile:
-        for line in myfile:
-            # num_atoms line
-            if len(line.split()) == 1:
-                pass
-            # blank line
-            elif len(line.split()) == 0:
-                pass
-            # line with cell parameters
-            elif 'Lattice=' in line:
-                lattice = line.replace('Lattice="', '')
-                lattice = lattice.replace('"', '')
-                lattice = lattice.split()[0:9]
-                lattice = [float(item) for item in lattice]
-                lattice = xp.array(lattice)
-                lattice = xp.reshape(lattice, (3, -1))
+    if comm.rank == 0:
 
-            # line with atoms and positions
-            elif len(line.split()) == 4:
-                c = line.split()[0]
-                if atoms.count(c) == 0:
-                    atoms.append(c)
-                coordsType.append(atoms.index(c))
-                coords.append(line.split()[1:])
-            else:
-                pass
+        with open(filename, "rt") as myfile:
+            for line in myfile:
+                # num_atoms line
+                if len(line.split()) == 1:
+                    pass
+                # blank line
+                elif len(line.split()) == 0:
+                    pass
+                # line with cell parameters
+                elif 'Lattice=' in line:
+                    lattice = line.replace('Lattice="', '')
+                    lattice = lattice.replace('"', '')
+                    lattice = lattice.split()[0:9]
+                    lattice = [float(item) for item in lattice]
+                    lattice = xp.array(lattice)
+                    lattice = xp.reshape(lattice, (3, -1))
 
-    coords = xp.asarray(coords, dtype=xp.float64)
-    coordsType = xp.asarray(coordsType, dtype=xp.int16)
-    lattice = xp.asarray(lattice, dtype=xp.float64)
+                # line with atoms and positions
+                elif len(line.split()) == 4:
+                    c = line.split()[0]
+                    if atoms.count(c) == 0:
+                        atoms.append(c)
+                    coordsType.append(atoms.index(c))
+                    coords.append(line.split()[1:])
+                else:
+                    pass
+
+        coords = xp.asarray(coords, dtype=xp.float64)
+        coordsType = xp.asarray(coordsType, dtype=xp.int16)
+        lattice = xp.asarray(lattice, dtype=xp.float64)
+
+    lattice = comm.bcast(lattice, root=0)
+    atoms = comm.bcast(atoms, root=0)
+    coords = comm.bcast(coords, root=0)
+    coordsType = comm.bcast(coordsType, root=0)
 
     return lattice, atoms, coords, coordsType
 
@@ -96,21 +135,22 @@ class Contact:
     mask_orb_i: NDArray = None
     mask_orb_j: NDArray = None
 
-    def __init__(self, corner_1, corner_2, direction):
+    def __init__(self, corner_1, corner_2, direction, name):
         self.corner_1 = corner_1
         self.corner_2 = corner_2
         self.direction = direction
+        self.name = name
 
     def compute_mask(self,coords,orbitals,delta_corner = xp.array([0,0,0])):
 
         shifted_corner_1 = self.corner_1 + delta_corner
         shifted_corner_2 = self.corner_2 + delta_corner
 
-        mask_atoms = coords[:,0] > shifted_corner_1[0]
+        mask_atoms = coords[:,0] >= shifted_corner_1[0]
         mask_atoms &= coords[:,0] < shifted_corner_2[0]
-        mask_atoms &= coords[:,1] > shifted_corner_1[1]
+        mask_atoms &= coords[:,1] >= shifted_corner_1[1]
         mask_atoms &= coords[:,1] < shifted_corner_2[1]
-        mask_atoms &= coords[:,2] > shifted_corner_1[2]
+        mask_atoms &= coords[:,2] >= shifted_corner_1[2]
         mask_atoms &= coords[:,2] < shifted_corner_2[2]
 
         mask_atoms = xp.nonzero(mask_atoms)[0]
@@ -136,6 +176,12 @@ class Contact:
         delta_corner = xp.multiply(-self.direction,(self.corner_2-self.corner_1))
         self.mask_atoms_j, self.mask_orb_j = self.compute_mask(coords,orbitals,delta_corner)
 
+        if self.mask_atoms_i.shape[1] != self.mask_atoms_j.shape[1]:
+            raise ValueError(
+                f"The number of {self.name} contact atoms in the slab i ({self.mask_atoms_i.shape[1]}) and slab j ({self.mask_atoms_j.shape[1]}) are different."
+            )
+
+        print(f"Contact {self.name} has {self.mask_atoms_i.shape[1]} atoms and {self.mask_orb_i.shape[1]} orbitals", flush=True) if comm.rank == 0 else None
     
 
 @dataclass
@@ -148,7 +194,9 @@ class Observables:
     hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
     
-    electron_transmission: NDArray = None
+    electron_transmission : NDArray = None
+    electron_transmission_labels = []
+
     electron_DOS: NDArray = None
 
     valence_band_edges: NDArray = None
@@ -193,9 +241,6 @@ class QTBM:
         self.local_energies = get_local_slice(self.electron_energies)
         self.obc = self._configure_obc(getattr(quatrex_config, "electron").obc)
 
-        self.observables.electron_transmission = xp.zeros_like(self.local_energies)
-        self.observables.electron_DOS = xp.zeros_like(self.local_energies)
-
         # Load the device Hamiltonian.
         self.hamiltonian_sparray = distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"
@@ -217,20 +262,20 @@ class QTBM:
         self.hamiltonian_sparray = self.hamiltonian_sparray.tocsr()
         self.overlap_sparray = self.overlap_sparray.tocsr()
 
-        self.lattice, self.atoms, self.coords, self.coordstType = read_xyz(quatrex_config.input_dir / "lattice.xyz")
+        self.lattice, self.atoms, self.coords, self.coordstType = distributed_read_xyz(quatrex_config.input_dir / "lattice.xyz")
 
-        self.orbitals_per_at = xp.array([13]) ##PUT INTO COMMAND FILE
+
+        self.orbitals_per_at = distributed_read_orbitals(quatrex_config.input_dir / "orb.dat")
 
         #create a vector with the starting orbital for each atom
         self.orbitals_vec = xp.concatenate((xp.array([0]),xp.cumsum(self.orbitals_per_at[self.coordstType])),dtype=xp.int32)
-
 
         # Check that the overlap matrix and Hamiltonian matrix match.
         if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:
             raise ValueError(
                 "Overlap matrix and Hamiltonian matrix have different shapes."
             )
-        
+
         #Load potential (TODO)
 
         # Contacts.
@@ -238,15 +283,33 @@ class QTBM:
         self.eta_obc = quatrex_config.electron.eta_obc
 
         # Extract contact Hamiltonians. (TODO)
-
-        self.n_block = 234 ##FOR TESTING ONLY
+        
         ## CREATE MASKS FOR EVERY CONTACT (MOVE TO CONFIG SOON)
 
-        self.contact1 = Contact(xp.array([-11,-6,-6]),xp.array([12.12,-2,-2]),xp.array([-1,0,0]))
-        self.contact1.set_mask(self.coords, self.orbitals_vec)
+        self.n_cont,self.cont_names,self.corner1,self.corner2,self.corner_direction = load_contact(quatrex_config.input_dir / "cont.dat")
 
-        self.contact2 = Contact(xp.array([80.7,-6,-6]),xp.array([103.82,-2,-2]),xp.array([1,0,0]))
-        self.contact2.set_mask(self.coords, self.orbitals_vec)
+        self.contacts = []
+
+        for n in range(self.n_cont):
+            self.contacts.append(Contact(self.corner1[n],self.corner2[n],self.corner_direction[n],self.cont_names[n]))
+            self.contacts[n].set_mask(self.coords, self.orbitals_vec)
+
+
+        self.n_transmissions = int((self.n_cont**2-self.n_cont)/2)
+        #This part is bad, I need to make it neat
+        cont_1 = 0
+        cont_2 = 1
+        for n in range(self.n_transmissions):
+            self.observables.electron_transmission_labels.append(self.contacts[cont_1].name[0] + '->' + self.contacts[cont_2].name[0])
+
+            cont_2 += 1
+
+            if cont_2 == self.n_cont:
+                cont_1 += 1
+                cont_2 = cont_1+1
+
+        self.observables.electron_transmission = xp.zeros((self.n_transmissions,self.local_energies.shape[0]),dtype=xp.float64)
+        self.observables.electron_DOS = xp.zeros((self.n_cont,self.local_energies.shape[0]),dtype=xp.float64)
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -349,6 +412,35 @@ class QTBM:
             )
 
         return obc_solver
+    
+    def compute_observables(self,phi,inj_ind,i):
+
+        #Compute transmissions for all the possible contact couples
+        cont_1 = 0
+        cont_2 = 1
+        for n in range(self.n_transmissions):
+
+            phi_1 = phi[self.contacts[cont_2].mask_orb_j.T,inj_ind[cont_1]]
+            phi_2 = phi[self.contacts[cont_2].mask_orb_i.T,inj_ind[cont_1]]
+
+            T01 = self.system_matrix[self.contacts[cont_2].mask_orb_j.T,self.contacts[cont_2].mask_orb_i]
+
+            if(phi_1.size != 0):
+                self.observables.electron_transmission[n,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
+            
+            cont_2 += 1
+
+            if cont_2 == self.n_cont:
+                cont_1 += 1
+                cont_2 = cont_1+1
+
+        #Compute DOS
+        for n in range(self.n_cont):
+        
+            phi_D = phi[:,inj_ind[n]].squeeze()
+
+            if(phi_D.size != 0):
+                self.observables.electron_DOS[n,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), self.overlap_sparray @ phi_D))/(2*xp.pi))
 
     def run(self) -> None:
         """Runs the QTBM"""
@@ -374,23 +466,23 @@ class QTBM:
 
             times.append(time.perf_counter())
 
+            S = []
+            inj = []
+            inj_ind = []
             # Compute the boundary self-energy and the injection vector
-            
-            S_L, inj_L = self.obc(
-            self.system_matrix[self.contact1.mask_orb_i.T,self.contact1.mask_orb_i].toarray(),
-            self.system_matrix[self.contact1.mask_orb_i.T,self.contact1.mask_orb_j].toarray(),
-            self.system_matrix[self.contact1.mask_orb_j.T,self.contact1.mask_orb_i].toarray(),
-            "left",
-            return_inj = True,
-            )
-
-            S_R, inj_R = self.obc(
-            self.system_matrix[self.contact2.mask_orb_i.T,self.contact2.mask_orb_i].toarray(),
-            self.system_matrix[self.contact2.mask_orb_i.T,self.contact2.mask_orb_j].toarray(),
-            self.system_matrix[self.contact2.mask_orb_j.T,self.contact2.mask_orb_i].toarray(),
-            "right",
-            return_inj = True,
-            )
+            ind_0 = 0
+            for n in range(self.n_cont):
+                S_n, inj_n = self.obc(
+                    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray(),
+                    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray(),
+                    self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray(),
+                    "left",
+                    return_inj = True,
+                )
+                S.append(S_n)
+                inj.append(inj_n)
+                inj_ind.append(xp.arange(ind_0,ind_0+inj_n.shape[1])[None,:])
+                ind_0 += inj_n.shape[1]
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -402,12 +494,11 @@ class QTBM:
             times.append(time.perf_counter())
             # Set up sytem matrix and rhs for electron solver.
 
-            self.system_matrix[:self.n_block, :self.n_block] -= S_L
-            self.system_matrix[-self.n_block:, -self.n_block:] -= S_R
+            inj_V = xp.zeros((self.system_matrix.shape[0],ind_0), dtype=xp.complex128)
 
-            inj_V = xp.zeros((self.system_matrix.shape[0],inj_L.shape[1]+inj_R.shape[1]), dtype=xp.complex128)
-            inj_V[:self.n_block,:inj_L.shape[1]] = inj_L
-            inj_V[-self.n_block:,-inj_R.shape[1]:] = inj_R 
+            for n in range(self.n_cont):
+                self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i] -= S[n]
+                inj_V[self.contacts[n].mask_orb_i.T,inj_ind[n]] = inj[n]
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -419,7 +510,9 @@ class QTBM:
             times.append(time.perf_counter())
             # Solve for the wavefunction
 
-            self.phi = spsolve(self.system_matrix, inj_V)
+            phi = spsolve(self.system_matrix, inj_V)
+
+            self.compute_observables(phi,inj_ind,i)
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -427,17 +520,6 @@ class QTBM:
                 if comm.rank == 0
                 else None
             )
-
-            # Compute transmission and DOS
-            T01 = self.system_matrix[:self.n_block,self.n_block:2*self.n_block]
-
-            phi_L = self.phi[:self.n_block,:inj_L.shape[1]]
-            phi_L_D = self.phi[:,:inj_L.shape[1]]
-            phi_L_2 = self.phi[self.n_block:2*self.n_block,:inj_L.shape[1]]
-
-            if(phi_L.size != 0):
-                self.observables.electron_transmission[i] = xp.trace(2*xp.imag(phi_L.T.conj() @ T01 @phi_L_2))
-                self.observables.electron_DOS[i]=xp.real(xp.sum(xp.multiply(phi_L_D.conj(), self.overlap_sparray @ phi_L_D))/(2*xp.pi))
 
             t_iteration = time.perf_counter() - times.pop()
             (

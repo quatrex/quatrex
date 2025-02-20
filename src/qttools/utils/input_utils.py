@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from pathlib import Path
+
 from qttools import NDArray, _DType, xp
 
 
@@ -82,59 +83,143 @@ def read_hr_dat(
     return hR
 
 
-def create_hamiltonian(hR: NDArray, num_transport_cells: int, cutoff: float = xp.inf, coords: NDArray = None) -> list[NDArray]:
+def get_hamiltonian_block(
+    hr: xp.ndarray,
+    supercell_size: tuple,
+    global_shift: tuple,
+) -> xp.ndarray:
+    """Constructs a supercell hamiltonian block from an hr array.
 
-    connections = hR.shape[2] // 2
-    num_unit_cells_per_supercell = connections + 1
-    wann_rows = hR.shape[3]
-    wann_cols = hR.shape[4]
-    block_rows = num_unit_cells_per_supercell * wann_rows
-    block_cols = num_unit_cells_per_supercell * wann_cols
+    Parameters
+    ----------
+    hr : np.ndarray
+        Wannier Hamiltonian.
+    supercell_size : tuple
+        Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
+    global_shift : tuple
+        Shift in the supercell system. If you want a
+        R-shift of 1 cell in x direction, you would pass (1, 0,
+        0).
 
-    # Create the diag, upper, and lower blocks.
-    diag_block = xp.zeros((block_rows, block_cols), dtype=hR.dtype)
-    upper_block = xp.zeros((block_rows, block_cols), dtype=hR.dtype)
-    lower_block = xp.zeros((block_rows, block_cols), dtype=hR.dtype)
-    for i in range(num_unit_cells_per_supercell):
-        sl_i = slice(i * wann_rows, (i + 1) * wann_rows)
-        for j in range(i - connections, 0):
-            sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-            lower_block[sl_i, sl_j] = hR[0, 0, j - i]
-        for j in range(0, num_unit_cells_per_supercell):
-            sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-            diag_block[sl_i, sl_j] = hR[0, 0, j - i]
-        for j in range(num_unit_cells_per_supercell, i + connections + 1):
-            sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-            upper_block[sl_i, sl_j] = hR[0, 0, j - i]
-    
+    Returns
+    -------
+    np.ndarray
+        The supercell hamiltonian block.
+
+    """
+    # Check if supercell makes sense
+    if not (
+        (hr.shape[:-2] >= xp.array(supercell_size)) & (0 < xp.array(supercell_size))
+    ).all():
+        raise ValueError(
+            f"Supercell size [{supercell_size}] is not compatible with hr shape [{hr.shape}]."
+        )
+    local_shifts = xp.array(list(xp.ndindex(supercell_size)))
+    global_shift = xp.multiply(global_shift, supercell_size)
+
+    rows = []
+    for r_i in local_shifts:
+        row = []
+        for r_j in local_shifts:
+            try:
+                block = hr[tuple(r_j - r_i + global_shift)]
+            except IndexError:
+                block = xp.zeros(hr.shape[-2:], dtype=hr.dtype)
+            row.append(block)
+        rows.append(row)
+    return xp.block(rows)
+
+
+def create_coordinate_grid(
+    wannier_centers: NDArray, super_cell: tuple, lattice_vectors: NDArray
+) -> NDArray:
+    """Creates a grid of coordinates for Wannier functions in a supercell."""
+    num_wann = wannier_centers.shape[0]
+    grid = xp.zeros((xp.prod(super_cell) * num_wann, 3), dtype=xp.float64)
+    for i, cell_ind in enumerate(xp.ndindex(*super_cell)):
+        grid[i * num_wann : (i + 1) * num_wann, :] = (
+            wannier_centers + xp.array(cell_ind) @ lattice_vectors
+        )
+    return grid
+
+
+def create_hamiltonian(
+    hR: NDArray,
+    num_transport_cells: int,
+    transport_dir: int | str = "x",
+    transport_cell: list = None,
+    cutoff: float = xp.inf,
+    coords: NDArray = None,
+    lattice_vectors: NDArray = None,
+) -> list[NDArray]:
+    """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
+    The transport cell (same as supercell) is the cell that is repeated in the transport direction,
+    and is only connected to nearest-neighboring cells.
+
+    Parameters
+    ----------
+    hR : np.ndarray
+        Wannier Hamiltonian.
+    num_transport_cells : int
+        Number of transport cells.
+    transport_dir : int or str, optional
+        Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
+    transport_cell : tuple, optional
+        Size of the transport cell. E.g. [2, 2, 1] for a 2x2 xy-transport cell.
+    cutoff : float, optional
+        Cutoff distance for connections between wannier functions. Defaults to `np.inf`.
+    coords : np.ndarray, optional
+        Coordinates of the Wannier functions in a unit cell. Defaults to `None`.
+    lattice_vectors : np.ndarray, optional
+        Lattice vectors of the system. Defaults to `None`.
+
+    Returns
+    -------
+    list[np.ndarray]
+        The block-tridiagonal Hamiltonian matrix.
+    """
+    if cutoff is not None and coords is None and lattice_vectors is None:
+        # Print a warning if cutoff is set but coords and lattice_vectors are not.
+        print(
+            "Cutoff is set but coords and lattice_vectors are not provided. No cutoff will be applied.",
+            flush=True,
+        )
+
+    if isinstance(transport_dir, str):
+        transport_dir = "xyz".index(transport_dir)
+
+    if transport_cell is None:
+        transport_cell = [1, 1, 1]
+        # NOTE: Can also do without the + 1.
+        transport_cell[transport_dir] = hR.shape[transport_dir] // 2 + 1
+        transport_cell = tuple(transport_cell)
+
+    upper_ind = [0, 0, 0]
+    upper_ind[transport_dir] = 1
+    upper_ind = tuple(upper_ind)
+    lower_ind = [0, 0, 0]
+    lower_ind[transport_dir] = -1
+    lower_ind = tuple(lower_ind)
+
+    diag_block = get_hamiltonian_block(hR, transport_cell, (0, 0, 0))
+    upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
+    lower_block = get_hamiltonian_block(hR, transport_cell, lower_ind)
+
     # Enforce cutoff.
-    # NOTE: Assuming single transport direction and coordinate.
-    if coords is not None and cutoff < xp.inf:
-        unit_cell_dist = xp.abs(xp.subtract.outer(coords, coords))
-        unit_cell_width = unit_cell_dist.max()  # NOTE: Can be constant.
-        diag_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
-        upper_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
-        lower_dist = xp.empty((block_rows, block_cols), dtype=unit_cell_dist.dtype)
-        for i in range(num_unit_cells_per_supercell):
-            sl_i = slice(i * wann_rows, (i + 1) * wann_rows)
-            for j in range(i - connections, 0):
-                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-                lower_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
-            for j in range(0, num_unit_cells_per_supercell):
-                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-                diag_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
-            for j in range(num_unit_cells_per_supercell, i + connections + 1):
-                sl_j = slice(j * wann_cols, (j + 1) * wann_cols)
-                upper_dist[sl_i, sl_j] = unit_cell_dist + abs(i - j) * unit_cell_width
+    if coords is not None and cutoff < xp.inf and lattice_vectors is not None:
+        super_cell_coords = create_coordinate_grid(
+            coords, transport_cell, lattice_vectors
+        )
+        diag_dist = xp.abs(xp.subtract.outer(super_cell_coords, super_cell_coords))
+        upper_dist = diag_dist + xp.array(upper_ind) @ lattice_vectors
+        lower_dist = diag_dist + xp.array(lower_ind) @ lattice_vectors
         diag_block[diag_dist > cutoff] = 0
         upper_block[upper_dist > cutoff] = 0
         lower_block[lower_dist > cutoff] = 0
-    
+
     # Create the block-tridiagonal matrix.
     diag = xp.repeat(diag_block, num_transport_cells, axis=0)
     upper = xp.repeat(upper_block, num_transport_cells - 1, axis=0)
     lower = xp.repeat(lower_block, num_transport_cells - 1, axis=0)
 
     return diag, upper, lower
-            
-

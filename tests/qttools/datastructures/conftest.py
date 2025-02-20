@@ -37,14 +37,14 @@ ACCESSED_ELEMENTS = [
 
 GLOBAL_STACK_SHAPES = [
     pytest.param((10,), id="1D-stack"),
-    # pytest.param((7, 2), id="2D-stack"),
-    # pytest.param((9, 2, 4), id="3D-stack"),
+    pytest.param((7, 2), id="2D-stack"),
+    pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
 NUM_INDS = [
     pytest.param(5, id="5-inds"),
-    # pytest.param(10, id="10-inds"),
-    # pytest.param(20, id="20-inds"),
+    pytest.param(10, id="10-inds"),
+    pytest.param(20, id="20-inds"),
 ]
 
 STACK_INDICES = [

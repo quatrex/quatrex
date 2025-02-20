@@ -44,15 +44,18 @@ class DSBanded(DSBSparse):
         return_dense: bool = True,
     ) -> None:
         """Initializes the DSBanded matrix."""
-        sparse_data = xp.reshape(data, (data.shape[0], -1))
+        sparse_data = xp.reshape(data, global_stack_shape + (-1,))
         super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
 
         self.half_bandwidth = half_bandwidth
         self.banded_block_size = banded_block_size
         self.half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size  # @czox's r_blk
-        assert data.shape[-1] == (2 * self.half_block_bandwidth + 1) * banded_block_size
+        num_cols = (2 * self.half_block_bandwidth + 1) * banded_block_size
+        assert sparse_data.shape[-1] % num_cols == 0
+        num_rows = sparse_data.shape[-1] // num_cols
+        assert num_rows % banded_block_size == 0
 
-        self.banded_shape = data.shape[-2:]
+        self.banded_shape = (num_rows, num_cols)
 
         assert banded_type in (0, 1)
         self.banded_type = banded_type
@@ -107,7 +110,7 @@ class DSBanded(DSBSparse):
 
         block_rows = rows // self.banded_block_size
         block_cols = cols // self.banded_block_size
-        block_dist = block_rows - block_cols
+        block_dist = block_cols - block_rows
         block_colidx = block_dist + self.half_block_bandwidth
         block_coloff = cols % self.banded_block_size
 
@@ -176,7 +179,7 @@ class DSBanded(DSBSparse):
 
         block_rows = rows // self.banded_block_size
         block_cols = cols // self.banded_block_size
-        block_dist = block_rows - block_cols
+        block_dist = block_cols - block_rows
         block_colidx = block_dist + self.half_block_bandwidth
         block_coloff = cols % self.banded_block_size
 
@@ -318,7 +321,8 @@ class DSBanded(DSBSparse):
 
         big_block_i = row
         big_block_j = col
-        BIG_BLOCK_SIZE = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
         BLK_SIZE = int(self.banded_block_size)
         r_block = int(self.half_block_bandwidth)
         A_blk_tallNSkinny = data_stack
@@ -328,14 +332,15 @@ class DSBanded(DSBSparse):
             A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
         if A_dense_block.ndim == 2:
             A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
-        batch, M, r = A_blk_tallNSkinny.shape
+        # batch, M, r = A_blk_tallNSkinny.shape
+        r = A_blk_tallNSkinny.shape[-1]
 
         # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
         # to the ranges of the block rows and columns
-        requested_dense_row_start = big_block_i * BIG_BLOCK_SIZE
-        requested_dense_row_end = (big_block_i + 1) * BIG_BLOCK_SIZE
-        requested_dense_col_start = big_block_j * BIG_BLOCK_SIZE
-        requested_dense_col_end = (big_block_j + 1) * BIG_BLOCK_SIZE
+        requested_dense_row_start = int(self.block_offsets[big_block_i])
+        requested_dense_row_end = int(self.block_offsets[big_block_i + 1])
+        requested_dense_col_start = int(self.block_offsets[big_block_j])
+        requested_dense_col_end = int(self.block_offsets[big_block_j + 1])
 
         blk_row_start = requested_dense_row_start // BLK_SIZE
         blk_row_end = (requested_dense_row_end + BLK_SIZE - 1) // BLK_SIZE
@@ -352,13 +357,13 @@ class DSBanded(DSBSparse):
             # if dense_col_start > requested_dense_col_end, pad with zeros
             # from the left side. Otherwise, extract the subset of the block row.
             left_padding = min(
-                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE
+                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE_J
             )
 
             # if dense_col_end < requested_dense_col_start, pad with zeros
             # from the right side.
             right_padding = min(
-                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE
+                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE_J
             )
 
             left_offset = max(0, requested_dense_col_start - dense_col_start)
@@ -368,7 +373,7 @@ class DSBanded(DSBSparse):
             start_banded = max(blk_i * BLK_SIZE, requested_dense_row_start)
             end_banded = min((blk_i + 1) * BLK_SIZE, requested_dense_row_end)
             blk_row = A_blk_tallNSkinny[
-                :,
+                ...,
                 start_banded : end_banded,
                 left_offset : r - right_offset,
             ]
@@ -380,9 +385,9 @@ class DSBanded(DSBSparse):
 
             # copy the block row to the big block matrix
             start_block = (blk_i - blk_row_start) * BLK_SIZE
-            end_block = min(BIG_BLOCK_SIZE, (blk_i + 1 - blk_row_start) * BLK_SIZE)
+            end_block = min(BIG_BLOCK_SIZE_I, (blk_i + 1 - blk_row_start) * BLK_SIZE)
             A_dense_block[
-                :,
+                ...,
                 start_block: end_block,
                 :,
             ] = blk_row
@@ -429,7 +434,8 @@ class DSBanded(DSBSparse):
 
         big_block_i = row
         big_block_j = col
-        BIG_BLOCK_SIZE = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
         BLK_SIZE = int(self.banded_block_size)
         r_block = int(self.half_block_bandwidth)
         A_blk_tallNSkinny = data_stack
@@ -439,14 +445,15 @@ class DSBanded(DSBSparse):
             A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
         if A_dense_block.ndim == 2:
             A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
-        batch, M, r = A_blk_tallNSkinny.shape
+        # batch, M, r = A_blk_tallNSkinny.shape
+        r = A_blk_tallNSkinny.shape[-1]
 
         # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
         # to the ranges of the block rows and columns
-        requested_dense_row_start = big_block_i * BIG_BLOCK_SIZE
-        requested_dense_row_end = (big_block_i + 1) * BIG_BLOCK_SIZE
-        requested_dense_col_start = big_block_j * BIG_BLOCK_SIZE
-        requested_dense_col_end = (big_block_j + 1) * BIG_BLOCK_SIZE
+        requested_dense_row_start = int(self.block_offsets[big_block_i])
+        requested_dense_row_end = int(self.block_offsets[big_block_i + 1])
+        requested_dense_col_start = int(self.block_offsets[big_block_j])
+        requested_dense_col_end = int(self.block_offsets[big_block_j + 1])
 
         blk_row_start = requested_dense_row_start // BLK_SIZE
         blk_row_end = (requested_dense_row_end + BLK_SIZE - 1) // BLK_SIZE
@@ -463,13 +470,13 @@ class DSBanded(DSBSparse):
             # if dense_col_start > requested_dense_col_end, pad with zeros
             # from the left side. Otherwise, extract the subset of the block row.
             left_padding = min(
-                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE
+                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE_J
             )
 
             # if dense_col_end < requested_dense_col_start, pad with zeros
             # from the right side.
             right_padding = min(
-                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE
+                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE_J
             )
 
             left_offset = max(0, requested_dense_col_start - dense_col_start)
@@ -477,9 +484,9 @@ class DSBanded(DSBSparse):
 
             # get the block row from the dense matrix
             start_block = (blk_i - blk_row_start) * BLK_SIZE
-            end_block = min(BIG_BLOCK_SIZE, (blk_i + 1 - blk_row_start) * BLK_SIZE)
+            end_block = min(BIG_BLOCK_SIZE_I, (blk_i + 1 - blk_row_start) * BLK_SIZE)
             blk_row = A_dense_block[
-                :,
+                ...,
                 start_block : end_block,
                 :,
             ]
@@ -493,7 +500,7 @@ class DSBanded(DSBSparse):
             start_banded = max(blk_i * BLK_SIZE, requested_dense_row_start)
             end_banded = min((blk_i + 1) * BLK_SIZE, requested_dense_row_end)
             A_blk_tallNSkinny[
-                :,
+                ...,
                 start_banded : end_banded,
                 left_offset : r - right_offset,
             ] = blk_row
@@ -787,7 +794,7 @@ class DSBanded(DSBSparse):
                 blk_row = xp.pad(blk_row, ((0, 0), (0, 0), (left_padding, right_padding)), 'constant', constant_values=0)
 
             # copy the block row to the tall and skinny matrix
-            A_blk_tallNSkinny[:, blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row
+            A_blk_tallNSkinny[..., blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row
 
         return cls(
             data=data,

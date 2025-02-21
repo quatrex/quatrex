@@ -48,11 +48,24 @@ def load_contact(filename):
 
     return n,name, corner1, corner2, direction
 
-def distributed_read_orbitals(filename):
-
+def distributed_read_slabs(filename):
 
     if comm.rank == 0:
-        orbitals = xp.reshape(xp.loadtxt(filename,dtype=xp.int32),(1,-1))
+        slabs = xp.loadtxt(filename,dtype=xp.int32)
+    else:
+        slabs = None
+    
+    slabs = comm.bcast(slabs, root=0)
+
+    slab_x = slabs[0].get().item() if hasattr(slabs[0], 'get') else slabs[0].item()
+    slab_y = slabs[1].get().item() if hasattr(slabs[1], 'get') else slabs[1].item()
+
+    return slab_x, slab_y
+
+def distributed_read_orbitals(filename):
+
+    if comm.rank == 0:
+        orbitals = xp.reshape(xp.loadtxt(filename,dtype=xp.int32),(-1,1))
     else:
         orbitals = None
     
@@ -119,6 +132,23 @@ def distributed_read_xyz(filename):
 
     return lattice, atoms, coords, coordsType
 
+def compute_slab_mask_X(coords,n_slabs):
+
+    mask = []
+
+    dx = 0.001
+
+    xMin=coords[:,0].min()
+    xMax=coords[:,0].max()
+
+    t_slab=(xMax-xMin)/n_slabs
+
+    for i in range(n_slabs):
+        if i != n_slabs-1:
+            mask.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<xMin+(i+1)*t_slab-dx))[0][None,:])
+        else:
+            mask.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<=xMin+(i+1)*t_slab+dx))[0][None,:])
+    return mask
 
 class Contact:
     """Contact class"""
@@ -194,10 +224,12 @@ class Observables:
     hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
     
-    electron_transmission : NDArray = None
-    electron_transmission_labels = []
+    electron_transmission_contacts : NDArray = None
+    electron_transmission_contacts_labels = []
 
-    electron_DOS: NDArray = None
+    electron_transmission_x_slabs: NDArray = None
+
+    electron_DOS_x_slabs: NDArray = None
 
     valence_band_edges: NDArray = None
     conduction_band_edges: NDArray = None
@@ -264,7 +296,6 @@ class QTBM:
 
         self.lattice, self.atoms, self.coords, self.coordstType = distributed_read_xyz(quatrex_config.input_dir / "lattice.xyz")
 
-
         self.orbitals_per_at = distributed_read_orbitals(quatrex_config.input_dir / "orb.dat")
 
         #create a vector with the starting orbital for each atom
@@ -282,10 +313,6 @@ class QTBM:
         self.flatband = quatrex_config.electron.flatband
         self.eta_obc = quatrex_config.electron.eta_obc
 
-        # Extract contact Hamiltonians. (TODO)
-        
-        ## CREATE MASKS FOR EVERY CONTACT (MOVE TO CONFIG SOON)
-
         self.n_cont,self.cont_names,self.corner1,self.corner2,self.corner_direction = load_contact(quatrex_config.input_dir / "cont.dat")
 
         self.contacts = []
@@ -294,13 +321,17 @@ class QTBM:
             self.contacts.append(Contact(self.corner1[n],self.corner2[n],self.corner_direction[n],self.cont_names[n]))
             self.contacts[n].set_mask(self.coords, self.orbitals_vec)
 
+        # CREATE MASK FOR EVERY SLAB
+
+        self.n_slabs_x, self.n_slab_y = distributed_read_slabs(quatrex_config.input_dir / "slabs.dat")
+        self.slab_mask_x = compute_slab_mask_X(self.coords,self.n_slabs_x)
 
         self.n_transmissions = int((self.n_cont**2-self.n_cont)/2)
         #This part is bad, I need to make it neat
         cont_1 = 0
         cont_2 = 1
         for n in range(self.n_transmissions):
-            self.observables.electron_transmission_labels.append(self.contacts[cont_1].name[0] + '->' + self.contacts[cont_2].name[0])
+            self.observables.electron_transmission_contacts_labels.append(self.contacts[cont_1].name[0] + '->' + self.contacts[cont_2].name[0])
 
             cont_2 += 1
 
@@ -308,8 +339,10 @@ class QTBM:
                 cont_1 += 1
                 cont_2 = cont_1+1
 
-        self.observables.electron_transmission = xp.zeros((self.n_transmissions,self.local_energies.shape[0]),dtype=xp.float64)
-        self.observables.electron_DOS = xp.zeros((self.n_cont,self.local_energies.shape[0]),dtype=xp.float64)
+        self.observables.electron_transmission_contacts = xp.zeros((self.n_transmissions,self.local_energies.shape[0]),dtype=xp.float64)
+        self.observables.electron_transmission_x_slabs = xp.zeros((self.n_cont,self.n_slabs_x,self.local_energies.shape[0]),dtype=xp.float64)
+
+        self.observables.electron_DOS_x_slabs = xp.zeros((self.n_cont,self.n_slabs_x,self.local_energies.shape[0]),dtype=xp.float64)
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -426,7 +459,7 @@ class QTBM:
             T01 = self.system_matrix[self.contacts[cont_2].mask_orb_j.T,self.contacts[cont_2].mask_orb_i]
 
             if(phi_1.size != 0):
-                self.observables.electron_transmission[n,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
+                self.observables.electron_transmission_contacts[n,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
             
             cont_2 += 1
 
@@ -434,13 +467,25 @@ class QTBM:
                 cont_1 += 1
                 cont_2 = cont_1+1
 
+        #Compute transmission for all the x slabs
+        for n in range(self.n_cont):
+            for s in range(self.n_slabs_x-1):
+                phi_1 = phi[self.slab_mask_x[s].T,inj_ind[n]]
+                phi_2 = phi[self.slab_mask_x[s+1].T,inj_ind[n]]
+
+                T01 = self.system_matrix[self.slab_mask_x[s].T,self.slab_mask_x[s+1]]
+
+                if(phi_1.size != 0):
+                    self.observables.electron_transmission_x_slabs[n,s,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
+
         #Compute DOS
         for n in range(self.n_cont):
-        
-            phi_D = phi[:,inj_ind[n]].squeeze()
+            for s in range(self.n_slabs_x):
+                phi_D = phi[self.slab_mask_x[s].T,inj_ind[n]].squeeze()
 
-            if(phi_D.size != 0):
-                self.observables.electron_DOS[n,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), self.overlap_sparray @ phi_D))/(2*xp.pi))
+                S00 = self.overlap_sparray[self.slab_mask_x[s].T,self.slab_mask_x[s]]
+                if(phi_D.size != 0):
+                    self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), S00 @ phi_D))/(2*xp.pi))
 
     def run(self) -> None:
         """Runs the QTBM"""
@@ -512,7 +557,7 @@ class QTBM:
 
             phi = spsolve(self.system_matrix, inj_V)
 
-            self.compute_observables(phi,inj_ind,i)
+
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -521,6 +566,12 @@ class QTBM:
                 else None
             )
 
+            # Get the bare system matrix back, needed for transmission calculation
+            for n in range(self.n_cont):
+                self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i] += S[n]
+                
+            self.compute_observables(phi,inj_ind,i)
+
             t_iteration = time.perf_counter() - times.pop()
             (
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
@@ -528,5 +579,6 @@ class QTBM:
                 else None
             )
         
-        self.observables.electron_transmission = xp.hstack(comm.allgather(self.observables.electron_transmission))
-        self.observables.electron_DOS = xp.hstack(comm.allgather(self.observables.electron_DOS))
+        self.observables.electron_transmission_x_slabs = xp.concatenate(comm.allgather(self.observables.electron_transmission_x_slabs),axis=-1)
+        self.observables.electron_transmission_contacts = xp.hstack(comm.allgather(self.observables.electron_transmission_contacts))
+        self.observables.electron_DOS_x_slabs = xp.concatenate(comm.allgather(self.observables.electron_DOS_x_slabs),axis=-1)

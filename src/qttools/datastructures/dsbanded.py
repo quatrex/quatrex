@@ -1,10 +1,12 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import functools
 from mpi4py.MPI import COMM_WORLD as comm
+import torch
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
+from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels, dsbanded_kernels
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
 
@@ -42,6 +44,7 @@ class DSBanded(DSBSparse):
         block_sizes: NDArray,  # @czox's BIG_BLK_SIZE
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        half_block_bandwidth: int = 0,  # @czox's r_blk
     ) -> None:
         """Initializes the DSBanded matrix."""
         sparse_data = xp.reshape(data, global_stack_shape + (-1,))
@@ -49,7 +52,10 @@ class DSBanded(DSBSparse):
 
         self.half_bandwidth = half_bandwidth
         self.banded_block_size = banded_block_size
-        self.half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size  # @czox's r_blk
+        if half_block_bandwidth == 0:
+            self.half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size  # @czox's r_blk
+        else:
+            self.half_block_bandwidth = half_block_bandwidth
         num_cols = (2 * self.half_block_bandwidth + 1) * banded_block_size
         assert sparse_data.shape[-1] % num_cols == 0
         num_rows = sparse_data.shape[-1] // num_cols
@@ -534,47 +540,79 @@ class DSBanded(DSBSparse):
     def __matmul__(self, other: "DSBanded") -> None:
         """Matrix multiplication of two DSBanded matrices."""
 
-        raise NotImplementedError
-
-        if sparse.isspmatrix(other):
-            raise NotImplementedError(
-                "Matrix multiplication with sparse matrices is not implemented."
-            )
-        if not isinstance(other, DSBSparse):
-            raise TypeError("Can only multiply DSBSparse matrices.")
+        if not isinstance(other, ShortNFat):
+            raise TypeError("Can only multiply ShortNFat matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
         if xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
-        product_rows, product_cols = product_sparsity_pattern(
-            sparse.csr_matrix(
-                (xp.ones(self.nnz), (self.rows, self.cols)), shape=self.shape[-2:]
-            ),
-            sparse.csr_matrix(
-                (xp.ones(other.nnz), (other.rows, other.cols)),
-                shape=other.shape[-2:],
-            ),
+        if xp.__name__ != "cupy":
+            raise NotImplementedError("Only CuPy is supported.")
+        
+        batch_a = functools.reduce(lambda x, y: x * y, self.data.shape[:-1])
+        A = torch.asarray(self.data.reshape((batch_a, ) + self.banded_shape), device='cuda')
+        batch_b = functools.reduce(lambda x, y: x * y, other.data.shape[:-1])
+        B = torch.asarray(other.data.reshape((batch_b, ) + other.banded_shape), device='cuda')
+        
+        blk_diag_dist_a = self.half_block_bandwidth
+        blk_diag_dist_b = other.half_block_bandwidth
+        blk_diag_dist_c = blk_diag_dist_a + blk_diag_dist_b
+        diag_dist_c = self.half_bandwidth + other.half_bandwidth
+        batch, M, _ = A.shape
+        BLK_M = self.banded_block_size
+        BLK_N = other.banded_block_size
+        BLK_K = self.banded_block_size
+        # allocate memory for the output
+        c_blk_tall_and_skinny = torch.zeros(
+            (batch, M, (2 * blk_diag_dist_c + 1) * BLK_M), device=A.device
         )
-        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-            product_rows, product_cols, self.block_sizes
+
+        # if perform_scaling == "do":
+        #     perform_scaling = True
+        #     a_blk_tall_and_skinny, scale_quant_a = rescale_and_quantize(
+        #         a_blk_tall_and_skinny, torch.float16
+        #     )
+        #     b_blk_short_and_fat, scale_quant_b = rescale_and_quantize(
+        #         b_blk_short_and_fat, torch.float16
+        #     )
+
+        # if perform_scaling == "done":
+        #     perform_scaling = True
+        # if perform_scaling == "":
+        #     perform_scaling = False
+
+        scale_quant_a = 1.0
+        scale_quant_b = 1.0
+        perform_scaling = False
+
+        scale_quant = scale_quant_a * scale_quant_b
+        dsbanded_kernels.band_gemm_from_band_format(
+            A,
+            B,
+            c_blk_tall_and_skinny,
+            blk_diag_dist_a=blk_diag_dist_a,
+            blk_diag_dist_b=blk_diag_dist_b,
+            BLK_M=BLK_M,
+            BLK_N=BLK_N,
+            BLK_K=BLK_K,
+            perform_scaling=perform_scaling,
+            scale_quant=scale_quant,
+            transpose_B=False,
         )
-        product = DSBCOO(
-            data=xp.zeros(self.stack_shape + (product_rows.size,), dtype=self.dtype),
-            rows=product_rows[block_sort_index],
-            cols=product_cols[block_sort_index],
+
+        print(
+            f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
+        )
+        
+        return DSBanded(
+            data=xp.asarray(c_blk_tall_and_skinny).reshape(self.global_stack_shape + (-1, )),
+            half_bandwidth=diag_dist_c,
+            banded_block_size=BLK_M,
+            banded_type=0,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
+            half_block_bandwidth=blk_diag_dist_c,
         )
-        # TODO: This is a naive implementation. Should be revisited. Same for dsbcsr.
-        for stack_index in xp.ndindex(self.data.shape[:-1]):
-            temp_product = sparse.csr_matrix(
-                (self.data[stack_index], (self.rows, self.cols)), shape=self.shape[-2:]
-            ) @ sparse.csr_matrix(
-                (other.data[stack_index], (other.rows, other.cols)),
-                shape=other.shape[-2:],
-            )
-            product.data[stack_index, :] = temp_product[product.rows, product.cols]
-        return product
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:
@@ -698,6 +736,7 @@ class DSBanded(DSBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
+        dtype = None
     ) -> "DSBanded":
         """Creates a new DSBanded matrix from a scipy.sparse array.
 
@@ -722,6 +761,8 @@ class DSBanded(DSBSparse):
             The new DSBanded matrix.
 
         """
+
+        dtype = dtype or arr.dtype
 
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
@@ -749,9 +790,9 @@ class DSBanded(DSBSparse):
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.data.dtype)
+        dense = xp.zeros((banded_rows, banded_cols), dtype=dtype)
         dense[coo.row, coo.col] = coo.data
-        data = xp.zeros(local_stack_shape + banded_shape, dtype=coo.data.dtype)
+        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
         # data[..., :] = coo.data[block_sort_index]
         # rows = coo.row[block_sort_index]
         # cols = coo.col[block_sort_index]
@@ -1492,6 +1533,7 @@ class ShortNFat(DSBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
+        dtype = None,
     ) -> "ShortNFat":
         """Creates a new ShortNFat matrix from a scipy.sparse array.
 
@@ -1516,6 +1558,8 @@ class ShortNFat(DSBSparse):
             The new ShortNFat matrix.
 
         """
+
+        dtype = dtype or arr.dtype
 
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
@@ -1543,9 +1587,9 @@ class ShortNFat(DSBSparse):
         banded_cols = ((coo.shape[1] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.data.dtype)
+        dense = xp.zeros((banded_rows, banded_cols), dtype=dtype)
         dense[coo.row, coo.col] = coo.data
-        data = xp.zeros(local_stack_shape + banded_shape, dtype=coo.data.dtype)
+        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
         # data[..., :] = coo.data[block_sort_index]
         # rows = coo.row[block_sort_index]
         # cols = coo.col[block_sort_index]

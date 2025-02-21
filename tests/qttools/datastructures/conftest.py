@@ -14,8 +14,7 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
-# DSBANDED_TYPES = [DSBanded, ShortNFat]
-DSBANDED_TYPES = [ShortNFat]
+DSBANDED_TYPES = [DSBanded, ShortNFat]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -93,6 +92,16 @@ def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
 
 @pytest.fixture(params=DSBANDED_TYPES)
 def dsbanded_type(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
+
+@pytest.fixture(params=DSBANDED_TYPES)
+def dsbanded_type_a(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
+
+@pytest.fixture(params=DSBANDED_TYPES)
+def dsbanded_type_b(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 @pytest.fixture(params=DSDBSPARSE_TYPES_DIST)

@@ -10,14 +10,17 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
+def _create_coo(sizes: NDArray, complex: bool = True) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.5, high=0.8)
     # density = rng.uniform(low=0.1, high=0.3)
-    coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
-    coo.data += 1j * rng.uniform(size=coo.nnz)
+    if complex:
+        coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+        coo.data += 1j * rng.uniform(size=coo.nnz)
+    else:
+        coo = sparse.random(size, size, density=density, format="coo").astype(xp.float64)
     return coo
 
 
@@ -625,19 +628,23 @@ class TestArithmetic:
 
     def test_matmul(
         self,
-        dsbanded_type: DSBSparse,
+        dsbanded_type_a: DSBSparse,
+        dsbanded_type_b: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
-        dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+        coo = _create_coo(block_sizes, complex=False)
+        dsbsparse_a = dsbanded_type_a.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks, dtype=xp.float16
         )
-        dense = dsbsparse.to_dense()
+        dense = coo.toarray().astype(xp.float16)
+        dsbsparse_b = dsbanded_type_b.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks, dtype=xp.float16
+        )
 
-        assert xp.allclose(dense @ dense, (dsbsparse @ dsbsparse).to_dense())
+        assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
 
 
 # Shape of the dense array.

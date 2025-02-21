@@ -5,7 +5,7 @@ import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse, DSBanded
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse, DSBanded, ShortNFat
 
 DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
 if global_comm.size == 1:
@@ -14,7 +14,8 @@ else:
     # DSDBCSR is not fully supported for distributed yet
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
-DSBANDED_TYPES = [DSBanded]
+# DSBANDED_TYPES = [DSBanded, ShortNFat]
+DSBANDED_TYPES = [ShortNFat]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),

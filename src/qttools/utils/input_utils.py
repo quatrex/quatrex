@@ -107,13 +107,6 @@ def get_hamiltonian_block(
         The supercell hamiltonian block.
 
     """
-    # Check if supercell makes sense
-    if not (
-        (hr.shape[:-2] >= xp.array(supercell_size)) & (0 < xp.array(supercell_size))
-    ).all():
-        raise ValueError(
-            f"Supercell size [{supercell_size}] is not compatible with hr shape [{hr.shape}]."
-        )
     local_shifts = xp.array(list(xp.ndindex(supercell_size)))
     global_shift = xp.multiply(global_shift, supercell_size)
 
@@ -121,8 +114,11 @@ def get_hamiltonian_block(
     for r_i in local_shifts:
         row = []
         for r_j in local_shifts:
+            ind = tuple(r_j - r_i + global_shift)
             try:
-                block = hr[tuple(r_j - r_i + global_shift)]
+                if any(abs(i) > hr.shape[j] // 2 for j, i in enumerate(ind)):
+                    raise IndexError
+                block = hr[ind]
             except IndexError:
                 block = xp.zeros(hr.shape[-2:], dtype=hr.dtype)
             row.append(block)

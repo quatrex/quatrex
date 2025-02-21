@@ -38,13 +38,23 @@ def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
 @pytest.mark.parametrize(
     "supercell, shift, ref_val",
     [
-        ((2, 2, 1), (0, 0, 0), (0, 1j, 1, 1+1j)),
-        ((2, 2, 1), (1, 1, 0), (2+2j, 2+3j, 3+2j, 3+3j)),
-        ((3, 1, 1), (0, 0, 0), (0, 1j, 2j)),
-        ((3, 1, 1), (1, 0, 0), (3j, 4j, 5j)),
+        ((2, 2, 1), (0, 0, 0), ((0+0j, 0+1j, 1+0j, 1+1j),
+                                (0-1j, 0+0j, 1-1j, 1+0j),
+                                (-1+0j, -1+1j, 0+0j, 0+1j),
+                                (-1-1j, -1+0j, 0-1j, 0+0j))),
+        ((2, 2, 1), (1, 1, 0), ((2+2j, 0+0j, 0+0j, 0+0j),
+                                (2+1j, 2+2j, 0+0j, 0+0j),
+                                (1+2j, 0+0j, 2+2j, 0+0j),
+                                (1+1j, 1+2j, 2+1j, 2+2j))),
+        ((3, 1, 1), (0, 0, 0), ((0+0j, 1+0j, 2+0j),
+                                (-1+0j, 0+0j, 1+0j),
+                                (-2+0j, -1+0j, 0+0j))),
+        ((3, 1, 1), (1, 0, 0), ((0+0j, 0+0j, 0+0j),
+                                (2+0j, 0+0j, 0+0j),
+                                (1+0j, 2+0j, 0+0j))),
     ],
 )
-def test_get_hamiltonian_block(supercell: tuple[int, int, int], shift: tuple[int, int, int], ref_val: tuple):
+def test_get_hamiltonian_block(supercell: tuple[int, int, int], shift: tuple[int, int, int], ref_val: tuple[tuple]):
     hr = read_hr_dat(wannier90_hr_path)
     bs = hr.shape[-1]
     block = get_hamiltonian_block(hr, supercell, shift)
@@ -52,7 +62,7 @@ def test_get_hamiltonian_block(supercell: tuple[int, int, int], shift: tuple[int
         br = xp.ravel_multi_index(ind_r, supercell)
         for ind_c in xp.ndindex(supercell):
             bc = xp.ravel_multi_index(ind_c, supercell)
-            assert xp.allclose(block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_val[bc-br])
+            assert xp.allclose(block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_val[br][bc])
 
 
 @pytest.mark.parametrize(

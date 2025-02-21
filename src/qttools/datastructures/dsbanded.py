@@ -907,7 +907,7 @@ class ShortNFat(DSBSparse):
 
         block_rows = rows // self.banded_block_size
         block_cols = cols // self.banded_block_size
-        block_dist = block_cols - block_rows
+        block_dist = block_rows - block_cols
         block_rowidx = block_dist + self.half_block_bandwidth
         block_rowoff = rows % self.banded_block_size
 
@@ -976,7 +976,7 @@ class ShortNFat(DSBSparse):
 
         block_rows = rows // self.banded_block_size
         block_cols = cols // self.banded_block_size
-        block_dist = block_cols - block_rows
+        block_dist = block_rows - block_cols
         block_rowidx = block_dist + self.half_block_bandwidth
         block_rowoff = rows % self.banded_block_size
 
@@ -1301,7 +1301,7 @@ class ShortNFat(DSBSparse):
 
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, DSBanded):
+        if not isinstance(other, (DSBanded, ShortNFat)):
             raise TypeError("Can only add DSBanded matrices.")
 
         if self.shape != other.shape:
@@ -1315,7 +1315,7 @@ class ShortNFat(DSBSparse):
 
     def __neg__(self) -> "DSBanded":
         """Negation of the data."""
-        return DSBanded(
+        return ShortNFat(
             data=-self.data,
             half_bandwidth=self.half_bandwidth,
             banded_block_size=self.banded_block_size,

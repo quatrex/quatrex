@@ -37,6 +37,7 @@ class TestCreation:
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
+        
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
     def test_zeros_like(

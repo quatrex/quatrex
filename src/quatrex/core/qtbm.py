@@ -132,9 +132,10 @@ def distributed_read_xyz(filename):
 
     return lattice, atoms, coords, coordsType
 
-def compute_slab_mask_X(coords,n_slabs):
+def compute_slab_mask_X(coords,n_slabs, orbitals):
 
-    mask = []
+    mask_atoms = []
+    mask_orb = []
 
     dx = 0.001
 
@@ -145,10 +146,23 @@ def compute_slab_mask_X(coords,n_slabs):
 
     for i in range(n_slabs):
         if i != n_slabs-1:
-            mask.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<xMin+(i+1)*t_slab-dx))[0][None,:])
+            mask_atoms.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<xMin+(i+1)*t_slab-dx))[0])
         else:
-            mask.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<=xMin+(i+1)*t_slab+dx))[0][None,:])
-    return mask
+            mask_atoms.append(xp.nonzero(xp.logical_and(coords[:,0]>=xMin+i*t_slab-dx,coords[:,0]<=xMin+(i+1)*t_slab+dx))[0])
+    
+    for i in range(n_slabs):
+        mask_orb_loc = xp.array([],dtype=xp.int32)
+        for j in range(mask_atoms[i].shape[0]):
+            #NEED TO MOVE THE INDEX ON THE CPU
+            #I USED A QUICK WORKAROUND FOR NOW
+            index = int(mask_atoms[i][j].get() if hasattr(mask_atoms[i][j], 'get') else mask_atoms[i][j])
+            k1 = int(orbitals[index].get() if hasattr(orbitals[index], 'get') else orbitals[index])
+            k2 = int(orbitals[index+1].get() if hasattr(orbitals[index + 1], 'get') else orbitals[index + 1])
+            mask_orb_loc = xp.concatenate((mask_orb_loc,xp.arange(k1, k2)))
+        
+        mask_orb.append(mask_orb_loc[None,:])
+
+    return mask_atoms, mask_orb
 
 class Contact:
     """Contact class"""
@@ -324,7 +338,7 @@ class QTBM:
         # CREATE MASK FOR EVERY SLAB
 
         self.n_slabs_x, self.n_slab_y = distributed_read_slabs(quatrex_config.input_dir / "slabs.dat")
-        self.slab_mask_x = compute_slab_mask_X(self.coords,self.n_slabs_x)
+        self.slab_mask_x_at, self.slab_mask_x_orb = compute_slab_mask_X(self.coords,self.n_slabs_x,self.orbitals_vec)
 
         self.n_transmissions = int((self.n_cont**2-self.n_cont)/2)
         #This part is bad, I need to make it neat
@@ -470,10 +484,10 @@ class QTBM:
         #Compute transmission for all the x slabs
         for n in range(self.n_cont):
             for s in range(self.n_slabs_x-1):
-                phi_1 = phi[self.slab_mask_x[s].T,inj_ind[n]]
-                phi_2 = phi[self.slab_mask_x[s+1].T,inj_ind[n]]
+                phi_1 = phi[self.slab_mask_x_orb[s].T,inj_ind[n]]
+                phi_2 = phi[self.slab_mask_x_orb[s+1].T,inj_ind[n]]
 
-                T01 = self.system_matrix[self.slab_mask_x[s].T,self.slab_mask_x[s+1]]
+                T01 = self.system_matrix[self.slab_mask_x_orb[s].T,self.slab_mask_x_orb[s+1]]
 
                 if(phi_1.size != 0):
                     self.observables.electron_transmission_x_slabs[n,s,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
@@ -481,9 +495,9 @@ class QTBM:
         #Compute DOS
         for n in range(self.n_cont):
             for s in range(self.n_slabs_x):
-                phi_D = phi[self.slab_mask_x[s].T,inj_ind[n]].squeeze()
+                phi_D = phi[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
 
-                S00 = self.overlap_sparray[self.slab_mask_x[s].T,self.slab_mask_x[s]]
+                S00 = self.overlap_sparray[self.slab_mask_x_orb[s].T,self.slab_mask_x_orb[s]]
                 if(phi_D.size != 0):
                     self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), S00 @ phi_D))/(2*xp.pi))
 

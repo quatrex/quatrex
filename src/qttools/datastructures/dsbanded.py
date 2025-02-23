@@ -651,60 +651,59 @@ class DSBanded(DSBSparse):
 
         """
 
-        raise NotImplementedError
-
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if copy:
+            new_data = xp.zeros_like(self.data)
+            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            num_brows = self.banded_shape[0] // self.banded_block_size
+            num_bcols = self.banded_shape[1] // self.banded_block_size
+            num_half_bcols = num_bcols // 2
+            for brow in range(num_brows):
+                nrlice = slice(brow * self.banded_block_size, (brow + 1) * self.banded_block_size)
+                for bcol_off in range(-num_half_bcols, num_half_bcols + 1):
+                    if brow + bcol_off < 0:
+                        continue
+                    if brow + bcol_off > num_brows - 1:
+                        continue
+                    bcol = bcol_off + num_half_bcols   
+                    nclice = slice(bcol * self.banded_block_size, (bcol + 1) * self.banded_block_size)
+                    orlice = slice((brow + bcol_off) * self.banded_block_size, (brow + bcol_off + 1) * self.banded_block_size)
+                    oclice = slice((num_half_bcols - bcol_off) * self.banded_block_size, (num_half_bcols - bcol_off + 1) * self.banded_block_size)
+                    new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
+            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
             self = DSBanded(
-                self.data.copy(),
+                new_data,
                 self.half_bandwidth,
                 self.banded_block_size,
                 self.banded_type,
                 self.block_sizes,
                 self.global_stack_shape,
+                half_block_bandwidth=self.half_block_bandwidth,
             )
-
-        if not (
-            hasattr(self, "_inds_bcoo2bcoo_t")
-            and hasattr(self, "_rows_t")
-            and hasattr(self, "_cols_t")
-            and hasattr(self, "_block_slice_cache_t")
-        ):
-            # Transpose.
-            rows_t, cols_t = self.cols, self.rows
-
-            # Canonical ordering of the transpose.
-            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
-            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
-            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
-
-            # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
-                canonical_rows_t, canonical_cols_t, self.block_sizes
-            )
-
-            # Mapping directly from original ordering to transpose
-            # block-ordering is achieved by chaining the two mappings.
-            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
-
-            # Cache the necessary objects.
-            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
-            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
-            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
-
-            self._block_slice_cache_t = {}
-
-        self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
-        self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
-        self.cols, self._cols_t = self._cols_t, self.cols
-        self.rows, self._rows_t = self._rows_t, self.rows
-
-        self._block_slice_cache, self._block_slice_cache_t = (
-            self._block_slice_cache_t,
-            self._block_slice_cache,
-        )
+        else:
+            new_data = xp.zeros_like(self.data)
+            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            num_brows = self.banded_shape[0] // self.banded_block_size
+            num_bcols = self.banded_shape[1] // self.banded_block_size
+            num_half_bcols = num_bcols // 2
+            for brow in range(num_brows):
+                nrlice = slice(brow * self.banded_block_size, (brow + 1) * self.banded_block_size)
+                for bcol_off in range(-num_half_bcols, num_half_bcols + 1):
+                    if brow + bcol_off < 0:
+                        continue
+                    if brow + bcol_off > num_brows - 1:
+                        continue
+                    bcol = bcol_off + num_half_bcols   
+                    nclice = slice(bcol * self.banded_block_size, (bcol + 1) * self.banded_block_size)
+                    orlice = slice((brow + bcol_off) * self.banded_block_size, (brow + bcol_off + 1) * self.banded_block_size)
+                    oclice = slice((num_half_bcols - bcol_off) * self.banded_block_size, (num_half_bcols - bcol_off + 1) * self.banded_block_size)
+                    new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
+            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            self.data = new_data
 
         return self if copy else None
 
@@ -1448,60 +1447,59 @@ class ShortNFat(DSBSparse):
 
         """
 
-        raise NotImplementedError
-
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if copy:
-            self = DSBanded(
-                self.data.copy(),
-                self.half_bandwidth,
-                self.banded_block_size,
-                self.banded_type,
-                self.block_sizes,
-                self.global_stack_shape,
+            new_data = xp.zeros_like(self.data)
+            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            num_brows = self.banded_shape[0] // self.banded_block_size
+            num_bcols = self.banded_shape[1] // self.banded_block_size
+            num_half_brows = num_brows // 2
+            for bcol in range(num_bcols):
+                nclice = slice(bcol * self.banded_block_size, (bcol + 1) * self.banded_block_size)
+                for brow_off in range(-num_half_brows, num_half_brows + 1):
+                    if bcol + brow_off < 0:
+                        continue
+                    if bcol + brow_off > num_bcols - 1:
+                        continue
+                    brow = brow_off + num_half_brows   
+                    nrlice = slice(brow * self.banded_block_size, (brow + 1) * self.banded_block_size)
+                    oclice = slice((bcol + brow_off) * self.banded_block_size, (bcol + brow_off + 1) * self.banded_block_size)
+                    orlice = slice((num_half_brows - brow_off) * self.banded_block_size, (num_half_brows - brow_off + 1) * self.banded_block_size)
+                    new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
+            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            self = ShortNFat(
+                data=new_data,
+                half_bandwidth=self.half_bandwidth,
+                banded_block_size=self.banded_block_size,
+                banded_type=self.banded_type,
+                block_sizes=self.block_sizes,
+                global_stack_shape=self.global_stack_shape,
+                return_dense=self.return_dense,
             )
-
-        if not (
-            hasattr(self, "_inds_bcoo2bcoo_t")
-            and hasattr(self, "_rows_t")
-            and hasattr(self, "_cols_t")
-            and hasattr(self, "_block_slice_cache_t")
-        ):
-            # Transpose.
-            rows_t, cols_t = self.cols, self.rows
-
-            # Canonical ordering of the transpose.
-            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
-            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
-            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
-
-            # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
-                canonical_rows_t, canonical_cols_t, self.block_sizes
-            )
-
-            # Mapping directly from original ordering to transpose
-            # block-ordering is achieved by chaining the two mappings.
-            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
-
-            # Cache the necessary objects.
-            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
-            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
-            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
-
-            self._block_slice_cache_t = {}
-
-        self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
-        self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
-        self.cols, self._cols_t = self._cols_t, self.cols
-        self.rows, self._rows_t = self._rows_t, self.rows
-
-        self._block_slice_cache, self._block_slice_cache_t = (
-            self._block_slice_cache_t,
-            self._block_slice_cache,
-        )
+        else:
+            new_data = xp.zeros_like(self.data)
+            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            num_brows = self.banded_shape[0] // self.banded_block_size
+            num_bcols = self.banded_shape[1] // self.banded_block_size
+            num_half_brows = num_brows // 2
+            for bcol in range(num_bcols):
+                nclice = slice(bcol * self.banded_block_size, (bcol + 1) * self.banded_block_size)
+                for brow_off in range(-num_half_brows, num_half_brows + 1):
+                    if bcol + brow_off < 0:
+                        continue
+                    if bcol + brow_off > num_bcols - 1:
+                        continue
+                    brow = brow_off + num_half_brows   
+                    nrlice = slice(brow * self.banded_block_size, (brow + 1) * self.banded_block_size)
+                    oclice = slice((bcol + brow_off) * self.banded_block_size, (bcol + brow_off + 1) * self.banded_block_size)
+                    orlice = slice((num_half_brows - brow_off) * self.banded_block_size, (num_half_brows - brow_off + 1) * self.banded_block_size)
+                    new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
+            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            self.data = new_data
 
         return self if copy else None
 

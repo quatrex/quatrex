@@ -1,4 +1,4 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import tomllib
 from pathlib import Path
@@ -8,12 +8,15 @@ from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 
 
 class ComputeConfig(BaseModel):
+    """All configurations concerning computational details."""
+
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    dbsparse_type: DSBSparse = DSBCOO
+    dsbsparse_type: DSBSparse = DSBCOO
 
-    @field_validator("dbsparse_type", mode="before")
-    def set_dbsparse(cls, value) -> DSBSparse:
+    @field_validator("dsbsparse_type", mode="before")
+    def set_dsbsparse(cls, value) -> DSBSparse:
+        """Converts the string value to the corresponding DSBSparse object."""
         if value == "DSBCSR":
             return DSBCSR
         elif value == "DSBCOO":
@@ -22,7 +25,19 @@ class ComputeConfig(BaseModel):
 
 
 def parse_config(config_file: Path) -> ComputeConfig:
-    """Reads the TOML config file."""
+    """Reads the TOML config file.
+
+    Parameters
+    ----------
+    config_file : Path
+        Path to the TOML config file.
+
+    Returns
+    -------
+    ComputeConfig
+        The parsed compute config.
+
+    """
     with open(config_file, "rb") as f:
         config = tomllib.load(f)
 

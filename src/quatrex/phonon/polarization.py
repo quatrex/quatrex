@@ -1,7 +1,6 @@
-# Copyright 2023-2024 ETH Zurich and the QuaTrEx authors. All rights reserved.
+# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 from quatrex.core.sse import ScatteringSelfEnergy
 
 
-class PiPhonon(ScatteringSelfEnergy):
-    ...
+class PiPhonon(ScatteringSelfEnergy): ...

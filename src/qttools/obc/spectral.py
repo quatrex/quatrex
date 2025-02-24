@@ -197,6 +197,57 @@ class Spectral(OBCSolver):
 
         return mask_pairwise_propagating
 
+    def _compute_dE_dk(
+        self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray], vls: NDArray | None = None
+    ) -> NDArray:
+        """Computes the group velocity of the modes.
+
+        Parameters
+        ----------
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vrs : NDArray
+            The right eigenvectors of the NEVP.
+        a_xx : tuple[NDArray, ...]
+            The blocks of the periodic matrix.
+        vls : NDArray, optional
+            The left eigenvectors of the NEVP. Required for two-sided
+
+        Returns
+        -------
+        dEk_dk : NDArray
+            The group velocity of the modes.
+
+        """
+
+        b = len(a_xx) // 2
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+
+            if self.two_sided:
+                phi_right = vrs
+                phi_left = vls
+            else:
+                phi_right = vrs
+                phi_left = vrs
+
+            dEk_dk = -sum(
+                (1j * n)
+                * xp.diagonal(
+                    phi_left.conj().swapaxes(-1, -2) @ a_x @ phi_right,
+                    axis1=-2,
+                    axis2=-1,
+                )
+                * ws**n
+                for a_x, n in zip(a_xx, range(-b, b + 1))
+            ) / xp.diagonal(
+                phi_left.conj().swapaxes(-1, -2) @ phi_right, axis1=-2, axis2=-1
+            )
+
+        return dEk_dk
+
     def _find_reflected_modes(
         self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray], vls: NDArray | None = None
     ) -> NDArray:
@@ -227,36 +278,16 @@ class Spectral(OBCSolver):
         if self.two_sided and vls is None:
             raise ValueError("Two-sided calculation requires left eigenvectors.")
 
-        batchsize = a_xx[0].shape[0]
-        b = len(a_xx) // 2
-
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
         # polynomial eigenvalue equation with respect to k.
         # NOTE: This is actually only correct if we have no overlap.
-        dEk_dk = xp.zeros_like(ws)
+
+        dEk_dk = self._compute_dE_dk(ws, vrs, a_xx, vls)
+
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
-        ):  # Ignore division by zero.
-            # TODO: Replace this for loop with a faster implementation.
-            for i in range(batchsize):
-                for j, w in enumerate(ws[i]):
-                    a = -sum(
-                        (1j * n) * w**n * a_xn[i]
-                        for a_xn, n in zip(a_xx, range(-b, b + 1))
-                    )
-
-                    if self.two_sided:
-                        phi_right = vrs[i, :, j]
-                        phi_left = vls[i, :, j]
-                    else:
-                        phi_right = vrs[i, :, j]
-                        phi_left = vrs[i, :, j]
-
-                    dEk_dk[i, j] = (phi_left.conj().T @ a @ phi_right) / (
-                        phi_left.conj().T @ phi_right
-                    )
-
+        ):  # Ignore zero log and division by zero.
             ks = -1j * xp.log(ws)
 
         # replace nan and infs with 0 due to zero eigenvalues
@@ -324,16 +355,20 @@ class Spectral(OBCSolver):
         batchsize, subblock_size, num_modes = vs.shape
         block_size = subblock_size * self.block_sections
 
-        vs_upscaled = xp.zeros((batchsize, block_size, num_modes), dtype=vs.dtype)
-        for i in range(batchsize):
-            for j, w in enumerate(ws[i]):
-                vs_upscaled[i, :, j] = xp.kron(
-                    xp.array([w**n for n in range(self.block_sections)]), vs[i, :, j]
-                )
-                with warnings.catch_warnings(
-                    action="ignore", category=RuntimeWarning
-                ):  # Ignore division by zero.
-                    vs_upscaled[i, :, j] /= xp.linalg.norm(vs_upscaled[i, :, j])
+        ws_upscaled = xp.array([ws**n for n in range(self.block_sections)]).swapaxes(
+            0, 1
+        )
+
+        vs_upscaled = (
+            ws_upscaled[:, :, xp.newaxis, :] * vs[:, xp.newaxis, :, :]
+        ).reshape(batchsize, block_size, num_modes)
+
+        with warnings.catch_warnings(
+            action="ignore", category=RuntimeWarning
+        ):  # Ignore division by zero.
+            vs_upscaled = vs_upscaled / xp.linalg.norm(
+                vs_upscaled, axis=-2, keepdims=True
+            )
 
         return ws**self.block_sections, vs_upscaled
 

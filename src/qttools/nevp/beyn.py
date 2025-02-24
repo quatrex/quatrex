@@ -3,8 +3,8 @@
 import numpy as np
 
 from qttools import NDArray, xp
+from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
-from qttools.nevp.utils import operator_inverse
 from qttools.utils.gpu_utils import get_device, get_host
 
 rng = xp.random.default_rng(42)
@@ -32,6 +32,9 @@ class Beyn(NEVP):
     num_quad_points : int
         The number of quadrature points to use for the contour
         integration.
+    num_threads_contour : int, optional
+        The number of cuda threads to use for the contour integration kernel.
+        Only relevant for GPU computations.
 
     """
 
@@ -41,12 +44,14 @@ class Beyn(NEVP):
         r_i: float,
         m_0: int,
         num_quad_points: int,
+        num_threads_contour: int = 1024,
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
         self.r_i = r_i
         self.m_0 = m_0
         self.num_quad_points = num_quad_points
+        self.num_threads_contour = num_threads_contour
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
@@ -95,8 +100,12 @@ class Beyn(NEVP):
         w = w.reshape(1, -1, 1, 1)
 
         a_xx = tuple(a_x[:, xp.newaxis, :, :] for a_x in a_xx)
-        inv_Tz_o = operator_inverse(a_xx, z_o, in_type, in_type)
-        inv_Tz_i = operator_inverse(a_xx, z_i, in_type, in_type)
+        inv_Tz_o = operator_inverse(
+            a_xx, z_o, in_type, in_type, self.num_threads_contour
+        )
+        inv_Tz_i = operator_inverse(
+            a_xx, z_i, in_type, in_type, self.num_threads_contour
+        )
 
         # Compute first and second moment.
         P_0 = xp.sum(w * z_o * inv_Tz_o - w * z_i * inv_Tz_i, axis=1) @ Y
@@ -183,8 +192,12 @@ class Beyn(NEVP):
         w = w.reshape(1, -1, 1, 1)
 
         a_xx = [a_x[:, xp.newaxis, :, :] for a_x in a_xx]
-        inv_Tz_o = operator_inverse(a_xx, z_o, in_type, in_type)
-        inv_Tz_i = operator_inverse(a_xx, z_i, in_type, in_type)
+        inv_Tz_o = operator_inverse(
+            a_xx, z_o, in_type, in_type, self.num_threads_contour
+        )
+        inv_Tz_i = operator_inverse(
+            a_xx, z_i, in_type, in_type, self.num_threads_contour
+        )
 
         q0 = xp.sum(w * z_o * inv_Tz_o - w * z_i * inv_Tz_i, axis=1)
         q1 = xp.sum(w * z_o**2 * inv_Tz_o - w * z_i**2 * inv_Tz_i, axis=1)

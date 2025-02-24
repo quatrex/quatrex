@@ -127,3 +127,102 @@ def test_memoizer(
 
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)
+
+
+@pytest.mark.usefixtures(
+    "block_size",
+    "batch_size",
+    "nevp",
+    "block_sections",
+)
+def test_upscaling(
+    block_size: int,
+    batch_size: int,
+    nevp: NEVP,
+    block_sections: int,
+):
+    """Tests that the eigenmode upscaling works."""
+
+    spectral = Spectral(nevp=nevp, block_sections=block_sections)
+
+    rng = xp.random.default_rng()
+
+    ws = rng.random((batch_size, block_size)) + 1j * rng.random(
+        (batch_size, block_size)
+    )
+
+    vs = rng.random(
+        (batch_size, block_size // block_sections, block_size)
+    ) + 1j * rng.random((batch_size, block_size // block_sections, block_size))
+
+    _, vs_upscaled = spectral._upscale_eigenmodes(ws, vs)
+
+    vs_upscaled_ref = xp.zeros((batch_size, block_size, block_size), dtype=vs.dtype)
+    for i in range(batch_size):
+        for j, w in enumerate(ws[i]):
+            vs_upscaled_ref[i, :, j] = xp.kron(
+                xp.array([w**n for n in range(block_sections)]), vs[i, :, j]
+            )
+            vs_upscaled_ref[i, :, j] /= xp.linalg.norm(vs_upscaled_ref[i, :, j])
+
+    assert xp.allclose(vs_upscaled, vs_upscaled_ref)
+
+
+@pytest.mark.usefixtures(
+    "nevp",
+    "two_sided",
+)
+def test_compute_dE_dk(
+    a_xx: tuple[NDArray, ...],
+    nevp: NEVP,
+    two_sided: bool,
+):
+    """Tests that the eigenmode upscaling works."""
+
+    if a_xx[0].ndim == 2:
+        a_xx = tuple(a[xp.newaxis, ...] for a in a_xx)
+
+    batch_size = a_xx[0].shape[0]
+    block_size = a_xx[0].shape[-1]
+    b = len(a_xx) // 2
+
+    spectral = Spectral(nevp=nevp, two_sided=two_sided)
+
+    rng = xp.random.default_rng()
+
+    ws = rng.random((batch_size, block_size)) + 1j * rng.random(
+        (batch_size, block_size)
+    )
+
+    vrs = rng.random((batch_size, block_size, block_size)) + 1j * rng.random(
+        (batch_size, block_size, block_size)
+    )
+
+    if two_sided:
+        vls = rng.random((batch_size, block_size, block_size)) + 1j * rng.random(
+            (batch_size, block_size, block_size)
+        )
+    else:
+        vls = None
+
+    dEk_dk = spectral._compute_dE_dk(ws, vrs, a_xx, vls=vls)
+
+    dEk_dk_ref = xp.zeros_like(ws)
+    for i in range(batch_size):
+        for j, w in enumerate(ws[i]):
+            a = -sum(
+                (1j * n) * w**n * a_xn[i] for a_xn, n in zip(a_xx, range(-b, b + 1))
+            )
+
+            if two_sided:
+                phi_right = vrs[i, :, j]
+                phi_left = vls[i, :, j]
+            else:
+                phi_right = vrs[i, :, j]
+                phi_left = vrs[i, :, j]
+
+            dEk_dk_ref[i, j] = (phi_left.conj().T @ a @ phi_right) / (
+                phi_left.conj().T @ phi_right
+            )
+
+    assert xp.allclose(dEk_dk, dEk_dk_ref)

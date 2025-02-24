@@ -1,5 +1,8 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
+import time
+
+from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.utils.mpi_utils import distributed_load
@@ -154,17 +157,27 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         w_greater.block_sizes = g_greater.block_sizes
 
         sigma_lesser, sigma_greater, sigma_retarded = out
+        t0 = time.perf_counter()
         # Transpose the matrices to nnz distribution.
         for m in (
-            g_lesser,
-            g_greater,
             w_lesser,
             w_greater,
+            g_lesser,
+            g_greater,
             sigma_lesser,
             sigma_greater,
             sigma_retarded,
         ):
+            # The electron Green's functions and self-energies should
+            # ideally already be in nnz-distribution. We cannot discard
+            # the data here, as we cannot be sure that this is the
+            # first/only interaction.
             m.dtranspose() if m.distribution_state != "nnz" else None
+        t1 = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
+            )
 
         # Compute the full self-energy using the convolution theorem.
         # Second term are corrections for negative frequencies that
@@ -188,16 +201,18 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         sigma_retarded.data += 1j * sigma_hermitian + sigma_antihermitian / 2
 
         # Transpose the matrices to stack distribution.
-        for m in (
-            g_lesser,
-            g_greater,
-            w_lesser,
-            w_greater,
-            sigma_lesser,
-            sigma_greater,
-            sigma_retarded,
-        ):
-            m.dtranspose() if m.distribution_state != "stack" else None
+        t0 = time.perf_counter()
+        for m in (w_lesser, w_greater):
+            m.dtranspose(discard=True) if m.distribution_state != "stack" else None
+        # NOTE: The electron Green's functions and self-energies must
+        # not be transposed back to stack distribution, as they are
+        # needed in nnz distribution for the other interactions.
+
+        t1 = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True
+            )
 
         # Recover original block sizes.
         w_lesser.block_sizes = self.big_block_sizes
@@ -231,19 +246,26 @@ class SigmaFock(ScatteringSelfEnergy):
         coulomb_matrix_sparray = distributed_load(
             quatrex_config.input_dir / "coulomb_matrix.npz"
         ).astype(xp.complex128)
+        # Make sure that the Coulomb matrix is Hermitian.
+        coulomb_matrix_sparray = (
+            0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
+        ).tocoo()
 
         # Load block sizes for the coulomb matrix.
         block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
 
         # Create the DSBSparse object.
         # TODO: This is pretty wasteful memory-wise.
-        self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
+        # Workaround: Use comm size as global stack shape.
+        coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=self.energies.shape,
+            global_stack_shape=(comm.size,),
         )
-        self.coulomb_matrix.data = 0.0
-        self.coulomb_matrix += coulomb_matrix_sparray
+        coulomb_matrix.data = 0.0
+        coulomb_matrix += coulomb_matrix_sparray
+        coulomb_matrix.dtranspose()
+        self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     def compute(self, g_lesser: DSBSparse, out: tuple[DSBSparse, ...]) -> None:
         """Computes the Fock self-energy.
@@ -260,10 +282,18 @@ class SigmaFock(ScatteringSelfEnergy):
         # TODO: Check again if we really need to transpose the matrices
         # here.
         (sigma_retarded,) = out
-        for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
+        t0 = time.perf_counter()
+        for m in (g_lesser, sigma_retarded):
+            # These should both already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
+        t1 = time.perf_counter()
+        if comm.rank == 0:
+            print(f"SigmaFock: stack->nnz transpose time: {t1-t0}", flush=True)
+
         # Compute the electron density by summing over energies.
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-        sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix.data)
-        for m in (g_lesser, sigma_retarded, self.coulomb_matrix):
-            m.dtranspose() if m.distribution_state != "stack" else None
+        sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
+
+        # NOTE: The electron Green's functions and self-energies must
+        # not be transposed back to stack distribution, as they are
+        # needed in nnz distribution for the other interactions.

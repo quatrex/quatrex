@@ -69,15 +69,10 @@ class SCBAData:
                 quatrex_config.phonon.interaction_cutoff,
             )
 
-        (
+        if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
-            if comm.rank == 0
-            else None
-        )
+
         self.sparsity_pattern = compute_sparsity_pattern(grid, max_interaction_cutoff)
-        # self.sparsity_pattern = distributed_load(
-        #     quatrex_config.input_dir / "hamiltonian.npz"
-        # ).astype(xp.complex128)
 
         dsbsparse_type = compute_config.dsbsparse_type
 
@@ -111,11 +106,9 @@ class SCBAData:
                 num_connected_blocks = compute_num_connected_blocks(
                     self.sparsity_pattern, block_sizes
                 )
-            (
+
+            if comm.rank == 0:
                 print(f"Number of connected blocks: {num_connected_blocks}", flush=True)
-                if comm.rank == 0
-                else None
-            )
 
             # TODO: This only works for constant block sizes.
             coulomb_screening_block_sizes = (
@@ -123,14 +116,12 @@ class SCBAData:
                 * num_connected_blocks
             )
 
-            self.w_retarded = dsbsparse_type.from_sparray(
+            self.w_lesser = dsbsparse_type.from_sparray(
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
             )
-            self.w_retarded._data[:] = 0.0  # Initialize to zero.
-            self.w_lesser = dsbsparse_type.zeros_like(self.w_retarded)
-            self.w_greater = dsbsparse_type.zeros_like(self.w_retarded)
+            self.w_greater = dsbsparse_type.zeros_like(self.w_lesser)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -165,7 +156,6 @@ class Observables:
     sigma_greater_density: NDArray = None
 
     # --- Coulomb screening --------------------------------------------
-    w_retarded_density: NDArray = None
     w_lesser_density: NDArray = None
     w_greater_density: NDArray = None
 
@@ -224,6 +214,7 @@ class SCBA:
 
         self.data = SCBAData(quatrex_config, compute_config)
         self.observables = Observables()
+        self.mixing_factor = self.quatrex_config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
         self.electron_energies = distributed_load(
@@ -267,7 +258,6 @@ class SCBA:
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
-            # NOTE: No sparsity information required here.
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.quatrex_config,
                 self.compute_config,
@@ -316,18 +306,18 @@ class SCBA:
 
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
-        mixing_factor = self.quatrex_config.scba.mixing_factor
+
         self.data.sigma_lesser.data = (
-            (1 - mixing_factor) * self.data.sigma_lesser_prev.data
-            + mixing_factor * self.data.sigma_lesser.data
+            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
+            + self.mixing_factor * self.data.sigma_lesser.data
         )
         self.data.sigma_greater.data = (
-            (1 - mixing_factor) * self.data.sigma_greater_prev.data
-            + mixing_factor * self.data.sigma_greater.data
+            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
+            + self.mixing_factor * self.data.sigma_greater.data
         )
         self.data.sigma_retarded.data = (
-            (1 - mixing_factor) * self.data.sigma_retarded_prev.data
-            + mixing_factor * self.data.sigma_retarded.data
+            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
+            + self.mixing_factor * self.data.sigma_retarded.data
         )
 
         # Symmetrization.
@@ -344,6 +334,12 @@ class SCBA:
 
         self.data.sigma_retarded._data.imag = 0.0
 
+        # Make the remaining real part Hermitian.
+        self.data.sigma_retarded.data = 0.5 * (
+            self.data.sigma_retarded.data
+            + self.data.sigma_retarded.ltranspose(copy=True).data.conj()
+        )
+        # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded.data += 0.5 * (
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
@@ -354,11 +350,6 @@ class SCBA:
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
         max_diff = xp.max(xp.abs(diff))
         max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        (
-            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
-            if comm.rank == 0
-            else None
-        )
 
         i_left, i_right = contact_currents(
             self.data.g_lesser,
@@ -372,29 +363,11 @@ class SCBA:
             i_right.real - self.observables.electron_current.get("right", 0.0)
         )
         ave_change = 0.5 * (change_left + change_right)
-        (
+
+        if comm.rank == 0:
+            print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Average Current Change: {ave_change}", flush=True)
-            if comm.rank == 0
-            else None
-        )
-        rel_change_left = change_left / xp.linalg.norm(i_left.real)
-        rel_change_right = change_right / xp.linalg.norm(i_right.real)
-        rel_ave_change = 0.5 * (rel_change_left + rel_change_right)
-        (
-            print(f"Relative Average Current Change: {rel_ave_change}", flush=True)
-            if comm.rank == 0
-            else None
-        )
-
-        diff = i_left.real.sum() + i_right.real.sum()
-        print(f"Current Difference: {diff}", flush=True) if comm.rank == 0 else None
-
-        rel_diff = diff / (i_left.real.sum() - i_right.real.sum())
-        (
-            print(f"Relative Current Conservation: {rel_diff}", flush=True)
-            if comm.rank == 0
-            else None
-        )
+            print(f"Current Difference: {diff}", flush=True)
 
         # if ave_change < self.quatrex_config.scba.convergence_tol:
         #     return True
@@ -431,35 +404,31 @@ class SCBA:
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
         t_polarization = time.perf_counter() - times.pop()
-        (
+        if comm.rank == 0:
             print(f"Time for polarization: {t_polarization:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
-        )
+
         times.append(time.perf_counter())
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
             self.data.p_retarded,
-            out=(self.data.w_lesser, self.data.w_greater, self.data.w_retarded),
+            out=(self.data.w_lesser, self.data.w_greater),
         )
         t_solve = time.perf_counter() - times.pop()
-        (
+        if comm.rank == 0:
             print(f"Time for Coulomb screening solver: {t_solve:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
-        )
+
+        self._compute_coulomb_screening_observables()
+
         times.append(time.perf_counter())
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
         )
         t_fock = time.perf_counter() - times.pop()
-        (
+        if comm.rank == 0:
             print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
-        )
+
         times.append(time.perf_counter())
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
@@ -473,16 +442,13 @@ class SCBA:
             ),
         )
         t_sigma = time.perf_counter() - times.pop()
-        (
+        if comm.rank == 0:
             print(
                 f"Time for Coulomb screening self-energy: {t_sigma:.2f} s", flush=True
             )
-            if comm.rank == 0
-            else None
-        )
 
-    def _compute_observables(self) -> None:
-        """Computes observables."""
+    def _compute_electron_observables(self) -> None:
+        """Computes electron observables."""
         self.observables.electron_ldos = -density(
             self.data.g_retarded,
             self.electron_solver.overlap_sparray,
@@ -506,35 +472,12 @@ class SCBA:
                 ),
             )
         )
-
         self.observables.electron_current["device"] = device_current(
             self.data.g_lesser, self.electron_solver.hamiltonian_sparray
         )
-
         if self.quatrex_config.electron.solver.compute_current:
             self.observables.electron_current["meir-wingreen"] = xp.vstack(
                 comm.allgather(self.electron_solver.meir_wingreen_current)
-            )
-
-        if self.quatrex_config.scba.coulomb_screening:
-            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-                2 * xp.pi
-            )
-            self.observables.p_lesser_density = density(self.data.p_lesser) / (
-                2 * xp.pi
-            )
-            self.observables.p_greater_density = -density(self.data.p_greater) / (
-                2 * xp.pi
-            )
-
-            self.observables.w_retarded_density = -density(self.data.w_retarded) / (
-                2 * xp.pi
-            )
-            self.observables.w_lesser_density = density(self.data.w_lesser) / (
-                2 * xp.pi
-            )
-            self.observables.w_greater_density = -density(self.data.w_greater) / (
-                2 * xp.pi
             )
 
         self.observables.sigma_retarded_density = -density(
@@ -549,6 +492,16 @@ class SCBA:
             self.data.sigma_greater,
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
+
+    def _compute_coulomb_screening_observables(self) -> None:
+        self.observables.p_retarded_density = -density(self.data.p_retarded) / (
+            2 * xp.pi
+        )
+        self.observables.p_lesser_density = density(self.data.p_lesser) / (2 * xp.pi)
+        self.observables.p_greater_density = -density(self.data.p_greater) / (2 * xp.pi)
+
+        self.observables.w_lesser_density = density(self.data.w_lesser) / (2 * xp.pi)
+        self.observables.w_greater_density = -density(self.data.w_greater) / (2 * xp.pi)
 
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
@@ -615,10 +568,6 @@ class SCBA:
                 f"{output_dir}/w_greater_density_{iteration}.npy",
                 self.observables.w_greater_density,
             )
-            xp.save(
-                f"{output_dir}/w_retarded_density_{iteration}.npy",
-                self.observables.w_retarded_density,
-            )
 
         xp.save(
             f"{output_dir}/sigma_retarded_density_{iteration}.npy",
@@ -650,34 +599,46 @@ class SCBA:
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
             t_solve = time.perf_counter() - times.pop()
-            (
+            if comm.rank == 0:
                 print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+
+            self._compute_electron_observables()
 
             # Stash current into previous self-energy buffer.
             times.append(time.perf_counter())
             self._stash_sigma()
             t_swap = time.perf_counter() - times.pop()
-            (
+            if comm.rank == 0:
                 print(f"Time for swapping: {t_swap:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+
+            # Transpose to nnz distribution.
+            # NOTE: While computing all interactions, we only ever need
+            # to access the Green's function and the self-energies in
+            # their nnz-distributed state.
+            t0 = time.perf_counter()
+            for m in (self.data.g_lesser, self.data.g_greater):
+                m.dtranspose(discard=False)  # This must not be discarded.
+                assert m.distribution_state == "nnz"
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ):
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "nnz"
+            t1 = time.perf_counter()
+            if comm.rank == 0:
+                print(f"scba: Time for transposing forth: {t1 - t0:.2f} s", flush=True)
 
             if self.quatrex_config.scba.coulomb_screening:
                 times.append(time.perf_counter())
                 self._compute_coulomb_screening_interaction()
                 t_coulomb = time.perf_counter() - times.pop()
-                (
+                if comm.rank == 0:
                     print(
                         f"Time for Coulomb screening interaction: {t_coulomb:.2f} s",
                         flush=True,
                     )
-                    if comm.rank == 0
-                    else None
-                )
 
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()
@@ -692,58 +653,49 @@ class SCBA:
                     else None
                 )
 
-            self.observables.electron_current = dict(
-                zip(
-                    ("left", "right"),
-                    contact_currents(
-                        self.data.g_lesser,
-                        self.data.g_greater,
-                        self.electron_solver.obc_blocks,
-                    ),
-                )
-            )
+            # Transpose back to stack distribution.
+            t0 = time.perf_counter()
+            for m in (self.data.g_lesser, self.data.g_greater):
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "stack"
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ):
+                m.dtranspose(discard=False)  # This must not be discarded.
+                assert m.distribution_state == "stack"
+            t1 = time.perf_counter()
+            if comm.rank == 0:
+                print(f"scba: Time for transposing back: {t1 - t0:.2f} s", flush=True)
 
             times.append(time.perf_counter())
             if self._has_converged():
-                (
-                    print(f"SCBA converged after {i} iterations.")
-                    if comm.rank == 0
-                    else None
-                )
-                self._compute_observables()
+                if comm.rank == 0:
+                    print(f"SCBA converged after {i} iterations.", flush=True)
+
                 break
+
             t_convergence = time.perf_counter() - times.pop()
-            (
+            if comm.rank == 0:
                 print(f"Time for convergence check: {t_convergence:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+
+            times.append(time.perf_counter())
 
             # Update self-energy for next iteration with mixing factor.
-            times.append(time.perf_counter())
             self._update_sigma()
+
             t_update = time.perf_counter() - times.pop()
-            (
+            if comm.rank == 0:
                 print(f"Time for updating: {t_update:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
-            self._compute_observables()
+
+            t_iteration = time.perf_counter() - times.pop()
+            if comm.rank == 0:
+                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
             if i % self.quatrex_config.scba.output_interval == 0:
                 self._write_iteration_outputs(i)
 
-            t_iteration = time.perf_counter() - times.pop()
-            (
-                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
-
         else:  # Did not break, i.e. max_iterations reached.
-            (
+            if comm.rank == 0:
                 print(f"SCBA did not converge after {i} iterations.")
-                if comm.rank == 0
-                else None
-            )
-            self._compute_observables()

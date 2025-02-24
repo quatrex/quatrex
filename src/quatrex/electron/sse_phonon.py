@@ -109,6 +109,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
         sigma_lesser, sigma_greater, sigma_retarded = out
         # Transpose the matrices to nnz distribution.
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):
+            # These should ideally already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         # ==== Diagonal only ===========================================
@@ -153,12 +154,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
         #     )
         # )
 
-        # Keep only the imaginary part.
-        sigma_lesser._data.real = 0.0
-        sigma_greater._data.real = 0.0
-
-        sigma_retarded.data += 0.5 * (sigma_greater.data - sigma_lesser.data)
-
-        # Transpose the matrices back to the original stack distribution.
-        for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):
-            m.dtranspose() if m.distribution_state != "stack" else None
+        # NOTE: The electron Green's functions and self-energies must
+        # not be transposed back to stack distribution, as they are
+        # needed in nnz distribution for the other interactions.

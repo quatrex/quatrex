@@ -845,6 +845,75 @@ class DSBanded(DSBSparse):
             global_stack_shape=global_stack_shape,
         )
 
+    @classmethod
+    def eye(
+        cls,
+        size: int,
+        half_bandwidth: int,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        pinned: bool = False,
+        dtype = xp.complex128
+    ) -> "DSBanded":
+        """Creates a new DSBanded matrix from a scipy.sparse array.
+
+        Parameters
+        ----------
+        arr : sparse.spmatrix
+            The sparse array to convert.
+        block_sizes : NDArray
+            The size of all the blocks in the matrix.
+        global_stack_shape : tuple
+            The global shape of the stack of matrices. The provided
+            sparse matrix is replicated across the stack.
+        densify_blocks : list[tuple], optional
+            List of matrix blocks to densify. Default is None. This is
+            useful to densify the boundary blocks of the matrix
+        pinned : bool, optional
+            Whether to pin the memory when using GPU. Default is False.
+
+        Returns
+        -------
+        DSBanded
+            The new DSBanded matrix.
+
+        """
+
+        # We only distribute the first dimension of the stack.
+        stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
+        section_size = stack_section_sizes[comm.rank]
+        local_stack_shape = (section_size,) + global_stack_shape[1:]
+
+        banded_block_size = 16
+        banded_type = 0
+        half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
+        banded_rows = ((size + banded_block_size - 1) // banded_block_size) * banded_block_size
+        banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
+        banded_shape = (banded_rows, banded_cols)
+
+        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+
+        A_blk_tallNSkinny = data
+        BLK_SIZE = banded_block_size
+
+        M = banded_rows
+
+        row_indices = xp.arange(BLK_SIZE, dtype=xp.int32)
+        col_indices = xp.arange(half_block_bandwidth * BLK_SIZE, (half_block_bandwidth + 1) * BLK_SIZE, dtype=xp.int32)
+
+        # iterate over the block rows
+        for blk_i in range(0, M // BLK_SIZE):
+            A_blk_tallNSkinny[..., row_indices + blk_i * BLK_SIZE, col_indices] = 1
+
+        return cls(
+            data=data,
+            half_bandwidth=half_bandwidth,
+            banded_block_size=banded_block_size,
+            banded_type=banded_type,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+
 
 class ShortNFat(DSBSparse):
     """Distributed stack of banded matrices.
@@ -1631,6 +1700,75 @@ class ShortNFat(DSBSparse):
 
             # copy the block row to the tall and skinny matrix
             B_blk_shortNFat[..., :, blk_j * BLK_SIZE : (blk_j + 1) * BLK_SIZE] = blk_col
+
+        return cls(
+            data=data,
+            half_bandwidth=half_bandwidth,
+            banded_block_size=banded_block_size,
+            banded_type=banded_type,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+
+    @classmethod
+    def eye(
+        cls,
+        size: int,
+        half_bandwidth: int,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        pinned: bool = False,
+        dtype = xp.complex128
+    ) -> "DSBanded":
+        """Creates a new DSBanded matrix from a scipy.sparse array.
+
+        Parameters
+        ----------
+        arr : sparse.spmatrix
+            The sparse array to convert.
+        block_sizes : NDArray
+            The size of all the blocks in the matrix.
+        global_stack_shape : tuple
+            The global shape of the stack of matrices. The provided
+            sparse matrix is replicated across the stack.
+        densify_blocks : list[tuple], optional
+            List of matrix blocks to densify. Default is None. This is
+            useful to densify the boundary blocks of the matrix
+        pinned : bool, optional
+            Whether to pin the memory when using GPU. Default is False.
+
+        Returns
+        -------
+        DSBanded
+            The new DSBanded matrix.
+
+        """
+
+        # We only distribute the first dimension of the stack.
+        stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
+        section_size = stack_section_sizes[comm.rank]
+        local_stack_shape = (section_size,) + global_stack_shape[1:]
+
+        banded_block_size = 16
+        banded_type = 1
+        half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
+        banded_rows = (2 * half_block_bandwidth + 1) * banded_block_size
+        banded_cols = ((size + banded_block_size - 1) // banded_block_size) * banded_block_size
+        banded_shape = (banded_rows, banded_cols)
+
+        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+
+        B_blk_shortNFat = data
+        BLK_SIZE = banded_block_size
+
+        N = banded_cols
+
+        col_indices = xp.arange(BLK_SIZE, dtype=xp.int32)
+        row_indices = xp.arange(half_block_bandwidth * BLK_SIZE, (half_block_bandwidth + 1) * BLK_SIZE, dtype=xp.int32)
+
+        # iterate over the block rows
+        for blk_j in range(0, N // BLK_SIZE):
+            B_blk_shortNFat[..., row_indices, col_indices +  blk_j * BLK_SIZE] = 1
 
         return cls(
             data=data,

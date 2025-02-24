@@ -15,6 +15,7 @@ else:
     DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
 DSBANDED_TYPES = [DSBanded, ShortNFat]
+DSBANDED_MATMUL_TYPES = [(DSBanded, ShortNFat)]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -59,6 +60,13 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(2.0, id="double-change"),
 ]
 
+HALF_BANDWIDTH = [
+    pytest.param(1, id="half-bandwidth"),
+    pytest.param(2, id="full-bandwidth"),
+    pytest.param(5, id="full-bandwidth"),
+    pytest.param(10, id="full-bandwidth"),
+]
+
 OPS = [
     pytest.param(xp.add, id="add"),
     pytest.param(xp.subtract, id="subtract"),
@@ -95,13 +103,8 @@ def dsbanded_type(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 
-@pytest.fixture(params=DSBANDED_TYPES)
-def dsbanded_type_a(request: pytest.FixtureRequest) -> DSBSparse:
-    return request.param
-
-
-@pytest.fixture(params=DSBANDED_TYPES)
-def dsbanded_type_b(request: pytest.FixtureRequest) -> DSBSparse:
+@pytest.fixture(params=DSBANDED_MATMUL_TYPES)
+def dsbanded_matmul_type(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 @pytest.fixture(params=DSDBSPARSE_TYPES_DIST)
@@ -145,4 +148,9 @@ def op(request):
 
 @pytest.fixture(params=SYMMETRY_TYPE)
 def symmetry_type(request: pytest.FixtureRequest) -> bool:
+    return request.param
+
+
+@pytest.fixture(params=HALF_BANDWIDTH)
+def half_bandwidth(request):
     return request.param

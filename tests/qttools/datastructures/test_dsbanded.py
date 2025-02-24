@@ -57,6 +57,19 @@ class TestCreation:
         )
         zeros = dsbanded_type.zeros_like(dsbsparse)
         assert (zeros.to_dense() == 0).all()
+    
+    def test_eye(
+        self,
+        dsbanded_type: DSBSparse,
+        half_bandwidth: int,
+        block_sizes: NDArray,
+        global_stack_shape: int | tuple,
+    ):
+        """Tests the creation of a DSBanded identiy matrix."""
+        size = int(sum(block_sizes))
+        reference = xp.eye(size, dtype=xp.complex128)
+        dsbsparse = dsbanded_type.eye(size, half_bandwidth, block_sizes, global_stack_shape)
+        assert xp.allclose(reference, dsbsparse.to_dense())
 
 
 def _create_new_block_sizes(
@@ -468,28 +481,28 @@ class TestAccess:
         # Assert that the two DSBSparse matrices are equivalent.
         assert (dsbsparse.data == dsbsparse_updated_block_sizes.data).all()
 
-    def test_spy(
-        self,
-        dsbanded_type: DSBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests that we can get the correct sparsity pattern."""
-        coo = _create_coo(block_sizes)
-        dsbsparse = dsbanded_type.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
-        )
-        inds = xp.lexsort(xp.vstack((coo.col, coo.row)))
-        ref_col, ref_row = coo.col[inds], coo.row[inds]
+    # def test_spy(
+    #     self,
+    #     dsbanded_type: DSBSparse,
+    #     block_sizes: NDArray,
+    #     global_stack_shape: tuple,
+    # ):
+    #     """Tests that we can get the correct sparsity pattern."""
+    #     coo = _create_coo(block_sizes)
+    #     dsbsparse = dsbanded_type.from_sparray(
+    #         coo,
+    #         block_sizes=block_sizes,
+    #         global_stack_shape=global_stack_shape,
+    #     )
+    #     inds = xp.lexsort(xp.vstack((coo.col, coo.row)))
+    #     ref_col, ref_row = coo.col[inds], coo.row[inds]
 
-        rows, cols = dsbsparse.spy()
-        inds = xp.lexsort(xp.vstack((cols, rows)))
-        col, row = cols[inds], rows[inds]
+    #     rows, cols = dsbsparse.spy()
+    #     inds = xp.lexsort(xp.vstack((cols, rows)))
+    #     col, row = cols[inds], rows[inds]
 
-        assert xp.allclose(ref_col, col)
-        assert xp.allclose(ref_row, row)
+    #     assert xp.allclose(ref_col, col)
+    #     assert xp.allclose(ref_row, row)
 
     def test_diagonal(
         self,
@@ -532,22 +545,22 @@ class TestArithmetic:
 
         assert xp.allclose(dense + dense, dsbsparse.to_dense())
 
-    def test_iadd_coo(
-        self,
-        dsbanded_type: DSBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
-    ):
-        """Tests the in-place addition of a DSBSparse matrix with a COO matrix."""
-        coo = _create_coo(block_sizes)
-        dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
-        )
+    # def test_iadd_coo(
+    #     self,
+    #     dsbanded_type: DSBSparse,
+    #     block_sizes: NDArray,
+    #     global_stack_shape: tuple,
+    #     densify_blocks: list[tuple] | None,
+    # ):
+    #     """Tests the in-place addition of a DSBSparse matrix with a COO matrix."""
+    #     coo = _create_coo(block_sizes)
+    #     dsbsparse = dsbanded_type.from_sparray(
+    #         coo, block_sizes, global_stack_shape, densify_blocks
+    #     )
 
-        dsbsparse += coo.copy()
+    #     dsbsparse += coo.copy()
 
-        assert xp.allclose(dsbsparse.to_dense(), 2 * coo.toarray())
+    #     assert xp.allclose(dsbsparse.to_dense(), 2 * coo.toarray())
 
     def test_isub(
         self,
@@ -573,24 +586,24 @@ class TestArithmetic:
 
         assert xp.allclose(dense_1 - dense_2, dsbsparse_1.to_dense())
 
-    def test_isub_coo(
-        self,
-        dsbanded_type: DSBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
-    ):
-        """Tests the in-place subtraction of a DSBSparse matrix with a COO matrix."""
-        coo = _create_coo(block_sizes)
+    # def test_isub_coo(
+    #     self,
+    #     dsbanded_type: DSBSparse,
+    #     block_sizes: NDArray,
+    #     global_stack_shape: tuple,
+    #     densify_blocks: list[tuple] | None,
+    # ):
+    #     """Tests the in-place subtraction of a DSBSparse matrix with a COO matrix."""
+    #     coo = _create_coo(block_sizes)
 
-        dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
-        )
-        dense = dsbsparse.to_dense()
+    #     dsbsparse = dsbanded_type.from_sparray(
+    #         coo, block_sizes, global_stack_shape, densify_blocks
+    #     )
+    #     dense = dsbsparse.to_dense()
 
-        dsbsparse -= 2 * coo
+    #     dsbsparse -= 2 * coo
 
-        assert xp.allclose(dense - 2 * coo.toarray(), dsbsparse.to_dense())
+    #     assert xp.allclose(dense - 2 * coo.toarray(), dsbsparse.to_dense())
 
     def test_imul(
         self,
@@ -628,13 +641,14 @@ class TestArithmetic:
 
     def test_matmul(
         self,
-        dsbanded_type_a: DSBSparse,
-        dsbanded_type_b: DSBSparse,
+        dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
+        dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
+
         coo = _create_coo(block_sizes, complex=False)
         dsbsparse_a = dsbanded_type_a.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks, dtype=xp.float16

@@ -84,7 +84,7 @@ def read_hr_dat(
 
 
 def get_hamiltonian_block(
-    hr: xp.ndarray,
+    hr: NDArray,
     supercell_size: tuple,
     global_shift: tuple,
 ) -> xp.ndarray:
@@ -150,7 +150,8 @@ def create_hamiltonian(
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
-    and is only connected to nearest-neighboring cells.
+    and is only connected to nearest-neighboring cells. Note therefore that interactions outside
+    nearest neighbors are not included in the block-tridiagonal Hamiltonian.
 
     Parameters
     ----------
@@ -175,7 +176,6 @@ def create_hamiltonian(
         The block-tridiagonal Hamiltonian matrix.
     """
     if cutoff is not None and coords is None and lattice_vectors is None:
-        # Print a warning if cutoff is set but coords and lattice_vectors are not.
         print(
             "Cutoff is set but coords and lattice_vectors are not provided. No cutoff will be applied.",
             flush=True,
@@ -185,17 +185,16 @@ def create_hamiltonian(
         transport_dir = "xyz".index(transport_dir)
 
     if transport_cell is None:
-        transport_cell = [1, 1, 1]
         # NOTE: Can also do without the + 1.
-        transport_cell[transport_dir] = hR.shape[transport_dir] // 2 + 1
-        transport_cell = tuple(transport_cell)
+        transport_cell = tuple(
+            [
+                shape // 2 + 1 if i == transport_dir else 1
+                for i, shape in enumerate(hR.shape[:3])
+            ]
+        )
 
-    upper_ind = [0, 0, 0]
-    upper_ind[transport_dir] = 1
-    upper_ind = tuple(upper_ind)
-    lower_ind = [0, 0, 0]
-    lower_ind[transport_dir] = -1
-    lower_ind = tuple(lower_ind)
+    upper_ind = tuple([1 if i == transport_dir else 0 for i in range(3)])
+    lower_ind = tuple([-1 if i == transport_dir else 0 for i in range(3)])
 
     diag_block = get_hamiltonian_block(hR, transport_cell, (0, 0, 0))
     upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
@@ -206,16 +205,23 @@ def create_hamiltonian(
         super_cell_coords = create_coordinate_grid(
             coords, transport_cell, lattice_vectors
         )
-        diag_dist = xp.abs(xp.subtract.outer(super_cell_coords, super_cell_coords))
-        upper_dist = diag_dist + xp.array(upper_ind) @ lattice_vectors
-        lower_dist = diag_dist + xp.array(lower_ind) @ lattice_vectors
+        distance_matrix = xp.diagonal(
+            xp.subtract.outer(super_cell_coords, super_cell_coords), axis1=1, axis2=3
+        )
+        diag_dist = xp.linalg.norm(distance_matrix, axis=-1)
+        upper_dist = xp.linalg.norm(
+            distance_matrix + xp.array(upper_ind) @ lattice_vectors, axis=-1
+        )
+        lower_dist = xp.linalg.norm(
+            distance_matrix + xp.array(lower_ind) @ lattice_vectors, axis=-1
+        )
         diag_block[diag_dist > cutoff] = 0
         upper_block[upper_dist > cutoff] = 0
         lower_block[lower_dist > cutoff] = 0
 
     # Create the block-tridiagonal matrix.
-    diag = xp.repeat(diag_block, num_transport_cells, axis=0)
-    upper = xp.repeat(upper_block, num_transport_cells - 1, axis=0)
-    lower = xp.repeat(lower_block, num_transport_cells - 1, axis=0)
+    diag = xp.tile(diag_block, (num_transport_cells, 1))
+    upper = xp.tile(upper_block, (num_transport_cells - 1, 1))
+    lower = xp.tile(lower_block, (num_transport_cells - 1, 1))
 
     return diag, upper, lower

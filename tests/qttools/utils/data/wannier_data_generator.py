@@ -82,7 +82,7 @@ def main():
             [2, 2, 0],
         ]
     )
-    MR = xp.ones((25, 10, 10), dtype=xp.complex128)
+    MR = xp.ones((25, 1, 1), dtype=xp.complex128)
     for i in range(25):
         MR[i] = R[i][0] + 1j * R[i][1]
     save_as_wannierhr("wannier90_hr.dat", R, MR)

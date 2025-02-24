@@ -68,7 +68,7 @@ def test_get_hamiltonian_block(supercell: tuple[int, int, int], shift: tuple[int
 @pytest.mark.parametrize(
     "coords, supercell, lat_vecs",
     [
-        (xp.ones((9, 3)), (2, 2, 2), xp.eye(3)),
+        (xp.ones((10, 3)), (2, 2, 2), xp.eye(3)),
     ],
 )
 def test_create_coordinate_grid(coords: NDArray, supercell: tuple[int, int, int], lat_vecs: NDArray):
@@ -76,7 +76,7 @@ def test_create_coordinate_grid(coords: NDArray, supercell: tuple[int, int, int]
     assert grid.shape == (xp.prod(supercell) * 10, 3)
     for ind in xp.ndindex(supercell):
         row_ind = xp.ravel_multi_index(ind, supercell) 
-        assert xp.allclose(grid[row_ind * 10 : (row_ind + 1) * 10], 1 + sum(ind))
+        assert xp.allclose(grid[row_ind * 10 : (row_ind + 1) * 10], 1 + xp.array(ind))
 
 
 @pytest.mark.parametrize(

@@ -40,11 +40,7 @@ TWO_SIDED = [True, False]
 
 TREAT_PAIRWISE = [True, False]
 
-RESIDUAL_NORMALIZATION_FORMULAS = [
-    "operator_norm",
-    "abs_eigenvalue",
-    "no_normalization",
-]
+RESIDUAL_NORMALIZATION_FORMULAS = ["operator", "eigenvalue", None]
 
 
 @pytest.fixture(params=X_II_FORMULAS)
@@ -116,6 +112,6 @@ def treat_pairwise(request: pytest.FixtureRequest) -> bool:
 
 
 @pytest.fixture(params=RESIDUAL_NORMALIZATION_FORMULAS)
-def residual_normalization_formula(request: pytest.FixtureRequest) -> str:
+def residual_normalization(request: pytest.FixtureRequest) -> str | None:
     """Returns a residual normalization formula."""
     return request.param

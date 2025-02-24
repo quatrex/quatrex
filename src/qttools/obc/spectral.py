@@ -60,14 +60,14 @@ class Spectral(OBCSolver):
         clearly a mode propagates.
     residual_tolerance : float, optional
         The tolerance for the residual of the NEVP.
-    residual_normalization_formula : str, optional
+    residual_normalization : str | None, optional
         The formula to use for the normalization of the residual. The
-        default is the "operator_norm" formula. The other options are
-        "abs_eigenvalue" and "no_normalization".The "operator_norm"
-        formula corresponds to normalization by the frobenius norm of
-        the operator, the "abs_eigenvalue" formula corresponds to
-        normalization by the absolute of the eigenvalues, and
-        "no_normalization" results in no normalization.
+        default is the "operator" formula. The other options are
+        "eigenvalue" and None. The "operator" formula corresponds to
+        normalization by the Frobenius norm of the operator, the
+        "eigenvalue" formula corresponds to normalization by the
+        absolute of the eigenvalues, and None results in no
+        normalization.
 
         [^1]: S. Brück, et al., Efficient algorithms for large-scale
         quantum transport calculations, The Journal of Chemical Physics,
@@ -88,7 +88,7 @@ class Spectral(OBCSolver):
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
-        residual_normalization_formula: str = "abs_eigenvalue",
+        residual_normalization: str | None = "eigenvalue",
         warning_threshold: float = 1e-1,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -108,7 +108,7 @@ class Spectral(OBCSolver):
         self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
-        self.residual_normalization_formula = residual_normalization_formula
+        self.residual_normalization = residual_normalization
         self.warning_threshold = warning_threshold
 
     def _extract_subblocks(
@@ -294,7 +294,7 @@ class Spectral(OBCSolver):
 
         # Calculate the residual
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
-            if self.residual_normalization_formula == "operator_norm":
+            if self.residual_normalization == "operator":
                 # NOTE: This consumes a lot of memory since
                 # the operators are explicitly calculated.
                 operators = sum(
@@ -303,18 +303,18 @@ class Spectral(OBCSolver):
                     for i, a_x in enumerate(a_xx)
                 )
                 products = operators @ vrs.swapaxes(-1, -2)[..., xp.newaxis]
-            elif self.residual_normalization_formula in [
-                "abs_eigenvalue",
-                "no_normalization",
-            ]:
+            elif (
+                self.residual_normalization == "eigenvalue"
+                or self.residual_normalization is None
+            ):
                 products = sum(
                     a_x @ vrs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
                     for i, a_x in enumerate(a_xx)
                 ).swapaxes(-1, -2)[..., xp.newaxis]
             else:
                 raise ValueError(
-                    f"Unknown formula: {self.residual_normalization_formula}"
-                    "Choose 'operator_norm', 'abs_eigenvalue', or 'no_normalization'."
+                    f"Unknown normalization: {self.residual_normalization}"
+                    "Choose 'operator', 'eigenvalue', or 'None'."
                 )
 
             residuals = xp.linalg.norm(products, axis=(-1, -2))
@@ -323,21 +323,12 @@ class Spectral(OBCSolver):
             eigenvector_norm = xp.linalg.norm(vrs, axis=-2)
             residuals /= eigenvector_norm
 
-            if self.residual_normalization_formula == "operator_norm":
-                operator_norm = xp.linalg.norm(operators, axis=(-1, -2))
-                residuals /= operator_norm
-            elif self.residual_normalization_formula == "abs_eigenvalue":
-                residuals /= xp.abs(ws)
-            elif self.residual_normalization_formula == "no_normalization":
-                pass
-            else:
-                raise ValueError(
-                    f"Unknown formula: {self.residual_normalization_formula}"
-                    "Choose 'operator_norm', 'abs_eigenvalue', or 'no_normalization'."
-                )
+            if self.residual_normalization == "operator":
+                operator = xp.linalg.norm(operators, axis=(-1, -2))
+                residuals /= operator
 
-            if xp.any(residuals > self.residual_tolerance):
-                print("Warning: Residuals are larger than the tolerance.")
+            if self.residual_normalization == "eigenvalue":
+                residuals /= xp.abs(ws)
 
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the

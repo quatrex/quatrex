@@ -4,7 +4,7 @@ import functools
 from mpi4py.MPI import COMM_WORLD as comm
 import torch
 
-from qttools import NDArray, sparse, xp
+from qttools import DTypeLike, NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels, dsbanded_kernels
 from qttools.utils.mpi_utils import get_section_sizes
@@ -735,7 +735,9 @@ class DSBanded(DSBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
-        dtype = None
+        banded_block_size: int = 16,
+        half_block_bandwidth: int = None,
+        dtype: DTypeLike = None
     ) -> "DSBanded":
         """Creates a new DSBanded matrix from a scipy.sparse array.
 
@@ -750,7 +752,7 @@ class DSBanded(DSBSparse):
             sparse matrix is replicated across the stack.
         densify_blocks : list[tuple], optional
             List of matrix blocks to densify. Default is None. This is
-            useful to densify the boundary blocks of the matrix
+            useful to densify the boundary blocks of the matrix.
         pinned : bool, optional
             Whether to pin the memory when using GPU. Default is False.
 
@@ -782,9 +784,8 @@ class DSBanded(DSBSparse):
         # )
 
         half_bandwidth = int(xp.abs(coo.row - coo.col).max())
-        banded_block_size = 16
         banded_type = 0
-        half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
+        half_block_bandwidth = half_block_bandwidth or (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = ((coo.shape[0] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
@@ -1600,7 +1601,9 @@ class ShortNFat(DSBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
-        dtype = None,
+        banded_block_size: int = 16,
+        half_block_bandwidth: int = None,
+        dtype: DTypeLike = None
     ) -> "ShortNFat":
         """Creates a new ShortNFat matrix from a scipy.sparse array.
 
@@ -1641,15 +1644,9 @@ class ShortNFat(DSBSparse):
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
-        # # Compute the block-sorting index.
-        # block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-        #     coo.row, coo.col, block_sizes
-        # )
-
         half_bandwidth = int(xp.abs(coo.row - coo.col).max())
-        banded_block_size = 16
         banded_type = 1
-        half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
+        half_block_bandwidth = half_block_bandwidth or (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_cols = ((coo.shape[1] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
@@ -1657,9 +1654,6 @@ class ShortNFat(DSBSparse):
         dense = xp.zeros((banded_rows, banded_cols), dtype=dtype)
         dense[coo.row, coo.col] = coo.data
         data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
-        # data[..., :] = coo.data[block_sort_index]
-        # rows = coo.row[block_sort_index]
-        # cols = coo.col[block_sort_index]
 
         B = dense
         B_blk_shortNFat = data
@@ -1669,12 +1663,8 @@ class ShortNFat(DSBSparse):
         if len(B.shape) == 2:
             B = xp.reshape(B, (1,) + B.shape)
         batch, M, N = B.shape
-        # allocate memory for the compressed matrix
-        # A_blk_tallNSkinny = torch.zeros(
-        #     (batch, M, (2 * r_block + 1) * BLK_SIZE), dtype=A.dtype, device=A.device
-        # )
 
-        # iterate over the block rows
+        # iterate over the block columns
         for blk_j in range(0, N // BLK_SIZE):
             # copy the block row from the dense matrix to the tall and skinny matrix
             # while shifting the elements to the correct positions

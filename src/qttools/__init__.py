@@ -5,7 +5,7 @@ import warnings
 from typing import Any, TypeAlias, TypeVar
 
 from mpi4py.MPI import COMM_WORLD as global_comm
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, DTypeLike
 
 from qttools.__about__ import __version__
 
@@ -70,4 +70,4 @@ _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
 _DType = xp.dtype[_ScalarType]
 NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
-__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]
+__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike", "DTypeLike"]

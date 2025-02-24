@@ -24,7 +24,6 @@ def _create_coo(sizes: NDArray, complex: bool = True) -> sparse.coo_matrix:
     return coo
 
 
-@pytest.mark.usefixtures("densify_blocks")
 class TestCreation:
     """Tests the creation methods of DSBSparse."""
 
@@ -33,12 +32,12 @@ class TestCreation:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
-        densify_blocks: list[tuple] | None,
+        banded_block_size: int,
     ):
         """Tests the creation of DSBSparse matrices from sparse arrays."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
         )
         
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
@@ -48,12 +47,11 @@ class TestCreation:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the creation of a zero DSBSparse matrix with the same shape as another."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         zeros = dsbanded_type.zeros_like(dsbsparse)
         assert (zeros.to_dense() == 0).all()
@@ -523,7 +521,6 @@ class TestAccess:
         assert xp.allclose(reference, dsbsparse.diagonal())
 
 
-@pytest.mark.usefixtures("densify_blocks")
 class TestArithmetic:
     """Tests for the arithmetic operations of DSBSparse."""
 
@@ -532,12 +529,11 @@ class TestArithmetic:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the in-place addition of a DSBSparse matrix."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         dense = dsbsparse.to_dense()
 
@@ -567,18 +563,17 @@ class TestArithmetic:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the in-place subtraction of a DSBSparse matrix."""
         coo = _create_coo(block_sizes)
 
         dsbsparse_1 = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         dense_1 = dsbsparse_1.to_dense()
 
         dsbsparse_2 = dsbanded_type.from_sparray(
-            2 * coo, block_sizes, global_stack_shape, densify_blocks
+            2 * coo, block_sizes, global_stack_shape
         )
         dense_2 = dsbsparse_2.to_dense()
 
@@ -610,12 +605,11 @@ class TestArithmetic:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the in-place multiplication of a DSBSparse matrix."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         dense = dsbsparse.to_dense()
 
@@ -628,12 +622,11 @@ class TestArithmetic:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the negation of a DSBSparse matrix."""
         coo = _create_coo(block_sizes)
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         dense = dsbsparse.to_dense()
 
@@ -644,18 +637,17 @@ class TestArithmetic:
         dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
 
         coo = _create_coo(block_sizes, complex=False)
         dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, dtype=xp.float16
         )
         dense = coo.toarray().astype(xp.float16)
         dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, dtype=xp.float16
         )
 
         assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
@@ -707,20 +699,18 @@ def test_block_view(array: NDArray, axis: int, num_blocks: int):
 class TestDistribution:
     """Tests for the distribution methods of DSBSparse."""
 
-    @pytest.mark.usefixtures("densify_blocks")
     def test_from_sparray(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
     ):
         """Tests distributed creation of DSBSparse matrices from sparrays."""
         coo = _create_coo(block_sizes) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo, block_sizes, global_stack_shape
         )
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 

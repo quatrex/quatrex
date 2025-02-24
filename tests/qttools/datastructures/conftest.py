@@ -24,6 +24,11 @@ BLOCK_SIZES = [
     pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
+BIG_BLOCK_SIZES = [
+    pytest.param(xp.array([200] * 10), id="big-constant-block-size"),
+    pytest.param(xp.array([200] * 3 + [400] * 2 + [200] * 3), id="big-mixed-block-size"),
+]
+
 ACCESSED_BLOCKS = [
     pytest.param((0, 0), id="first-block"),
     pytest.param((4, 2), id="random-lower-block"),
@@ -60,11 +65,18 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(2.0, id="double-change"),
 ]
 
-HALF_BANDWIDTH = [
-    pytest.param(1, id="half-bandwidth"),
-    pytest.param(2, id="full-bandwidth"),
-    pytest.param(5, id="full-bandwidth"),
-    pytest.param(10, id="full-bandwidth"),
+BANDED_BLOCK_SIZES = [
+    pytest.param(16, id="16-band-block-size"),
+    pytest.param(32, id="32-band-block-size"),
+    pytest.param(64, id="64-band-block-size"),
+    pytest.param(128, id="128-band-block-size"),
+]
+
+HALF_BANDWIDTHS = [
+    pytest.param(1, id="1-half-bw"),
+    pytest.param(2, id="2-half-bw"),
+    pytest.param(5, id="5-half-bw"),
+    pytest.param(10, id="10-half-bw"),
 ]
 
 OPS = [
@@ -90,6 +102,26 @@ SYMMETRY_TYPE = [
 
 @pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
+    return request.param
+
+
+@pytest.fixture(params=BIG_BLOCK_SIZES)
+def big_block_sizes(request: pytest.FixtureRequest) -> NDArray:
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_SIZES+BIG_BLOCK_SIZES)
+def all_block_sizes(request: pytest.FixtureRequest) -> NDArray:
+    return request.param
+
+
+@pytest.fixture(params=BIG_BLOCK_SIZES)
+def big_block_sizes(request: pytest.FixtureRequest) -> NDArray:
+    return request.param
+
+
+@pytest.fixture(params=BLOCK_SIZES+BIG_BLOCK_SIZES)
+def all_block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
@@ -151,6 +183,11 @@ def symmetry_type(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
-@pytest.fixture(params=HALF_BANDWIDTH)
+@pytest.fixture(params=BANDED_BLOCK_SIZES)
+def banded_block_size(request):
+    return request.param
+
+
+@pytest.fixture(params=HALF_BANDWIDTHS)
 def half_bandwidth(request):
     return request.param

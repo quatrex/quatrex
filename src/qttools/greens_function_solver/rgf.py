@@ -68,7 +68,9 @@ class RGF(GFSolver):
 
             # See if there is an OBC block for the current layer.
             obc = obc_blocks.retarded[0]
-            a_00 = a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc
+            a_00 = (
+                a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc[stack_slice]
+            )
 
             x_diag_blocks[0] = xp.linalg.inv(a_00)
 
@@ -78,7 +80,11 @@ class RGF(GFSolver):
 
                 # See if there is an OBC block for the current layer.
                 obc = obc_blocks.retarded[j]
-                a_jj = a_.blocks[j, j] if obc is None else a_.blocks[j, j] - obc
+                a_jj = (
+                    a_.blocks[j, j]
+                    if obc is None
+                    else a_.blocks[j, j] - obc[stack_slice]
+                )
 
                 x_diag_blocks[j] = xp.linalg.inv(
                     a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
@@ -174,19 +180,15 @@ class RGF(GFSolver):
         # If out is not none, xr will be the third element of the tuple.
         if out is not None:
             xl, xg, *xr = out
-            if len(xr) == 0:
-                # Allocate the retarded Green's function.
-                xr = a.__class__.zeros_like(a)
-            elif len(xr) == 1:
-                # Unpack the tuple.
+            if return_retarded:
+                if len(xr) != 1:
+                    raise ValueError("Invalid number of output matrices.")
                 xr = xr[0]
-            else:
-                raise ValueError("Invalid number of output matrices.")
-
         else:
-            xr = a.__class__.zeros_like(a)
             xl = a.__class__.zeros_like(a)
             xg = a.__class__.zeros_like(a)
+            if return_retarded:
+                xr = a.__class__.zeros_like(a)
 
         # Perform the selected solve by batches.
         for i in range(len(batches_sizes)):
@@ -196,24 +198,29 @@ class RGF(GFSolver):
             sigma_lesser_ = sigma_lesser.stack[stack_slice]
             sigma_greater_ = sigma_greater.stack[stack_slice]
 
-            xr_ = xr.stack[stack_slice]
             xl_ = xl.stack[stack_slice]
             xg_ = xg.stack[stack_slice]
+            if return_retarded:
+                xr_ = xr.stack[stack_slice]
 
             # Check if there are OBC blocks for the current layer.
             obc_r = obc_blocks.retarded[0]
-            a_00 = a_.blocks[0, 0] if obc_r is None else a_.blocks[0, 0] - obc_r
+            a_00 = (
+                a_.blocks[0, 0]
+                if obc_r is None
+                else a_.blocks[0, 0] - obc_r[stack_slice]
+            )
             obc_l = obc_blocks.lesser[0]
             sl_00 = (
                 sigma_lesser_.blocks[0, 0]
                 if obc_l is None
-                else sigma_lesser_.blocks[0, 0] + obc_l
+                else sigma_lesser_.blocks[0, 0] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[0]
             sg_00 = (
                 sigma_greater_.blocks[0, 0]
                 if obc_g is None
-                else sigma_greater_.blocks[0, 0] + obc_g
+                else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             )
 
             xr_00 = xp.linalg.inv(a_00)
@@ -228,18 +235,22 @@ class RGF(GFSolver):
 
                 # Check if there are OBC blocks for the current layer.
                 obc_r = obc_blocks.retarded[j]
-                a_jj = a_.blocks[j, j] if obc_r is None else a_.blocks[j, j] - obc_r
+                a_jj = (
+                    a_.blocks[j, j]
+                    if obc_r is None
+                    else a_.blocks[j, j] - obc_r[stack_slice]
+                )
                 obc_l = obc_blocks.lesser[j]
                 sl_jj = (
                     sigma_lesser_.blocks[j, j]
                     if obc_l is None
-                    else sigma_lesser_.blocks[j, j] + obc_l
+                    else sigma_lesser_.blocks[j, j] + obc_l[stack_slice]
                 )
                 obc_g = obc_blocks.greater[j]
                 sg_jj = (
                     sigma_greater_.blocks[j, j]
                     if obc_g is None
-                    else sigma_greater_.blocks[j, j] + obc_g
+                    else sigma_greater_.blocks[j, j] + obc_g[stack_slice]
                 )
 
                 # Get the blocks that are used multiple times.
@@ -281,9 +292,10 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xr_.blocks[-1, -1] = xr_diag_blocks[-1]
             xl_.blocks[-1, -1] = xl_diag_blocks[-1]
             xg_.blocks[-1, -1] = xg_diag_blocks[-1]
+            if return_retarded:
+                xr_.blocks[-1, -1] = xr_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
@@ -398,10 +410,9 @@ class RGF(GFSolver):
                     - temp_1_g
                     + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
                 )
-
-                xr_.blocks[i, i] = xr_diag_blocks[i] = (
-                    xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
-                )
+                xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
+                if return_retarded:
+                    xr_.blocks[i, i] = xr_diag_blocks[i]
 
         if out is None:
             if return_retarded:

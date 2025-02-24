@@ -469,7 +469,9 @@ class DSBSparse(ABC):
         self.return_dense = original_return_dense
         return xp.concatenate(diagonals, axis=-1)
 
-    def _dtranspose(self, block_axis: int, concatenate_axis: int) -> None:
+    def _dtranspose(
+        self, block_axis: int, concatenate_axis: int, discard: bool = False
+    ) -> None:
         """Performs the distributed transposition of the data.
 
         This is a helper method that performs the distributed transposition
@@ -481,6 +483,8 @@ class DSBSparse(ABC):
             The axis along which the blocks view is created.
         concatenate_axis : int
             The axis along which the received blocks are concatenated.
+        discard : bool, optional
+            Whether to perform a "fake" transposition. Default is False.
 
         """
         # old_shape = self._data.shape
@@ -491,6 +495,11 @@ class DSBSparse(ABC):
         # )
 
         self._data = _block_view(self._data, axis=block_axis)
+        if discard:
+            self._data = xp.concatenate(self._data, axis=concatenate_axis)
+            self._data[:] = 0.0
+            return
+
         # We need to make sure that the block-view is memory-contiguous.
         # This does nothing if the data is already contiguous.
         self._data = xp.ascontiguousarray(self._data)
@@ -512,7 +521,7 @@ class DSBSparse(ABC):
 
         # self._data = np.moveaxis(self._data, concatenate_axis, -2).reshape(new_shape)
 
-    def dtranspose(self) -> None:
+    def dtranspose(self, discard: bool = False) -> None:
         """Performs a distributed transposition of the datastructure.
 
         This is done by reshaping the local data, then performing an
@@ -525,12 +534,20 @@ class DSBSparse(ABC):
         more ranks and by not forcing a synchronization barrier right
         before calling `dtranspose`.
 
+        Parameters
+        ----------
+        discard : bool, optional
+            Whether to perform a "fake" transposition. Default is False.
+            This is useful if you want to get the correct data shape
+            after a transposition, but do not want to perform the actual
+            all-to-all communication.
+
         """
         if self.distribution_state == "stack":
-            self._dtranspose(block_axis=-1, concatenate_axis=0)
+            self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
         else:
-            self._dtranspose(block_axis=0, concatenate_axis=-1)
+            self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
 
     @abstractmethod

@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
+from qttools.datastructures.dsbsparse import _block_view
 
 
 def homogenize(matrix: DSBSparse) -> None:
@@ -117,3 +118,61 @@ def compute_num_connected_blocks(
         return 2
 
     return 3
+
+
+def get_periodic_superblocks(
+    a_ii: NDArray, a_ij: NDArray, a_ji: NDArray, block_sections: int
+) -> NDArray:
+    """Constructs a periodic superblock structure from the given blocks.
+
+    The periodic superblock structure will repeat the left- and
+    upper-most subblocks of the input block layer.
+
+    Parameters
+    ----------
+    a_ii : NDArray
+        The diagonal block made up of smaller subblocks.
+    a_ij : NDArray
+        The superdiagonal block made up of smaller subblocks.
+    a_ji : NDArray
+        The subdiagonal block made up of smaller subblocks.
+    block_sections : int
+        The number of subblocks each block is divided into. So if the
+        block is of shape (n, n), the subblocks each have a shape of
+        (n // block_sections, n // block_sections).
+
+    Returns
+    -------
+    NDArray
+        The periodic superblock structure.
+
+    """
+    # Stack the diagonal and superdiagonal blocks and divide them into
+    # sublayers. We are interested in the first, outermost sublayer.
+    view_ij = _block_view(xp.concatenate((a_ii, a_ij), -1), -2, block_sections)
+    # Divide the sublayer into sublayers along the remaining axis.
+    view_ij = _block_view(view_ij[0], -1, 2 * block_sections)
+
+    # Stack the diagonal and subdiagonal blocks and divide them into
+    # sublayers. Like before we are interested in the first, outermost
+    # sublayer.
+    view_ji = _block_view(xp.concatenate((a_ii, a_ji), -2), -1, block_sections)
+    # Divide the sublayer into sublayers along the remaining axis.
+    view_ji = _block_view(view_ji[0], -2, 2 * block_sections)
+
+    # Stack the sublayers to form a periodic layer from the outermost
+    # subblocks.
+    periodic_layer = xp.vstack((view_ji[block_sections::-1], view_ij[1:]))
+
+    # Stack the periodic layer to form a periodic superblock structure.
+    subblock_shape = a_ii.shape[:-2] + (a_ii.shape[-1] // block_sections,) * 2
+    periodic_blocks = xp.zeros(
+        (block_sections, 3 * block_sections, *subblock_shape),
+        dtype=a_ii.dtype,
+    )
+    for i in range(block_sections):
+        periodic_blocks[i, :] = xp.roll(periodic_layer, i, axis=0)
+
+    # Recover the correct superbblock structure form the subblocks.
+    periodic_blocks = xp.concatenate(xp.concatenate(periodic_blocks, -2), -1)
+    return _block_view(periodic_blocks, -1, 3)

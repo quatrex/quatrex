@@ -6,7 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
-from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
 from quatrex.bandstructure.band_edges import (
@@ -18,6 +18,25 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
+from quatrex.core.utils import get_periodic_superblocks, homogenize
+
+
+def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
+    """Subtracts b from a on the block-tridiagonal.
+
+    This is an in-place operation, i.e. a is modified.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The matrix to subtract from.
+    b : DSBSparse
+        The matrix to subtract.
+
+    """
+    for i in range(a.num_blocks):
+        for j in range(max(0, i - 2), min(a.num_blocks, i + 3)):
+            a.blocks[i, j] -= b.blocks[i, j]
 
 
 class ElectronSolver(SubsystemSolver):
@@ -79,20 +98,23 @@ class ElectronSolver(SubsystemSolver):
                 "Overlap matrix and Hamiltonian matrix have different shapes."
             )
 
-        # Construct the bare system matrix.
-        self.bare_system_matrix = compute_config.dsbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
+        # Make sure that the Hamiltonian and overlap matrices are
+        # Hermitian.
+        self.hamiltonian_sparray = (
+            0.5 * (self.hamiltonian_sparray + self.hamiltonian_sparray.conj().T)
+        ).tocoo()
+        self.overlap_sparray = (
+            0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
+        ).tocoo()
+
+        # Allocate memory for the system matrix.
+        self.system_matrix = compute_config.dsbsparse_type.from_sparray(
+            self.hamiltonian_sparray.astype(  # We want the full Hamiltonian.
+                xp.complex128
+            ),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
-        self.bare_system_matrix.data = 0.0
-
-        self.bare_system_matrix += self.overlap_sparray
-        scale_stack(
-            self.bare_system_matrix.data,
-            self.local_energies + 1j * quatrex_config.electron.eta,
-        )
-        self.bare_system_matrix -= self.hamiltonian_sparray
 
         # Load the potential.
         try:
@@ -108,20 +130,20 @@ class ElectronSolver(SubsystemSolver):
             self.potential = xp.zeros(
                 self.hamiltonian_sparray.shape[0], dtype=self.hamiltonian_sparray.dtype
             )
-
-        self.bare_system_matrix -= sparse.diags(self.potential)
-
-        self.system_matrix = compute_config.dsbsparse_type.zeros_like(
-            self.bare_system_matrix
-        )
+        self.eta = quatrex_config.electron.eta
 
         # Contacts.
         self.flatband = quatrex_config.electron.flatband
+        if self.flatband and comm.rank == 0:
+            print("Flatband conditions detected", flush=True)
+
         self.eta_obc = quatrex_config.electron.eta_obc
 
         self.compute_meir_wingreen_current = (
             quatrex_config.electron.solver.compute_current
         )
+
+        self.dos_peak_limit = quatrex_config.electron.dos_peak_limit
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -151,6 +173,7 @@ class ElectronSolver(SubsystemSolver):
 
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=self.block_sizes.size)
+        self.block_sections = quatrex_config.electron.obc.block_sections
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -161,8 +184,6 @@ class ElectronSolver(SubsystemSolver):
             The new potential matrix.
 
         """
-        potential_diff_matrix = sparse.diags(new_potential - self.potential)
-        self.bare_system_matrix -= potential_diff_matrix
         self.potential = new_potential
 
     def _update_fermi_levels(self, e_0_left: NDArray, e_0_right: NDArray) -> None:
@@ -233,7 +254,6 @@ class ElectronSolver(SubsystemSolver):
 
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
-
         # Extract the overlap matrix blocks.
         s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
         s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
@@ -242,32 +262,46 @@ class ElectronSolver(SubsystemSolver):
         s_nm = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -2))
         s_mn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-2, -1))
 
-        # Compute surface Green's functions.
+        m_10, m_00, m_01 = get_periodic_superblocks(
+            a_ii=self.system_matrix.blocks[0, 0],
+            a_ji=self.system_matrix.blocks[1, 0],
+            a_ij=self.system_matrix.blocks[0, 1],
+            block_sections=self.block_sections,
+        )
+        m_mn, m_nn, m_nm = get_periodic_superblocks(
+            # Twist it, flip it, ...
+            a_ii=xp.flip(self.system_matrix.blocks[-1, -1], axis=(-2, -1)),
+            a_ji=xp.flip(self.system_matrix.blocks[-2, -1], axis=(-2, -1)),
+            a_ij=xp.flip(self.system_matrix.blocks[-1, -2], axis=(-2, -1)),
+            block_sections=self.block_sections,
+        )
+        # ... bop it.
+        m_nn = xp.flip(m_nn, axis=(-2, -1))
+        m_nm = xp.flip(m_nm, axis=(-2, -1))
+        m_mn = xp.flip(m_mn, axis=(-2, -1))
+
         g_00 = self.obc(
-            self.system_matrix.blocks[0, 0] + s_00,
-            self.system_matrix.blocks[0, 1] + s_01,
-            self.system_matrix.blocks[1, 0] + s_10,
-            "left",
+            a_ii=m_00 + s_00,
+            a_ij=m_01 + s_01,
+            a_ji=m_10 + s_10,
+            contact="left",
         )
-        # Twist it, flip it, bop it.
         g_nn = self.obc(
-            xp.flip(self.system_matrix.blocks[-1, -1] + s_nn, axis=(-2, -1)),
-            xp.flip(self.system_matrix.blocks[-1, -2] + s_nm, axis=(-2, -1)),
-            xp.flip(self.system_matrix.blocks[-2, -1] + s_mn, axis=(-2, -1)),
-            "right",
+            # Twist it, flip it, ...
+            a_ii=xp.flip(m_nn + s_nn, axis=(-2, -1)),
+            a_ij=xp.flip(m_nm + s_nm, axis=(-2, -1)),
+            a_ji=xp.flip(m_mn + s_mn, axis=(-2, -1)),
+            contact="right",
         )
+        # ... bop it.
         g_nn = xp.flip(g_nn, axis=(-2, -1))
 
         # NOTE: Here we could possibly do peak/discontinuity detection
         # on the surface Green's function DOS (not same as actual DOS).
 
         # Apply the retarded boundary self-energy.
-        sigma_00 = (
-            self.system_matrix.blocks[1, 0] @ g_00 @ self.system_matrix.blocks[0, 1]
-        )
-        sigma_nn = (
-            self.system_matrix.blocks[-2, -1] @ g_nn @ self.system_matrix.blocks[-1, -2]
-        )
+        sigma_00 = m_10 @ g_00 @ m_01
+        sigma_nn = m_mn @ g_nn @ m_nm
 
         self.obc_blocks.retarded[0] = sigma_00
         self.obc_blocks.retarded[-1] = sigma_nn
@@ -300,8 +334,14 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
-        self.system_matrix.data = self.bare_system_matrix.data
-        self.system_matrix -= sse_retarded
+        self.system_matrix.data = 0.0
+        self.system_matrix += self.overlap_sparray
+        scale_stack(
+            self.system_matrix.data,
+            self.local_energies + 1j * self.eta,
+        )
+        self.system_matrix -= self.hamiltonian_sparray + sparse.diags(self.potential)
+        _btd_subtract(self.system_matrix, sse_retarded)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -310,33 +350,25 @@ class ElectronSolver(SubsystemSolver):
         ----------
         out : tuple[DSBSparse, ...]
             The Green's function tuple. In the order (lesser, greater,
+            retarded).
+
         """
+        g_lesser, g_greater, g_retarded = out
+        local_dos = [
+            (-xp.diagonal(g_retarded.blocks[b, b], axis1=-2, axis2=-1).imag).mean(-1)
+            for b in range(g_retarded.num_blocks)
+        ]
+        dos = xp.hstack(comm.allgather(local_dos))
+        dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
+        mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
-        # NOTE: This filtering only works in flatband systems.
-        # Otherwise, the dos and charge densities should be summed per
-        # transport cell (in the old code the trace is taken during
-        # RGF).
-        # TODO: make parameters settable.
-        if self.flatband:
-            g_lesser, g_greater, g_retarded = out
-            dos = -g_retarded.diagonal().imag.sum(1)
-            ne = g_lesser.diagonal().imag.sum(1)
-            nh = -g_greater.diagonal().imag.sum(1)
-            f1 = xp.abs(dos - (ne + nh) / 2) / (xp.abs(dos) + 1e-6)
-            f2 = xp.abs(dos - (ne + nh) / 2) / (xp.abs((ne + nh) / 2) + 1e-6)
+        section_sizes, __ = get_section_sizes(self.energies.size, comm.size)
+        section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
+        local_mask = mask[section_offsets[comm.rank] : section_offsets[comm.rank + 1]]
 
-            # peaks = find_peaks(xp.abs(dos), height=0.5)[0]
-            # TODO: Should communicate boundary energies to correctly
-            # filter makes arrays of bools
-            # f3 = xp.zeros_like(f1, dtype=bool)
-            # f3[peaks] = True
-
-            mask = (f1 > 1e-1) | (f2 > 1e-1) | (dos < 0)
-
-            assert g_lesser.distribution_state == "stack"
-            g_lesser.data[mask] = 0.0
-            g_greater.data[mask] = 0.0
-            g_retarded.data[mask] = 0.0
+        g_lesser.data[local_mask] = 0.0
+        g_greater.data[local_mask] = 0.0
+        g_retarded.data[local_mask] = 0.0
 
     def solve(
         self,
@@ -362,10 +394,16 @@ class ElectronSolver(SubsystemSolver):
         """
         times = []
 
+        if self.flatband:
+            homogenize(sse_greater)
+            homogenize(sse_lesser)
+            homogenize(sse_retarded)
+
         times.append(time.perf_counter())
         self._assemble_system_matrix(sse_retarded)
         t_assemble = time.perf_counter() - times.pop()
 
+        t0 = time.perf_counter()
         if self.band_edge_tracking == "eigenvalues":
             e_0_left, e_0_right = find_renormalized_eigenvalues(
                 self.hamiltonian_sparray,
@@ -380,6 +418,9 @@ class ElectronSolver(SubsystemSolver):
                 (self.left_mid_gap_energy, self.right_mid_gap_energy),
             )
             self._update_fermi_levels(e_0_left, e_0_right)
+        t1 = time.perf_counter()
+        if comm.rank == 0:
+            print(f"Band edge tracking: {t1-t0}", flush=True)
 
         times.append(time.perf_counter())
         self._compute_obc()
@@ -399,6 +440,7 @@ class ElectronSolver(SubsystemSolver):
         g_lesser, g_greater, g_retarded = out
 
         # Make sure the Green's functions are skew-Hermitian.
+        t0 = time.perf_counter()
         g_lesser.data = 0.5 * (
             g_lesser.data - g_lesser.ltranspose(copy=True).data.conj()
         )
@@ -407,6 +449,9 @@ class ElectronSolver(SubsystemSolver):
         )
 
         self._filter_peaks(out)
+        t1 = time.perf_counter()
+        if comm.rank == 0:
+            print(f"Symmetrization: {t1-t0}", flush=True)
 
         if self.band_edge_tracking == "dos-peaks":
             s_00 = self._get_block(self.overlap_sparray, (0, 0))
@@ -428,11 +473,8 @@ class ElectronSolver(SubsystemSolver):
 
             self._update_fermi_levels(e_0_left, e_0_right)
 
-        (
+        if comm.rank == 0:
             print(
                 f"Assemble: {t_assemble}, OBC: {t_obc}, Solve: {t_solve}",
                 flush=True,
             )
-            if comm.rank == 0
-            else None
-        )

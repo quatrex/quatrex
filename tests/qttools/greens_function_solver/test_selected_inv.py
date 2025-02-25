@@ -25,16 +25,11 @@ def test_selected_inv(
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
-    def sinv(input: DSBSparse, out: DSBSparse = None) -> DSBSparse:
-        return solver.selected_inv(input, out=out)
-
     if out:
         gf_inv = dsbsparse_type.zeros_like(dsbsparse)
-        # solver.selected_inv(dsbsparse, out=gf_inv)
-        sinv(dsbsparse, gf_inv)
+        solver.selected_inv(dsbsparse, out=gf_inv)
     else:
-        # gf_inv = solver.selected_inv(dsbsparse)
-        gf_inv = sinv(dsbsparse)
+        gf_inv = solver.selected_inv(dsbsparse)
 
     bt_mask_broadcasted = xp.broadcast_to(
         bt_mask, (*global_stack_shape, *bt_mask.shape)

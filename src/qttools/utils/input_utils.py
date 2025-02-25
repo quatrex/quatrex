@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import re
 from pathlib import Path
 
 from qttools import NDArray, _DType, xp
@@ -81,6 +82,114 @@ def read_hr_dat(
     if return_all:
         return hR, xp.unique(R, axis=0)
     return hR
+
+
+def read_wannier_wout(
+    path: Path, transform_home_cell: bool = True
+) -> tuple[NDArray, NDArray]:
+    """Parses the contents of a `seedname.wout` file and returns the Wannier centers and lattice vectors.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a `seedname.wout` file.
+    transform_home_cell : bool, optional
+        Whether to transform the Wannier centers to the home cell. Defaults to `True`.
+
+    Returns
+    -------
+    wannier_centers : np.ndarray
+        The Wannier centers.
+    lattice_vectors : np.ndarray
+        The lattice vectors.
+    """
+    with open(path, "r") as f:
+        lines = f.readlines()
+
+    num_lines = len(lines)
+
+    # Find the line with the lattice vectors.
+    for i, line in enumerate(lines):
+        if "Lattice Vectors" in line:
+            lattice_vectors = xp.array(
+                [list(map(float, lines[i + j + 1].split()[1:])) for j in range(3)]
+            )
+        if "Number of Wannier Functions" in line:
+            num_wann = int(line.split()[-2])
+            break
+
+    # Find the line with the Wannier centers. Start from the end of the file.
+    for i, line in enumerate(lines[::-1]):
+        if "Final State" in line:
+            # The Wannier centers are enclosed by parantheses, so we have to extract them.
+            wannier_centers = xp.array(
+                [
+                    list(
+                        map(
+                            float,
+                            re.findall(r"\((.*?)\)", lines[num_lines - i + j])[0].split(
+                                ", "
+                            ),
+                        )
+                    )
+                    for j in range(num_wann)
+                ]
+            )
+            break
+
+    if transform_home_cell:
+        # Get the transformation that diagonalize the lattice vectors
+        transformation = xp.linalg.inv(lattice_vectors)
+        # Appy it to the wannier centers
+        wannier_centers = xp.dot(wannier_centers, transformation)
+        # Translate the Wannier centers to the home cell
+        wannier_centers = xp.mod(wannier_centers, 1)
+        # Transform the Wannier centers back to the original basis
+        wannier_centers = xp.dot(wannier_centers, lattice_vectors)
+
+    return wannier_centers, lattice_vectors
+
+
+def cutoff_hr(
+    hr: NDArray,
+    value_cutoff: float | None = None,
+    R_cutoff: int | tuple[int, int, int] | None = None,
+) -> NDArray:
+    """Cutoffs the Hamiltonian matrix elements based on their values or the wigner-seitz cell indices.
+
+    Parameters
+    ----------
+    hr : np.ndarray
+        Wannier Hamiltonian.
+    value_cutoff : float, optional
+        Cutoff value for the Hamiltonian. Defaults to `None`.
+    R_cutoff : int or tuple, optional
+        Cutoff distance for the Hamiltonian. Defaults to `None`.
+
+    Returns
+    -------
+    np.ndarray
+        The cutoff Hamiltonian.
+    """
+    if value_cutoff is None and R_cutoff is None:
+        return hr
+    if value_cutoff is not None:
+        hr_cut = hr.copy()
+        hr_cut[hr < value_cutoff] = 0
+    if R_cutoff is not None:
+        if isinstance(R_cutoff, int):
+            R_cutoff = (R_cutoff, R_cutoff, R_cutoff)
+        cut_shape = [
+            r * 2 + 1 if hr.shape[i] > r * 2 + 1 else hr.shape[i]
+            for i, r in enumerate(R_cutoff)
+        ] + list(hr.shape[3:])
+        hr_cut = xp.zeros(cut_shape, dtype=hr.dtype)
+        for ind in xp.ndindex(hr.shape[:3]):
+            if (ind <= R_cutoff).all():
+                ind = xp.array(ind)
+                hr_cut[*ind] = hr[*ind]
+                hr_cut[*-ind] = hr[*-ind]
+    return hr_cut
 
 
 def get_hamiltonian_block(

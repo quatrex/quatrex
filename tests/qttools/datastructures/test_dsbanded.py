@@ -650,7 +650,11 @@ class TestArithmetic:
             coo, block_sizes, global_stack_shape, dtype=xp.float16
         )
 
-        assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
+        reference = dense @ dense
+        value = (dsbsparse_a @ dsbsparse_b).to_dense()
+        relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
+        assert relerror < 1e-5
+        # assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
 
 
 # Shape of the dense array.

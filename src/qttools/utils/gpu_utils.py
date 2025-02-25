@@ -74,8 +74,7 @@ def synchronize_current_stream():
 
 
 def get_cuda_devices(return_names: bool = False):
-    """Returns the list of available CUDA devices.
-    """
+    """Returns the list of available CUDA devices."""
     if xp.__name__ != "cupy":
         return []
     num_devices = xp.cuda.runtime.getDeviceCount()

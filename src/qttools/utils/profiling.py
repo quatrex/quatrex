@@ -1,19 +1,11 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import time
-from collections import defaultdict
-from functools import wraps
 import json
+import time
+from functools import wraps
 
 from qttools import xp
 from qttools.utils.gpu_utils import get_cuda_devices
-
-cupy_avail = False
-try:
-    import cupy as cp
-    cupy_avail = True
-except (ImportError, ModuleNotFoundError):
-    pass
 
 
 class Profiler:
@@ -36,7 +28,15 @@ class Profiler:
 
         return cls._instance
 
-    def start(self, func_name, devices, start_events, finish_events, host_runtimes, dev_runtimes):
+    def start(
+        self,
+        func_name,
+        devices,
+        start_events,
+        finish_events,
+        host_runtimes,
+        dev_runtimes,
+    ):
         """Records the start time of a function.
 
         Parameters
@@ -53,10 +53,18 @@ class Profiler:
                 event.record(xp.cuda.stream.Stream(dev_id))
             finally:
                 xp.cuda.runtime.setDevice(current_device)
-        
+
         host_runtimes.append(-time.perf_counter())
 
-    def end(self, func_name, devices, start_events, finish_events, host_runtimes, dev_runtimes):
+    def end(
+        self,
+        func_name,
+        devices,
+        start_events,
+        finish_events,
+        host_runtimes,
+        dev_runtimes,
+    ):
         """Records the end time of a function.
 
         Parameters
@@ -76,7 +84,7 @@ class Profiler:
                 event.record(xp.cuda.stream.Stream(dev_id))
             finally:
                 xp.cuda.runtime.setDevice(current_device)
-        
+
         for dev_id, event in zip(devices, finish_events):
             current_device = xp.cuda.runtime.getDevice()
             try:
@@ -85,9 +93,13 @@ class Profiler:
             finally:
                 xp.cuda.runtime.setDevice(current_device)
             event.synchronize()
-        
-        for dev_id, start_event, finish_event in zip(devices, start_events, finish_events):
-            dev_runtimes[dev_id].append(xp.cuda.get_elapsed_time(start_event, finish_event) * 1e-3)
+
+        for dev_id, start_event, finish_event in zip(
+            devices, start_events, finish_events
+        ):
+            dev_runtimes[dev_id].append(
+                xp.cuda.get_elapsed_time(start_event, finish_event) * 1e-3
+            )
 
     def report(self):
         """Generates a report of the total time spent in each function.
@@ -102,10 +114,10 @@ class Profiler:
         report_data = {}
         for profile_id, func_name, host_runtimes, dev_runtimes in self.data:
             # print(f"{profile_id}: {func_name} - {host_runtimes} - {dev_runtimes}")
-            report_dict = {'func': func_name, 'host': host_runtimes[-1]}
+            report_dict = {"func": func_name, "host": host_runtimes[-1]}
             for dev_id, dev_runtime in enumerate(dev_runtimes):
                 if dev_runtime:
-                    report_dict[f'device_{dev_id}'] = dev_runtime[-1]
+                    report_dict[f"device_{dev_id}"] = dev_runtime[-1]
             report_data[profile_id] = report_dict
         return report_data
 
@@ -156,9 +168,6 @@ class Profiler:
                     finish_events.append(xp.cuda.stream.Event())
                 finally:
                     xp.cuda.runtime.setDevice(current_device)
-            
-            host_runtimes = []
-            dev_runtimes = [[] for _ in devices]
 
             @wraps(func)
             def wrapper(*args, **kwargs):
@@ -177,15 +186,30 @@ class Profiler:
                         xp.cuda.runtime.setDevice(current_device)
                     event.synchronize()
 
-                self.start(name, devices, start_events, finish_events, host_runtimes, dev_runtimes)
+                self.start(
+                    name,
+                    devices,
+                    start_events,
+                    finish_events,
+                    host_runtimes,
+                    dev_runtimes,
+                )
 
                 result = func(*args, **kwargs)
 
-                self.end(name, devices, start_events, finish_events, host_runtimes, dev_runtimes)
+                self.end(
+                    name,
+                    devices,
+                    start_events,
+                    finish_events,
+                    host_runtimes,
+                    dev_runtimes,
+                )
 
                 self.data.append((profile_id, name, host_runtimes, dev_runtimes))
 
                 return result
 
             return wrapper
+
         return decorator

@@ -105,8 +105,9 @@ SYMMETRY_TYPE = [
 class BlockSizes:
     def __init__(self):
         if xp.__name__ == "cupy":
-            memory_pool = xp.get_default_memory_pool()
-            if memory_pool.free_bytes() > 1e10:
+            device = xp.cuda.Device(0)
+            free_bytes = device.mem_info[0]
+            if free_bytes > 1e10:
                 self.sizes = LARGE_BLOCK_SIZES
                 return
         self.sizes = BLOCK_SIZES

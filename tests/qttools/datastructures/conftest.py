@@ -24,9 +24,11 @@ BLOCK_SIZES = [
     pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
-BIG_BLOCK_SIZES = [
-    pytest.param(xp.array([200] * 10), id="big-constant-block-size"),
-    pytest.param(xp.array([200] * 3 + [400] * 2 + [200] * 3), id="big-mixed-block-size"),
+LARGE_BLOCK_SIZES = [
+    pytest.param(xp.array([200] * 10), id="large-constant-block-size-200"),
+    pytest.param(xp.array([500] * 10), id="large-constant-block-size-500"),
+    pytest.param(xp.array([200] * 3 + [400] * 2 + [200] * 3), id="large-mixed-block-size-200"),
+    pytest.param(xp.array([500] * 3 + [1000] * 2 + [500] * 3), id="large-mixed-block-size-500"),
 ]
 
 ACCESSED_BLOCKS = [
@@ -100,28 +102,18 @@ SYMMETRY_TYPE = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES)
+class BlockSizes:
+    def __init__(self):
+        if xp.__name__ == "cupy":
+            memory_pool = xp.get_default_memory_pool()
+            if memory_pool.free_bytes() > 1e10:
+                self.sizes = LARGE_BLOCK_SIZES
+                return
+        self.sizes = BLOCK_SIZES
+
+
+@pytest.fixture(params=BlockSizes().sizes)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=BIG_BLOCK_SIZES)
-def big_block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=BLOCK_SIZES+BIG_BLOCK_SIZES)
-def all_block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=BIG_BLOCK_SIZES)
-def big_block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=BLOCK_SIZES+BIG_BLOCK_SIZES)
-def all_block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 

@@ -24,6 +24,13 @@ BLOCK_SIZES = [
     pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
+MIDDLE_BLOCK_SIZES = [
+    pytest.param(xp.array([20] * 10), id="constant-block-size-20"),
+    pytest.param(xp.array([50] * 10), id="constant-block-size-50"),
+    pytest.param(xp.array([20] * 3 + [40] * 2 + [20] * 3), id="mixed-block-size-20"),
+    pytest.param(xp.array([50] * 3 + [100] * 2 + [50] * 3), id="mixed-block-size-50"),
+]
+
 LARGE_BLOCK_SIZES = [
     pytest.param(xp.array([200] * 10), id="large-constant-block-size-200"),
     pytest.param(xp.array([500] * 10), id="large-constant-block-size-500"),
@@ -108,8 +115,10 @@ class BlockSizes:
             device = xp.cuda.Device(0)
             free_bytes = device.mem_info[0]
             if free_bytes > 1e10:
-                self.sizes = LARGE_BLOCK_SIZES
-                return
+                self.sizes = MIDDLE_BLOCK_SIZES
+            else:
+                self.sizes = BLOCK_SIZES
+            return
         self.sizes = BLOCK_SIZES
 
 

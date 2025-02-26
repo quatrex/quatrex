@@ -622,9 +622,13 @@ class TallNSkinny(DSBanded):
             raise NotImplementedError("Triton and Pytorch are not available.")
         
         batch_a = functools.reduce(lambda x, y: x * y, self.data.shape[:-1])
-        A = torch.asarray(self.data.reshape((batch_a, ) + self.banded_shape), device='cuda')
+        if not hasattr(self, "torch"):
+            self.torch = torch.asarray(self.data.reshape((batch_a, ) + self.banded_shape), device='cuda')
+        A = self.torch
         batch_b = functools.reduce(lambda x, y: x * y, other.data.shape[:-1])
-        B = torch.asarray(other.data.reshape((batch_b, ) + other.banded_shape), device='cuda')
+        if not hasattr(other, "torch"):
+            other.torch = torch.asarray(other.data.reshape((batch_b, ) + other.banded_shape), device='cuda')
+        B = other.torch
         
         blk_diag_dist_a = self.half_block_bandwidth
         blk_diag_dist_b = other.half_block_bandwidth

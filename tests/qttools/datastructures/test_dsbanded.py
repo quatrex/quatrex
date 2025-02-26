@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 
+import functools
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
 from types import ModuleType
@@ -647,31 +648,41 @@ class TestMatmul:
         dtype: tuple[ModuleType, DTypeLike],
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
+
+        def _set_torch(dsbsparse: DSBSparse, mod: ModuleType, dt: DTypeLike):
+            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:-1])
+            banded_data = dsbsparse.data.reshape(batch_size, dsbsparse.banded_shape)
+            dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
+
+
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
         mod, dt = dtype
 
         coo = _create_coo(block_sizes, complex=False)
-        dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=dt
-        )
         dense = coo.toarray()
+
+        dsbsparse_a = dsbanded_type_a.from_sparray(
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+        )
+
+        dsbsparse_b = dsbanded_type_b.from_sparray(
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+        )
 
         if mod.__name__ == "cupy":
             dense = dense.astype(dt)
             reference = dense @ dense
+            value = (dsbsparse_a @ dsbsparse_b).to_dense()
         elif mod.__name__ == "torch":
             dense = mod.astensor(dense, dtype=dt)
             reference = dense @ dense
             reference = mod.asarray(reference)
+            _set_torch(dsbsparse_a, mod, dt)
+            _set_torch(dsbsparse_b, mod, dt)
+            value = (dsbsparse_a @ dsbsparse_b).to_dense()
         else:
             raise NotImplementedError
 
-        dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=dt
-        )
-
-        reference = dense @ dense
-        value = (dsbsparse_a @ dsbsparse_b).to_dense()
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
         assert relerror < 1e-3
         # assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())

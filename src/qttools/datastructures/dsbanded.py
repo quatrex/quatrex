@@ -996,7 +996,8 @@ class ShortNFat(DSBSparse):
         return_dense: bool = True,
     ) -> None:
         """Initializes the DSBanded matrix."""
-        sparse_data = xp.reshape(data, global_stack_shape + (-1,))
+        local_stack_shape = data.shape[:len(global_stack_shape)]
+        sparse_data = xp.reshape(data, local_stack_shape + (-1,))
         super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
 
         self.half_bandwidth = half_bandwidth
@@ -1541,11 +1542,13 @@ class ShortNFat(DSBSparse):
 
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
+        
+        local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
 
         if copy:
             new_data = xp.zeros_like(self.data)
-            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
-            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            old_data = xp.reshape(self.data, local_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, local_stack_shape + self.banded_shape)
             num_brows = self.banded_shape[0] // self.banded_block_size
             num_bcols = self.banded_shape[1] // self.banded_block_size
             num_half_brows = num_brows // 2
@@ -1561,7 +1564,7 @@ class ShortNFat(DSBSparse):
                     oclice = slice((bcol + brow_off) * self.banded_block_size, (bcol + brow_off + 1) * self.banded_block_size)
                     orlice = slice((num_half_brows - brow_off) * self.banded_block_size, (num_half_brows - brow_off + 1) * self.banded_block_size)
                     new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
-            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            new_data = new_data.reshape(local_stack_shape + (-1, )) 
             self = ShortNFat(
                 data=new_data,
                 half_bandwidth=self.half_bandwidth,
@@ -1573,8 +1576,8 @@ class ShortNFat(DSBSparse):
             )
         else:
             new_data = xp.zeros_like(self.data)
-            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
-            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            old_data = xp.reshape(self.data, local_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, local_stack_shape + self.banded_shape)
             num_brows = self.banded_shape[0] // self.banded_block_size
             num_bcols = self.banded_shape[1] // self.banded_block_size
             num_half_brows = num_brows // 2
@@ -1590,7 +1593,7 @@ class ShortNFat(DSBSparse):
                     oclice = slice((bcol + brow_off) * self.banded_block_size, (bcol + brow_off + 1) * self.banded_block_size)
                     orlice = slice((num_half_brows - brow_off) * self.banded_block_size, (num_half_brows - brow_off + 1) * self.banded_block_size)
                     new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
-            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            new_data = new_data.reshape(local_stack_shape + (-1, )) 
             self.data = new_data
 
         return self if copy else None

@@ -632,6 +632,7 @@ class TestArithmetic:
 
         assert xp.allclose(-dense, (-dsbsparse).to_dense())
 
+    pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
     def test_matmul(
         self,
         dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],

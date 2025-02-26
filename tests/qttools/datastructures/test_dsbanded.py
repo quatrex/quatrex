@@ -632,7 +632,11 @@ class TestArithmetic:
 
         assert xp.allclose(-dense, (-dsbsparse).to_dense())
 
-    pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
+
+pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
+class TestMatmul:
+    """Tests for matrix multiplications with DSBanded matrices."""
+
     def test_matmul(
         self,
         dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
@@ -702,7 +706,7 @@ def test_block_view(array: NDArray, axis: int, num_blocks: int):
             assert (array[*index] == view[i]).all()
 
 
-@pytest.mark.mpi(min_size=1)
+@pytest.mark.mpi(min_size=2)
 class TestDistribution:
     """Tests for the distribution methods of DSBSparse."""
 

@@ -662,11 +662,11 @@ class TestMatmul:
         dense = coo.toarray().real
 
         dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float64
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
         )
 
         dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float64
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
         )
 
         if mod.__name__ == "cupy":
@@ -674,14 +674,15 @@ class TestMatmul:
             reference = dense @ dense
             value = (dsbsparse_a @ dsbsparse_b).to_dense()
         elif mod.__name__ == "torch":
-            dense = mod.astensor(dense, dtype=dt)
+            dense = mod.asarray(dense, dtype=dt)
             reference = dense @ dense
-            reference = mod.asarray(reference)
-            _set_torch(dsbsparse_a, mod, dt)
-            _set_torch(dsbsparse_b, mod, dt)
-            value = (dsbsparse_a @ dsbsparse_b).to_dense()
+            reference = xp.asarray(reference)
         else:
             raise NotImplementedError
+
+        _set_torch(dsbsparse_a, mod, dt)
+        _set_torch(dsbsparse_b, mod, dt)
+        value = (dsbsparse_a @ dsbsparse_b).to_dense()
 
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
         assert relerror < 1e-3

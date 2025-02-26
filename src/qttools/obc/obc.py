@@ -70,7 +70,7 @@ class OBCMemoizer:
     def __init__(
         self,
         obc_solver: "OBCSolver",
-        num_ref_iterations: int = 2,
+        num_ref_iterations: int = 3,
         convergence_tol: float = 1e-4,
     ) -> None:
         """Initalizes the memoizer."""
@@ -162,7 +162,7 @@ class OBCMemoizer:
         x_ii_ref = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Check for convergence accross all MPI ranks.
-        recursion_error = xp.mean(
+        recursion_error = xp.max(
             xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
             / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
         )

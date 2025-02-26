@@ -46,7 +46,8 @@ class DSBanded(DSBSparse):
         half_block_bandwidth: int = 0,  # @czox's r_blk
     ) -> None:
         """Initializes the DSBanded matrix."""
-        sparse_data = xp.reshape(data, global_stack_shape + (-1,))
+        local_stack_shape = data.shape[:len(global_stack_shape)]
+        sparse_data = xp.reshape(data, local_stack_shape + (-1,))
         super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
 
         self.half_bandwidth = half_bandwidth
@@ -66,7 +67,21 @@ class DSBanded(DSBSparse):
         self.banded_type = banded_type
 
         assert return_dense
+    
+    def flatten_index(self, accesed_element: tuple) -> tuple:
+        """Flattens matrix coordinates (2D) to buffer coordinates (1D)."""
+        
+        row, col = accesed_element
 
+        block_row = row // self.banded_block_size
+        block_col = col // self.banded_block_size
+        block_dist = block_col - block_row
+        block_colidx = block_dist + self.half_block_bandwidth
+        block_coloff = col % self.banded_block_size
+
+        ind = row * self.banded_shape[1] + block_colidx * self.banded_block_size + block_coloff
+
+        return ind
 
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -630,9 +645,10 @@ class DSBanded(DSBSparse):
         print(
             f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
         )
-        
+
+        local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
         return DSBanded(
-            data=xp.asarray(c_blk_tall_and_skinny).reshape(self.global_stack_shape + (-1, )),
+            data=xp.asarray(c_blk_tall_and_skinny).reshape(local_stack_shape + (-1, )),
             half_bandwidth=diag_dist_c,
             banded_block_size=BLK_M,
             banded_type=0,
@@ -680,11 +696,13 @@ class DSBanded(DSBSparse):
 
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
+        
+        local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
 
         if copy:
             new_data = xp.zeros_like(self.data)
-            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
-            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            old_data = xp.reshape(self.data, local_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, local_stack_shape + self.banded_shape)
             num_brows = self.banded_shape[0] // self.banded_block_size
             num_bcols = self.banded_shape[1] // self.banded_block_size
             num_half_bcols = num_bcols // 2
@@ -700,7 +718,7 @@ class DSBanded(DSBSparse):
                     orlice = slice((brow + bcol_off) * self.banded_block_size, (brow + bcol_off + 1) * self.banded_block_size)
                     oclice = slice((num_half_bcols - bcol_off) * self.banded_block_size, (num_half_bcols - bcol_off + 1) * self.banded_block_size)
                     new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
-            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            new_data = new_data.reshape(local_stack_shape + (-1, )) 
             self = DSBanded(
                 new_data,
                 self.half_bandwidth,
@@ -712,8 +730,8 @@ class DSBanded(DSBSparse):
             )
         else:
             new_data = xp.zeros_like(self.data)
-            old_data = xp.reshape(self.data, self.global_stack_shape + self.banded_shape)
-            new_data = xp.reshape(new_data, self.global_stack_shape + self.banded_shape)
+            old_data = xp.reshape(self.data, local_stack_shape + self.banded_shape)
+            new_data = xp.reshape(new_data, local_stack_shape + self.banded_shape)
             num_brows = self.banded_shape[0] // self.banded_block_size
             num_bcols = self.banded_shape[1] // self.banded_block_size
             num_half_bcols = num_bcols // 2
@@ -729,7 +747,7 @@ class DSBanded(DSBSparse):
                     orlice = slice((brow + bcol_off) * self.banded_block_size, (brow + bcol_off + 1) * self.banded_block_size)
                     oclice = slice((num_half_bcols - bcol_off) * self.banded_block_size, (num_half_bcols - bcol_off + 1) * self.banded_block_size)
                     new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
-            new_data = new_data.reshape(self.global_stack_shape + (-1, )) 
+            new_data = new_data.reshape(local_stack_shape + (-1, )) 
             self.data = new_data
 
         return self if copy else None
@@ -995,7 +1013,21 @@ class ShortNFat(DSBSparse):
         self.banded_type = banded_type
 
         assert return_dense
+    
+    def flatten_index(self, accesed_element: tuple) -> tuple:
+        """Flattens matrix coordinates (2D) to buffer coordinates (1D)."""
+        
+        row, col = accesed_element
 
+        block_row = row // self.banded_block_size
+        block_col = col // self.banded_block_size
+        block_dist = block_row - block_col
+        block_rowidx = block_dist + self.half_block_bandwidth
+        block_rowoff = row % self.banded_block_size
+
+        ind = (block_rowidx * self.banded_block_size + block_rowoff) * self.banded_shape[1] + col
+
+        return ind
 
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.

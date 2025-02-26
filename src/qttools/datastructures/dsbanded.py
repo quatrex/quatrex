@@ -394,8 +394,7 @@ class DSBanded(DSBSparse):
 
             # apply padding if needed
             if left_padding > 0 or right_padding > 0:
-                if xp.__name__ == "cupy":
-                    row = xp.pad(row, (base_padding + ((left_padding, right_padding), )), 'constant', constant_values=0)
+                row = xp.pad(row, (base_padding + ((left_padding, right_padding), )), 'constant', constant_values=0)
 
             # copy the row to the dense matrix
             A_dense_block[..., i - requested_dense_row_start, :] = row

@@ -18,7 +18,7 @@ class Spectral(LyapunovSolver):
         The threshold for the relative recursion error to issue a warning.
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "device" or "host". Only relevant if cupy is used.
+        Can be either "numpy" or "cupy". Only relevant if cupy is used.
 
     """
 
@@ -26,7 +26,7 @@ class Spectral(LyapunovSolver):
         self,
         num_ref_iterations: int = 3,
         warning_threshold: float = 1e-1,
-        eig_compute_location: str = "host",
+        eig_compute_location: str = "numpy",
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
@@ -65,7 +65,7 @@ class Spectral(LyapunovSolver):
             a = a[xp.newaxis, ...]
             q = q[xp.newaxis, ...]
 
-        ws, vs = eig(a, compute_location=self.eig_compute_location)
+        ws, vs = eig(a, compute_module=self.eig_compute_location)
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

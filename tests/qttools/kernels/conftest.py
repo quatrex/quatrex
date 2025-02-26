@@ -40,7 +40,7 @@ BATCHSIZE = [
     pytest.param(3, id="3"),
 ]
 
-BLOCKSIZE = [
+MATRIX_SIZE = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
 ]
@@ -48,6 +48,21 @@ BLOCKSIZE = [
 NUM_QUATRATURE_POINTS = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
+]
+
+COMPUTE_MODULE = [
+    pytest.param("numpy", id="numpy"),
+    pytest.param("cupy", id="cupy"),
+]
+
+OUTPUT_MODULE = [
+    pytest.param("numpy", id="numpy"),
+    pytest.param("cupy", id="cupy"),
+]
+
+INPUT_MODULE = [
+    pytest.param("numpy", id="numpy"),
+    pytest.param("cupy", id="cupy"),
 ]
 
 
@@ -86,11 +101,26 @@ def batchsize(request: pytest.FixtureRequest):
     return request.param
 
 
-@pytest.fixture(params=BLOCKSIZE)
-def blocksize(request: pytest.FixtureRequest):
+@pytest.fixture(params=NUM_QUATRATURE_POINTS)
+def num_quatrature_points(request: pytest.FixtureRequest):
     return request.param
 
 
-@pytest.fixture(params=NUM_QUATRATURE_POINTS)
-def num_quatrature_points(request: pytest.FixtureRequest):
+@pytest.fixture(params=MATRIX_SIZE)
+def matrix_size(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=COMPUTE_MODULE)
+def compute_module(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=OUTPUT_MODULE)
+def output_module(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=INPUT_MODULE)
+def input_module(request: pytest.FixtureRequest):
     return request.param

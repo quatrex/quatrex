@@ -35,7 +35,7 @@ class Beyn(NEVP):
         Only relevant for GPU computations.
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "device" or "host". Only relevant if cupy is used.
+        Can be either "numpy" or "cupy". Only relevant if cupy is used.
 
     """
 
@@ -46,7 +46,7 @@ class Beyn(NEVP):
         m_0: int,
         num_quad_points: int,
         num_threads_contour: int = 1024,
-        eig_compute_location: str = "host",
+        eig_compute_location: str = "numpy",
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -131,7 +131,7 @@ class Beyn(NEVP):
 
             # Probe second moment.
             a = u.conj().T @ P_1[i] @ vh.conj().T / s
-            w, v = eig(a, compute_location=self.eig_compute_location)
+            w, v = eig(a, compute_module=self.eig_compute_location)
 
             # Recover the full eigenvectors from the subspace.
             ws[i, : len(inds)] = w
@@ -243,8 +243,8 @@ class Beyn(NEVP):
             # NOTE: xp.diag is unnecessary, should be removed
             a_hat = xp.diag(1 / s_hat) @ u_hat.conj().T @ P_1_hat[i] @ vh_hat.conj().T
 
-            w, v = eig(a, compute_location=self.eig_compute_location)
-            w_hat, v_hat = eig(a_hat, compute_location=self.eig_compute_location)
+            w, v = eig(a, compute_module=self.eig_compute_location)
+            w_hat, v_hat = eig(a_hat, compute_module=self.eig_compute_location)
 
             # Recover the full eigenvectors from the subspace.
             wrs[i, : len(inds)] = w

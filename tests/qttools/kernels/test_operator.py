@@ -8,13 +8,13 @@ from qttools.kernels.operator import operator_inverse
 
 @pytest.mark.usefixtures(
     "batchsize",
-    "blocksize",
+    "matrix_size",
     "num_quatrature_points",
     "num_blocks",
 )
 def test_operator_inverse(
     batchsize,
-    blocksize,
+    matrix_size,
     num_quatrature_points,
     num_blocks,
 ):
@@ -23,8 +23,8 @@ def test_operator_inverse(
 
     # mirror shape change inside beyn
     a_xx = tuple(
-        rng.random((batchsize, 1, blocksize, blocksize), dtype=xp.float64)
-        + 1j * rng.random((batchsize, 1, blocksize, blocksize), dtype=xp.float64)
+        rng.random((batchsize, 1, matrix_size, matrix_size), dtype=xp.float64)
+        + 1j * rng.random((batchsize, 1, matrix_size, matrix_size), dtype=xp.float64)
         for _ in range(2 * num_blocks + 1)
     )
 

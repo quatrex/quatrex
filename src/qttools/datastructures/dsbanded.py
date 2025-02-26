@@ -2,7 +2,6 @@
 
 import functools
 from mpi4py.MPI import COMM_WORLD as comm
-import torch
 
 from qttools import DTypeLike, NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
@@ -571,6 +570,11 @@ class DSBanded(DSBSparse):
             raise ValueError("Block sizes do not match.")
         if xp.__name__ != "cupy":
             raise NotImplementedError("Only CuPy is supported.")
+        
+        if dsbanded_kernels.TT_AVAIL:
+            torch = dsbanded_kernels.torch
+        else:
+            raise NotImplementedError("Triton and Pytorch are not available.")
         
         batch_a = functools.reduce(lambda x, y: x * y, self.data.shape[:-1])
         A = torch.asarray(self.data.reshape((batch_a, ) + self.banded_shape), device='cuda')

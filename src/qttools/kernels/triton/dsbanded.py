@@ -1,8 +1,13 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import triton
-import triton.language as tl
-import torch
+TT_AVAIL = False
+try:
+    import triton
+    import triton.language as tl
+    import torch
+    TT_AVAIL = True
+except (ImportError, ModuleNotFoundError):
+    pass
 
 
 def cdiv(a, b):

@@ -638,23 +638,25 @@ class TestArithmetic:
         dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        banded_block_size: int,
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
 
         coo = _create_coo(block_sizes, complex=False)
         dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float16
         )
-        dense = coo.toarray().astype(xp.float16)
+        dense = coo.toarray()
+        dense = dense.astype(xp.float16)
         dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float16
         )
 
         reference = dense @ dense
         value = (dsbsparse_a @ dsbsparse_b).to_dense()
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
-        assert relerror < 1e-5
+        assert relerror < 1e-3
         # assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
 
 

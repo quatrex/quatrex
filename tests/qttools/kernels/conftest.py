@@ -44,6 +44,7 @@ N = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
 ]
+
 M = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
@@ -52,6 +53,13 @@ M = [
 NUM_QUATRATURE_POINTS = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
+]
+
+BATCH_SHAPE = [
+    pytest.param((1,), id="1"),
+    pytest.param((3,), id="1"),
+    pytest.param((5, 1), id="5x1"),
+    pytest.param((5, 2), id="5x2"),
 ]
 
 COMPUTE_MODULE = [
@@ -122,6 +130,11 @@ def n(request: pytest.FixtureRequest):
 
 @pytest.fixture(params=M)
 def m(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=BATCH_SHAPE)
+def batch_shape(request: pytest.FixtureRequest):
     return request.param
 
 

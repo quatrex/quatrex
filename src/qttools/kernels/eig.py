@@ -1,9 +1,42 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
 from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+
+
+@nb.njit(parallel=True, cache=True, no_rewrites=True)
+def _eig_numba(A: NDArray) -> tuple[NDArray, NDArray]:
+    """Computes the eigenvalues and eigenvectors of a matrix on a given location.
+
+    Parallelized over the batch dimension with numba.
+
+    Parameters
+    ----------
+    A : NDArray
+        The matrix.
+
+    Returns
+    -------
+    NDArray
+        The eigenvalues.
+    NDArray
+        The eigenvectors.
+    """
+
+    n = A.shape[-1]
+    batch_size = A.shape[0]
+    ws = np.empty((batch_size, n), dtype=A.dtype)
+    vs = np.empty((batch_size, n, n), dtype=A.dtype)
+
+    for i in nb.prange(batch_size):
+        w, v = np.linalg.eig(A[i])
+        ws[i] = w
+        vs[i] = v
+
+    return ws, vs
 
 
 def eig(
@@ -65,7 +98,15 @@ def eig(
     if compute_module == "cupy":
         w, v = xp.linalg.eig(A)
     elif compute_module == "numpy":
-        w, v = np.linalg.eig(A)
+        batch_shape = A.shape[:-2]
+        if A.shape[-1] != A.shape[-2]:
+            raise ValueError("Matrix must be square.")
+        # NOTE: more error handling with zero size could be done
+        n = A.shape[-1]
+        A = A.reshape((-1, n, n))
+        w, v = _eig_numba(A)
+        w = w.reshape(*batch_shape, n)
+        v = v.reshape(*batch_shape, n, n)
 
     if output_module == "numpy" and compute_module == "cupy":
         w, v = get_host(w), get_host(v)

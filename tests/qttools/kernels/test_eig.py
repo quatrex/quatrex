@@ -17,7 +17,7 @@ def test_eig(n: int, compute_module: str, input_module: str, output_module: str)
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
     ):
         return
-    if xp.__name__ == "cupy" and (hasattr(xp.linalg, "eig") is False):
+    if compute_module == "cupy" and (hasattr(xp.linalg, "eig") is False):
         return
 
     if input_module == "cupy":
@@ -54,7 +54,7 @@ def test_eig_batched(
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
     ):
         return
-    if xp.__name__ == "cupy" and (hasattr(xp.linalg, "eig") is False):
+    if compute_module == "cupy" and (hasattr(xp.linalg, "eig") is False):
         return
 
     if input_module == "cupy":

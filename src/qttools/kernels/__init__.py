@@ -17,6 +17,7 @@ else:
 
 import qttools.kernels.operator as operator
 import qttools.kernels.eig as eig
+import qttools.kernels.eigvalsh as eigvalsh
 import qttools.kernels.svd as svd
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "operator",
     "eig",
     "svd",
+    "eigvalsh",
 ]

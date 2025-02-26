@@ -659,14 +659,14 @@ class TestMatmul:
         mod, dt = dtype
 
         coo = _create_coo(block_sizes, complex=False)
-        dense = coo.toarray()
+        dense = coo.toarray().real
 
         dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float64
         )
 
         dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float64
         )
 
         if mod.__name__ == "cupy":

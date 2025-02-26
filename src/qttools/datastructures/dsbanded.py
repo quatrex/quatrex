@@ -362,7 +362,7 @@ class DSBanded(DSBSparse):
         requested_dense_col_start = int(self.block_offsets[big_block_j])
         requested_dense_col_end = int(self.block_offsets[big_block_j + 1])
 
-        base_padding = ((0, 0)) * len(self.global_stack_shape)
+        base_padding = ((0, 0), ) * len(self.global_stack_shape)
 
         # Iterate over the requested rows
         for i in range(requested_dense_row_start, requested_dense_row_end):
@@ -394,7 +394,8 @@ class DSBanded(DSBSparse):
 
             # apply padding if needed
             if left_padding > 0 or right_padding > 0:
-                row = xp.pad(row, (base_padding + ((left_padding, right_padding))), 'constant', constant_values=0)
+                if xp.__name__ == "cupy":
+                    row = xp.pad(row, (base_padding + ((left_padding, right_padding), )), 'constant', constant_values=0)
 
             # copy the row to the dense matrix
             A_dense_block[..., i - requested_dense_row_start, :] = row
@@ -1285,7 +1286,7 @@ class ShortNFat(DSBSparse):
         requested_dense_col_start = int(self.block_offsets[big_block_j])
         requested_dense_col_end = int(self.block_offsets[big_block_j + 1])
 
-        base_padding = ((0, 0)) * len(self.global_stack_shape)
+        base_padding = ((0, 0), ) * len(self.global_stack_shape)
 
         # Iterate over the requested columns
         for j in range(requested_dense_col_start, requested_dense_col_end):
@@ -1322,7 +1323,7 @@ class ShortNFat(DSBSparse):
 
             # apply padding if needed
             if top_padding > 0 or bottom_padding > 0:
-                blk_col = xp.pad(blk_col, (base_padding + ((top_padding, bottom_padding))), 'constant', constant_values=0)
+                blk_col = xp.pad(blk_col, (base_padding + ((top_padding, bottom_padding), )), 'constant', constant_values=0)
 
             # copy the block column to the big block matrix
             B_dense_block[..., :, j - requested_dense_col_start] = blk_col

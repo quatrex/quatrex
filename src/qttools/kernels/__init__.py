@@ -17,6 +17,7 @@ else:
 
 import qttools.kernels.operator as operator
 import qttools.kernels.eig as eig
+import qttools.kernels.svd as svd
 
 __all__ = [
     "dsbsparse_kernels",
@@ -24,4 +25,5 @@ __all__ = [
     "dsbcsr_kernels",
     "operator",
     "eig",
+    "svd",
 ]

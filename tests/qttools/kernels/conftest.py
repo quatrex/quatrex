@@ -40,7 +40,11 @@ BATCHSIZE = [
     pytest.param(3, id="3"),
 ]
 
-MATRIX_SIZE = [
+N = [
+    pytest.param(5, id="5"),
+    pytest.param(10, id="10"),
+]
+M = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
 ]
@@ -63,6 +67,11 @@ OUTPUT_MODULE = [
 INPUT_MODULE = [
     pytest.param("numpy", id="numpy"),
     pytest.param("cupy", id="cupy"),
+]
+
+FULL_MATRICES = [
+    pytest.param(True, id="True"),
+    pytest.param(False, id="False"),
 ]
 
 
@@ -106,8 +115,18 @@ def num_quatrature_points(request: pytest.FixtureRequest):
     return request.param
 
 
-@pytest.fixture(params=MATRIX_SIZE)
-def matrix_size(request: pytest.FixtureRequest):
+@pytest.fixture(params=N)
+def n(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=M)
+def m(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=FULL_MATRICES)
+def full_matrices(request: pytest.FixtureRequest):
     return request.param
 
 

@@ -9,12 +9,8 @@ if xp.__name__ == "cupy":
     import cupy as cp
 
 
-@pytest.mark.usefixtures(
-    "matrix_size", "compute_module", "input_module", "output_module"
-)
-def test_eig(
-    matrix_size: int, compute_module: str, input_module: str, output_module: str
-):
+@pytest.mark.usefixtures("n", "compute_module", "input_module", "output_module")
+def test_eig(n: int, compute_module: str, input_module: str, output_module: str):
     """Tests the eig function."""
 
     if xp.__name__ == "numpy" and (
@@ -29,7 +25,7 @@ def test_eig(
     elif input_module == "numpy":
         rng = np.random.default_rng()
 
-    A = rng.random((matrix_size, matrix_size))
+    A = rng.random((n, n)) + 1j * rng.random((n, n))
 
     w, v = eig(A, compute_module=compute_module, output_module=output_module)
 
@@ -38,5 +34,5 @@ def test_eig(
     v = get_host(v)
     A = get_host(A)
 
-    for i in range(matrix_size):
+    for i in range(n):
         assert xp.allclose(A @ v[:, i], w[i] * v[:, i])

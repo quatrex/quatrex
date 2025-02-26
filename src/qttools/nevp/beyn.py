@@ -3,6 +3,7 @@
 from qttools import NDArray, xp
 from qttools.kernels.eig import eig
 from qttools.kernels.operator import operator_inverse
+from qttools.kernels.svd import svd
 from qttools.nevp.nevp import NEVP
 
 rng = xp.random.default_rng(42)
@@ -36,6 +37,10 @@ class Beyn(NEVP):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
+    svd_compute_location : str, optional
+        The location where to compute the singular value decomposition.
+        Can be either "numpy" or "cupy". Only relevant if cupy is
+        used.
 
     """
 
@@ -47,6 +52,7 @@ class Beyn(NEVP):
         num_quad_points: int,
         num_threads_contour: int = 1024,
         eig_compute_location: str = "numpy",
+        svd_compute_location: str = "numpy",
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -55,6 +61,7 @@ class Beyn(NEVP):
         self.num_quad_points = num_quad_points
         self.num_threads_contour = num_threads_contour
         self.eig_compute_location = eig_compute_location
+        self.svd_compute_location = svd_compute_location
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
@@ -121,7 +128,9 @@ class Beyn(NEVP):
         # TODO: Batch even if the reduced size is smaller than m_0.
         for i in range(batchsize):
             # Perform an SVD on the linear subspace projector.
-            u, s, vh = xp.linalg.svd(P_0[i], full_matrices=False)
+            u, s, vh = svd(
+                P_0[i], full_matrices=False, compute_module=self.svd_compute_location
+            )
 
             # Remove the zero singular values (within numerical tolerance).
             eps_svd = s.max() * d * xp.finfo(in_type).eps
@@ -221,8 +230,14 @@ class Beyn(NEVP):
         # TODO: Batch even if the reduced size is smaller than m_0.
         for i in range(batchsize):
             # Perform an SVD on the linear subspace projector.
-            u, s, vh = xp.linalg.svd(P_0[i], full_matrices=False)
-            u_hat, s_hat, vh_hat = xp.linalg.svd(P_0_hat[i], full_matrices=False)
+            u, s, vh = svd(
+                P_0[i], full_matrices=False, compute_module=self.svd_compute_location
+            )
+            u_hat, s_hat, vh_hat = svd(
+                P_0_hat[i],
+                full_matrices=False,
+                compute_module=self.svd_compute_location,
+            )
 
             # Remove the zero singular values (within numerical tolerance).
             # and orthogonalize projector

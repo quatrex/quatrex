@@ -11,26 +11,31 @@ from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity
 
 
 class DSBanded(DSBSparse):
-    """Distributed stack of banded matrices.
+    """Base class for distributed stack of banded matrices.
 
-    This DSBSparse implementation stores the matrices in block-based
-    "TallNSkinny" or "ShortNFat" format.
+    Banded matrices implement a dense band in blocks and 
+    always retun dense arrays when accessing the blocks.
 
     Parameters
     ----------
     data : NDArray
         The local slice of the data. This should be an array of shape
-        `(*local_stack_shape, nnz)`. It is the caller's responsibility
-        to ensure that the data is distributed correctly across the
-        ranks.
+        `(*local_stack_shape, num_rows * num_cols)`. It is the caller's
+        responsibility to ensure that the data is distributed correctly
+        across the ranks.
+    half_bandwidth : int
+        The half bandwidth of the banded matrix.
+    banded_block_size : int
+        The size of the blocks in the banded matrix.
     block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack of sparse matrices. If this is an
         integer, it is interpreted as a one-dimensional stack.
-    return_dense : bool, optional
-        Whether to return dense arrays when accessing the blocks.
-        Default is True.
+    half_block_bandwidth : int, optional
+        The half block bandwidth of the banded matrix. If not provided,
+        it is automatically calculated based on the half bandwidth and
+        block size. Default is None
 
     """
 
@@ -39,34 +44,70 @@ class DSBanded(DSBSparse):
         data: NDArray,
         half_bandwidth: int,  # @czox's r
         banded_block_size: int,  # @czox's BLK_SIZE
-        banded_type: int,  # 0: TallNSkinny, 1: ShortNFat
         block_sizes: NDArray,  # @czox's BIG_BLK_SIZE
         global_stack_shape: tuple | int,
-        return_dense: bool = True,
-        half_block_bandwidth: int = 0,  # @czox's r_blk
+        half_block_bandwidth: int = None,  # @czox's r_blk
     ) -> None:
         """Initializes the DSBanded matrix."""
+
         local_stack_shape = data.shape[:len(global_stack_shape)]
         sparse_data = xp.reshape(data, local_stack_shape + (-1,))
-        super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
+        super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense=True)
 
         self.half_bandwidth = half_bandwidth
         self.banded_block_size = banded_block_size
-        if half_block_bandwidth == 0:
-            self.half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size  # @czox's r_blk
-        else:
-            self.half_block_bandwidth = half_block_bandwidth
+        self.half_block_bandwidth = (
+            half_block_bandwidth or
+            (half_bandwidth + banded_block_size - 1) // banded_block_size)  # @czox's r_blk
+
+
+class TallNSkinny(DSBanded):
+    """'TallNSkinny' implementation of the DSBanded format.
+
+    Parameters
+    ----------
+    data : NDArray
+        The local slice of the data. This should be an array of shape
+        `(*local_stack_shape, num_rows * num_cols)`. It is the caller's
+        responsibility to ensure that the data is distributed correctly
+        across the ranks.
+    half_bandwidth : int
+        The half bandwidth of the banded matrix.
+    banded_block_size : int
+        The size of the blocks in the banded matrix.
+    block_sizes : NDArray
+        The size of each block in the sparse matrix.
+    global_stack_shape : tuple or int
+        The global shape of the stack of sparse matrices. If this is an
+        integer, it is interpreted as a one-dimensional stack.
+    half_block_bandwidth : int, optional
+        The half block bandwidth of the banded matrix. If not provided,
+        it is automatically calculated based on the half bandwidth and
+        block size. Default is None.
+
+    """
+
+    def __init__(
+        self,
+        data: NDArray,
+        half_bandwidth: int,  # @czox's r
+        banded_block_size: int,  # @czox's BLK_SIZE
+        block_sizes: NDArray,  # @czox's BIG_BLK_SIZE
+        global_stack_shape: tuple | int,
+        half_block_bandwidth: int = None,  # @czox's r_blk
+    ) -> None:
+        """Initializes the TallNSkinny matrix."""
+
+        local_stack_shape = data.shape[:len(global_stack_shape)]
+        sparse_data = xp.reshape(data, local_stack_shape + (-1,))
+        super().__init__(data, half_bandwidth, banded_block_size, block_sizes, global_stack_shape, half_block_bandwidth)
+
         num_cols = (2 * self.half_block_bandwidth + 1) * banded_block_size
         assert sparse_data.shape[-1] % num_cols == 0
         num_rows = sparse_data.shape[-1] // num_cols
         assert num_rows % banded_block_size == 0
 
         self.banded_shape = (num_rows, num_cols)
-
-        assert banded_type in (0, 1)
-        self.banded_type = banded_type
-
-        assert return_dense
     
     def flatten_index(self, accesed_element: tuple) -> tuple:
         """Flattens matrix coordinates (2D) to buffer coordinates (1D)."""
@@ -336,9 +377,6 @@ class DSBanded(DSBSparse):
         # else:
         #     data_stack = xp.reshape(data_stack, (1, *self.banded_shape))
 
-        if not self.banded_type == 0:
-            raise NotImplementedError
-
         big_block_i = row
         big_block_j = col
         BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
@@ -432,9 +470,6 @@ class DSBanded(DSBSparse):
         #     self.cols[block_slice] - self.block_offsets[col],
         #     self.data[*stack_index][..., block_slice],
         # )
-
-        if not self.banded_type == 0:
-            raise NotImplementedError
         
         data_stack = self.data[*stack_index]
         data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
@@ -548,33 +583,28 @@ class DSBanded(DSBSparse):
         #         left_offset : r - right_offset,
         #     ] = blk_row
 
-    def _check_commensurable(self, other: "DSBSparse") -> None:
+    def _check_commensurable(self, other: "TallNSkinny") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, DSBanded):
-            raise TypeError("Can only add DSBanded matrices.")
+        if not isinstance(other, TallNSkinny):
+            raise TypeError("Can only add TallNSkinny matrices.")
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
         
-        if self.banded_type != other.banded_type:
-            raise ValueError("Banded types do not match.")
-        
         if self.banded_block_size != other.banded_block_size:
             raise ValueError("Banded block sizes do not match.")
 
-    def __neg__(self) -> "DSBanded":
+    def __neg__(self) -> "TallNSkinny":
         """Negation of the data."""
-        return DSBanded(
+        return TallNSkinny(
             data=-self.data,
             half_bandwidth=self.half_bandwidth,
             banded_block_size=self.banded_block_size,
-            banded_type=self.banded_type,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
-            return_dense=self.return_dense,
         )
 
-    def __matmul__(self, other: "DSBanded") -> None:
+    def __matmul__(self, other: "ShortNFat") -> "TallNSkinny":
         """Matrix multiplication of two DSBanded matrices."""
 
         if not isinstance(other, ShortNFat):
@@ -647,11 +677,10 @@ class DSBanded(DSBSparse):
         )
 
         local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
-        return DSBanded(
+        return TallNSkinny(
             data=xp.asarray(c_blk_tall_and_skinny).reshape(local_stack_shape + (-1, )),
             half_bandwidth=diag_dist_c,
             banded_block_size=BLK_M,
-            banded_type=0,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             half_block_bandwidth=blk_diag_dist_c,
@@ -679,7 +708,7 @@ class DSBanded(DSBSparse):
         self.num_blocks = len(block_sizes)
         self._block_slice_cache = {}
 
-    def ltranspose(self, copy=False) -> "None | DSBanded":
+    def ltranspose(self, copy=False) -> "None | TallNSkinny":
         """Performs a local transposition of the matrix.
 
         Parameters
@@ -689,7 +718,7 @@ class DSBanded(DSBSparse):
 
         Returns
         -------
-        None | DSBanded
+        None | TallNSkinny
             The transposed matrix. If copy is False, this is None.
 
         """
@@ -719,11 +748,10 @@ class DSBanded(DSBSparse):
                     oclice = slice((num_half_bcols - bcol_off) * self.banded_block_size, (num_half_bcols - bcol_off + 1) * self.banded_block_size)
                     new_data[..., nrlice, nclice] = old_data[..., orlice, oclice].swapaxes(-2, -1)
             new_data = new_data.reshape(local_stack_shape + (-1, )) 
-            self = DSBanded(
+            self = TallNSkinny(
                 new_data,
                 self.half_bandwidth,
                 self.banded_block_size,
-                self.banded_type,
                 self.block_sizes,
                 self.global_stack_shape,
                 half_block_bandwidth=self.half_block_bandwidth,
@@ -783,8 +811,8 @@ class DSBanded(DSBSparse):
         banded_block_size: int = 16,
         half_block_bandwidth: int = None,
         dtype: DTypeLike = None
-    ) -> "DSBanded":
-        """Creates a new DSBanded matrix from a scipy.sparse array.
+    ) -> "TallNSkinny":
+        """Creates a new TallNSkiny matrix from a scipy.sparse array.
 
         Parameters
         ----------
@@ -803,8 +831,8 @@ class DSBanded(DSBSparse):
 
         Returns
         -------
-        DSBanded
-            The new DSBanded matrix.
+        TallNSkinny
+            The new TallNSkinny matrix.
 
         """
 
@@ -829,7 +857,6 @@ class DSBanded(DSBSparse):
         # )
 
         half_bandwidth = int(xp.abs(coo.row - coo.col).max())
-        banded_type = 0
         half_block_bandwidth = half_block_bandwidth or (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = ((coo.shape[0] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
@@ -886,9 +913,9 @@ class DSBanded(DSBSparse):
             data=data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
-            banded_type=banded_type,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            half_block_bandwidth=half_block_bandwidth,
         )
 
     @classmethod
@@ -899,29 +926,30 @@ class DSBanded(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple,
         pinned: bool = False,
-        dtype = xp.complex128
-    ) -> "DSBanded":
-        """Creates a new DSBanded matrix from a scipy.sparse array.
+        dtype: DTypeLike = xp.complex128
+    ) -> "TallNSkinny":
+        """Creates an identity TallNSkinny matrix.
 
         Parameters
         ----------
         arr : sparse.spmatrix
             The sparse array to convert.
+        half_bandwidth : int
+            The half bandwidth of the banded matrix.
         block_sizes : NDArray
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided
             sparse matrix is replicated across the stack.
-        densify_blocks : list[tuple], optional
-            List of matrix blocks to densify. Default is None. This is
-            useful to densify the boundary blocks of the matrix
         pinned : bool, optional
             Whether to pin the memory when using GPU. Default is False.
+        dtype : DTypeLike, optional
+            The data type of the matrix. Default is complex128.
 
         Returns
         -------
-        DSBanded
-            The new DSBanded matrix.
+        TallNSkinny
+            The new TallNSkinny matrix.
 
         """
 
@@ -931,7 +959,6 @@ class DSBanded(DSBSparse):
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
         banded_block_size = 16
-        banded_type = 0
         half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = ((size + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
@@ -955,33 +982,34 @@ class DSBanded(DSBSparse):
             data=data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
-            banded_type=banded_type,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
 
 
-class ShortNFat(DSBSparse):
-    """Distributed stack of banded matrices.
-
-    This DSBSparse implementation stores the matrices in block-based
-    "TallNSkinny" or "ShortNFat" format.
+class ShortNFat(DSBanded):
+    """'ShortNFat' implementation of the DSBanded format.
 
     Parameters
     ----------
     data : NDArray
         The local slice of the data. This should be an array of shape
-        `(*local_stack_shape, nnz)`. It is the caller's responsibility
-        to ensure that the data is distributed correctly across the
-        ranks.
+        `(*local_stack_shape, num_rows * num_cols)`. It is the caller's
+        responsibility to ensure that the data is distributed correctly
+        across the ranks.
+    half_bandwidth : int
+        The half bandwidth of the banded matrix.
+    banded_block_size : int
+        The size of the blocks in the banded matrix.
     block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
         The global shape of the stack of sparse matrices. If this is an
         integer, it is interpreted as a one-dimensional stack.
-    return_dense : bool, optional
-        Whether to return dense arrays when accessing the blocks.
-        Default is True.
+    half_block_bandwidth : int, optional
+        The half block bandwidth of the banded matrix. If not provided,
+        it is automatically calculated based on the half bandwidth and
+        block size. Default is None.
 
     """
 
@@ -990,15 +1018,15 @@ class ShortNFat(DSBSparse):
         data: NDArray,
         half_bandwidth: int,  # @czox's r
         banded_block_size: int,  # @czox's BLK_SIZE
-        banded_type: int,  # 0: TallNSkinny, 1: ShortNFat
         block_sizes: NDArray,  # @czox's BIG_BLK_SIZE
         global_stack_shape: tuple | int,
-        return_dense: bool = True,
+        half_block_bandwidth: int = None,  # @czox's r_blk
     ) -> None:
         """Initializes the DSBanded matrix."""
+
         local_stack_shape = data.shape[:len(global_stack_shape)]
         sparse_data = xp.reshape(data, local_stack_shape + (-1,))
-        super().__init__(sparse_data, block_sizes, global_stack_shape, return_dense)
+        super().__init__(data, half_bandwidth, banded_block_size, block_sizes, global_stack_shape, half_block_bandwidth)
 
         self.half_bandwidth = half_bandwidth
         self.banded_block_size = banded_block_size
@@ -1009,11 +1037,6 @@ class ShortNFat(DSBSparse):
         assert num_cols % banded_block_size == 0
 
         self.banded_shape = (num_rows, num_cols)
-
-        assert banded_type in (0, 1)
-        self.banded_type = banded_type
-
-        assert return_dense
     
     def flatten_index(self, accesed_element: tuple) -> tuple:
         """Flattens matrix coordinates (2D) to buffer coordinates (1D)."""
@@ -1260,9 +1283,6 @@ class ShortNFat(DSBSparse):
 
         data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
 
-        if not self.banded_type == 1:
-            raise NotImplementedError
-
         big_block_i = row
         big_block_j = col
         BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
@@ -1360,9 +1380,6 @@ class ShortNFat(DSBSparse):
         #     self.cols[block_slice] - self.block_offsets[col],
         #     self.data[*stack_index][..., block_slice],
         # )
-
-        if not self.banded_type == 1:
-            raise NotImplementedError
         
         data_stack = self.data[*stack_index]
         data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
@@ -1432,30 +1449,25 @@ class ShortNFat(DSBSparse):
             B_blk_shortNFat[..., top_offset : r - bottom_offset, j] = blk_col
 
 
-    def _check_commensurable(self, other: "DSBSparse") -> None:
+    def _check_commensurable(self, other: "ShortNFat") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, (DSBanded, ShortNFat)):
-            raise TypeError("Can only add DSBanded matrices.")
+        if not isinstance(other,ShortNFat):
+            raise TypeError("Can only add ShortNFat matrices.")
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
         
-        if self.banded_type != other.banded_type:
-            raise ValueError("Banded types do not match.")
-        
         if self.banded_block_size != other.banded_block_size:
             raise ValueError("Banded block sizes do not match.")
 
-    def __neg__(self) -> "DSBanded":
+    def __neg__(self) -> "ShortNFat":
         """Negation of the data."""
         return ShortNFat(
             data=-self.data,
             half_bandwidth=self.half_bandwidth,
             banded_block_size=self.banded_block_size,
-            banded_type=self.banded_type,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
-            return_dense=self.return_dense,
         )
 
     def __matmul__(self, other: "DSBanded") -> None:
@@ -1525,7 +1537,7 @@ class ShortNFat(DSBSparse):
         self.num_blocks = len(block_sizes)
         self._block_slice_cache = {}
 
-    def ltranspose(self, copy=False) -> "None | DSBanded":
+    def ltranspose(self, copy=False) -> "None | ShortNFat":
         """Performs a local transposition of the matrix.
 
         Parameters
@@ -1535,7 +1547,7 @@ class ShortNFat(DSBSparse):
 
         Returns
         -------
-        None | DSBanded
+        None | ShortNFat
             The transposed matrix. If copy is False, this is None.
 
         """
@@ -1569,10 +1581,9 @@ class ShortNFat(DSBSparse):
                 data=new_data,
                 half_bandwidth=self.half_bandwidth,
                 banded_block_size=self.banded_block_size,
-                banded_type=self.banded_type,
                 block_sizes=self.block_sizes,
                 global_stack_shape=self.global_stack_shape,
-                return_dense=self.return_dense,
+                half_block_bandwidth=self.half_block_bandwidth,
             )
         else:
             new_data = xp.zeros_like(self.data)
@@ -1670,7 +1681,7 @@ class ShortNFat(DSBSparse):
         coo.sum_duplicates()
 
         half_bandwidth = int(xp.abs(coo.row - coo.col).max())
-        banded_type = 1
+
         half_block_bandwidth = half_block_bandwidth or (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_cols = ((coo.shape[1] + banded_block_size - 1) // banded_block_size) * banded_block_size
@@ -1720,9 +1731,9 @@ class ShortNFat(DSBSparse):
             data=data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
-            banded_type=banded_type,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            half_block_bandwidth=half_block_bandwidth,
         )
 
     @classmethod
@@ -1733,29 +1744,30 @@ class ShortNFat(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple,
         pinned: bool = False,
-        dtype = xp.complex128
+        dtype: DTypeLike = xp.complex128
     ) -> "DSBanded":
-        """Creates a new DSBanded matrix from a scipy.sparse array.
+        """Creates an identity ShortNFat matrix.
 
         Parameters
         ----------
         arr : sparse.spmatrix
             The sparse array to convert.
+        half_bandwidth : int
+            The half bandwidth of the banded matrix.
         block_sizes : NDArray
             The size of all the blocks in the matrix.
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided
             sparse matrix is replicated across the stack.
-        densify_blocks : list[tuple], optional
-            List of matrix blocks to densify. Default is None. This is
-            useful to densify the boundary blocks of the matrix
         pinned : bool, optional
             Whether to pin the memory when using GPU. Default is False.
+        dtype : DTypeLike, optional
+            The data type of the matrix. Default is xp.complex128.
 
         Returns
         -------
-        DSBanded
-            The new DSBanded matrix.
+        ShortNFat
+            The new ShortNFat matrix.
 
         """
 
@@ -1789,7 +1801,6 @@ class ShortNFat(DSBSparse):
             data=data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
-            banded_type=banded_type,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )

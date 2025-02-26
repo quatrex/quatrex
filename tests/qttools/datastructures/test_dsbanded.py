@@ -702,7 +702,7 @@ def test_block_view(array: NDArray, axis: int, num_blocks: int):
             assert (array[*index] == view[i]).all()
 
 
-@pytest.mark.mpi(min_size=2)
+@pytest.mark.mpi(min_size=1)
 class TestDistribution:
     """Tests for the distribution methods of DSBSparse."""
 
@@ -791,7 +791,9 @@ class TestDistribution:
 
         dsbsparse[accessed_element] = 42
 
-        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
+        # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        dense[..., *accessed_element] = 42
         assert xp.allclose(dense, dsbsparse.to_dense())
 
     @pytest.mark.usefixtures("accessed_element")
@@ -808,9 +810,8 @@ class TestDistribution:
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
-        rows, cols = dsbsparse.spy()
         row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
-        ind = xp.where((rows == row) & (cols == col))[0]
+        ind = [dsbsparse.flatten_index((row, col))]
 
         reference = dense[..., *accessed_element].flatten()[0]
 
@@ -841,14 +842,15 @@ class TestDistribution:
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
-        rows, cols = dsbsparse.spy()
         row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
-        ind = xp.where((rows == row) & (cols == col))[0]
+        ind = [dsbsparse.flatten_index((row, col))]
 
         if len(ind) == 0:
             return
 
-        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
+        # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        dense[..., *accessed_element] = 42
 
         dsbsparse.dtranspose()
 

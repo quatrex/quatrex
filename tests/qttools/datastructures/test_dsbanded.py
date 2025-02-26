@@ -633,7 +633,7 @@ class TestArithmetic:
         assert xp.allclose(-dense, (-dsbsparse).to_dense())
 
 
-pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
+@pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
 class TestMatmul:
     """Tests for matrix multiplications with DSBanded matrices."""
 

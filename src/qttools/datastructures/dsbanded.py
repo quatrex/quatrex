@@ -571,7 +571,7 @@ class DSBanded(DSBSparse):
         if xp.__name__ != "cupy":
             raise NotImplementedError("Only CuPy is supported.")
         
-        if dsbanded_kernels.TT_AVAIL:
+        if dsbanded_kernels and hasattr(dsbanded_kernels, "TT_AVAIL") and dsbanded_kernels.TT_AVAIL:
             torch = dsbanded_kernels.torch
         else:
             raise NotImplementedError("Triton and Pytorch are not available.")

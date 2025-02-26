@@ -4,8 +4,9 @@ from contextlib import nullcontext
 
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
+from types import ModuleType
 
-from qttools import NDArray, sparse, xp
+from qttools import DTypeLike, NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -643,18 +644,30 @@ class TestMatmul:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         banded_block_size: int,
+        dtype: tuple[ModuleType, DTypeLike],
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
+        mod, dt = dtype
 
         coo = _create_coo(block_sizes, complex=False)
         dsbsparse_a = dsbanded_type_a.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=dt
         )
         dense = coo.toarray()
-        dense = dense.astype(xp.float16)
+
+        if mod.__name__ == "cupy":
+            dense = dense.astype(dt)
+            reference = dense @ dense
+        elif mod.__name__ == "torch":
+            dense = mod.astensor(dense, dtype=dt)
+            reference = dense @ dense
+            reference = mod.asarray(reference)
+        else:
+            raise NotImplementedError
+
         dsbsparse_b = dsbanded_type_b.from_sparray(
-            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=xp.float16
+            coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size, dtype=dt
         )
 
         reference = dense @ dense

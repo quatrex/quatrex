@@ -650,9 +650,14 @@ class TestMatmul:
         """Tests the matrix multiplication of a DSBSparse matrix."""
 
         def _set_torch(dsbsparse: DSBSparse, mod: ModuleType, dt: DTypeLike):
-            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:-1])
-            banded_data = dsbsparse.data.reshape(batch_size, dsbsparse.banded_shape)
-            dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
+            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:len(dsbsparse.global_stack_shape)])
+            banded_data = dsbsparse.data.reshape((batch_size, *dsbsparse.banded_shape))
+            if mod.__name__ == "cupy":
+                import torch
+                banded_data = banded_data.astype(dt)
+                dsbsparse.torch = torch.asarray(banded_data, device='cuda')
+            else:  # mod.__name__ == "torch"
+                dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
 
 
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
@@ -672,7 +677,6 @@ class TestMatmul:
         if mod.__name__ == "cupy":
             dense = dense.astype(dt)
             reference = dense @ dense
-            value = (dsbsparse_a @ dsbsparse_b).to_dense()
         elif mod.__name__ == "torch":
             dense = mod.asarray(dense, dtype=dt)
             reference = dense @ dense

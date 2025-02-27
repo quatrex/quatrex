@@ -680,9 +680,9 @@ class TallNSkinny(DSBanded):
             transpose_B=False,
         )
 
-        print(
-            f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
-        )
+        # print(
+        #     f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
+        # )
 
         result_torch = c_blk_tall_and_skinny.to(_torch_dtype[self.dtype.type])
         local_stack_shape = self.data.shape[:len(self.global_stack_shape)]

@@ -121,12 +121,12 @@ def band_gemm_from_band_format(
             transpose_B=transpose_B,
         )
 
-    print(
-        f"band gemm from band format. perform scaling: {perform_scaling}, scale_quant: {scale_quant}"
-    )
-    print(
-        f"Norms. a_blk_tall_and_skinny: {torch.norm(a_blk_tall_and_skinny)}, b_blk_short_and_fat: {torch.norm(b_blk_short_and_fat)}, c_blk_tall_and_skinny: {torch.norm(c_blk_tall_and_skinny)}, c_blk_tall_and_skinny type: {c_blk_tall_and_skinny.dtype}"
-    )
+    # print(
+    #     f"band gemm from band format. perform scaling: {perform_scaling}, scale_quant: {scale_quant}"
+    # )
+    # print(
+    #     f"Norms. a_blk_tall_and_skinny: {torch.norm(a_blk_tall_and_skinny)}, b_blk_short_and_fat: {torch.norm(b_blk_short_and_fat)}, c_blk_tall_and_skinny: {torch.norm(c_blk_tall_and_skinny)}, c_blk_tall_and_skinny type: {c_blk_tall_and_skinny.dtype}"
+    # )
 
     # # --- DEBUG ONLY ----
     # # calculate:

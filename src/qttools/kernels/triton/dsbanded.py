@@ -282,10 +282,11 @@ def band_gemm_kernel(
         a_ptrs += BLK_K * stride_ak
         b_ptrs += BLK_K * stride_bk
 
-    if scale_quant:
-        c = accumulator
-    else:
-        c = accumulator.to(tl.float16)
+    # if scale_quant:
+    #     c = accumulator
+    # else:
+    #     c = accumulator.to(tl.float16)
+    c = accumulator
 
     offs_cm = bandC_blk_row * BLK_M + tl.arange(0, BLK_M)
     offs_cn = bandC_blk_col * BLK_N + tl.arange(0, BLK_N)

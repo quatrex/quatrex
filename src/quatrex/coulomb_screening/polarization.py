@@ -71,10 +71,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         coulomb_screening_energies: NDArray,
-        number_of_kpoints: xp.ndarray,
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
+        number_of_kpoints = quatrex_config.electron.number_of_kpoints
         self.ne = len(self.energies)
         self.prefactor = (
             -1j

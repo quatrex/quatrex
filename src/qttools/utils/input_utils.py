@@ -128,7 +128,7 @@ def read_wannier_wout(
                         map(
                             float,
                             re.findall(r"\((.*?)\)", lines[num_lines - i + j])[0].split(
-                                ", "
+                                ","
                             ),
                         )
                     )
@@ -284,7 +284,7 @@ def create_hamiltonian(
     list[np.ndarray]
         The block-tridiagonal Hamiltonian matrix.
     """
-    if cutoff is not None and coords is None and lattice_vectors is None:
+    if cutoff is not xp.inf and coords is None and lattice_vectors is None:
         print(
             "Cutoff is set but coords and lattice_vectors are not provided. No cutoff will be applied.",
             flush=True,

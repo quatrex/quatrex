@@ -674,23 +674,25 @@ class TestMatmul:
             coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
         )
 
-        if mod.__name__ == "cupy":
-            dense = dense.astype(dt)
-            reference = dense @ dense
-        elif mod.__name__ == "torch":
-            dense = mod.asarray(dense, dtype=dt)
-            reference = dense @ dense
-            reference = xp.asarray(reference)
-        else:
-            raise NotImplementedError
+        # if mod.__name__ == "cupy":
+        #     dense = dense.astype(dt)
+        #     reference = dense @ dense
+        # elif mod.__name__ == "torch":
+        #     dense = mod.asarray(dense, dtype=dt)
+        #     reference = dense @ dense
+        #     reference = xp.asarray(reference)
+        # else:
+        #     raise NotImplementedError
 
         _set_torch(dsbsparse_a, mod, dt)
         _set_torch(dsbsparse_b, mod, dt)
         value = (dsbsparse_a @ dsbsparse_b).to_dense()
 
+        reference = dense @ dense
         if mod.__name__ == "cupy":
             relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
         elif mod.__name__ == "torch":
+            reference = mod.asarray(reference)
             relerror = mod.linalg.norm(reference - value) / mod.linalg.norm(reference)
         else:
             raise NotImplementedError

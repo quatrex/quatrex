@@ -79,7 +79,6 @@ def get_cuda_devices(return_names: bool = False):
         return []
     num_devices = xp.cuda.runtime.getDeviceCount()
     if return_names:
-        devices = [f"cuda:{i}" for i in range(num_devices)]
-    else:
-        devices = list(range(num_devices))
-    return devices
+        return [f"cuda:{i}" for i in range(num_devices)]
+
+    return list(range(num_devices))

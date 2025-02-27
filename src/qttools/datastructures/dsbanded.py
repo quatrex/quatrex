@@ -621,6 +621,10 @@ class TallNSkinny(DSBanded):
         else:
             raise NotImplementedError("Triton and Pytorch are not available.")
         
+        _torch_dtype = {
+            xp.complex128: torch.float64, xp.complex64: torch.float32,
+            xp.float64: torch.float64, xp.float32: torch.float32, xp.float16: torch.float16}
+        
         batch_a = functools.reduce(lambda x, y: x * y, self.data.shape[:-1])
         if not hasattr(self, "torch"):
             self.torch = torch.asarray(self.data.reshape((batch_a, ) + self.banded_shape), device='cuda')
@@ -680,15 +684,18 @@ class TallNSkinny(DSBanded):
             f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
         )
 
+        result_torch = c_blk_tall_and_skinny.to(_torch_dtype[self.dtype.type])
         local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
-        return TallNSkinny(
-            data=xp.asarray(c_blk_tall_and_skinny).reshape(local_stack_shape + (-1, )),
+        result = TallNSkinny(
+            data=xp.asarray(result_torch).reshape(local_stack_shape + (-1, )),
             half_bandwidth=diag_dist_c,
             banded_block_size=BLK_M,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             half_block_bandwidth=blk_diag_dist_c,
         )
+        result.torch = result_torch
+        return result
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:

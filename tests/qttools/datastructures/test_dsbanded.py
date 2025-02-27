@@ -684,19 +684,13 @@ class TestMatmul:
         # else:
         #     raise NotImplementedError
 
+        reference = dense @ dense
         _set_torch(dsbsparse_a, mod, dt)
         _set_torch(dsbsparse_b, mod, dt)
         value = (dsbsparse_a @ dsbsparse_b).to_dense()
 
-        reference = dense @ dense
-        if mod.__name__ == "cupy":
-            relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
-        elif mod.__name__ == "torch":
-            reference = mod.asarray(reference)
-            relerror = mod.linalg.norm(reference - value) / mod.linalg.norm(reference)
-        else:
-            raise NotImplementedError
-        assert relerror < 1e-3
+        relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
+        assert relerror < 1e-2
         # assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
 
 

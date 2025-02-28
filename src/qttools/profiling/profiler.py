@@ -3,9 +3,11 @@
 import json
 import os
 import pickle
+import sys
 import time
 import warnings
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from typing import Literal
@@ -85,10 +87,9 @@ class _ProfilingEvent:
         self.datetime = datetime.fromtimestamp(timestamp)
 
         # Names will look like "<function Class.do_something at 0x...>".
-        prof_type, qualname, __, prof_id = name.strip("<>").split()
+        prof_type, qualname, *__ = name.strip("<>").split()
         self.prof_type = prof_type
         self.qualname = qualname
-        self.prof_id = prof_id
 
         self.host_time = host_time
         self.device_times = device_times
@@ -359,7 +360,7 @@ class Profiler:
             raise ValueError(f"Invalid profiling level {level}.")
 
         def decorator(func):
-            if not PROFILE_GPU or _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
+            if _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
                 return func
 
             name = func.__str__()
@@ -408,3 +409,90 @@ class Profiler:
             return wrapper
 
         return decorator
+
+    @contextmanager
+    def profile_range(self, label: str = "range", level: str = PROFILE_LEVEL):
+        """Profiles a range of code.
+
+        This is a context manager that profiles a range of code.
+
+        Parameters
+        ----------
+        label : str, optional
+            A label for the profiled range. This is used to identify
+            the profiled range in the profiling data.
+        level : str, optional
+            The profiling level controls whether the function is
+            profiled or not. By default, the function is always
+            profiled, irrespective of the PROFILE_LEVEL environment
+            variable. The following levels are implemented:
+            - `"off"`: The function is not profiled.
+            - `"basic"`: The function is part of the core profiling.
+            - `"api"`: The function is part of the API and does not
+              always need to be timed. It is part of the underlying
+              infrastructure.
+            - `"debug"`: This function only needs to be profiled for
+              debugging purposes.
+            - `"full"`: The function does not even need to be profiled
+              for debugging purposes unless the user explicitly requests
+              it to be profiled.
+
+        Yields
+        ------
+        None
+            The context manager does not return anything.
+
+        """
+        if level not in ("off", "basic", "api", "debug", "full"):
+            raise ValueError(f"Invalid profiling level {level}.")
+
+        if _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
+            yield
+            return
+
+        # This is quite a bit of a hack to get the qualified name of the
+        # function in which the context manager is called.
+        qualname = "no_qualname"
+        if hasattr(sys, "_getframe"):
+            qualname = sys._getframe(depth=2).f_code.co_qualname
+
+        label = "." + label.replace(" ", "_")
+        name = "<range " + qualname + label + ">"
+
+        try:
+            timestamp = time.time()
+
+            if PROFILE_GPU:
+                start_events, end_events = self._setup_events()
+
+                # Record and sync start events for each device.
+                self._record_events(start_events)
+                self._synchronize_events(start_events)
+
+                # Record start events for each device.
+                self._record_events(start_events)
+
+            host_time = -time.perf_counter()
+
+            yield
+
+        finally:
+
+            host_time += time.perf_counter()
+
+            device_times = []
+            if PROFILE_GPU:
+                # Record end events for each device.
+                self._record_events(end_events)
+
+                # Sync to ensure all devices are done.
+                self._synchronize_events(end_events)
+
+                # Calculate the time spent on each device.
+                for start_event, end_event in zip(start_events, end_events):
+                    device_times.append(
+                        xp.cuda.get_elapsed_time(start_event, end_event)
+                        * 1e-3  # Convert to seconds.
+                    )
+
+            self.eventlog.append((timestamp, name, host_time, device_times))

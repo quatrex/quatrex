@@ -2,9 +2,13 @@
 
 import json
 import os
+import pickle
 import time
 import warnings
+from collections import defaultdict
+from datetime import datetime
 from functools import wraps
+from typing import Literal
 
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -12,21 +16,164 @@ from qttools import xp
 from qttools.utils.gpu_utils import get_cuda_devices
 
 # Set the default profiling detail.
-PROFILING_DETAIL = os.environ.get("PROFILING_DETAIL", "basic")
-if PROFILING_DETAIL.lower() not in ("off", "basic", "detailed"):
+PROFILING_DETAIL = os.environ.get("PROFILING_DETAIL", "basic").lower()
+if PROFILING_DETAIL not in ("off", "basic", "detailed"):
     warnings.warn(
         f"Invalid profiling detail {PROFILING_DETAIL}. Defaulting to 'basic'."
     )
     PROFILING_DETAIL = "basic"
+if PROFILING_DETAIL == "detailed":
+    if xp.__name__ != "cupy":
+        warnings.warn("CUDA is not available. Defaulting to 'basic' profiling detail.")
+        PROFILING_DETAIL = "basic"
+    warnings.warn(
+        "Detailed profiling is enabled. This will cause device"
+        "synchronization for every profiled event."
+    )
+
 
 # Set the default profiling group/environment.
-PROFILING_GROUP = os.environ.get("PROFILING_GROUP", "basic")
-if PROFILING_GROUP.lower() not in ("off", "basic", "api", "debug", "full"):
+PROFILING_GROUP = os.environ.get("PROFILING_GROUP", "basic").lower()
+if PROFILING_GROUP not in ("off", "basic", "api", "debug", "full"):
     warnings.warn(f"Invalid profiling group {PROFILING_GROUP}. Defaulting to 'basic'.")
     PROFILING_GROUP = "basic"
 
 # Define the mapping of profiling groups to numbers.
 _group_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
+
+
+class _ProfilingEvent:
+    """A profiling event object.
+
+    This is basically just there to parse the names of the profiled
+    functions.
+
+    Parameters
+    ----------
+    event : list
+        The profiling event data.
+    rank : int
+        The MPI rank on which the event
+        occurred.
+
+    Attributes
+    ----------
+    datetime : datetime
+        The timestamp of the event.
+    prof_type : str
+        The type of the profiling event.
+    qualname : str
+        The qualified name of the function.
+    prof_id : str
+        The ID of the profiling event.
+    host_time : float
+        The time spent on the host.
+    device_times : list
+        The time spent on each device.
+    rank : int
+        The MPI rank on which the event occurred.
+
+    """
+
+    def __init__(self, event: list, rank: int):
+        """Initializes the profiling event object."""
+        timestamp, name, host_time, device_times = event
+        # TODO: Here we parse the timestamp as a datetime object. It
+        # would be very nice to have a waterfall plot of the profiling
+        # data, but this would require a bit more work.
+        self.datetime = datetime.fromtimestamp(timestamp)
+
+        # Names will look like "<function Class.do_something at 0x...>".
+        prof_type, qualname, __, prof_id = name.strip("<>").split()
+        self.prof_type = prof_type
+        self.qualname = qualname
+        self.prof_id = prof_id
+
+        self.host_time = host_time
+        self.device_times = device_times
+        self.rank = rank
+
+
+class _ProfilingRun:
+    """A profiling run object.
+
+    Parameters
+    ----------
+    eventlogs : list
+        A list of profiling events for each rank.
+
+    Attributes
+    ----------
+    profiling_events : list[_ProfilingEvent]
+        A list of parsed profiling events.
+
+    """
+
+    def __init__(self, eventlogs: list[list]):
+        """Initializes the profiling run object."""
+        profiling_events: list[_ProfilingEvent] = []
+        for rank, events in enumerate(eventlogs):
+            for event in events:
+                profiling_events.append(_ProfilingEvent(event, rank))
+
+        self.profiling_events = profiling_events
+
+    def get_stats(self) -> dict:
+        """Returns the profiling statistics.
+
+        Thsi reports some statistics for each profiled function.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the profiling statistics.
+
+        """
+        host_stats = defaultdict(list)
+        device_stats = defaultdict(list)
+        ranks = set()
+        for event in self.profiling_events:
+            host_stats[event.qualname].append(event.host_time)
+            device_stats[event.qualname].append(event.device_times)
+            ranks.add(event.rank)
+
+        stats = {}
+        for key in host_stats:
+            host_times = xp.array(host_stats[key])
+
+            num_calls = len(host_times)
+            num_ranks = len(ranks)
+            total_host_time = float(xp.sum(host_times))
+
+            stats[key] = {
+                "num_calls": num_calls,
+                "num_calls_per_rank": num_calls / num_ranks,
+                "total_host_time": total_host_time,
+                "total_host_time_per_rank": total_host_time / num_ranks,
+                "average_host_time": float(xp.mean(host_times)),
+                "median_host_time": float(xp.median(host_times)),
+                "std_host_time": float(xp.std(host_times)),
+                "min_host_time": float(xp.min(host_times)),
+                "max_host_time": float(xp.max(host_times)),
+            }
+            device_times = xp.array(device_stats[key])
+            if not xp.any(device_times):
+                continue
+
+            total_device_time = float(xp.sum(device_times))
+            stats[key].update(
+                {
+                    "total_device_time": total_device_time,
+                    "total_device_time_per_rank": total_device_time / num_ranks,
+                    "average_device_time": float(xp.mean(device_times)),
+                    "median_device_time": float(xp.median(device_times)),
+                    "std_device_time": float(xp.std(device_times)),
+                    "min_device_time": float(xp.min(device_times)),
+                    "max_device_time": float(xp.max(device_times)),
+                }
+            )
+
+        return stats
 
 
 class Profiler:
@@ -52,60 +199,63 @@ class Profiler:
 
         return cls._instance
 
-    def gather_events(self, root: int = 0) -> list:
+    def _gather_events(self, root: int = 0) -> list:
         """Gathers profiling events.
 
         Returns
         -------
         list
-            A list of profiling events.
+            A list of profiling events or an empty list.
 
         """
         all_events = comm.gather(self.eventlog, root=root)
         if comm.rank == root:
             return all_events
-        return []
+        return [[]]
 
-    def report(self):
-        """Generates a report of the total time spent in each function.
+    def get_stats(self) -> dict:
+        """Computes statistics from profiling data accross all ranks.
 
         Returns
         -------
         dict
-            A dictionary with function names as keys and total time
-            spent as values.
+            A dictionary containing the profiling data.
 
         """
-        report_data = {}
-        for profile_id, func_name, host_time, device_times in self.data:
-            report_dict = {"func": func_name, "host": host_time[-1]}
-            for dev_id, dev_runtime in enumerate(device_times):
-                if dev_runtime:
-                    report_dict[f"device_{dev_id}"] = dev_runtime[-1]
-            report_data[profile_id] = report_dict
-        return report_data
+        return _ProfilingRun(self._gather_events()).get_stats()
 
-    def dump_json(self, filepath):
-        """Dumps the profiling report as a JSON file.
+    def dump(self, filepath: str, format: Literal["pickle", "json"] = "pickle"):
+        """Dumps the profiling statistics to a file.
 
         Parameters
         ----------
         filepath : str
-            The path to the output JSON file.
+            The path to the output file.
+        format : {"pickle", "json"}, optional
+            The format in which to save the profiling data.
 
         """
-        report_data = self.report()
-        with open(filepath, "w") as json_file:
-            json.dump(report_data, json_file, indent=4)
+        if format not in ("pickle", "json"):
+            raise ValueError(f"Invalid format {format}.")
+
+        stats = self.get_stats()
+        if comm.rank == 0:
+            if format == "pickle":
+                with open(filepath, "wb") as pickle_file:
+                    pickle.dump(stats, pickle_file)
+
+            else:
+                with open(filepath, "w") as json_file:
+                    json.dump(stats, json_file, indent=4)
 
     def _setup_events(
         self,
-    ) -> tuple[list[xp.cuda.stream.Event], list[xp.cuda.stream.Event]]:
+    ) -> tuple[list, list]:
         """Sets up CUDA events for each device.
 
         Returns
         -------
-        tuple[list[xp.cuda.stream.Event], list[xp.cuda.stream.Event]]
+        tuple[list, list]
             A tuple of lists of start and end events for each device.
 
         """
@@ -123,12 +273,12 @@ class Profiler:
 
         return start_events, end_events
 
-    def _record_events(self, events: list[xp.cuda.stream.Event]):
+    def _record_events(self, events: list):
         """Records events for each device.
 
         Parameters
         ----------
-        events : list[xp.cuda.stream.Event]
+        events : list
             A list of events to record.
 
         """
@@ -140,12 +290,12 @@ class Profiler:
             finally:
                 xp.cuda.runtime.setDevice(current_device)
 
-    def _synchronize_events(self, events: list[xp.cuda.stream.Event]):
+    def _synchronize_events(self, events: list):
         """Synchronizes events for each device.
 
         Parameters
         ----------
-        events : list[xp.cuda.stream.Event]
+        events : list
             A list of events to synchronize.
 
         """
@@ -202,7 +352,7 @@ class Profiler:
             raise ValueError(f"Invalid profiling group {group}.")
 
         def decorator(func):
-            if detail == "off" or _group_to_num[group] < _group_to_num[PROFILING_GROUP]:
+            if detail == "off" or _group_to_num[group] > _group_to_num[PROFILING_GROUP]:
                 return func
 
             name = func.__str__()

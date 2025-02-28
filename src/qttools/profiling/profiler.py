@@ -454,7 +454,7 @@ class Profiler:
         # function in which the context manager is called.
         qualname = "no_qualname"
         if hasattr(sys, "_getframe"):
-            qualname = sys._getframe(depth=2).f_code.co_qualname
+            qualname = sys._getframe(2).f_code.co_qualname
 
         label = "." + label.replace(" ", "_")
         name = "<range " + qualname + label + ">"

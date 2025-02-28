@@ -15,31 +15,32 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import xp
 from qttools.utils.gpu_utils import get_cuda_devices
 
-# Set the default profiling detail.
-PROFILING_DETAIL = os.environ.get("PROFILING_DETAIL", "basic").lower()
-if PROFILING_DETAIL not in ("off", "basic", "detailed"):
-    warnings.warn(
-        f"Invalid profiling detail {PROFILING_DETAIL}. Defaulting to 'basic'."
-    )
-    PROFILING_DETAIL = "basic"
-if PROFILING_DETAIL == "detailed":
+# Set the whether to profile the GPU.
+PROFILE_GPU = os.environ.get("PROFILE_GPU", "false").lower()
+if PROFILE_GPU in ("y", "yes", "t", "true", "on", "1"):
     if xp.__name__ != "cupy":
-        warnings.warn("CUDA is not available. Defaulting to 'basic' profiling detail.")
-        PROFILING_DETAIL = "basic"
-    warnings.warn(
-        "Detailed profiling is enabled. This will cause device"
-        "synchronization for every profiled event."
-    )
+        warnings.warn("CUDA is not available. Defaulting to no GPU profiling.")
+        PROFILE_GPU = False
+    else:
+        warnings.warn(
+            "GPU profiling is enabled. This will cause device "
+            "synchronization for every profiled event."
+        )
+        PROFILE_GPU = True
+elif PROFILE_GPU in ("n", "no", "f", "false", "off", "0"):
+    PROFILE_GPU = False
+else:
+    raise ValueError(f"Invalid truth value '{PROFILE_GPU=}'.")
 
 
-# Set the default profiling group/environment.
-PROFILING_GROUP = os.environ.get("PROFILING_GROUP", "basic").lower()
-if PROFILING_GROUP not in ("off", "basic", "api", "debug", "full"):
-    warnings.warn(f"Invalid profiling group {PROFILING_GROUP}. Defaulting to 'basic'.")
-    PROFILING_GROUP = "basic"
+# Set the profiling level.
+PROFILE_LEVEL = os.environ.get("PROFILE_LEVEL", "basic").lower()
+if PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
+    warnings.warn(f"Invalid profiling level {PROFILE_LEVEL}. Defaulting to 'basic'.")
+    PROFILE_LEVEL = "basic"
 
-# Define the mapping of profiling groups to numbers.
-_group_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
+# Define the mapping of profiling levels to numbers.
+_level_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
 
 
 class _ProfilingEvent:
@@ -63,7 +64,7 @@ class _ProfilingEvent:
     prof_type : str
         The type of the profiling event.
     qualname : str
-        The qualified name of the function.
+        The qualified name of the profiled function.
     prof_id : str
         The ID of the profiling event.
     host_time : float
@@ -307,27 +308,17 @@ class Profiler:
             finally:
                 xp.cuda.runtime.setDevice(current_device)
 
-    def profile(self, detail: str = PROFILING_DETAIL, group: str = PROFILING_GROUP):
+    def profile(self, level: str = PROFILE_LEVEL):
         """Profiles a function and adds profiling data to the event log.
 
         Notes
         -----
-
-        Parameters
-        ----------
-        detail : str, optional
-            With which detail to profile the function. If set, this
-            overrides the PROFILING_DETAIL environment variable. The
-            following details are available:
-            - `"off"`: No profiling. The function is returned as is.
-            - `"basic"`: Only the total time spent in the function.
-            - `"detailed"`: The total time spent in the function and the
-                time spent on each device.
-        group : str, optional
-            The profiling group controls whether the function is
-            profiled or not. By default, the function is always
-            profiled, irrespective of the PROFILING_GROUP environment
-            variable. The following groups are implemented:
+        Two environment variables control the profiling behavior:
+        - `PROFILE_GPU`: Whether to separately measure the time spent on
+          the GPU. If turned on, this will cause device synchronization
+          for every profiled event.
+        - `PROFILE_LEVEL`: The profiling level for functions. The
+            following levels are implemented:
             - `"off"`: The function is not profiled.
             - `"basic"`: The function is part of the core profiling.
             - `"api"`: The function is part of the API and does not
@@ -338,6 +329,25 @@ class Profiler:
             - `"full"`: The function does not even need to be profiled for
               debugging purposes unless the user explicitly requests it.
 
+
+        Parameters
+        ----------
+        level : str, optional
+            The profiling level controls whether the function is
+            profiled or not. By default, the function is always
+            profiled, irrespective of the PROFILE_LEVEL environment
+            variable. The following levels are implemented:
+            - `"off"`: The function is not profiled.
+            - `"basic"`: The function is part of the core profiling.
+            - `"api"`: The function is part of the API and does not
+              always need to be timed. It is part of the underlying
+              infrastructure.
+            - `"debug"`: This function only needs to be profiled for
+              debugging purposes.
+            - `"full"`: The function does not even need to be profiled
+              for debugging purposes unless the user explicitly requests
+              it to be profiled.
+
         Returns
         -------
         callable
@@ -345,14 +355,11 @@ class Profiler:
             specified level.
 
         """
-        if detail not in ("off", "basic", "detailed"):
-            raise ValueError(f"Invalid profiling detail {detail}.")
-
-        if group not in ("off", "basic", "api", "debug", "full"):
-            raise ValueError(f"Invalid profiling group {group}.")
+        if level not in ("off", "basic", "api", "debug", "full"):
+            raise ValueError(f"Invalid profiling level {level}.")
 
         def decorator(func):
-            if detail == "off" or _group_to_num[group] > _group_to_num[PROFILING_GROUP]:
+            if not PROFILE_GPU or _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
                 return func
 
             name = func.__str__()
@@ -362,7 +369,7 @@ class Profiler:
 
                 timestamp = time.time()
 
-                if detail == "detailed":
+                if PROFILE_GPU:
                     start_events, end_events = self._setup_events()
 
                     # Record and sync start events for each device.
@@ -380,7 +387,7 @@ class Profiler:
                 host_time += time.perf_counter()
 
                 device_times = []
-                if detail == "detailed":
+                if PROFILE_GPU:
                     # Record end events for each device.
                     self._record_events(end_events)
 

@@ -460,7 +460,7 @@ class QTBM:
 
         return obc_solver
     
-    def compute_observables(self,phi,inj_ind,i):
+    def compute_observables(self,phi,inj_ind,i,w):
 
         #Compute transmissions for all the possible contact couples
         cont_1 = 0
@@ -493,13 +493,22 @@ class QTBM:
                     self.observables.electron_transmission_x_slabs[n,s,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
 
         #Compute DOS
+        phi_ortho = self.overlap_sparray @ phi
+
+        for n in range(self.n_cont):
+            S_off_coup_cont = self.overlap_sparray[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i]
+            w_sign = w.copy()
+            w_sign[inj_ind[n]] = 1/w_sign[inj_ind[n]]
+            
+            phi_ortho[self.contacts[n].mask_orb_i.squeeze(),:] += S_off_coup_cont @ xp.multiply(phi[self.contacts[n].mask_orb_i.squeeze(),:],w_sign)
+
         for n in range(self.n_cont):
             for s in range(self.n_slabs_x):
-                phi_D = phi[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
 
-                S00 = self.overlap_sparray[self.slab_mask_x_orb[s].T,self.slab_mask_x_orb[s]]
+                phi_D = phi[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
+                phi_D_ortho = phi_ortho[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
                 if(phi_D.size != 0):
-                    self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), S00 @ phi_D))/(2*xp.pi))
+                    self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho))/(2*xp.pi))
 
     def run(self) -> None:
         """Runs the QTBM"""
@@ -528,10 +537,11 @@ class QTBM:
             S = []
             inj = []
             inj_ind = []
+            w = []
             # Compute the boundary self-energy and the injection vector
             ind_0 = 0
             for n in range(self.n_cont):
-                S_n, inj_n = self.obc(
+                S_n, inj_n, w_n = self.obc(
                     self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray(),
                     self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray(),
                     self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray(),
@@ -542,6 +552,9 @@ class QTBM:
                 inj.append(inj_n)
                 inj_ind.append(xp.arange(ind_0,ind_0+inj_n.shape[1])[None,:])
                 ind_0 += inj_n.shape[1]
+                w.append(w_n)
+
+            w = xp.concatenate(w)
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -558,6 +571,8 @@ class QTBM:
             for n in range(self.n_cont):
                 self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i] -= S[n]
                 inj_V[self.contacts[n].mask_orb_i.T,inj_ind[n]] = inj[n]
+
+            self.system_matrix.eliminate_zeros()
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -584,7 +599,7 @@ class QTBM:
             for n in range(self.n_cont):
                 self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i] += S[n]
                 
-            self.compute_observables(phi,inj_ind,i)
+            self.compute_observables(phi,inj_ind,i,w)
 
             t_iteration = time.perf_counter() - times.pop()
             (

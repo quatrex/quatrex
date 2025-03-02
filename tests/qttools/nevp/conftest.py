@@ -17,7 +17,13 @@ BLOCK_SIZE = [
 # a very large number to ensure that the non-spurious eigenvalues get
 # approximated very accurately.
 SUBSPACE_NEVP_SOLVERS = [
-    pytest.param(Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200), id="Beyn")
+    pytest.param(
+        Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200, use_qr=False), id="Beyn"
+    ),
+    pytest.param(
+        Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200, use_qr=True),
+        id="Beyn with QR",
+    ),
 ]
 LEFT = [pytest.param(True, id="both"), pytest.param(False, id="right")]
 

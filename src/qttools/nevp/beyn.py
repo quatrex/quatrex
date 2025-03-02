@@ -1,8 +1,11 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import warnings
+
 from qttools import NDArray, xp
 from qttools.kernels.eig import eig
 from qttools.kernels.operator import operator_inverse
+from qttools.kernels.qr import qr
 from qttools.kernels.svd import svd
 from qttools.nevp.nevp import NEVP
 
@@ -37,10 +40,14 @@ class Beyn(NEVP):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
-    svd_compute_location : str, optional
-        The location where to compute the singular value decomposition.
+    project_compute_location : str, optional
+        The location where to compute the singular value
+        or qr decomposition for the projector.
         Can be either "numpy" or "cupy". Only relevant if cupy is
         used.
+    use_qr : bool, optional
+        Whether to use QR decomposition for the projector instead of SVD.
+        Default is `False`.
 
     """
 
@@ -52,7 +59,8 @@ class Beyn(NEVP):
         num_quad_points: int,
         num_threads_contour: int = 1024,
         eig_compute_location: str = "numpy",
-        svd_compute_location: str = "numpy",
+        project_compute_location: str = "numpy",
+        use_qr: bool = False,
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -61,7 +69,8 @@ class Beyn(NEVP):
         self.num_quad_points = num_quad_points
         self.num_threads_contour = num_threads_contour
         self.eig_compute_location = eig_compute_location
-        self.svd_compute_location = svd_compute_location
+        self.project_compute_location = project_compute_location
+        self.use_qr = use_qr
 
     def _project_svd(
         self, P_0: NDArray, P_1: NDArray, left: bool = False
@@ -90,7 +99,7 @@ class Beyn(NEVP):
 
         # Perform an SVD on the linear subspace projector.
         u, s, vh = svd(
-            P_0, full_matrices=False, compute_module=self.svd_compute_location
+            P_0, full_matrices=False, compute_module=self.project_compute_location
         )
 
         a = []
@@ -118,6 +127,48 @@ class Beyn(NEVP):
             return a, v_out
         else:
             return a, u_out
+
+    def _project_qr(
+        self, P_0: NDArray, P_1: NDArray, left: bool = False
+    ) -> tuple[NDArray, NDArray]:
+        """Projects the systems onto the linear subspace with a QR.
+
+        Parameters
+        ----------
+        P_0 : NDArray
+            The first moment of the system.
+        P_1 : NDArray
+            The second moment of the system.
+        left : bool, optional
+            Whether to project the system from the left.
+
+        Returns
+        -------
+        a : NDArray
+            The projected system.
+        q : NDArray
+            The projectors.
+
+        """
+
+        # Perform an QR on the linear subspace projector.
+        if left:
+            q, r = qr(
+                P_0.conj().swapaxes(-2, -1),
+                compute_module=self.project_compute_location,
+            )
+        else:
+            q, r = qr(P_0, compute_module=self.project_compute_location)
+
+        if left:
+            a = xp.linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
+        else:
+            a = q.conj().swapaxes(-2, -1) @ P_1 @ xp.linalg.inv(r)
+
+        if left:
+            return a, q.conj().swapaxes(-2, -1)
+        else:
+            return a, q
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
@@ -178,7 +229,10 @@ class Beyn(NEVP):
         P_1 = xp.sum(w * z_o**2 * inv_Tz_o - w * z_i**2 * inv_Tz_i, axis=1) @ Y
 
         # project the system
-        a, p_back = self._project_svd(P_0, P_1)
+        if self.use_qr:
+            a, p_back = self._project_qr(P_0, P_1)
+        else:
+            a, p_back = self._project_svd(P_0, P_1)
 
         # solve the reduced system
         w, v = eig(a, compute_module=self.eig_compute_location)
@@ -268,8 +322,12 @@ class Beyn(NEVP):
         P_1_hat = Y_hat.conj().swapaxes(-2, -1) @ q1
 
         # project the system
-        a, p_back = self._project_svd(P_0, P_1)
-        a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
+        if self.use_qr:
+            a, p_back = self._project_qr(P_0, P_1)
+            a_hat, p_back_hat = self._project_qr(P_0_hat, P_1_hat, left=True)
+        else:
+            a, p_back = self._project_svd(P_0, P_1)
+            a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
 
         # solve the reduced system
         w, v = eig(a, compute_module=self.eig_compute_location)
@@ -322,6 +380,22 @@ class Beyn(NEVP):
             Returned only if `left` is `True`.
 
         """
+
+        if a_xx[0].shape[-1] < self.m_0 and self.use_qr:
+            warnings.warn(
+                f"Subspace guess {self.m_0} is larger than the "
+                f"dimension of the system {a_xx[0].shape[-1]}. "
+                f"Setting subspace guess to {a_xx[0].shape[-1]}."
+            )
+            self.old_m_0 = self.m_0
+            self.m_0 = a_xx[0].shape[-1]
+
         if left:
-            return self._two_sided(a_xx)
-        return self._one_sided(a_xx)
+            out = self._two_sided(a_xx)
+        else:
+            out = self._one_sided(a_xx)
+
+        # reset subspace guess
+        if hasattr(self, "old_m_0"):
+            self.m_0 = self.old_m_0
+        return out

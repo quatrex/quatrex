@@ -64,4 +64,11 @@ def test_subspace(a_xx: tuple[NDArray, ...], subspace_nevp: Beyn, left: bool):
     z_scores = 0.6745 * (residuals - median) / median_abs_deviation
     spurious_mask = xp.abs(z_scores) > 30  # Very generous threshold.
 
-    assert residuals[~spurious_mask].max() < 1e-10
+    # assert some eigenvalues were found
+    assert not xp.all(spurious_mask)
+
+    if subspace_nevp.use_qr:
+        # Single shot beyn with QR is less numerically stable.
+        assert residuals[~spurious_mask].max() < 1e-5
+    else:
+        assert residuals[~spurious_mask].max() < 1e-9

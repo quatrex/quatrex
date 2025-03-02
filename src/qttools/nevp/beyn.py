@@ -63,6 +63,62 @@ class Beyn(NEVP):
         self.eig_compute_location = eig_compute_location
         self.svd_compute_location = svd_compute_location
 
+    def _project_svd(
+        self, P_0: NDArray, P_1: NDArray, left: bool = False
+    ) -> tuple[list[NDArray], list[NDArray]]:
+        """Projects the systems onto the linear subspace with an SVD.
+
+        Parameters
+        ----------
+        P_0 : NDArray
+            The first moment of the system.
+        P_1 : NDArray
+            The second moment of the system.
+        left : bool, optional
+            Whether to project the system from the left.
+
+        Returns
+        -------
+        a : list[NDArray]
+            The projected systems.
+        u_out : list[NDArray]
+            The projectors.
+
+        """
+        batchsize = P_0.shape[0]
+        d = P_0.shape[-1]
+
+        # Perform an SVD on the linear subspace projector.
+        u, s, vh = svd(
+            P_0, full_matrices=False, compute_module=self.svd_compute_location
+        )
+
+        a = []
+        u_out = []
+        v_out = []
+        for i in range(batchsize):
+
+            ui, si, vhi = u[i], s[i], vh[i]
+
+            # Remove the zero singular values (within numerical tolerance).
+            eps_svd = si.max() * d * xp.finfo(P_0.dtype).eps
+            inds = xp.where(si > eps_svd)[0]
+
+            ui, si, vhi = ui[:, inds], si[inds], vhi[inds, :]
+            u_out.append(ui)
+            v_out.append(vhi)
+
+            # Probe second moment.
+            if left:
+                a.append(xp.diag(1 / si) @ ui.conj().T @ P_1[i] @ vhi.conj().T)
+            else:
+                a.append(ui.conj().T @ P_1[i] @ vhi.conj().T / si)
+
+        if left:
+            return a, v_out
+        else:
+            return a, u_out
+
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
@@ -121,30 +177,20 @@ class Beyn(NEVP):
         P_0 = xp.sum(w * z_o * inv_Tz_o - w * z_i * inv_Tz_i, axis=1) @ Y
         P_1 = xp.sum(w * z_o**2 * inv_Tz_o - w * z_i**2 * inv_Tz_i, axis=1) @ Y
 
+        # project the system
+        a, p_back = self._project_svd(P_0, P_1)
+
+        # solve the reduced system
+        w, v = eig(a, compute_module=self.eig_compute_location)
+
         # Get the eigenvalues and eigenvectors.
         ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
         vs = Y.copy()
-
-        # TODO: Batch even if the reduced size is smaller than m_0.
         for i in range(batchsize):
-            # Perform an SVD on the linear subspace projector.
-            u, s, vh = svd(
-                P_0[i], full_matrices=False, compute_module=self.svd_compute_location
-            )
-
-            # Remove the zero singular values (within numerical tolerance).
-            eps_svd = s.max() * d * xp.finfo(in_type).eps
-            inds = xp.where(s > eps_svd)[0]
-
-            u, s, vh = u[:, inds], s[inds], vh[inds, :]
-
-            # Probe second moment.
-            a = u.conj().T @ P_1[i] @ vh.conj().T / s
-            w, v = eig(a, compute_module=self.eig_compute_location)
-
+            len_w = len(w[i])
             # Recover the full eigenvectors from the subspace.
-            ws[i, : len(inds)] = w
-            vs[i, :, : len(inds)] = u @ v
+            ws[i, :len_w] = w[i]
+            vs[i, :, :len_w] = p_back[i] @ v[i]
 
         return ws, vs
 
@@ -221,52 +267,28 @@ class Beyn(NEVP):
         P_0_hat = Y_hat.conj().swapaxes(-2, -1) @ q0
         P_1_hat = Y_hat.conj().swapaxes(-2, -1) @ q1
 
+        # project the system
+        a, p_back = self._project_svd(P_0, P_1)
+        a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
+
+        # solve the reduced system
+        w, v = eig(a, compute_module=self.eig_compute_location)
+        w_hat, v_hat = eig(a_hat, compute_module=self.eig_compute_location)
+
         # Get the eigenvalues and eigenvectors.
         wrs = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vrs = xp.zeros((batchsize, d, self.m_0), dtype=in_type)
+        vrs = Y.copy()
         wls = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vls = xp.zeros((batchsize, d, self.m_0), dtype=in_type)
-
-        # TODO: Batch even if the reduced size is smaller than m_0.
+        vls = Y_hat.copy()
         for i in range(batchsize):
-            # Perform an SVD on the linear subspace projector.
-            u, s, vh = svd(
-                P_0[i], full_matrices=False, compute_module=self.svd_compute_location
-            )
-            u_hat, s_hat, vh_hat = svd(
-                P_0_hat[i],
-                full_matrices=False,
-                compute_module=self.svd_compute_location,
-            )
-
-            # Remove the zero singular values (within numerical tolerance).
-            # and orthogonalize projector
-            eps_svd = s.max() * d * xp.finfo(in_type).eps
-            eps_svd_hat = s_hat.max() * d * xp.finfo(in_type).eps
-            inds = xp.where(s > eps_svd)[0]
-            inds_hat = xp.where(s_hat > eps_svd_hat)[0]
-
-            u, s, vh = u[:, inds], s[inds], vh[inds, :]
-            u_hat, s_hat, vh_hat = (
-                u_hat[:, inds_hat],
-                s_hat[inds_hat],
-                vh_hat[inds_hat, :],
-            )
-
-            # Probe second moment.
-            a = u.conj().T @ P_1[i] @ vh.conj().T / s
-            # NOTE: xp.diag is unnecessary, should be removed
-            a_hat = xp.diag(1 / s_hat) @ u_hat.conj().T @ P_1_hat[i] @ vh_hat.conj().T
-
-            w, v = eig(a, compute_module=self.eig_compute_location)
-            w_hat, v_hat = eig(a_hat, compute_module=self.eig_compute_location)
-
+            len_w = len(w[i])
+            len_w_hat = len(w_hat[i])
             # Recover the full eigenvectors from the subspace.
-            wrs[i, : len(inds)] = w
-            wls[i, : len(inds_hat)] = w_hat
+            wrs[i, :len_w] = w[i]
+            wls[i, :len_w_hat] = w_hat[i]
 
-            vrs[i, :, : len(inds)] = u @ v
-            vls[i, :, : len(inds_hat)] = xp.linalg.solve(v_hat, vh_hat).conj().T
+            vrs[i, :, :len_w] = p_back[i] @ v[i]
+            vls[i, :, :len_w_hat] = xp.linalg.solve(v_hat[i], p_back_hat[i]).conj().T
 
         return wrs, vrs, wls, vls
 

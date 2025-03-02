@@ -5,6 +5,7 @@ import warnings
 from qttools import NDArray, xp
 from qttools.kernels.eig import eig
 from qttools.lyapunov.lyapunov import LyapunovSolver
+from qttools.utils.lyapunov_utils import system_reduction
 
 
 class Spectral(LyapunovSolver):
@@ -19,6 +20,8 @@ class Spectral(LyapunovSolver):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
+    reduce_sparsity : bool, optional
+        Whether to reduce the sparsity of the system matrix.
 
     """
 
@@ -27,19 +30,20 @@ class Spectral(LyapunovSolver):
         num_ref_iterations: int = 3,
         warning_threshold: float = 1e-1,
         eig_compute_location: str = "numpy",
+        reduce_sparsity: bool = True,
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
         self.warning_threshold = warning_threshold
         self.eig_compute_location = eig_compute_location
+        self.reduce_sparsity = reduce_sparsity
 
-    def __call__(
+    def _solve(
         self,
         a: NDArray,
         q: NDArray,
-        contact: str,
         out: None | NDArray = None,
-    ) -> NDArray | None:
+    ):
         """Computes the solution of the discrete-time Lyapunov equation.
 
         Parameters
@@ -48,8 +52,6 @@ class Spectral(LyapunovSolver):
             The system matrix.
         q : NDArray
             The right-hand side matrix.
-        contact : str
-            The contact to which the boundary blocks belong.
         out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
@@ -60,10 +62,6 @@ class Spectral(LyapunovSolver):
             The solution of the discrete-time Lyapunov equation.
 
         """
-
-        if a.ndim == 2:
-            a = a[xp.newaxis, ...]
-            q = q[xp.newaxis, ...]
 
         ws, vs = eig(a, compute_module=self.eig_compute_location)
 
@@ -97,3 +95,41 @@ class Spectral(LyapunovSolver):
             return
 
         return x_ref
+
+    def __call__(
+        self,
+        a: NDArray,
+        q: NDArray,
+        contact: str,
+        out: None | NDArray = None,
+    ) -> NDArray | None:
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+        out : NDArray, optional
+            The array to store the result in. If not provided, a new
+            array is returned.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
+
+        if a.ndim == 2:
+            a = a[xp.newaxis, ...]
+            q = q[xp.newaxis, ...]
+
+        # NOTE: possible to cache the sparsity reduction
+        if self.reduce_sparsity:
+            return system_reduction(a, q, self._solve, out=out)
+
+        return self._solve(a, q, out=out)

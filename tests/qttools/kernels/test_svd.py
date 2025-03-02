@@ -71,7 +71,6 @@ def test_svd(
         full_matrices=full_matrices,
     )
 
-    # check residual on the host
     u = get_host(u)
     s = get_host(s)
     vh = get_host(vh)
@@ -125,7 +124,6 @@ def test_svd_batched(
         full_matrices=full_matrices,
     )
 
-    # check residual on the host
     u = get_host(u)
     s = get_host(s)
     vh = get_host(vh)

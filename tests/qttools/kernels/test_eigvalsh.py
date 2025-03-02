@@ -71,7 +71,6 @@ def test_eigvalsh_batched(
 
     assert w.shape[-1] == n
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
 
@@ -110,7 +109,6 @@ def test_eigvalsh_generalized(
 
     w = eigvalsh(A, B=B, compute_module=compute_module, output_module=output_module)
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
     B = get_host(B)
@@ -167,7 +165,6 @@ def test_eigvalsh_generalized_batched(
 
     assert w.shape[-1] == n
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
     B = get_host(B)

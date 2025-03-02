@@ -12,6 +12,8 @@ if xp.__name__ == "cupy":
 
 @pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
+    """Tests the _eig_numba_ndarray function."""
+
     rng = np.random.default_rng()
 
     batch_size = np.prod(batch_shape)
@@ -27,6 +29,8 @@ def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
 
 @pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
+    """Tests the _eig_numba_list function."""
+
     rng = np.random.default_rng()
 
     batch_size = np.prod(batch_shape)

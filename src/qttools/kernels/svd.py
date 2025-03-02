@@ -1,24 +1,78 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
 from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
 
 
+@nb.njit(parallel=True, cache=True, no_rewrites=True)
+def _svd_numba_ndarray(
+    A: NDArray,
+    full_matrices: bool = True,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Computes the singular value decomposition of a batch of matrices.
+
+    Parallelized over the batch dimension with numba. ndim of A must be 3.
+
+    Parameters
+    ----------
+    A : NDArray
+        The matrices.
+    full_matrices : bool, optional
+        Whether to compute the full matrices u and vh (see numpy.linalg.svd).
+
+    Returns
+    -------
+    NDArray
+        The left singular vectors.
+    NDArray
+        The singular values.
+    NDArray
+        The right singular vectors.
+
+    """
+
+    m = A.shape[-2]
+    n = A.shape[-1]
+    k = min(m, n)
+    batch_size = A.shape[0]
+
+    s = np.empty((batch_size, k), dtype=A.dtype)
+    if full_matrices:
+        u = np.empty((batch_size, m, m), dtype=A.dtype)
+        vh = np.empty((batch_size, n, n), dtype=A.dtype)
+    else:
+        u = np.empty((batch_size, m, k), dtype=A.dtype)
+        vh = np.empty((batch_size, k, n), dtype=A.dtype)
+
+    for i in nb.prange(batch_size):
+        u_, s_, vh_ = np.linalg.svd(A[i], full_matrices=full_matrices)
+        s[i] = s_
+        u[i] = u_
+        vh[i] = vh_
+
+    return u, s, vh
+
+
 def svd(
     A: NDArray,
     full_matrices: bool = True,
-    compute_uv: bool = True,
     compute_module: str = "numpy",
     output_module: str | None = None,
 ) -> tuple[NDArray, NDArray, NDArray]:
     """Computes the singular value decomposition of a matrix on a given location.
 
+    The kwargs compute_uv and hermitian are not supported.
+    They are implicitly set to True and False, respectively.
+
     Parameters
     ----------
     A : NDArray
         The matrix.
+    full_matrices : bool, optional
+        Whether to compute the full matrices u and vh (see numpy.linalg.svd).
     compute_module : str, optional
         The location where to compute the singular value decomposition.
         Can be either "numpy" or "cupy".
@@ -61,9 +115,23 @@ def svd(
         A = get_device(A)
 
     if compute_module == "cupy":
-        u, s, vh = xp.linalg.svd(A, full_matrices=full_matrices, compute_uv=compute_uv)
+        u, s, vh = xp.linalg.svd(A, full_matrices=full_matrices)
     elif compute_module == "numpy":
-        u, s, vh = np.linalg.svd(A, full_matrices=full_matrices, compute_uv=compute_uv)
+        batch_shape = A.shape[:-2]
+        m = A.shape[-2]
+        n = A.shape[-1]
+        A = A.reshape((-1, m, n))
+
+        u, s, vh = _svd_numba_ndarray(A, full_matrices)
+
+        k = min(m, n)
+        if full_matrices:
+            u = u.reshape((*batch_shape, m, m))
+            vh = vh.reshape((*batch_shape, n, n))
+        else:
+            u = u.reshape((*batch_shape, m, k))
+            vh = vh.reshape((*batch_shape, k, n))
+        s = s.reshape((*batch_shape, k))
 
     if output_module == "numpy" and compute_module == "cupy":
         u, s, vh = get_host(u), get_host(s), get_host(vh)

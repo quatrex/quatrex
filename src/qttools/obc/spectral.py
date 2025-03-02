@@ -576,7 +576,7 @@ class Spectral(OBCSolver):
         contact: str,
         out: None | NDArray = None,
         return_inj: bool = False,
-    ) -> tuple[NDArray | None, NDArray]:
+    ) -> tuple[NDArray | None, NDArray, NDArray]:
         """Returns the surface Green's function.
 
         Parameters
@@ -601,7 +601,8 @@ class Spectral(OBCSolver):
             The system's surface Green's function. (if return_inj = True, the boundary self energy is returned instead)
         inj: NDArray
             The Injection vector (only compatible with batchsize = 1)
-
+        w_inj: NDArray
+            The eigenvalues of the injected modes (only compatible with batchsize = 1)
         """
 
         if a_ii.ndim != 2 and return_inj == True:
@@ -655,7 +656,7 @@ class Spectral(OBCSolver):
                 RuntimeWarning,
             )
 
-        # Calculate the injection vector and return it together with the boundary self-energy
+        # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_inj:
 
             mask_inj = mask_inj[0, :]
@@ -671,7 +672,7 @@ class Spectral(OBCSolver):
             # Compute injection vector
             inj_vec = -a_ji[0, :, :] @ vrs_inj @ xp.linalg.inv(wrs_inj) - sig @ vrs_inj
 
-            return sig, inj_vec
+            return sig, inj_vec, wrs[0, mask_inj]
 
         # Return the surface Green's function.
         if out is not None:

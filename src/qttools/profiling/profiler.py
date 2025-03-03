@@ -123,7 +123,7 @@ class _ProfilingRun:
     def get_stats(self) -> dict:
         """Returns the profiling statistics.
 
-        Thsi reports some statistics for each profiled function.
+        This reports some statistics for each profiled function.
 
         Returns
         -------

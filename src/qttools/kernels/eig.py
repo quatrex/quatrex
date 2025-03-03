@@ -9,56 +9,29 @@ from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
-def _eig_numba_ndarray(A: NDArray) -> tuple[NDArray, NDArray]:
-    """Computes the eigenvalues and eigenvectors of a batch of matrices.
+def _eig_numba(
+    A: NDArray | List[NDArray],
+    ws: NDArray | List[NDArray],
+    vs: NDArray | List[NDArray],
+    batch_size: int,
+) -> None:
+    """Computes the eigenvalues and eigenvectors of multiple matrices.
 
-    Parallelized over the batch dimension with numba.
-
-    Parameters
-    ----------
-    A : NDArray
-        The matrices.
-
-    Returns
-    -------
-    NDArray
-        The eigenvalues.
-    NDArray
-        The eigenvectors.
-    """
-
-    n = A.shape[-1]
-    batch_size = A.shape[0]
-    ws = np.empty((batch_size, n), dtype=A.dtype)
-    vs = np.empty((batch_size, n, n), dtype=A.dtype)
-
-    for i in nb.prange(batch_size):
-        w, v = np.linalg.eig(A[i])
-        ws[i] = w
-        vs[i] = v
-
-    return ws, vs
-
-
-@nb.njit(parallel=True, cache=True, no_rewrites=True)
-def _eig_numba_list(A: list[NDArray], ws: list[NDArray], vs: list[NDArray]):
-    """Computes the eigenvalues and eigenvectors of a list of matrices.
-
-    Parallelized over the list dimension with numba.
+    Parallelized with numba.
 
     Parameters
     ----------
-    A : list[NDArray]
+    A : NDArray | List[NDArray]
         The matrices.
-    ws : list[NDArray]
+    ws : NDArray | List[NDArray]
         The eigenvalues.
-    vs : list[NDArray]
+    vs : NDArray | List[NDArray]
         The eigenvectors.
+    batch_size : int
+        The number of matrices.
     """
-
-    batch_size = len(A)
-
     for i in nb.prange(batch_size):
+        i = np.int64(i)
         w, v = np.linalg.eig(A[i])
         ws[i][:] = w
         vs[i][:] = v
@@ -157,8 +130,9 @@ def eig(
             A = List(A)
             w = List([np.empty((a.shape[-1]), dtype=a.dtype) for a in A])
             v = List([np.empty((a.shape[-1], a.shape[-1]), dtype=a.dtype) for a in A])
+            batch_size = len(A)
 
-            _eig_numba_list(A, w, v)
+            _eig_numba(A, w, v, batch_size)
         else:
             batch_shape = A.shape[:-2]
             if A.shape[-1] != A.shape[-2]:
@@ -167,7 +141,12 @@ def eig(
             n = A.shape[-1]
             A = A.reshape((-1, n, n))
 
-            w, v = _eig_numba_ndarray(A)
+            w = np.empty((A.shape[0], n), dtype=A.dtype)
+            v = np.empty((A.shape[0], n, n), dtype=A.dtype)
+
+            batch_size = A.shape[0]
+
+            _eig_numba(A, w, v, batch_size)
             w = w.reshape(*batch_shape, n)
             v = v.reshape(*batch_shape, n, n)
 
@@ -182,7 +161,6 @@ def eig(
             w = [get_device(w) for w in w]
             v = [get_device(v) for v in v]
         else:
-            print(w.shape, v.shape)
             w, v = get_device(w), get_device(v)
 
     return w, v

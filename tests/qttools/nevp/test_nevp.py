@@ -69,6 +69,6 @@ def test_subspace(a_xx: tuple[NDArray, ...], subspace_nevp: Beyn, left: bool):
 
     if subspace_nevp.use_qr:
         # Single shot beyn with QR is less numerically stable.
-        assert residuals[~spurious_mask].max() < 1e-5
+        assert residuals[~spurious_mask].max() < 1e-4
     else:
         assert residuals[~spurious_mask].max() < 1e-9

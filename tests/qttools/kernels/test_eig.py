@@ -3,7 +3,7 @@ import pytest
 from numba.typed import List
 
 from qttools import xp
-from qttools.kernels.eig import _eig_numba_list, _eig_numba_ndarray, eig
+from qttools.kernels.eig import _eig_numba, eig
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -12,7 +12,7 @@ if xp.__name__ == "cupy":
 
 @pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
-    """Tests the _eig_numba_ndarray function."""
+    """Tests the _eig_numba function with array input."""
 
     rng = np.random.default_rng()
 
@@ -20,7 +20,10 @@ def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
 
     A = rng.random((batch_size, n, n)) + 1j * rng.random((batch_size, n, n))
 
-    w, v = _eig_numba_ndarray(A)
+    w = np.empty((batch_size, n), dtype=A.dtype)
+    v = np.empty((batch_size, n, n), dtype=A.dtype)
+
+    _eig_numba(A, w, v, batch_size)
 
     for b in range(batch_size):
         for i in range(n):
@@ -29,7 +32,7 @@ def test_eig_numba_ndarray(n: int, batch_shape: tuple[int, ...]):
 
 @pytest.mark.usefixtures("n", "batch_shape")
 def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
-    """Tests the _eig_numba_list function."""
+    """Tests the _eig_numba function with array input."""
 
     rng = np.random.default_rng()
 
@@ -49,7 +52,7 @@ def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
     w = List([np.empty((a.shape[-1]), dtype=a.dtype) for a in A])
     v = List([np.empty((a.shape[-1], a.shape[-1]), dtype=a.dtype) for a in A])
 
-    _eig_numba_list(A, w, v)
+    _eig_numba(A, w, v, batch_size)
 
     for b in range(batch_size):
         n_ = A[b].shape[-1]

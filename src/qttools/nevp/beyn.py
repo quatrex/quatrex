@@ -3,10 +3,8 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.kernels.eig import eig
+from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
-from qttools.kernels.qr import qr
-from qttools.kernels.svd import svd
 from qttools.nevp.nevp import NEVP
 
 rng = xp.random.default_rng(42)
@@ -98,7 +96,7 @@ class Beyn(NEVP):
         d = P_0.shape[-1]
 
         # Perform an SVD on the linear subspace projector.
-        u, s, vh = svd(
+        u, s, vh = linalg.svd(
             P_0, full_matrices=False, compute_module=self.project_compute_location
         )
 
@@ -153,12 +151,12 @@ class Beyn(NEVP):
 
         # Perform an QR on the linear subspace projector.
         if left:
-            q, r = qr(
+            q, r = linalg.qr(
                 P_0.conj().swapaxes(-2, -1),
                 compute_module=self.project_compute_location,
             )
         else:
-            q, r = qr(P_0, compute_module=self.project_compute_location)
+            q, r = linalg.qr(P_0, compute_module=self.project_compute_location)
 
         if left:
             a = xp.linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
@@ -235,7 +233,7 @@ class Beyn(NEVP):
             a, p_back = self._project_svd(P_0, P_1)
 
         # solve the reduced system
-        w, v = eig(a, compute_module=self.eig_compute_location)
+        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
 
         # Get the eigenvalues and eigenvectors.
         ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
@@ -330,8 +328,8 @@ class Beyn(NEVP):
             a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
 
         # solve the reduced system
-        w, v = eig(a, compute_module=self.eig_compute_location)
-        w_hat, v_hat = eig(a_hat, compute_module=self.eig_compute_location)
+        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
+        w_hat, v_hat = linalg.eig(a_hat, compute_module=self.eig_compute_location)
 
         # Get the eigenvalues and eigenvectors.
         wrs = xp.zeros((batchsize, self.m_0), dtype=in_type)

@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
-from qttools.kernels.eig import eig
+from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
 
 
@@ -58,7 +58,7 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        w, v = eig(A, compute_module=eig_compute_location)
+        w, v = linalg.eig(A, compute_module=eig_compute_location)
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

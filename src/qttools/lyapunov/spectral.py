@@ -3,7 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.kernels.eig import eig
+from qttools.kernels import linalg
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.utils.lyapunov_utils import system_reduction
 
@@ -63,7 +63,7 @@ class Spectral(LyapunovSolver):
 
         """
 
-        ws, vs = eig(a, compute_module=self.eig_compute_location)
+        ws, vs = linalg.eig(a, compute_module=self.eig_compute_location)
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

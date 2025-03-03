@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from qttools import xp
-from qttools.kernels.svd import _svd_numba_ndarray, svd
+from qttools.kernels import linalg
+from qttools.kernels.linalg.svd import _svd_numba_ndarray
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -64,7 +65,7 @@ def test_svd(
 
     A = rng.random((m, n)) + 1j * rng.random((m, n))
 
-    u, s, vh = svd(
+    u, s, vh = linalg.svd(
         A,
         compute_module=compute_module,
         output_module=output_module,
@@ -117,7 +118,7 @@ def test_svd_batched(
 
     A = rng.random((*batch_shape, m, n)) + 1j * rng.random((*batch_shape, m, n))
 
-    u, s, vh = svd(
+    u, s, vh = linalg.svd(
         A,
         compute_module=compute_module,
         output_module=output_module,

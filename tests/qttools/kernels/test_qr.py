@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from qttools import xp
-from qttools.kernels.qr import _qr_numba_ndarray, qr
+from qttools.kernels import linalg
+from qttools.kernels.linalg.qr import _qr_numba_ndarray
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -48,7 +49,7 @@ def test_qr(
 
     A = rng.random((m, n)) + 1j * rng.random((m, n))
 
-    q, r = qr(
+    q, r = linalg.qr(
         A,
         compute_module=compute_module,
         output_module=output_module,
@@ -93,7 +94,7 @@ def test_qr_batched(
 
     A = rng.random((*batch_shape, m, n)) + 1j * rng.random((*batch_shape, m, n))
 
-    q, r = qr(
+    q, r = linalg.qr(
         A,
         compute_module=compute_module,
         output_module=output_module,

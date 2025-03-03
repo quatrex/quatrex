@@ -3,7 +3,8 @@ import pytest
 from numba.typed import List
 
 from qttools import xp
-from qttools.kernels.eig import _eig_numba, eig
+from qttools.kernels import linalg
+from qttools.kernels.linalg.eig import _eig_numba
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -89,7 +90,7 @@ def test_eig(
     if if_list:
         A = [A]
 
-    w, v = eig(A, compute_module=compute_module, output_module=output_module)
+    w, v = linalg.eig(A, compute_module=compute_module, output_module=output_module)
 
     if if_list:
         w = w[0]
@@ -138,7 +139,7 @@ def test_eig_batched(
     if if_list:
         A = [a for a in A]
 
-    w, v = eig(A, compute_module=compute_module, output_module=output_module)
+    w, v = linalg.eig(A, compute_module=compute_module, output_module=output_module)
 
     if if_list:
         A = xp.array([a for a in A])

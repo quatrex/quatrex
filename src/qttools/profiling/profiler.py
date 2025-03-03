@@ -32,14 +32,14 @@ if PROFILE_GPU in ("y", "yes", "t", "true", "on", "1"):
 elif PROFILE_GPU in ("n", "no", "f", "false", "off", "0"):
     PROFILE_GPU = False
 else:
-    warnings.warn(f"Invalid truth value '{PROFILE_GPU=}'. Defaulting to 'false'.")
+    warnings.warn(f"Invalid truth value {PROFILE_GPU=}. Defaulting to 'false'.")
     PROFILE_GPU = False
 
 
 # Set the profiling level.
 PROFILE_LEVEL = os.environ.get("PROFILE_LEVEL", "basic").lower()
 if PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
-    warnings.warn(f"Invalid profiling level {PROFILE_LEVEL}. Defaulting to 'basic'.")
+    warnings.warn(f"Invalid profiling level {PROFILE_LEVEL=}. Defaulting to 'basic'.")
     PROFILE_LEVEL = "basic"
 
 # Define the mapping of profiling levels to numbers.
@@ -83,7 +83,7 @@ class _ProfilingEvent:
         """Initializes the profiling event object."""
         timestamp, name, host_time, device_times = event
         # TODO: Here we parse the timestamp as a datetime object. It
-        # would be very nice to have a waterfall plot of the profiling
+        # would be very nice to have a trace plot of the profiling
         # data, but this would require a bit more work.
         self.datetime = datetime.fromtimestamp(timestamp)
 

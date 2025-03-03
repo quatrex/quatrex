@@ -55,6 +55,7 @@ def read_hr_dat(
 
     # Strip info from header.
     num_wann, nrpts = xp.loadtxt(path, skiprows=1, max_rows=2, dtype=int)
+    num_wann, nrpts = int(num_wann), int(nrpts)
 
     # Read wannier data (skipping degeneracy info).
     deg_rows = int(xp.ceil(nrpts / 15.0))
@@ -67,6 +68,7 @@ def read_hr_dat(
         R = wann_dat[:, :3].astype(int)
     Rs = xp.subtract(R, R.min(axis=0))
     N1, N2, N3 = Rs.max(axis=0) + 1
+    N1, N2, N3 = int(N1), int(N2), int(N3)
 
     # Obtain Hamiltonian elements.
     if read_fast:
@@ -203,7 +205,7 @@ def get_hamiltonian_block(
 
     Parameters
     ----------
-    hr : np.ndarray
+    hr : NDArray
         Wannier Hamiltonian.
     supercell_size : tuple
         Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
@@ -214,11 +216,16 @@ def get_hamiltonian_block(
 
     Returns
     -------
-    np.ndarray
+    NDArray
         The supercell hamiltonian block.
 
     """
     local_shifts = xp.array(list(xp.ndindex(supercell_size)))
+    # Transform to NDArrays (because of cupy).
+    if not isinstance(supercell_size, xp.ndarray):
+        supercell_size = xp.array(supercell_size)
+    if not isinstance(global_shift, xp.ndarray):
+        global_shift = xp.array(global_shift)
     global_shift = xp.multiply(global_shift, supercell_size)
 
     rows = []
@@ -233,8 +240,8 @@ def get_hamiltonian_block(
             except IndexError:
                 block = xp.zeros(hr.shape[-2:], dtype=hr.dtype)
             row.append(block)
-        rows.append(row)
-    return xp.block(rows)
+        rows.append(xp.hstack(row))
+    return xp.vstack(rows)
 
 
 def create_coordinate_grid(
@@ -242,8 +249,10 @@ def create_coordinate_grid(
 ) -> NDArray:
     """Creates a grid of coordinates for Wannier functions in a supercell."""
     num_wann = wannier_centers.shape[0]
-    grid = xp.zeros((xp.prod(super_cell) * num_wann, 3), dtype=xp.float64)
-    for i, cell_ind in enumerate(xp.ndindex(*super_cell)):
+    grid = xp.zeros(
+        (int(xp.prod(xp.array(super_cell)) * num_wann), 3), dtype=xp.float64
+    )
+    for i, cell_ind in enumerate(xp.ndindex(super_cell)):
         grid[i * num_wann : (i + 1) * num_wann, :] = (
             wannier_centers + xp.array(cell_ind) @ lattice_vectors
         )

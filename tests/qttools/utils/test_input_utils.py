@@ -86,9 +86,11 @@ def test_get_hamiltonian_block(
     bs = hr.shape[-1]
     block = get_hamiltonian_block(hr, supercell, shift)
     for ind_r in xp.ndindex(supercell):
-        br = xp.ravel_multi_index(ind_r, supercell)
+        br = xp.ravel_multi_index(xp.asarray(ind_r), supercell)
+        br = int(br)
         for ind_c in xp.ndindex(supercell):
-            bc = xp.ravel_multi_index(ind_c, supercell)
+            bc = xp.ravel_multi_index(xp.asarray(ind_c), supercell)
+            bc = int(bc)
             assert xp.allclose(
                 block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_val[br][bc]
             )
@@ -104,9 +106,9 @@ def test_create_coordinate_grid(
     coords: NDArray, supercell: tuple[int, int, int], lat_vecs: NDArray
 ):
     grid = create_coordinate_grid(coords, supercell, lat_vecs)
-    assert grid.shape == (xp.prod(supercell) * 10, 3)
+    assert grid.shape == (xp.prod(xp.asarray(supercell)) * 10, 3)
     for ind in xp.ndindex(supercell):
-        row_ind = xp.ravel_multi_index(ind, supercell)
+        row_ind = xp.ravel_multi_index(xp.asarray(ind), supercell)
         assert xp.allclose(grid[row_ind * 10 : (row_ind + 1) * 10], 1 + xp.array(ind))
 
 

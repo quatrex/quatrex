@@ -5,7 +5,7 @@ import numpy as np
 from numba.typed import List
 
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
@@ -85,13 +85,6 @@ def eig(
     if output_module is None:
         output_module = input_module
 
-    if output_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid output location: {output_module}")
-    if compute_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid compute location: {compute_module}")
-    if input_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid input location: {input_module}")
-
     if compute_module == "cupy" and hasattr(xp.linalg, "eig") is False:
         raise ValueError("Eig is not available in cupy.")
 
@@ -100,19 +93,10 @@ def eig(
     ):
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
-    # memcopy to correct location
-    if compute_module == "numpy" and input_module == "cupy":
-        # NOTE: ininstace checks are not very portable
-        # TODO: check as well if NDArray
-        if isinstance(A, list):
-            A = [get_host(a) for a in A]
-        else:
-            A = get_host(A)
-    elif compute_module == "cupy" and input_module == "numpy":
-        if isinstance(A, list):
-            A = [get_device(a) for a in A]
-        else:
-            A = get_device(A)
+    if isinstance(A, (List, list)):
+        A = [get_any_location(a, compute_module) for a in A]
+    else:
+        A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
         if isinstance(A, list):
@@ -150,17 +134,10 @@ def eig(
             w = w.reshape(*batch_shape, n)
             v = v.reshape(*batch_shape, n, n)
 
-    if output_module == "numpy" and compute_module == "cupy":
-        if isinstance(w, List):
-            w = [get_host(w) for w in w]
-            v = [get_host(v) for v in v]
-        else:
-            w, v = get_host(w), get_host(v)
-    elif output_module == "cupy" and compute_module == "numpy":
-        if isinstance(w, List):
-            w = [get_device(w) for w in w]
-            v = [get_device(v) for v in v]
-        else:
-            w, v = get_device(w), get_device(v)
+    if isinstance(w, (List, list)):
+        w = [get_any_location(w, output_module) for w in w]
+        v = [get_any_location(v, output_module) for v in v]
+    else:
+        w, v = get_any_location(w, output_module), get_any_location(v, output_module)
 
     return w, v

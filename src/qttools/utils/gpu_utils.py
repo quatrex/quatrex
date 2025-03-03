@@ -63,6 +63,32 @@ def get_device(arr: NDArray) -> NDArray:
     return xp.asarray(arr)
 
 
+def get_any_location(arr: NDArray, output_module: str):
+    """Returns the array in the desired location.
+
+    Parameters
+    ----------
+    arr : NDArray
+        The array to convert.
+    output_module : str
+        The desired location.
+        The location can be either "numpy" or "cupy".
+
+    Returns
+    -------
+    NDArray
+        The equivalent array in the desired location.
+
+    """
+
+    if output_module == "numpy":
+        return get_host(arr)
+    elif output_module == "cupy":
+        return get_device(arr)
+    else:
+        raise ValueError(f"Invalid output location: {output_module}")
+
+
 def synchronize_current_stream():
     """Synchronizes the current stream if using cupy.
 

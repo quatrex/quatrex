@@ -4,7 +4,7 @@ import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
@@ -65,23 +65,13 @@ def qr(
     if output_module is None:
         output_module = input_module
 
-    if output_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid output location: {output_module}")
-    if compute_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid compute location: {compute_module}")
-    if input_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid input location: {input_module}")
-
     if xp.__name__ == "numpy" and (
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
     ):
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    if compute_module == "numpy" and input_module == "cupy":
-        A = get_host(A)
-    elif compute_module == "cupy" and input_module == "numpy":
-        A = get_device(A)
+    A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
         q, r = xp.linalg.qr(A)
@@ -97,9 +87,6 @@ def qr(
         q = q.reshape((*batch_shape, m, k))
         r = r.reshape((*batch_shape, k, n))
 
-    if output_module == "numpy" and compute_module == "cupy":
-        q, r = get_host(q), get_host(r)
-    elif output_module == "cupy" and compute_module == "numpy":
-        q, r = get_device(q), get_device(r)
+    q, r = get_any_location(q, output_module), get_any_location(r, output_module)
 
     return q, r

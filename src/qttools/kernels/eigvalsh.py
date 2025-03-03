@@ -1,7 +1,7 @@
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 def _eigvalsh(
@@ -75,23 +75,13 @@ def eigvalsh(
     if output_module is None:
         output_module = input_module
 
-    if output_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid output location: {output_module}")
-    if compute_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid compute location: {compute_module}")
-    if input_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid input location: {input_module}")
-
     if xp.__name__ == "numpy" and (
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
     ):
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    if compute_module == "numpy" and input_module == "cupy":
-        A = get_host(A)
-    elif compute_module == "cupy" and input_module == "numpy":
-        A = get_device(A)
+    A = get_any_location(A, compute_module)
 
     if B is None:
         if compute_module == "numpy":
@@ -104,9 +94,4 @@ def eigvalsh(
         elif compute_module == "cupy":
             w = _eigvalsh(A, B, xp)
 
-    if output_module == "numpy" and compute_module == "cupy":
-        w = get_host(w)
-    elif output_module == "cupy" and compute_module == "numpy":
-        w = get_device(w)
-
-    return w
+    return get_any_location(w, output_module)

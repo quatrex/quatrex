@@ -4,7 +4,7 @@ import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
@@ -96,23 +96,13 @@ def svd(
     if output_module is None:
         output_module = input_module
 
-    if output_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid output location: {output_module}")
-    if compute_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid compute location: {compute_module}")
-    if input_module not in ["numpy", "cupy"]:
-        raise ValueError(f"Invalid input location: {input_module}")
-
     if xp.__name__ == "numpy" and (
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
     ):
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    if compute_module == "numpy" and input_module == "cupy":
-        A = get_host(A)
-    elif compute_module == "cupy" and input_module == "numpy":
-        A = get_device(A)
+    A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
         u, s, vh = xp.linalg.svd(A, full_matrices=full_matrices)
@@ -133,9 +123,10 @@ def svd(
             vh = vh.reshape((*batch_shape, k, n))
         s = s.reshape((*batch_shape, k))
 
-    if output_module == "numpy" and compute_module == "cupy":
-        u, s, vh = get_host(u), get_host(s), get_host(vh)
-    elif output_module == "cupy" and compute_module == "numpy":
-        u, s, vh = get_device(u), get_device(s), get_device(vh)
+    u, s, vh = (
+        get_any_location(u, output_module),
+        get_any_location(s, output_module),
+        get_any_location(vh, output_module),
+    )
 
     return u, s, vh

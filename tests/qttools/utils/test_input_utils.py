@@ -111,10 +111,30 @@ def test_create_coordinate_grid(
 
 
 @pytest.mark.parametrize(
-    "hr, num_transport_cells, transport_dir, transport_cell, cutoff, coords, lat_vecs",
+    "hr, num_transport_cells, transport_dir, transport_cell, cutoff, coords, lat_vecs, return_sparse",
     [
-        (xp.ones((3, 3, 3, 5, 5)), 10, "x", (2, 1, 1), 2, xp.zeros((5, 3)), xp.eye(3)),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
+            False,
+        ),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
+            True,
+        ),
     ],
+    ids=["dense", "sparse"],
 )
 def test_create_hamiltonian(
     hr: NDArray,
@@ -124,9 +144,8 @@ def test_create_hamiltonian(
     cutoff: float,
     coords: NDArray,
     lat_vecs: NDArray,
+    return_sparse: bool,
 ):
-    num_wann = hr.shape[-1]
-    num_wann_per_supercell = num_wann * xp.prod(transport_cell)
     hamiltonians = create_hamiltonian(
         hr,
         num_transport_cells,
@@ -135,33 +154,65 @@ def test_create_hamiltonian(
         cutoff,
         coords,
         lat_vecs,
+        return_sparse,
     )
-    assert len(hamiltonians) == 3
+    # Number of unit cells in a transport cell
+    transport_cell_size = int(xp.prod(xp.array(transport_cell)))
+    if return_sparse:
+        assert len(hamiltonians) == 2
+        sparse_hamiltonian, block_sizes = hamiltonians
+        assert sparse_hamiltonian.shape[0] == sum(block_sizes)
+        assert sparse_hamiltonian.shape[1] == sum(block_sizes)
+        assert len(block_sizes) == num_transport_cells
+        num_wann_per_supercell = int(block_sizes[0])
+        num_wann = num_wann_per_supercell // transport_cell_size
+        # Make sure the sparse hamiltonian is csr to be able to slice it
+        if sparse_hamiltonian.format != "csr":
+            sparse_hamiltonian = sparse_hamiltonian.tocsr()
+    else:
+        assert len(hamiltonians) == 3
 
-    h_diag, h_upper, h_lower = hamiltonians
-    assert h_diag.shape == (
-        num_transport_cells * num_wann_per_supercell,
-        num_wann_per_supercell,
-    )
-    assert h_upper.shape == (
-        (num_transport_cells - 1) * num_wann_per_supercell,
-        num_wann_per_supercell,
-    )
-    assert h_lower.shape == (
-        (num_transport_cells - 1) * num_wann_per_supercell,
-        num_wann_per_supercell,
-    )
+        h_diag, h_upper, h_lower = hamiltonians
+        num_wann = int(hr.shape[-1])
+        num_wann_per_supercell = num_wann * transport_cell_size
+        assert h_diag.shape == (
+            num_transport_cells * num_wann_per_supercell,
+            num_wann_per_supercell,
+        )
+        assert h_upper.shape == (
+            (num_transport_cells - 1) * num_wann_per_supercell,
+            num_wann_per_supercell,
+        )
+        assert h_lower.shape == (
+            (num_transport_cells - 1) * num_wann_per_supercell,
+            num_wann_per_supercell,
+        )
 
     for i in range(num_transport_cells):
         block_slice = slice(
             i * num_wann_per_supercell, (i + 1) * num_wann_per_supercell
         )
         # Assume cut-off is large enough to include all interaction in diagonal blocks
-        assert xp.allclose(h_diag[block_slice], 1)
+        if return_sparse:
+            assert xp.allclose(
+                sparse_hamiltonian[block_slice, block_slice].todense(), 1
+            )
+        else:
+            assert xp.allclose(h_diag[block_slice], 1)
         if i < num_transport_cells - 1:
-            for r in range(xp.prod(transport_cell)):
+            if return_sparse:
+                off_diagonal_block_slice = slice(
+                    (i + 1) * num_wann_per_supercell, (i + 2) * num_wann_per_supercell
+                )
+                h_upper = sparse_hamiltonian[
+                    block_slice, off_diagonal_block_slice
+                ].todense()
+                h_lower = sparse_hamiltonian[
+                    off_diagonal_block_slice, block_slice
+                ].todense()
+            for r in range(transport_cell_size):
                 row_unit_slice = slice(r * num_wann, (r + 1) * num_wann)
-                for c in range(xp.prod(transport_cell)):
+                for c in range(transport_cell_size):
                     col_unit_slice = slice(c * num_wann, (c + 1) * num_wann)
                     if r <= c:
                         assert xp.allclose(

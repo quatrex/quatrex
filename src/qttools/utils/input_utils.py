@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from scipy import sparse
+
 from qttools import NDArray, _DType, xp
 
 
@@ -256,6 +258,7 @@ def create_hamiltonian(
     cutoff: float = xp.inf,
     coords: NDArray = None,
     lattice_vectors: NDArray = None,
+    return_sparse: bool = True,
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
@@ -278,11 +281,13 @@ def create_hamiltonian(
         Coordinates of the Wannier functions in a unit cell. Defaults to `None`.
     lattice_vectors : np.ndarray, optional
         Lattice vectors of the system. Defaults to `None`.
+    return_sparse : bool, optional
+        Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
 
     Returns
     -------
     list[np.ndarray]
-        The block-tridiagonal Hamiltonian matrix.
+        The block-tridiagonal Hamiltonian matrix as either a tuple of arrays or a sparse matrix and block sizes.
     """
     if cutoff is not xp.inf and coords is None and lattice_vectors is None:
         print(
@@ -328,9 +333,40 @@ def create_hamiltonian(
         upper_block[upper_dist > cutoff] = 0
         lower_block[lower_dist > cutoff] = 0
 
-    # Create the block-tridiagonal matrix.
-    diag = xp.tile(diag_block, (num_transport_cells, 1))
-    upper = xp.tile(upper_block, (num_transport_cells - 1, 1))
-    lower = xp.tile(lower_block, (num_transport_cells - 1, 1))
+    if return_sparse:
+        # Create a sparse matrix of a block row.
+        coo_mat = sparse.coo_matrix(
+            xp.hstack([lower_block, diag_block, upper_block]).get()
+        )
+        if coo_mat.has_canonical_format is False:
+            coo_mat.sum_duplicates()
+        # Tile the block row to create the full block-tridiagonal matrix.
+        offsets = xp.arange(num_transport_cells) * diag_block.shape[0]
+        full_rows = xp.tile(coo_mat.row, num_transport_cells) + xp.repeat(
+            offsets, coo_mat.nnz
+        )
+        full_cols = xp.tile(coo_mat.col, num_transport_cells) + xp.repeat(
+            offsets, coo_mat.nnz
+        )
+        full_data = xp.tile(coo_mat.data, num_transport_cells)
+        # Remove the coupling to the leads to make it square.
+        valid_mask = (full_cols >= lower_block.shape[1]) & (
+            full_cols < diag_block.shape[0] * num_transport_cells + lower_block.shape[1]
+        )
+        full_rows = full_rows[valid_mask]
+        full_cols = full_cols[valid_mask] - lower_block.shape[1]
+        full_data = full_data[valid_mask]
+        # Also return the block sizes.
+        block_sizes = xp.ones(num_transport_cells, dtype=int) * diag_block.shape[0]
+        return (
+            sparse.coo_matrix((full_data.get(), (full_rows.get(), full_cols.get()))),
+            block_sizes,
+        )
+    else:
+        # Returns the block-tridiagonal Hamiltonian matrix as a tuple of arrays.
+        # Create the block-tridiagonal matrix.
+        diag = xp.tile(diag_block, (num_transport_cells, 1))
+        upper = xp.tile(upper_block, (num_transport_cells - 1, 1))
+        lower = xp.tile(lower_block, (num_transport_cells - 1, 1))
 
-    return diag, upper, lower
+        return diag, upper, lower

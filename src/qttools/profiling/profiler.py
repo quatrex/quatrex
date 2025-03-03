@@ -32,7 +32,8 @@ if PROFILE_GPU in ("y", "yes", "t", "true", "on", "1"):
 elif PROFILE_GPU in ("n", "no", "f", "false", "off", "0"):
     PROFILE_GPU = False
 else:
-    raise ValueError(f"Invalid truth value '{PROFILE_GPU=}'.")
+    warnings.warn(f"Invalid truth value '{PROFILE_GPU=}'. Defaulting to 'false'.")
+    PROFILE_GPU = False
 
 
 # Set the profiling level.
@@ -133,22 +134,23 @@ class _ProfilingRun:
         """
         host_stats = defaultdict(list)
         device_stats = defaultdict(list)
-        ranks = set()
+        ranks = defaultdict(set)
         for event in self.profiling_events:
             host_stats[event.qualname].append(event.host_time)
             device_stats[event.qualname].append(event.device_times)
-            ranks.add(event.rank)
+            ranks[event.qualname].add(event.rank)
 
         stats = {}
         for key in host_stats:
             host_times = xp.array(host_stats[key])
 
             num_calls = len(host_times)
-            num_ranks = len(ranks)
+            num_ranks = len(ranks[key])
             total_host_time = float(xp.sum(host_times))
 
             stats[key] = {
                 "num_calls": num_calls,
+                "num_participating_ranks": num_ranks,
                 "num_calls_per_rank": num_calls / num_ranks,
                 "total_host_time": total_host_time,
                 "total_host_time_per_rank": total_host_time / num_ranks,
@@ -226,13 +228,14 @@ class Profiler:
         """
         return _ProfilingRun(self._gather_events()).get_stats()
 
-    def dump(self, filepath: str, format: Literal["pickle", "json"] = "pickle"):
+    def dump_stats(self, filepath: str, format: Literal["pickle", "json"] = "pickle"):
         """Dumps the profiling statistics to a file.
 
         Parameters
         ----------
         filepath : str
-            The path to the output file.
+            The path to the output file. The correct file extension
+            will be appended based on the format.
         format : {"pickle", "json"}, optional
             The format in which to save the profiling data.
 
@@ -241,18 +244,24 @@ class Profiler:
             raise ValueError(f"Invalid format {format}.")
 
         stats = self.get_stats()
-        if comm.rank == 0:
-            if format == "pickle":
-                with open(filepath, "wb") as pickle_file:
-                    pickle.dump(stats, pickle_file)
+        if comm.rank != 0:
+            # Only the root rank dumps the stats.
+            return
 
-            else:
-                with open(filepath, "w") as json_file:
-                    json.dump(stats, json_file, indent=4)
+        filepath = os.fspath(filepath)
+        os.path.isdir(os.path.dirname(filepath))
+        if format == "pickle":
+            if not filepath.endswith(".pkl"):
+                filepath += ".pkl"
+            with open(filepath, "wb") as pickle_file:
+                pickle.dump(stats, pickle_file)
+        else:
+            if not filepath.endswith(".json"):
+                filepath += ".json"
+            with open(filepath, "w") as json_file:
+                json.dump(stats, json_file, indent=4)
 
-    def _setup_events(
-        self,
-    ) -> tuple[list, list]:
+    def _setup_events(self) -> tuple[list, list]:
         """Sets up CUDA events for each device.
 
         Returns
@@ -335,9 +344,9 @@ class Profiler:
         ----------
         level : str, optional
             The profiling level controls whether the function is
-            profiled or not. By default, the function is always
-            profiled, irrespective of the PROFILE_LEVEL environment
-            variable. The following levels are implemented:
+            profiled or not. By default, the level is set to the
+            PROFILE_LEVEL environment variable. The function is thus
+            always profiled. The following levels are implemented:
             - `"off"`: The function is not profiled.
             - `"basic"`: The function is part of the core profiling.
             - `"api"`: The function is part of the API and does not

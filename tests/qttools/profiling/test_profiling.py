@@ -77,13 +77,13 @@ def test_profiler_profile_range(profiler):
 
 
 def test_profiler_dump(profiler, tmp_path):
-    """Tests that the profiler can dump the eventlog to a file."""
+    """Tests that the profiler can dump the stats to a file."""
     filepath = tmp_path / "test.pkl"
-    profiler.dump(filepath, format="pickle")
+    profiler.dump_stats(filepath, format="pickle")
     assert filepath.exists()
 
     filepath = tmp_path / "test.json"
-    profiler.dump(filepath, format="json")
+    profiler.dump_stats(filepath, format="json")
     assert filepath.exists()
 
 

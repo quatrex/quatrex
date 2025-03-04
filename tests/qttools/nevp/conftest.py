@@ -16,15 +16,34 @@ BLOCK_SIZE = [
 # capture all the eigenvalues. The number of quadrature points is set to
 # a very large number to ensure that the non-spurious eigenvalues get
 # approximated very accurately.
-SUBSPACE_NEVP_SOLVERS = [
-    pytest.param(
-        Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200, use_qr=False), id="Beyn"
-    ),
-    pytest.param(
-        Beyn(r_o=1.2, r_i=0.9, m_0=60, num_quad_points=200, use_qr=True),
-        id="Beyn with QR",
-    ),
+BATCH_SIZES = [
+    2,
+    25,
+    30,
 ]
+
+SUBSPACE_NEVP_SOLVERS = []
+
+for BATCH_SIZE in BATCH_SIZES:
+    for use_qr in [
+        False,
+        True,
+    ]:
+        SUBSPACE_NEVP_SOLVERS.append(
+            pytest.param(
+                Beyn(
+                    r_o=1.2,
+                    r_i=0.9,
+                    m_0=60,
+                    num_quad_points=200,
+                    use_qr=use_qr,
+                    contour_batch_size=BATCH_SIZE,
+                ),
+                id=f"Beyn with QR batch size {BATCH_SIZE} and use_qr {use_qr}",
+            )
+        )
+
+
 LEFT = [pytest.param(True, id="both"), pytest.param(False, id="right")]
 
 

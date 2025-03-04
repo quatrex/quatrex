@@ -2,6 +2,8 @@
 
 import warnings
 
+import numpy as np
+
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
@@ -46,6 +48,8 @@ class Beyn(NEVP):
     use_qr : bool, optional
         Whether to use QR decomposition for the projector instead of SVD.
         Default is `False`.
+    contour_batch_size : int, optional
+        The batch size for the contour integration kernel.
 
     """
 
@@ -59,6 +63,7 @@ class Beyn(NEVP):
         eig_compute_location: str = "numpy",
         project_compute_location: str = "numpy",
         use_qr: bool = False,
+        contour_batch_size: int = 10,
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -69,6 +74,20 @@ class Beyn(NEVP):
         self.eig_compute_location = eig_compute_location
         self.project_compute_location = project_compute_location
         self.use_qr = use_qr
+        self.contour_batch_size = contour_batch_size
+
+        if num_quad_points > contour_batch_size:
+            contour_counts = [
+                contour_batch_size for _ in range(num_quad_points // contour_batch_size)
+            ]
+            for i in range(num_quad_points % contour_batch_size):
+                contour_counts[i % len(contour_counts)] += 1
+        else:
+            contour_counts = [num_quad_points]
+
+        self.contour_displacements = np.cumsum(
+            np.concatenate(([0], np.array(contour_counts)))
+        )
 
     def _project_svd(
         self, P_0: NDArray, P_1: NDArray, left: bool = False
@@ -168,6 +187,66 @@ class Beyn(NEVP):
         else:
             return a, q
 
+    def _contour_integrate(self, a_xx: tuple[NDArray, ...]):
+        """Computes the contour integral of the operator inverse.
+
+        Parameters
+        ----------
+        a_xx : tuple[NDArray, ...]
+            The coefficient blocks of the non-linear eigenvalue problem
+            from lowest to highest order.
+
+        Returns
+        -------
+        q0 : NDArray
+            The first moment of the contour integral.
+        q1 : NDArray
+            The second moment of the contour integral.
+
+        """
+
+        in_type = a_xx[0].dtype
+
+        # Determine quadrature points and weights.
+        zeta = xp.arange(self.num_quad_points) + 1
+        phase = xp.exp(2j * xp.pi * (zeta + 0.5) / self.num_quad_points)
+        z_o = self.r_o * phase
+        z_i = self.r_i * phase
+        w = xp.ones(self.num_quad_points) / self.num_quad_points
+
+        # Reshape to broadcast over batch dimension.
+        z_o = z_o.reshape(1, -1, 1, 1)
+        z_i = z_i.reshape(1, -1, 1, 1)
+        w = w.reshape(1, -1, 1, 1)
+
+        q0 = xp.zeros_like(a_xx[0])
+        q1 = xp.zeros_like(a_xx[0])
+        a_xx = [a_x[:, xp.newaxis, :, :] for a_x in a_xx]
+
+        for j in range(len(self.contour_displacements) - 1):
+
+            z_oj = z_o[
+                :, self.contour_displacements[j] : self.contour_displacements[j + 1]
+            ]
+            z_ij = z_i[
+                :, self.contour_displacements[j] : self.contour_displacements[j + 1]
+            ]
+            w_j = w[
+                :, self.contour_displacements[j] : self.contour_displacements[j + 1]
+            ]
+
+            inv_Tz_o = operator_inverse(
+                a_xx, z_oj, in_type, in_type, self.num_threads_contour
+            )
+            inv_Tz_i = operator_inverse(
+                a_xx, z_ij, in_type, in_type, self.num_threads_contour
+            )
+
+            q0 += xp.sum(w_j * z_oj * inv_Tz_o - w_j * z_ij * inv_Tz_i, axis=1)
+            q1 += xp.sum(w_j * z_oj**2 * inv_Tz_o - w_j * z_ij**2 * inv_Tz_i, axis=1)
+
+        return q0, q1
+
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
@@ -202,29 +281,12 @@ class Beyn(NEVP):
             (batchsize, d, self.m_0)
         )
 
-        # Determine quadrature points and weights.
-        zeta = xp.arange(self.num_quad_points) + 1
-        phase = xp.exp(2j * xp.pi * (zeta + 0.5) / self.num_quad_points)
-        z_o = self.r_o * phase
-        z_i = self.r_i * phase
-        w = xp.ones(self.num_quad_points) / self.num_quad_points
-
-        # Reshape to broadcast over batch dimension.
-        z_o = z_o.reshape(1, -1, 1, 1)
-        z_i = z_i.reshape(1, -1, 1, 1)
-        w = w.reshape(1, -1, 1, 1)
-
-        a_xx = tuple(a_x[:, xp.newaxis, :, :] for a_x in a_xx)
-        inv_Tz_o = operator_inverse(
-            a_xx, z_o, in_type, in_type, self.num_threads_contour
-        )
-        inv_Tz_i = operator_inverse(
-            a_xx, z_i, in_type, in_type, self.num_threads_contour
-        )
+        # Compute the contour integral.
+        q0, q1 = self._contour_integrate(a_xx)
 
         # Compute first and second moment.
-        P_0 = xp.sum(w * z_o * inv_Tz_o - w * z_i * inv_Tz_i, axis=1) @ Y
-        P_1 = xp.sum(w * z_o**2 * inv_Tz_o - w * z_i**2 * inv_Tz_i, axis=1) @ Y
+        P_0 = q0 @ Y
+        P_1 = q1 @ Y
 
         # project the system
         if self.use_qr:
@@ -289,28 +351,8 @@ class Beyn(NEVP):
             (batchsize, d, self.m_0)
         )
 
-        # Determine quadrature points and weights.
-        zeta = xp.arange(self.num_quad_points) + 1
-        phase = xp.exp(2j * xp.pi * (zeta + 0.5) / self.num_quad_points)
-        z_o = self.r_o * phase
-        z_i = self.r_i * phase
-        w = xp.ones(self.num_quad_points) / self.num_quad_points
-
-        # Reshape to broadcast over batch dimension.
-        z_o = z_o.reshape(1, -1, 1, 1)
-        z_i = z_i.reshape(1, -1, 1, 1)
-        w = w.reshape(1, -1, 1, 1)
-
-        a_xx = [a_x[:, xp.newaxis, :, :] for a_x in a_xx]
-        inv_Tz_o = operator_inverse(
-            a_xx, z_o, in_type, in_type, self.num_threads_contour
-        )
-        inv_Tz_i = operator_inverse(
-            a_xx, z_i, in_type, in_type, self.num_threads_contour
-        )
-
-        q0 = xp.sum(w * z_o * inv_Tz_o - w * z_i * inv_Tz_i, axis=1)
-        q1 = xp.sum(w * z_o**2 * inv_Tz_o - w * z_i**2 * inv_Tz_i, axis=1)
+        # Compute the contour integral.
+        q0, q1 = self._contour_integrate(a_xx)
 
         # Compute first and second moment.
         P_0 = q0 @ Y

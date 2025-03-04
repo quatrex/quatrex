@@ -639,21 +639,24 @@ class QTBM:
                     self.observables.electron_transmission_x_slabs[n,s,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
 
         #Compute DOS
-        phi_ortho = self.overlap_sparray @ phi
-        for n in range(self.n_cont):
-            S_off_coup_cont = self.overlap_sparray[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i]
-            w_sign = w.copy()
-            w_sign[inj_ind[n]] = 1/w_sign[inj_ind[n]]
-            
-            phi_ortho[self.contacts[n].mask_orb_i.squeeze(),:] += S_off_coup_cont @ xp.multiply(phi[self.contacts[n].mask_orb_i.squeeze(),:],w_sign)
 
+        #Spill over correction
+        phi_ortho = self.overlap_sparray @ phi #"Orthogonalize" the wavefunction
+        for n in range(self.n_cont):
+            S_off_coup_cont = self.overlap_sparray[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i] #Get the off-diagonal elements of the overlap matrix in the contact
+
+            w_sign = w.copy()
+            w_sign[inj_ind[n]] = 1/w_sign[inj_ind[n]] #Change the sign of the injected wavefunction that propagates back in the contact
+            
+            phi_ortho[self.contacts[n].mask_orb_i.squeeze(),:] += S_off_coup_cont @ xp.multiply(phi[self.contacts[n].mask_orb_i.squeeze(),:],w_sign) #Add the spill over contribution
+
+        #Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
             for s in range(self.n_slabs_x):
-
-                phi_D = phi[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
-                phi_D_ortho = phi_ortho[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze()
+                phi_D = phi[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze() #Get the wavefunction in the slab
+                phi_D_ortho = phi_ortho[self.slab_mask_x_orb[s].T,inj_ind[n]].squeeze() #Get the "orthogonalized" wavefunction in the slab
                 if(phi_D.size != 0):
-                    self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho))/(2*xp.pi))
+                    self.observables.electron_DOS_x_slabs[n,s,i]=xp.real(xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho))/(2*xp.pi)) #Compute the DOS
 
     def run(self) -> None:
         """Runs the QTBM"""
@@ -686,12 +689,12 @@ class QTBM:
             # Compute the boundary self-energy and the injection vector
             ind_0 = 0
             for n in range(self.n_cont):
-                S_n, inj_n, w_n = self.obc(
+                _ , S_n, inj_n, w_n = self.obc(
                     self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray(),
                     self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray(),
                     self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray(),
                     "left",
-                    return_inj = True,
+                    return_injected = True,
                 )
                 S.append(S_n)
                 inj.append(inj_n)

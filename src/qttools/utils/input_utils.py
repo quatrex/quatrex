@@ -6,6 +6,7 @@ from pathlib import Path
 from scipy import sparse
 
 from qttools import NDArray, _DType, xp
+from qttools.utils.gpu_utils import get_host
 
 
 def read_hr_dat(
@@ -102,9 +103,9 @@ def read_wannier_wout(
 
     Returns
     -------
-    wannier_centers : np.ndarray
+    wannier_centers : ndarray
         The Wannier centers.
-    lattice_vectors : np.ndarray
+    lattice_vectors : ndarray
         The lattice vectors.
     """
     with open(path, "r") as f:
@@ -115,7 +116,7 @@ def read_wannier_wout(
     # Find the line with the lattice vectors.
     for i, line in enumerate(lines):
         if "Lattice Vectors" in line:
-            lattice_vectors = xp.array(
+            lattice_vectors = xp.asarray(
                 [list(map(float, lines[i + j + 1].split()[1:])) for j in range(3)]
             )
         if "Number of Wannier Functions" in line:
@@ -126,7 +127,7 @@ def read_wannier_wout(
     for i, line in enumerate(lines[::-1]):
         if "Final State" in line:
             # The Wannier centers are enclosed by parantheses, so we have to extract them.
-            wannier_centers = xp.array(
+            wannier_centers = xp.asarray(
                 [
                     list(
                         map(
@@ -163,7 +164,7 @@ def cutoff_hr(
 
     Parameters
     ----------
-    hr : np.ndarray
+    hr : ndarray
         Wannier Hamiltonian.
     value_cutoff : float, optional
         Cutoff value for the Hamiltonian. Defaults to `None`.
@@ -172,7 +173,7 @@ def cutoff_hr(
 
     Returns
     -------
-    np.ndarray
+    ndarray
         The cutoff Hamiltonian.
     """
     if value_cutoff is None and R_cutoff is None:
@@ -190,7 +191,7 @@ def cutoff_hr(
         hr_cut = xp.zeros(cut_shape, dtype=hr.dtype)
         for ind in xp.ndindex(hr.shape[:3]):
             if (ind <= R_cutoff).all():
-                ind = xp.array(ind)
+                ind = xp.asarray(ind)
                 hr_cut[*ind] = hr[*ind]
                 hr_cut[*-ind] = hr[*-ind]
     return hr_cut
@@ -205,7 +206,7 @@ def get_hamiltonian_block(
 
     Parameters
     ----------
-    hr : NDArray
+    hr : ndarray
         Wannier Hamiltonian.
     supercell_size : tuple
         Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
@@ -216,16 +217,16 @@ def get_hamiltonian_block(
 
     Returns
     -------
-    NDArray
+    ndarray
         The supercell hamiltonian block.
 
     """
-    local_shifts = xp.array(list(xp.ndindex(supercell_size)))
-    # Transform to NDArrays (because of cupy).
+    local_shifts = xp.asarray(list(xp.ndindex(supercell_size)))
+    # Transform to NDArrays (because of cupy multiply).
     if not isinstance(supercell_size, xp.ndarray):
-        supercell_size = xp.array(supercell_size)
+        supercell_size = xp.asarray(supercell_size)
     if not isinstance(global_shift, xp.ndarray):
-        global_shift = xp.array(global_shift)
+        global_shift = xp.asarray(global_shift)
     global_shift = xp.multiply(global_shift, supercell_size)
 
     rows = []
@@ -250,11 +251,11 @@ def create_coordinate_grid(
     """Creates a grid of coordinates for Wannier functions in a supercell."""
     num_wann = wannier_centers.shape[0]
     grid = xp.zeros(
-        (int(xp.prod(xp.array(super_cell)) * num_wann), 3), dtype=xp.float64
+        (int(xp.prod(xp.asarray(super_cell)) * num_wann), 3), dtype=xp.float64
     )
     for i, cell_ind in enumerate(xp.ndindex(super_cell)):
         grid[i * num_wann : (i + 1) * num_wann, :] = (
-            wannier_centers + xp.array(cell_ind) @ lattice_vectors
+            wannier_centers + xp.asarray(cell_ind) @ lattice_vectors
         )
     return grid
 
@@ -276,7 +277,7 @@ def create_hamiltonian(
 
     Parameters
     ----------
-    hR : np.ndarray
+    hR : ndarray
         Wannier Hamiltonian.
     num_transport_cells : int
         Number of transport cells.
@@ -286,16 +287,16 @@ def create_hamiltonian(
         Size of the transport cell. E.g. [2, 2, 1] for a 2x2 xy-transport cell.
     cutoff : float, optional
         Cutoff distance for connections between wannier functions. Defaults to `np.inf`.
-    coords : np.ndarray, optional
+    coords : ndarray, optional
         Coordinates of the Wannier functions in a unit cell. Defaults to `None`.
-    lattice_vectors : np.ndarray, optional
+    lattice_vectors : ndarray, optional
         Lattice vectors of the system. Defaults to `None`.
     return_sparse : bool, optional
         Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
 
     Returns
     -------
-    list[np.ndarray]
+    list[ndarray]
         The block-tridiagonal Hamiltonian matrix as either a tuple of arrays or a sparse matrix and block sizes.
     """
     if cutoff is not xp.inf and coords is None and lattice_vectors is None:
@@ -333,10 +334,10 @@ def create_hamiltonian(
         )
         diag_dist = xp.linalg.norm(distance_matrix, axis=-1)
         upper_dist = xp.linalg.norm(
-            distance_matrix + xp.array(upper_ind) @ lattice_vectors, axis=-1
+            distance_matrix + xp.asarray(upper_ind) @ lattice_vectors, axis=-1
         )
         lower_dist = xp.linalg.norm(
-            distance_matrix + xp.array(lower_ind) @ lattice_vectors, axis=-1
+            distance_matrix + xp.asarray(lower_ind) @ lattice_vectors, axis=-1
         )
         diag_block[diag_dist > cutoff] = 0
         upper_block[upper_dist > cutoff] = 0
@@ -345,7 +346,7 @@ def create_hamiltonian(
     if return_sparse:
         # Create a sparse matrix of a block row.
         coo_mat = sparse.coo_matrix(
-            xp.hstack([lower_block, diag_block, upper_block]).get()
+            get_host(xp.hstack([lower_block, diag_block, upper_block]))
         )
         if coo_mat.has_canonical_format is False:
             coo_mat.sum_duplicates()
@@ -368,7 +369,9 @@ def create_hamiltonian(
         # Also return the block sizes.
         block_sizes = xp.ones(num_transport_cells, dtype=int) * diag_block.shape[0]
         return (
-            sparse.coo_matrix((full_data.get(), (full_rows.get(), full_cols.get()))),
+            sparse.coo_matrix(
+                (get_host(full_data), (get_host(full_rows), get_host(full_cols)))
+            ),
             block_sizes,
         )
     else:

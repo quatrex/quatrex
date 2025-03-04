@@ -86,11 +86,9 @@ def test_get_hamiltonian_block(
     bs = hr.shape[-1]
     block = get_hamiltonian_block(hr, supercell, shift)
     for ind_r in xp.ndindex(supercell):
-        br = xp.ravel_multi_index(xp.asarray(ind_r), supercell)
-        br = int(br)
+        br = int(xp.ravel_multi_index(xp.asarray(ind_r), supercell))
         for ind_c in xp.ndindex(supercell):
-            bc = xp.ravel_multi_index(xp.asarray(ind_c), supercell)
-            bc = int(bc)
+            bc = int(xp.ravel_multi_index(xp.asarray(ind_c), supercell))
             assert xp.allclose(
                 block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_val[br][bc]
             )

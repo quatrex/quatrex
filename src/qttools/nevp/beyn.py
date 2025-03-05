@@ -8,6 +8,7 @@ from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
+from qttools.utils.mpi_utils import get_section_sizes
 
 rng = xp.random.default_rng(42)
 
@@ -76,14 +77,9 @@ class Beyn(NEVP):
         self.use_qr = use_qr
         self.contour_batch_size = contour_batch_size
 
-        if num_quad_points > contour_batch_size:
-            contour_counts = [
-                contour_batch_size for _ in range(num_quad_points // contour_batch_size)
-            ]
-            for i in range(num_quad_points % contour_batch_size):
-                contour_counts[i % len(contour_counts)] += 1
-        else:
-            contour_counts = [num_quad_points]
+        contour_counts, _ = get_section_sizes(
+            num_quad_points, int(np.ceil(num_quad_points / contour_batch_size))
+        )
 
         self.contour_displacements = np.cumsum(
             np.concatenate(([0], np.array(contour_counts)))

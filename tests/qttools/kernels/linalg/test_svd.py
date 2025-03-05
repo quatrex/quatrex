@@ -3,7 +3,7 @@ import pytest
 
 from qttools import xp
 from qttools.kernels import linalg
-from qttools.kernels.linalg.svd import _svd_numba_ndarray
+from qttools.kernels.linalg.svd import _svd_numba
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -22,7 +22,7 @@ def test_svd_numba_ndarray(
 
     A = rng.random((batch_size, m, n)) + 1j * rng.random((batch_size, m, n))
 
-    u, s, vh = _svd_numba_ndarray(
+    u, s, vh = _svd_numba(
         A,
         full_matrices=full_matrices,
     )

@@ -8,7 +8,7 @@ from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
-def _svd_numba_ndarray(
+def _svd_numba(
     A: NDArray,
     full_matrices: bool = True,
 ) -> tuple[NDArray, NDArray, NDArray]:
@@ -112,7 +112,7 @@ def svd(
         n = A.shape[-1]
         A = A.reshape((-1, m, n))
 
-        u, s, vh = _svd_numba_ndarray(A, full_matrices)
+        u, s, vh = _svd_numba(A, full_matrices)
 
         k = min(m, n)
         if full_matrices:

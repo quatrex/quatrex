@@ -61,9 +61,8 @@ def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
             assert xp.allclose(A[b] @ v[b][:, i], w[b][i] * v[b][:, i])
 
 
-@pytest.mark.usefixtures(
-    "n", "compute_module", "input_module", "output_module", "if_list"
-)
+@pytest.mark.usefixtures("n", "compute_module", "input_module", "output_module")
+@pytest.mark.parametrize("if_list", [False, True])
 def test_eig(
     n: int,
     compute_module: str,
@@ -107,8 +106,9 @@ def test_eig(
 
 
 @pytest.mark.usefixtures(
-    "n", "batch_shape", "compute_module", "input_module", "output_module", "if_list"
+    "n", "batch_shape", "compute_module", "input_module", "output_module"
 )
+@pytest.mark.parametrize("if_list", [False, True])
 def test_eig_batched(
     n: int,
     batch_shape: tuple[int, ...],

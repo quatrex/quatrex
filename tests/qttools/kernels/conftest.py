@@ -82,11 +82,6 @@ FULL_MATRICES = [
     pytest.param(False, id="False"),
 ]
 
-IF_LIST = [
-    pytest.param(True, id="True"),
-    pytest.param(False, id="False"),
-]
-
 
 @pytest.fixture(params=NUM_INDS)
 def num_inds(request: pytest.FixtureRequest):
@@ -160,9 +155,4 @@ def output_module(request: pytest.FixtureRequest):
 
 @pytest.fixture(params=INPUT_MODULE)
 def input_module(request: pytest.FixtureRequest):
-    return request.param
-
-
-@pytest.fixture(params=IF_LIST)
-def if_list(request: pytest.FixtureRequest):
     return request.param

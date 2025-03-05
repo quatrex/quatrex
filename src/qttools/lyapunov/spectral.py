@@ -5,7 +5,7 @@ import warnings
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.utils.lyapunov_utils import system_reduction
+from qttools.lyapunov.utils import system_reduction
 
 
 class Spectral(LyapunovSolver):

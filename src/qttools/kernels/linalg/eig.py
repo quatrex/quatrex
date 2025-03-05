@@ -29,6 +29,7 @@ def _eig_numba(
         The eigenvectors.
     batch_size : int
         The number of matrices.
+
     """
     for i in nb.prange(batch_size):
         i = np.int64(i)
@@ -37,11 +38,86 @@ def _eig_numba(
         vs[i][:] = v
 
 
+def _eig_numpy(
+    A: NDArray | List[NDArray],
+) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
+    """Computes the eigenvalues and eigenvectors of multiple matrices.
+
+    Parameters
+    ----------
+    A : NDArray | List[NDArray]
+        The matrices.
+
+    Returns
+    -------
+    NDArray | List[NDArray]
+        The eigenvalues.
+    NDArray | List[NDArray]
+        The eigenvectors.
+
+    """
+
+    if isinstance(A, list):
+        A = List(A)
+        w = List([np.empty((a.shape[-1]), dtype=a.dtype) for a in A])
+        v = List([np.empty((a.shape[-1], a.shape[-1]), dtype=a.dtype) for a in A])
+        batch_size = len(A)
+
+        _eig_numba(A, w, v, batch_size)
+    else:
+        batch_shape = A.shape[:-2]
+        if A.shape[-1] != A.shape[-2]:
+            raise ValueError("Matrix must be square.")
+        # NOTE: more error handling with zero size could be done
+        n = A.shape[-1]
+        A = A.reshape((-1, n, n))
+
+        w = np.empty((A.shape[0], n), dtype=A.dtype)
+        v = np.empty((A.shape[0], n, n), dtype=A.dtype)
+
+        batch_size = A.shape[0]
+
+        _eig_numba(A, w, v, batch_size)
+        w = w.reshape(*batch_shape, n)
+        v = v.reshape(*batch_shape, n, n)
+
+    return w, v
+
+
+def _eig_cupy(
+    A: NDArray | List[NDArray],
+) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
+    """Computes the eigenvalues and eigenvectors of multiple matrices.
+
+    Parameters
+    ----------
+    A : NDArray | List[NDArray]
+        The matrices.
+
+    Returns
+    -------
+    NDArray | List[NDArray]
+        The eigenvalues.
+    NDArray | List[NDArray]
+        The eigenvectors.
+
+    """
+    if isinstance(A, list):
+        w = []
+        v = []
+        for a in A:
+            w_, v_ = xp.linalg.eig(a)
+            w.append(w_)
+            v.append(v_)
+    else:
+        w, v = xp.linalg.eig(A)
+
+
 def eig(
     A: NDArray | list[NDArray],
     compute_module: str = "numpy",
     output_module: str | None = None,
-) -> tuple[NDArray, NDArray]:
+) -> tuple[NDArray, NDArray] | tuple[list[NDArray], list[NDArray]]:
     """Computes the eigenvalues and eigenvectors of matrices on a given location.
 
     To compute the eigenvalues and eigenvectors on the device with cupy
@@ -99,40 +175,9 @@ def eig(
         A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
-        if isinstance(A, list):
-            w = []
-            v = []
-            for a in A:
-                w_, v_ = xp.linalg.eig(a)
-                w.append(w_)
-                v.append(v_)
-        else:
-            w, v = xp.linalg.eig(A)
+        w, v = _eig_cupy(A)
     elif compute_module == "numpy":
-
-        if isinstance(A, list):
-            A = List(A)
-            w = List([np.empty((a.shape[-1]), dtype=a.dtype) for a in A])
-            v = List([np.empty((a.shape[-1], a.shape[-1]), dtype=a.dtype) for a in A])
-            batch_size = len(A)
-
-            _eig_numba(A, w, v, batch_size)
-        else:
-            batch_shape = A.shape[:-2]
-            if A.shape[-1] != A.shape[-2]:
-                raise ValueError("Matrix must be square.")
-            # NOTE: more error handling with zero size could be done
-            n = A.shape[-1]
-            A = A.reshape((-1, n, n))
-
-            w = np.empty((A.shape[0], n), dtype=A.dtype)
-            v = np.empty((A.shape[0], n, n), dtype=A.dtype)
-
-            batch_size = A.shape[0]
-
-            _eig_numba(A, w, v, batch_size)
-            w = w.reshape(*batch_shape, n)
-            v = v.reshape(*batch_shape, n, n)
+        w, v = _eig_numpy(A)
 
     if isinstance(w, (List, list)):
         w = [get_any_location(w, output_module) for w in w]

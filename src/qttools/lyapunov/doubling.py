@@ -4,7 +4,7 @@ import warnings
 
 from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.utils.lyapunov_utils import system_reduction
+from qttools.lyapunov.utils import system_reduction
 
 
 class Doubling(LyapunovSolver):
@@ -16,6 +16,8 @@ class Doubling(LyapunovSolver):
         The maximum number of iterations to perform.
     convergence_tol : float, optional
         The required accuracy for convergence.
+    reduce_sparsity : bool, optional
+        Whether to reduce the sparsity of the system matrix
 
     """
 

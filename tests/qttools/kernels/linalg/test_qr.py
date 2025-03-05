@@ -3,7 +3,7 @@ import pytest
 
 from qttools import xp
 from qttools.kernels import linalg
-from qttools.kernels.linalg.qr import _qr_numba_ndarray
+from qttools.kernels.linalg.qr import _qr_numba
 from qttools.utils.gpu_utils import get_host
 
 if xp.__name__ == "cupy":
@@ -20,7 +20,7 @@ def test_qr_numba_ndarray(m: int, n: int, batch_shape: tuple[int, ...]):
 
     A = rng.random((batch_size, m, n)) + 1j * rng.random((batch_size, m, n))
 
-    q, r = _qr_numba_ndarray(
+    q, r = _qr_numba(
         A,
     )
 

@@ -8,9 +8,26 @@ from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
-def _qr_numba_ndarray(
+def _qr_numba(
     A: NDArray,
-) -> tuple[NDArray, NDArray, NDArray]:
+) -> tuple[NDArray, NDArray]:
+    """Computes the QR decomposition of a batch of matrices.
+
+    Parallelized with numba.
+
+    Parameters
+    ----------
+    A : NDArray
+        The matrices.
+
+    Returns
+    -------
+    NDArray
+        Unitary matrix Q in the QR decomposition.
+    NDArray
+        Upper triangular matrix R in the QR decomposition.
+
+    """
 
     m = A.shape[-2]
     n = A.shape[-1]
@@ -81,7 +98,7 @@ def qr(
         n = A.shape[-1]
         A = A.reshape((-1, m, n))
 
-        q, r = _qr_numba_ndarray(A)
+        q, r = _qr_numba(A)
 
         k = min(m, n)
         q = q.reshape((*batch_shape, m, k))

@@ -120,32 +120,56 @@ def bd_sandwich(
     out.data = 0
 
     for i in range(num_blocks):
+
+        ab_ik = [None] * num_blocks*2
+
+        for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+
+            out_range = (m < 0) or (m >= num_blocks)
+            if out_range and (not spillover_correction):
+                continue
+            else:
+                if out_range:
+                    a_i, a_m = correct_out_range_index(i, m, num_blocks)
+                else:
+                    a_i, a_m = i, m
+
+            a_im = a.blocks[a_i, a_m]
+
+            for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
+                out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        b_m, b_k = correct_out_range_index(m, k, num_blocks)
+                    else:
+                        b_m, b_k = m, k
+                if ab_ik[k] is None:
+                    ab_ik[k] = a_im @ b.blocks[b_m, b_k]
+                else:
+                    ab_ik[k] += a_im @ b.blocks[b_m, b_k]
+        
         for j in range(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
-            tmp = out.blocks[i, j]
-            for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
-                for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
-                    if abs(j - k) > in_num_diag // 2:
-                        continue
-                    out_range = (
-                        (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
-                    )
-                    if out_range and (not spillover_correction):
-                        continue
+
+            partsum = out.blocks[i, j]
+
+            for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        a_k, a_j = correct_out_range_index(k, j, num_blocks)
                     else:
-                        if out_range:
-                            a_i, a_m = correct_out_range_index(i, m, num_blocks)
-                            b_m, b_k = correct_out_range_index(m, k, num_blocks)
-                            a_k, a_j = correct_out_range_index(k, j, num_blocks)
-                            tmp += (
-                                a.blocks[a_i, a_m]
-                                @ b.blocks[b_m, b_k]
-                                @ a.blocks[a_k, a_j]
-                            )
-                        else:
-                            tmp += a.blocks[i, m] @ b.blocks[m, k] @ a.blocks[k, j]
-            out.blocks[i, j] = tmp
+                        a_k, a_j = k, j          
+                if ab_ik[k] is None:
+                    continue     
+                partsum += ab_ik[k] @ a.blocks[a_k, a_j]
+
+            out.blocks[i, j] = partsum
 
     return
 

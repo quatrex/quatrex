@@ -2,12 +2,16 @@
 
 import time
 
+import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
+from qttools.utils.mpi_utils import get_section_sizes
 
+from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+
 
 
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
@@ -45,12 +49,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
     """
 
     def __init__(
-        self, quatrex_config: QuatrexConfig, coulomb_screening_energies: NDArray
+        self, quatrex_config: QuatrexConfig,  compute_config: ComputeConfig, coulomb_screening_energies: NDArray
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
         self.ne = len(self.energies)
         self.prefactor = -1j / xp.pi * xp.abs(self.energies[1] - self.energies[0])
+        self.batch_size = compute_config.convolve.batch_size
 
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
@@ -83,12 +88,25 @@ class PCoulombScreening(ScatteringSelfEnergy):
         if comm.rank == 0:
             print(f"PCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True)
 
-        p_g_full = self.prefactor * fft_correlate(g_greater.data, -g_lesser.data.conj())
-        p_l_full = -p_g_full[::-1].conj()
-        # Fill the matrices with the data. Take second part of the
-        # energy convolution.
-        p_lesser.data = p_l_full[self.ne - 1 :]
-        p_greater.data = p_g_full[self.ne - 1 :]
+        batch_counts, _ = get_section_sizes(
+            p_greater.total_nnz_size, int(np.ceil(p_greater.total_nnz_size / self.batch_size))
+        )
+
+        batch_displacements = np.cumsum(
+            np.concatenate(([0], np.array(batch_counts)))
+        )
+
+        rows, cols = p_lesser.spy()
+
+        for start, end in zip(batch_displacements, batch_displacements[1:]):
+            batch = slice(start, end)
+
+            p_g_full = self.prefactor * fft_correlate(g_greater.data[:,batch], -g_lesser.data[:,batch].conj())
+            p_l_full = -p_g_full[::-1].conj()
+            # Fill the matrices with the data. Take second part of the
+            # energy convolution.
+            p_lesser[rows[batch],cols[batch]] = p_l_full[self.ne - 1 :]
+            p_greater[rows[batch],cols[batch]] = p_g_full[self.ne - 1 :]
 
         # Transpose the matrices to stack distribution.
         t0 = time.perf_counter()

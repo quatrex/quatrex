@@ -2,10 +2,12 @@
 
 import time
 
+import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.mpi_utils import get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -115,6 +117,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
 
         self.big_block_sizes = None
+        self.batch_size = compute_config.convolve.batch_size
 
     def compute(
         self,
@@ -179,26 +182,39 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
             )
 
-        # Compute the full self-energy using the convolution theorem.
-        # Second term are corrections for negative frequencies that
-        # where cut off by the polarization calculation.
-        sigma_lesser.data += self.prefactor * (
-            fft_convolve(g_lesser.data, w_lesser.data)[: self.num_energies]
-            - fft_correlate(g_lesser.data, w_greater.data.conj())[
-                self.num_energies - 1 :
-            ]
-        )
-        sigma_greater.data += self.prefactor * (
-            fft_convolve(g_greater.data, w_greater.data)[: self.num_energies]
-            - fft_correlate(g_greater.data, w_lesser.data.conj())[
-                self.num_energies - 1 :
-            ]
+        batch_counts, _ = get_section_sizes(
+            g_greater.total_nnz_size, int(np.ceil(g_greater.total_nnz_size / self.batch_size))
         )
 
-        # Compute retarded self-energy with a Hilbert transform.
-        sigma_antihermitian = 1j * xp.imag(sigma_greater.data - sigma_lesser.data)
-        sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-        sigma_retarded.data += 1j * sigma_hermitian + sigma_antihermitian / 2
+        batch_displacements = np.cumsum(
+            np.concatenate(([0], np.array(batch_counts)))
+        )
+
+        rows, cols = g_greater.spy()
+
+        for start, end in zip(batch_displacements, batch_displacements[1:]):
+            batch = slice(start, end)
+
+            # Compute the full self-energy using the convolution theorem.
+            # Second term are corrections for negative frequencies that
+            # where cut off by the polarization calculation.
+            sigma_lesser[rows[batch],cols[batch]] += self.prefactor * (
+                fft_convolve(g_lesser.data[:,batch], w_lesser.data[:,batch])[: self.num_energies]
+                - fft_correlate(g_lesser.data[:,batch], w_greater.data[:,batch].conj())[
+                    self.num_energies - 1 :
+                ]
+            )
+            sigma_greater[rows[batch],cols[batch]] += self.prefactor * (
+                fft_convolve(g_greater.data[:,batch], w_greater.data[:,batch])[: self.num_energies]
+                - fft_correlate(g_greater.data[:,batch], w_lesser.data[:,batch].conj())[
+                    self.num_energies - 1 :
+                ]
+            )
+
+            # Compute retarded self-energy with a Hilbert transform.
+            sigma_antihermitian = 1j * xp.imag(sigma_greater.data[:,batch] - sigma_lesser.data[:,batch])
+            sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
+            sigma_retarded[rows[batch],cols[batch]] += 1j * sigma_hermitian + sigma_antihermitian / 2
 
         # Transpose the matrices to stack distribution.
         t0 = time.perf_counter()

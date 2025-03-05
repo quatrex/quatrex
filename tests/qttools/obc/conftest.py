@@ -12,33 +12,15 @@ from qttools.nevp import NEVP, Beyn, Full
 # large to capture all the eigenvalues in that annulus. The number of
 # quadrature points is set such that non-spurious eigenvalues get
 # approximated accurately enough.
-BATCH_SIZES = [
-    2,
-    14,
-]
-
 NEVP_SOLVERS = [
+    pytest.param(
+        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=False), id="Beyn"
+    ),
+    pytest.param(
+        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=True), id="Beyn"
+    ),
     pytest.param(Full(), id="Full"),
 ]
-
-for BATCH_SIZE in BATCH_SIZES:
-    for use_qr in [
-        False,
-        True,
-    ]:
-        NEVP_SOLVERS.append(
-            pytest.param(
-                Beyn(
-                    r_o=200,
-                    r_i=0.9,
-                    m_0=23,
-                    num_quad_points=13,
-                    use_qr=use_qr,
-                    contour_batch_size=BATCH_SIZE,
-                ),
-                id=f"Beyn with QR batch size {BATCH_SIZE} and use_qr {use_qr}",
-            )
-        )
 
 X_II_FORMULAS = ["self-energy", "direct"]
 

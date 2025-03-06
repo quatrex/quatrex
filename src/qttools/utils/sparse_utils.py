@@ -101,23 +101,14 @@ def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
 
     blocks = {}
 
-    rows, cols = matrix.spy()
-
     for i in range(matrix.num_blocks):
         for j in range(matrix.num_blocks):
-            start_row = matrix.block_offsets[i]
-            end_row = matrix.block_offsets[i + 1]
-            start_col = matrix.block_offsets[j]
-            end_col = matrix.block_offsets[j + 1]
-            indices = xp.logical_and(
-                xp.logical_and(rows >= start_row, rows < end_row),
-                xp.logical_and(cols >= start_col, cols < end_col)
-            )
-            blocks[i, j] = sparse.csr_matrix((
-                xp.ones(int(xp.sum(indices))),
-                (rows[indices] - start_row, cols[indices] - start_col)),
-                shape=(matrix.block_sizes[i], matrix.block_sizes[j]),
-                dtype=xp.float32)
+            sparse_data = matrix.sparse_blocks[i, j]
+            data = xp.ones_like(sparse_data[0][-1], dtype=xp.float32)
+            sparse_data = (data, *sparse_data[1:])
+            blocks[i, j] = sparse.csr_matrix(
+                sparse_data,
+                shape=(matrix.block_sizes[i], matrix.block_sizes[j]))
     
     return blocks
 

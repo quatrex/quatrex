@@ -55,6 +55,8 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(2.0, id="double-change"),
 ]
 
+COMM_SIZES = [1, 2, 3, 4, 5, 6, 7, 8]
+
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
@@ -98,4 +100,8 @@ def stack_index(request: pytest.FixtureRequest) -> tuple:
 
 @pytest.fixture(params=BLOCK_CHANGE_FACTORS)
 def block_change_factor(request):
+    return request.param
+
+@pytest.fixture(params=COMM_SIZES)
+def comm_size(request):
     return request.param

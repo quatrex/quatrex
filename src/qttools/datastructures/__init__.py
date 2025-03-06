@@ -5,6 +5,7 @@ from qttools.datastructures.dsbcsr import DSBCSR
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.routines import (
     bd_matmul,
+    bd_matmul_partial,
     bd_sandwich,
     btd_matmul,
     btd_sandwich,
@@ -17,5 +18,6 @@ __all__ = [
     "btd_matmul",
     "btd_sandwich",
     "bd_matmul",
+    "bd_matmul_partial",
     "bd_sandwich",
 ]

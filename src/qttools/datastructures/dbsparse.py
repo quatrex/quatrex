@@ -114,9 +114,13 @@ class DBCOO(DBSparse):
 
         self.num_local_blocks = section_sizes[comm.rank]
         # Have to add one more block here.
+        # self.local_block_sizes = block_sizes[
+        #     ...,
+        #     int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1] + 1),
+        # ]
         self.local_block_sizes = block_sizes[
             ...,
-            int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1] + 1),
+            int(section_offsets[comm.rank]) : ,
         ]
 
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
@@ -171,7 +175,7 @@ class DBCOO(DBSparse):
             (int(self.local_block_sizes[row]), int(self.local_block_sizes[col])),
             dtype=self.dtype,
         )
-        if block_slice == slice(None):
+        if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block
 
@@ -187,7 +191,7 @@ class DBCOO(DBSparse):
     def _set_block(self, row: int, col: int, block: NDArray) -> None:
         """Sets the block at the specified row and column."""
         block_slice = self._get_block_slice(row, col)
-        if block_slice == slice(None):
+        if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
 
@@ -203,6 +207,10 @@ class DBCOO(DBSparse):
         # Gather rows, cols, and data.
         rows = comm.allgather(self.local_rows)
         cols = comm.allgather(self.local_cols)
+        if comm.rank == 0:
+            for r, c in zip(rows, cols):
+                print(r, c)
+        comm.Barrier()
         data = xp.hstack(comm.allgather(self.local_data))
 
         rank_max = xp.hstack(
@@ -259,10 +267,25 @@ class DBCOO(DBSparse):
         cols = coo.col[block_sort_index]
 
         # Find indices
-        split_inds = find_split_indices(rows, cols, block_sizes)
-        local_data = xp.split(data, split_inds)[comm.rank]
-        local_rows = xp.split(rows, split_inds)[comm.rank]
-        local_cols = xp.split(cols, split_inds)[comm.rank]
+        # split_inds = find_split_indices(rows, cols, block_sizes)
+        # local_data = xp.split(data, split_inds)[comm.rank]
+        # local_rows = xp.split(rows, split_inds)[comm.rank]
+        # local_cols = xp.split(cols, split_inds)[comm.rank]
+        section_sizes, __ = get_section_sizes(len(block_sizes), comm.size)
+        section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
+        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        start_idx = block_offsets[section_offsets[comm.rank]]
+        end_idx = block_offsets[section_offsets[comm.rank + 1]]
+        indices = xp.logical_and(xp.logical_and(rows >= start_idx, cols >= start_idx),
+                                 xp.logical_or(rows < end_idx, cols < end_idx))
+        local_data = data[indices]
+        local_rows = rows[indices]
+        local_cols = cols[indices]
+
+        for r in range(comm.size):
+            if comm.rank == r:
+                print(f"rank {r}: {local_rows=}, {local_cols=}", flush=True)
+            comm.Barrier()
 
         # Normalize the row and column indices.
         local_rows -= local_rows.min()

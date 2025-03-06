@@ -75,6 +75,241 @@ def bd_matmul(
     return
 
 
+def bd_matmul_partial(
+    a: DSBSparse,
+    b: DSBSparse,
+    out: DSBSparse,
+    in_num_diag: int = 3,
+    out_num_diag: int = 5,
+    spillover_correction: bool = False,
+    start_block: int = 0,
+    end_block: int = None,
+):
+    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block diagonal matrix.
+    b : DSBSparse
+        The second block diagonal matrix.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_numdiag`.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+
+    # Make sure the output matrix is initialized to zero.
+    # out.data = 0
+
+    if end_block is None:
+        end_block = num_blocks
+
+    for i in range(start_block, end_block):
+        for j in range(
+            max(start_block, i - out_num_diag // 2, 0), min(end_block, i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i, j] = tmp
+    
+    for i in range(end_block, num_blocks):
+        for j in range(
+            max(start_block, i - out_num_diag // 2, 0), min(end_block, i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i, j] = tmp
+    
+    for i in range(start_block, end_block):
+        for j in range(
+            max(end_block, i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i, j] = tmp
+
+    return
+
+
+def bd_matmul_distr(
+    a: DSBSparse,
+    b: DSBSparse,
+    out: DSBSparse,
+    in_num_diag: int = 3,
+    out_num_diag: int = 5,
+    spillover_correction: bool = False,
+    start_block: int = 0,
+    end_block: int = None,
+    total_blocks: int = None,
+):
+    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block diagonal matrix.
+    b : DSBSparse
+        The second block diagonal matrix.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_numdiag`.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+    total_blocks = total_blocks or num_blocks
+
+    # Make sure the output matrix is initialized to zero.
+    # out.data = 0
+
+    if end_block is None:
+        end_block = num_blocks
+
+    for i in range(start_block, end_block):
+        i_a = i - start_block
+        for j in range(
+            max(start_block, i - out_num_diag // 2, 0), min(end_block, i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            j_b = j - start_block
+            tmp = out.blocks[i_a, j_b]
+            # tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                k_a = k - start_block
+                k_b = k - start_block
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        # tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i_a, j_b] = tmp
+            # out.blocks[i, j] = tmp
+    
+    for i in range(end_block, num_blocks):
+        i_a = i - start_block
+        for j in range(
+            max(start_block, i - out_num_diag // 2, 0), min(end_block, i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            j_b = j - start_block
+            tmp = out.blocks[i_a, j_b]
+            # tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                k_a = k - start_block
+                k_b = k - start_block
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        # tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i_a, j_b] = tmp
+            # out.blocks[i, j] = tmp
+    
+    for i in range(start_block, end_block):
+        i_a = i - start_block
+        for j in range(
+            max(end_block, i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            j_b = j - start_block
+            tmp = out.blocks[i_a, j_b]
+            # tmp = out.blocks[i, j]
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                k_a = k - start_block
+                k_b = k - start_block
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                    else:
+                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        # tmp += a.blocks[i, k] @ b.blocks[k, j]
+            out.blocks[i_a, j_b] = tmp
+            # out.blocks[i, j] = tmp
+
+    return
+
+
 def bd_sandwich(
     a: DSBSparse,
     b: DSBSparse,

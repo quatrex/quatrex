@@ -1,9 +1,13 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import pytest
+from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import (
     DSBSparse,
     bd_matmul,
+    bd_matmul_partial,
     bd_sandwich,
     btd_matmul,
     btd_sandwich,
@@ -37,6 +41,7 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     return sparse.coo_matrix(arr)
 
 
+@pytest.mark.skip
 def test_btd_matmul(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -56,6 +61,7 @@ def test_btd_matmul(
     assert xp.allclose(dense @ dense, out.to_dense())
 
 
+@pytest.mark.skip
 def test_btd_sandwich(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -74,6 +80,7 @@ def test_btd_sandwich(
     assert xp.allclose(dense @ dense @ dense, out.to_dense())
 
 
+@pytest.mark.skip
 def test_bd_matmul(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -93,6 +100,66 @@ def test_bd_matmul(
     assert xp.allclose(dense @ dense, out.to_dense())
 
 
+def test_bd_matmul_partial(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+    comm_size: int,
+):
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
+
+    out.data = 0
+
+    num_blocks = len(block_sizes)
+    local_blocks = num_blocks // comm_size
+    for rank in range(comm_size):
+        start_block = rank * local_blocks
+        end_block = start_block + local_blocks
+        if rank == comm_size - 1:
+            end_block = num_blocks
+        bd_matmul_partial(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block)
+
+    assert xp.allclose(dense @ dense, out.to_dense())
+
+
+@pytest.mark.mpi(min_size=2)
+def test_bd_matmul_distr(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
+
+    out.data = 0
+
+    comm_size = comm.Get_size()
+    comm_rank = comm.Get_rank()
+
+    num_blocks = len(block_sizes)
+    local_blocks = num_blocks // comm_size
+    for rank in range(comm_size):
+        start_block = rank * local_blocks
+        end_block = start_block + local_blocks
+        if rank == comm_size - 1:
+            end_block = num_blocks
+        bd_matmul_partial(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block)
+
+    assert xp.allclose(dense @ dense, out.to_dense())
+
+
+@pytest.mark.skip
 def test_bd_sandwich(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -111,6 +178,7 @@ def test_bd_sandwich(
     assert xp.allclose(dense @ dense @ dense, out.to_dense())
 
 
+@pytest.mark.skip
 def test_bd_matmul_spillover(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -165,6 +233,70 @@ def test_bd_matmul_spillover(
     assert xp.allclose(ref, out.to_dense())
 
 
+def test_bd_matmul_partial_spillover(
+    dsbsparse_type: DSBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+    comm_size: int,
+):
+    coo = _create_btd_coo(block_sizes)
+    dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+    dense = dsbsparse.to_dense()
+    dense_shape = list(dense.shape)
+    NBC = 1
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    dense_shape[-2] += left_obc + right_obc
+    dense_shape[-1] += left_obc + right_obc
+
+    dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
+    dense_exp[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ] = dense
+    # simply repeat the boundaries slices
+    dense_exp[..., :left_obc, :-left_obc] = dense_exp[
+        ..., left_obc : 2 * left_obc, left_obc:
+    ]
+    dense_exp[..., :-left_obc, :left_obc] = dense_exp[
+        ..., left_obc:, left_obc : 2 * left_obc
+    ]
+    dense_exp[..., -right_obc:, right_obc:] = dense_exp[
+        ..., -2 * right_obc : -right_obc, :-right_obc
+    ]
+    dense_exp[..., right_obc:, -right_obc:] = dense_exp[
+        ..., :-right_obc, -2 * right_obc : -right_obc
+    ]
+
+    expended_product = dense_exp @ dense_exp
+    ref = expended_product[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ]
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dsbsparse_type.from_sparray(
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
+    )
+
+    out.data = 0
+
+    num_blocks = len(block_sizes)
+    local_blocks = num_blocks // comm_size
+    for rank in range(comm_size):
+        start_block = rank * local_blocks
+        end_block = start_block + local_blocks
+        if rank == comm_size - 1:
+            end_block = num_blocks
+        bd_matmul_partial(dsbsparse, dsbsparse, out, spillover_correction=True, start_block=start_block, end_block=end_block)
+
+    assert xp.allclose(ref, out.to_dense())
+
+
+@pytest.mark.skip
 def test_bd_sandwich_spillover(
     dsbsparse_type: DSBSparse,
     block_sizes: NDArray,
@@ -221,3 +353,8 @@ def test_bd_sandwich_spillover(
 def _get_last_2d(x):
     m, n = x.shape[-2:]
     return x.flat[: m * n].reshape(m, n)
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

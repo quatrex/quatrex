@@ -1,13 +1,7 @@
 from qttools import NDArray, xp
 
 
-def _system_reduction_rows(
-    a: NDArray,
-    q: NDArray,
-    solve,
-    row_start,
-    row_end,
-):
+def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
     """Reduces the system by rows of A that are all zero.
 
     Parameters
@@ -18,10 +12,8 @@ def _system_reduction_rows(
         The right-hand side matrix.
     solve : function
         The solver to use for the reduced system.
-    row_start : int
-        The first row with non-zero elements.
-    row_end : int
-        The last row with non-zero elements.
+    rows_to_reduce : slice
+        The slice of rows to reduce.
 
     Returns
     -------
@@ -30,17 +22,15 @@ def _system_reduction_rows(
 
     """
 
-    a_hat = a[:, row_start:row_end, row_start:row_end]
+    a_hat = a[:, rows_to_reduce, rows_to_reduce]
 
     x = q.copy()
-    x[:, row_start:row_end, row_start:row_end] = 0
-    q_hat = q[:, row_start:row_end, row_start:row_end] + (
-        a[:, row_start:row_end, :]
-        @ x
-        @ a[:, row_start:row_end, :].conj().swapaxes(-2, -1)
+    x[:, rows_to_reduce, rows_to_reduce] = 0
+    q_hat = q[:, rows_to_reduce, rows_to_reduce] + (
+        a[:, rows_to_reduce, :] @ x @ a[:, rows_to_reduce, :].conj().swapaxes(-2, -1)
     )
 
-    x[:, row_start:row_end, row_start:row_end] = solve(a_hat, q_hat)
+    x[:, rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat)
 
     return x
 
@@ -49,8 +39,7 @@ def _system_reduction_cols(
     a: NDArray,
     q: NDArray,
     solve,
-    col_start,
-    col_end,
+    cols_to_reduce,
 ):
     """Reduces the system by columns of A that are all zero.
 
@@ -62,10 +51,8 @@ def _system_reduction_cols(
         The right-hand side matrix.
     solve : function
         The solver to use for the reduced system.
-    col_start : int
-        The first column with non-zero elements.
-    col_end : int
-        The last column with non-zero elements.
+    cols_to_reduce : slice
+        The slice of columns to reduce
 
     Returns
     -------
@@ -74,14 +61,14 @@ def _system_reduction_cols(
 
     """
 
-    a_hat = a[:, col_start:col_end, col_start:col_end]
+    a_hat = a[:, cols_to_reduce, cols_to_reduce]
 
-    q_hat = q[:, col_start:col_end, col_start:col_end]
+    q_hat = q[:, cols_to_reduce, cols_to_reduce]
 
     x_hat = solve(a_hat, q_hat)
 
-    x = q.copy() + a[:, :, col_start:col_end] @ x_hat @ a[
-        :, :, col_start:col_end
+    x = q.copy() + a[:, :, cols_to_reduce] @ x_hat @ a[
+        :, :, cols_to_reduce
     ].conj().swapaxes(-2, -1)
 
     return x
@@ -146,13 +133,10 @@ def system_reduction(
 
     # account for only zero rows/cols
     # else will not reduce
-    row_start = xp.min(row_start[any_rows])
-    row_end = xp.max(row_end[any_rows])
-    col_start = xp.min(col_start[any_cols])
-    col_end = xp.max(col_end[any_cols])
-
-    length_row = row_end - row_start
-    length_col = col_end - col_start
+    rows_to_reduce = slice(xp.min(row_start[any_rows]), xp.max(row_end[any_rows]))
+    cols_to_reduce = slice(xp.min(col_start[any_cols]), xp.max(col_end[any_cols]))
+    length_row = rows_to_reduce.stop - rows_to_reduce.start
+    length_col = cols_to_reduce.stop - cols_to_reduce.start
 
     # only reduce in either rows or cols
     # TODO: reduce in both directions
@@ -162,9 +146,9 @@ def system_reduction(
     # Furthermore, possible to reduce to non contiguous rows/cols
 
     if length_row < length_col:
-        x = _system_reduction_rows(a, q, solve, row_start, row_end)
+        x = _system_reduction_rows(a, q, solve, rows_to_reduce)
     else:
-        x = _system_reduction_cols(a, q, solve, col_start, col_end)
+        x = _system_reduction_cols(a, q, solve, cols_to_reduce)
 
     x = x.reshape(*batch_shape, *x.shape[-2:])
 

@@ -50,7 +50,8 @@ class Beyn(NEVP):
         Whether to use QR decomposition for the projector instead of SVD.
         Default is `False`.
     contour_batch_size : int, optional
-        The batch size for the contour integration kernel.
+        The batch size for the contour integration kernel. If `None`,
+        the batch size is set to `num_quad_points`.
 
     """
 
@@ -64,7 +65,7 @@ class Beyn(NEVP):
         eig_compute_location: str = "numpy",
         project_compute_location: str = "numpy",
         use_qr: bool = False,
-        contour_batch_size: int = 10,
+        contour_batch_size: int | None = None,
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -75,6 +76,9 @@ class Beyn(NEVP):
         self.eig_compute_location = eig_compute_location
         self.project_compute_location = project_compute_location
         self.use_qr = use_qr
+        if contour_batch_size is None:
+            contour_batch_size = num_quad_points
+
         self.contour_batch_size = contour_batch_size
 
         contour_counts, _ = get_section_sizes(
@@ -183,7 +187,7 @@ class Beyn(NEVP):
         else:
             return a, q
 
-    def _contour_integrate(self, a_xx: tuple[NDArray, ...]):
+    def _contour_integrate(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Computes the contour integral of the operator inverse.
 
         Parameters

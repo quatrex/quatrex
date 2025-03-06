@@ -72,7 +72,7 @@ def bd_matmul(
         for j in range(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
-            tmp = (out.blocks[i, j]).astype(accumulator_dtype)
+            partsum = (out.blocks[i, j]).astype(accumulator_dtype)
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
                     continue
@@ -83,14 +83,18 @@ def bd_matmul(
                     if out_range:
                         i_a, k_a = correct_out_range_index(i, k, num_blocks)
                         k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        partsum += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
                     else:
-                        tmp += a.blocks[i, k] @ b.blocks[k, j]
+                        partsum += a.blocks[i, k] @ b.blocks[k, j]
 
             if out_block_coo:
-                out[i][j] = sparse.coo_matrix(tmp)
+                if partsum.ndim <= 2:
+                    out[i][j] = sparse.coo_matrix(partsum)
+                else:
+                    slc = [0] * (partsum.ndim - 2) + [slice(None), slice(None)]
+                    out[i][j] = sparse.coo_matrix(partsum[slc])  # only take a stack
             else:
-                out.blocks[i, j] = tmp
+                out.blocks[i, j] = partsum
 
     if out_block_coo:
         return out
@@ -202,7 +206,11 @@ def bd_sandwich(
                 )  # cast data type
 
             if out_block_coo:
-                out[i][j] = sparse.coo_matrix(partsum)
+                if partsum.ndim <= 2:
+                    out[i][j] = sparse.coo_matrix(partsum)
+                else:
+                    slc = [0] * (partsum.ndim - 2) + [slice(None), slice(None)]
+                    out[i][j] = sparse.coo_matrix(partsum[slc])  # only take a stack
             else:
                 out.blocks[i, j] = partsum
 

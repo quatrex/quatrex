@@ -342,7 +342,7 @@ class Spectral(OBCSolver):
             if self.residual_normalization == "eigenvalue":
                 residuals /= xp.abs(ws)
 
-        if batchsize != 1 and find_injected == True:
+        if batchsize != 1 and find_injected:
             raise ValueError(
                 "The injection vector can only be calculated with batchsize = 1"
             )
@@ -598,19 +598,24 @@ class Spectral(OBCSolver):
         Returns
         -------
         x_ii : NDArray
-            The system's surface Green's function. 
+            The system's surface Green's function.
         sigma_retarded: NDArray
-            The boundary self energy. Returned only if return_injected == True. (only compatible with batchsize = 1)
+            The boundary self energy. Returned only if return_injected
+            is True. (only compatible with batchsize = 1)
         inj: NDArray
-            The Injection vector. Returned only if return_injected == True. (only compatible with batchsize = 1)
+            The Injection vector. Returned only if return_injected is
+            True. (only compatible with batchsize = 1)
         w_inj: NDArray
-            The eigenvalues of the injected modes. Returned only if return_injected == True. (only compatible with batchsize = 1)
+            The eigenvalues of the injected modes. Returned only if
+            return_injected is True. (only compatible with batchsize =
+            1)
+
         """
 
-        if a_ii.ndim != 2 and return_injected == True:
+        if a_ii.ndim != 2 and return_injected:
             raise NotImplementedError
 
-        if return_injected == True and out is not None:
+        if return_injected and out is not None:
             raise NotImplementedError
 
         if a_ii.ndim == 2:
@@ -632,7 +637,11 @@ class Spectral(OBCSolver):
 
         if return_injected:
             mask_reflected, mask_injected, dE_dK_injected = self._find_reflected_modes(
-                wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls, find_injected=return_injected
+                wrs,
+                vrs,
+                a_xx=(a_ji, a_ii, a_ij),
+                vls=vls,
+                find_injected=return_injected,
             )
         else:
             mask_reflected = self._find_reflected_modes(
@@ -672,7 +681,10 @@ class Spectral(OBCSolver):
             sigma_retarded = a_ji[0, :, :] @ x_ii[0, :, :] @ a_ij[0, :, :]
 
             # Compute injection vector
-            injection = -a_ji[0, :, :] @ vrs_inj @ xp.linalg.inv(wrs_inj) - sigma_retarded @ vrs_inj
+            injection = (
+                -a_ji[0, :, :] @ vrs_inj @ xp.linalg.inv(wrs_inj)
+                - sigma_retarded @ vrs_inj
+            )
 
             return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]
 

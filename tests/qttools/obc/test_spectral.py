@@ -227,6 +227,6 @@ def test_compute_dE_dk(
                 phi_right = vrs[i, :, j]
                 phi_left = vrs[i, :, j]
 
-            dEk_dk_ref[i, j] = (phi_left.conj().T @ a @ phi_right) 
+            dEk_dk_ref[i, j] = phi_left.conj().T @ a @ phi_right
 
     assert xp.allclose(dEk_dk, dEk_dk_ref)

@@ -16,11 +16,7 @@ BLOCK_SIZE = [
 # capture all the eigenvalues. The number of quadrature points is set to
 # a very large number to ensure that the non-spurious eigenvalues get
 # approximated very accurately.
-BATCH_SIZES = [
-    2,
-    25,
-    30,
-]
+BATCH_SIZES = [2, 25, 30]
 
 SUBSPACE_NEVP_SOLVERS = []
 

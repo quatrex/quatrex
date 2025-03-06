@@ -282,6 +282,40 @@ class DSBCOO(DSBSparse):
         )
 
         return block
+    
+    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+        """Gets a block from the data structure in a sparse representation.
+
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the block indexer.
+        The index is assumed to already be renormalized.
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        row : int
+            Row index of the block.
+        col : int
+            Column index of the block.
+
+        Returns
+        -------
+        block : spmatrix | tuple
+            The block at the requested index. It is a sparse
+            representation of the block.
+
+        """
+        data_stack = self.data[*stack_index]
+        block_slice = self._get_block_slice(row, col)
+
+        if block_slice.start is None and block_slice.stop is None:
+            # No data in this block, return an empty block.
+            return xp.empty(data_stack.shape[:-1] + (0,)), (xp.empty(0), xp.empty(0))
+
+        rows = self.rows[block_slice] - self.block_offsets[row]
+        cols = self.cols[block_slice] - self.block_offsets[col]
+        return data_stack[..., block_slice], (rows, cols)
 
     def _set_block(
         self, stack_index: tuple, row: int, col: int, block: NDArray

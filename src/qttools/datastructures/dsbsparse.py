@@ -233,6 +233,11 @@ class DSBSparse(ABC):
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
         return _DSBlockIndexer(self)
+    
+    @property
+    def sparse_blocks(self) -> "_DSBlockIndexer":
+        """Returns a block indexer."""
+        return _DSBlockIndexer(self, return_dense=False)
 
     @property
     def stack(self) -> "_DStackIndexer":
@@ -373,6 +378,32 @@ class DSBSparse(ABC):
             The block at the requested index. This is an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`
             if `return_dense` is True. Otherwise, it is a sparse
+            representation of the block.
+
+        """
+        ...
+    
+    @abstractmethod
+    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+        """Gets a block from the data structure in a sparse representation.
+
+        This is supposed to be a low-level method that does not perform
+        any checks on the input. These are handled by the block indexer.
+        The index is assumed to already be renormalized.
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The index in the stack.
+        row : int
+            Row index of the block.
+        col : int
+            Column index of the block.
+
+        Returns
+        -------
+        block : spmatrix | tuple
+            The block at the requested index. It is a sparse
             representation of the block.
 
         """
@@ -782,16 +813,20 @@ class _DSBlockIndexer:
     stack_index : tuple, optional
         The stack index to slice the blocks from. Default is Ellipsis,
         i.e. we return the whole stack of blocks.
+    return_dense : bool, optional
+        Whether to return dense arrays when accessing the blocks.
+        Default is True.
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple = (Ellipsis,)) -> None:
+    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple = (Ellipsis,), return_dense: bool = True) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
         self._num_blocks = dsbsparse.num_blocks
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         self._stack_index = stack_index
+        self._return_dense = return_dense
 
     def _unsign_index(self, row: int, col: int) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
@@ -821,7 +856,9 @@ class _DSBlockIndexer:
     def __getitem__(self, index: tuple) -> NDArray | tuple:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
-        return self._dsbsparse._get_block(self._stack_index, row, col)
+        if self._return_dense:
+            return self._dsbsparse._get_block(self._stack_index, row, col)
+        return self._dsbsparse._get_sparse_block(self._stack_index, row, col)
 
     def __setitem__(self, index: tuple, block: NDArray) -> None:
         """Sets the requested block in the data structure."""

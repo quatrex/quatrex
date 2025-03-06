@@ -287,14 +287,14 @@ class ReducedSystem:
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
         out: DBSparse,
-        xl_diag_blocks: list[NDArray],
-        xl_buffer_upper: list[NDArray],
-        xl_buffer_lower: list[NDArray],
-        xl_out: DBSparse,
-        xg_diag_blocks: list[NDArray],
-        xg_buffer_upper: list[NDArray],
-        xg_buffer_lower: list[NDArray],
-        xg_out: DBSparse,
+        xl_diag_blocks: list[NDArray] = None,
+        xl_buffer_upper: list[NDArray] = None,
+        xl_buffer_lower: list[NDArray] = None,
+        xl_out: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
+        xg_buffer_upper: list[NDArray] = None,
+        xg_buffer_lower: list[NDArray] = None,
+        xg_out: DBSparse = None,
     ):
         self._mapback_reduced_system(
             x_diag_blocks,
@@ -917,6 +917,16 @@ class RGFDist(GFSolver):
         buffer_lower: list[NDArray],
         buffer_upper: list[NDArray],
         out: DBSparse,
+        bl: DBSparse = None,
+        xl_diag_blocks: list[NDArray] = None,
+        xl_buffer_lower: list[NDArray] = None,
+        xl_buffer_upper: list[NDArray] = None,
+        xl_out: DBSparse = None,
+        bg: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
+        xg_buffer_lower: list[NDArray] = None,
+        xg_buffer_upper: list[NDArray] = None,
+        xg_out: DBSparse = None,
     ):
         for i in range(a.num_local_blocks - 2, 0, -1):
 
@@ -924,21 +934,268 @@ class RGFDist(GFSolver):
                 a.local_blocks[i, i + 1] @ x_diag_blocks[i + 1]
                 + buffer_upper[i - 1] @ buffer_lower[i]
             )
-
             B2 = (
                 a.local_blocks[i, i + 1] @ buffer_upper[i]
                 + buffer_upper[i - 1] @ x_diag_blocks[0]
             )
-
             C1 = (
                 x_diag_blocks[i + 1] @ a.local_blocks[i + 1, i]
                 + buffer_upper[i] @ buffer_lower[i - 1]
             )
-
             C2 = (
                 buffer_lower[i] @ a.local_blocks[i + 1, i]
                 + x_diag_blocks[0] @ buffer_lower[i - 1]
             )
+
+            if self.solve_lesser:
+                temp_B_13 = xl_buffer_upper[i - 1]
+                temp_B_31 = xl_buffer_lower[i - 1]
+
+                bl_upper_block = (
+                    -x_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
+                        + buffer_upper[i - 1] @ xl_buffer_lower[i]
+                    )
+                    - xl_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
+                        + buffer_lower[i - 1].T @ buffer_upper[i].T
+                    )
+                    + x_diag_blocks[i]
+                    @ (
+                        bl.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
+                        + xl_buffer_upper[i - 1] @ buffer_upper[i].T
+                    )
+                )
+                xl_buffer_upper[i - 1] = (
+                    -x_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i, i + 1] @ xl_buffer_upper[i]
+                        + buffer_upper[i - 1] @ xl_diag_blocks[0]
+                    )
+                    - xl_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i + 1, i].T @ buffer_lower[i].T
+                        + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                    )
+                    + x_diag_blocks[i]
+                    @ (
+                        bl.local_blocks[i, i + 1] @ buffer_lower[i].T
+                        + xl_buffer_upper[i - 1] @ x_diag_blocks[0].T
+                    )
+                )
+
+                bl_lower_block = (
+                    -(
+                        xl_diag_blocks[i + 1] @ a.local_blocks[i, i + 1].T
+                        + xl_buffer_upper[i] @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - (C1) @ xl_diag_blocks[i]
+                    + (
+                        x_diag_blocks[i + 1] @ bl.local_blocks[i + 1, i]
+                        + buffer_upper[i] @ xl_buffer_lower[i - 1]
+                    )
+                    @ x_diag_blocks[i].T
+                )
+                xl_buffer_lower[i - 1] = (
+                    -(
+                        xl_buffer_lower[i] @ a.local_blocks[i, i + 1].T
+                        + xl_diag_blocks[0] @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - (C2) @ xl_diag_blocks[i]
+                    + (
+                        buffer_lower[i] @ bl.local_blocks[i + 1, i]
+                        + x_diag_blocks[0] @ xl_buffer_lower[i - 1]
+                    )
+                    @ x_diag_blocks[i].T
+                )
+
+                xl_diag_blocks[i] = (
+                    xl_diag_blocks[i]
+                    + x_diag_blocks[i]
+                    @ (
+                        (
+                            a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
+                            + buffer_upper[i - 1] @ xl_buffer_lower[i]
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            a.local_blocks[i, i + 1] @ xl_buffer_upper[i]
+                            + buffer_upper[i - 1] @ xl_diag_blocks[0]
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[i]
+                    @ (
+                        (B1) @ a.local_blocks[i + 1, i]
+                        + (B2) @ buffer_lower[i - 1]
+                    )
+                    @ xl_diag_blocks[i]
+                    + xl_diag_blocks[i].T
+                    @ (
+                        (
+                            a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
+                            + buffer_lower[i - 1].T @ buffer_upper[i].T
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            a.local_blocks[i + 1, i].T @ buffer_lower[i].T
+                            + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - x_diag_blocks[i]
+                    @ ((B1) @ bl.local_blocks[i + 1, i] + (B2) @ temp_B_31)
+                    @ x_diag_blocks[i].T
+                    - x_diag_blocks[i]
+                    @ (
+                        (
+                            bl.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
+                            + temp_B_13 @ buffer_upper[i].T
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            bl.local_blocks[i, i + 1] @ buffer_lower[i].T
+                            + temp_B_13 @ x_diag_blocks[0].T
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                )
+                # Streaming/Sparsifying back to DDSBSparse
+                xl_out.local_blocks[i + 1, i] = bl_lower_block
+                xl_out.local_blocks[i, i + 1] = bl_upper_block
+                xl_out.local_blocks[i, i] = xl_diag_blocks[i]
+                
+            if self.solve_greater:
+                temp_B_13 = xg_buffer_upper[i - 1]
+                temp_B_31 = xg_buffer_lower[i - 1]
+
+                bg_upper_block = (
+                    -x_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
+                        + buffer_upper[i - 1] @ xg_buffer_lower[i]
+                    )
+                    - xg_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
+                        + buffer_lower[i - 1].T @ buffer_upper[i].T
+                    )
+                    + x_diag_blocks[i]
+                    @ (
+                        bg.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
+                        + xg_buffer_upper[i - 1] @ buffer_upper[i].T
+                    )
+                )
+                xg_buffer_upper[i - 1] = (
+                    -x_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i, i + 1] @ xg_buffer_upper[i]
+                        + buffer_upper[i - 1] @ xg_diag_blocks[0]
+                    )
+                    - xg_diag_blocks[i]
+                    @ (
+                        a.local_blocks[i + 1, i].T @ buffer_lower[i].T
+                        + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                    )
+                    + x_diag_blocks[i]
+                    @ (
+                        bg.local_blocks[i, i + 1] @ buffer_lower[i].T
+                        + xg_buffer_upper[i - 1] @ x_diag_blocks[0].T
+                    )
+                )
+
+                bg_lower_block = (
+                    -(
+                        xg_diag_blocks[i + 1] @ a.local_blocks[i, i + 1].T
+                        + xg_buffer_upper[i] @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - (C1) @ xg_diag_blocks[i]
+                    + (
+                        x_diag_blocks[i + 1] @ bg.local_blocks[i + 1, i]
+                        + buffer_upper[i] @ xg_buffer_lower[i - 1]
+                    )
+                    @ x_diag_blocks[i].T
+                )
+                xg_buffer_lower[i - 1] = (
+                    -(
+                        xg_buffer_lower[i] @ a.local_blocks[i, i + 1].T
+                        + xg_diag_blocks[0] @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - (C2) @ xg_diag_blocks[i]
+                    + (
+                        buffer_lower[i] @ bg.local_blocks[i + 1, i]
+                        + x_diag_blocks[0] @ xg_buffer_lower[i - 1]
+                    )
+                    @ x_diag_blocks[i].T
+                )
+
+                xg_diag_blocks[i] = (
+                    xg_diag_blocks[i]
+                    + x_diag_blocks[i]
+                    @ (
+                        (
+                            a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
+                            + buffer_upper[i - 1] @ xg_buffer_lower[i]
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            a.local_blocks[i, i + 1] @ xg_buffer_upper[i]
+                            + buffer_upper[i - 1] @ xg_diag_blocks[0]
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[i]
+                    @ (
+                        (B1) @ a.local_blocks[i + 1, i]
+                        + (B2) @ buffer_lower[i - 1]
+                    )
+                    @ xg_diag_blocks[i]
+                    + xg_diag_blocks[i].T
+                    @ (
+                        (
+                            a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
+                            + buffer_lower[i - 1].T @ buffer_upper[i].T
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            a.local_blocks[i + 1, i].T @ buffer_lower[i].T
+                            + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                    - x_diag_blocks[i]
+                    @ ((B1) @ bg.local_blocks[i + 1, i] + (B2) @ temp_B_31)
+                    @ x_diag_blocks[i].T
+                    - x_diag_blocks[i]
+                    @ (
+                        (
+                            bg.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
+                            + temp_B_13 @ buffer_upper[i].T
+                        )
+                        @ a.local_blocks[i, i + 1].T
+                        + (
+                            bg.local_blocks[i, i + 1] @ buffer_lower[i].T
+                            + temp_B_13 @ x_diag_blocks[0].T
+                        )
+                        @ buffer_upper[i - 1].T
+                    )
+                    @ x_diag_blocks[i].T
+                )
+                # Streaming/Sparsifying back to DDSBSparse
+                xg_out.local_blocks[i + 1, i] = bg_lower_block
+                xg_out.local_blocks[i, i + 1] = bg_upper_block
+                xg_out.local_blocks[i, i] = xg_diag_blocks[i]
 
             out.local_blocks[i, i + 1] = -x_diag_blocks[i] @ B1
             buffer_upper[i - 1] = -x_diag_blocks[i] @ B2
@@ -953,12 +1210,17 @@ class RGFDist(GFSolver):
                 x_diag_blocks[i]
                 + x_diag_blocks[i] @ (B1 @ D1 + B2 @ D2) @ x_diag_blocks[i]
             )
-
             # Streaming/Sparsifying back to DDSBSparse
             out.local_blocks[i, i] = x_diag_blocks[i]
 
         a.local_blocks[1, 0] = buffer_upper[0]
         a.local_blocks[0, 1] = buffer_lower[0]
+        if self.solve_lesser:
+            bl.local_blocks[1, 0] = xl_buffer_upper[0]
+            bl.local_blocks[0, 1] = xl_buffer_lower[0]
+        if self.solve_greater:
+            bg.local_blocks[1, 0] = xg_buffer_upper[0]
+            bg.local_blocks[0, 1] = xg_buffer_lower[0]
 
     def selected_inv(
         self,
@@ -1021,13 +1283,155 @@ class RGFDist(GFSolver):
 
     def selected_solve(
         self,
-        a,
-        sigma_lesser,
-        sigma_greater,
-        obc_blocks=None,
-        out=None,
-        return_retarded=False,
-        return_current=False,
+        a: DBSparse,
+        out: DBSparse,
+        bl: DBSparse = None,
+        bg: DBSparse = None,
+        xl_out: DBSparse = None,
+        xg_out: DBSparse = None,
+        comm: MPI.Comm = MPI.COMM_WORLD,
     ):
-        # TODO: Implement selected_solve.
-        ...
+        if bl is None and bg is None:
+            return self.selected_inv(a, out, comm)
+
+        # Initialize temporary buffers.
+        reduced_system = ReducedSystem(comm=comm, solve_lesser=bl is not None, solve_greater=bg is not None)
+
+        buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+        buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+        x_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
+        if reduced_system.solve_lesser:
+            bl_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+            bl_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xl_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
+        else:
+            xl_diag_blocks = None
+            bl_buffer_upper = None
+            bl_buffer_lower = None
+        if reduced_system.solve_greater:
+            bg_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+            bg_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xg_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
+        else:
+            xg_diag_blocks = None
+            bg_buffer_upper = None
+            bg_buffer_lower = None
+
+        if comm.rank == 0:
+            # Direction: downward Schur-complement
+            self._downward_schur(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                invert_last_block=False,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+            )
+        elif comm.rank == comm.size - 1:
+            # Direction: upward Schur-complement
+            self._upward_schur(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                invert_last_block=False,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+            )
+        else:
+            # Permuted Schur-complement
+            self._permuted_schur(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                buffer_lower=buffer_lower,
+                buffer_upper=buffer_upper,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                bl_buffer_lower=bl_buffer_lower,
+                bl_buffer_upper=bl_buffer_upper,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+                bg_buffer_lower=bg_buffer_lower,
+                bg_buffer_upper=bg_buffer_upper,
+            )
+
+        # Construct the reduced system.
+        reduced_system.gather(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                buffer_lower=buffer_lower,
+                buffer_upper=buffer_upper,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                bl_buffer_lower=bl_buffer_lower,
+                bl_buffer_upper=bl_buffer_upper,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+                bg_buffer_lower=bg_buffer_lower,
+                bg_buffer_upper=bg_buffer_upper,
+            )
+        # Perform selected-inversion on the reduced system.
+        reduced_system.solve()
+        # Scatter the result to the output matrix.
+        reduced_system.scatter(
+                x_diag_blocks=x_diag_blocks, 
+                buffer_lower=buffer_lower,
+                buffer_upper=buffer_upper,
+                out=out,
+                xl_diag_blocks=xl_diag_blocks,
+                bl_buffer_lower=bl_buffer_lower,
+                bl_buffer_upper=bl_buffer_upper,
+                xl_out=xl_out,
+                xg_diag_blocks=xg_diag_blocks,
+                bg_buffer_lower=bg_buffer_lower,
+                bg_buffer_upper=bg_buffer_upper,
+                xg_out=xg_out,
+            )
+
+        if comm.rank == 0:
+            # Direction: upward sell-inv
+            self._downward_selinv(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                out=out,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                xl_out=xl_out,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+                xg_out=xg_out,
+            )
+        elif comm.rank == comm.size - 1:
+            # Direction: downward sell-inv
+            self._upward_selinv(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                out=out,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                xl_out=xl_out,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+                xg_out=xg_out,
+            )
+        else:
+            # Permuted Sell-inv
+            self._permuted_selinv(
+                a=a, 
+                x_diag_blocks=x_diag_blocks, 
+                buffer_lower=buffer_lower,
+                buffer_upper=buffer_upper,
+                out=out,
+                bl=bl,
+                xl_diag_blocks=xl_diag_blocks,
+                xl_buffer_lower=bl_buffer_lower,
+                xl_buffer_upper=bl_buffer_upper,
+                xl_out=xl_out,
+                bg=bg,
+                xg_diag_blocks=xg_diag_blocks,
+                xg_buffer_lower=bg_buffer_lower,
+                xg_buffer_upper=bg_buffer_upper,
+                xg_out=xg_out,
+            )
+

@@ -3,6 +3,9 @@
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class Full(NEVP):
@@ -21,6 +24,7 @@ class Full(NEVP):
 
     """
 
+    @profiler.profile(level="debug")
     def _solve(
         self, a_xx: tuple[NDArray, ...], eig_compute_location: str = "numpy"
     ) -> tuple[NDArray, NDArray]:
@@ -67,6 +71,7 @@ class Full(NEVP):
 
         return w, v
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a_xx: tuple[NDArray, ...],

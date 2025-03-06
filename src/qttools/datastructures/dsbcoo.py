@@ -5,8 +5,11 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
+
+profiler = Profiler()
 
 
 class DSBCOO(DSBSparse):
@@ -57,6 +60,7 @@ class DSBCOO(DSBSparse):
         # *slices* for faster access.
         self._block_slice_cache = {}
 
+    @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
@@ -118,6 +122,7 @@ class DSBCOO(DSBSparse):
             ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
         ]
 
+    @profiler.profile(level="debug")
     def _set_items(
         self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
@@ -196,6 +201,7 @@ class DSBCOO(DSBSparse):
         ]
         return
 
+    @profiler.profile(level="debug")
     def _get_block_slice(self, row: int, col: int) -> slice:
         """Gets the slice of data corresponding to a given block.
 
@@ -228,6 +234,7 @@ class DSBCOO(DSBSparse):
         self._block_slice_cache[(row, col)] = block_slice
         return block_slice
 
+    @profiler.profile(level="debug")
     def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
@@ -317,6 +324,7 @@ class DSBCOO(DSBSparse):
         cols = self.cols[block_slice] - self.block_offsets[col]
         return data_stack[..., block_slice], (rows, cols)
 
+    @profiler.profile(level="debug")
     def _set_block(
         self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
@@ -349,6 +357,7 @@ class DSBCOO(DSBSparse):
             self.data[*stack_index][..., block_slice],
         )
 
+    @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
         if not isinstance(other, DSBCOO):
@@ -455,6 +464,7 @@ class DSBCOO(DSBSparse):
         self.num_blocks = len(block_sizes)
         self._block_slice_cache = {}
 
+    @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCOO":
         """Performs a local transposition of the matrix.
 
@@ -524,6 +534,7 @@ class DSBCOO(DSBSparse):
 
         return self if copy else None
 
+    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
@@ -541,6 +552,7 @@ class DSBCOO(DSBSparse):
         """
         return self.rows, self.cols
 
+    @profiler.profile(level="api")
     @classmethod
     def from_sparray(
         cls,

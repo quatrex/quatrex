@@ -4,7 +4,12 @@ import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
+from qttools.profiling import Profiler
 
+profiler = Profiler()
+
+
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Find the ranks of the indices in the offsets.

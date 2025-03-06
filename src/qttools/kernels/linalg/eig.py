@@ -5,9 +5,13 @@ import numpy as np
 from numba.typed import List
 
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
+profiler = Profiler()
 
+
+@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def _eig_numba(
     A: NDArray | List[NDArray],
@@ -38,6 +42,7 @@ def _eig_numba(
         vs[i][:] = v
 
 
+@profiler.profile(level="debug")
 def _eig_numpy(
     A: NDArray | List[NDArray],
 ) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
@@ -84,6 +89,7 @@ def _eig_numpy(
     return w, v
 
 
+@profiler.profile(level="debug")
 def _eig_cupy(
     A: NDArray | List[NDArray],
 ) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
@@ -113,6 +119,7 @@ def _eig_cupy(
         w, v = xp.linalg.eig(A)
 
 
+@profiler.profile(level="api")
 def eig(
     A: NDArray | list[NDArray],
     compute_module: str = "numpy",

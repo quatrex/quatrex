@@ -8,11 +8,19 @@ from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
+from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.mpi_utils import get_section_sizes
+
+profiler = Profiler()
+
 
 rng = xp.random.default_rng(42)
 
 
+@decorate_methods(
+    profiler.profile(level="debug"),
+    exclude=["__call__", "__init__"],
+)
 class Beyn(NEVP):
     """Beyn's integral method for solving NEVP.[^1]
 
@@ -390,6 +398,7 @@ class Beyn(NEVP):
 
         return wrs, vrs, wls, vls
 
+    @profiler.profile(level="api")
     def __call__(
         self, a_xx: tuple[NDArray, ...], left: bool = False
     ) -> tuple[NDArray, NDArray]:

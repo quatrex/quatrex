@@ -1,8 +1,12 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools.datastructures import DSBSparse
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="api")
 def correct_out_range_index(i: int, k: int, num_blocks: int):
     # find the index of block in the matrix being repeated into open-end
     # based on the difference of row and col, ie diagonal
@@ -14,6 +18,7 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
     return (i_2, k_2)
 
 
+@profiler.profile(level="api")
 def bd_matmul(
     a: DSBSparse,
     b: DSBSparse,
@@ -75,6 +80,7 @@ def bd_matmul(
     return
 
 
+@profiler.profile(level="api")
 def bd_sandwich(
     a: DSBSparse,
     b: DSBSparse,
@@ -144,6 +150,7 @@ def bd_sandwich(
     return
 
 
+@profiler.profile(level="api")
 def btd_matmul(
     a: DSBSparse,
     b: DSBSparse,
@@ -193,6 +200,7 @@ def btd_matmul(
     out.blocks[-1, -1] += a.blocks[-2, -1] @ b.blocks[-1, -2]
 
 
+@profiler.profile(level="api")
 def btd_sandwich(
     a: DSBSparse,
     b: DSBSparse,

@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+from qttools import sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
 
@@ -22,10 +23,11 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
 def bd_matmul(
     a: DSBSparse,
     b: DSBSparse,
-    out: DSBSparse,
+    out: DSBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
+    accumulator_dtype=xp.complex128,
 ):
     """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
 
@@ -37,7 +39,7 @@ def bd_matmul(
         The second block diagonal matrix.
     out : DSBSparse
         The output matrix. This matrix must have the same block size as
-        `a` and `b`. It will compute up to `out_numdiag`.
+        `a` and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
         The number of diagonals in input matrices
     out_num_diag: int
@@ -46,6 +48,10 @@ def bd_matmul(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
 
     """
     if a.distribution_state == "nnz" or b.distribution_state == "nnz":
@@ -55,13 +61,18 @@ def bd_matmul(
     num_blocks = len(a.block_sizes)
 
     # Make sure the output matrix is initialized to zero.
-    out.data = 0
+    if out is not None:
+        out.data = 0
+        out_block_coo = False
+    else:
+        out_block_coo = True
+        out = [[None] * num_blocks] * num_blocks
 
     for i in range(num_blocks):
         for j in range(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
-            tmp = out.blocks[i, j]
+            tmp = (out.blocks[i, j]).astype(accumulator_dtype)
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
                     continue
@@ -75,19 +86,25 @@ def bd_matmul(
                         tmp += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
                     else:
                         tmp += a.blocks[i, k] @ b.blocks[k, j]
-            out.blocks[i, j] = tmp
 
-    return
+            if out_block_coo:
+                out[i][j] = sparse.coo_matrix(tmp)
+            else:
+                out.blocks[i, j] = tmp
+
+    if out_block_coo:
+        return out
 
 
 @profiler.profile(level="api")
 def bd_sandwich(
     a: DSBSparse,
     b: DSBSparse,
-    out: DSBSparse,
+    out: DSBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
+    accumulator_dtype=xp.complex128,
 ):
     """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
 
@@ -99,7 +116,7 @@ def bd_sandwich(
         The second block tridiagonal matrix.
     out : DSBSparse
         The output matrix. This matrix must have the same block size as
-        `a`, and `b`. It will compute up to heptadiagonal.
+        `a`, and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
         The number of diagonals in input matrices
     out_num_diag: int
@@ -108,6 +125,10 @@ def bd_sandwich(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
 
     """
     if a.distribution_state == "nnz" or b.distribution_state == "nnz":
@@ -117,11 +138,16 @@ def bd_sandwich(
     num_blocks = len(a.block_sizes)
 
     # Make sure the output matrix is initialized to zero.
-    out.data = 0
+    if out is not None:
+        out.data = 0
+        out_block_coo = False
+    else:
+        out_block_coo = True
+        out = [[None] * num_blocks] * num_blocks
 
     for i in range(num_blocks):
 
-        ab_ik = [None] * num_blocks*2
+        ab_ik = [None] * num_blocks * 2
 
         for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
 
@@ -146,15 +172,19 @@ def bd_sandwich(
                     else:
                         b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = a_im @ b.blocks[b_m, b_k]
+                    ab_ik[k] = (a_im @ b.blocks[b_m, b_k]).astype(
+                        accumulator_dtype
+                    )  # cast data type
                 else:
-                    ab_ik[k] += a_im @ b.blocks[b_m, b_k]
-        
+                    ab_ik[k] += (a_im @ b.blocks[b_m, b_k]).astype(
+                        accumulator_dtype
+                    )  # cast data type
+
         for j in range(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
 
-            partsum = out.blocks[i, j]
+            partsum = (out.blocks[i, j]).astype(accumulator_dtype)  # cast data type
 
             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks)
@@ -164,14 +194,20 @@ def bd_sandwich(
                     if out_range:
                         a_k, a_j = correct_out_range_index(k, j, num_blocks)
                     else:
-                        a_k, a_j = k, j          
+                        a_k, a_j = k, j
                 if ab_ik[k] is None:
-                    continue     
-                partsum += ab_ik[k] @ a.blocks[a_k, a_j]
+                    continue
+                partsum += (ab_ik[k] @ a.blocks[a_k, a_j]).astype(
+                    accumulator_dtype
+                )  # cast data type
 
-            out.blocks[i, j] = partsum
+            if out_block_coo:
+                out[i][j] = sparse.coo_matrix(partsum)
+            else:
+                out.blocks[i, j] = partsum
 
-    return
+    if out_block_coo:
+        return out
 
 
 @profiler.profile(level="api")

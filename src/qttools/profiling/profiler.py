@@ -15,7 +15,7 @@ from typing import Literal
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import xp
-from qttools.utils.gpu_utils import get_cuda_devices
+from qttools.profiling.utils import get_cuda_devices
 
 # Set the whether to profile the GPU.
 PROFILE_GPU = os.environ.get("PROFILE_GPU", "false").lower()

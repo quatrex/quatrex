@@ -6,6 +6,9 @@ from cupyx import jit
 
 from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 @jit.rawkernel()
@@ -29,6 +32,7 @@ def _find_ranks_kernel(nnz_section_offsets: NDArray, inds: NDArray, ranks: NDArr
             ranks[i] = ranks[i] * (1 - cond) + j * cond
 
 
+@profiler.profile(level="api")
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Finds the ranks of the indices in the offsets.
 

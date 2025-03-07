@@ -1,6 +1,9 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 if xp.__name__ == "cupy":
     import cupyx as cpx
@@ -51,6 +54,7 @@ if xp.__name__ == "cupy":
                 output[idx] += a_xx[m_idx] * z_i ** (h - b)
 
 
+@profiler.profile(level="debug")
 def operator_inverse(
     a_xx: tuple[NDArray, ...],
     z: NDArray,

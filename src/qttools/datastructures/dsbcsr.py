@@ -5,8 +5,11 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
+
+profiler = Profiler()
 
 
 class DSBCSR(DSBSparse):
@@ -54,6 +57,7 @@ class DSBCSR(DSBSparse):
         self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
 
+    @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
@@ -110,6 +114,7 @@ class DSBCSR(DSBSparse):
             ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
         ]
 
+    @profiler.profile(level="debug")
     def _set_items(
         self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
@@ -173,6 +178,7 @@ class DSBCSR(DSBSparse):
         ]
         return
 
+    @profiler.profile(level="debug")
     def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
@@ -231,8 +237,10 @@ class DSBCSR(DSBSparse):
         )
 
         return block
-    
-    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+
+    def _get_sparse_block(
+        self, stack_index: tuple, row: int, col: int
+    ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
         This is supposed to be a low-level method that does not perform
@@ -270,6 +278,7 @@ class DSBCSR(DSBSparse):
             cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
             return data_stack[..., rowptr[0] : rowptr[-1]], cols, rowptr - rowptr[0]
 
+    @profiler.profile(level="debug")
     def _set_block(
         self, stack_index: tuple, row: int, col: int, block: NDArray
     ) -> None:
@@ -303,6 +312,7 @@ class DSBCSR(DSBSparse):
             data=self.data[*stack_index],
         )
 
+    @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSBSparse") -> None:
         """Checks if the other matrix is commensurate."""
         if not isinstance(other, DSBCSR):
@@ -406,6 +416,7 @@ class DSBCSR(DSBSparse):
         self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
         self.num_blocks = len(block_sizes)
 
+    @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCSR":
         """Performs a local transposition of the matrix.
 
@@ -470,6 +481,7 @@ class DSBCSR(DSBSparse):
 
         return self if copy else None
 
+    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
@@ -492,6 +504,7 @@ class DSBCSR(DSBSparse):
 
         return rows, self.cols
 
+    @profiler.profile(level="api")
     @classmethod
     def from_sparray(
         cls,

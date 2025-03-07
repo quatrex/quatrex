@@ -6,6 +6,9 @@ from cupyx import jit
 from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 @jit.rawkernel()
@@ -105,6 +108,7 @@ def _compute_block_inds_kernel(
         block_inds[i] = ind
 
 
+@profiler.profile(level="api")
 def find_inds(
     rowptr_map: dict,
     block_offsets: NDArray,
@@ -205,6 +209,7 @@ def _expand_rows_kernel(rows: NDArray, rowptr: NDArray):
             rows[j] = i
 
 
+@profiler.profile(level="api")
 def densify_block(
     block: NDArray,
     block_offset: NDArray,
@@ -239,6 +244,7 @@ def densify_block(
     block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
 
 
+@profiler.profile(level="api")
 def sparsify_block(
     block: NDArray,
     block_offset: NDArray,
@@ -273,6 +279,7 @@ def sparsify_block(
     data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
 
 
+@profiler.profile(level="api")
 def compute_rowptr_map(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> dict:

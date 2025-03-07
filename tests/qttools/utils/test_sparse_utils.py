@@ -1,11 +1,15 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import functools
+
 import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.utils.sparse_utils import product_sparsity_pattern, product_sparsity_pattern_dsbsparse
+from qttools.utils.sparse_utils import (
+    product_sparsity_pattern,
+    product_sparsity_pattern_dsbsparse,
+)
 
 
 def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
@@ -29,7 +33,9 @@ def test_product_sparsity(
     ref = product.toarray()
 
     rows, cols = product_sparsity_pattern(*matrices)
-    val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=product.shape).toarray()
+    val = sparse.coo_matrix(
+        (xp.ones(len(rows)), (rows, cols)), shape=product.shape
+    ).toarray()
 
     assert xp.allclose(ref, val)
 
@@ -41,14 +47,18 @@ def test_product_sparsity_dsbsparse(
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
     matrices = [_create_coo(block_sizes) for _ in range(num_matrices)]
-    dsbsparse_matrices = [dsbsparse_type.from_sparray(matrix, block_sizes, (1,)) for matrix in matrices]
+    dsbsparse_matrices = [
+        dsbsparse_type.from_sparray(matrix, block_sizes, (1,)) for matrix in matrices
+    ]
 
     product = functools.reduce(lambda x, y: x @ y, matrices)
     product.data[:] = 1
     ref = product.toarray()
 
     rows, cols = product_sparsity_pattern_dsbsparse(*dsbsparse_matrices)
-    val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=product.shape).toarray()
+    val = sparse.coo_matrix(
+        (xp.ones(len(rows)), (rows, cols)), shape=product.shape
+    ).toarray()
 
     assert xp.allclose(ref, val)
 

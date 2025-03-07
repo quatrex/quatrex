@@ -5,6 +5,9 @@ import warnings
 from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.lyapunov.utils import system_reduction
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class Doubling(LyapunovSolver):
@@ -32,6 +35,7 @@ class Doubling(LyapunovSolver):
         self.convergence_tol = convergence_tol
         self.reduce_sparsity = reduce_sparsity
 
+    @profiler.profile(level="debug")
     def _solve(
         self,
         a: NDArray,
@@ -78,6 +82,7 @@ class Doubling(LyapunovSolver):
 
         return x
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

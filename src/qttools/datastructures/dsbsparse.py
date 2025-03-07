@@ -7,12 +7,16 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import ArrayLike, NDArray, sparse, xp
+from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+
+profiler = Profiler()
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
+@profiler.profile(level="debug")
 def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
     """Gets a block view of an array along a given axis.
 
@@ -192,6 +196,7 @@ class DSBSparse(ABC):
         """Sets the block sizes."""
         ...
 
+    @profiler.profile(level="debug")
     def _normalize_index(self, index: tuple) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
         if not isinstance(index, tuple):
@@ -233,7 +238,7 @@ class DSBSparse(ABC):
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
         return _DSBlockIndexer(self)
-    
+
     @property
     def sparse_blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
@@ -382,9 +387,11 @@ class DSBSparse(ABC):
 
         """
         ...
-    
+
     @abstractmethod
-    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+    def _get_sparse_block(
+        self, stack_index: tuple, row: int, col: int
+    ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
         This is supposed to be a low-level method that does not perform
@@ -452,6 +459,7 @@ class DSBSparse(ABC):
         """Matrix multiplication of two DSBSparse matrices."""
         ...
 
+    @profiler.profile(level="api")
     def block_diagonal(self, offset: int = 0) -> list[NDArray]:
         """Returns the block diagonal of the matrix.
 
@@ -477,6 +485,7 @@ class DSBSparse(ABC):
 
         return blocks
 
+    @profiler.profile(level="api")
     def diagonal(self) -> NDArray:
         """Returns the diagonal elements of the matrix.
 
@@ -500,6 +509,7 @@ class DSBSparse(ABC):
         self.return_dense = original_return_dense
         return xp.concatenate(diagonals, axis=-1)
 
+    @profiler.profile(level="debug")
     def _dtranspose(
         self, block_axis: int, concatenate_axis: int, discard: bool = False
     ) -> None:
@@ -552,6 +562,7 @@ class DSBSparse(ABC):
 
         # self._data = np.moveaxis(self._data, concatenate_axis, -2).reshape(new_shape)
 
+    @profiler.profile(level="api")
     def dtranspose(self, discard: bool = False) -> None:
         """Performs a distributed transposition of the datastructure.
 
@@ -616,6 +627,7 @@ class DSBSparse(ABC):
         """
         ...
 
+    @profiler.profile(level="api")
     def to_dense(self) -> NDArray:
         """Converts the local data to a dense array.
 
@@ -682,6 +694,7 @@ class DSBSparse(ABC):
         """
         ...
 
+    @profiler.profile(level="api")
     @classmethod
     def zeros_like(cls, dsbsparse: "DSBSparse") -> "DSBSparse":
         """Creates a new DSBSparse matrix with the same shape and dtype.
@@ -798,6 +811,7 @@ class _DStackView:
         return _DSBlockIndexer(self._dsbsparse, self._stack_index)
 
 
+@decorate_methods(profiler.profile(level="debug"))
 class _DSBlockIndexer:
     """A utility class to locate blocks in the distributed stack.
 
@@ -819,7 +833,12 @@ class _DSBlockIndexer:
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple = (Ellipsis,), return_dense: bool = True) -> None:
+    def __init__(
+        self,
+        dsbsparse: DSBSparse,
+        stack_index: tuple = (Ellipsis,),
+        return_dense: bool = True,
+    ) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
         self._num_blocks = dsbsparse.num_blocks

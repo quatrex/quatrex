@@ -3,8 +3,12 @@
 import inspect
 
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="debug")
 def get_array_module_name(arr: NDArray) -> str:
     """Given an array, returns the array's module name.
 
@@ -25,6 +29,7 @@ def get_array_module_name(arr: NDArray) -> str:
     return submodule.__name__.split(".")[0]
 
 
+@profiler.profile(level="debug")
 def get_host(arr: NDArray) -> NDArray:
     """Returns the host array of the given array.
 
@@ -44,6 +49,7 @@ def get_host(arr: NDArray) -> NDArray:
     return arr.get()
 
 
+@profiler.profile(level="debug")
 def get_device(arr: NDArray) -> NDArray:
     """Returns the device array of the given array.
 
@@ -63,6 +69,7 @@ def get_device(arr: NDArray) -> NDArray:
     return xp.asarray(arr)
 
 
+@profiler.profile(level="debug")
 def get_any_location(arr: NDArray, output_module: str):
     """Returns the array in the desired location.
 
@@ -89,6 +96,7 @@ def get_any_location(arr: NDArray, output_module: str):
         raise ValueError(f"Invalid output location: {output_module}")
 
 
+@profiler.profile(level="debug")
 def synchronize_current_stream():
     """Synchronizes the current stream if using cupy.
 
@@ -97,25 +105,3 @@ def synchronize_current_stream():
     """
     if xp.__name__ == "cupy":
         xp.cuda.get_current_stream().synchronize()
-
-
-def get_cuda_devices(return_names: bool = False):
-    """Returns the list of available CUDA devices.
-
-    Parameters
-    ----------
-    return_names
-        If the device names should be written out.
-
-    Returns
-    ----------
-    list
-        List of available devices
-    """
-    if xp.__name__ != "cupy":
-        return []
-    num_devices = xp.cuda.runtime.getDeviceCount()
-    if return_names:
-        return [f"cuda:{i}" for i in range(num_devices)]
-
-    return list(range(num_devices))

@@ -6,8 +6,15 @@ from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
+from qttools.profiling import Profiler, decorate_methods
+
+profiler = Profiler()
 
 
+@decorate_methods(
+    profiler.profile(level="debug"),
+    exclude=["__call__", "__init__"],
+)
 class Spectral(OBCSolver):
     """Spectral open-boundary condition solver.
 
@@ -568,6 +575,7 @@ class Spectral(OBCSolver):
 
         return vls
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

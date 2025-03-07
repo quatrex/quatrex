@@ -4,8 +4,12 @@ import functools
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="debug")
 def densify_selected_blocks(
     coo: sparse.coo_matrix,
     block_sizes: NDArray,
@@ -63,6 +67,7 @@ def densify_selected_blocks(
     return coo
 
 
+@profiler.profile(level="debug")
 def product_sparsity_pattern(
     *matrices: sparse.spmatrix,
 ) -> tuple[NDArray, NDArray]:
@@ -107,11 +112,10 @@ def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
             data = xp.ones_like(sparse_data[0][-1], dtype=xp.float32)
             sparse_data = (data, *sparse_data[1:])
             blocks[i, j] = sparse.csr_matrix(
-                sparse_data,
-                shape=(matrix.block_sizes[i], matrix.block_sizes[j]))
-    
-    return blocks
+                sparse_data, shape=(matrix.block_sizes[i], matrix.block_sizes[j])
+            )
 
+    return blocks
 
 
 def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, NDArray]:
@@ -155,13 +159,15 @@ def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, N
                         c_block = a_blocks[i, k] @ b_blocks[k, j]
                     else:
                         c_block += a_blocks[i, k] @ b_blocks[k, j]
-                
+
                 if c_block is None:
-                    c_block = sparse.csr_matrix((block_sizes[i], block_sizes[j]), dtype=xp.float32)
+                    c_block = sparse.csr_matrix(
+                        (block_sizes[i], block_sizes[j]), dtype=xp.float32
+                    )
                 c_blocks[i, j] = c_block
-        
+
         a_blocks = c_blocks
-    
+
     c_rows = xp.empty(0, dtype=xp.int32)
     c_cols = xp.empty(0, dtype=xp.int32)
 

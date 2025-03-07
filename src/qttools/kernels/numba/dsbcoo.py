@@ -4,7 +4,12 @@ import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
+from qttools.profiling import Profiler
 
+profiler = Profiler()
+
+
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def find_inds(
     self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
@@ -50,6 +55,7 @@ def find_inds(
     return inds, value_inds, np.max(counts)
 
 
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
@@ -98,6 +104,7 @@ def compute_block_slice(
     return inds[0], inds[-1] + 1
 
 
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def densify_block(
     block: NDArray,
@@ -129,6 +136,7 @@ def densify_block(
         block[..., rows[i], cols[i]] = data[..., i]
 
 
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
@@ -149,6 +157,7 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
         data[..., i] = block[..., rows[i], cols[i]]
 
 
+@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def compute_block_sort_index(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray

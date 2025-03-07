@@ -12,6 +12,7 @@ from qttools.datastructures import (
     btd_matmul,
     btd_sandwich,
     bd_matmul_distr,
+    bd_sandwich_distr,
 )
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -256,6 +257,33 @@ def test_bd_matmul_distr(
     val = out.to_dense()
 
     assert xp.allclose(val, ref)
+
+
+@pytest.mark.mpi
+def test_bd_sandwich(
+    dbsparse_type: DBSparse,
+    block_sizes: NDArray,
+    # global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    coo = comm.bcast(coo, root=0)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dense = dsbsparse.to_dense()
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dbsparse_type.from_sparray(coo @ coo @ coo, block_sizes) #, global_stack_shape)
+    out.local_data[:] = 0
+
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
+    start_block = sum(local_blocks[:comm.rank])
+    end_block = start_block + local_blocks[comm.rank]
+
+    bd_sandwich_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block)
+
+    assert xp.allclose(dense @ dense @ dense, out.to_dense())
+
 
 
 @pytest.mark.mpi

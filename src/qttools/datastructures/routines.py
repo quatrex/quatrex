@@ -360,8 +360,10 @@ class BlockMatrix(dict):
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             return self.dbsparse.local_blocks[key]
-        return xp.zeros((self.dbsparse.block_sizes[key[0]],
-                         self.dbsparse.block_sizes[key[1]]),
+        print(f"{comm.rank=}, {key=}, {self.origin=}")
+        raise KeyError(key)
+        return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
+                         int(self.dbsparse.block_sizes[key[1]])),
                         dtype=self.dbsparse.local_data.dtype)
 
     def __setitem__(self, key, val):
@@ -372,11 +374,14 @@ class BlockMatrix(dict):
             return super(BlockMatrix, self).__setitem__(key, val)
 
     def toarray(self):
-        size = sum(self.dbsparse.block_sizes)
+        size = int(sum(self.dbsparse.block_sizes))
         out = xp.zeros((size, size), dtype=self.dbsparse.local_data.dtype)
         for i, (isz, ioff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
             for j, (jsz, joff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
-                out[ioff:ioff + isz, joff:joff + jsz] = self[i, j]
+                try:
+                    out[ioff:ioff + isz, joff:joff + jsz] = self[i, j]
+                except KeyError:
+                    pass
         return out
 
 
@@ -401,8 +406,12 @@ def arrow_partition_halo_comm(
             for j in range(start_block, min(a.dbsparse.num_blocks, i + a_off + 1)):
                 reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=0))
         for j in range(start_block, start_block + c_off):
-            for i in range(start_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+        # for j in range(start_block, min(b.dbsparse.num_blocks, start_block + bc_off)):
+            # for i in range(start_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+            for i in range(max(start_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
                 reqs.append(comm.isend(b[i, j], dest=rank - 1, tag=1))
+                # if sandwich:
+                #     reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=2))
     # Send halo blocks to next rank
     if end_block < a.dbsparse.num_blocks:
         for i in range(end_block, end_block + a_off):
@@ -412,6 +421,8 @@ def arrow_partition_halo_comm(
         for j in range(end_block, end_block + b_off):
             for i in range(max(0, j - b_off), end_block):
                 reqs.append(comm.isend(b[i, j], dest=rank + 1, tag=1))
+                # if sandwich:
+                #     reqs.append(comm.isend(a[i, j], dest=rank + 1, tag=2))
     # Receive halo blocks from next rank
     if end_block < a.dbsparse.num_blocks:
         for i in range(end_block, end_block + c_off):
@@ -419,8 +430,12 @@ def arrow_partition_halo_comm(
                 a[i, j] = comm.recv(source=rank + 1, tag=0)
     if end_block < b.dbsparse.num_blocks:
         for j in range(end_block, end_block + c_off):
-            for i in range(end_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+        # for j in range(end_block, min(b.dbsparse.num_blocks, end_block + bc_off)):
+            # for i in range(end_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+            for i in range(max(end_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
                 b[i, j] = comm.recv(source=rank + 1, tag=1)
+                # if sandwich:
+                #     a[i, j] = comm.recv(source=rank + 1, tag=2)
     # Receive halo blocks from previous rank
     if start_block > 0:
         for i in range(start_block, start_block + a_off):
@@ -429,14 +444,17 @@ def arrow_partition_halo_comm(
         for j in range(start_block, start_block + b_off):
             for i in range(max(0, j - b_off), start_block):
                 b[i, j] = comm.recv(source=rank - 1, tag=1)
+                # if sandwich:
+                #     a[i, j] = comm.recv(source=rank - 1, tag=2)
     Request.Waitall(reqs)
 
 
 def bd_matmul_distr(
-    a: DBSparse,
-    b: DBSparse,
+    a: DBSparse | BlockMatrix,
+    b: DBSparse | BlockMatrix,
     out: DBSparse | None,
-    in_num_diag: int = 3,
+    a_num_diag: int = 3,
+    b_num_diag: int = 3,
     out_num_diag: int = 5,
     start_block: int = 0,
     end_block: int = None,
@@ -474,39 +492,52 @@ def bd_matmul_distr(
     #     raise ValueError(
     #         "Matrix multiplication is not supported for matrices in nnz distribution state."
     #     )
-    num_blocks = len(a.block_sizes)
-    end_block = end_block or num_blocks
-    accumulator_dtype = accumulator_dtype or a.dtype
 
-    local_keys = set()
-    for i in range(start_block, end_block):
-        for j in range(start_block, min(num_blocks, i + in_num_diag // 2 + 1)):
-            local_keys.add((i, j))
-    for j in range(start_block, end_block):
-        for i in range(end_block, min(num_blocks, j + in_num_diag // 2 + 1)):
-            local_keys.add((i, j))
-    
-    a_ = BlockMatrix(a, local_keys, (start_block, start_block))
-    b_ = BlockMatrix(b, local_keys, (start_block, start_block))
+    if isinstance(a, BlockMatrix):
+        a_ = a
+        num_blocks = len(a.dbsparse.block_sizes)
+        end_block = end_block or num_blocks
+        accumulator_dtype = accumulator_dtype or a.dbsparse.dtype
+    else:
+        num_blocks = len(a.block_sizes)
+        end_block = end_block or num_blocks
+        accumulator_dtype = accumulator_dtype or a.dtype
+        local_keys = set()
+        for i in range(start_block, end_block):
+            for j in range(start_block, min(num_blocks, i + a_num_diag // 2 + 1)):
+                local_keys.add((i, j))
+        for j in range(start_block, end_block):
+            for i in range(end_block, min(num_blocks, j + a_num_diag // 2 + 1)):
+                local_keys.add((i, j))
+        a_ = BlockMatrix(a, local_keys, (start_block, start_block))
 
-    arrow_partition_halo_comm(a_, b_, in_num_diag, in_num_diag, start_block, end_block, comm)
-    
-    local_keys = set()
-    for i in range(start_block, end_block):
-        for j in range(start_block, min(num_blocks, i + out_num_diag // 2 + 1)):
-            local_keys.add((i, j))
-    for j in range(start_block, end_block):
-        for i in range(end_block, min(num_blocks, j + out_num_diag // 2 + 1)):
-            local_keys.add((i, j))
+    if isinstance(b, BlockMatrix):
+        b_ = b
+    else:
+        local_keys = set()
+        for i in range(start_block, end_block):
+            for j in range(start_block, min(num_blocks, i + b_num_diag // 2 + 1)):
+                local_keys.add((i, j))
+        for j in range(start_block, end_block):
+            for i in range(end_block, min(num_blocks, j + b_num_diag // 2 + 1)):
+                local_keys.add((i, j))
+        b_ = BlockMatrix(b, local_keys, (start_block, start_block))
+
+    arrow_partition_halo_comm(a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm)
 
     # Make sure the output matrix is initialized to zero.
     if out is not None:
         out.local_data[:] = 0
-        out_block = False
+        local_keys = set()
+        for i in range(start_block, end_block):
+            for j in range(start_block, min(num_blocks, i + out_num_diag // 2 + 1)):
+                local_keys.add((i, j))
+        for j in range(start_block, end_block):
+            for i in range(end_block, min(num_blocks, j + out_num_diag // 2 + 1)):
+                local_keys.add((i, j))
         out_ = BlockMatrix(out, local_keys, (start_block, start_block))
     else:
-        out_block = True
-        out = {}
+        out_ = BlockMatrix(a, set(), (start_block, start_block))
     
     for sector in ((start_block, end_block, start_block, num_blocks),
                    (end_block, num_blocks, start_block, end_block)):
@@ -519,8 +550,8 @@ def bd_matmul_distr(
             ):
                 partsum = None
 
-                for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
-                    if abs(j - k) > in_num_diag // 2:
+                for k in range(i - a_num_diag // 2, i + a_num_diag // 2 + 1):
+                    if abs(j - k) > b_num_diag // 2:
                         continue
                     out_range = (k < 0) or (k >= num_blocks)
                     if out_range and (not spillover_correction):
@@ -537,10 +568,159 @@ def bd_matmul_distr(
                         else:
                             partsum += a_[i_a, k_a] @ b_[k_b, j_b]
 
-                if out_block:
-                    out[i, j] = partsum
-                else:
-                    out_[i, j] = partsum
+                # if out_block:
+                #     out[i, j] = partsum
+                # else:
+                out_[i, j] = partsum
 
-    if out_block:
-        return out
+    # if out_block:
+    return out_
+
+
+def bd_sandwich_distr(
+    a: DBSparse,
+    b: DBSparse,
+    out: DBSparse | None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 7,
+    start_block: int = 0,
+    end_block: int = None,
+    comm: Intracomm = comm,
+    spillover_correction: bool = False,
+    accumulator_dtype=None,
+
+):
+    """Matrix multiplication of two `a @ b` BD DBSparse matrices.
+
+    Parameters
+    ----------
+    a : DBSparse
+        The first block diagonal matrix.
+    b : DBSparse
+        The second block diagonal matrix.
+    out : DBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_num_diag` diagonals.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
+
+    """
+    tmp_num_diag = 2 * in_num_diag - 1
+    tmp = bd_matmul_distr(a, b, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, spillover_correction, accumulator_dtype)
+    return bd_matmul_distr(tmp, a, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, spillover_correction, accumulator_dtype)
+    # # if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+    # #     raise ValueError(
+    # #         "Matrix multiplication is not supported for matrices in nnz distribution state."
+    # #     )
+    # num_blocks = len(a.block_sizes)
+    # end_block = end_block or num_blocks
+    # accumulator_dtype = accumulator_dtype or a.dtype
+
+    # local_keys = set()
+    # for i in range(start_block, end_block):
+    #     for j in range(start_block, min(num_blocks, i + in_num_diag // 2 + 1)):
+    #         local_keys.add((i, j))
+    # for j in range(start_block, end_block):
+    #     for i in range(end_block, min(num_blocks, j + in_num_diag // 2 + 1)):
+    #         local_keys.add((i, j))
+    
+    # a_ = BlockMatrix(a, local_keys, (start_block, start_block))
+    # b_ = BlockMatrix(b, local_keys, (start_block, start_block))
+
+    # arrow_partition_halo_comm(a_, b_, in_num_diag, in_num_diag, start_block, end_block, comm)
+    
+    # local_keys = set()
+    # for i in range(start_block, end_block):
+    #     for j in range(start_block, min(num_blocks, i + out_num_diag // 2 + 1)):
+    #         local_keys.add((i, j))
+    # for j in range(start_block, end_block):
+    #     for i in range(end_block, min(num_blocks, j + out_num_diag // 2 + 1)):
+    #         local_keys.add((i, j))
+
+    # # Make sure the output matrix is initialized to zero.
+    # if out is not None:
+    #     out.local_data[:] = 0
+    #     out_block = False
+    #     out_ = BlockMatrix(out, local_keys, (start_block, start_block))
+    # else:
+    #     out_block = True
+    #     out = {}
+    
+    # for sector in ((start_block, end_block, start_block, num_blocks),
+    #                (end_block, num_blocks, start_block, end_block)):
+        
+    #     brow_start, brow_end, bcol_start, bcol_end = sector
+
+    #     for i in range(brow_start, brow_end):
+
+    #         ab_ik = [None] * num_blocks * 2
+
+    #         for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+
+    #             out_range = (m < 0) or (m >= num_blocks)
+    #             if out_range and (not spillover_correction):
+    #                 continue
+    #             else:
+    #                 if out_range:
+    #                     a_i, a_m = correct_out_range_index(i, m, num_blocks)
+    #                 else:
+    #                     a_i, a_m = i, m
+
+    #             a_im = a_[a_i, a_m]
+            
+    #             for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
+    #                 out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
+    #                 if out_range and (not spillover_correction):
+    #                     continue
+    #                 else:
+    #                     if out_range:
+    #                         b_m, b_k = correct_out_range_index(m, k, num_blocks)
+    #                     else:
+    #                         b_m, b_k = m, k
+    #                 if ab_ik[k] is None:
+    #                     ab_ik[k] = (a_im @ b_[b_m, b_k]).astype(
+    #                         accumulator_dtype
+    #                     )  # cast data type
+    #                 else:
+    #                     ab_ik[k] += a_im @ b_[b_m, b_k]  # cast data type
+
+    #         for j in range(
+    #             max(i - out_num_diag // 2, bcol_start), min(i + out_num_diag // 2 + 1, bcol_end)
+    #         ):
+    #             partsum = None
+
+    #             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
+    #                 out_range = (k < 0) or (k >= num_blocks)
+    #                 if out_range and (not spillover_correction):
+    #                     continue
+    #                 else:
+    #                     if out_range:
+    #                         a_k, a_j = correct_out_range_index(k, j, num_blocks)
+    #                     else:
+    #                         a_k, a_j = k, j
+    #                 if ab_ik[k] is None:
+    #                     continue
+    #                 if partsum is None:
+    #                     partsum = (ab_ik[k] @ a_[a_k, a_j]).astype(accumulator_dtype)
+    #                 else:
+    #                     partsum += ab_ik[k] @ a_[a_k, a_j]
+
+    #             if out_block:
+    #                 out[i, j] = partsum
+    #             else:
+    #                 out_[i, j] = partsum
+    
+    # # raise NotImplementedError
+
+    # if out_block:
+    #     return out

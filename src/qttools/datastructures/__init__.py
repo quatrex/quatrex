@@ -10,6 +10,7 @@ from qttools.datastructures.routines import (
     btd_matmul,
     btd_sandwich,
     bd_matmul_distr,
+    bd_sandwich_distr,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "bd_matmul",
     "bd_sandwich",
     "bd_matmul_distr",
+    "bd_sandwich_distr",
 ]

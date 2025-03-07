@@ -40,7 +40,7 @@ def read_hr_dat(
         The data type of the Hamiltonian matrix elements. Defaults to
         `numpy.complex128`.
     read_fast : bool, optional
-        Whether to asume that the file is well-formed and all the
+        Whether to assume that the file is well-formatted and all the
         data is sorted correctly. Defaults to `False`.
 
     Returns
@@ -93,6 +93,8 @@ def read_wannier_wout(
     path: Path, transform_home_cell: bool = True
 ) -> tuple[NDArray, NDArray]:
     """Parses the contents of a `seedname.wout` file and returns the Wannier centers and lattice vectors.
+
+    TODO: Add tests.
 
     Parameters
     ----------
@@ -160,7 +162,9 @@ def cutoff_hr(
     value_cutoff: float | None = None,
     R_cutoff: int | tuple[int, int, int] | None = None,
 ) -> NDArray:
-    """Cutoffs the Hamiltonian matrix elements based on their values or the wigner-seitz cell indices.
+    """Cutoffs the Hamiltonian matrix elements based on their values and/or the wigner-seitz cell indices.
+
+    TODO: Add tests.
 
     Parameters
     ----------
@@ -180,7 +184,9 @@ def cutoff_hr(
         return hr
     if value_cutoff is not None:
         hr_cut = hr.copy()
-        hr_cut[hr < value_cutoff] = 0
+        hr_cut[xp.abs(hr) < value_cutoff] = 0
+        # Remove eventual cells with only zeros.
+        hr_cut = hr_cut[hr_cut.any(axis=(-2, -1))]
     if R_cutoff is not None:
         if isinstance(R_cutoff, int):
             R_cutoff = (R_cutoff, R_cutoff, R_cutoff)
@@ -213,7 +219,7 @@ def get_hamiltonian_block(
     global_shift : tuple
         Shift in the supercell system. If you want a
         R-shift of 1 cell in x direction, you would pass (1, 0,
-        0).
+        0). NOTE: this is for the supercell and NOT the unit cell.
 
     Returns
     -------
@@ -272,8 +278,25 @@ def create_hamiltonian(
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
-    and is only connected to nearest-neighboring cells. Note therefore that interactions outside
-    nearest neighbors are not included in the block-tridiagonal Hamiltonian.
+    and is only connected to nearest-neighboring cells. NOTE: interactions outside
+    nearest neighbors are not included in the block-tridiagonal Hamiltonian (see below).
+    It can therefore be important to make sure that the transport cell is large enough, such that
+    each row have the same number of neighbouring cells. Not setting a transport cell will default
+    to a cell that includes all interactions of hR.
+
+      ------- -------
+     | o o o | o o o | x
+     | o o o | o o o | x x  <- cells outside nearest neighbors are not included
+     | o o o | o o o | x x x
+      ------- ------- -------
+     | o o o | o o o | o o o |
+     | o o o | o o o | o o o |
+     | o o o | o o o | o o o |
+      ------- ------- -------
+       x x x | o o o | o o o |
+         x x | o o o | o o o |
+           x | o o o | o o o |
+              ------- -------
 
     Parameters
     ----------

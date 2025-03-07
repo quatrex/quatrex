@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from mpi4py.MPI import Intracomm, Request
+from mpi4py.MPI import COMM_WORLD as comm, Intracomm, Request
 
 from qttools import xp
 from qttools.datastructures import DSBSparse, DBSparse
@@ -424,21 +424,25 @@ def arrow_partition_halo_comm(
 def bd_matmul_distr(
     a: DBSparse,
     b: DBSparse,
-    out: DSBSparse | None,
+    out: DBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 5,
+    start_block: int = 0,
+    end_block: int = None,
+    comm: Intracomm = comm,
     spillover_correction: bool = False,
     accumulator_dtype=None,
+
 ):
-    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+    """Matrix multiplication of two `a @ b` BD DBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DBSparse
         The first block diagonal matrix.
-    b : DSBSparse
+    b : DBSparse
         The second block diagonal matrix.
-    out : DSBSparse
+    out : DBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
@@ -460,14 +464,19 @@ def bd_matmul_distr(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
     num_blocks = len(a.block_sizes)
+    end_block = end_block or num_blocks
+    accumulator_dtype = accumulator_dtype or a.dtype
+    
+    a_ = BlockMatrix(a)
+    b_ = BlockMatrix(b)
 
-    if accumulator_dtype is None:
-        accumulator_dtype = a.dtype
+    arrow_partition_halo_comm(a_, b_, in_num_diag, in_num_diag)
 
     # Make sure the output matrix is initialized to zero.
     if out is not None:
         out.data = 0
         out_block = False
+        out_ = BlockMatrix(out)
     else:
         out_block = True
         out = {}
@@ -478,10 +487,11 @@ def bd_matmul_distr(
         ):
             if out_block:
                 partsum = xp.zeros(
-                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
+                    (a_.dbsparse.block_sizes[i], a_.dbsparse.block_sizes[j]),
+                    dtype=accumulator_dtype
                 )
             else:
-                partsum = (out.blocks[i, j]).astype(accumulator_dtype)
+                partsum = (out_[i, j]).astype(accumulator_dtype)
 
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
@@ -493,14 +503,14 @@ def bd_matmul_distr(
                     if out_range:
                         i_a, k_a = correct_out_range_index(i, k, num_blocks)
                         k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        partsum += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        partsum += a_[i_a, k_a] @ b_[k_b, j_b]
                     else:
-                        partsum += a.blocks[i, k] @ b.blocks[k, j]
+                        partsum += a_[i, k] @ b_[k, j]
 
             if out_block:
                 out[i, j] = partsum
             else:
-                out.blocks[i, j] = partsum
+                out_[i, j] = partsum
 
     if out_block:
         return out

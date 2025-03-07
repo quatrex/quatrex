@@ -255,10 +255,18 @@ class DBCOO(DBSparse):
         cols = coo.col[block_sort_index]
 
         # Find indices
-        split_inds = find_split_indices(rows, cols, block_sizes)
-        local_data = xp.split(data, split_inds)[comm.rank]
-        local_rows = xp.split(rows, split_inds)[comm.rank]
-        local_cols = xp.split(cols, split_inds)[comm.rank]
+        # NOTE: This is arrow-wise partitioning.
+        # TODO: Allow more options, e.g., block row-wise partitioning.
+        section_sizes, __ = get_section_sizes(len(block_sizes), comm.size)
+        section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
+        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        start_idx = block_offsets[section_offsets[comm.rank]]
+        end_idx = block_offsets[section_offsets[comm.rank + 1]]
+        indices = xp.logical_and(xp.logical_and(rows >= start_idx, cols >= start_idx),
+                                 xp.logical_or(rows < end_idx, cols < end_idx))
+        local_data = data[indices]
+        local_rows = rows[indices]
+        local_cols = cols[indices]
 
         # Normalize the row and column indices.
         local_rows -= local_rows.min()

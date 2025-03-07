@@ -13,7 +13,7 @@ class ConvolveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # NOTE: should be calculate from the number of energy points, ranks, and nnz.
-    batch_size: PositiveInt = 1000
+    batch_size: PositiveInt | None = None
 
 
 class ComputeConfig(BaseModel):

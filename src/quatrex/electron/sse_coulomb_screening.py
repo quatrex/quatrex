@@ -182,15 +182,24 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
             )
 
+        if self.batch_size is None:
+            # NOTE: This is a temporary solution. The batch size should be
+            # calculated in the configuration.
+            self.batch_size = g_greater.data.shape[-1]
+
         batch_counts, _ = get_section_sizes(
-            g_greater.total_nnz_size, int(np.ceil(g_greater.total_nnz_size / self.batch_size))
+            g_greater.data.shape[-1], int(np.ceil(g_greater.data.shape[-1] / self.batch_size))
         )
 
         batch_displacements = np.cumsum(
             np.concatenate(([0], np.array(batch_counts)))
         )
 
+        # TODO: the datastructures does not allow for easy slicing of the
+        # data. This is a workaround.
         rows, cols = g_greater.spy()
+        rows = rows[g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[comm.rank + 1]]
+        cols = cols[g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[comm.rank + 1]]
 
         for start, end in zip(batch_displacements, batch_displacements[1:]):
             batch = slice(start, end)

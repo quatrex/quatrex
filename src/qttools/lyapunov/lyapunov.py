@@ -6,6 +6,9 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class LyapunovSolver(ABC):
@@ -76,6 +79,7 @@ class LyapunovMemoizer:
         self.convergence_tol = convergence_tol
         self._cache = {}
 
+    @profiler.profile(level="debug")
     def _call_with_cache(
         self,
         a: NDArray,
@@ -112,6 +116,7 @@ class LyapunovMemoizer:
         self._cache[contact] = out.copy()
         return None
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

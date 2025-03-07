@@ -4,6 +4,9 @@ import warnings
 
 from qttools import NDArray, xp
 from qttools.obc.obc import OBCSolver
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class SanchoRubio(OBCSolver):
@@ -29,6 +32,7 @@ class SanchoRubio(OBCSolver):
         self.max_iterations = max_iterations
         self.convergence_tol = convergence_tol
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

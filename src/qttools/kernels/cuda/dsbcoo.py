@@ -5,6 +5,11 @@ from cupyx import jit
 
 from qttools import NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
+from qttools.profiling import Profiler
+
+# NOTE: CUDA kernels are not profiled, as the jit-compiled kernels
+# cannot find the correct name of the function to profile.
+profiler = Profiler()
 
 
 @jit.rawkernel()
@@ -46,6 +51,7 @@ def _find_inds_kernel(
             counts[i] += cond
 
 
+@profiler.profile(level="api")
 def find_inds(
     self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
 ) -> tuple[NDArray, NDArray, int]:
@@ -129,6 +135,7 @@ def _compute_coo_block_mask_kernel(
         )
 
 
+@profiler.profile(level="api")
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
 ) -> slice:
@@ -175,6 +182,7 @@ def compute_block_slice(
     return inds[0], inds[-1] + 1
 
 
+@profiler.profile(level="api")
 def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the dense block with the given data.
 
@@ -203,6 +211,7 @@ def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     block[..., rows, cols] = data[:]
 
 
+@profiler.profile(level="api")
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
 
@@ -227,6 +236,7 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     data[:] = block[..., rows, cols]
 
 
+@profiler.profile(level="api")
 def compute_block_sort_index(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> NDArray:

@@ -1,5 +1,8 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
 from typing import Callable
+
+from qttools import xp
 
 
 def decorate_methods(
@@ -32,3 +35,25 @@ def decorate_methods(
         return cls
 
     return decorate
+
+
+def get_cuda_devices(return_names: bool = False):
+    """Returns the list of available CUDA devices.
+
+    Parameters
+    ----------
+    return_names
+        If the device names should be written out.
+
+    Returns
+    ----------
+    list
+        List of available devices
+    """
+    if xp.__name__ != "cupy":
+        return []
+    num_devices = xp.cuda.runtime.getDeviceCount()
+    if return_names:
+        return [f"cuda:{i}" for i in range(num_devices)]
+
+    return list(range(num_devices))

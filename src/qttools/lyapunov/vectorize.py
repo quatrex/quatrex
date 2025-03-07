@@ -2,11 +2,15 @@
 
 from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class Vectorize(LyapunovSolver):
     """A solver for the Lyapunov equation using vectorization."""
 
+    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

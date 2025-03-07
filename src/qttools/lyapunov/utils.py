@@ -1,6 +1,85 @@
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="debug")
+def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
+    """Reduces the system by rows of A that are all zero.
+
+    Parameters
+    ----------
+    a : NDArray
+        The system matrix.
+    q : NDArray
+        The right-hand side matrix.
+    solve : function
+        The solver to use for the reduced system.
+    rows_to_reduce : slice
+        The slice of rows to reduce.
+
+    Returns
+    -------
+    x : NDArray
+        The solution of the reduced system.
+
+    """
+
+    a_hat = a[:, rows_to_reduce, rows_to_reduce]
+
+    x = q.copy()
+    x[:, rows_to_reduce, rows_to_reduce] = 0
+    q_hat = q[:, rows_to_reduce, rows_to_reduce] + (
+        a[:, rows_to_reduce, :] @ x @ a[:, rows_to_reduce, :].conj().swapaxes(-2, -1)
+    )
+
+    x[:, rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat)
+
+    return x
+
+
+@profiler.profile(level="debug")
+def _system_reduction_cols(
+    a: NDArray,
+    q: NDArray,
+    solve,
+    cols_to_reduce,
+):
+    """Reduces the system by columns of A that are all zero.
+
+    Parameters
+    ----------
+    a : NDArray
+        The system matrix.
+    q : NDArray
+        The right-hand side matrix.
+    solve : function
+        The solver to use for the reduced system.
+    cols_to_reduce : slice
+        The slice of columns to reduce
+
+    Returns
+    -------
+    x : NDArray
+        The solution of the reduced system.
+
+    """
+
+    a_hat = a[:, cols_to_reduce, cols_to_reduce]
+
+    q_hat = q[:, cols_to_reduce, cols_to_reduce]
+
+    x_hat = solve(a_hat, q_hat)
+
+    x = q.copy() + a[:, :, cols_to_reduce] @ x_hat @ a[
+        :, :, cols_to_reduce
+    ].conj().swapaxes(-2, -1)
+
+    return x
+
+
+@profiler.profile(level="debug")
 def system_reduction(
     a: NDArray,
     q: NDArray,
@@ -45,31 +124,37 @@ def system_reduction(
         a = a[xp.newaxis, ...]
         q = q[xp.newaxis, ...]
 
-    # NOTE: possible to further reduce
-    # but it is assumed contiguous rows are non-zero
+    # get first and last row/cols with non-zero elements
+    nnz_rows = xp.sum(xp.abs(a), axis=-1) > 0
+    nnz_cols = xp.sum(xp.abs(a), axis=-2) > 0
 
-    # get first row with non-zero elements
-    row_start = xp.argmax(xp.sum(xp.abs(a), axis=-1) > 0, axis=-1)
-    # get last row with non-zero elements
-    row_end = a.shape[-1] - xp.argmax(xp.sum(xp.abs(a), axis=-1)[:, ::-1] > 0, axis=-1)
+    row_start = xp.argmax(nnz_rows, axis=-1)
+    row_end = a.shape[-1] - xp.argmax(nnz_rows[:, ::-1], axis=-1)
 
-    # assumes same sparsity pattern for all matrices
-    assert xp.all(row_start == row_start[0])
-    assert xp.all(row_end == row_end[0])
-    row_start = row_start[0]
-    row_end = row_end[0]
+    col_start = xp.argmax(nnz_cols, axis=-1)
+    col_end = a.shape[-2] - xp.argmax(nnz_cols[:, ::-1], axis=-1)
 
-    a_hat = a[:, row_start:row_end, row_start:row_end]
+    any_rows = xp.any(nnz_rows, axis=-1)
+    any_cols = xp.any(nnz_cols, axis=-1)
 
-    x = q.copy()
-    x[:, row_start:row_end, row_start:row_end] = 0
-    q_hat = q[:, row_start:row_end, row_start:row_end] + (
-        a[:, row_start:row_end, :]
-        @ x
-        @ a[:, row_start:row_end, :].conj().swapaxes(-2, -1)
-    )
+    # account for only zero rows/cols
+    # else will not reduce
+    rows_to_reduce = slice(xp.min(row_start[any_rows]), xp.max(row_end[any_rows]))
+    cols_to_reduce = slice(xp.min(col_start[any_cols]), xp.max(col_end[any_cols]))
+    length_row = rows_to_reduce.stop - rows_to_reduce.start
+    length_col = cols_to_reduce.stop - cols_to_reduce.start
 
-    x[:, row_start:row_end, row_start:row_end] = solve(a_hat, q_hat)
+    # only reduce in either rows or cols
+    # TODO: reduce in both directions
+    # but not occuring in the current use case
+    # Would be calling reduce cols inside reduce rows
+    # or reduce rows inside reduce cols
+    # Furthermore, possible to reduce to non contiguous rows/cols
+
+    if length_row < length_col:
+        x = _system_reduction_rows(a, q, solve, rows_to_reduce)
+    else:
+        x = _system_reduction_cols(a, q, solve, cols_to_reduce)
 
     x = x.reshape(*batch_shape, *x.shape[-2:])
 

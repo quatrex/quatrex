@@ -7,8 +7,12 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="debug")
 def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
@@ -63,6 +67,7 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
+@profiler.profile(level="debug")
 def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """Loads an array from disk and distributes it to all ranks.
 
@@ -97,6 +102,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     return arr
 
 
+@profiler.profile(level="debug")
 def get_local_slice(global_array: NDArray) -> NDArray:
     """Returns the local slice of a distributed array.
 
@@ -119,6 +125,7 @@ def get_local_slice(global_array: NDArray) -> NDArray:
     ]
 
 
+@profiler.profile(level="debug")
 def check_gpu_aware_mpi() -> bool:
     """Checks if the MPI implementation is GPU-aware.
 

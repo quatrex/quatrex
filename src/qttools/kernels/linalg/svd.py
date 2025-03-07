@@ -4,9 +4,13 @@ import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
+profiler = Profiler()
 
+
+@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def _svd_numba(
     A: NDArray,
@@ -56,6 +60,7 @@ def _svd_numba(
     return u, s, vh
 
 
+@profiler.profile(level="api")
 def svd(
     A: NDArray,
     full_matrices: bool = True,

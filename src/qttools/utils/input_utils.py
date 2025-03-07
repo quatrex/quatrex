@@ -200,16 +200,16 @@ def cutoff_hr(
             hr_cut = hr.copy()
         hr_cut[xp.abs(hr_cut) > value_cutoff] = 0
 
-    # Remove eventual cell axes with only zeros, except the center cell.
+    # Remove eventual cell planes with only zeros, except the center.
     zero_mask = hr_cut.any(axis=(-2, -1))
     zero_mask[0, 0, 0] = True
 
     for ax in range(3):  # Loop through axes (0, 1, 2)
         for idx in range(zero_mask.shape[ax]):
             axes_to_remove = []
-            # Check if slice perpendicular to the axis are all False.
+            # Check if all elements are False in the cell plane.
             if not zero_mask.take(idx, axis=ax).any():
-                # If so, remove the slice.
+                # If so, remove it.
                 axes_to_remove.append(idx)
             hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
 

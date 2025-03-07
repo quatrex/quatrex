@@ -3,6 +3,7 @@
 from qttools.datastructures.dsbcoo import DSBCOO
 from qttools.datastructures.dsbcsr import DSBCSR
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.datastructures.dsbsparse import DBSparse, DBCOO
 from qttools.datastructures.routines import (
     bd_matmul,
     bd_sandwich,
@@ -12,8 +13,10 @@ from qttools.datastructures.routines import (
 
 __all__ = [
     "DSBSparse",
+    "DBSparse",
     "DSBCSR",
     "DSBCOO",
+    "DBCOO",
     "btd_matmul",
     "btd_sandwich",
     "bd_matmul",

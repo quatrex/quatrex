@@ -1,6 +1,9 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools.datastructures import DSBSparse
+from mpi4py.MPI import Intracomm, Request
+
+from qttools import xp
+from qttools.datastructures import DSBSparse, DBSparse
 
 
 def correct_out_range_index(i: int, k: int, num_blocks: int):
@@ -255,3 +258,80 @@ def btd_sandwich(
     )
     out.blocks[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ a.blocks[-1, -2]
     out.blocks[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ a.blocks[-1, -2]
+
+
+class BlockMatrix(dict):
+
+    def __init__(self, dbsparse: DBSparse, mapping=None):
+        self.dbsparse = dbsparse
+        mapping = mapping or {}
+        super(BlockMatrix, self).__init__(mapping)
+
+    def __getitem__(self, key):
+        if super(BlockMatrix, self).__contains__(key):
+            return super(BlockMatrix, self).__getitem__(key)
+        return self.dbsparse.blocks[key]
+
+    def __setitem__(self, key, val):
+        # TODO: Check that we can set this block
+        self.dbsparse.blocks[key] = val
+
+    def toarray(self):
+        size = sum(self.dbsparse.block_sizes)
+        out = xp.zeros((size, size), dtype=self.dbsparse.local_data.dtype)
+        for i, (isz, ioff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
+            for j, (jsz, joff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
+                out[ioff:ioff + isz, joff:joff + jsz] = self[i, j]
+        return out
+
+
+def arrow_partition_halo_comm(
+        a: BlockMatrix,
+        b: BlockMatrix,
+        a_num_diag: int,
+        b_num_diag: int,
+        start_block: int,
+        end_block: int,
+        comm: Intracomm,
+):
+    a_off = a_num_diag // 2
+    b_off = b_num_diag // 2
+    c_off = a_off + b_off
+    rank = comm.rank
+
+    reqs = []
+    # Send halo blocks to previous rank
+    if start_block > 0:
+        for i in range(start_block, start_block + c_off):
+            for j in range(start_block, min(a.num_blocks, i + a_off + 1)):
+                reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=0))
+        for j in range(start_block, start_block + c_off):
+            for i in range(start_block, min(b.num_blocks, j + b_off + 1)):
+                reqs.append(comm.isend(b[i, j], dest=rank - 1, tag=1))
+    # Send halo blocks to next rank
+    if end_block < a.num_blocks:
+        for i in range(end_block, end_block + c_off):
+            for j in range(max(0, i - a_off), end_block):
+                reqs.append(comm.isend(a[i, j], dest=rank + 1, tag=0))
+    if end_block < b.num_blocks:
+        for j in range(end_block, end_block + c_off):
+            for i in range(max(0, j - b_off), end_block):
+                reqs.append(comm.isend(b[i, j], dest=rank + 1, tag=1))
+    # Receive halo blocks from previous rank
+    if start_block > 0:
+        for i in range(start_block, start_block + a_off):
+            for j in range(max(0, i - a_off), start_block):
+                a[i, j] = comm.recv(source=rank - 1, tag=0)
+        for j in range(start_block, start_block + b_off):
+            for i in range(max(0, j - b_off), start_block):
+                b[i, j] = comm.recv(source=rank - 1, tag=1)
+    # Receive halo blocks from next rank
+    if end_block < a.num_blocks:
+        for i in range(end_block, end_block + c_off):
+            for j in range(end_block, min(a.num_blocks, i + a_off + 1)):
+                a[i, j] = comm.recv(source=rank + 1, tag=0)
+    if end_block < b.num_blocks:
+        for j in range(end_block, end_block + c_off):
+            for i in range(end_block, min(b.num_blocks, j + b_off + 1)):
+                b[i, j] = comm.recv(source=rank + 1, tag=1)
+    Request.Waitall(reqs)

@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import sparse, xp
+from qttools import xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
 
@@ -60,7 +60,7 @@ def bd_matmul(
         )
     num_blocks = len(a.block_sizes)
 
-    if accumulator_dtype == None:
+    if accumulator_dtype is None:
         accumulator_dtype = a.dtype
 
     # Make sure the output matrix is initialized to zero.
@@ -146,7 +146,7 @@ def bd_sandwich(
         )
     num_blocks = len(a.block_sizes)
 
-    if accumulator_dtype == None:
+    if accumulator_dtype is None:
         accumulator_dtype = a.dtype
 
     # Make sure the output matrix is initialized to zero.

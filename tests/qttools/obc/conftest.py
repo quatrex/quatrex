@@ -13,7 +13,12 @@ from qttools.nevp import NEVP, Beyn, Full
 # quadrature points is set such that non-spurious eigenvalues get
 # approximated accurately enough.
 NEVP_SOLVERS = [
-    pytest.param(Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13), id="Beyn"),
+    pytest.param(
+        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=False), id="Beyn"
+    ),
+    pytest.param(
+        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=True), id="Beyn"
+    ),
     pytest.param(Full(), id="Full"),
 ]
 

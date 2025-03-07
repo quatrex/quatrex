@@ -3,6 +3,7 @@
 import functools
 
 from qttools import NDArray, sparse, xp
+from qttools.datastructures.dsbsparse import DSBSparse
 
 
 def densify_selected_blocks(
@@ -80,11 +81,95 @@ def product_sparsity_pattern(
         The column indices of the sparsity pattern.
 
     """
-    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.
-    csrs = [matrix.tocsr().astype(xp.float32) for matrix in matrices]
+    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.]
+    csrs = [matrix.tocsr() for matrix in matrices]
+    for i, csr in enumerate(csrs):
+        if xp.iscomplexobj(csr.data):
+            csr = csr.copy()
+            csr.data = csr.data.real
+        csrs[i] = csr.astype(xp.float32)
     product = functools.reduce(lambda x, y: x @ y, csrs)
     product = product.tocoo()
     # Canonicalize
     product.sum_duplicates()
 
     return product.row, product.col
+
+
+def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
+    """Converts a DSBSparse matrix to a dictionary of CSR blocks."""
+
+    blocks = {}
+
+    for i in range(matrix.num_blocks):
+        for j in range(matrix.num_blocks):
+            sparse_data = matrix.sparse_blocks[i, j]
+            data = xp.ones_like(sparse_data[0][-1], dtype=xp.float32)
+            sparse_data = (data, *sparse_data[1:])
+            blocks[i, j] = sparse.csr_matrix(
+                sparse_data,
+                shape=(matrix.block_sizes[i], matrix.block_sizes[j]))
+    
+    return blocks
+
+
+
+def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, NDArray]:
+    """Computes the sparsity pattern of the product of a sequence of DSBSparse matrices.
+
+    Parameters
+    ----------
+    matrices : sparse.spmatrix
+        A sequence of sparse matrices.
+
+    Returns
+    -------
+    rows : NDArray
+        The row indices of the sparsity pattern.
+    cols : NDArray
+        The column indices of the sparsity pattern.
+
+    """
+
+    assert len(matrices) > 1
+
+    a = matrices[0]
+
+    # Assuming that all matrices have the same numober of blocks and block sizes.
+    num_blocks = a.num_blocks
+    block_sizes = a.block_sizes
+    block_offsets = a.block_offsets
+
+    a_blocks = tocsr_dict(a)
+
+    for b in matrices[1:]:
+        b_blocks = tocsr_dict(b)
+        c_blocks = {}
+
+        for i in range(num_blocks):
+            for j in range(num_blocks):
+
+                c_block = None
+                for k in range(num_blocks):
+                    if c_block is None:
+                        c_block = a_blocks[i, k] @ b_blocks[k, j]
+                    else:
+                        c_block += a_blocks[i, k] @ b_blocks[k, j]
+                
+                if c_block is None:
+                    c_block = sparse.csr_matrix((block_sizes[i], block_sizes[j]), dtype=xp.float32)
+                c_blocks[i, j] = c_block
+        
+        a_blocks = c_blocks
+    
+    c_rows = xp.empty(0, dtype=xp.int32)
+    c_cols = xp.empty(0, dtype=xp.int32)
+
+    for i in range(num_blocks):
+        for j in range(num_blocks):
+            c_block = c_blocks[i, j].tocoo()
+            c_block.sum_duplicates()
+            c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
+            c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
+
+    return c_rows, c_cols

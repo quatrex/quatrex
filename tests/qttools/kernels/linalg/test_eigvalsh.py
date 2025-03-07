@@ -3,7 +3,7 @@ import pytest
 import scipy
 
 from qttools import xp
-from qttools.kernels.eigvalsh import eigvalsh
+from qttools.kernels import linalg
 from qttools.utils.gpu_utils import get_device, get_host
 
 
@@ -25,7 +25,7 @@ def test_eigvalsh(n: int, compute_module: str, input_module: str, output_module:
     if compute_module == "cupy":
         A = get_device(A)
 
-    w = eigvalsh(A, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(A, compute_module=compute_module, output_module=output_module)
 
     # check residual on the host
     w = get_host(w)
@@ -65,13 +65,12 @@ def test_eigvalsh_batched(
     if compute_module == "cupy":
         A = get_device(A)
 
-    w = eigvalsh(A, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(A, compute_module=compute_module, output_module=output_module)
 
     assert w.shape[:-1] == batch_shape
 
     assert w.shape[-1] == n
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
 
@@ -108,9 +107,10 @@ def test_eigvalsh_generalized(
         B = get_device(B)
         A = get_device(A)
 
-    w = eigvalsh(A, B=B, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(
+        A, B=B, compute_module=compute_module, output_module=output_module
+    )
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
     B = get_host(B)
@@ -161,13 +161,14 @@ def test_eigvalsh_generalized_batched(
         B = get_device(B)
         A = get_device(A)
 
-    w = eigvalsh(A, B=B, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(
+        A, B=B, compute_module=compute_module, output_module=output_module
+    )
 
     assert w.shape[:-1] == batch_shape
 
     assert w.shape[-1] == n
 
-    # check residual on the host
     w = get_host(w)
     A = get_host(A)
     B = get_host(B)

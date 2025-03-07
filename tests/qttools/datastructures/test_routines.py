@@ -43,20 +43,21 @@ def _create_bd_coo(sizes: NDArray, num_diag) -> sparse.coo_matrix:
     offsets = xp.hstack(([0], xp.cumsum(sizes)))
 
     arr = xp.zeros((size, size), dtype=xp.complex128)
+    num_diag = min(num_diag, len(sizes))
     for i in range(len(sizes)):
         # Diagonal block.
         block_shape = (int(sizes[i]), int(sizes[i]))
         arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = xp.random.rand(
             *block_shape
         ) + 1j * xp.random.rand(*block_shape)
-        for idiag in range(num_diag):
+        for idiag in range(1,num_diag//2+1):
             # Superdiagonal block.
-            if i < len(sizes) - idiag - 1:
-                block_shape = (int(sizes[i]), int(sizes[i + 1]))
-                arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = (
+            if i < len(sizes) - idiag:
+                block_shape = (int(sizes[i]), int(sizes[i + idiag]))
+                arr[offsets[i] : offsets[i + 1], offsets[i + idiag] : offsets[i + idiag + 1]] = (
                     xp.random.rand(*block_shape) + 1j * xp.random.rand(*block_shape)
                 )
-                arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = (
+                arr[offsets[i + idiag] : offsets[i + idiag + 1], offsets[i] : offsets[i + 1]] = (
                     xp.random.rand(*block_shape).T + 1j * xp.random.rand(*block_shape).T
                 )
     rng = xp.random.default_rng()
@@ -119,7 +120,7 @@ def test_bd_matmul(
 
     # dense blocks returned
     out = bd_matmul(
-        dsbsparse, dsbsparse, out=None, in_num_diag=num_diag, out_num_diag=num_diag + 2
+        dsbsparse, dsbsparse, out=None, in_num_diag=num_diag, out_num_diag=num_diag // 2 * 2 * 2 + 1
     )
     out_dense = xp.zeros_like(dense)
     for row, col in out:
@@ -136,7 +137,7 @@ def test_bd_matmul(
     out = dsbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
 
     bd_matmul(
-        dsbsparse, dsbsparse, out, in_num_diag=num_diag, out_num_diag=num_diag + 2
+        dsbsparse, dsbsparse, out, in_num_diag=num_diag, out_num_diag=num_diag // 2 * 2 * 2 + 1
     )
 
     assert xp.allclose(dense @ dense, out.to_dense())
@@ -159,7 +160,7 @@ def test_bd_sandwich(
 
     # dense blocks returned
     out = bd_sandwich(
-        dsbsparse, dsbsparse, out=None, in_num_diag=num_diag, out_num_diag=num_diag + 4
+        dsbsparse, dsbsparse, out=None, in_num_diag=num_diag, out_num_diag=num_diag // 2 * 3 * 2 + 1 
     )
     out_dense = xp.zeros_like(dense)
     for row, col in out:
@@ -193,7 +194,7 @@ def test_bd_matmul_spillover(
     dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
-    NBC = num_diag
+    NBC = num_diag // 2 
     left_obc = int((block_sizes[0]))
     right_obc = int((block_sizes[-1]))
     dense_shape[-2] += left_obc * NBC + right_obc * NBC
@@ -239,7 +240,7 @@ def test_bd_matmul_spillover(
         sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
     )
 
-    bd_matmul(dsbsparse, dsbsparse, out, spillover_correction=True)
+    bd_matmul(dsbsparse, dsbsparse, out, in_num_diag=num_diag, out_num_diag=num_diag // 2 * 2 * 2 + 1, spillover_correction=True)
 
     assert xp.allclose(ref, out.to_dense())
 
@@ -251,11 +252,11 @@ def test_bd_sandwich_spillover(
     num_diag: int,
 ):
     """Tests the block diagonal matmul of three DSBSparse matrix with spillover correction."""
-    coo = _create_btd_coo(block_sizes)
+    coo = _create_bd_coo(block_sizes,num_diag)
     dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
-    NBC = num_diag * 2
+    NBC = num_diag // 2 
     left_obc = int(block_sizes[0])
     right_obc = int(block_sizes[-1])
     dense_shape[-2] += left_obc * NBC + right_obc * NBC
@@ -301,7 +302,7 @@ def test_bd_sandwich_spillover(
         sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
     )
 
-    bd_sandwich(dsbsparse, dsbsparse, out, spillover_correction=True)
+    bd_sandwich(dsbsparse, dsbsparse, out, in_num_diag=num_diag, out_num_diag=num_diag // 2 * 3 * 2 + 1, spillover_correction=True)
 
     assert xp.allclose(ref, out.to_dense())
 

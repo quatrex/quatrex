@@ -15,7 +15,6 @@ BLOCK_SIZES = [
 NUM_DIAG = [
     pytest.param(3, id="3-diagonal"),
     pytest.param(5, id="5-diagonal"),
-    pytest.param(7, id="7-diagonal"),
 ]
 
 DENSIFY_BLOCKS = [

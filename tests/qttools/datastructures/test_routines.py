@@ -198,12 +198,10 @@ def test_bd_matmul_spillover(
     right_obc = int((block_sizes[-1]))
     dense_shape[-2] += left_obc * NBC + right_obc * NBC
     dense_shape[-1] += left_obc * NBC + right_obc * NBC
-
     dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
     # copy matrix into the center
     size = sum(block_sizes)
     exp_size = size + left_obc * NBC + right_obc * NBC
-    print(size, left_obc, right_obc)
     dense_exp[
         ...,
         left_obc * NBC : left_obc * NBC + size,
@@ -265,7 +263,7 @@ def test_bd_sandwich_spillover(
     size = sum(block_sizes)
     exp_size = size + left_obc * NBC + right_obc * NBC
     dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
-    print(size, left_obc, right_obc)
+    # copy data into the center
     dense_exp[
         ...,
         left_obc * NBC : left_obc * NBC + size,

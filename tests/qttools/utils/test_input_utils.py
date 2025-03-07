@@ -8,6 +8,7 @@ from qttools import NDArray, _DType, xp
 from qttools.utils.input_utils import (
     create_coordinate_grid,
     create_hamiltonian,
+    cutoff_hr,
     get_hamiltonian_block,
     read_hr_dat,
 )
@@ -34,6 +35,32 @@ def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
             assert xp.allclose(R[i], r)
         # NOTE: This assumes specific data in the file, should be generalized
         assert xp.allclose(hr[*r], r[0] + 1j * r[1])
+
+
+@pytest.mark.parametrize(
+    "value_cutoff, R_cutoff",
+    [
+        (0.5, None),
+        (None, 1),
+        (0.5, 1),
+    ],
+)
+def test_cutoff_hr(value_cutoff: float, R_cutoff: int):
+    hr = read_hr_dat(wannier90_hr_path)
+    hr_cutoff = cutoff_hr(hr, value_cutoff, R_cutoff)
+    if R_cutoff is None:
+        R_cutoff = xp.array([s // 2 if s > 1 else 1 for s in hr.shape[:3]])
+    if value_cutoff is None:
+        value_cutoff = xp.inf
+    for r in R_ref:
+        if (xp.abs(r) <= R_cutoff).all():
+            hr_ref = hr[*r][xp.abs(hr[*r]) <= value_cutoff]
+            try:
+                assert xp.allclose(hr_cutoff[*r], hr_ref)
+            # Some R values can have been removed, but then
+            # the corresponding hr values should be zero
+            except IndexError:
+                assert (hr_ref == 0).all()
 
 
 @pytest.mark.parametrize(

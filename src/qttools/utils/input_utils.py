@@ -180,13 +180,9 @@ def cutoff_hr(
     ndarray
         The cutoff Hamiltonian.
     """
+    hr_cut = None
     if value_cutoff is None and R_cutoff is None:
-        return hr
-    if value_cutoff is not None:
-        hr_cut = hr.copy()
-        hr_cut[xp.abs(hr) < value_cutoff] = 0
-        # Remove eventual cells with only zeros.
-        hr_cut = hr_cut[hr_cut.any(axis=(-2, -1))]
+        return hr.copy()
     if R_cutoff is not None:
         if isinstance(R_cutoff, int):
             R_cutoff = (R_cutoff, R_cutoff, R_cutoff)
@@ -196,10 +192,27 @@ def cutoff_hr(
         ] + list(hr.shape[3:])
         hr_cut = xp.zeros(cut_shape, dtype=hr.dtype)
         for ind in xp.ndindex(hr.shape[:3]):
-            if (ind <= R_cutoff).all():
-                ind = xp.asarray(ind)
+            ind = xp.asarray(ind) - xp.asarray(hr.shape[:3]) // 2
+            if (abs(ind) <= xp.asarray(R_cutoff)).all():
                 hr_cut[*ind] = hr[*ind]
-                hr_cut[*-ind] = hr[*-ind]
+    if value_cutoff is not None:
+        if hr_cut is None:
+            hr_cut = hr.copy()
+        hr_cut[xp.abs(hr_cut) > value_cutoff] = 0
+
+    # Remove eventual cell axes with only zeros, except the center cell.
+    zero_mask = hr_cut.any(axis=(-2, -1))
+    zero_mask[0, 0, 0] = True
+
+    for ax in range(3):  # Loop through axes (0, 1, 2)
+        for idx in range(zero_mask.shape[ax]):
+            axes_to_remove = []
+            # Check if slice perpendicular to the axis are all False.
+            if not zero_mask.take(idx, axis=ax).any():
+                # If so, remove the slice.
+                axes_to_remove.append(idx)
+            hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
+
     return hr_cut
 
 

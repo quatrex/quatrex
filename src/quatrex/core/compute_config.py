@@ -3,8 +3,17 @@
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, PositiveInt
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+
+
+class ConvolveConfig(BaseModel):
+    """All configurations concerning the fft convolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # NOTE: should be calculate from the number of energy points, ranks, and nnz.
+    batch_size: PositiveInt | None = None
 
 
 class ComputeConfig(BaseModel):
@@ -13,6 +22,8 @@ class ComputeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     dsbsparse_type: DSBSparse = DSBCOO
+
+    convolve: ConvolveConfig = ConvolveConfig()
 
     @field_validator("dsbsparse_type", mode="before")
     def set_dsbsparse(cls, value) -> DSBSparse:

@@ -27,7 +27,7 @@ def bd_matmul(
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype=None,
 ):
     """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
 
@@ -60,19 +60,28 @@ def bd_matmul(
         )
     num_blocks = len(a.block_sizes)
 
+    if accumulator_dtype == None:
+        accumulator_dtype = a.dtype
+
     # Make sure the output matrix is initialized to zero.
     if out is not None:
         out.data = 0
-        out_block_coo = False
+        out_block = False
     else:
-        out_block_coo = True
-        out = [[None] * num_blocks] * num_blocks
+        out_block = True
+        out = {}
 
     for i in range(num_blocks):
         for j in range(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
-            partsum = (out.blocks[i, j]).astype(accumulator_dtype)
+            if out_block:
+                partsum = xp.zeros(
+                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
+                )
+            else:
+                partsum = (out.blocks[i, j]).astype(accumulator_dtype)
+
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
                     continue
@@ -87,16 +96,12 @@ def bd_matmul(
                     else:
                         partsum += a.blocks[i, k] @ b.blocks[k, j]
 
-            if out_block_coo:
-                if partsum.ndim <= 2:
-                    out[i][j] = sparse.coo_matrix(partsum)
-                else:
-                    slc = [0] * (partsum.ndim - 2) + [slice(None), slice(None)]
-                    out[i][j] = sparse.coo_matrix(partsum[slc])  # only take a stack
+            if out_block:
+                out[i, j] = partsum
             else:
                 out.blocks[i, j] = partsum
 
-    if out_block_coo:
+    if out_block:
         return out
 
 
@@ -108,7 +113,7 @@ def bd_sandwich(
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype=None,
 ):
     """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
 
@@ -141,12 +146,15 @@ def bd_sandwich(
         )
     num_blocks = len(a.block_sizes)
 
+    if accumulator_dtype == None:
+        accumulator_dtype = a.dtype
+
     # Make sure the output matrix is initialized to zero.
     if out is not None:
         out.data = 0
-        out_block_coo = False
+        out_block = False
     else:
-        out_block_coo = True
+        out_block = True
         out = [[None] * num_blocks] * num_blocks
 
     for i in range(num_blocks):
@@ -188,7 +196,12 @@ def bd_sandwich(
             max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
         ):
 
-            partsum = (out.blocks[i, j]).astype(accumulator_dtype)  # cast data type
+            if out_block:
+                partsum = xp.zeros(
+                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
+                )
+            else:
+                partsum = (out.blocks[i, j]).astype(accumulator_dtype)  # cast data type
 
             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks)
@@ -205,16 +218,12 @@ def bd_sandwich(
                     accumulator_dtype
                 )  # cast data type
 
-            if out_block_coo:
-                if partsum.ndim <= 2:
-                    out[i][j] = sparse.coo_matrix(partsum)
-                else:
-                    slc = [0] * (partsum.ndim - 2) + [slice(None), slice(None)]
-                    out[i][j] = sparse.coo_matrix(partsum[slc])  # only take a stack
+            if out_block:
+                out[i, j] = partsum
             else:
                 out.blocks[i, j] = partsum
 
-    if out_block_coo:
+    if out_block:
         return out
 
 

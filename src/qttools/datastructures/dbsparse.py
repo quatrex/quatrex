@@ -113,11 +113,7 @@ class DBCOO(DBSparse):
         section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
         self.num_local_blocks = section_sizes[comm.rank]
-        # Have to add one more block here.
-        self.local_block_sizes = block_sizes[
-            ...,
-            int(section_offsets[comm.rank]) : int(section_offsets[comm.rank + 1] + 1),
-        ]
+        self.local_block_sizes = block_sizes[..., int(section_offsets[comm.rank]):]
 
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.local_block_offsets = xp.hstack(([0], xp.cumsum(self.local_block_sizes)))

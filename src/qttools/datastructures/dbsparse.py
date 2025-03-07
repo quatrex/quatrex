@@ -189,8 +189,8 @@ class DBCOO(DBSparse):
 
         dsbcoo_kernels.sparsify_block(
             block,
-            self.local_rows[block_slice] - self.block_offsets[row],
-            self.local_cols[block_slice] - self.block_offsets[col],
+            self.local_rows[block_slice] - self.local_block_offsets[row],
+            self.local_cols[block_slice] - self.local_block_offsets[col],
             self.local_data[block_slice],
         )
 

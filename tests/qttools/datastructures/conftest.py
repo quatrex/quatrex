@@ -4,12 +4,16 @@ import pytest
 
 from qttools import NDArray, host_xp, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.datastructures import DBCOO, DBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
+DBSPARSE_TYPES = [DBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(host_xp.array([2] * 10), id="constant-block-size-2"),
+    pytest.param(host_xp.array([5] * 10), id="constant-block-size-5"),
+    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
+    pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
 DENSIFY_BLOCKS = [
@@ -61,13 +65,18 @@ OPS = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+@pytest.fixture(params=DSBSPARSE_TYPES)
 def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
+
+@pytest.fixture(params=DBSPARSE_TYPES)
+def dbsparse_type(request: pytest.FixtureRequest) -> DBSparse:
     return request.param
 
 
@@ -91,7 +100,7 @@ def num_inds(request):
     return request.param
 
 
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+@pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param
 

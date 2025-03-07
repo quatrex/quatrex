@@ -171,7 +171,7 @@ class DBCOO(DBSparse):
             (int(self.local_block_sizes[row]), int(self.local_block_sizes[col])),
             dtype=self.dtype,
         )
-        if block_slice == slice(None):
+        if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block
 
@@ -187,7 +187,7 @@ class DBCOO(DBSparse):
     def _set_block(self, row: int, col: int, block: NDArray) -> None:
         """Sets the block at the specified row and column."""
         block_slice = self._get_block_slice(row, col)
-        if block_slice == slice(None):
+        if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
 

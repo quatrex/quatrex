@@ -77,7 +77,11 @@ def bd_matmul(
         ):
             if out_block:
                 partsum = xp.zeros(
-                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
+                    (
+                        a.stack_shape
+                        + tuple([int(a.block_sizes[i]), int(a.block_sizes[j])])
+                    ),
+                    dtype=accumulator_dtype,
                 )
             else:
                 partsum = (out.blocks[i, j]).astype(accumulator_dtype)
@@ -198,7 +202,11 @@ def bd_sandwich(
 
             if out_block:
                 partsum = xp.zeros(
-                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
+                    (
+                        a.stack_shape
+                        + tuple([int(a.block_sizes[i]), int(a.block_sizes[j])])
+                    ),
+                    dtype=accumulator_dtype,
                 )
             else:
                 partsum = (out.blocks[i, j]).astype(accumulator_dtype)  # cast data type

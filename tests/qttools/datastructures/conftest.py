@@ -12,6 +12,12 @@ BLOCK_SIZES = [
     pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
+NUM_DIAG = [
+    pytest.param(3, id="3-diagonal"),
+    pytest.param(5, id="5-diagonal"),
+    pytest.param(7, id="7-diagonal"),
+]
+
 DENSIFY_BLOCKS = [
     pytest.param(None, id="no-densify"),
     pytest.param([(0, 0), (-1, -1)], id="densify-boundary"),
@@ -54,6 +60,11 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(0.5, id="half-change"),
     pytest.param(2.0, id="double-change"),
 ]
+
+
+@pytest.fixture(params=NUM_DIAG, autouse=True)
+def num_diag(request: pytest.FixtureRequest) -> NDArray:
+    return request.param
 
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)

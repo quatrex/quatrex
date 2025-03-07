@@ -155,7 +155,7 @@ def bd_sandwich(
         out_block = False
     else:
         out_block = True
-        out = [[None] * num_blocks] * num_blocks
+        out = {}
 
     for i in range(num_blocks):
 

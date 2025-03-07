@@ -47,9 +47,11 @@ class SubsystemSolver(ABC):
         self.energies = energies
         self.local_energies = get_local_slice(energies)
 
-        self.obc = self._configure_obc(getattr(quatrex_config, self.system).obc)
+        self.obc = self._configure_obc(
+            getattr(quatrex_config, self.system).obc, compute_config
+        )
         self.lyapunov = self._configure_lyapunov(
-            getattr(quatrex_config, self.system).lyapunov
+            getattr(quatrex_config, self.system).lyapunov, compute_config
         )
         self.solver = self._configure_solver(
             getattr(quatrex_config, self.system).solver
@@ -58,7 +60,9 @@ class SubsystemSolver(ABC):
         self.quatrex_config = quatrex_config
         self.compute_config = compute_config
 
-    def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
+    def _configure_nevp(
+        self, obc_config: OBCConfig, compute_config: ComputeConfig
+    ) -> NEVP:
         """Configures the NEVP solver from the config.
 
         Parameters
@@ -78,15 +82,22 @@ class SubsystemSolver(ABC):
                 r_i=obc_config.r_i,
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
+                num_threads_contour=compute_config.nevp.num_threads_contour,
+                eig_compute_location=compute_config.nevp.eig_compute_location,
+                project_compute_location=compute_config.nevp.project_compute_location,
+                use_qr=compute_config.nevp.use_qr,
+                contour_batch_size=compute_config.nevp.contour_batch_size,
             )
         if obc_config.nevp_solver == "full":
-            return Full()
+            return Full(eig_compute_location=compute_config.nevp.eig_compute_location)
 
         raise NotImplementedError(
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def _configure_obc(self, obc_config: OBCConfig) -> obc.OBCSolver:
+    def _configure_obc(
+        self, obc_config: OBCConfig, compute_config: ComputeConfig
+    ) -> obc.OBCSolver:
         """Configures the OBC algorithm from the config.
 
         Parameters
@@ -106,7 +117,7 @@ class SubsystemSolver(ABC):
             )
 
         elif obc_config.algorithm == "spectral":
-            nevp = self._configure_nevp(obc_config)
+            nevp = self._configure_nevp(obc_config, compute_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
                 block_sections=obc_config.block_sections,
@@ -118,6 +129,8 @@ class SubsystemSolver(ABC):
                 treat_pairwise=obc_config.treat_pairwise,
                 pairing_threshold=obc_config.pairing_threshold,
                 min_propagation=obc_config.min_propagation,
+                residual_tolerance=obc_config.residual_tolerance,
+                residual_normalization=obc_config.residual_normalization,
                 warning_threshold=obc_config.warning_threshold,
             )
 
@@ -136,7 +149,7 @@ class SubsystemSolver(ABC):
         return obc_solver
 
     def _configure_lyapunov(
-        self, lyapunov_config: LyapunovConfig
+        self, lyapunov_config: LyapunovConfig, compute_config: ComputeConfig
     ) -> lyapunov.LyapunovSolver:
         """Configures the Lyapunov solver from the config.
 
@@ -155,10 +168,14 @@ class SubsystemSolver(ABC):
             lyapunov_solver = lyapunov.Spectral(
                 num_ref_iterations=lyapunov_config.num_ref_iterations,
                 warning_threshold=lyapunov_config.warning_threshold,
+                reduce_sparsity=lyapunov_config.reduce_sparsity,
+                eig_compute_location=compute_config.nevp.eig_compute_location,
             )
         elif lyapunov_config.algorithm == "doubling":
             lyapunov_solver = lyapunov.Doubling(
-                lyapunov_config.max_iterations, lyapunov_config.convergence_tol
+                max_iterations=lyapunov_config.max_iterations,
+                convergence_tol=lyapunov_config.convergence_tol,
+                reduce_sparsity=lyapunov_config.reduce_sparsity,
             )
         else:
             raise NotImplementedError(

@@ -352,23 +352,15 @@ class SCBA:
         max_diff = xp.max(xp.abs(diff))
         max_diff = comm.allreduce(max_diff, op=MPI.MAX)
 
-        i_left, i_right = contact_currents(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.electron_solver.obc_blocks,
-        )
-        change_left = xp.linalg.norm(
-            i_left.real - self.observables.electron_current.get("left", 0.0)
-        )
-        change_right = xp.linalg.norm(
-            i_right.real - self.observables.electron_current.get("right", 0.0)
-        )
-        ave_change = 0.5 * (change_left + change_right)
+        i_left = xp.real(self.observables.electron_current.get("left", 0.0))
+        i_right = xp.real(self.observables.electron_current.get("right", 0.0))
+
+        dE = self.electron_energies[1] - self.electron_energies[0]
+        current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
-            print(f"Average Current Change: {ave_change}", flush=True)
-            print(f"Current Difference: {diff}", flush=True)
+            print(f"Contact Current Difference: {current_diff}", flush=True)
 
         # if ave_change < self.quatrex_config.scba.convergence_tol:
         #     return True
@@ -695,7 +687,11 @@ class SCBA:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
             if i % self.quatrex_config.scba.output_interval == 0:
+                times.append(time.perf_counter())
                 self._write_iteration_outputs(i)
+                t_outputs = time.perf_counter() - times.pop()
+                if comm.rank == 0:
+                    print(f"Time for writing outputs: {t_outputs:.2f} s", flush=True)
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:

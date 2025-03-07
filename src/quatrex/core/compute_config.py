@@ -2,9 +2,40 @@
 
 import tomllib
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, PositiveInt
+from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+
+
+class LyapunovConfig(BaseModel):
+    """Configuration concerning the Lyapunov solvers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+
+
+class NEVPConfig(BaseModel):
+    """All configurations concerning the solution of NEVPs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    project_compute_location: Literal["numpy", "cupy"] = "numpy"
+
+    use_qr: bool = False
+    contour_batch_size: PositiveInt | None = None
+    num_threads_contour: PositiveInt = 1024
+
+
+class BandEdgeConfig(BaseModel):
+    """Parameters concerning the eigenvalue-based band-edge tracking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_eigvalsh: bool = False
+    eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
 
 
 class ConvolveConfig(BaseModel):
@@ -12,7 +43,8 @@ class ConvolveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # NOTE: should be calculate from the number of energy points, ranks, and nnz.
+    # NOTE: should be calculate from the number of energy points, ranks,
+    # and nnz.
     batch_size: PositiveInt | None = None
 
 
@@ -24,6 +56,9 @@ class ComputeConfig(BaseModel):
     dsbsparse_type: DSBSparse = DSBCOO
 
     convolve: ConvolveConfig = ConvolveConfig()
+    nevp: NEVPConfig = NEVPConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
+    band_edge: BandEdgeConfig = BandEdgeConfig()
 
     @field_validator("dsbsparse_type", mode="before")
     def set_dsbsparse(cls, value) -> DSBSparse:

@@ -6,8 +6,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
-from qttools.utils.mpi_utils import distributed_load
-from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -188,18 +187,25 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.batch_size = g_greater.data.shape[-1]
 
         batch_counts, _ = get_section_sizes(
-            g_greater.data.shape[-1], int(np.ceil(g_greater.data.shape[-1] / self.batch_size))
+            g_greater.data.shape[-1],
+            int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
         )
 
-        batch_displacements = np.cumsum(
-            np.concatenate(([0], np.array(batch_counts)))
-        )
+        batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
 
         # TODO: the datastructures does not allow for easy slicing of the
         # data. This is a workaround.
         rows, cols = g_greater.spy()
-        rows = rows[g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[comm.rank + 1]]
-        cols = cols[g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[comm.rank + 1]]
+        rows = rows[
+            g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
+                comm.rank + 1
+            ]
+        ]
+        cols = cols[
+            g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
+                comm.rank + 1
+            ]
+        ]
 
         for start, end in zip(batch_displacements, batch_displacements[1:]):
             batch = slice(start, end)
@@ -207,23 +213,31 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             # Compute the full self-energy using the convolution theorem.
             # Second term are corrections for negative frequencies that
             # where cut off by the polarization calculation.
-            sigma_lesser[rows[batch],cols[batch]] += self.prefactor * (
-                fft_convolve(g_lesser.data[:,batch], w_lesser.data[:,batch])[: self.num_energies]
-                - fft_correlate(g_lesser.data[:,batch], w_greater.data[:,batch].conj())[
-                    self.num_energies - 1 :
+            sigma_lesser[rows[batch], cols[batch]] += self.prefactor * (
+                fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
+                    : self.num_energies
                 ]
+                - fft_correlate(
+                    g_lesser.data[:, batch], w_greater.data[:, batch].conj()
+                )[self.num_energies - 1 :]
             )
-            sigma_greater[rows[batch],cols[batch]] += self.prefactor * (
-                fft_convolve(g_greater.data[:,batch], w_greater.data[:,batch])[: self.num_energies]
-                - fft_correlate(g_greater.data[:,batch], w_lesser.data[:,batch].conj())[
-                    self.num_energies - 1 :
+            sigma_greater[rows[batch], cols[batch]] += self.prefactor * (
+                fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
+                    : self.num_energies
                 ]
+                - fft_correlate(
+                    g_greater.data[:, batch], w_lesser.data[:, batch].conj()
+                )[self.num_energies - 1 :]
             )
 
             # Compute retarded self-energy with a Hilbert transform.
-            sigma_antihermitian = 1j * xp.imag(sigma_greater.data[:,batch] - sigma_lesser.data[:,batch])
+            sigma_antihermitian = 1j * xp.imag(
+                sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
+            )
             sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-            sigma_retarded[rows[batch],cols[batch]] += 1j * sigma_hermitian + sigma_antihermitian / 2
+            sigma_retarded[rows[batch], cols[batch]] += (
+                1j * sigma_hermitian + sigma_antihermitian / 2
+            )
 
         # Transpose the matrices to stack distribution.
         t0 = time.perf_counter()

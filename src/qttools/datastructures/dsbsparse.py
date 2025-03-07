@@ -238,7 +238,7 @@ class DSBSparse(ABC):
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
         return _DSBlockIndexer(self)
-    
+
     @property
     def sparse_blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
@@ -387,9 +387,11 @@ class DSBSparse(ABC):
 
         """
         ...
-    
+
     @abstractmethod
-    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+    def _get_sparse_block(
+        self, stack_index: tuple, row: int, col: int
+    ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
         This is supposed to be a low-level method that does not perform
@@ -831,7 +833,12 @@ class _DSBlockIndexer:
 
     """
 
-    def __init__(self, dsbsparse: DSBSparse, stack_index: tuple = (Ellipsis,), return_dense: bool = True) -> None:
+    def __init__(
+        self,
+        dsbsparse: DSBSparse,
+        stack_index: tuple = (Ellipsis,),
+        return_dense: bool = True,
+    ) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
         self._num_blocks = dsbsparse.num_blocks

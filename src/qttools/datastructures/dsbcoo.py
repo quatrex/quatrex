@@ -289,8 +289,10 @@ class DSBCOO(DSBSparse):
         )
 
         return block
-    
-    def _get_sparse_block(self, stack_index: tuple, row: int, col: int) -> sparse.spmatrix | tuple:
+
+    def _get_sparse_block(
+        self, stack_index: tuple, row: int, col: int
+    ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
         This is supposed to be a low-level method that does not perform

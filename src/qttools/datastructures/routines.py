@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from mpi4py.MPI import Intracomm, Request
+from mpi4py.MPI import COMM_WORLD as comm, Intracomm, Request
 
 from qttools import xp
 from qttools.datastructures import DSBSparse, DBSparse
@@ -445,3 +445,98 @@ def arrow_partition_halo_comm(
             for i in range(end_block, min(b.num_blocks, j + b_off + 1)):
                 b[i, j] = comm.recv(source=rank + 1, tag=1)
     Request.Waitall(reqs)
+
+
+def bd_matmul_distr(
+    a: DBSparse,
+    b: DBSparse,
+    out: DBSparse | None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 5,
+    start_block: int = 0,
+    end_block: int = None,
+    comm: Intracomm = comm,
+    spillover_correction: bool = False,
+    accumulator_dtype=None,
+
+):
+    """Matrix multiplication of two `a @ b` BD DBSparse matrices.
+
+    Parameters
+    ----------
+    a : DBSparse
+        The first block diagonal matrix.
+    b : DBSparse
+        The second block diagonal matrix.
+    out : DBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_num_diag` diagonals.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+    end_block = end_block or num_blocks
+    accumulator_dtype = accumulator_dtype or a.dtype
+    
+    a_ = BlockMatrix(a)
+    b_ = BlockMatrix(b)
+
+    arrow_partition_halo_comm(a_, b_, in_num_diag, in_num_diag)
+
+    # Make sure the output matrix is initialized to zero.
+    if out is not None:
+        out.data = 0
+        out_block = False
+        out_ = BlockMatrix(out)
+    else:
+        out_block = True
+        out = {}
+
+    for i in range(num_blocks):
+        for j in range(
+            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            if out_block:
+                partsum = xp.zeros(
+                    (a_.dbsparse.block_sizes[i], a_.dbsparse.block_sizes[j]),
+                    dtype=accumulator_dtype
+                )
+            else:
+                partsum = (out_[i, j]).astype(accumulator_dtype)
+
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        partsum += a_[i_a, k_a] @ b_[k_b, j_b]
+                    else:
+                        partsum += a_[i, k] @ b_[k, j]
+
+            if out_block:
+                out[i, j] = partsum
+            else:
+                out_[i, j] = partsum
+
+    if out_block:
+        return out

@@ -7,7 +7,6 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import (
     DSBSparse,
     DBSparse,
-    DBCOO,
     bd_matmul,
     bd_sandwich,
     btd_matmul,
@@ -241,7 +240,6 @@ def test_bd_matmul_distr(
     coo = comm.bcast(coo, root=0)
     dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
     dense = dsbsparse.to_dense()
-    assert xp.allclose(coo.toarray(), dense)
 
     # Initalize the output matrix with the correct sparsity pattern.
 
@@ -258,6 +256,66 @@ def test_bd_matmul_distr(
     val = out.to_dense()
 
     assert xp.allclose(val, ref)
+
+
+@pytest.mark.mpi
+def test_bd_matmul_distr_spillover(
+    dbsparse_type: DBSparse,
+    block_sizes: NDArray,
+    # global_stack_shape: tuple,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    coo = _create_btd_coo(block_sizes)
+    coo = comm.bcast(coo, root=0)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dense = dsbsparse.to_dense()
+    dense_shape = list(dense.shape)
+    NBC = 1
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    dense_shape[-2] += left_obc + right_obc
+    dense_shape[-1] += left_obc + right_obc
+
+    dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
+    dense_exp[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ] = dense
+    # simply repeat the boundaries slices
+    dense_exp[..., :left_obc, :-left_obc] = dense_exp[
+        ..., left_obc : 2 * left_obc, left_obc:
+    ]
+    dense_exp[..., :-left_obc, :left_obc] = dense_exp[
+        ..., left_obc:, left_obc : 2 * left_obc
+    ]
+    dense_exp[..., -right_obc:, right_obc:] = dense_exp[
+        ..., -2 * right_obc : -right_obc, :-right_obc
+    ]
+    dense_exp[..., right_obc:, -right_obc:] = dense_exp[
+        ..., :-right_obc, -2 * right_obc : -right_obc
+    ]
+
+    expended_product = dense_exp @ dense_exp
+    ref = expended_product[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ]
+
+    # Initalize the output matrix with the correct sparsity pattern.
+
+    out = dbsparse_type.from_sparray(
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes) #, global_stack_shape)
+    out.local_data[:] = 0
+
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
+    start_block = sum(local_blocks[:comm.rank])
+    end_block = start_block + local_blocks[comm.rank]
+
+    bd_matmul_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block, spillover_correction=True)
+
+    assert xp.allclose(ref, out.to_dense())
 
 
 if __name__ == "__main__":

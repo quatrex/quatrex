@@ -5,7 +5,7 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
-from qttools.datastructures.routines import btd_matmul, btd_sandwich
+from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
@@ -308,7 +308,7 @@ class CoulombScreeningSolver(SubsystemSolver):
     def _assemble_system_matrix(self, p_retarded: DSBSparse) -> None:
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
-        btd_matmul(
+        bd_matmul(
             self.coulomb_matrix,
             p_retarded,
             out=self.system_matrix,
@@ -382,13 +382,13 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Assemble the system matrix (Includes matrix multiplication).
         self._assemble_system_matrix(p_retarded)
 
-        btd_sandwich(
+        bd_sandwich(
             self.coulomb_matrix,
             p_lesser,
             out=self.l_lesser,
             spillover_correction=True,
         )
-        btd_sandwich(
+        bd_sandwich(
             self.coulomb_matrix,
             p_greater,
             out=self.l_greater,
@@ -439,7 +439,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         self._filter_peaks(out)
 
         if comm.rank == 0:
-            print(self.local_energies[0])
             w_greater.data[0, :] = 0.0
             w_lesser.data[0, :] = 0.0
 

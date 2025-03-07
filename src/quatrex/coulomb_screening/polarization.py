@@ -13,7 +13,6 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 
-
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 
@@ -49,7 +48,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
     """
 
     def __init__(
-        self, quatrex_config: QuatrexConfig,  compute_config: ComputeConfig, coulomb_screening_energies: NDArray
+        self,
+        quatrex_config: QuatrexConfig,
+        compute_config: ComputeConfig,
+        coulomb_screening_energies: NDArray,
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
@@ -94,28 +96,37 @@ class PCoulombScreening(ScatteringSelfEnergy):
             self.batch_size = p_greater.data.shape[-1]
 
         batch_counts, _ = get_section_sizes(
-            p_greater.data.shape[-1], int(np.ceil(p_greater.data.shape[-1] / self.batch_size))
+            p_greater.data.shape[-1],
+            int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
         )
 
-        batch_displacements = np.cumsum(
-            np.concatenate(([0], np.array(batch_counts)))
-        )
+        batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
 
         # TODO: the datastructures does not allow for easy slicing of the
         # data. This is a workaround.
         rows, cols = p_lesser.spy()
-        rows = rows[p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[comm.rank + 1]]
-        cols = cols[p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[comm.rank + 1]]
+        rows = rows[
+            p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
+                comm.rank + 1
+            ]
+        ]
+        cols = cols[
+            p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
+                comm.rank + 1
+            ]
+        ]
 
         for start, end in zip(batch_displacements, batch_displacements[1:]):
             batch = slice(start, end)
 
-            p_g_full = self.prefactor * fft_correlate(g_greater.data[:,batch], -g_lesser.data[:,batch].conj())
+            p_g_full = self.prefactor * fft_correlate(
+                g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+            )
             p_l_full = -p_g_full[::-1].conj()
             # Fill the matrices with the data. Take second part of the
             # energy convolution.
-            p_lesser[rows[batch],cols[batch]] = p_l_full[self.ne - 1 :]
-            p_greater[rows[batch],cols[batch]] = p_g_full[self.ne - 1 :]
+            p_lesser[rows[batch], cols[batch]] = p_l_full[self.ne - 1 :]
+            p_greater[rows[batch], cols[batch]] = p_g_full[self.ne - 1 :]
 
         # Transpose the matrices to stack distribution.
         t0 = time.perf_counter()

@@ -102,12 +102,15 @@ class OBCConfig(BaseModel):
     min_decay: PositiveFloat = 1e-3
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    warning_threshold: PositiveFloat = 1e-1
     x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
     two_sided: bool = False
     treat_pairwise: bool = True
     pairing_threshold: PositiveFloat = 0.25
     min_propagation: PositiveFloat = 1e-2
+    residual_tolerance: PositiveFloat = 1e-3
+    residual_normalization: Literal["eigenvalue", "operator"] | None = "eigenvalue"
+
+    warning_threshold: PositiveFloat = 1e-1
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 100
@@ -130,6 +133,7 @@ class LyapunovConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["spectral", "doubling"] = "spectral"
+    reduce_sparsity: bool = True
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 100

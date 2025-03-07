@@ -5,6 +5,7 @@ from functools import partial
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
+from qttools.kernels.linalg import eigvalsh
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import get_section_sizes
 from scipy import linalg as spla
@@ -88,6 +89,8 @@ def _compute_eigenvalues(
     sigma_retarded: DSBSparse,
     ind: int,
     side: str,
+    use_eigvalsh: bool = False,
+    eigvalsh_compute_location: str = "numpy",
 ):
     """Computes the eigenvalues for the left or right contact."""
     if side == "left":
@@ -105,14 +108,17 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    h_0 = (
-        sum(
-            _get_block(hamiltonian, index=block) + sigma_retarded.blocks[*block][ind]
-            for block in blocks
-        )
-        + potential
-    )
     s_0 = sum(_get_block(overlap, index=block) for block in blocks)
+
+    h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
+    if use_eigvalsh:
+        # NOTE: In this case we use only the real part of the retarded
+        # self-energy.
+        h_0 += sum(xp.real(sigma_retarded.blocks[*block][ind]) for block in blocks)
+        e_0 = eigvalsh(h_0, s_0, compute_location=eigvalsh_compute_location)
+        return xp.sort(e_0.real)
+
+    h_0 += sum(sigma_retarded.blocks[*block][ind] for block in blocks)
     e_0 = get_device(spla.eigvals(get_host(h_0), get_host(s_0)))
     return xp.sort(e_0.real)
 

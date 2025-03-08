@@ -3,7 +3,9 @@
 from mpi4py.MPI import COMM_WORLD as comm, Intracomm, Request
 
 from qttools import xp
-from qttools.datastructures import DSBSparse, DBSparse
+# from qttools.datastructures import DSBSparse, DBSparse
+from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -560,7 +562,7 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         out_ = BlockMatrix(out, local_keys, (start_block, start_block))
     else:
-        out_ = BlockMatrix(a, set(), (start_block, start_block))
+        out_ = BlockMatrix(a_.dbsparse, set(), (start_block, start_block))
     
     for sector in ((start_block, end_block, start_block, num_blocks),
                    (end_block, num_blocks, start_block, end_block)):

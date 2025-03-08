@@ -385,8 +385,8 @@ class BlockMatrix(dict):
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             return self.dbsparse.local_blocks[key]
         print(f"Something bad happened: {comm.rank=}, {key=}, {self.origin=}")
-        return None
-        # raise KeyError(key)
+        # return None
+        raise KeyError(key)
         return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
                          int(self.dbsparse.block_sizes[key[1]])),
                         dtype=self.dbsparse.local_data.dtype)
@@ -419,6 +419,7 @@ def arrow_partition_halo_comm(
     end_block: int,
     comm: Intracomm,
 ):
+    num_blocks = a.dbsparse.num_blocks
     a_off = a_num_diag // 2
     b_off = b_num_diag // 2
     c_off = a_off + b_off
@@ -427,50 +428,38 @@ def arrow_partition_halo_comm(
     reqs = []
     # Send halo blocks to previous rank
     if start_block > 0:
-        for i in range(start_block, start_block + c_off):
-            for j in range(start_block, min(a.dbsparse.num_blocks, i + a_off + 1)):
+        for i in range(start_block, min(num_blocks, start_block + c_off)):
+            for j in range(max(start_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)):
                 reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=0))
-        for j in range(start_block, start_block + c_off):
-        # for j in range(start_block, min(b.dbsparse.num_blocks, start_block + bc_off)):
-            # for i in range(start_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+        for j in range(start_block, min(num_blocks, start_block + c_off)):
             for i in range(max(start_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
                 reqs.append(comm.isend(b[i, j], dest=rank - 1, tag=1))
-                # if sandwich:
-                #     reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=2))
     # Send halo blocks to next rank
     if end_block < a.dbsparse.num_blocks:
-        for i in range(end_block, end_block + a_off):
-            for j in range(max(0, i - a_off), end_block):
+        for i in range(end_block, min(num_blocks, end_block + a_off)):
+            for j in range(max(0, i - a_off), min(end_block, i + a_off + 1)):
                 reqs.append(comm.isend(a[i, j], dest=rank + 1, tag=0))
     if end_block < b.dbsparse.num_blocks:
-        for j in range(end_block, end_block + b_off):
-            for i in range(max(0, j - b_off), end_block):
+        for j in range(end_block, min(num_blocks, end_block + b_off)):
+            for i in range(max(0, j - b_off), min(end_block, j + b_off + 1)):
                 reqs.append(comm.isend(b[i, j], dest=rank + 1, tag=1))
-                # if sandwich:
-                #     reqs.append(comm.isend(a[i, j], dest=rank + 1, tag=2))
     # Receive halo blocks from next rank
     if end_block < a.dbsparse.num_blocks:
-        for i in range(end_block, end_block + c_off):
-            for j in range(end_block, min(a.dbsparse.num_blocks, i + a_off + 1)):
+        for i in range(end_block, min(num_blocks, end_block + c_off)):
+            for j in range(max(end_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)):
                 a[i, j] = comm.recv(source=rank + 1, tag=0)
     if end_block < b.dbsparse.num_blocks:
-        for j in range(end_block, end_block + c_off):
-        # for j in range(end_block, min(b.dbsparse.num_blocks, end_block + bc_off)):
-            # for i in range(end_block, min(b.dbsparse.num_blocks, j + b_off + 1)):
+        for j in range(end_block, min(num_blocks, end_block + c_off)):
             for i in range(max(end_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
                 b[i, j] = comm.recv(source=rank + 1, tag=1)
-                # if sandwich:
-                #     a[i, j] = comm.recv(source=rank + 1, tag=2)
     # Receive halo blocks from previous rank
     if start_block > 0:
-        for i in range(start_block, start_block + a_off):
-            for j in range(max(0, i - a_off), start_block):
+        for i in range(start_block, min(num_blocks, start_block + a_off)):
+            for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
                 a[i, j] = comm.recv(source=rank - 1, tag=0)
-        for j in range(start_block, start_block + b_off):
-            for i in range(max(0, j - b_off), start_block):
+        for j in range(start_block, min(num_blocks, start_block + b_off)):
+            for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
                 b[i, j] = comm.recv(source=rank - 1, tag=1)
-                # if sandwich:
-                #     a[i, j] = comm.recv(source=rank - 1, tag=2)
     Request.Waitall(reqs)
 
 
@@ -588,17 +577,16 @@ def bd_matmul_distr(
                         else:
                             i_a, k_a = i, k
                             k_b, j_b = k, j
-                        if partsum is None:
-                            partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(accumulator_dtype)
-                        else:
-                            partsum += a_[i_a, k_a] @ b_[k_b, j_b]
+                        try:
+                            if partsum is None:
+                                partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(accumulator_dtype)
+                            else:
+                                partsum += a_[i_a, k_a] @ b_[k_b, j_b]
+                        except:
+                            print(f"Something bad happened: {comm.rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}")
 
-                # if out_block:
-                #     out[i, j] = partsum
-                # else:
                 out_[i, j] = partsum
 
-    # if out_block:
     return out_
 
 
@@ -646,17 +634,17 @@ def bd_sandwich_distr(
     accumulator_dtype = accumulator_dtype or a.dtype
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(start_block, min(num_blocks, i + in_num_diag // 2 + 1)):
+        for j in range(max(start_block, i - in_num_diag // 2), min(num_blocks, i + in_num_diag // 2 + 1)):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(end_block, min(num_blocks, j + in_num_diag // 2 + 1)):
+        for i in range(max(end_block, j - in_num_diag // 2), min(num_blocks, j + in_num_diag // 2 + 1)):
             local_keys.add((i, j))
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
     b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
     tmp_num_diag = 2 * in_num_diag - 1
-    tmp = bd_matmul_distr(a, b, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, False, accumulator_dtype)
-    out_ = bd_matmul_distr(tmp, a, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, False, accumulator_dtype)
+    tmp = bd_matmul_distr(a_, b_, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, False, accumulator_dtype)
+    out_ = bd_matmul_distr(tmp, a_, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, False, accumulator_dtype)
 
     if spillover_correction:
 
@@ -683,13 +671,6 @@ def bd_sandwich_distr(
             )
             out_[m1, m2] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m2]
             out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
-            # out_[-1, -1] += (
-            #     a.blocks[-2, -1] @ b.blocks[-1, -2] @ a.blocks[-1, -1]
-            #     + a.blocks[-1, -1] @ b.blocks[-2, -1] @ a.blocks[-1, -2]
-            #     + a.blocks[-2, -1] @ b.blocks[-1, -1] @ a.blocks[-1, -2]
-            # )
-            # out_[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ a.blocks[-1, -2]
-            # out_[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ a.blocks[-1, -2]
     
     return out_
     

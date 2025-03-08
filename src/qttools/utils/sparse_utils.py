@@ -2,7 +2,10 @@
 
 import functools
 
+# from mpi4py.MPI import COMM_WORLD as comm, Intracomm
+
 from qttools import NDArray, sparse, xp
+# from qttools.datastructures.dbsparse import DBSparse
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.profiling import Profiler
 
@@ -86,7 +89,7 @@ def product_sparsity_pattern(
         The column indices of the sparsity pattern.
 
     """
-    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.]
+    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.
     csrs = [matrix.tocsr() for matrix in matrices]
     for i, csr in enumerate(csrs):
         if xp.iscomplexobj(csr.data):
@@ -167,6 +170,12 @@ def product_sparsity_pattern_dsbsparse(
                         (block_sizes[i], block_sizes[j]), dtype=xp.float32
                     )
                 c_blocks[i, j] = c_block
+        
+        if spillover:
+            # Left spillover
+            c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
+            # Right spillover
+            c_blocks[num_blocks-1, num_blocks-1] += a_blocks[num_blocks-2, num_blocks-1] @ b_blocks[num_blocks-1, num_blocks-2]
 
         if spillover:
             # Left spillover
@@ -190,3 +199,83 @@ def product_sparsity_pattern_dsbsparse(
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
 
     return c_rows, c_cols
+
+
+# def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
+#                                       start_block: int = 0,
+#                                       end_block: int = None, comm:
+#                                       Intracomm = comm,
+#                                       spillover: bool = False) -> tuple[NDArray, NDArray]:
+#     """Computes the sparsity pattern of the product of a sequence of DBSparse matrices.
+
+#     Parameters
+#     ----------
+#     matrices : sparse.spmatrix
+#         A sequence of sparse matrices.
+
+#     Returns
+#     -------
+#     rows : NDArray
+#         The row indices of the sparsity pattern.
+#     cols : NDArray
+#         The column indices of the sparsity pattern.
+
+#     """
+
+#     assert len(matrices) > 1
+
+#     a = matrices[0]
+
+#     # Assuming that all matrices have the same number of blocks and block sizes.
+#     num_blocks = a.num_blocks
+#     block_sizes = a.block_sizes
+#     block_offsets = a.block_offsets
+
+#     a_blocks = tocsr_dict(a)
+
+#     for b in matrices[1:]:
+#         b_blocks = tocsr_dict(b)
+#         c_blocks = {}
+
+#         for i in range(num_blocks):
+#             for j in range(num_blocks):
+
+#                 c_block = None
+#                 for k in range(num_blocks):
+#                     if c_block is None:
+#                         c_block = a_blocks[i, k] @ b_blocks[k, j]
+#                     else:
+#                         c_block += a_blocks[i, k] @ b_blocks[k, j]
+
+#                 if c_block is None:
+#                     c_block = sparse.csr_matrix(
+#                         (block_sizes[i], block_sizes[j]), dtype=xp.float32
+#                     )
+#                 c_blocks[i, j] = c_block
+
+#         a_blocks = c_blocks
+
+#         if spillover:
+#             # Left spillover
+#             c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
+#             # i_ = slice(None, int(block_sizes[0]))
+#             # j_ = slice(int(block_sizes[0]), int(sum(block_sizes[:2])))
+#             # c_blocks[i_, i_] += a_blocks[j_, i_] @ b_blocks[i_, j_]
+
+#             # Right spillover
+#             c_blocks[num_blocks-1, num_blocks-1] += a_blocks[num_blocks-2, num_blocks-1] @ b_blocks[num_blocks-1, num_blocks-2]
+#             # i_ = slice(int(-block_sizes[-1]), None)
+#             # j_ = slice(int(-sum(block_sizes[-2:])), int(-block_sizes[-1]))
+#             # c_blocks[i_, i_] += a_blocks[j_, i_] @ b_blocks[i_, j_]
+
+#     c_rows = xp.empty(0, dtype=xp.int32)
+#     c_cols = xp.empty(0, dtype=xp.int32)
+
+#     for i in range(num_blocks):
+#         for j in range(num_blocks):
+#             c_block = c_blocks[i, j].tocoo()
+#             c_block.sum_duplicates()
+#             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
+#             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
+
+#     return c_rows, c_cols

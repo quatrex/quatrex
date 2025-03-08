@@ -289,6 +289,7 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
                 continue
             c_block = sparse.coo_matrix(c_block)
             c_block.sum_duplicates()
+            c_block.eliminate_zeros()
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
     

@@ -644,9 +644,24 @@ def bd_sandwich_distr(
 
     tmp_num_diag = 2 * in_num_diag - 1
     tmp = bd_matmul_distr(a_, b_, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, False, accumulator_dtype)
+    # if spillover_correction:
+    #     if start_block == 0:
+    #         tmp[0, 0] += a_[1, 0] @ b_[0, 1]
+    #     if end_block == a.num_blocks:
+    #         m1 = a.num_blocks - 1
+    #         m2 = a.num_blocks - 2
+    #         tmp[m1, m1] += a_[m2, m1] @ b_[m1, m2]
     out_ = bd_matmul_distr(tmp, a_, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, False, accumulator_dtype)
+    # if spillover_correction:
+    #     if start_block == 0:
+    #         out_[0, 0] += a_[1, 0] @ b_[0, 1] @ a_[0, 0]
+    #     if end_block == a.num_blocks:
+    #         m1 = a.num_blocks - 1
+    #         m2 = a.num_blocks - 2
+    #         out_[m1, m1] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m1]
 
     if spillover_correction:
+    # if False:
 
         # NOTE: This only works for BTD matrices with open ends.
 

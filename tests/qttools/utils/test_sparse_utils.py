@@ -113,18 +113,18 @@ def _expand_matrix(matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1) 
 
     expanded = sparse.csr_matrix(tuple(shape), dtype=matrix.dtype)
 
-    expanded[left_obc : -right_obc, left_obc : -right_obc] = csr
-    expanded[:left_obc, left_obc:2*left_obc] = csr[:left_obc, left_obc:2*left_obc]
-    expanded[left_obc:2*left_obc, :left_obc] = csr[left_obc:2*left_obc, :left_obc]
-    expanded[-right_obc:, -2*right_obc:-right_obc] = csr[-2*right_obc:-right_obc, -right_obc:]
-    expanded[-2*right_obc:-right_obc, -right_obc:] = csr[-right_obc:, -2*right_obc:-right_obc]
+    # expanded[left_obc : -right_obc, left_obc : -right_obc] = csr
+    # expanded[:left_obc, left_obc:2*left_obc] = csr[:left_obc, left_obc:2*left_obc]
+    # expanded[left_obc:2*left_obc, :left_obc] = csr[left_obc:2*left_obc, :left_obc]
+    # expanded[-right_obc:, -2*right_obc:-right_obc] = csr[-2*right_obc:-right_obc, -right_obc:]
+    # expanded[-2*right_obc:-right_obc, -right_obc:] = csr[-right_obc:, -2*right_obc:-right_obc]
 
-    # # simply repeat the boundaries slices
-    # expanded[left_obc : left_obc + int(sum(block_sizes)), left_obc : left_obc + int(sum(block_sizes))] = csr
-    # expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
-    # expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
-    # expanded[-right_obc:, right_obc:] = expanded[-2 * right_obc : -right_obc, :-right_obc]
-    # expanded[right_obc:, -right_obc:] = expanded[:-right_obc, -2 * right_obc : -right_obc]
+    # simply repeat the boundaries slices
+    expanded[left_obc : left_obc + int(sum(block_sizes)), left_obc : left_obc + int(sum(block_sizes))] = csr
+    expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
+    expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
+    expanded[-right_obc:, right_obc:] = expanded[-2 * right_obc : -right_obc, :-right_obc]
+    expanded[right_obc:, -right_obc:] = expanded[:-right_obc, -2 * right_obc : -right_obc]
 
     return expanded
 
@@ -254,6 +254,9 @@ def test_product_sparsity_dbsparse_spillover(
     product.data[:] = 1
     ref = product.toarray()[block_sizes[0]:block_sizes[0]+int(sum(block_sizes)),
                             block_sizes[0]:block_sizes[0]+int(sum(block_sizes))]
+    # product = functools.reduce(lambda x, y: _spillover_matmul(x, y, block_sizes), matrices)
+    # product.data[:] = 1
+    # ref = product.toarray()
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
     start_block = sum(local_blocks[:comm.rank])

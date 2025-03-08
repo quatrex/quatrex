@@ -214,7 +214,9 @@ class DBCOO(DBSparse):
         cols = xp.hstack(cols)
 
         # Create the dense matrix
-        dense = xp.zeros((int(rows.max()) + 1, int(cols.max()) + 1), dtype=self.dtype)
+        # dense = xp.zeros((int(rows.max()) + 1, int(cols.max()) + 1), dtype=self.dtype)
+        size = int(sum(self.block_sizes))
+        dense = xp.zeros((size, size), dtype=self.dtype)
         dense[rows, cols] = data
 
         return dense
@@ -269,8 +271,10 @@ class DBCOO(DBSparse):
         local_cols = cols[indices]
 
         # Normalize the row and column indices.
-        local_rows -= local_rows.min()
-        local_cols -= local_cols.min()
+        # local_rows -= local_rows.min()
+        # local_cols -= local_cols.min()
+        local_rows -= start_idx
+        local_cols -= start_idx
 
         return cls(
             local_data=local_data,

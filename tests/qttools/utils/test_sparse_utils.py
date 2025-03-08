@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dbsparse import DBSparse, DBCOO
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import (
     product_sparsity_pattern,
@@ -113,18 +113,18 @@ def _expand_matrix(matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1) 
 
     expanded = sparse.csr_matrix(tuple(shape), dtype=matrix.dtype)
 
-    # expanded[left_obc : -right_obc, left_obc : -right_obc] = csr
-    # expanded[:left_obc, left_obc:2*left_obc] = csr[:left_obc, left_obc:2*left_obc]
-    # expanded[left_obc:2*left_obc, :left_obc] = csr[left_obc:2*left_obc, :left_obc]
-    # expanded[-right_obc:, -2*right_obc:-right_obc] = csr[-2*right_obc:-right_obc, -right_obc:]
-    # expanded[-2*right_obc:-right_obc, -right_obc:] = csr[-right_obc:, -2*right_obc:-right_obc]
+    expanded[left_obc : -right_obc, left_obc : -right_obc] = csr
+    expanded[:left_obc, left_obc:2*left_obc] = csr[:left_obc, left_obc:2*left_obc]
+    expanded[left_obc:2*left_obc, :left_obc] = csr[left_obc:2*left_obc, :left_obc]
+    expanded[-right_obc:, -2*right_obc:-right_obc] = csr[-2*right_obc:-right_obc, -right_obc:]
+    expanded[-2*right_obc:-right_obc, -right_obc:] = csr[-right_obc:, -2*right_obc:-right_obc]
 
-    # simply repeat the boundaries slices
-    expanded[left_obc : left_obc + int(sum(block_sizes)), left_obc : left_obc + int(sum(block_sizes))] = csr
-    expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
-    expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
-    expanded[-right_obc:, right_obc:] = expanded[-2 * right_obc : -right_obc, :-right_obc]
-    expanded[right_obc:, -right_obc:] = expanded[:-right_obc, -2 * right_obc : -right_obc]
+    # # simply repeat the boundaries slices
+    # expanded[left_obc : left_obc + int(sum(block_sizes)), left_obc : left_obc + int(sum(block_sizes))] = csr
+    # expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
+    # expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
+    # expanded[-right_obc:, right_obc:] = expanded[-2 * right_obc : -right_obc, :-right_obc]
+    # expanded[right_obc:, -right_obc:] = expanded[:-right_obc, -2 * right_obc : -right_obc]
 
     return expanded
 
@@ -184,10 +184,19 @@ def test_product_sparsity_dbsparse(
     block_sizes: NDArray,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
+    last_block_sizes = block_sizes[-3:]
+    if num_matrices > 3:
+        block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    # for i in range(num_matrices):
+    #     matrices[i] = comm.bcast(matrices[i], root=0)
+    matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
         dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
     ]
+    dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
+    for i in range(num_matrices):
+        assert xp.allclose(dense_matrices[i], matrices[i].toarray())
 
     product = functools.reduce(lambda x, y: x @ y, matrices)
     product.data[:] = 1
@@ -206,8 +215,68 @@ def test_product_sparsity_dbsparse(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
+    if comm.rank == 0:
+        print(xp.nonzero(ref - val))
+
+    assert xp.allclose(ref, val)
+
+
+def test_product_sparsity_dbsparse_spillover(
+    dbsparse_type: DBSparse,
+    num_matrices: int,
+    block_sizes: NDArray,
+):
+    """Tests the computation of the matrix product's sparsity pattern."""
+    last_block_sizes = block_sizes[-3:]
+    if num_matrices > 3:
+        block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
+    # matrices = []
+    # for _ in range(num_matrices):
+    #     matrix = None
+    #     if comm.rank == 0:
+    #         matrix = _create_btd_coo(block_sizes)
+    #     matrix = comm.bcast(matrix, root=0)
+    #     matrices.append(matrix)
+    matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    # # for i in range(num_matrices):
+    # #     matrices[i] = comm.bcast(matrices[i], root=0)
+    matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
+    dsbsparse_matrices = [
+        dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
+    ]
+    dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
+    for i in range(num_matrices):
+        assert xp.allclose(dense_matrices[i], matrices[i].toarray())
+
+    shape = matrices[0].shape
+    expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
+    product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
+    product.data[:] = 1
+    ref = product.toarray()[block_sizes[0]:block_sizes[0]+int(sum(block_sizes)),
+                            block_sizes[0]:block_sizes[0]+int(sum(block_sizes))]
+
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
+    start_block = sum(local_blocks[:comm.rank])
+    end_block = start_block + local_blocks[comm.rank]
+
+    rows, cols = product_sparsity_pattern_dbsparse(
+        *dsbsparse_matrices,
+        in_num_diag=3,
+        start_block=start_block, end_block=end_block,
+        comm=comm,
+        spillover=True)
+    val = sparse.coo_matrix(
+        (xp.ones(len(rows)), (rows, cols)), shape=shape
+    ).toarray()
+
+    print(f"{comm.rank=}, {start_block=}, {end_block=}", flush=True)
+    if comm.rank == 0:
+        print(xp.nonzero(ref - val))
+
     assert xp.allclose(ref, val)
 
 
 if __name__ == "__main__":
     pytest.main([__file__])
+    # for num_matrices in range(2, 6):
+    #     test_product_sparsity_dbsparse(DBCOO, num_matrices, xp.array([2] * 15))

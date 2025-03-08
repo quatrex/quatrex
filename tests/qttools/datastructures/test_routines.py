@@ -7,6 +7,7 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import (
     DSBSparse,
     DBSparse,
+    DBCOO,
     bd_matmul,
     bd_sandwich,
     btd_matmul,
@@ -260,7 +261,7 @@ def test_bd_matmul_distr(
 
 
 @pytest.mark.mpi
-def test_bd_sandwich(
+def test_bd_sandwich_distr(
     dbsparse_type: DBSparse,
     block_sizes: NDArray,
     # global_stack_shape: tuple,
@@ -408,4 +409,5 @@ def test_bd_sandwich_distr_spillover(
 if __name__ == "__main__":
     pytest.main(['--only-mpi', __file__])
     # pytest.main([__file__])
+    # test_bd_sandwich_distr(DBCOO, xp.array([2] * 3 + [4] * 2 + [2] * 3))
 

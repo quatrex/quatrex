@@ -232,6 +232,7 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
 
     # Assuming that all matrices have the same number of blocks, same block sizes, and same block diagonals.
     num_blocks = a.num_blocks
+    end_block = end_block or num_blocks
     block_offsets = a.block_offsets
     a_num_diag = in_num_diag
 
@@ -260,9 +261,12 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
         if spillover:
             if start_block == 0:
                 # Left spillover
-                c_[0, 0] += a_[1, 0] @ b_[0, 1]
+                print(f"left spillover, {comm.rank=}, {c_.origin=}")
+                c_[0, 0] = c_[0, 0] + a_[1, 0] @ b_[0, 1]
             if end_block == num_blocks:
-                c_[num_blocks-1, num_blocks-1] += a_[num_blocks-2, num_blocks-1] @ b_[num_blocks-1, num_blocks-2]
+                # Right spillover
+                print(f"right spillover, {comm.rank=}, {c_.origin=}")
+                c_[num_blocks-1, num_blocks-1] = c_[num_blocks-1, num_blocks-1] + a_[num_blocks-2, num_blocks-1] @ b_[num_blocks-1, num_blocks-2]
         
         a_ = c_
         a_num_diag = tmp_num_diag

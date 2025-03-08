@@ -3,9 +3,10 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse, DBCOO, DBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
+DBSPARSE_TYPES = [DBCOO]
 
 BLOCK_SIZES = [
     pytest.param(xp.array([2] * 10), id="constant-block-size-2"),
@@ -22,8 +23,13 @@ def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+@pytest.fixture(params=DSBSPARSE_TYPES)
 def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
+
+@pytest.fixture(params=DBSPARSE_TYPES)
+def dbsparse_type(request: pytest.FixtureRequest) -> DBSparse:
     return request.param
 
 

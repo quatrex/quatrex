@@ -2,7 +2,7 @@
 
 import functools
 
-from mpi4py.MPI import COMM_WORLD as comm, Intracomm
+from mpi4py.MPI import COMM_WORLD as comm, Intracomm, SUM
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dbsparse import DBSparse
@@ -232,16 +232,15 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
 
     # Assuming that all matrices have the same number of blocks, same block sizes, and same block diagonals.
     num_blocks = a.num_blocks
-    block_sizes = a.block_sizes
     block_offsets = a.block_offsets
     a_num_diag = in_num_diag
 
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(start_block, min(num_blocks, i + in_num_diag // 2 + 1)):
+        for j in range(max(start_block, i - in_num_diag // 2), min(num_blocks, i + in_num_diag // 2 + 1)):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(end_block, min(num_blocks, j + in_num_diag // 2 + 1)):
+        for i in range(max(end_block, j - in_num_diag // 2), min(num_blocks, j + in_num_diag // 2 + 1)):
             local_keys.add((i, j))
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
 
@@ -253,8 +252,8 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
         b_num_diag = in_num_diag
         tmp_num_diag = a_num_diag + b_num_diag - 1
-        # if n == len(matrices) - 2:
-        #     tmp_num_diag = out_num_diag
+        if n == len(matrices) - 2:
+            tmp_num_diag = out_num_diag
 
         c_ = bd_matmul_distr(a_, b, None, a_num_diag, b_num_diag, tmp_num_diag, start_block, end_block, comm, False)
 
@@ -271,13 +270,12 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
     c_rows = xp.empty(0, dtype=xp.int32)
     c_cols = xp.empty(0, dtype=xp.int32)
 
-    print(f"{out_num_diag=}")
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(start_block, min(num_blocks, i + out_num_diag // 2 + 1)):
+        for j in range(max(start_block, i - out_num_diag // 2), min(num_blocks, i + out_num_diag // 2 + 1)):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(end_block, min(num_blocks, j + out_num_diag // 2 + 1)):
+        for i in range(max(end_block, j - out_num_diag // 2), min(num_blocks, j + out_num_diag // 2 + 1)):
             local_keys.add((i, j))
 
     for i in range(num_blocks):
@@ -285,8 +283,6 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
             if (i, j) not in local_keys:
                 continue
             c_block = c_[i, j]
-            if c_block is None:
-                continue
             c_block = sparse.coo_matrix(c_block)
             c_block.sum_duplicates()
             c_block.eliminate_zeros()

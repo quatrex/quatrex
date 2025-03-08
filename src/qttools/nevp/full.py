@@ -22,12 +22,23 @@ class Full(NEVP):
     [^1]: S. Brück, Ab-initio Quantum Transport Simulations for
     Nanoelectronic Devices, ETH Zurich, 2017.
 
+    Parameters
+    ----------
+    eig_compute_location : str, optional
+        The location where to compute the eigenvalues and eigenvectors.
+        Can be either "numpy" or "cupy". Only relevant if cupy is used.
+
     """
 
+    def __init__(
+        self,
+        eig_compute_location: str = "numpy",
+    ):
+        """Initializes the Full NEVP solver."""
+        self.eig_compute_location = eig_compute_location
+
     @profiler.profile(level="debug")
-    def _solve(
-        self, a_xx: tuple[NDArray, ...], eig_compute_location: str = "numpy"
-    ) -> tuple[NDArray, NDArray]:
+    def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -38,9 +49,6 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        eig_compute_location : str, optional
-            The location where to compute the eigenvalues and eigenvectors.
-            Can be either "numpy" or "cupy". Only relevant if cupy is used.
 
         Returns
         -------
@@ -62,7 +70,7 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        w, v = linalg.eig(A, compute_module=eig_compute_location)
+        w, v = linalg.eig(A, compute_module=self.eig_compute_location)
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
@@ -76,7 +84,6 @@ class Full(NEVP):
         self,
         a_xx: tuple[NDArray, ...],
         left: bool = False,
-        eig_compute_location: str = "numpy",
     ) -> tuple:
         """Solves the plynomial eigenvalue problem.
 
@@ -90,9 +97,6 @@ class Full(NEVP):
             from lowest to highest order.
         left : bool, optional
             Whether to solve additionally for the left eigenvectors.
-        eig_compute_location : str, optional
-            The location where to compute the eigenvalues and eigenvectors.
-            Can be either "cupy" or "numpy". Only relevant if cupy is used.
 
         Returns
         -------
@@ -112,14 +116,13 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
-        wrs, vrs = self._solve(a_xx, eig_compute_location=eig_compute_location)
+        wrs, vrs = self._solve(a_xx)
 
         if left:
             # solve for the left eigenvectors
             # by solving the right eigenvectors of the adjoint problem
             wls, vls = self._solve(
                 tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
-                eig_compute_location=eig_compute_location,
             )
             wls = wls.conj()
 

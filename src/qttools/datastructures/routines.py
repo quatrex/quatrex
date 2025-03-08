@@ -365,9 +365,9 @@ class BlockMatrix(dict):
         print(f"Something bad happened: {comm.rank=}, {key=}, {self.origin=}")
         # return None
         raise KeyError(key)
-        return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
-                         int(self.dbsparse.block_sizes[key[1]])),
-                        dtype=self.dbsparse.local_data.dtype)
+        # return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
+        #                  int(self.dbsparse.block_sizes[key[1]])),
+        #                 dtype=self.dbsparse.local_data.dtype)
 
     def __setitem__(self, key, val):
         if key in self.local_keys:

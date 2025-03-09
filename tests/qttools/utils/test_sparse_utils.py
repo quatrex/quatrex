@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.datastructures.dbsparse import DBSparse, DBCOO
+from qttools.datastructures.dbsparse import DBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import (
     product_sparsity_pattern,
@@ -57,7 +57,6 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     return coo
 
 
-@pytest.mark.skip
 def test_product_sparsity(
     num_matrices: int,
     block_sizes: NDArray,
@@ -77,7 +76,6 @@ def test_product_sparsity(
     assert xp.allclose(ref, val)
 
 
-@pytest.mark.skip
 def test_product_sparsity_dsbsparse(
     dsbsparse_type: DSBSparse,
     num_matrices: int,
@@ -148,7 +146,6 @@ def _spillover_matmul(a: sparse.spmatrix, b: sparse.spmatrix, block_sizes) -> sp
     return c
 
 
-@pytest.mark.skip
 def test_product_sparsity_dsbsparse_spillover(
     dsbsparse_type: DSBSparse,
     num_matrices: int,
@@ -188,8 +185,6 @@ def test_product_sparsity_dbsparse(
     if num_matrices > 3:
         block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
-    # for i in range(num_matrices):
-    #     matrices[i] = comm.bcast(matrices[i], root=0)
     matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
         dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
@@ -230,16 +225,7 @@ def test_product_sparsity_dbsparse_spillover(
     last_block_sizes = block_sizes[-3:]
     if num_matrices > 3:
         block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
-    # matrices = []
-    # for _ in range(num_matrices):
-    #     matrix = None
-    #     if comm.rank == 0:
-    #         matrix = _create_btd_coo(block_sizes)
-    #     matrix = comm.bcast(matrix, root=0)
-    #     matrices.append(matrix)
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
-    # # for i in range(num_matrices):
-    # #     matrices[i] = comm.bcast(matrices[i], root=0)
     matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
         dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
@@ -281,5 +267,3 @@ def test_product_sparsity_dbsparse_spillover(
 
 if __name__ == "__main__":
     pytest.main([__file__])
-    # for num_matrices in range(2, 6):
-    #     test_product_sparsity_dbsparse(DBCOO, num_matrices, xp.array([2] * 15))

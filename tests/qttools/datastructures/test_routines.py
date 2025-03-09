@@ -408,6 +408,5 @@ def test_bd_sandwich_distr_spillover(
 
 if __name__ == "__main__":
     pytest.main(['--only-mpi', __file__])
-    # pytest.main([__file__])
-    # test_bd_sandwich_distr(DBCOO, xp.array([2] * 3 + [4] * 2 + [2] * 3))
+
 

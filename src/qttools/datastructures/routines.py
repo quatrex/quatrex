@@ -397,6 +397,13 @@ def arrow_partition_halo_comm(
         end_block: int,
         comm: Intracomm,
 ):
+    """ Communicate halo blocks between neighboring ranks assuming arrow partitioning.
+
+    NOTE: The method works ONLY IF the ranks need to communicate ONLY with their immediate neighbors,
+    i.e., rank - 1 and rank + 1. 
+  
+    """
+
     num_blocks = a.dbsparse.num_blocks
     a_off = a_num_diag // 2
     b_off = b_num_diag // 2
@@ -622,29 +629,13 @@ def bd_sandwich_distr(
 
     tmp_num_diag = 2 * in_num_diag - 1
     tmp = bd_matmul_distr(a_, b_, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, False, accumulator_dtype)
-    # if spillover_correction:
-    #     if start_block == 0:
-    #         tmp[0, 0] += a_[1, 0] @ b_[0, 1]
-    #     if end_block == a.num_blocks:
-    #         m1 = a.num_blocks - 1
-    #         m2 = a.num_blocks - 2
-    #         tmp[m1, m1] += a_[m2, m1] @ b_[m1, m2]
     out_ = bd_matmul_distr(tmp, a_, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, False, accumulator_dtype)
-    # if spillover_correction:
-    #     if start_block == 0:
-    #         out_[0, 0] += a_[1, 0] @ b_[0, 1] @ a_[0, 0]
-    #     if end_block == a.num_blocks:
-    #         m1 = a.num_blocks - 1
-    #         m2 = a.num_blocks - 2
-    #         out_[m1, m1] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m1]
 
     if spillover_correction:
-    # if False:
+        if in_num_diag != 3:
+            raise NotImplementedError("Spillover correction is only implemented for in_num_diag=3.")
 
-        # NOTE: This only works for BTD matrices with open ends.
-
-        # Corrections accounting for the fact that the matrices should have
-        # open ends.
+        # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
             out_[0, 0] += (
                 a_[1, 0] @ b_[0, 1] @ a_[0, 0]

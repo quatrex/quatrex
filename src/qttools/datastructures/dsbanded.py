@@ -604,6 +604,41 @@ class TallNSkinny(DSBanded):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
         )
+    
+    # @classmethod
+    # def matmul(a: "TallNSkinny", b: "ShortNFat", c: "TallNSkinny"):
+    #     if not isinstance(a, TallNSkinny):
+    #         raise TypeError("First matrix must be TallNSkinny.")
+    #     if not isinstance(b, ShortNFat):
+    #         raise TypeError("Second Matrix must be ShortNFat.")
+    #     if not isinstance(c, TallNSkinny):
+    #         raise TypeError("Result matrix must be TallNSkinny.")
+    #     if a.shape[-1] != b.shape[-2] or a.shape[-1] != c.shape[-1] or b.shape[-2] != c.shape[-2]:
+    #         raise ValueError("Matrix shapes do not match.")
+    #     if xp.any(a.block_sizes != b.block_sizes) or xp.any(a.block_sizes != c.block_sizes):
+    #         raise ValueError("Block sizes do not match.")
+    #     if xp.__name__ != "cupy":
+    #         raise NotImplementedError("Only CuPy is supported.")
+        
+    #     if dsbanded_kernels and hasattr(dsbanded_kernels, "TT_AVAIL") and dsbanded_kernels.TT_AVAIL:
+    #         torch = dsbanded_kernels.torch
+    #     else:
+    #         raise NotImplementedError("Triton and Pytorch are not available.")
+
+    #     batch_a = functools.reduce(lambda x, y: x * y, a.data.shape[:-1])
+    #     if not hasattr(a, "torch"):
+    #         a.torch = torch.asarray(a.data.reshape((batch_a, ) + a.banded_shape), device='cuda')
+    #     A = a.torch
+    #     batch_b = functools.reduce(lambda x, y: x * y, b.data.shape[:-1])
+    #     if not hasattr(b, "torch"):
+    #         b.torch = torch.asarray(b.data.reshape((batch_b, ) + b.banded_shape), device='cuda')
+    #     B = b.torch
+    #     batch_c = functools.reduce(lambda x, y: x * y, c.data.shape[:-1])
+    #     if not hasattr(c, "torch"):
+    #         c.torch = torch.asarray(c.data.reshape((batch_c, ) + c.banded_shape), device='cuda')
+    #     C = c.torch
+
+    #     pass
 
     def __matmul__(self, other: "ShortNFat") -> "TallNSkinny":
         """Matrix multiplication of two DSBanded matrices."""
@@ -680,10 +715,6 @@ class TallNSkinny(DSBanded):
             scale_quant=scale_quant,
             transpose_B=False,
         )
-
-        # print(
-        #     f"a_blk_tall_and_skinny norm: {torch.norm(A)}, b_blk_short_and_fat norm: {torch.norm(B)}, c_blk_tall_and_skinny norm: {torch.norm(c_blk_tall_and_skinny)}, perform_scaling: {perform_scaling}, scale_quant: {scale_quant}"
-        # )
 
         result_torch = c_blk_tall_and_skinny.to(_torch_dtype[self.dtype.type])
         local_stack_shape = self.data.shape[:len(self.global_stack_shape)]
@@ -886,7 +917,7 @@ class TallNSkinny(DSBanded):
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.dtype)
+        dense = xp.zeros((banded_rows, max(banded_cols, coo.shape[-1])), dtype=coo.dtype)
         dense[coo.row, coo.col] = coo.data
 
         def _data(real, imag):
@@ -1765,7 +1796,7 @@ class ShortNFat(DSBanded):
         banded_cols = ((coo.shape[1] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.dtype)
+        dense = xp.zeros((max(banded_rows, coo.shape[-2]), banded_cols), dtype=coo.dtype)
         dense[coo.row, coo.col] = coo.data
         
         def _data(real, imag):

@@ -882,47 +882,63 @@ class TestDistribution:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests distributed creation of DSBSparse matrices from sparrays."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        ref = coo.toarray()
 
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
+        if isinstance(dsbsparse, tuple):
+            val = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            val = dsbsparse.to_dense()
+
+        assert xp.array_equiv(ref, val)
 
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
-        assert dsbsparse.to_dense().shape == (*local_stack_shape,) + coo.shape
+        assert val.shape == (*local_stack_shape,) + coo.shape
 
     def test_dtranspose(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests the distributed transpose method."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
-        assert dsbsparse.distribution_state == "stack"
 
-        original_data = dsbsparse._data.copy()
+        if isinstance(dsbsparse, tuple):
+            matrices = [dsbsparse[0], dsbsparse[1]]
+        else:
+            matrices = [dsbsparse]
+        
+        for dsbsparse in matrices:
 
-        # Transpose forth.
-        dsbsparse.dtranspose()
-        assert dsbsparse.distribution_state == "nnz"
+            assert dsbsparse.distribution_state == "stack"
 
-        # Transpose back.
-        dsbsparse.dtranspose()
-        assert dsbsparse.distribution_state == "stack"
+            original_data = dsbsparse._data.copy()
 
-        comm.barrier()
+            # Transpose forth.
+            dsbsparse.dtranspose()
+            assert dsbsparse.distribution_state == "nnz"
 
-        assert xp.allclose(original_data, dsbsparse._data)
+            # Transpose back.
+            dsbsparse.dtranspose()
+            assert dsbsparse.distribution_state == "stack"
+
+            comm.barrier()
+
+            assert xp.allclose(original_data, dsbsparse._data)
 
     @pytest.mark.usefixtures("accessed_element")
     def test_getitem_stack(
@@ -931,19 +947,29 @@ class TestDistribution:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
 
         reference = dense[..., *accessed_element]
-        print(dsbsparse[accessed_element].shape, flush=True) if comm.rank == 0 else None
+        if isinstance(dsbsparse, tuple):
+            print(dsbsparse[0][accessed_element].shape, flush=True) if comm.rank == 0 else None
+            print(dsbsparse[1][accessed_element].shape, flush=True) if comm.rank == 0 else None
+            val = dsbsparse[0][accessed_element] + 1j * dsbsparse[1][accessed_element]
+        else:
+            print(dsbsparse[accessed_element].shape, flush=True) if comm.rank == 0 else None
+            val = dsbsparse[accessed_element]
         print(reference.shape, flush=True) if comm.rank == 0 else None
 
-        assert xp.allclose(reference, dsbsparse[accessed_element])
+        assert xp.allclose(reference, val)
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem_stack(
@@ -952,20 +978,28 @@ class TestDistribution:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsbsparse.to_dense()
-
-        dsbsparse[accessed_element] = 42
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            dense[..., *accessed_element] = 42 + 1j * 42
+            dsbsparse[0][accessed_element] = 42
+            dsbsparse[1][accessed_element] = 42
+            val = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
+            dense[..., *accessed_element] = 42
+            dsbsparse[accessed_element] = 42
+            val = dsbsparse.to_dense()
 
         # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
         # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
-        dense[..., *accessed_element] = 42
-        assert xp.allclose(dense, dsbsparse.to_dense())
+        assert xp.allclose(dense, val)
 
     @pytest.mark.usefixtures("accessed_element")
     def test_getitem_nnz(
@@ -974,30 +1008,37 @@ class TestDistribution:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsbsparse.to_dense()
-        row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
-        ind = [dsbsparse.flatten_index((row, col))]
-
-        reference = dense[..., *accessed_element].flatten()[0]
-
-        dsbsparse.dtranspose()
-
-        if len(ind) == 0:
-            with pytest.raises(IndexError):
-                dsbsparse[accessed_element]
-            return
-
-        rank = xp.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
-        if rank == comm.rank:
-            assert xp.allclose(reference, dsbsparse[accessed_element])
+        if isinstance(dsbsparse, tuple):
+            matrices = [dsbsparse[0], dsbsparse[1]]
         else:
-            assert dsbsparse[accessed_element].shape[-1] == 0
+            matrices = [dsbsparse]
+        
+        for dsbsparse in matrices:
+            dense = dsbsparse.to_dense()
+            row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
+            ind = [dsbsparse.flatten_index((row, col))]
+
+            reference = dense[..., *accessed_element].flatten()[0]
+
+            dsbsparse.dtranspose()
+
+            if len(ind) == 0:
+                with pytest.raises(IndexError):
+                    dsbsparse[accessed_element]
+                return
+
+            rank = xp.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
+            if rank == comm.rank:
+                assert xp.allclose(reference, dsbsparse[accessed_element])
+            else:
+                assert dsbsparse[accessed_element].shape[-1] == 0
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem_nnz(
@@ -1006,31 +1047,38 @@ class TestDistribution:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo = _create_coo(block_sizes, dtype=datatype) if comm.rank == 0 else None
         coo: sparse.coo_matrix = comm.bcast(coo, root=0)
 
         dsbsparse = dsbanded_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsbsparse.to_dense()
-        row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
-        ind = [dsbsparse.flatten_index((row, col))]
+        if isinstance(dsbsparse, tuple):
+            matrices = [dsbsparse[0], dsbsparse[1]]
+        else:
+            matrices = [dsbsparse]
+        
+        for dsbsparse in matrices:
+            dense = dsbsparse.to_dense()
+            row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
+            ind = [dsbsparse.flatten_index((row, col))]
 
-        if len(ind) == 0:
-            return
+            if len(ind) == 0:
+                return
 
-        # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
-        # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
-        dense[..., *accessed_element] = 42
+            # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
+            # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+            dense[..., *accessed_element] = 42
 
-        dsbsparse.dtranspose()
+            dsbsparse.dtranspose()
 
-        dsbsparse[accessed_element] = 42
+            dsbsparse[accessed_element] = 42
 
-        dsbsparse.dtranspose()
+            dsbsparse.dtranspose()
 
-        assert xp.allclose(dense, dsbsparse.to_dense())
+            assert xp.allclose(dense, dsbsparse.to_dense())
 
 
 if __name__ == "__main__":
-    pytest.main(["-s", __file__])
+    pytest.main(["--only-mpi", __file__])

@@ -828,7 +828,7 @@ class TestMatmul:
 
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
         print(relerror)
-        assert xp.allclose(dense @ dense, value)
+        assert xp.allclose(reference, value)
 
 
 # Shape of the dense array.

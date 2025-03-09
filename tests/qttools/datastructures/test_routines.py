@@ -3,44 +3,61 @@
 import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, sparse, xp
+import functools
+from types import ModuleType
+
+from qttools import DTypeLike, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures import (
     DSDBSparse,
+    DSBanded,
+    TallNSkinny,
+    ShortNFat,
     bd_matmul,
     bd_matmul_distr,
     bd_sandwich,
     bd_sandwich_distr,
     btd_matmul,
     btd_sandwich,
+    bbanded_matmul,
 )
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
+def _create_btd_coo(sizes: NDArray, dtype: DTypeLike = xp.complex128, integer: bool = False) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     offsets = xp.hstack(([0], xp.cumsum(xp.asarray(sizes))))
 
-    arr = xp.zeros((size, size), dtype=xp.complex128)
+    rng = xp.random.default_rng()
+    def _rvs(size=None, rng=rng):
+        if integer:
+            return rng.integers(-5, 5, size=size)
+        return rng.uniform(size=size)
+    
+    is_complex = xp.iscomplexobj(dtype(0))
+
+    arr = xp.zeros((size, size), dtype=dtype)
     for i in range(len(sizes)):
         # Diagonal block.
         block_shape = (int(sizes[i]), int(sizes[i]))
-        arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = xp.random.rand(
-            *block_shape
-        ) + 1j * xp.random.rand(*block_shape)
+        arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = _rvs(block_shape)
+        if is_complex:
+            arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] += 1j * _rvs(block_shape)
         # Superdiagonal block.
         if i < len(sizes) - 1:
             block_shape = (int(sizes[i]), int(sizes[i + 1]))
-            arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = (
-                xp.random.rand(*block_shape) + 1j * xp.random.rand(*block_shape)
-            )
-            arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = (
-                xp.random.rand(*block_shape).T + 1j * xp.random.rand(*block_shape).T
-            )
-    rng = xp.random.default_rng()
+            arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = _rvs(block_shape)
+            if is_complex:
+                arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] += 1j * _rvs(block_shape)
+            arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = _rvs(block_shape).T
+            if is_complex:
+                arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] += 1j * _rvs(block_shape).T
+
     cutoff = rng.uniform(low=0.1, high=0.4)
+    if integer:
+        cutoff = rng.integers(3, 5)
     arr[xp.abs(arr) < cutoff] = 0
     return sparse.coo_matrix(arr)
 
@@ -258,6 +275,87 @@ class TestNotDistr:
         bd_sandwich(dsdbsparse, dsdbsparse, out, spillover_correction=True)
 
         assert xp.allclose(ref, out.to_dense())
+
+
+def test_bbanded_matmul(
+    dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+    banded_block_size: int,
+    datatype: DTypeLike,
+    dtype: DTypeLike,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+
+    def _set_torch(dsbsparse: DSBSparse, mod: ModuleType, dt: DTypeLike):
+
+        if isinstance(dsbsparse, tuple):
+            matrices = [dsbsparse[0], dsbsparse[1]]
+        else:
+            matrices = [dsbsparse]
+
+        for dsbsparse in matrices:
+            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:len(dsbsparse.global_stack_shape)])
+            banded_data = dsbsparse.data.reshape((batch_size, *dsbsparse.banded_shape))
+            if mod.__name__ == "cupy":
+                import torch
+                banded_data = banded_data.astype(dt)
+                dsbsparse.torch = torch.asarray(banded_data, device='cuda')
+            else:  # mod.__name__ == "torch"
+                dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
+
+    coo = _create_btd_coo(block_sizes, dtype=datatype, integer=True)
+    dense = coo.toarray()
+
+    dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
+    mod, dt = dtype
+
+    dsbsparse_a = dsbanded_type_a.from_sparray(
+        coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+    )
+    if isinstance(dsbsparse_a, tuple):
+        val = dsbsparse_a[0].to_dense() + 1j * dsbsparse_a[1].to_dense()
+        assert xp.allclose(val, dense)
+    else:
+        assert xp.allclose(dsbsparse_a.to_dense(), dense)
+
+    dsbsparse_b = dsbanded_type_b.from_sparray(
+        coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+    )
+    if isinstance(dsbsparse_b, tuple):
+        val = dsbsparse_b[0].to_dense() + 1j * dsbsparse_b[1].to_dense()
+        assert xp.allclose(val, dense)
+    else:
+        assert xp.allclose(dsbsparse_b.to_dense(), dense)
+
+    reference = dense @ dense
+    _set_torch(dsbsparse_a, mod, dt)
+    _set_torch(dsbsparse_b, mod, dt)
+
+    if isinstance(dsbsparse_a, tuple):
+        if isinstance(dsbsparse_b, tuple):
+            real = bbanded_matmul(dsbsparse_a[0], dsbsparse_b[0]) - bbanded_matmul(dsbsparse_a[1], dsbsparse_b[1])
+            imag = bbanded_matmul(dsbsparse_a[0], dsbsparse_b[1]) + bbanded_matmul(dsbsparse_a[1], dsbsparse_b[0])
+            value = (real, imag)
+        else:
+            real = bbanded_matmul(dsbsparse_a[0], dsbsparse_b)
+            imag = bbanded_matmul(dsbsparse_a[1], dsbsparse_b)
+            value = (real, imag)
+    else:
+        if isinstance(dsbsparse_b, tuple):
+            real = bbanded_matmul(dsbsparse_a, dsbsparse_b[0])
+            imag = bbanded_matmul(dsbsparse_a, dsbsparse_b[1])
+            value = (real, imag)
+        else:
+            value = bbanded_matmul(dsbsparse_a, dsbsparse_b)
+    if isinstance(value, tuple):
+        value = value[0].to_dense() + 1j * value[1].to_dense()
+    else:
+        value = value.to_dense()
+
+    relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
+    print(relerror)
+    assert xp.allclose(reference, value)
 
 
 def _get_last_2d(x):

@@ -8,6 +8,7 @@ from qttools import xp
 from qttools.comm import comm
 from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
+from qttools.datastructures import DSBSparse, TallNSkinny, ShortNFat
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 
@@ -917,3 +918,47 @@ def bd_sandwich_distr(
             out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
 
     return out_
+
+
+def bbanded_matmul(
+    a: TallNSkinny,
+    b: ShortNFat,
+    out: TallNSkinny = None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 5,
+    spillover_correction: bool = False,
+):
+    """Matrix multiplication of two `a @ b` DSBanded matrices.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block diagonal matrix.
+    b : DSBSparse
+        The second block diagonal matrix.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_numdiag`.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+
+    if out is not None:
+        raise NotImplementedError("Output matrix is not supported yet.")
+    
+    if spillover_correction:
+        raise NotImplementedError("Spillover correction is not supported yet.")
+    
+    return a @ b

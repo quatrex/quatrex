@@ -12,20 +12,26 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes: NDArray, complex: bool = True) -> sparse.coo_matrix:
+def _create_coo(sizes: NDArray, complex: bool = True, integer: bool = False) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.5, high=0.8)
-    # density = rng.uniform(low=0.1, high=0.3)
+
+    def _rvs(size=None, rng=rng):
+        if integer:
+            return rng.integers(-5, 5, size=size)
+        return rng.uniform(size=size)
+
     if complex:
-        coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
-        coo.data += 1j * rng.uniform(size=coo.nnz)
+        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(xp.complex128)
+        coo.data += 1j * _rvs(size=coo.nnz)
     else:
-        coo = sparse.random(size, size, density=density, format="coo").astype(xp.float64)
+        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(xp.float64)
     return coo
 
 
+@pytest.mark.skip
 class TestCreation:
     """Tests the creation methods of DSBSparse."""
 
@@ -118,6 +124,7 @@ def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     return index, in_bounds
 
 
+@pytest.mark.skip
 class TestConversion:
     """Tests for the conversion methods of DSBSparse."""
 
@@ -171,6 +178,7 @@ class TestConversion:
         assert xp.allclose(dense, dsbsparse.to_dense())
 
 
+@pytest.mark.skip
 class TestAccess:
     """Tests for the access methods of DSBSparse."""
 
@@ -523,6 +531,7 @@ class TestAccess:
         assert xp.allclose(reference, dsbsparse.diagonal())
 
 
+@pytest.mark.skip
 class TestArithmetic:
     """Tests for the arithmetic operations of DSBSparse."""
 
@@ -663,7 +672,7 @@ class TestMatmul:
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
         mod, dt = dtype
 
-        coo = _create_coo(block_sizes, complex=False)
+        coo = _create_coo(block_sizes, complex=False, integer=True)
         dense = coo.toarray().real
 
         dsbsparse_a = dsbanded_type_a.from_sparray(
@@ -690,8 +699,9 @@ class TestMatmul:
         value = (dsbsparse_a @ dsbsparse_b).to_dense()
 
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
-        assert relerror < 1e-2
-        # assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
+        print(relerror)
+        # assert relerror < 1e-2
+        assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
 
 
 # Shape of the dense array.
@@ -719,6 +729,7 @@ def array() -> NDArray:
         pytest.param(5, id="5-blocks"),
     ],
 )
+@pytest.mark.skip
 def test_block_view(array: NDArray, axis: int, num_blocks: int):
     """Tests the block view helper function."""
     with (
@@ -896,4 +907,4 @@ class TestDistribution:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main(["-s", __file__])

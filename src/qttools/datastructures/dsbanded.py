@@ -2,6 +2,7 @@
 
 import functools
 from mpi4py.MPI import COMM_WORLD as comm
+from typing import Union
 
 from qttools import DTypeLike, NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
@@ -822,7 +823,7 @@ class TallNSkinny(DSBanded):
         banded_block_size: int = 16,
         half_block_bandwidth: int = None,
         dtype: DTypeLike = None
-    ) -> "TallNSkinny":
+    ) -> Union["TallNSkinny", tuple["TallNSkinny", "TallNSkinny"]]:
         """Creates a new TallNSkiny matrix from a scipy.sparse array.
 
         Parameters
@@ -847,7 +848,19 @@ class TallNSkinny(DSBanded):
 
         """
 
+        _complex_to_float = {
+            xp.dtype(xp.complex128): xp.float64,
+            xp.dtype(xp.complex64): xp.float32,
+        }
+
+        _float_to_complex = {
+            xp.dtype(xp.float64): xp.complex128,
+            xp.dtype(xp.float32): xp.complex64,
+        }
+
         dtype = dtype or arr.dtype
+        if dtype in _complex_to_float:
+            dtype = _complex_to_float[dtype]
 
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
@@ -873,12 +886,18 @@ class TallNSkinny(DSBanded):
         banded_cols = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=dtype)
+        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.dtype)
         dense[coo.row, coo.col] = coo.data
-        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
-        # data[..., :] = coo.data[block_sort_index]
-        # rows = coo.row[block_sort_index]
-        # cols = coo.col[block_sort_index]
+
+        def _data(real, imag):
+            return dict(real=real, imag=imag)
+
+        real_data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+        if xp.iscomplexobj(coo.data):
+            imag_data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+        else:
+            imag_data = None
+        data = _data(real_data, imag_data)
 
         A = dense
         A_blk_tallNSkinny = data
@@ -918,16 +937,39 @@ class TallNSkinny(DSBanded):
                 blk_row = xp.pad(blk_row, ((0, 0), (0, 0), (left_padding, right_padding)), 'constant', constant_values=0)
 
             # copy the block row to the tall and skinny matrix
-            A_blk_tallNSkinny[..., blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row
-
-        return cls(
-            data=data,
+            # A_blk_tallNSkinny[..., blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row
+            A_blk_tallNSkinny['real'][..., blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row.real
+            if imag_data is not None:
+                A_blk_tallNSkinny['imag'][..., blk_i * BLK_SIZE : (blk_i + 1) * BLK_SIZE, :] = blk_row.imag
+        
+        real = cls(
+            data=real_data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             half_block_bandwidth=half_block_bandwidth,
         )
+        if imag_data is not None:
+            imag = cls(
+                data=imag_data,
+                half_bandwidth=half_bandwidth,
+                banded_block_size=banded_block_size,
+                block_sizes=block_sizes,
+                global_stack_shape=global_stack_shape,
+                half_block_bandwidth=half_block_bandwidth,
+            )
+            return real, imag
+        return real
+
+        # return cls(
+        #     data=data,
+        #     half_bandwidth=half_bandwidth,
+        #     banded_block_size=banded_block_size,
+        #     block_sizes=block_sizes,
+        #     global_stack_shape=global_stack_shape,
+        #     half_block_bandwidth=half_block_bandwidth,
+        # )
 
     @classmethod
     def eye(
@@ -963,6 +1005,19 @@ class TallNSkinny(DSBanded):
             The new TallNSkinny matrix.
 
         """
+
+        _complex_to_float = {
+            xp.dtype(xp.complex128): xp.float64,
+            xp.dtype(xp.complex64): xp.float32,
+        }
+
+        _float_to_complex = {
+            xp.dtype(xp.float64): xp.complex128,
+            xp.dtype(xp.float32): xp.complex64,
+        }
+
+        if dtype in _complex_to_float:
+            dtype = _complex_to_float[dtype]
 
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
@@ -1651,7 +1706,7 @@ class ShortNFat(DSBanded):
         banded_block_size: int = 16,
         half_block_bandwidth: int = None,
         dtype: DTypeLike = None
-    ) -> "ShortNFat":
+    ) -> Union["ShortNFat", tuple["ShortNFat", "ShortNFat"]]:
         """Creates a new ShortNFat matrix from a scipy.sparse array.
 
         Parameters
@@ -1676,7 +1731,19 @@ class ShortNFat(DSBanded):
 
         """
 
+        _complex_to_float = {
+            xp.dtype(xp.complex128): xp.float64,
+            xp.dtype(xp.complex64): xp.float32,
+        }
+
+        _float_to_complex = {
+            xp.dtype(xp.float64): xp.complex128,
+            xp.dtype(xp.float32): xp.complex64,
+        }
+
         dtype = dtype or arr.dtype
+        if dtype in _complex_to_float:
+            dtype = _complex_to_float[dtype]
 
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
@@ -1698,9 +1765,19 @@ class ShortNFat(DSBanded):
         banded_cols = ((coo.shape[1] + banded_block_size - 1) // banded_block_size) * banded_block_size
         banded_shape = (banded_rows, banded_cols)
 
-        dense = xp.zeros((banded_rows, banded_cols), dtype=dtype)
+        dense = xp.zeros((banded_rows, banded_cols), dtype=coo.dtype)
         dense[coo.row, coo.col] = coo.data
-        data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+        
+        def _data(real, imag):
+            return dict(real=real, imag=imag)
+
+        real_data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+        if xp.iscomplexobj(coo.data):
+            imag_data = xp.zeros(local_stack_shape + banded_shape, dtype=dtype)
+        else:
+            imag_data = None
+        data = _data(real_data, imag_data)
+
 
         B = dense
         B_blk_shortNFat = data
@@ -1736,16 +1813,38 @@ class ShortNFat(DSBanded):
                 blk_col = xp.pad(blk_col, ((0, 0), (top_padding, bottom_padding), (0, 0)), 'constant', constant_values=0)
 
             # copy the block row to the tall and skinny matrix
-            B_blk_shortNFat[..., :, blk_j * BLK_SIZE : (blk_j + 1) * BLK_SIZE] = blk_col
-
-        return cls(
-            data=data,
+            B_blk_shortNFat['real'][..., :, blk_j * BLK_SIZE : (blk_j + 1) * BLK_SIZE] = blk_col.real
+            if imag_data is not None:
+                B_blk_shortNFat['imag'][..., :, blk_j * BLK_SIZE : (blk_j + 1) * BLK_SIZE] = blk_col.imag
+        
+        real = cls(
+            data=real_data,
             half_bandwidth=half_bandwidth,
             banded_block_size=banded_block_size,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             half_block_bandwidth=half_block_bandwidth,
         )
+        if imag_data is not None:
+            imag = cls(
+                data=imag_data,
+                half_bandwidth=half_bandwidth,
+                banded_block_size=banded_block_size,
+                block_sizes=block_sizes,
+                global_stack_shape=global_stack_shape,
+                half_block_bandwidth=half_block_bandwidth,
+            )
+            return real, imag
+        return real
+
+        # return cls(
+        #     data=data,
+        #     half_bandwidth=half_bandwidth,
+        #     banded_block_size=banded_block_size,
+        #     block_sizes=block_sizes,
+        #     global_stack_shape=global_stack_shape,
+        #     half_block_bandwidth=half_block_bandwidth,
+        # )
 
     @classmethod
     def eye(
@@ -1782,13 +1881,25 @@ class ShortNFat(DSBanded):
 
         """
 
+        _complex_to_float = {
+            xp.dtype(xp.complex128): xp.float64,
+            xp.dtype(xp.complex64): xp.float32,
+        }
+
+        _float_to_complex = {
+            xp.dtype(xp.float64): xp.complex128,
+            xp.dtype(xp.float32): xp.complex64,
+        }
+
+        if dtype in _complex_to_float:
+            dtype = _complex_to_float[dtype]
+
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
         banded_block_size = 16
-        banded_type = 1
         half_block_bandwidth = (half_bandwidth + banded_block_size - 1) // banded_block_size
         banded_rows = (2 * half_block_bandwidth + 1) * banded_block_size
         banded_cols = ((size + banded_block_size - 1) // banded_block_size) * banded_block_size

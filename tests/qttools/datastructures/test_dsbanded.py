@@ -12,7 +12,7 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes: NDArray, complex: bool = True, integer: bool = False) -> sparse.coo_matrix:
+def _create_coo(sizes: NDArray, dtype: DTypeLike = xp.complex128, integer: bool = False) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
@@ -22,16 +22,19 @@ def _create_coo(sizes: NDArray, complex: bool = True, integer: bool = False) -> 
         if integer:
             return rng.integers(-5, 5, size=size)
         return rng.uniform(size=size)
+    
+    is_complex = xp.iscomplexobj(dtype(0))
 
-    if complex:
-        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(xp.complex128)
+    if is_complex:
+        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(dtype)
         coo.data += 1j * _rvs(size=coo.nnz)
     else:
-        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(xp.float64)
+        coo = sparse.random(size, size, density=density, format="coo", data_rvs=_rvs).astype(dtype)
+    assert coo.dtype == dtype
+
     return coo
 
 
-@pytest.mark.skip
 class TestCreation:
     """Tests the creation methods of DSBSparse."""
 
@@ -41,14 +44,21 @@ class TestCreation:
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
         banded_block_size: int,
+        datatype: DTypeLike,
     ):
         """Tests the creation of DSBSparse matrices from sparse arrays."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
+        ref = coo.toarray()
+
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
         )
+        if isinstance(dsbsparse, tuple):
+            val = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            val = dsbsparse.to_dense()
         
-        assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
+        assert xp.array_equiv(ref, val)
 
     def test_zeros_like(
         self,
@@ -61,7 +71,10 @@ class TestCreation:
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        zeros = dsbanded_type.zeros_like(dsbsparse)
+        if isinstance(dsbsparse, tuple):
+            zeros = dsbanded_type.zeros_like(dsbsparse[0])
+        else:
+            zeros = dsbanded_type.zeros_like(dsbsparse)
         assert (zeros.to_dense() == 0).all()
     
     def test_eye(
@@ -124,7 +137,6 @@ def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     return index, in_bounds
 
 
-@pytest.mark.skip
 class TestConversion:
     """Tests for the conversion methods of DSBSparse."""
 
@@ -133,27 +145,33 @@ class TestConversion:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests that we can convert a DSBSparse matrix to dense."""
-        coo = _create_coo(block_sizes)
-
+        coo = _create_coo(block_sizes, dtype=datatype)
         reference = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
+
         dsbsparse = dsbanded_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
+        if isinstance(dsbsparse, tuple):
+            val = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            val = dsbsparse.to_dense()
 
-        assert xp.allclose(reference, dsbsparse.to_dense())
+        assert xp.allclose(reference, val)
 
     def test_ltranspose(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests that we can transpose a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
 
         dense = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
         reference = xp.swapaxes(dense, -2, -1)
@@ -163,22 +181,38 @@ class TestConversion:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
+        if isinstance(dsbsparse, tuple):
+            val = (dsbsparse[0].ltranspose(copy=True).to_dense() +
+                   1j * dsbsparse[1].ltranspose(copy=True).to_dense())
+        else:
+            val = dsbsparse.ltranspose(copy=True).to_dense()
 
         # Test copy transpose
-        assert xp.allclose(reference, dsbsparse.ltranspose(copy=True).to_dense())
+        assert xp.allclose(reference, val)
 
         # Transpose forth.
-        dsbsparse.ltranspose()  # In-place transpose.
+        if isinstance(dsbsparse, tuple):
+            dsbsparse[0].ltranspose()  # In-place transpose.
+            dsbsparse[1].ltranspose()  # In-place transpose.
+            val = (dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense())
+        else:
+            dsbsparse.ltranspose()  # In-place transpose.
+            val = dsbsparse.to_dense()
 
-        assert xp.allclose(reference, dsbsparse.to_dense())
+        assert xp.allclose(reference, val)
 
         # Transpose back.
-        dsbsparse.ltranspose()
+        if isinstance(dsbsparse, tuple):
+            dsbsparse[0].ltranspose()
+            dsbsparse[1].ltranspose()
+            val = (dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense())
+        else:
+            dsbsparse.ltranspose()
+            val = dsbsparse.to_dense()
 
-        assert xp.allclose(dense, dsbsparse.to_dense())
+        assert xp.allclose(dense, val)
 
 
-@pytest.mark.skip
 class TestAccess:
     """Tests for the access methods of DSBSparse."""
 
@@ -189,18 +223,24 @@ class TestAccess:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests that we can get individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
-
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            val = dsbsparse[0][accessed_element] + 1j * dsbsparse[1][accessed_element]
+        else:
+            dense = dsbsparse.to_dense()
+            val = dsbsparse[accessed_element]
         reference = dense[..., *accessed_element]
-        assert xp.allclose(reference, dsbsparse[accessed_element])
+
+        assert xp.allclose(reference, val)
 
     @pytest.mark.usefixtures("num_inds")
     def test_getitem_with_array(
@@ -209,9 +249,10 @@ class TestAccess:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         num_inds: int,
+        datatype: DTypeLike,
     ):
         """Tests that we can get multiple matrix elements at once."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo,
             block_sizes=block_sizes,
@@ -228,7 +269,11 @@ class TestAccess:
         reference = xp.broadcast_to(
             reference_data, global_stack_shape + reference_data.shape[1:]
         )
-        assert xp.allclose(reference, dsbsparse[rows, cols])
+        if isinstance(dsbsparse, tuple):
+            val = dsbsparse[0][rows, cols] + 1j * dsbsparse[1][rows, cols]
+        else:
+            val = dsbsparse[rows, cols]
+        assert xp.allclose(reference, val)
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem(
@@ -237,22 +282,30 @@ class TestAccess:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        datatype: DTypeLike,
     ):
         """Tests that we can set individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
-
-        dsbsparse[accessed_element] = 42
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            dense[..., *accessed_element] = 42 + 1j * 42
+            dsbsparse[0][accessed_element] = 42
+            dsbsparse[1][accessed_element] = 42
+            val = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
+            dense[..., *accessed_element] = 42
+            dsbsparse[accessed_element] = 42
+            val = dsbsparse.to_dense()
 
         # NOTE: Banded datastructures are not sparse and they will write outside the original sparsity pattern.
         # dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
-        dense[..., *accessed_element] = 42
-        assert xp.allclose(dense, dsbsparse.to_dense())
+        assert xp.allclose(dense, val)
 
     @pytest.mark.usefixtures("accessed_block")
     def test_get_block(
@@ -269,13 +322,20 @@ class TestAccess:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
 
         inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
         reference_block = dense[..., *inds]
 
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            assert xp.allclose(reference_block, dsbsparse.blocks[accessed_block])
+            if isinstance(dsbsparse, tuple):
+                val = dsbsparse[0].blocks[accessed_block] + 1j * dsbsparse[1].blocks[accessed_block]
+            else:
+                val = dsbsparse.blocks[accessed_block]
+            assert xp.allclose(reference_block, val)
 
     # @pytest.mark.usefixtures("accessed_block")
     # def test_get_sparse_block(
@@ -336,15 +396,26 @@ class TestAccess:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
 
         inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
 
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
+            if isinstance(dsbsparse, tuple):
+                dsbsparse[0].blocks[accessed_block] = xp.ones_like(dense[..., *inds].real)
+                dsbsparse[1].blocks[accessed_block] = xp.ones_like(dense[..., *inds].imag)
+            else:
+                dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
 
         # Sparsity structure should be modified.
-        assert (dsbsparse.to_dense()[..., *inds] == 1).all()
+        if isinstance(dsbsparse, tuple):
+            assert (dsbsparse[0].to_dense()[..., *inds] == 1).all()
+            assert (dsbsparse[1].to_dense()[..., *inds] == 1).all()
+        else:
+            assert (dsbsparse.to_dense()[..., *inds] == 1).all()
 
     @pytest.mark.usefixtures("accessed_block", "stack_index")
     def test_get_block_substack(
@@ -362,7 +433,10 @@ class TestAccess:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
 
         inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
         inds = (
@@ -372,9 +446,12 @@ class TestAccess:
         )
         reference_block = dense[inds]
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            assert xp.allclose(
-                reference_block, dsbsparse.stack[stack_index].blocks[accessed_block]
-            )
+            if isinstance(dsbsparse, tuple):
+                val = (dsbsparse[0].stack[stack_index].blocks[accessed_block] +
+                       1j * dsbsparse[1].stack[stack_index].blocks[accessed_block])
+            else:
+                val = dsbsparse.stack[stack_index].blocks[accessed_block]
+            assert xp.allclose(reference_block, val)
 
     # @pytest.mark.usefixtures("accessed_block", "stack_index")
     # def test_get_sparse_block_substack(
@@ -442,7 +519,10 @@ class TestAccess:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+        else:
+            dense = dsbsparse.to_dense()
 
         inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
         inds = (
@@ -452,12 +532,18 @@ class TestAccess:
         )
 
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            dsbsparse.stack[stack_index].blocks[accessed_block] = xp.ones_like(
-                dense[inds]
-            )
+            if isinstance(dsbsparse, tuple):
+                dsbsparse[0].stack[stack_index].blocks[accessed_block] = xp.ones_like(dense[inds].real)
+                dsbsparse[1].stack[stack_index].blocks[accessed_block] = xp.ones_like(dense[inds].imag)
+            else:
+                dsbsparse.stack[stack_index].blocks[accessed_block] = xp.ones_like(dense[inds])
 
         # Sparsity structure should be modified.
-        assert (dsbsparse.to_dense()[inds] == 1).all()
+        if isinstance(dsbsparse, tuple):
+            assert (dsbsparse[0].to_dense()[inds] == 1).all()
+            assert (dsbsparse[1].to_dense()[inds] == 1).all()
+        else:
+            assert (dsbsparse.to_dense()[inds] == 1).all()
 
     @pytest.mark.usefixtures("block_change_factor")
     def test_block_sizes_setter(
@@ -484,10 +570,18 @@ class TestAccess:
         )
 
         # Update the block sizes.
-        dsbsparse.block_sizes = updated_block_sizes
+        if isinstance(dsbsparse, tuple):
+            dsbsparse[0].block_sizes = updated_block_sizes
+            dsbsparse[1].block_sizes = updated_block_sizes
+        else:
+            dsbsparse.block_sizes = updated_block_sizes
 
         # Assert that the two DSBSparse matrices are equivalent.
-        assert (dsbsparse.data == dsbsparse_updated_block_sizes.data).all()
+        if isinstance(dsbsparse, tuple):
+            assert (dsbsparse[0].data == dsbsparse_updated_block_sizes[0].data).all()
+            assert (dsbsparse[1].data == dsbsparse_updated_block_sizes[1].data).all()
+        else:
+            assert (dsbsparse.data == dsbsparse_updated_block_sizes.data).all()
 
     # def test_spy(
     #     self,
@@ -525,10 +619,15 @@ class TestAccess:
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            val = dsbsparse[0].diagonal() + 1j * dsbsparse[1].diagonal()
+        else:
+            dense = dsbsparse.to_dense()
+            val = dsbsparse.diagonal()
 
         reference = xp.diagonal(dense, axis1=-2, axis2=-1)
-        assert xp.allclose(reference, dsbsparse.diagonal())
+        assert xp.allclose(reference, val)
 
 
 @pytest.mark.skip
@@ -654,26 +753,34 @@ class TestMatmul:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         banded_block_size: int,
+        datatype: DTypeLike,
         dtype: tuple[ModuleType, DTypeLike],
     ):
         """Tests the matrix multiplication of a DSBSparse matrix."""
 
         def _set_torch(dsbsparse: DSBSparse, mod: ModuleType, dt: DTypeLike):
-            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:len(dsbsparse.global_stack_shape)])
-            banded_data = dsbsparse.data.reshape((batch_size, *dsbsparse.banded_shape))
-            if mod.__name__ == "cupy":
-                import torch
-                banded_data = banded_data.astype(dt)
-                dsbsparse.torch = torch.asarray(banded_data, device='cuda')
-            else:  # mod.__name__ == "torch"
-                dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
+
+            if isinstance(dsbsparse, tuple):
+                matrices = [dsbsparse[0], dsbsparse[1]]
+            else:
+                matrices = [dsbsparse]
+
+            for dsbsparse in matrices:
+                batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:len(dsbsparse.global_stack_shape)])
+                banded_data = dsbsparse.data.reshape((batch_size, *dsbsparse.banded_shape))
+                if mod.__name__ == "cupy":
+                    import torch
+                    banded_data = banded_data.astype(dt)
+                    dsbsparse.torch = torch.asarray(banded_data, device='cuda')
+                else:  # mod.__name__ == "torch"
+                    dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
 
 
         dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
         mod, dt = dtype
 
-        coo = _create_coo(block_sizes, complex=False, integer=True)
-        dense = coo.toarray().real
+        coo = _create_coo(block_sizes, dtype=datatype, integer=True)
+        dense = coo.toarray()
 
         dsbsparse_a = dsbanded_type_a.from_sparray(
             coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
@@ -696,12 +803,31 @@ class TestMatmul:
         reference = dense @ dense
         _set_torch(dsbsparse_a, mod, dt)
         _set_torch(dsbsparse_b, mod, dt)
-        value = (dsbsparse_a @ dsbsparse_b).to_dense()
+
+        if isinstance(dsbsparse_a, tuple):
+            if isinstance(dsbsparse_b, tuple):
+                real = dsbsparse_a[0] @ dsbsparse_b[0] - dsbsparse_a[1] @ dsbsparse_b[1]
+                imag = dsbsparse_a[0] @ dsbsparse_b[1] + dsbsparse_a[1] @ dsbsparse_b[0]
+                value = (real, imag)
+            else:
+                real = dsbsparse_a[0] @ dsbsparse_b
+                imag = dsbsparse_a[1] @ dsbsparse_b
+                value = (real, imag)
+        else:
+            if isinstance(dsbsparse_b, tuple):
+                real = dsbsparse_a @ dsbsparse_b[0]
+                imag = dsbsparse_a @ dsbsparse_b[1]
+                value = (real, imag)
+            else:
+                value = dsbsparse_a @ dsbsparse_b
+        if isinstance(value, tuple):
+            value = value[0].to_dense() + 1j * value[1].to_dense()
+        else:
+            value = value.to_dense()
 
         relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
         print(relerror)
-        # assert relerror < 1e-2
-        assert xp.allclose(dense @ dense, (dsbsparse_a @ dsbsparse_b).to_dense())
+        assert xp.allclose(dense @ dense, value)
 
 
 # Shape of the dense array.

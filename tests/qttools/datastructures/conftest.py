@@ -16,6 +16,7 @@ else:
 
 DSBANDED_TYPES = [TallNSkinny, ShortNFat]
 DSBANDED_MATMUL_TYPES = [(TallNSkinny, ShortNFat)]
+DATATYPES = [xp.complex128, xp.complex64, xp.float64, xp.float32]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -216,4 +217,9 @@ def half_bandwidth(request):
 
 @pytest.fixture(params=DTypes().dtypes)
 def dtype(request):
+    return request.param
+
+
+@pytest.fixture(params=DATATYPES)
+def datatype(request):
     return request.param

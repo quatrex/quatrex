@@ -630,7 +630,6 @@ class TestAccess:
         assert xp.allclose(reference, val)
 
 
-@pytest.mark.skip
 class TestArithmetic:
     """Tests for the arithmetic operations of DSBSparse."""
 
@@ -639,108 +638,110 @@ class TestArithmetic:
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests the in-place addition of a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            real, imag = dsbsparse
+            real += real
+            imag += imag
+            val = real.to_dense() + 1j * imag.to_dense()
+        else:
+            dense = dsbsparse.to_dense()
+            dsbsparse += dsbsparse
+            val = dsbsparse.to_dense()
 
-        dsbsparse += dsbsparse
-
-        assert xp.allclose(dense + dense, dsbsparse.to_dense())
-
-    # def test_iadd_coo(
-    #     self,
-    #     dsbanded_type: DSBSparse,
-    #     block_sizes: NDArray,
-    #     global_stack_shape: tuple,
-    #     densify_blocks: list[tuple] | None,
-    # ):
-    #     """Tests the in-place addition of a DSBSparse matrix with a COO matrix."""
-    #     coo = _create_coo(block_sizes)
-    #     dsbsparse = dsbanded_type.from_sparray(
-    #         coo, block_sizes, global_stack_shape, densify_blocks
-    #     )
-
-    #     dsbsparse += coo.copy()
-
-    #     assert xp.allclose(dsbsparse.to_dense(), 2 * coo.toarray())
+        assert xp.allclose(dense + dense, val)
 
     def test_isub(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests the in-place subtraction of a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
 
         dsbsparse_1 = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        dense_1 = dsbsparse_1.to_dense()
-
         dsbsparse_2 = dsbanded_type.from_sparray(
             2 * coo, block_sizes, global_stack_shape
         )
-        dense_2 = dsbsparse_2.to_dense()
+        if isinstance(dsbsparse_1, tuple):
+            dense_1 = dsbsparse_1[0].to_dense() + 1j * dsbsparse_1[1].to_dense()
+            dense_2 = dsbsparse_2[0].to_dense() + 1j * dsbsparse_2[1].to_dense()
+            real_1, imag_1 = dsbsparse_1
+            real_2, imag_2 = dsbsparse_2
+            real_1 -= real_2
+            imag_1 -= imag_2
+            val = real_1.to_dense() + 1j * imag_1.to_dense()
+        else:
+            dense_1 = dsbsparse_1.to_dense()
+            dense_2 = dsbsparse_2.to_dense()
+            dsbsparse_1 -= dsbsparse_2
+            val = dsbsparse_1.to_dense()
 
-        dsbsparse_1 -= dsbsparse_2
-
-        assert xp.allclose(dense_1 - dense_2, dsbsparse_1.to_dense())
-
-    # def test_isub_coo(
-    #     self,
-    #     dsbanded_type: DSBSparse,
-    #     block_sizes: NDArray,
-    #     global_stack_shape: tuple,
-    #     densify_blocks: list[tuple] | None,
-    # ):
-    #     """Tests the in-place subtraction of a DSBSparse matrix with a COO matrix."""
-    #     coo = _create_coo(block_sizes)
-
-    #     dsbsparse = dsbanded_type.from_sparray(
-    #         coo, block_sizes, global_stack_shape, densify_blocks
-    #     )
-    #     dense = dsbsparse.to_dense()
-
-    #     dsbsparse -= 2 * coo
-
-    #     assert xp.allclose(dense - 2 * coo.toarray(), dsbsparse.to_dense())
+        assert xp.allclose(dense_1 - dense_2, val)
 
     def test_imul(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests the in-place multiplication of a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            real, imag = dsbsparse
+            tmp = real * imag
+            tmp += tmp
+            real *= real
+            imag *= imag
+            real -= imag
+            imag = tmp
+            val = real.to_dense() + 1j * imag.to_dense()
+        else:
+            dense = dsbsparse.to_dense()
+            dsbsparse *= dsbsparse
+            val = dsbsparse.to_dense()
 
-        dsbsparse *= dsbsparse
-
-        assert xp.allclose(dense * dense, dsbsparse.to_dense())
+        assert xp.allclose(dense * dense, val)
 
     def test_neg(
         self,
         dsbanded_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        datatype: DTypeLike,
     ):
         """Tests the negation of a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, dtype=datatype)
         dsbsparse = dsbanded_type.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        dense = dsbsparse.to_dense()
+        if isinstance(dsbsparse, tuple):
+            dense = dsbsparse[0].to_dense() + 1j * dsbsparse[1].to_dense()
+            real, imag = dsbsparse
+            real = -real
+            imag = -imag
+            val = real.to_dense() + 1j * imag.to_dense()
+        else:
+            dense = dsbsparse.to_dense()
+            val = -dsbsparse.to_dense()
 
-        assert xp.allclose(-dense, (-dsbsparse).to_dense())
+        assert xp.allclose(-dense, val)
 
 
 @pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
@@ -855,7 +856,6 @@ def array() -> NDArray:
         pytest.param(5, id="5-blocks"),
     ],
 )
-@pytest.mark.skip
 def test_block_view(array: NDArray, axis: int, num_blocks: int):
     """Tests the block view helper function."""
     with (
@@ -1081,4 +1081,4 @@ class TestDistribution:
 
 
 if __name__ == "__main__":
-    pytest.main(["--only-mpi", __file__])
+    pytest.main([__file__])

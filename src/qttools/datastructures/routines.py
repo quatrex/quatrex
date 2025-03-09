@@ -959,6 +959,8 @@ def bbanded_matmul(
         raise NotImplementedError("Output matrix is not supported yet.")
     
     if spillover_correction:
-        raise NotImplementedError("Spillover correction is not supported yet.")
+        # raise NotImplementedError("Spillover correction is not supported yet.")
+        a.enforce_boundary_conditions()
+        b.enforce_boundary_conditions()
     
     return a @ b

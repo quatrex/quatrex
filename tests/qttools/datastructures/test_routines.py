@@ -4,6 +4,7 @@ import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 import functools
+import pytest
 from types import ModuleType
 
 from qttools import DTypeLike, NDArray, sparse, xp
@@ -56,9 +57,8 @@ def _create_btd_coo(sizes: NDArray, dtype: DTypeLike = xp.complex128, integer: b
                 arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] += 1j * _rvs(block_shape).T
 
     cutoff = rng.uniform(low=0.1, high=0.4)
-    if integer:
-        cutoff = rng.integers(3, 5)
-    arr[xp.abs(arr) < cutoff] = 0
+    if not integer:
+        arr[xp.abs(arr) < cutoff] = 0
     return sparse.coo_matrix(arr)
 
 
@@ -149,134 +149,8 @@ class TestNotDistr:
 
         assert xp.allclose(dense @ dense, out.to_dense())
 
-    def test_bd_sandwich(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
 
-        # Initalize the output matrix with the correct sparsity pattern.
-        out = dsdbsparse_type.from_sparray(
-            coo @ coo @ coo, block_sizes, global_stack_shape
-        )
-
-        bd_sandwich(dsdbsparse, dsdbsparse, out)
-
-        assert xp.allclose(dense @ dense @ dense, out.to_dense())
-
-    def test_bd_matmul_spillover(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-        dense_shape = list(dense.shape)
-        NBC = 1
-        left_obc = int(sum(block_sizes[0:NBC]))
-        right_obc = int(sum(block_sizes[-NBC:]))
-        dense_shape[-2] += left_obc + right_obc
-        dense_shape[-1] += left_obc + right_obc
-
-        dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
-        dense_exp[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ] = dense
-        # simply repeat the boundaries slices
-        dense_exp[..., :left_obc, :-left_obc] = dense_exp[
-            ..., left_obc : 2 * left_obc, left_obc:
-        ]
-        dense_exp[..., :-left_obc, :left_obc] = dense_exp[
-            ..., left_obc:, left_obc : 2 * left_obc
-        ]
-        dense_exp[..., -right_obc:, right_obc:] = dense_exp[
-            ..., -2 * right_obc : -right_obc, :-right_obc
-        ]
-        dense_exp[..., right_obc:, -right_obc:] = dense_exp[
-            ..., :-right_obc, -2 * right_obc : -right_obc
-        ]
-
-        expended_product = dense_exp @ dense_exp
-        ref = expended_product[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ]
-
-        # Initalize the output matrix with the correct sparsity pattern.
-
-        out = dsdbsparse_type.from_sparray(
-            sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
-        )
-
-        bd_matmul(dsdbsparse, dsdbsparse, out, spillover_correction=True)
-
-        assert xp.allclose(ref, out.to_dense())
-
-    def test_bd_sandwich_spillover(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-        dense_shape = list(dense.shape)
-        NBC = 1
-        left_obc = int(sum(block_sizes[0:NBC]))
-        right_obc = int(sum(block_sizes[-NBC:]))
-        dense_shape[-2] += left_obc + right_obc
-        dense_shape[-1] += left_obc + right_obc
-        dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
-        dense_exp[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ] = dense
-        # simply repeat the boundaries slices
-        dense_exp[..., :left_obc, :-left_obc] = dense_exp[
-            ..., left_obc : 2 * left_obc, left_obc:
-        ]
-        dense_exp[..., :-left_obc, :left_obc] = dense_exp[
-            ..., left_obc:, left_obc : 2 * left_obc
-        ]
-        dense_exp[..., -right_obc:, right_obc:] = dense_exp[
-            ..., -2 * right_obc : -right_obc, :-right_obc
-        ]
-        dense_exp[..., right_obc:, -right_obc:] = dense_exp[
-            ..., :-right_obc, -2 * right_obc : -right_obc
-        ]
-
-        expended_product = dense_exp @ dense_exp @ dense_exp
-        ref = expended_product[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ]
-
-        # Initalize the output matrix with the correct sparsity pattern.
-
-        out = dsdbsparse_type.from_sparray(
-            sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
-        )
-
-        bd_sandwich(dsdbsparse, dsdbsparse, out, spillover_correction=True)
-
-        assert xp.allclose(ref, out.to_dense())
-
-
+@pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
 def test_bbanded_matmul(
     dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
     block_sizes: NDArray,
@@ -348,6 +222,122 @@ def test_bbanded_matmul(
             value = (real, imag)
         else:
             value = bbanded_matmul(dsbsparse_a, dsbsparse_b)
+    if isinstance(value, tuple):
+        value = value[0].to_dense() + 1j * value[1].to_dense()
+    else:
+        value = value.to_dense()
+
+    relerror = xp.linalg.norm(reference - value) / xp.linalg.norm(reference)
+    print(relerror)
+    assert xp.allclose(reference, value)
+
+
+@pytest.mark.skipif(xp.__name__ != "cupy", reason="DSBanded matmul tests require a GPU.")
+def test_bbanded_matmul_spillover(
+    dsbanded_matmul_type: tuple[DSBSparse, DSBSparse],
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+    banded_block_size: int,
+    datatype: DTypeLike,
+    dtype: DTypeLike,
+):
+    """Tests the in-place addition of a DSBSparse matrix."""
+    def _set_torch(dsbsparse: DSBSparse, mod: ModuleType, dt: DTypeLike):
+
+        if isinstance(dsbsparse, tuple):
+            matrices = [dsbsparse[0], dsbsparse[1]]
+        else:
+            matrices = [dsbsparse]
+
+        for dsbsparse in matrices:
+            batch_size = functools.reduce(lambda x, y: x * y, dsbsparse.data.shape[:len(dsbsparse.global_stack_shape)])
+            banded_data = dsbsparse.data.reshape((batch_size, *dsbsparse.banded_shape))
+            if mod.__name__ == "cupy":
+                import torch
+                banded_data = banded_data.astype(dt)
+                dsbsparse.torch = torch.asarray(banded_data, device='cuda')
+            else:  # mod.__name__ == "torch"
+                dsbsparse.torch = mod.asarray(banded_data, dtype=dt, device='cuda')
+
+    coo = _create_btd_coo(block_sizes, dtype=datatype, integer=True)
+    dense = coo.toarray()
+    dense_shape = list(dense.shape)
+    NBC = 1
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    dense_shape[-2] += left_obc + right_obc
+    dense_shape[-1] += left_obc + right_obc
+
+    dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
+    dense_exp[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ] = dense
+    # simply repeat the boundaries slices
+    dense_exp[..., :left_obc, :-left_obc] = dense_exp[
+        ..., left_obc : 2 * left_obc, left_obc:
+    ]
+    dense_exp[..., :-left_obc, :left_obc] = dense_exp[
+        ..., left_obc:, left_obc : 2 * left_obc
+    ]
+    dense_exp[..., -right_obc:, right_obc:] = dense_exp[
+        ..., -2 * right_obc : -right_obc, :-right_obc
+    ]
+    dense_exp[..., right_obc:, -right_obc:] = dense_exp[
+        ..., :-right_obc, -2 * right_obc : -right_obc
+    ]
+
+    expended_product = dense_exp @ dense_exp
+    reference = expended_product[
+        ...,
+        left_obc : left_obc + sum(block_sizes),
+        left_obc : left_obc + sum(block_sizes),
+    ]
+
+    dsbanded_type_a, dsbanded_type_b = dsbanded_matmul_type
+    mod, dt = dtype
+
+    dsbsparse_a = dsbanded_type_a.from_sparray(
+        coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+    )
+    if isinstance(dsbsparse_a, tuple):
+        val = dsbsparse_a[0].to_dense() + 1j * dsbsparse_a[1].to_dense()
+        assert xp.allclose(val, dense)
+    else:
+        assert xp.allclose(dsbsparse_a.to_dense(), dense)
+
+    dsbsparse_b = dsbanded_type_b.from_sparray(
+        coo, block_sizes, global_stack_shape, banded_block_size=banded_block_size
+    )
+    if isinstance(dsbsparse_b, tuple):
+        val = dsbsparse_b[0].to_dense() + 1j * dsbsparse_b[1].to_dense()
+        assert xp.allclose(val, dense)
+    else:
+        assert xp.allclose(dsbsparse_b.to_dense(), dense)
+
+    _set_torch(dsbsparse_a, mod, dt)
+    _set_torch(dsbsparse_b, mod, dt)
+
+    def _matmul(a, b):
+        return bbanded_matmul(a, b, spillover_correction=True)
+
+    if isinstance(dsbsparse_a, tuple):
+        if isinstance(dsbsparse_b, tuple):
+            real = _matmul(dsbsparse_a[0], dsbsparse_b[0]) - _matmul(dsbsparse_a[1], dsbsparse_b[1])
+            imag = _matmul(dsbsparse_a[0], dsbsparse_b[1]) + _matmul(dsbsparse_a[1], dsbsparse_b[0])
+            value = (real, imag)
+        else:
+            real = _matmul(dsbsparse_a[0], dsbsparse_b)
+            imag = _matmul(dsbsparse_a[1], dsbsparse_b)
+            value = (real, imag)
+    else:
+        if isinstance(dsbsparse_b, tuple):
+            real = _matmul(dsbsparse_a, dsbsparse_b[0])
+            imag = _matmul(dsbsparse_a, dsbsparse_b[1])
+            value = (real, imag)
+        else:
+            value = _matmul(dsbsparse_a, dsbsparse_b)
     if isinstance(value, tuple):
         value = value[0].to_dense() + 1j * value[1].to_dense()
     else:
@@ -559,6 +549,7 @@ class TestDistr:
         )
 
         assert xp.allclose(ref, out.to_dense())
+
 
     def test_bd_sandwich_distr_spillover(
         self,

@@ -583,6 +583,144 @@ class TallNSkinny(DSBanded):
         #         start_banded : end_banded,
         #         left_offset : r - right_offset,
         #     ] = blk_row
+    
+
+    def enforce_boundary_conditions(self) -> None:
+        """Enforces boundary conditions on the matrix."""
+
+        assert self.block_sizes[0] == self.block_sizes[1]
+
+        row = 1
+        col = 0
+
+        block = self.blocks[row, col]
+
+        data_stack = self.data[...]
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
+
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
+        BLK_SIZE = int(self.banded_block_size)
+        r_block = int(self.half_block_bandwidth)
+        A_blk_tallNSkinny = data_stack
+        A_dense_block = block
+
+        if len(A_blk_tallNSkinny.shape) == 2:
+            A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
+        if A_dense_block.ndim == 2:
+            A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
+        # batch, M, r = A_blk_tallNSkinny.shape
+        r = A_blk_tallNSkinny.shape[-1]
+
+        # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
+        # to the ranges of the block rows and columns
+        requested_dense_row_start = 0
+        requested_dense_row_end = int(self.block_sizes[0])
+        requested_dense_col_start = -int(self.block_sizes[0])
+        requested_dense_col_end = 0
+
+        # Iterate over the requested rows
+        for i in range(requested_dense_row_start, requested_dense_row_end):
+            blk_i = i // BLK_SIZE
+            # calculate the range of columns in the dense matrix for the current row
+            dense_col_start = (blk_i - r_block) * BLK_SIZE
+            dense_col_end = (blk_i + r_block + 1) * BLK_SIZE
+
+            # TODO: Maybe remove this if you want to set boundary blocks
+            if dense_col_start >= requested_dense_col_end or dense_col_end <= requested_dense_col_start:
+                continue
+
+            # if dense_col_start > requested_dense_col_end, pad with zeros
+            # from the left side. Otherwise, extract the subset of the row.
+            left_padding = min(
+                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE_J
+            )
+
+            # if dense_col_end < requested_dense_col_start, pad with zeros
+            # from the right side.
+            right_padding = min(
+                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE_J
+            )
+
+            left_offset = max(0, requested_dense_col_start - dense_col_start)
+            right_offset = max(0, dense_col_end - requested_dense_col_end)
+
+            # get the row from the dense matrix
+            row = A_dense_block[..., i - requested_dense_row_start, :]
+
+            # apply padding if needed
+            if left_padding > 0 or right_padding > 0:
+                row = row[..., left_padding : r - right_padding]
+
+            # copy the row to the tall and skinny matrix
+            A_blk_tallNSkinny[..., i, left_offset : r - right_offset] = row
+        
+        assert self.block_sizes[-1] == self.block_sizes[-2]
+
+        row = len(self.block_sizes) - 2
+        col = len(self.block_sizes) - 1
+
+        block = self.blocks[row, col]
+
+        data_stack = self.data[...]
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
+
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
+        BLK_SIZE = int(self.banded_block_size)
+        r_block = int(self.half_block_bandwidth)
+        A_blk_tallNSkinny = data_stack
+        A_dense_block = block
+
+        if len(A_blk_tallNSkinny.shape) == 2:
+            A_blk_tallNSkinny = xp.reshape(A_blk_tallNSkinny, (1, *A_blk_tallNSkinny.shape))
+        if A_dense_block.ndim == 2:
+            A_dense_block = xp.reshape(A_dense_block, (1, *A_dense_block.shape))
+        # batch, M, r = A_blk_tallNSkinny.shape
+        r = A_blk_tallNSkinny.shape[-1]
+
+        # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
+        # to the ranges of the block rows and columns
+        requested_dense_row_start = int(self.block_offsets[-2])
+        requested_dense_row_end = int(self.block_offsets[-1])
+        requested_dense_col_start = int(self.block_offsets[-1])
+        requested_dense_col_end = int(self.block_offsets[-1] + self.block_sizes[-1])
+
+        # Iterate over the requested rows
+        for i in range(requested_dense_row_start, requested_dense_row_end):
+            blk_i = i // BLK_SIZE
+            # calculate the range of columns in the dense matrix for the current row
+            dense_col_start = (blk_i - r_block) * BLK_SIZE
+            dense_col_end = (blk_i + r_block + 1) * BLK_SIZE
+
+            # TODO: Maybe remove this if you want to set boundary blocks
+            if dense_col_start >= requested_dense_col_end or dense_col_end <= requested_dense_col_start:
+                continue
+
+            # if dense_col_start > requested_dense_col_end, pad with zeros
+            # from the left side. Otherwise, extract the subset of the row.
+            left_padding = min(
+                max(0, dense_col_start - requested_dense_col_start), BIG_BLOCK_SIZE_J
+            )
+
+            # if dense_col_end < requested_dense_col_start, pad with zeros
+            # from the right side.
+            right_padding = min(
+                max(0, requested_dense_col_end - dense_col_end), BIG_BLOCK_SIZE_J
+            )
+
+            left_offset = max(0, requested_dense_col_start - dense_col_start)
+            right_offset = max(0, dense_col_end - requested_dense_col_end)
+
+            # get the row from the dense matrix
+            row = A_dense_block[..., i - requested_dense_row_start, :]
+
+            # apply padding if needed
+            if left_padding > 0 or right_padding > 0:
+                row = row[..., left_padding : r - right_padding]
+
+            # copy the row to the tall and skinny matrix
+            A_blk_tallNSkinny[..., i, left_offset : r - right_offset] = row
 
     def _check_commensurable(self, other: "TallNSkinny") -> None:
         """Checks if the other matrix is commensurate."""
@@ -1502,6 +1640,152 @@ class ShortNFat(DSBanded):
         requested_dense_row_end = int(self.block_offsets[big_block_i + 1])
         requested_dense_col_start = int(self.block_offsets[big_block_j])
         requested_dense_col_end = int(self.block_offsets[big_block_j + 1])
+
+        # iterate over the requested columns
+        for j in range(requested_dense_col_start, requested_dense_col_end):
+            # Find the block column that contains the current column
+            blk_j = j // BLK_SIZE
+
+            # calculate the range of rows in the short-and-fat matrix for the current block column
+            dense_blk_row_start = blk_j - r_block
+            dense_blk_row_end = blk_j + r_block + 1
+
+            dense_row_start = dense_blk_row_start * BLK_SIZE
+            dense_row_end = dense_blk_row_end * BLK_SIZE
+
+            # TODO: Maybe remove this to allow setting boundary blocks.
+            if dense_row_start >= requested_dense_row_end or dense_row_end <= requested_dense_row_start:
+                continue
+
+            # if dense_row_start > requested_dense_row_end, pad with zeros
+            # from the top. Otherwise, extract the subset of the block column.
+            top_padding = min(
+                max(0, dense_row_start - requested_dense_row_start), BIG_BLOCK_SIZE_I
+            )
+
+            # if dense_row_end < requested_dense_row_start, pad with zeros
+            # from the bottom.
+            bottom_padding = min(
+                max(0, requested_dense_row_end - dense_row_end), BIG_BLOCK_SIZE_I
+            )
+
+            top_offset = max(0, requested_dense_row_start - dense_row_start)
+            bottom_offset = max(0, dense_row_end - requested_dense_row_end)
+
+            # get the block row from the dense matrix
+            blk_col = B_dense_block[..., :, j - requested_dense_col_start]
+
+            # dense 3diag blocks covers the shortNFat matrix, so we need to trim the blk_col
+            # from the "corners" of the dense block to fit the shortNFat matrix
+            if top_padding > 0 or bottom_padding > 0:
+                blk_col = blk_col[:, top_offset : r - bottom_offset]
+
+            # copy the block row to the tall and skinny matrix
+            B_blk_shortNFat[..., top_offset : r - bottom_offset, j] = blk_col
+
+    def enforce_boundary_conditions(self):
+
+        assert self.block_sizes[0] == self.block_sizes[1]
+
+        row = 0
+        col = 1
+
+        block = self.blocks[row, col]
+
+        data_stack = self.data[...]
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
+
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
+        BLK_SIZE = int(self.banded_block_size)
+        r_block = int(self.half_block_bandwidth)
+        B_blk_shortNFat = data_stack
+        B_dense_block = block
+
+        if len(B_blk_shortNFat.shape) == 2:
+            B_blk_shortNFat = xp.reshape(B_blk_shortNFat, (1, *B_blk_shortNFat.shape))
+        if B_dense_block.ndim == 2:
+            B_dense_block = xp.reshape(B_dense_block, (1, *B_dense_block.shape))
+        r = B_blk_shortNFat.shape[-2]
+
+        # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
+        # to the ranges of the block rows and columns
+        requested_dense_row_start = -int(self.block_sizes[0])
+        requested_dense_row_end = 0
+        requested_dense_col_start = 0
+        requested_dense_col_end = int(self.block_sizes[0])
+
+        # iterate over the requested columns
+        for j in range(requested_dense_col_start, requested_dense_col_end):
+            # Find the block column that contains the current column
+            blk_j = j // BLK_SIZE
+
+            # calculate the range of rows in the short-and-fat matrix for the current block column
+            dense_blk_row_start = blk_j - r_block
+            dense_blk_row_end = blk_j + r_block + 1
+
+            dense_row_start = dense_blk_row_start * BLK_SIZE
+            dense_row_end = dense_blk_row_end * BLK_SIZE
+
+            # TODO: Maybe remove this to allow setting boundary blocks.
+            if dense_row_start >= requested_dense_row_end or dense_row_end <= requested_dense_row_start:
+                continue
+
+            # if dense_row_start > requested_dense_row_end, pad with zeros
+            # from the top. Otherwise, extract the subset of the block column.
+            top_padding = min(
+                max(0, dense_row_start - requested_dense_row_start), BIG_BLOCK_SIZE_I
+            )
+
+            # if dense_row_end < requested_dense_row_start, pad with zeros
+            # from the bottom.
+            bottom_padding = min(
+                max(0, requested_dense_row_end - dense_row_end), BIG_BLOCK_SIZE_I
+            )
+
+            top_offset = max(0, requested_dense_row_start - dense_row_start)
+            bottom_offset = max(0, dense_row_end - requested_dense_row_end)
+
+            # get the block row from the dense matrix
+            blk_col = B_dense_block[..., :, j - requested_dense_col_start]
+
+            # dense 3diag blocks covers the shortNFat matrix, so we need to trim the blk_col
+            # from the "corners" of the dense block to fit the shortNFat matrix
+            if top_padding > 0 or bottom_padding > 0:
+                blk_col = blk_col[:, top_offset : r - bottom_offset]
+
+            # copy the block row to the tall and skinny matrix
+            B_blk_shortNFat[..., top_offset : r - bottom_offset, j] = blk_col
+        
+        block = self.blocks[row, col]
+
+        data_stack = self.data[...]
+        data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
+
+        row = len(self.block_sizes) - 1
+        col = len(self.block_sizes) - 2
+
+        block = self.blocks[row, col]
+
+        BIG_BLOCK_SIZE_I = int(self.block_sizes[row])
+        BIG_BLOCK_SIZE_J = int(self.block_sizes[col])
+        BLK_SIZE = int(self.banded_block_size)
+        r_block = int(self.half_block_bandwidth)
+        B_blk_shortNFat = data_stack
+        B_dense_block = block
+
+        if len(B_blk_shortNFat.shape) == 2:
+            B_blk_shortNFat = xp.reshape(B_blk_shortNFat, (1, *B_blk_shortNFat.shape))
+        if B_dense_block.ndim == 2:
+            B_dense_block = xp.reshape(B_dense_block, (1, *B_dense_block.shape))
+        r = B_blk_shortNFat.shape[-2]
+
+        # translate the BIG_BLOCK_SIZE coordinates big_block_i, big_block_j
+        # to the ranges of the block rows and columns
+        requested_dense_row_start = int(self.block_offsets[-1])
+        requested_dense_row_end = int(self.block_offsets[-1] + self.block_sizes[-1])
+        requested_dense_col_start = int(self.block_offsets[-2])
+        requested_dense_col_end = int(self.block_offsets[-1])
 
         # iterate over the requested columns
         for j in range(requested_dense_col_start, requested_dense_col_end):

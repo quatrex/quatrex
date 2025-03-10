@@ -38,20 +38,44 @@ def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
 
 
 @pytest.mark.parametrize(
-    "value_cutoff, R_cutoff",
+    "value_cutoff, R_cutoff, remove_zeros",
     [
-        (0.5, None),
-        (None, 1),
-        (0.5, 1),
+        (0.5, None, False),
+        (None, 1, False),
+        (0.5, 1, False),
+        (0.5, None, True),
+        (None, 1, True),
+        (0.5, 1, True),
     ],
 )
-def test_cutoff_hr(value_cutoff: float, R_cutoff: int):
+def test_cutoff_hr(value_cutoff: float, R_cutoff: int, remove_zeros: bool):
     hr = read_hr_dat(wannier90_hr_path)
-    hr_cutoff = cutoff_hr(hr, value_cutoff, R_cutoff)
+    hr_cutoff = cutoff_hr(hr, value_cutoff, R_cutoff, remove_zeros)
     if R_cutoff is None:
         R_cutoff = xp.array([s // 2 if s > 1 else 1 for s in hr.shape[:3]])
     if value_cutoff is None:
         value_cutoff = xp.inf
+    if remove_zeros and value_cutoff is None:
+        # NOTE: if value_cutoff is not None, we don't know the shape
+        if isinstance(R_cutoff, int):
+            assert (
+                hr_cutoff.shape
+                == tuple([2 * R_cutoff + 1 if hrs > 1 else 1 for hrs in hr.shape[:3]])
+                + hr.shape[3:]
+            )
+        else:
+            assert (
+                hr_cutoff.shape
+                == tuple(
+                    [
+                        2 * r + 1 if hrs > 1 else 1
+                        for r, hrs in zip(R_cutoff, hr.shape[:3])
+                    ]
+                )
+                + hr.shape[3:]
+            )
+    elif value_cutoff is None:
+        assert hr_cutoff.shape == hr.shape
     for r in R_ref:
         if (xp.abs(r) <= R_cutoff).all():
             hr_ref = hr[*r][xp.abs(hr[*r]) <= value_cutoff]
@@ -60,7 +84,13 @@ def test_cutoff_hr(value_cutoff: float, R_cutoff: int):
             # Some R values can have been removed, but then
             # the corresponding hr values should be zero
             except IndexError:
-                assert (hr_ref == 0).all()
+                if remove_zeros:
+                    assert (hr_ref == 0).all()
+                else:
+                    assert False
+        else:
+            if not remove_zeros:
+                assert (hr_cutoff[*r] == 0).all()
 
 
 @pytest.mark.parametrize(

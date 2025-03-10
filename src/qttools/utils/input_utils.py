@@ -189,11 +189,7 @@ def cutoff_hr(
     if R_cutoff is not None:
         if isinstance(R_cutoff, int):
             R_cutoff = (R_cutoff, R_cutoff, R_cutoff)
-        cut_shape = [
-            r * 2 + 1 if hr.shape[i] > r * 2 + 1 else hr.shape[i]
-            for i, r in enumerate(R_cutoff)
-        ] + list(hr.shape[3:])
-        hr_cut = xp.zeros(cut_shape, dtype=hr.dtype)
+        hr_cut = xp.zeros_like(hr)
         for ind in xp.ndindex(hr.shape[:3]):
             ind = xp.asarray(ind) - xp.asarray(hr.shape[:3]) // 2
             if (abs(ind) <= xp.asarray(R_cutoff)).all():
@@ -206,8 +202,6 @@ def cutoff_hr(
     # Remove eventual cell planes with only zeros, except the center.
     if remove_zeros:
         zero_mask = hr_cut.any(axis=(-2, -1))
-        zero_mask[0, 0, 0] = True
-
         for ax in range(3):  # Loop through axes (0, 1, 2)
             # Loop backwards through the axis (from the edge to the center).
             for idx in range(hr_cut.shape[ax] // 2, 0, -1):

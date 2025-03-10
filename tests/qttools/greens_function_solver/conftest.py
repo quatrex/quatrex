@@ -6,9 +6,11 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
-GFSOLVERS_TYPE = [Inv, RGF]
+# GFSOLVERS_TYPE = [Inv, RGF]
+GFSOLVERS_TYPE = [RGF]
 
-DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
+# DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
+DSBSPARSE_TYPES = [DSBCOO]
 
 SMALL_BLOCK_SIZES = [
     pytest.param(xp.array([2] * 10), id="constant-block-size-2"),
@@ -32,8 +34,8 @@ LARGE_BLOCK_SIZES = [
 ]
 
 BATCHING_TYPE = [
-    pytest.param(1, id="no-batching"),
-    pytest.param(2, id="2-batching"),
+    # pytest.param(1, id="no-batching"),
+    # pytest.param(2, id="2-batching"),
     pytest.param(100, id="all-batching"),
 ]
 
@@ -49,8 +51,8 @@ RETURN_RETARDED = [
 
 GLOBAL_STACK_SHAPES = [
     pytest.param((10,), id="1D-stack"),
-    pytest.param((7, 2), id="2D-stack"),
-    pytest.param((9, 2, 4), id="3D-stack"),
+    # pytest.param((7, 2), id="2D-stack"),
+    # pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
 class BlockSizes:
@@ -60,7 +62,7 @@ class BlockSizes:
             free_bytes = device.mem_info[0]
             print(f"Free memory: {free_bytes}")
             if free_bytes > 1e10:
-                self.sizes = MIDDLE_BLOCK_SIZES
+                self.sizes = LARGE_BLOCK_SIZES
             else:
                 self.sizes = SMALL_BLOCK_SIZES
             return

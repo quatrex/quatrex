@@ -233,6 +233,18 @@ class DSBCOO(DSBSparse):
 
         self._block_slice_cache[(row, col)] = block_slice
         return block_slice
+    
+    @profiler.profile(level="debug")
+    def _create_block(self, stack_shape, row, col) -> NDArray:
+        return xp.empty(
+            stack_shape[:-1]
+            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+            dtype=self.dtype,
+        )
+    
+    @profiler.profile(level="debug")
+    def _zero_block(self, block: NDArray) -> None:
+        block[:] = 0
 
     @profiler.profile(level="debug")
     def _get_block(self, stack_index: tuple, row: int, col: int, block: NDArray = None) -> NDArray | tuple:
@@ -278,12 +290,15 @@ class DSBCOO(DSBSparse):
         #     dtype=self.dtype,
         # )
         if block is None:
-            block = xp.empty(
-                data_stack.shape[:-1]
-                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-                dtype=self.dtype,
-            )
-        block[:] = 0
+            self._create_block(data_stack.shape, row, col)
+        self._zero_block(block)
+        # if block is None:
+        #     block = xp.empty(
+        #         data_stack.shape[:-1]
+        #         + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+        #         dtype=self.dtype,
+        #     )
+        # block[:] = 0
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block

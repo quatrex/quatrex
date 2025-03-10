@@ -27,8 +27,7 @@ def test_selected_inv(
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
-    print(f"{block_sizes=}", flush=True)
-    print(f"{global_stack_shape=}", flush=True)
+    print(f"{max_batch_size=}, {block_sizes=}, {global_stack_shape=}", flush=True)
 
     original = []
     new = []
@@ -66,12 +65,12 @@ def test_selected_inv(
                 xp.cuda.get_current_stream().synchronize()
             end = time.perf_counter()
             new.append(end - start)
+
+    original = xp.median(xp.array(original))
     if len(new) > 0:
-        original = xp.median(original)
-        new = xp.median(new)
+        new = xp.median(xp.array(new))
         print(f"Original: {original:.6f} s, New: {new:.6f} s", flush=True)
     else:
-        original = xp.median(original)
         print(f"Original: {original:.6f} s", flush=True)
 
     bt_mask_broadcasted = xp.broadcast_to(

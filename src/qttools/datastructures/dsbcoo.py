@@ -290,7 +290,7 @@ class DSBCOO(DSBSparse):
         #     dtype=self.dtype,
         # )
         if block is None:
-            self._create_block(data_stack.shape, row, col)
+            block = self._create_block(data_stack.shape, row, col)
         self._zero_block(block)
         # if block is None:
         #     block = xp.empty(

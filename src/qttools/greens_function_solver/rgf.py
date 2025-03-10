@@ -115,6 +115,134 @@ class RGF(GFSolver):
         if out is None:
             return x
 
+    def selected_inv_new(
+        self,
+        a: DSBSparse,
+        obc_blocks: OBCBlocks | None = None,
+        out: DSBSparse | None = None,
+    ) -> None | DSBSparse:
+        """Performs selected inversion of a block-tridiagonal matrix.
+
+        Parameters
+        ----------
+        a : DSBSparse
+            Matrix to invert.
+        obc_blocks : OBCBlocks, optional
+            OBC blocks for lesser, greater and retarded Green's
+            functions. By default None.
+        out : DSBSparse, optional
+            Preallocated output matrix, by default None.
+
+        Returns
+        -------
+        None | DSBSparse
+            If `out` is None, returns None. Otherwise, returns the
+            inverted matrix as a DSBSparse object.
+
+        """
+        # Initialize dense temporary buffers for the diagonal blocks.
+        x_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+
+        if obc_blocks is None:
+            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
+
+        # Get list of batches to perform
+        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+
+        if out is not None:
+            x = out
+        else:
+            x = a.__class__.zeros_like(a)
+
+        for b in range(len(batches_sizes)):
+            stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
+            stack_index = (stack_slice.stop - stack_slice.start, )
+            if len(x.global_stack_shape) > 1:
+                stack_index = (*stack_index, *x.global_stack_shape[1:])
+
+            bii = xp.empty((*stack_index, int(a.block_sizes[0]), int(a.block_sizes[0])), dtype=a.dtype)
+            bij = xp.empty((*stack_index, int(a.block_sizes[0]), int(a.block_sizes[1])), dtype=a.dtype)
+            bji = xp.empty((*stack_index, int(a.block_sizes[1]), int(a.block_sizes[0])), dtype=a.dtype)
+
+            a_ = a.stack[stack_slice]
+            x_ = x.stack[stack_slice]
+
+            # See if there is an OBC block for the current layer.
+            obc = obc_blocks.retarded[0]
+            # a_00 = (
+            #     a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc[stack_slice]
+            # )
+            a_00 = bii
+            a_.get_block((0, 0), block=a_00)
+            if obc is not None:
+                a_00 -= obc[stack_slice]
+
+            x_diag_blocks[0] = xp.linalg.inv(a_00)
+
+            # Forwards sweep.
+            for i in range(a.num_blocks - 1):
+                j = i + 1
+
+                # See if there is an OBC block for the current layer.
+                obc = obc_blocks.retarded[j]
+                # a_jj = (
+                #     a_.blocks[j, j]
+                #     if obc is None
+                #     else a_.blocks[j, j] - obc[stack_slice]
+                # )
+                if bii.shape[-2:] != (int(a.block_sizes[j]), int(a.block_sizes[j])):
+                    bii = xp.empty((*stack_index, int(a.block_sizes[j]), int(a.block_sizes[j])), dtype=a.dtype)
+                if bij.shape[-2:] != (int(a.block_sizes[i]), int(a.block_sizes[j])):
+                    bij = xp.empty((*stack_index, int(a.block_sizes[i]), int(a.block_sizes[j])), dtype=a.dtype)
+                if bji.shape[-2:] != (int(a.block_sizes[j]), int(a.block_sizes[i])):
+                    bji = xp.empty((*stack_index, int(a.block_sizes[j]), int(a.block_sizes[i])), dtype=a.dtype)
+                a_jj = bii
+                a_.get_block((j, j), block=a_jj)
+                if obc is not None:
+                    a_jj -= obc[stack_slice]
+                a_ij = bij
+                a_.get_block((i, j), block=a_ij)
+                a_ji = bji
+                a_.get_block((j, i), block=a_ji)
+
+                # x_diag_blocks[j] = xp.linalg.inv(
+                #     a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
+                # )
+                x_diag_blocks[j] = xp.linalg.inv(
+                    a_jj - a_ji @ x_diag_blocks[i] @ a_ij
+                )
+
+            # We need to write the last diagonal block to the output.
+            x_.blocks[j, j] = x_diag_blocks[j]
+
+            # Backwards sweep.
+            for i in range(a.num_blocks - 2, -1, -1):
+                j = i + 1
+
+                if bij.shape[-2:] != (int(a.block_sizes[i]), int(a.block_sizes[j])):
+                    bij = xp.empty((*stack_index, int(a.block_sizes[i]), int(a.block_sizes[j])), dtype=a.dtype)
+                if bji.shape[-2:] != (int(a.block_sizes[j]), int(a.block_sizes[i])):
+                    bji = xp.empty((*stack_index, int(a.block_sizes[j]), int(a.block_sizes[i])), dtype=a.dtype)
+                a_ij = bij
+                a_.get_block((i, j), block=a_ij)
+                a_ji = bji
+                a_.get_block((j, i), block=a_ji)
+
+                x_ii = x_diag_blocks[i]
+                x_jj = x_diag_blocks[j]
+                # a_ij = a_.blocks[i, j]
+
+                # x_ji = -x_jj @ a_.blocks[j, i] @ x_ii
+                x_ji = -x_jj @ a_ji @ x_ii
+                x_.blocks[j, i] = x_ji
+                x_.blocks[i, j] = -x_ii @ a_ij @ x_jj
+
+                # NOTE: Cursed Python multiple assignment syntax.
+                x_.blocks[i, i] = x_diag_blocks[i] = x_ii - x_ii @ a_ij @ x_ji
+
+        if out is None:
+            return x
+
     def selected_solve(
         self,
         a: DSBSparse,

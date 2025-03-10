@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import ArrayLike, NDArray, sparse, xp
+from qttools import ArrayLike, NDArray, sparse, xp, host_xp, pinned_xp
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, get_nccl_communicator, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
@@ -183,10 +183,16 @@ class DSBSparse(ABC):
         self.nnz = data.shape[-1]
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
-        self._block_sizes = xp.asarray(block_sizes).astype(int)
-        self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
+        # self._block_sizes = xp.asarray(block_sizes).astype(int)
+        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        # self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
+        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
         self.return_dense = return_dense
+
+        self._block_indexer = _DSBlockIndexer(self)
+        self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
+        self._stack_indexer = _DStackIndexer(self)
 
     @property
     def block_sizes(self) -> ArrayLike:
@@ -240,17 +246,17 @@ class DSBSparse(ABC):
     @property
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
-        return _DSBlockIndexer(self)
+        return self._block_indexer
 
     @property
     def sparse_blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer."""
-        return _DSBlockIndexer(self, return_dense=False)
+        return self._sparse_block_indexer
 
     @property
     def stack(self) -> "_DStackIndexer":
         """Returns a stack indexer."""
-        return _DStackIndexer(self)
+        return self._stack_indexer
 
     @property
     def data(self) -> NDArray:
@@ -857,7 +863,6 @@ class _DSBlockIndexer:
     ) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
-        self._num_blocks = dsbsparse.num_blocks
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         self._stack_index = stack_index
@@ -867,7 +872,8 @@ class _DSBlockIndexer:
         """Adjusts the sign to allow negative indices and checks bounds."""
         row = self._dsbsparse.num_blocks + row if row < 0 else row
         col = self._dsbsparse.num_blocks + col if col < 0 else col
-        if not (0 <= row < self._num_blocks and 0 <= col < self._num_blocks):
+        if not (0 <= row < self._dsbsparse.num_blocks and
+                0 <= col < self._dsbsparse.num_blocks):
             raise IndexError("Block index out of bounds.")
 
         return row, col

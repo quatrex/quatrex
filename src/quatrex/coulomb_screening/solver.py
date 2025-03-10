@@ -18,8 +18,12 @@ from quatrex.core.utils import (
     get_periodic_superblocks,
     homogenize,
 )
+from qttools.profiling import Profiler, decorate_methods
+
+profiler = Profiler()
 
 
+@profiler.profile(level="debug")
 def _check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) -> bool:
     """Checks if matrix elements lie within the block-tridiagonal.
 
@@ -58,6 +62,7 @@ def _check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) ->
     return rows.size == nnz_in_blocks
 
 
+@profiler.profile(level="debug")
 def _spillover_matmul(
     a: sparse.spmatrix, b: sparse.spmatrix, block_sizes
 ) -> sparse.coo_matrix:
@@ -80,6 +85,7 @@ def _spillover_matmul(
     return c.tocoo()
 
 
+@decorate_methods(profiler.profile(level="api"), exclude=["solve"])
 class CoulombScreeningSolver(SubsystemSolver):
     """Solves the dynamics of the screened Coulomb interaction.
 
@@ -350,6 +356,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         w_lesser.data[local_mask] = 0.0
         w_greater.data[local_mask] = 0.0
 
+    @profiler.profile(level="basic")
     def solve(
         self,
         p_lesser: DSBSparse,

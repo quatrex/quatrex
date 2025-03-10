@@ -11,8 +11,12 @@ from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
+@profiler.profile(level="api")
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 
@@ -59,6 +63,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.prefactor = -1j / xp.pi * xp.abs(self.energies[1] - self.energies[0])
         self.batch_size = compute_config.convolve.batch_size
 
+    @profiler.profile(level="api")
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
     ) -> None:
@@ -77,64 +82,69 @@ class PCoulombScreening(ScatteringSelfEnergy):
         """
         p_lesser, p_greater, p_retarded = out
 
-        # Transpose the matrices to nnz distribution.
-        t0 = time.perf_counter()
-        for m in (g_lesser, g_greater):
-            # These should ideally already be in nnz-distribution.
-            m.dtranspose() if m.distribution_state != "nnz" else None
-        for m in (p_lesser, p_greater):
-            # These only need the correct shape, so discard the data.
-            m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
+        with profiler.profile_range("stack->nnz transpose", level="debug"):
+            # Transpose the matrices to nnz distribution.
+            t0 = time.perf_counter()
+            for m in (g_lesser, g_greater):
+                # These should ideally already be in nnz-distribution.
+                m.dtranspose() if m.distribution_state != "nnz" else None
+            for m in (p_lesser, p_greater):
+                # These only need the correct shape, so discard the data.
+                m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
 
         t1 = time.perf_counter()
         if comm.rank == 0:
             print(f"PCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True)
 
-        if self.batch_size is None:
-            # NOTE: This is a temporary solution. The batch size should be
-            # calculated in the configuration.
-            self.batch_size = p_greater.data.shape[-1]
+        with profiler.profile_range("Polarization computation", level="debug"):
+            if self.batch_size is None:
+                # NOTE: This is a temporary solution. The batch size should be
+                # calculated in the configuration.
+                self.batch_size = p_greater.data.shape[-1]
 
-        batch_counts, _ = get_section_sizes(
-            p_greater.data.shape[-1],
-            int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
-        )
-
-        batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
-
-        # TODO: the datastructures does not allow for easy slicing of the
-        # data. This is a workaround.
-        rows, cols = p_lesser.spy()
-        rows = rows[
-            p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
-                comm.rank + 1
-            ]
-        ]
-        cols = cols[
-            p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
-                comm.rank + 1
-            ]
-        ]
-
-        for start, end in zip(batch_displacements, batch_displacements[1:]):
-            batch = slice(start, end)
-
-            p_g_full = self.prefactor * fft_correlate(
-                g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+            batch_counts, _ = get_section_sizes(
+                p_greater.data.shape[-1],
+                int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
             )
-            p_l_full = -p_g_full[::-1].conj()
-            # Fill the matrices with the data. Take second part of the
-            # energy convolution.
-            p_lesser[rows[batch], cols[batch]] = p_l_full[self.ne - 1 :]
-            p_greater[rows[batch], cols[batch]] = p_g_full[self.ne - 1 :]
+
+            batch_displacements = np.cumsum(
+                np.concatenate(([0], np.array(batch_counts)))
+            )
+
+            # TODO: the datastructures does not allow for easy slicing of the
+            # data. This is a workaround.
+            rows, cols = p_lesser.spy()
+            rows = rows[
+                p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
+                    comm.rank + 1
+                ]
+            ]
+            cols = cols[
+                p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
+                    comm.rank + 1
+                ]
+            ]
+
+            for start, end in zip(batch_displacements, batch_displacements[1:]):
+                batch = slice(start, end)
+
+                p_g_full = self.prefactor * fft_correlate(
+                    g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+                )
+                p_l_full = -p_g_full[::-1].conj()
+                # Fill the matrices with the data. Take second part of the
+                # energy convolution.
+                p_lesser[rows[batch], cols[batch]] = p_l_full[self.ne - 1 :]
+                p_greater[rows[batch], cols[batch]] = p_g_full[self.ne - 1 :]
 
         # Transpose the matrices to stack distribution.
-        t0 = time.perf_counter()
-        for m in (p_lesser, p_greater):
-            m.dtranspose() if m.distribution_state != "stack" else None
-        # NOTE: The Green's functions must not be transposed back to
-        # stack distribution, as they are needed in nnz distribution for
-        # the other interactions.
+        with profiler.profile_range("nnz->stack transpose", level="debug"):
+            t0 = time.perf_counter()
+            for m in (p_lesser, p_greater):
+                m.dtranspose() if m.distribution_state != "stack" else None
+            # NOTE: The Green's functions must not be transposed back to
+            # stack distribution, as they are needed in nnz distribution for
+            # the other interactions.
 
         t1 = time.perf_counter()
         if comm.rank == 0:

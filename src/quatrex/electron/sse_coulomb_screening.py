@@ -11,8 +11,11 @@ from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from qttools.profiling import Profiler
 
+profiler = Profiler()
 
+@profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using FFT.
 
@@ -34,7 +37,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     b_fft = xp.fft.fft(b, n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
 
-
+@profiler.profile(level="api")
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 
@@ -56,7 +59,7 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     b_fft = xp.fft.fft(b[::-1], n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
 
-
+@profiler.profile(level="api")
 def hilbert_transform(a: NDArray, energies: NDArray, eta=1e-8) -> NDArray:
     """Computes the Hilbert transform of the array a.
 
@@ -117,7 +120,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         self.big_block_sizes = None
         self.batch_size = compute_config.convolve.batch_size
-
+    
+    @profiler.profile(level="api")
     def compute(
         self,
         g_lesser: DSBSparse,
@@ -159,99 +163,103 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         w_greater.block_sizes = g_greater.block_sizes
 
         sigma_lesser, sigma_greater, sigma_retarded = out
-        t0 = time.perf_counter()
-        # Transpose the matrices to nnz distribution.
-        for m in (
-            w_lesser,
-            w_greater,
-            g_lesser,
-            g_greater,
-            sigma_lesser,
-            sigma_greater,
-            sigma_retarded,
-        ):
-            # The electron Green's functions and self-energies should
-            # ideally already be in nnz-distribution. We cannot discard
-            # the data here, as we cannot be sure that this is the
-            # first/only interaction.
-            m.dtranspose() if m.distribution_state != "nnz" else None
-        t1 = time.perf_counter()
+
+        with profiler.profile_range("stack->nnz transpose", level="debug"):
+            t0 = time.perf_counter()
+            # Transpose the matrices to nnz distribution.
+            for m in (
+                w_lesser,
+                w_greater,
+                g_lesser,
+                g_greater,
+                sigma_lesser,
+                sigma_greater,
+                sigma_retarded,
+            ):
+                # The electron Green's functions and self-energies should
+                # ideally already be in nnz-distribution. We cannot discard
+                # the data here, as we cannot be sure that this is the
+                # first/only interaction.
+                m.dtranspose() if m.distribution_state != "nnz" else None
+            t1 = time.perf_counter()
         if comm.rank == 0:
             print(
                 f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
             )
 
-        if self.batch_size is None:
-            # NOTE: This is a temporary solution. The batch size should be
-            # calculated in the configuration.
-            self.batch_size = g_greater.data.shape[-1]
+        with profiler.profile_range("SSE computation", level="debug"):
+            if self.batch_size is None:
+                # NOTE: This is a temporary solution. The batch size should be
+                # calculated in the configuration.
+                self.batch_size = g_greater.data.shape[-1]
 
-        batch_counts, _ = get_section_sizes(
-            g_greater.data.shape[-1],
-            int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
-        )
+            batch_counts, _ = get_section_sizes(
+                g_greater.data.shape[-1],
+                int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+            )
 
-        batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
+            batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
 
-        # TODO: the datastructures does not allow for easy slicing of the
-        # data. This is a workaround.
-        rows, cols = g_greater.spy()
-        rows = rows[
-            g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
-                comm.rank + 1
-            ]
-        ]
-        cols = cols[
-            g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
-                comm.rank + 1
-            ]
-        ]
-
-        for start, end in zip(batch_displacements, batch_displacements[1:]):
-            batch = slice(start, end)
-
-            # Compute the full self-energy using the convolution theorem.
-            # Second term are corrections for negative frequencies that
-            # where cut off by the polarization calculation.
-            sigma_lesser[rows[batch], cols[batch]] += self.prefactor * (
-                fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
-                    : self.num_energies
+            # TODO: the datastructures does not allow for easy slicing of the
+            # data. This is a workaround.
+            rows, cols = g_greater.spy()
+            rows = rows[
+                g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
+                    comm.rank + 1
                 ]
-                - fft_correlate(
-                    g_lesser.data[:, batch], w_greater.data[:, batch].conj()
-                )[self.num_energies - 1 :]
-            )
-            sigma_greater[rows[batch], cols[batch]] += self.prefactor * (
-                fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
-                    : self.num_energies
+            ]
+            cols = cols[
+                g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
+                    comm.rank + 1
                 ]
-                - fft_correlate(
-                    g_greater.data[:, batch], w_lesser.data[:, batch].conj()
-                )[self.num_energies - 1 :]
-            )
+            ]
 
-            # Compute retarded self-energy with a Hilbert transform.
-            sigma_antihermitian = 1j * xp.imag(
-                sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
-            )
-            sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-            sigma_retarded[rows[batch], cols[batch]] += (
-                1j * sigma_hermitian + sigma_antihermitian / 2
-            )
+            for start, end in zip(batch_displacements, batch_displacements[1:]):
+                batch = slice(start, end)
+
+                # Compute the full self-energy using the convolution theorem.
+                # Second term are corrections for negative frequencies that
+                # where cut off by the polarization calculation.
+                sigma_lesser[rows[batch], cols[batch]] += self.prefactor * (
+                    fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
+                        : self.num_energies
+                    ]
+                    - fft_correlate(
+                        g_lesser.data[:, batch], w_greater.data[:, batch].conj()
+                    )[self.num_energies - 1 :]
+                )
+                sigma_greater[rows[batch], cols[batch]] += self.prefactor * (
+                    fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
+                        : self.num_energies
+                    ]
+                    - fft_correlate(
+                        g_greater.data[:, batch], w_lesser.data[:, batch].conj()
+                    )[self.num_energies - 1 :]
+                )
+
+                # Compute retarded self-energy with a Hilbert transform.
+                sigma_antihermitian = 1j * xp.imag(
+                    sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
+                )
+                sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
+                sigma_retarded[rows[batch], cols[batch]] += (
+                    1j * sigma_hermitian + sigma_antihermitian / 2
+                )
 
         # Transpose the matrices to stack distribution.
-        t0 = time.perf_counter()
-        for m in (w_lesser, w_greater):
-            m.dtranspose(discard=True) if m.distribution_state != "stack" else None
-        # NOTE: The electron Green's functions and self-energies must
-        # not be transposed back to stack distribution, as they are
-        # needed in nnz distribution for the other interactions.
+        with profiler.profile_range("nnz->stack transpose", level="debug"):
+            t0 = time.perf_counter()
+            for m in (w_lesser, w_greater):
+                m.dtranspose(discard=True) if m.distribution_state != "stack" else None
+            # NOTE: The electron Green's functions and self-energies must
+            # not be transposed back to stack distribution, as they are
+            # needed in nnz distribution for the other interactions.
 
-        t1 = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True
-            )
+            t1 = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True
+                )
 
         # Recover original block sizes.
         w_lesser.block_sizes = self.big_block_sizes
@@ -306,6 +314,7 @@ class SigmaFock(ScatteringSelfEnergy):
         coulomb_matrix.dtranspose()
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
+    @profiler.profile(level="api")
     def compute(self, g_lesser: DSBSparse, out: tuple[DSBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 

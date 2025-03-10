@@ -24,7 +24,9 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
+from qttools.profiling import Profiler
 
+profiler = Profiler()
 
 class SCBAData:
     """Data container class for the SCBA.
@@ -305,6 +307,7 @@ class SCBA:
         self.data.sigma_lesser._data[:] = 0.0
         self.data.sigma_greater._data[:] = 0.0
 
+    @profiler.profile(level="api")
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
@@ -345,6 +348,7 @@ class SCBA:
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
 
+    @profiler.profile(level="api")
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
@@ -367,6 +371,7 @@ class SCBA:
 
         return False  # TODO: :-)
 
+    @profiler.profile(level="api")
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
         if self.quatrex_config.phonon.model == "negf":
@@ -383,10 +388,12 @@ class SCBA:
                 ),
             )
 
+    @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
         raise NotImplementedError
 
+    @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
         times = []
@@ -440,6 +447,7 @@ class SCBA:
                 f"Time for Coulomb screening self-energy: {t_sigma:.2f} s", flush=True
             )
 
+    @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
         self.observables.electron_ldos = -density(
@@ -486,6 +494,7 @@ class SCBA:
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
 
+    @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
         self.observables.p_retarded_density = -density(self.data.p_retarded) / (
             2 * xp.pi
@@ -496,6 +505,7 @@ class SCBA:
         self.observables.w_lesser_density = density(self.data.w_lesser) / (2 * xp.pi)
         self.observables.w_greater_density = -density(self.data.w_greater) / (2 * xp.pi)
 
+    @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
 
@@ -512,13 +522,13 @@ class SCBA:
             f"{output_dir}/electron_ldos_{iteration}.npy",
             self.observables.electron_ldos,
         )
-        xp.save(
-            f"{output_dir}/electron_density_{iteration}.npy",
-            self.observables.electron_density,
-        )
-        xp.save(
-            f"{output_dir}/hole_density_{iteration}.npy", self.observables.hole_density
-        )
+        # xp.save(
+        #     f"{output_dir}/electron_density_{iteration}.npy",
+        #     self.observables.electron_density,
+        # )
+        # xp.save(
+        #     f"{output_dir}/hole_density_{iteration}.npy", self.observables.hole_density
+        # )
         xp.save(
             f"{output_dir}/i_left_{iteration}.npy",
             self.observables.electron_current["left"],
@@ -539,42 +549,43 @@ class SCBA:
                 self.observables.electron_current["meir-wingreen"],
             )
 
-        if self.quatrex_config.scba.coulomb_screening:
-            xp.save(
-                f"{output_dir}/p_lesser_density_{iteration}.npy",
-                self.observables.p_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/p_greater_density_{iteration}.npy",
-                self.observables.p_greater_density,
-            )
-            xp.save(
-                f"{output_dir}/p_retarded_density_{iteration}.npy",
-                self.observables.p_retarded_density,
-            )
+        # if self.quatrex_config.scba.coulomb_screening:
+        #     xp.save(
+        #         f"{output_dir}/p_lesser_density_{iteration}.npy",
+        #         self.observables.p_lesser_density,
+        #     )
+        #     xp.save(
+        #         f"{output_dir}/p_greater_density_{iteration}.npy",
+        #         self.observables.p_greater_density,
+        #     )
+        #     xp.save(
+        #         f"{output_dir}/p_retarded_density_{iteration}.npy",
+        #         self.observables.p_retarded_density,
+        #     )
 
-            xp.save(
-                f"{output_dir}/w_lesser_density_{iteration}.npy",
-                self.observables.w_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/w_greater_density_{iteration}.npy",
-                self.observables.w_greater_density,
-            )
+        #     xp.save(
+        #         f"{output_dir}/w_lesser_density_{iteration}.npy",
+        #         self.observables.w_lesser_density,
+        #     )
+        #     xp.save(
+        #         f"{output_dir}/w_greater_density_{iteration}.npy",
+        #         self.observables.w_greater_density,
+        #     )
 
-        xp.save(
-            f"{output_dir}/sigma_retarded_density_{iteration}.npy",
-            self.observables.sigma_retarded_density,
-        )
-        xp.save(
-            f"{output_dir}/sigma_lesser_density_{iteration}.npy",
-            self.observables.sigma_lesser_density,
-        )
-        xp.save(
-            f"{output_dir}/sigma_greater_density_{iteration}.npy",
-            self.observables.sigma_greater_density,
-        )
+        # xp.save(
+        #     f"{output_dir}/sigma_retarded_density_{iteration}.npy",
+        #     self.observables.sigma_retarded_density,
+        # )
+        # xp.save(
+        #     f"{output_dir}/sigma_lesser_density_{iteration}.npy",
+        #     self.observables.sigma_lesser_density,
+        # )
+        # xp.save(
+        #     f"{output_dir}/sigma_greater_density_{iteration}.npy",
+        #     self.observables.sigma_greater_density,
+        # )
 
+    @profiler.profile(level="basic")
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None

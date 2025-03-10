@@ -35,7 +35,7 @@ class BandEdgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_eigvalsh: bool = False
-    eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
+    eigvalsh_compute_location: Literal["numpy", "cupy"] = "cupy"
 
 
 class ConvolveConfig(BaseModel):

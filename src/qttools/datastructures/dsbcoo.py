@@ -58,7 +58,7 @@ class DSBCOO(DSBSparse):
 
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
-        self._block_slice_cache = {}
+        # self._block_slice_cache = {}
 
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
@@ -221,7 +221,8 @@ class DSBCOO(DSBSparse):
             The slice of the data corresponding to the block.
 
         """
-        block_slice = self._block_slice_cache.get((row, col), None)
+        # block_slice = self._block_slice_cache.get((row, col), None)
+        block_slice = self._block_config[self.num_blocks].block_slice_cache.get((row, col), None)
 
         if block_slice is None:
             # Cache miss, compute the slice.
@@ -231,7 +232,8 @@ class DSBCOO(DSBSparse):
                 )
             )
 
-        self._block_slice_cache[(row, col)] = block_slice
+        # self._block_slice_cache[(row, col)] = block_slice
+        self._block_config[self.num_blocks].block_slice_cache[(row, col)] = block_slice
         return block_slice
 
     @profiler.profile(level="debug")
@@ -440,6 +442,11 @@ class DSBCOO(DSBSparse):
             The new block sizes.
 
         """
+        num_blocks = len(block_sizes)
+        if num_blocks in self._block_config:
+            # Block configuration already exists.
+            self.num_blocks = num_blocks
+            return
         if self.distribution_state == "nnz":
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
@@ -461,12 +468,10 @@ class DSBCOO(DSBSparse):
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
-        # self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        # self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)), dtype=host_xp.int32)
+        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
-        self._block_slice_cache = {}
+        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCOO":
@@ -531,9 +536,9 @@ class DSBCOO(DSBSparse):
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows
 
-        self._block_slice_cache, self._block_slice_cache_t = (
+        self._block_config[self.num_blocks].block_slice_cache, self._block_slice_cache_t = (
             self._block_slice_cache_t,
-            self._block_slice_cache,
+            self._block_config[self.num_blocks].block_slice_cache,
         )
 
         return self if copy else None

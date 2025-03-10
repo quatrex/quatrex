@@ -58,6 +58,13 @@ def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray
     return xp.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
 
 
+class BlockConfig(object):
+    def __init__(self, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
+        self.block_sizes = block_sizes
+        self.block_offsets = block_offsets
+        self.block_slice_cache = block_slice_cache or {}
+
+
 class DSBSparse(ABC):
     """Base class for distributed stacks of sparse block matrices.
 
@@ -183,27 +190,36 @@ class DSBSparse(ABC):
         self.nnz = data.shape[-1]
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
-        # self._block_sizes = xp.asarray(block_sizes).astype(int)
-        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        # self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
-        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)), dtype=host_xp.int32)
+        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
+        self._block_config : dict[int, BlockConfig] = {}
+        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
+
         self.return_dense = return_dense
 
         self._block_indexer = _DSBlockIndexer(self)
         self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
         self._stack_indexer = _DStackIndexer(self)
+    
+    def _add_block_config(self, num_blocks: int, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
+        self._block_config[num_blocks] = BlockConfig(block_sizes, block_offsets, block_slice_cache)
 
     @property
     def block_sizes(self) -> ArrayLike:
         """Returns the block sizes."""
-        return self._block_sizes
+        return self._block_config[self.num_blocks].block_sizes
 
     @block_sizes.setter
     @abstractmethod
     def block_sizes(self, block_sizes: ArrayLike) -> None:
         """Sets the block sizes."""
         ...
+    
+    @property
+    def block_offsets(self) -> ArrayLike:
+        """Returns the block sizes."""
+        return self._block_config[self.num_blocks].block_offsets
 
     @profiler.profile(level="debug")
     def _normalize_index(self, index: tuple) -> tuple:

@@ -390,6 +390,11 @@ class DSBCSR(DSBSparse):
             The new block sizes.
 
         """
+        num_blocks = len(block_sizes)
+        if num_blocks in self._block_config:
+            # Block configuration already exists.
+            self.num_blocks = num_blocks
+            return
         if self.distribution_state == "nnz":
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
@@ -412,11 +417,10 @@ class DSBCSR(DSBSparse):
         self.data[:] = self.data[..., inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
-        # self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        # self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-        self._block_offsets = host_xp.hstack(([0], host_xp.cumsum(self._block_sizes)), dtype=host_xp.int32)
+        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
+        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCSR":

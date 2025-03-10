@@ -10,11 +10,26 @@ GFSOLVERS_TYPE = [Inv, RGF]
 
 DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
 
-BLOCK_SIZES = [
-    pytest.param(xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+SMALL_BLOCK_SIZES = [
+    pytest.param(xp.array([2] * 10), id="constant-block-size-2"),
+    pytest.param(xp.array([5] * 10), id="constant-block-size-5"),
+    pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
+    pytest.param(xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
+MIDDLE_BLOCK_SIZES = [
+    pytest.param(xp.array([20] * 10), id="constant-block-size-20"),
+    pytest.param(xp.array([50] * 10), id="constant-block-size-50"),
+    pytest.param(xp.array([20] * 3 + [40] * 2 + [20] * 3), id="mixed-block-size-20"),
+    pytest.param(xp.array([50] * 3 + [100] * 2 + [50] * 3), id="mixed-block-size-50"),
+]
+
+LARGE_BLOCK_SIZES = [
+    pytest.param(xp.array([200] * 10), id="large-constant-block-size-200"),
+    pytest.param(xp.array([500] * 10), id="large-constant-block-size-500"),
+    pytest.param(xp.array([200] * 3 + [400] * 2 + [200] * 3), id="large-mixed-block-size-200"),
+    pytest.param(xp.array([500] * 3 + [1000] * 2 + [500] * 3), id="large-mixed-block-size-500"),
+]
 
 BATCHING_TYPE = [
     pytest.param(1, id="no-batching"),
@@ -38,8 +53,21 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
+class BlockSizes:
+    def __init__(self):
+        if xp.__name__ == "cupy":
+            device = xp.cuda.Device(0)
+            free_bytes = device.mem_info[0]
+            print(f"Free memory: {free_bytes}")
+            if free_bytes > 1e10:
+                self.sizes = MIDDLE_BLOCK_SIZES
+            else:
+                self.sizes = SMALL_BLOCK_SIZES
+            return
+        self.sizes = SMALL_BLOCK_SIZES
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+
+@pytest.fixture(params=BlockSizes().sizes, autouse=True)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 

@@ -27,29 +27,52 @@ def test_selected_inv(
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
-    xp.cuda.get_current_stream().synchronize()
-    start = time.perf_counter()
-    if out:
-        gf_inv = dsbsparse_type.zeros_like(dsbsparse)
-        solver.selected_inv(dsbsparse, out=gf_inv)
-    else:
-        gf_inv = solver.selected_inv(dsbsparse)
-    xp.cuda.get_current_stream().synchronize()
-    end = time.perf_counter()
-    # print(f"Time: {end - start:.6f} s")
-    first = end - start
+    print(f"{block_sizes=}", flush=True)
+    print(f"{global_stack_shape=}", flush=True)
 
-    if dsbsparse_type is DSBCOO and gfsolver_type is RGF:
-        xp.cuda.get_current_stream().synchronize()
-        start = time.perf_counter()
+    original = []
+    new = []
+    for _ in range(10):
         if out:
             gf_inv = dsbsparse_type.zeros_like(dsbsparse)
-            solver.selected_inv_new(dsbsparse, out=gf_inv)
+            if xp.__name__ == "cupy":
+                xp.cuda.get_current_stream().synchronize()
+            start = time.perf_counter()
+            solver.selected_inv(dsbsparse, out=gf_inv)
         else:
-            gf_inv = solver.selected_inv_new(dsbsparse)
-        xp.cuda.get_current_stream().synchronize()
+            if xp.__name__ == "cupy":
+                xp.cuda.get_current_stream().synchronize()
+            start = time.perf_counter()
+            gf_inv = solver.selected_inv(dsbsparse)
+        if xp.__name__ == "cupy":
+            xp.cuda.get_current_stream().synchronize()
         end = time.perf_counter()
-        print(f"Original: {first:.6f} s, New: {end - start:.6f} s")
+        original.append(end - start)
+
+
+        if dsbsparse_type is DSBCOO and gfsolver_type is RGF:
+            if out:
+                gf_inv = dsbsparse_type.zeros_like(dsbsparse)
+                if xp.__name__ == "cupy":
+                    xp.cuda.get_current_stream().synchronize()
+                start = time.perf_counter()
+                solver.selected_inv_new(dsbsparse, out=gf_inv)
+            else:
+                if xp.__name__ == "cupy":
+                    xp.cuda.get_current_stream().synchronize()
+                start = time.perf_counter()
+                gf_inv = solver.selected_inv_new(dsbsparse)
+            if xp.__name__ == "cupy":
+                xp.cuda.get_current_stream().synchronize()
+            end = time.perf_counter()
+            new.append(end - start)
+    if len(new) > 0:
+        original = xp.median(original)
+        new = xp.median(new)
+        print(f"Original: {original:.6f} s, New: {new:.6f} s", flush=True)
+    else:
+        original = xp.median(original)
+        print(f"Original: {original:.6f} s", flush=True)
 
     bt_mask_broadcasted = xp.broadcast_to(
         bt_mask, (*global_stack_shape, *bt_mask.shape)

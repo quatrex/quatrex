@@ -35,7 +35,7 @@ def densify_selected_blocks(
 
     """
     num_blocks = len(block_sizes)
-    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+    block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
 
     added_nnz = int(xp.sum(xp.prod(block_sizes[blocks], axis=1)))
     added_rows = xp.empty(added_nnz, dtype=xp.int32)

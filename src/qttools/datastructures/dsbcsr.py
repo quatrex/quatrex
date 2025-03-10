@@ -2,7 +2,7 @@
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, xp, host_xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -92,7 +92,7 @@ class DSBCSR(DSBSparse):
 
         """
         inds, value_inds = dsbcsr_kernels.find_inds(
-            self.rowptr_map, self.block_offsets, self.cols, rows, cols
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
 
         data_stack = self.data[stack_index]
@@ -137,7 +137,7 @@ class DSBCSR(DSBSparse):
 
         """
         inds, value_inds = dsbcsr_kernels.find_inds(
-            self.rowptr_map, self.block_offsets, self.cols, rows, cols
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
 
         if len(inds) == 0:
@@ -321,7 +321,7 @@ class DSBCSR(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
@@ -351,7 +351,7 @@ class DSBCSR(DSBSparse):
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
         stack_indices = xp.ndindex(self.data.shape[:-1])
         product_rows, product_cols = product_sparsity_pattern(
@@ -412,8 +412,10 @@ class DSBCSR(DSBSparse):
         self.data[:] = self.data[..., inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
-        self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        # self._block_sizes = xp.asarray(block_sizes, dtype=int)
+        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        # self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        self._block_offsets = host_xp.hstack(([0], host_xp.cumsum(self._block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
 
     @profiler.profile(level="api")

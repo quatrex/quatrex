@@ -2,7 +2,7 @@
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, xp, host_xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -53,8 +53,8 @@ class DSBCOO(DSBSparse):
         """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.rows = rows.astype(int)
-        self.cols = cols.astype(int)
+        self.rows = rows.astype(xp.int32)
+        self.cols = cols.astype(xp.int32)
 
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
@@ -368,7 +368,7 @@ class DSBCOO(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if xp.any(self.rows != other.rows):
@@ -398,7 +398,7 @@ class DSBCOO(DSBSparse):
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
         product_rows, product_cols = product_sparsity_pattern(
             sparse.csr_matrix(
@@ -461,8 +461,10 @@ class DSBCOO(DSBSparse):
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
-        self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        # self._block_sizes = xp.asarray(block_sizes, dtype=int)
+        self._block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        # self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)), dtype=host_xp.int32)
         self.num_blocks = len(block_sizes)
         self._block_slice_cache = {}
 

@@ -3,7 +3,7 @@
 import cupy as cp
 from cupyx import jit
 
-from qttools import NDArray
+from qttools import NDArray, host_xp
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 from qttools.profiling import Profiler
@@ -309,7 +309,8 @@ def compute_rowptr_map(
 
     """
     num_blocks = block_sizes.shape[0]
-    block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
+    # block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
+    block_offsets = host_xp.hstack((host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     rowptr_map = {}
@@ -324,13 +325,26 @@ def compute_rowptr_map(
             (
                 coo_rows,
                 coo_cols,
-                int(block_offsets[i]),
-                int(block_offsets[i + 1]),
-                int(block_offsets[j]),
-                int(block_offsets[j + 1]),
+                host_xp.int32(block_offsets[i]),
+                host_xp.int32(block_offsets[i + 1]),
+                host_xp.int32(block_offsets[j]),
+                host_xp.int32(block_offsets[j + 1]),
                 mask,
             ),
         )
+        # _compute_coo_block_mask_kernel(
+        #     (blocks_per_grid,),
+        #     (THREADS_PER_BLOCK,),
+        #     (
+        #         coo_rows,
+        #         coo_cols,
+        #         block_offsets[i],
+        #         block_offsets[i + 1],
+        #         block_offsets[j],
+        #         block_offsets[j + 1],
+        #         mask,
+        #     ),
+        # )
 
         bnnz = cp.sum(mask)
 

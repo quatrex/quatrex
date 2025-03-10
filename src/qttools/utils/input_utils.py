@@ -161,6 +161,7 @@ def cutoff_hr(
     hr: NDArray,
     value_cutoff: float | None = None,
     R_cutoff: int | tuple[int, int, int] | None = None,
+    remove_zeros: bool = False,
 ) -> NDArray:
     """Cutoffs the Hamiltonian matrix elements based on their values and/or the wigner-seitz cell indices.
 
@@ -174,6 +175,8 @@ def cutoff_hr(
         Cutoff value for the Hamiltonian. Defaults to `None`.
     R_cutoff : int or tuple, optional
         Cutoff distance for the Hamiltonian. Defaults to `None`.
+    remove_zeros : bool, optional
+        Whether to remove cell planes with only zeros. Defaults to `False`.
 
     Returns
     -------
@@ -201,17 +204,19 @@ def cutoff_hr(
         hr_cut[xp.abs(hr_cut) > value_cutoff] = 0
 
     # Remove eventual cell planes with only zeros, except the center.
-    zero_mask = hr_cut.any(axis=(-2, -1))
-    zero_mask[0, 0, 0] = True
+    # TODO: THIS CAN BE DANGEROUS IF ZERO PLANES ARE NOT AT THE EDGES.
+    if remove_zeros:
+        zero_mask = hr_cut.any(axis=(-2, -1))
+        zero_mask[0, 0, 0] = True
 
-    for ax in range(3):  # Loop through axes (0, 1, 2)
-        for idx in range(zero_mask.shape[ax]):
-            axes_to_remove = []
-            # Check if all elements are False in the cell plane.
-            if not zero_mask.take(idx, axis=ax).any():
-                # If so, remove it.
-                axes_to_remove.append(idx)
-            hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
+        for ax in range(3):  # Loop through axes (0, 1, 2)
+            for idx in range(zero_mask.shape[ax]):
+                axes_to_remove = []
+                # Check if all elements are False in the cell plane.
+                if not zero_mask.take(idx, axis=ax).any():
+                    # If so, remove it.
+                    axes_to_remove.append(idx)
+                hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
 
     return hr_cut
 

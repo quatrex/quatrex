@@ -204,18 +204,23 @@ def cutoff_hr(
         hr_cut[xp.abs(hr_cut) > value_cutoff] = 0
 
     # Remove eventual cell planes with only zeros, except the center.
-    # TODO: THIS CAN BE DANGEROUS IF ZERO PLANES ARE NOT AT THE EDGES.
     if remove_zeros:
         zero_mask = hr_cut.any(axis=(-2, -1))
         zero_mask[0, 0, 0] = True
 
         for ax in range(3):  # Loop through axes (0, 1, 2)
-            for idx in range(zero_mask.shape[ax]):
+            # Loop backwards through the axis (from the edge to the center).
+            for idx in range(hr_cut.shape[ax] // 2, 0, -1):
                 axes_to_remove = []
                 # Check if all elements are False in the cell plane.
                 if not zero_mask.take(idx, axis=ax).any():
                     # If so, remove it.
                     axes_to_remove.append(idx)
+                elif not zero_mask.take(-idx, axis=ax).any():
+                    axes_to_remove.append(-idx)
+                else:
+                    # If not, break the loop (to not mess with ordering incase zero planes are not at the edge).
+                    break
                 hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
 
     return hr_cut

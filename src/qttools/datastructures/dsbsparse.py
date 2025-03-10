@@ -233,6 +233,14 @@ class DSBSparse(ABC):
         """Sets a single value in the matrix."""
         index = self._normalize_index(index)
         self._set_items((Ellipsis,), *index, value)
+    
+    def get_block(self, index: tuple, block: NDArray = None) -> NDArray | tuple:
+        """Gets a block from the data structure."""
+        indexer = _DSBlockIndexer(self)
+        row, col = indexer._normalize_index(index)
+        if indexer._return_dense:
+            return self._get_block(indexer._stack_index, row, col, block=block)
+        return self._get_sparse_block(indexer._stack_index, row, col)
 
     @property
     def blocks(self) -> "_DSBlockIndexer":
@@ -361,7 +369,7 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, stack_index: tuple, row: int, col: int, block: NDArray = None) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -804,6 +812,14 @@ class _DStackView:
         """Sets the requested data in the substack."""
         rows, cols = self._dsbsparse._normalize_index(index)
         self._dsbsparse._set_items(self._stack_index, rows, cols, values)
+    
+    def get_block(self, index: tuple, block: NDArray = None) -> NDArray | tuple:
+        """Gets a block from the substack."""
+        indexer = _DSBlockIndexer(self._dsbsparse, self._stack_index)
+        row, col = indexer._normalize_index(index)
+        if indexer._return_dense:
+            return self._dsbsparse._get_block(self._stack_index, row, col, block=block)
+        return self._dsbsparse._get_sparse_block(self._stack_index, row, col)
 
     @property
     def blocks(self) -> "_DSBlockIndexer":

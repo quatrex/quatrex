@@ -235,7 +235,7 @@ class DSBCOO(DSBSparse):
         return block_slice
 
     @profiler.profile(level="debug")
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, stack_index: tuple, row: int, col: int, block: NDArray = None) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -272,11 +272,18 @@ class DSBCOO(DSBSparse):
             cols = self.cols[block_slice] - self.block_offsets[col]
             return rows, cols, data_stack[..., block_slice]
 
-        block = xp.zeros(
-            data_stack.shape[:-1]
-            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-            dtype=self.dtype,
-        )
+        # block = xp.zeros(
+        #     data_stack.shape[:-1]
+        #     + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+        #     dtype=self.dtype,
+        # )
+        if block is None:
+            block = xp.empty(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+                dtype=self.dtype,
+            )
+        block[:] = 0
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block

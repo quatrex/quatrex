@@ -179,7 +179,7 @@ def compute_block_slice(
     # NOTE: The data is sorted by block-row and -column, so
     # we can safely assume that the block is contiguous.
     inds = cp.nonzero(mask)[0]
-    return inds[0], inds[-1] + 1
+    return int(inds[0]), int(inds[-1] + 1)
 
 
 @profiler.profile(level="api")

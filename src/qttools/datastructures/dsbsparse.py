@@ -794,6 +794,7 @@ class _DStackView:
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)
         self._stack_index = stack_index
+        self._block_indexer = _DSBlockIndexer(self._dsbsparse, self._stack_index)
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:
         """Replaces ellipsis with the correct number of slices.
@@ -846,7 +847,7 @@ class _DStackView:
     @property
     def blocks(self) -> "_DSBlockIndexer":
         """Returns a block indexer on the substack."""
-        return _DSBlockIndexer(self._dsbsparse, self._stack_index)
+        return self._block_indexer
 
 
 @decorate_methods(profiler.profile(level="debug"))

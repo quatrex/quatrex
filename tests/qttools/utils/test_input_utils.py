@@ -81,8 +81,8 @@ def test_cutoff_hr(value_cutoff: float, R_cutoff: int, remove_zeros: bool):
             hr_ref = hr[*r][xp.abs(hr[*r]) <= value_cutoff]
             try:
                 assert xp.allclose(hr_cutoff[*r], hr_ref)
-            # Some R values can have been removed, but then
-            # the corresponding hr values should be zero
+            # Some R values can have been removed because of the value_cutoff,
+            # but then the corresponding hr values should be zero
             except IndexError:
                 if remove_zeros:
                     assert (hr_ref == 0).all()
@@ -168,59 +168,99 @@ def test_create_coordinate_grid(
 
 
 @pytest.mark.parametrize(
-    "hr, num_transport_cells, transport_dir, transport_cell, cutoff, coords, lat_vecs, return_sparse",
+    "hr, num_transport_cells, transport_dir, transport_cell, block_start, block_end, return_sparse, cutoff, coords, lat_vecs",
     [
         (
             xp.ones((3, 3, 3, 5, 5)),
             10,
             "x",
             (2, 1, 1),
+            None,
+            None,
+            False,
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
-            False,
         ),
         (
             xp.ones((3, 3, 3, 5, 5)),
             10,
             "x",
             (2, 1, 1),
+            None,
+            None,
+            True,
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
+        ),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            0,
+            2,
+            False,
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
+        ),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            0,
+            2,
             True,
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
         ),
     ],
-    ids=["dense", "sparse"],
+    ids=[
+        "dense_no-block-inds",
+        "sparse_no-block-inds",
+        "dense_with-block-inds",
+        "sparse_with-block-inds",
+    ],
 )
 def test_create_hamiltonian(
     hr: NDArray,
     num_transport_cells: int,
     transport_dir: int | str,
     transport_cell: list[int],
+    block_start: int | None,
+    block_end: int | None,
+    return_sparse: bool,
     cutoff: float,
     coords: NDArray,
     lat_vecs: NDArray,
-    return_sparse: bool,
 ):
     hamiltonians = create_hamiltonian(
         hr,
         num_transport_cells,
-        transport_dir,
-        transport_cell,
-        cutoff,
-        coords,
-        lat_vecs,
-        return_sparse,
+        transport_dir=transport_dir,
+        transport_cell=transport_cell,
+        block_start=block_start,
+        block_end=block_end,
+        return_sparse=return_sparse,
+        cutoff=cutoff,
+        coords=coords,
+        lattice_vectors=lat_vecs,
     )
+    block_start = block_start or 0
+    block_end = block_end or num_transport_cells
     # Number of unit cells in a transport cell
     transport_cell_size = int(xp.prod(xp.array(transport_cell)))
     if return_sparse:
         assert len(hamiltonians) == 2
         sparse_hamiltonian, block_sizes = hamiltonians
-        assert sparse_hamiltonian.shape[0] == sum(block_sizes)
-        assert sparse_hamiltonian.shape[1] == sum(block_sizes)
-        assert len(block_sizes) == num_transport_cells
+        # Assumes the block sizes are the same for all blocks
+        assert sparse_hamiltonian.shape[0] == block_sizes[0] * num_transport_cells
+        assert sparse_hamiltonian.shape[1] == block_sizes[0] * num_transport_cells
+        assert len(block_sizes) == block_end - block_start
         num_wann_per_supercell = int(block_sizes[0])
         num_wann = num_wann_per_supercell // transport_cell_size
         # Make sure the sparse hamiltonian is csr to be able to slice it
@@ -233,19 +273,21 @@ def test_create_hamiltonian(
         num_wann = int(hr.shape[-1])
         num_wann_per_supercell = num_wann * transport_cell_size
         assert h_diag.shape == (
-            num_transport_cells * num_wann_per_supercell,
+            (block_end - block_start) * num_wann_per_supercell,
             num_wann_per_supercell,
         )
         assert h_upper.shape == (
-            (num_transport_cells - 1) * num_wann_per_supercell,
+            (block_end - block_start - (1 if block_end == num_transport_cells else 0))
+            * num_wann_per_supercell,
             num_wann_per_supercell,
         )
         assert h_lower.shape == (
-            (num_transport_cells - 1) * num_wann_per_supercell,
+            (block_end - block_start - (1 if block_end == num_transport_cells else 0))
+            * num_wann_per_supercell,
             num_wann_per_supercell,
         )
 
-    for i in range(num_transport_cells):
+    for i in range(block_start, block_end):
         block_slice = slice(
             i * num_wann_per_supercell, (i + 1) * num_wann_per_supercell
         )

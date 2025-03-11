@@ -288,10 +288,12 @@ def create_hamiltonian(
     num_transport_cells: int,
     transport_dir: int | str = "x",
     transport_cell: list = None,
+    block_start: int = None,
+    block_end: int = None,
+    return_sparse: bool = True,
     cutoff: float = xp.inf,
     coords: NDArray = None,
     lattice_vectors: NDArray = None,
-    return_sparse: bool = True,
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
@@ -325,18 +327,22 @@ def create_hamiltonian(
         Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
     transport_cell : tuple, optional
         Size of the transport cell. E.g. [2, 2, 1] for a 2x2 xy-transport cell.
+    block_start : int, optional
+        Starting block index for arrow shape partition. Defaults to `None`.
+    block_end : int, optional
+        Ending block index for arrow shape partition. Defaults to `None`.
+    return_sparse : bool, optional
+        Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
     cutoff : float, optional
         Cutoff distance for connections between wannier functions. Defaults to `np.inf`.
     coords : ndarray, optional
         Coordinates of the Wannier functions in a unit cell. Defaults to `None`.
     lattice_vectors : ndarray, optional
         Lattice vectors of the system. Defaults to `None`.
-    return_sparse : bool, optional
-        Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
 
     Returns
     -------
-    list[ndarray]
+    list[ndarray] or tuple[sparse.coo_matrix, ndarray]
         The block-tridiagonal Hamiltonian matrix as either a tuple of arrays or a sparse matrix and block sizes.
     """
     if cutoff is not xp.inf and coords is None and lattice_vectors is None:
@@ -356,6 +362,15 @@ def create_hamiltonian(
                 for i, shape in enumerate(hR.shape[:3])
             ]
         )
+
+    block_start = block_start or 0
+    block_end = block_end or num_transport_cells
+    if block_start >= block_end:
+        raise ValueError("block_start must be smaller than block_end.")
+    if block_end > num_transport_cells:
+        raise ValueError("block_end must be smaller than num_transport_cells.")
+    if block_start < 0:
+        raise ValueError("block_start must be greater than or equal to 0.")
 
     upper_ind = tuple([1 if i == transport_dir else 0 for i in range(3)])
     lower_ind = tuple([-1 if i == transport_dir else 0 for i in range(3)])
@@ -384,41 +399,66 @@ def create_hamiltonian(
         lower_block[lower_dist > cutoff] = 0
 
     if return_sparse:
-        # Create a sparse matrix of a block row.
-        coo_mat = sparse.coo_matrix(
-            get_host(xp.hstack([lower_block, diag_block, upper_block]))
+        # Create sparse matrices of the blocks.
+        diag_block = sparse.coo_matrix(get_host(diag_block))
+        upper_block = sparse.coo_matrix(get_host(upper_block))
+        lower_block = sparse.coo_matrix(get_host(lower_block))
+        # Canoncialize the sparse matrices.
+        # NOTE: Not sure if this is necessary.
+        for mat in [diag_block, upper_block, lower_block]:
+            if mat.has_canonical_format is False:
+                mat.sum_duplicates()
+        # Create the block-tridiagonal matrix.
+        num_blocks = block_end - block_start
+        offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
+
+        def _tile_sparse_blocks(block, num_blocks, offsets):
+            return (
+                xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
+                xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
+                xp.tile(block.data, num_blocks),
+            )
+
+        diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
+            diag_block, num_blocks, offsets
         )
-        if coo_mat.has_canonical_format is False:
-            coo_mat.sum_duplicates()
-        # Tile the block row to create the full block-tridiagonal matrix.
-        offsets = xp.arange(num_transport_cells) * diag_block.shape[0]
-        full_rows = xp.tile(coo_mat.row, num_transport_cells) + xp.repeat(
-            offsets, coo_mat.nnz
+        upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
+            upper_block, num_blocks, offsets
         )
-        full_cols = xp.tile(coo_mat.col, num_transport_cells) + xp.repeat(
-            offsets, coo_mat.nnz
+        lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
+            lower_block, num_blocks, offsets
         )
-        full_data = xp.tile(coo_mat.data, num_transport_cells)
-        # Remove the coupling to the leads to make it square.
-        valid_mask = (full_cols >= lower_block.shape[1]) & (
-            full_cols < diag_block.shape[0] * num_transport_cells + lower_block.shape[1]
-        )
+        upper_cols += diag_block.shape[0]
+        lower_rows += diag_block.shape[0]
+
+        full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
+        full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
+        full_data = xp.hstack([diag_data, upper_data, lower_data])
+        # Remove the fishtail at the end of the matrix.
+        matrix_shape = num_transport_cells * diag_block.shape[0]
+        valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
         full_rows = full_rows[valid_mask]
-        full_cols = full_cols[valid_mask] - lower_block.shape[1]
+        full_cols = full_cols[valid_mask]
         full_data = full_data[valid_mask]
         # Also return the block sizes.
-        block_sizes = xp.ones(num_transport_cells, dtype=int) * diag_block.shape[0]
+        block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
         return (
             sparse.coo_matrix(
-                (get_host(full_data), (get_host(full_rows), get_host(full_cols)))
+                (get_host(full_data), (get_host(full_rows), get_host(full_cols))),
+                shape=(matrix_shape, matrix_shape),
             ),
             block_sizes,
         )
     else:
         # Returns the block-tridiagonal Hamiltonian matrix as a tuple of arrays.
-        # Create the block-tridiagonal matrix.
-        diag = xp.tile(diag_block, (num_transport_cells, 1))
-        upper = xp.tile(upper_block, (num_transport_cells - 1, 1))
-        lower = xp.tile(lower_block, (num_transport_cells - 1, 1))
+        diag = xp.tile(diag_block, (block_end - block_start, 1))
+        upper = xp.tile(
+            upper_block,
+            (min(block_end + 1, num_transport_cells) - (block_start + 1), 1),
+        )
+        lower = xp.tile(
+            lower_block,
+            (min(block_end + 1, num_transport_cells) - (block_start + 1), 1),
+        )
 
         return diag, upper, lower

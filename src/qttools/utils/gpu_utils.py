@@ -148,4 +148,7 @@ def get_nccl_communicator(mpi_comm: MPI.Comm = MPI.COMM_WORLD):
 
     from cupyx import distributed
 
+    # TODO: This will probably not work with communicators other than
+    # MPI.COMM_WORLD. We need to fix this if we want to use other
+    # communicators.
     return distributed.NCCLBackend(mpi_comm.size, mpi_comm.rank, use_mpi=True)

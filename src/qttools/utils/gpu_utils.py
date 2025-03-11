@@ -141,7 +141,9 @@ def get_nccl_communicator(mpi_comm: MPI.Comm = MPI.COMM_WORLD):
     if not xp.__name__ == "cupy":
         return None
 
-    if not xp.cuda.nccl.available:
+    from cupy.cuda import nccl
+
+    if not nccl.available:
         return None
 
     from cupyx import distributed

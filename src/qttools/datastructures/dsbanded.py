@@ -585,7 +585,7 @@ class TallNSkinny(DSBanded):
         #     ] = blk_row
     
 
-    def enforce_boundary_conditions(self) -> None:
+    def enforce_boundary_conditions(self, bp1p0: NDArray = None, bm2m1: NDArray = None) -> None:
         """Enforces boundary conditions on the matrix."""
 
         assert self.block_sizes[0] == self.block_sizes[1]
@@ -593,7 +593,7 @@ class TallNSkinny(DSBanded):
         row = 1
         col = 0
 
-        block = self.blocks[row, col]
+        block = bp1p0 or self.blocks[row, col]
 
         data_stack = self.data[...]
         data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
@@ -660,7 +660,7 @@ class TallNSkinny(DSBanded):
         row = len(self.block_sizes) - 2
         col = len(self.block_sizes) - 1
 
-        block = self.blocks[row, col]
+        block = bm2m1 or self.blocks[row, col]
 
         data_stack = self.data[...]
         data_stack = xp.reshape(data_stack, data_stack.shape[:-1] + self.banded_shape)
@@ -811,6 +811,7 @@ class TallNSkinny(DSBanded):
         blk_diag_dist_a = self.half_block_bandwidth
         blk_diag_dist_b = other.half_block_bandwidth
         blk_diag_dist_c = blk_diag_dist_a + blk_diag_dist_b
+        print(f"{blk_diag_dist_a=}, {blk_diag_dist_b=}, {blk_diag_dist_c=}")
         diag_dist_c = self.half_bandwidth + other.half_bandwidth
         batch, M, _ = A.shape
         BLK_M = self.banded_block_size

@@ -927,6 +927,7 @@ def bbanded_matmul(
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
+    sandwich: bool = False,
 ):
     """Matrix multiplication of two `a @ b` DSBanded matrices.
 
@@ -958,9 +959,90 @@ def bbanded_matmul(
     if out is not None:
         raise NotImplementedError("Output matrix is not supported yet.")
     
-    if spillover_correction:
-        # raise NotImplementedError("Spillover correction is not supported yet.")
-        a.enforce_boundary_conditions()
-        b.enforce_boundary_conditions()
+    # if spillover_correction:
+    #     # raise NotImplementedError("Spillover correction is not supported yet.")
+    #     a.enforce_boundary_conditions()
+    #     b.enforce_boundary_conditions()
     
-    return a @ b
+    out = a @ b
+
+    if sandwich:
+        bp1p0 = (a.blocks[0, 0] @ b.blocks[1, 0]
+            + a.blocks[1, 0] @ b.blocks[0, 0]
+        )
+
+        bm2m1= (a.blocks[-1, -1] @ b.blocks[-2, -1]
+            + a.blocks[-2, -1] @ b.blocks[-1, -1]
+        )
+        out.enforce_boundary_conditions(bp1p0, bm2m1)
+
+    return out
+
+
+
+def bbanded_sandwich(
+    a: TallNSkinny,
+    b: ShortNFat,
+    c: ShortNFat,
+    out: TallNSkinny = None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 7,
+    spillover_correction: bool = False,
+):
+    """Compute the sandwich product `a @ b @ a` with DSBanded matrices.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block tridiagonal matrix.
+    b : DSBSparse
+        The second block tridiagonal matrix.
+    c : DSBanded
+        The first block tridiagonal matrix but in ShortNFat format.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a`, and `b`. It will compute up to heptadiagonal.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+
+    if out is not None:
+        raise NotImplementedError("Output matrix is not supported yet.")
+    
+    if out_num_diag != (in_num_diag * 2 + 1):
+        raise NotImplementedError("Limiting output's diagonals is unsupported.")
+    
+    # if spillover_correction:
+    #     # raise NotImplementedError("Spillover correction is not supported yet.")
+    #     a.enforce_boundary_conditions()
+    #     b.enforce_boundary_conditions()
+    
+    tmp = a @ b
+
+    if spillover_correction:
+        bp1p0 = (a.blocks[0, 0] @ b.blocks[1, 0]
+            + a.blocks[1, 0] @ b.blocks[0, 0]
+        )
+
+        bm2m1= (a.blocks[-1, -1] @ b.blocks[-2, -1]
+            + a.blocks[-2, -1] @ b.blocks[-1, -1]
+        )
+        tmp.enforce_boundary_conditions(bp1p0, bm2m1)
+
+    # if spillover_correction:
+    #     tmp.enforce_boundary_conditions()
+    #     c.enforce_boundary_conditions()
+     
+    return tmp @ c

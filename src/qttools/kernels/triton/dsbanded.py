@@ -243,6 +243,14 @@ def band_gemm_kernel(
 
     num_blocks = min(blk_band_a - bandA_col_start, blk_band_b - bandB_row_start)
 
+    # if denseC_blk_row == 0 and denseC_blk_col == 0:
+    #     bandA_col_start = - min(blk_diag_dist_a, blk_diag_dist_b)
+    #     bandB_row_start = - min(blk_diag_dist_a, blk_diag_dist_b)
+    # if denseC_blk_row == num_denseC_blocks - 1 and denseC_blk_col == num_denseC_blocks - 1:
+    #     bandA_col_start = max(blk_band_a - blk_band_b, 0)
+    #     bandB_row_start = max(blk_band_b - blk_band_a, 0)
+
+
     # ----------------------------------------------------------
     # Create pointers for the first blocks of A and B.
     # We will advance this pointer as we move in the K direction

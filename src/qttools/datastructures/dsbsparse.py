@@ -888,7 +888,10 @@ class _DSBlockIndexer:
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         self._stack_index = stack_index
-        self._data_stack = self._dsbsparse.data[*self._stack_index]
+        if self._dsbsparse.distribution_state == "stack":
+            self._data_stack = self._dsbsparse.data[*self._stack_index]
+        else:
+            self._data_stack = None
         self._return_dense = return_dense
 
     def _unsign_index(self, row: int, col: int) -> tuple:
@@ -907,6 +910,8 @@ class _DSBlockIndexer:
             raise ValueError(
                 "Block indexing is only supported in 'stack' distribution state."
             )
+        if self._data_stack is None:
+            self._data_stack = self._dsbsparse.data[*self._stack_index]
         if len(index) != 2:
             raise IndexError("Exactly two block indices are required.")
 

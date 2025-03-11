@@ -6,6 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -19,8 +20,6 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
-
-from qttools.profiling import Profiler, decorate_methods
 
 profiler = Profiler()
 

@@ -6,14 +6,15 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
-from qttools.profiling import Profiler
 
 profiler = Profiler()
+
 
 @profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
@@ -37,6 +38,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     b_fft = xp.fft.fft(b, n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
 
+
 @profiler.profile(level="api")
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
@@ -58,6 +60,7 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     a_fft = xp.fft.fft(a, n, axis=0)
     b_fft = xp.fft.fft(b[::-1], n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
+
 
 @profiler.profile(level="api")
 def hilbert_transform(a: NDArray, energies: NDArray, eta=1e-8) -> NDArray:
@@ -120,7 +123,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         self.big_block_sizes = None
         self.batch_size = compute_config.convolve.batch_size
-    
+
     @profiler.profile(level="api")
     def compute(
         self,
@@ -198,20 +201,22 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
             )
 
-            batch_displacements = np.cumsum(np.concatenate(([0], np.array(batch_counts))))
+            batch_displacements = np.cumsum(
+                np.concatenate(([0], np.array(batch_counts)))
+            )
 
             # TODO: the datastructures does not allow for easy slicing of the
             # data. This is a workaround.
             rows, cols = g_greater.spy()
             rows = rows[
-                g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
-                    comm.rank + 1
-                ]
+                g_greater.nnz_section_offsets[
+                    comm.rank
+                ] : g_greater.nnz_section_offsets[comm.rank + 1]
             ]
             cols = cols[
-                g_greater.nnz_section_offsets[comm.rank] : g_greater.nnz_section_offsets[
-                    comm.rank + 1
-                ]
+                g_greater.nnz_section_offsets[
+                    comm.rank
+                ] : g_greater.nnz_section_offsets[comm.rank + 1]
             ]
 
             for start, end in zip(batch_displacements, batch_displacements[1:]):
@@ -258,7 +263,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             t1 = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True
+                    f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}",
+                    flush=True,
                 )
 
         # Recover original block sizes.

@@ -7,6 +7,7 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -18,7 +19,6 @@ from quatrex.core.utils import (
     get_periodic_superblocks,
     homogenize,
 )
-from qttools.profiling import Profiler, decorate_methods
 
 profiler = Profiler()
 

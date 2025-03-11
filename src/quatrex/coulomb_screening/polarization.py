@@ -6,12 +6,12 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
-from qttools.profiling import Profiler
 
 profiler = Profiler()
 

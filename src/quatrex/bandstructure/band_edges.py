@@ -6,10 +6,10 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.kernels.linalg import eigvalsh
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import get_section_sizes
 from scipy import linalg as spla
-from qttools.profiling import Profiler
 
 profiler = Profiler()
 

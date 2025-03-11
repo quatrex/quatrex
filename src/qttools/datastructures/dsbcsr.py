@@ -504,8 +504,8 @@ class DSBCSR(DSBSparse):
 
         return rows, self.cols
 
-    @profiler.profile(level="api")
     @classmethod
+    @profiler.profile(level="api")
     def from_sparray(
         cls,
         arr: sparse.spmatrix,

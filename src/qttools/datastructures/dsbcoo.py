@@ -237,7 +237,8 @@ class DSBCOO(DSBSparse):
         return block_slice
 
     @profiler.profile(level="debug")
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, data_stack: NDArray, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -262,7 +263,7 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
-        data_stack = self.data[*stack_index]
+        # data_stack = self.data[*stack_index]
         block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
@@ -293,7 +294,8 @@ class DSBCOO(DSBSparse):
         return block
 
     def _get_sparse_block(
-        self, stack_index: tuple, row: int, col: int
+        # self, stack_index: tuple, row: int, col: int
+        self, data_stack: NDArray, row: int, col: int
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -317,7 +319,7 @@ class DSBCOO(DSBSparse):
             representation of the block.
 
         """
-        data_stack = self.data[*stack_index]
+        # data_stack = self.data[*stack_index]
         block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
@@ -330,7 +332,8 @@ class DSBCOO(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: NDArray
+        # self, stack_index: tuple, row: int, col: int, block: NDArray
+        self, data_stack: NDArray, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -358,7 +361,8 @@ class DSBCOO(DSBSparse):
             block,
             self.rows[block_slice] - self.block_offsets[row],
             self.cols[block_slice] - self.block_offsets[col],
-            self.data[*stack_index][..., block_slice],
+            # self.data[*stack_index][..., block_slice],
+            data_stack[..., block_slice],
         )
 
     @profiler.profile(level="debug")

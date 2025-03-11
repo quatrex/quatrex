@@ -179,7 +179,8 @@ class DSBCSR(DSBSparse):
         return
 
     @profiler.profile(level="debug")
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, data_stack: NDArray, row: int, col: int) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -204,7 +205,7 @@ class DSBCSR(DSBSparse):
             arrays `(rowptr, cols, data)`.
 
         """
-        data_stack = self.data[*stack_index]
+        # data_stack = self.data[*stack_index]
         rowptr = self.rowptr_map.get((row, col), None)
 
         if not self.return_dense:
@@ -239,7 +240,8 @@ class DSBCSR(DSBSparse):
         return block
 
     def _get_sparse_block(
-        self, stack_index: tuple, row: int, col: int
+        # self, stack_index: tuple, row: int, col: int
+        self, data_stack: NDArray, row: int, col: int
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -263,7 +265,7 @@ class DSBCSR(DSBSparse):
             representation of the block.
 
         """
-        data_stack = self.data[*stack_index]
+        # data_stack = self.data[*stack_index]
         rowptr = self.rowptr_map.get((row, col), None)
 
         if rowptr is None:
@@ -280,7 +282,8 @@ class DSBCSR(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: NDArray
+        # self, stack_index: tuple, row: int, col: int, block: NDArray
+        self, data_stack: NDArray, row: int, col: int, block: NDArray
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -309,7 +312,8 @@ class DSBCSR(DSBSparse):
             block_offset=self.block_offsets[col],
             self_cols=self.cols,
             rowptr=rowptr,
-            data=self.data[*stack_index],
+            # data=self.data[*stack_index],
+            data=data_stack,
         )
 
     @profiler.profile(level="debug")

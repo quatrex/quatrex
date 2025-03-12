@@ -238,7 +238,7 @@ class DSBCOO(DSBSparse):
 
     @profiler.profile(level="debug")
     # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
-    def _get_block(self, data_stack: NDArray, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -263,7 +263,12 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
+
         # data_stack = self.data[*stack_index]
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
@@ -295,7 +300,7 @@ class DSBCOO(DSBSparse):
 
     def _get_sparse_block(
         # self, stack_index: tuple, row: int, col: int
-        self, data_stack: NDArray, row: int, col: int
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -320,6 +325,10 @@ class DSBCOO(DSBSparse):
 
         """
         # data_stack = self.data[*stack_index]
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
@@ -333,7 +342,7 @@ class DSBCOO(DSBSparse):
     @profiler.profile(level="debug")
     def _set_block(
         # self, stack_index: tuple, row: int, col: int, block: NDArray
-        self, data_stack: NDArray, row: int, col: int, block: NDArray
+        self, arg: tuple | NDArray, row: int, col: int, block: NDArray, is_index: bool = True
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -352,6 +361,10 @@ class DSBCOO(DSBSparse):
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
 
         """
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.

@@ -200,7 +200,7 @@ class DSBSparse(ABC):
 
         self._block_indexer = _DSBlockIndexer(self)
         self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
-        self._stack_indexer = _DStackIndexer(self)
+        # self._stack_indexer = _DStackIndexer(self)
     
     def _add_block_config(self, num_blocks: int, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
         self._block_config[num_blocks] = BlockConfig(block_sizes, block_offsets, block_slice_cache)
@@ -272,7 +272,8 @@ class DSBSparse(ABC):
     @property
     def stack(self) -> "_DStackIndexer":
         """Returns a stack indexer."""
-        return self._stack_indexer
+        # return self._stack_indexer
+        return _DStackIndexer(self)
 
     @property
     def data(self) -> NDArray:
@@ -363,7 +364,7 @@ class DSBSparse(ABC):
     @abstractmethod
     def _set_block(
         # self, stack_index: tuple, row: int, col: int, block: NDArray
-        self, data_stack: NDArray, row: int, col: int, block: NDArray
+        self, arg: tuple | NDArray, row: int, col: int, block: NDArray, is_index: bool = True
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -388,7 +389,7 @@ class DSBSparse(ABC):
 
     @abstractmethod
     # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
-    def _get_block(self, data_stack: NDArray, row: int, col: int) -> NDArray | tuple:
+    def _get_block(self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -418,7 +419,7 @@ class DSBSparse(ABC):
     @abstractmethod
     def _get_sparse_block(
         # self, stack_index: tuple, row: int, col: int
-        self, data_stack: NDArray, row: int, col: int
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -689,14 +690,12 @@ class DSBSparse(ABC):
         self.return_dense = True
 
         arr = xp.zeros(self.shape, dtype=self.dtype)
-        stack = self.stack[Ellipsis]
         for i, j in xp.ndindex(self.num_blocks, self.num_blocks):
             arr[
                 ...,
                 self.block_offsets[i] : self.block_offsets[i + 1],
                 self.block_offsets[j] : self.block_offsets[j + 1],
-            # ] = self._get_block((Ellipsis,), i, j)
-            ] = stack.blocks[i, j]
+            ] = self._get_block((Ellipsis,), i, j)
 
         self.return_dense = original_return_dense
 
@@ -882,16 +881,19 @@ class _DSBlockIndexer:
         dsbsparse: DSBSparse,
         stack_index: tuple = (Ellipsis,),
         return_dense: bool = True,
+        cache_stack: bool = False,
     ) -> None:
         """Initializes the block indexer."""
         self._dsbsparse = dsbsparse
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
-        self._stack_index = stack_index
-        if self._dsbsparse.distribution_state == "stack":
-            self._data_stack = self._dsbsparse.data[*self._stack_index]
+        # self._stack_index = stack_index
+        if cache_stack:
+            self._arg = self._dsbsparse.data[*self._stack_index]
+            self._is_index = False
         else:
-            self._data_stack = None
+            self._arg = stack_index
+            self._is_index = True
         self._return_dense = return_dense
 
     def _unsign_index(self, row: int, col: int) -> tuple:
@@ -910,8 +912,6 @@ class _DSBlockIndexer:
             raise ValueError(
                 "Block indexing is only supported in 'stack' distribution state."
             )
-        if self._data_stack is None:
-            self._data_stack = self._dsbsparse.data[*self._stack_index]
         if len(index) != 2:
             raise IndexError("Exactly two block indices are required.")
 
@@ -927,12 +927,12 @@ class _DSBlockIndexer:
         row, col = self._normalize_index(index)
         if self._return_dense:
             # return self._dsbsparse._get_block(self._stack_index, row, col)
-            return self._dsbsparse._get_block(self._data_stack, row, col)
+            return self._dsbsparse._get_block(self._arg, row, col, self._is_index)
         # return self._dsbsparse._get_sparse_block(self._stack_index, row, col)
-        return self._dsbsparse._get_sparse_block(self._data_stack, row, col)
+        return self._dsbsparse._get_sparse_block(self._arg, row, col, self._is_index)
 
     def __setitem__(self, index: tuple, block: NDArray) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
         # self._dsbsparse._set_block(self._stack_index, row, col, block)
-        self._dsbsparse._set_block(self._data_stack, row, col, block)
+        self._dsbsparse._set_block(self._arg, row, col, block, self._is_index)

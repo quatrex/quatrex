@@ -3,17 +3,16 @@
 import functools
 
 import pytest
-
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
-from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dbsparse import DBSparse
+from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import (
     product_sparsity_pattern,
-    product_sparsity_pattern_dsbsparse,
     product_sparsity_pattern_dbsparse,
+    product_sparsity_pattern_dsbsparse,
 )
 
 
@@ -22,8 +21,10 @@ def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
+
     def _rvs(size=None, rng=rng):
         return xp.ones(size)
+
     coo = sparse.random(size, size, density=density, data_rvs=_rvs, format="coo")
     return coo
 
@@ -39,15 +40,15 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
         block_shape = (int(sizes[i]), int(sizes[i]))
         arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = xp.random.rand(
             *block_shape
-        ) # + 1j * xp.random.rand(*block_shape)
+        )  # + 1j * xp.random.rand(*block_shape)
         # Superdiagonal block.
         if i < len(sizes) - 1:
             block_shape = (int(sizes[i]), int(sizes[i + 1]))
             arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = (
-                xp.random.rand(*block_shape) # + 1j * xp.random.rand(*block_shape)
+                xp.random.rand(*block_shape)  # + 1j * xp.random.rand(*block_shape)
             )
             arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = (
-                xp.random.rand(*block_shape).T # + 1j * xp.random.rand(*block_shape).T
+                xp.random.rand(*block_shape).T  # + 1j * xp.random.rand(*block_shape).T
             )
     rng = xp.random.default_rng()
     cutoff = rng.uniform(low=0.1, high=0.4)
@@ -99,7 +100,9 @@ def test_product_sparsity_dsbsparse(
     assert xp.allclose(ref, val)
 
 
-def _expand_matrix(matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1) -> sparse.spmatrix:
+def _expand_matrix(
+    matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
+) -> sparse.spmatrix:
 
     shape = list(matrix.shape)
     left_obc = int(sum(block_sizes[0:NBC]))
@@ -118,15 +121,25 @@ def _expand_matrix(matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1) 
     # expanded[-2*right_obc:-right_obc, -right_obc:] = csr[-right_obc:, -2*right_obc:-right_obc]
 
     # simply repeat the boundaries slices
-    expanded[left_obc : left_obc + int(sum(block_sizes)), left_obc : left_obc + int(sum(block_sizes))] = csr
+    expanded[
+        left_obc : left_obc + int(sum(block_sizes)),
+        left_obc : left_obc + int(sum(block_sizes)),
+    ] = csr
     expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
     expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
-    expanded[-right_obc:, right_obc:] = expanded[-2 * right_obc : -right_obc, :-right_obc]
-    expanded[right_obc:, -right_obc:] = expanded[:-right_obc, -2 * right_obc : -right_obc]
+    expanded[-right_obc:, right_obc:] = expanded[
+        -2 * right_obc : -right_obc, :-right_obc
+    ]
+    expanded[right_obc:, -right_obc:] = expanded[
+        :-right_obc, -2 * right_obc : -right_obc
+    ]
 
     return expanded
 
-def _spillover_matmul(a: sparse.spmatrix, b: sparse.spmatrix, block_sizes) -> sparse.spmatrix:
+
+def _spillover_matmul(
+    a: sparse.spmatrix, b: sparse.spmatrix, block_sizes
+) -> sparse.spmatrix:
     """Multiplies two sparse matrices with spillover correction."""
     c = (a @ b).tocsr()
 
@@ -161,8 +174,10 @@ def test_product_sparsity_dsbsparse_spillover(
     expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
     product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
     product.data[:] = 1
-    ref = product.toarray()[block_sizes[0]:block_sizes[0]+int(sum(block_sizes)),
-                            block_sizes[0]:block_sizes[0]+int(sum(block_sizes))]
+    ref = product.toarray()[
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+    ]
     # product = functools.reduce(lambda x, y: _spillover_matmul(x, y, block_sizes), matrices)
     # product.data[:] = 1
     # ref = product.toarray()
@@ -183,7 +198,9 @@ def test_product_sparsity_dbsparse(
     """Tests the computation of the matrix product's sparsity pattern."""
     last_block_sizes = block_sizes[-3:]
     if num_matrices > 3:
-        block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
+        block_sizes = xp.hstack(
+            (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
+        )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
     matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
@@ -198,14 +215,16 @@ def test_product_sparsity_dbsparse(
     ref = product.toarray()
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
     rows, cols = product_sparsity_pattern_dbsparse(
         *dsbsparse_matrices,
         in_num_diag=3,
-        start_block=start_block, end_block=end_block,
-        comm=comm)
+        start_block=start_block,
+        end_block=end_block,
+        comm=comm,
+    )
     val = sparse.coo_matrix(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
@@ -224,7 +243,9 @@ def test_product_sparsity_dbsparse_spillover(
     """Tests the computation of the matrix product's sparsity pattern."""
     last_block_sizes = block_sizes[-3:]
     if num_matrices > 3:
-        block_sizes = xp.hstack((block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)]))
+        block_sizes = xp.hstack(
+            (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
+        )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
     matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
@@ -238,25 +259,27 @@ def test_product_sparsity_dbsparse_spillover(
     expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
     product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
     product.data[:] = 1
-    ref = product.toarray()[block_sizes[0]:block_sizes[0]+int(sum(block_sizes)),
-                            block_sizes[0]:block_sizes[0]+int(sum(block_sizes))]
+    ref = product.toarray()[
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+    ]
     # product = functools.reduce(lambda x, y: _spillover_matmul(x, y, block_sizes), matrices)
     # product.data[:] = 1
     # ref = product.toarray()
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
     rows, cols = product_sparsity_pattern_dbsparse(
         *dsbsparse_matrices,
         in_num_diag=3,
-        start_block=start_block, end_block=end_block,
+        start_block=start_block,
+        end_block=end_block,
         comm=comm,
-        spillover=True)
-    val = sparse.coo_matrix(
-        (xp.ones(len(rows)), (rows, cols)), shape=shape
-    ).toarray()
+        spillover=True,
+    )
+    val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
     print(f"{comm.rank=}, {start_block=}, {end_block=}", flush=True)
     if comm.rank == 0:

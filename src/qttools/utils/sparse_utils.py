@@ -2,7 +2,8 @@
 
 import functools
 
-from mpi4py.MPI import COMM_WORLD as comm, Intracomm, SUM
+from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import Intracomm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dbsparse import DBSparse
@@ -171,12 +172,15 @@ def product_sparsity_pattern_dsbsparse(
                         (block_sizes[i], block_sizes[j]), dtype=xp.float32
                     )
                 c_blocks[i, j] = c_block
-        
+
         if spillover:
             # Left spillover
             c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
             # Right spillover
-            c_blocks[num_blocks-1, num_blocks-1] += a_blocks[num_blocks-2, num_blocks-1] @ b_blocks[num_blocks-1, num_blocks-2]
+            c_blocks[num_blocks - 1, num_blocks - 1] += (
+                a_blocks[num_blocks - 2, num_blocks - 1]
+                @ b_blocks[num_blocks - 1, num_blocks - 2]
+            )
 
         if spillover:
             # Left spillover
@@ -202,13 +206,15 @@ def product_sparsity_pattern_dsbsparse(
     return c_rows, c_cols
 
 
-def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
-                                      in_num_diag: int = 3,
-                                      out_num_diag: int = None,
-                                      start_block: int = 0,
-                                      end_block: int = None, comm:
-                                      Intracomm = comm,
-                                      spillover: bool = False) -> tuple[NDArray, NDArray]:
+def product_sparsity_pattern_dbsparse(
+    *matrices: DBSparse,
+    in_num_diag: int = 3,
+    out_num_diag: int = None,
+    start_block: int = 0,
+    end_block: int = None,
+    comm: Intracomm = comm,
+    spillover: bool = False,
+) -> tuple[NDArray, NDArray]:
     """Computes the sparsity pattern of the product of a sequence of DBSparse matrices.
 
     Parameters
@@ -238,10 +244,16 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
 
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(max(start_block, i - in_num_diag // 2), min(num_blocks, i + in_num_diag // 2 + 1)):
+        for j in range(
+            max(start_block, i - in_num_diag // 2),
+            min(num_blocks, i + in_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(max(end_block, j - in_num_diag // 2), min(num_blocks, j + in_num_diag // 2 + 1)):
+        for i in range(
+            max(end_block, j - in_num_diag // 2),
+            min(num_blocks, j + in_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
 
@@ -256,7 +268,18 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
         if n == len(matrices) - 2:
             tmp_num_diag = out_num_diag
 
-        c_ = bd_matmul_distr(a_, b, None, a_num_diag, b_num_diag, tmp_num_diag, start_block, end_block, comm, False)
+        c_ = bd_matmul_distr(
+            a_,
+            b,
+            None,
+            a_num_diag,
+            b_num_diag,
+            tmp_num_diag,
+            start_block,
+            end_block,
+            comm,
+            False,
+        )
 
         if spillover:
             if start_block == 0:
@@ -266,8 +289,12 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
             if end_block == num_blocks:
                 # Right spillover
                 print(f"right spillover, {comm.rank=}, {c_.origin=}")
-                c_[num_blocks-1, num_blocks-1] = c_[num_blocks-1, num_blocks-1] + a_[num_blocks-2, num_blocks-1] @ b_[num_blocks-1, num_blocks-2]
-        
+                c_[num_blocks - 1, num_blocks - 1] = (
+                    c_[num_blocks - 1, num_blocks - 1]
+                    + a_[num_blocks - 2, num_blocks - 1]
+                    @ b_[num_blocks - 1, num_blocks - 2]
+                )
+
         a_ = c_
         a_num_diag = tmp_num_diag
 
@@ -276,10 +303,16 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
 
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(max(start_block, i - out_num_diag // 2), min(num_blocks, i + out_num_diag // 2 + 1)):
+        for j in range(
+            max(start_block, i - out_num_diag // 2),
+            min(num_blocks, i + out_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(max(end_block, j - out_num_diag // 2), min(num_blocks, j + out_num_diag // 2 + 1)):
+        for i in range(
+            max(end_block, j - out_num_diag // 2),
+            min(num_blocks, j + out_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
 
     for i in range(num_blocks):
@@ -292,7 +325,7 @@ def product_sparsity_pattern_dbsparse(*matrices: DBSparse,
             c_block.eliminate_zeros()
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
-    
+
     c_rows = comm.allgather(c_rows)
     c_cols = comm.allgather(c_cols)
     c_rows = xp.concatenate(c_rows)

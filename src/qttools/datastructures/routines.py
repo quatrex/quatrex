@@ -1,8 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from mpi4py.MPI import COMM_WORLD as comm, Intracomm, Request
+from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import Intracomm, Request
 
 from qttools import xp
+
 # from qttools.datastructures import DSBSparse, DBSparse
 from qttools.datastructures.dbsparse import DBSparse
 from qttools.datastructures.dsbsparse import DSBSparse
@@ -370,8 +372,13 @@ def btd_sandwich(
 
 class BlockMatrix(dict):
 
-    def __init__(self, dbsparse: DBSparse, local_keys: set[tuple[int, int]],
-                 origin: tuple[int, int], mapping=None):
+    def __init__(
+        self,
+        dbsparse: DBSparse,
+        local_keys: set[tuple[int, int]],
+        origin: tuple[int, int],
+        mapping=None,
+    ):
         self.dbsparse = dbsparse
         self.local_keys = local_keys
         self.origin = origin
@@ -401,10 +408,14 @@ class BlockMatrix(dict):
     def toarray(self):
         size = int(sum(self.dbsparse.block_sizes))
         out = xp.zeros((size, size), dtype=self.dbsparse.local_data.dtype)
-        for i, (isz, ioff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
-            for j, (jsz, joff) in enumerate(zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)):
+        for i, (isz, ioff) in enumerate(
+            zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)
+        ):
+            for j, (jsz, joff) in enumerate(
+                zip(self.dbsparse.block_sizes, self.dbsparse.block_offsets)
+            ):
                 try:
-                    out[ioff:ioff + isz, joff:joff + jsz] = self[i, j]
+                    out[ioff : ioff + isz, joff : joff + jsz] = self[i, j]
                 except KeyError:
                     pass
         return out
@@ -419,11 +430,11 @@ def arrow_partition_halo_comm(
     end_block: int,
     comm: Intracomm,
 ):
-    """ Communicate halo blocks between neighboring ranks assuming arrow partitioning.
+    """Communicate halo blocks between neighboring ranks assuming arrow partitioning.
 
     NOTE: The method works ONLY IF the ranks need to communicate ONLY with their immediate neighbors,
-    i.e., rank - 1 and rank + 1. 
-  
+    i.e., rank - 1 and rank + 1.
+
     """
 
     num_blocks = a.dbsparse.num_blocks
@@ -436,10 +447,14 @@ def arrow_partition_halo_comm(
     # Send halo blocks to previous rank
     if start_block > 0:
         for i in range(start_block, min(num_blocks, start_block + c_off)):
-            for j in range(max(start_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)):
+            for j in range(
+                max(start_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)
+            ):
                 reqs.append(comm.isend(a[i, j], dest=rank - 1, tag=0))
         for j in range(start_block, min(num_blocks, start_block + c_off)):
-            for i in range(max(start_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
+            for i in range(
+                max(start_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)
+            ):
                 reqs.append(comm.isend(b[i, j], dest=rank - 1, tag=1))
     # Send halo blocks to next rank
     if end_block < a.dbsparse.num_blocks:
@@ -453,11 +468,15 @@ def arrow_partition_halo_comm(
     # Receive halo blocks from next rank
     if end_block < a.dbsparse.num_blocks:
         for i in range(end_block, min(num_blocks, end_block + c_off)):
-            for j in range(max(end_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)):
+            for j in range(
+                max(end_block, i - a_off), min(a.dbsparse.num_blocks, i + a_off + 1)
+            ):
                 a[i, j] = comm.recv(source=rank + 1, tag=0)
     if end_block < b.dbsparse.num_blocks:
         for j in range(end_block, min(num_blocks, end_block + c_off)):
-            for i in range(max(end_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)):
+            for i in range(
+                max(end_block, j - b_off), min(b.dbsparse.num_blocks, j + b_off + 1)
+            ):
                 b[i, j] = comm.recv(source=rank + 1, tag=1)
     # Receive halo blocks from previous rank
     if start_block > 0:
@@ -482,7 +501,6 @@ def bd_matmul_distr(
     comm: Intracomm = comm,
     spillover_correction: bool = False,
     accumulator_dtype=None,
-
 ):
     """Matrix multiplication of two `a @ b` BD DBSparse matrices.
 
@@ -544,7 +562,9 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
-    arrow_partition_halo_comm(a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm)
+    arrow_partition_halo_comm(
+        a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm
+    )
 
     # Make sure the output matrix is initialized to zero.
     if out is not None:
@@ -559,15 +579,18 @@ def bd_matmul_distr(
         out_ = BlockMatrix(out, local_keys, (start_block, start_block))
     else:
         out_ = BlockMatrix(a_.dbsparse, set(), (start_block, start_block))
-    
-    for sector in ((start_block, end_block, start_block, num_blocks),
-                   (end_block, num_blocks, start_block, end_block)):
-        
+
+    for sector in (
+        (start_block, end_block, start_block, num_blocks),
+        (end_block, num_blocks, start_block, end_block),
+    ):
+
         brow_start, brow_end, bcol_start, bcol_end = sector
 
         for i in range(brow_start, brow_end):
             for j in range(
-                max(i - out_num_diag // 2, bcol_start), min(i + out_num_diag // 2 + 1, bcol_end)
+                max(i - out_num_diag // 2, bcol_start),
+                min(i + out_num_diag // 2 + 1, bcol_end),
             ):
                 partsum = None
 
@@ -586,11 +609,15 @@ def bd_matmul_distr(
                             k_b, j_b = k, j
                         try:
                             if partsum is None:
-                                partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(accumulator_dtype)
+                                partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(
+                                    accumulator_dtype
+                                )
                             else:
                                 partsum += a_[i_a, k_a] @ b_[k_b, j_b]
-                        except:
-                            print(f"Something bad happened: {comm.rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}")
+                        except Exception:
+                            print(
+                                f"Something bad happened: {comm.rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
+                            )
 
                 out_[i, j] = partsum
 
@@ -608,7 +635,6 @@ def bd_sandwich_distr(
     comm: Intracomm = comm,
     spillover_correction: bool = False,
     accumulator_dtype=None,
-
 ):
     """Matrix multiplication of two `a @ b` BD DBSparse matrices.
 
@@ -641,21 +667,53 @@ def bd_sandwich_distr(
     accumulator_dtype = accumulator_dtype or a.dtype
     local_keys = set()
     for i in range(start_block, end_block):
-        for j in range(max(start_block, i - in_num_diag // 2), min(num_blocks, i + in_num_diag // 2 + 1)):
+        for j in range(
+            max(start_block, i - in_num_diag // 2),
+            min(num_blocks, i + in_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
     for j in range(start_block, end_block):
-        for i in range(max(end_block, j - in_num_diag // 2), min(num_blocks, j + in_num_diag // 2 + 1)):
+        for i in range(
+            max(end_block, j - in_num_diag // 2),
+            min(num_blocks, j + in_num_diag // 2 + 1),
+        ):
             local_keys.add((i, j))
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
     b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
     tmp_num_diag = 2 * in_num_diag - 1
-    tmp = bd_matmul_distr(a_, b_, None, in_num_diag, in_num_diag, tmp_num_diag, start_block, end_block, comm, False, accumulator_dtype)
-    out_ = bd_matmul_distr(tmp, a_, out, tmp_num_diag, in_num_diag, out_num_diag, start_block, end_block, comm, False, accumulator_dtype)
+    tmp = bd_matmul_distr(
+        a_,
+        b_,
+        None,
+        in_num_diag,
+        in_num_diag,
+        tmp_num_diag,
+        start_block,
+        end_block,
+        comm,
+        False,
+        accumulator_dtype,
+    )
+    out_ = bd_matmul_distr(
+        tmp,
+        a_,
+        out,
+        tmp_num_diag,
+        in_num_diag,
+        out_num_diag,
+        start_block,
+        end_block,
+        comm,
+        False,
+        accumulator_dtype,
+    )
 
     if spillover_correction:
         if in_num_diag != 3:
-            raise NotImplementedError("Spillover correction is only implemented for in_num_diag=3.")
+            raise NotImplementedError(
+                "Spillover correction is only implemented for in_num_diag=3."
+            )
 
         # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
@@ -666,7 +724,7 @@ def bd_sandwich_distr(
             )
             out_[0, 1] += a_[1, 0] @ b_[0, 1] @ a_[0, 1]
             out_[1, 0] += a_[1, 0] @ b_[1, 0] @ a_[0, 1]
-        
+
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
             m2 = a.num_blocks - 2
@@ -677,6 +735,5 @@ def bd_sandwich_distr(
             )
             out_[m1, m2] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m2]
             out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
-    
+
     return out_
-    

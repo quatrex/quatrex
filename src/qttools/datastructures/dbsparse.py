@@ -113,7 +113,7 @@ class DBCOO(DBSparse):
         section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
         self.num_local_blocks = section_sizes[comm.rank]
-        self.local_block_sizes = block_sizes[..., int(section_offsets[comm.rank]):]
+        self.local_block_sizes = block_sizes[..., int(section_offsets[comm.rank]) :]
 
         self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
         self.local_block_offsets = xp.hstack(([0], xp.cumsum(self.local_block_sizes)))
@@ -264,8 +264,10 @@ class DBCOO(DBSparse):
         block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
         start_idx = block_offsets[section_offsets[comm.rank]]
         end_idx = block_offsets[section_offsets[comm.rank + 1]]
-        indices = xp.logical_and(xp.logical_and(rows >= start_idx, cols >= start_idx),
-                                 xp.logical_or(rows < end_idx, cols < end_idx))
+        indices = xp.logical_and(
+            xp.logical_and(rows >= start_idx, cols >= start_idx),
+            xp.logical_or(rows < end_idx, cols < end_idx),
+        )
         local_data = data[indices]
         local_rows = rows[indices]
         local_cols = cols[indices]

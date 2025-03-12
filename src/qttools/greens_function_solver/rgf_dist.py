@@ -89,24 +89,46 @@ class ReducedSystem:
         bg_buffer_lower: list[NDArray] = None,
     ):
         """Gathers the reduced system across all ranks."""
-        
-        (diag_blocks, upper_blocks, lower_blocks)= self._map_reduced_system(a, x_diag_blocks, buffer_upper, buffer_lower)
+
+        (diag_blocks, upper_blocks, lower_blocks) = self._map_reduced_system(
+            a, x_diag_blocks, buffer_upper, buffer_lower
+        )
         if self.solve_lesser:
-            (diag_blocks_lesser, upper_blocks_lesser, lower_blocks_lesser) = self._map_reduced_system(bl, xl_diag_blocks, bl_buffer_upper, bl_buffer_lower)
+            (diag_blocks_lesser, upper_blocks_lesser, lower_blocks_lesser) = (
+                self._map_reduced_system(
+                    bl, xl_diag_blocks, bl_buffer_upper, bl_buffer_lower
+                )
+            )
         if self.solve_greater:
-            (diag_blocks_greater, upper_blocks_greater, lower_blocks_greater) = self._map_reduced_system(bg, xg_diag_blocks, bg_buffer_upper, bg_buffer_lower)
+            (diag_blocks_greater, upper_blocks_greater, lower_blocks_greater) = (
+                self._map_reduced_system(
+                    bg, xg_diag_blocks, bg_buffer_upper, bg_buffer_lower
+                )
+            )
 
         self.diag_blocks = _flatten_list(self.comm.allgather(diag_blocks))
         self.upper_blocks = _flatten_list(self.comm.allgather(upper_blocks))
         self.lower_blocks = _flatten_list(self.comm.allgather(lower_blocks))
         if self.solve_lesser:
-            self.diag_blocks_lesser = _flatten_list(self.comm.allgather(diag_blocks_lesser))
-            self.upper_blocks_lesser = _flatten_list(self.comm.allgather(upper_blocks_lesser))
-            self.lower_blocks_lesser = _flatten_list(self.comm.allgather(lower_blocks_lesser))
+            self.diag_blocks_lesser = _flatten_list(
+                self.comm.allgather(diag_blocks_lesser)
+            )
+            self.upper_blocks_lesser = _flatten_list(
+                self.comm.allgather(upper_blocks_lesser)
+            )
+            self.lower_blocks_lesser = _flatten_list(
+                self.comm.allgather(lower_blocks_lesser)
+            )
         if self.solve_greater:
-            self.diag_blocks_greater = _flatten_list(self.comm.allgather(diag_blocks_greater))
-            self.upper_blocks_greater = _flatten_list(self.comm.allgather(upper_blocks_greater))
-            self.lower_blocks_greater = _flatten_list(self.comm.allgather(lower_blocks_greater))
+            self.diag_blocks_greater = _flatten_list(
+                self.comm.allgather(diag_blocks_greater)
+            )
+            self.upper_blocks_greater = _flatten_list(
+                self.comm.allgather(upper_blocks_greater)
+            )
+            self.lower_blocks_greater = _flatten_list(
+                self.comm.allgather(lower_blocks_greater)
+            )
 
     def _map_reduced_system(
         self,
@@ -147,11 +169,15 @@ class ReducedSystem:
             self.diag_blocks[i] = xp.linalg.inv(self.diag_blocks[i])
             if self.solve_lesser:
                 self.diag_blocks_lesser[i] = (
-                    self.diag_blocks[i] @ self.diag_blocks_lesser[i] @ self.diag_blocks[i].T
+                    self.diag_blocks[i]
+                    @ self.diag_blocks_lesser[i]
+                    @ self.diag_blocks[i].T
                 )
             if self.solve_greater:
                 self.diag_blocks_greater[i] = (
-                    self.diag_blocks[i] @ self.diag_blocks_greater[i] @ self.diag_blocks[i].T
+                    self.diag_blocks[i]
+                    @ self.diag_blocks_greater[i]
+                    @ self.diag_blocks[i].T
                 )
 
             temp_1 = self.lower_blocks[i] @ self.diag_blocks[i]
@@ -159,8 +185,7 @@ class ReducedSystem:
                 temp_2 = self.diag_blocks[i].T @ self.lower_blocks[i].T
 
             self.diag_blocks[i + 1] = (
-                self.diag_blocks[i + 1]
-                - temp_1 @ self.upper_blocks[i]
+                self.diag_blocks[i + 1] - temp_1 @ self.upper_blocks[i]
             )
             if self.solve_lesser:
                 self.diag_blocks_lesser[i + 1] = (
@@ -185,11 +210,15 @@ class ReducedSystem:
         self.diag_blocks[-1] = xp.linalg.inv(self.diag_blocks[-1])
         if self.solve_lesser:
             self.diag_blocks_lesser[-1] = (
-                self.diag_blocks[-1] @ self.diag_blocks_lesser[-1] @ self.diag_blocks[-1].T
+                self.diag_blocks[-1]
+                @ self.diag_blocks_lesser[-1]
+                @ self.diag_blocks[-1].T
             )
         if self.solve_greater:
             self.diag_blocks_greater[-1] = (
-                self.diag_blocks[-1] @ self.diag_blocks_greater[-1] @ self.diag_blocks[-1].T
+                self.diag_blocks[-1]
+                @ self.diag_blocks_greater[-1]
+                @ self.diag_blocks[-1].T
             )
 
         # Backwards pass.
@@ -270,12 +299,8 @@ class ReducedSystem:
                 )
 
             temp_lower = self.lower_blocks[i]
-            self.lower_blocks[i] = (
-                - temp_3 @ self.diag_blocks[i]
-            )
-            self.upper_blocks[i] = (
-                - temp_1 @ self.diag_blocks[i + 1]
-            )
+            self.lower_blocks[i] = -temp_3 @ self.diag_blocks[i]
+            self.upper_blocks[i] = -temp_1 @ self.diag_blocks[i + 1]
             self.diag_blocks[i] = (
                 self.diag_blocks[i]
                 - self.upper_blocks[i] @ temp_lower @ self.diag_blocks[i]
@@ -373,25 +398,25 @@ class RGFDist(GFSolver):
     """
 
     def __init__(
-        self, 
-        solve_lesser: bool = False, 
-        solve_greater: bool = False, 
+        self,
+        solve_lesser: bool = False,
+        solve_greater: bool = False,
         max_batch_size: int = 100,
-    ) -> None:  
+    ) -> None:
         """Initializes the selected inversion solver."""
         self.solve_lesser = solve_lesser
         self.solve_greater = solve_greater
         self.max_batch_size = max_batch_size
 
     def _downward_schur(
-        self, 
-        a: DBSparse, 
-        x_diag_blocks: list[NDArray], 
+        self,
+        a: DBSparse,
+        x_diag_blocks: list[NDArray],
         invert_last_block: bool,
-        bl: DBSparse = None, 
-        xl_diag_blocks: list[NDArray] = None, 
-        bg: DBSparse = None, 
-        xg_diag_blocks: list[NDArray] = None, 
+        bl: DBSparse = None,
+        xl_diag_blocks: list[NDArray] = None,
+        bg: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
     ):
         x_diag_blocks[0] = a.local_blocks[0, 0]
         if self.solve_lesser:
@@ -417,25 +442,18 @@ class RGFDist(GFSolver):
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     xl_diag_blocks[j]
-                    + a.local_blocks[j, i]
-                    @ xl_diag_blocks[i]
-                    @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i] @ xl_diag_blocks[i] @ a.local_blocks[j, i].T
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
             if self.solve_greater:
                 xg_diag_blocks[j] = (
                     xg_diag_blocks[j]
-                    + a.local_blocks[j, i]
-                    @ xg_diag_blocks[i]
-                    @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i] @ xg_diag_blocks[i] @ a.local_blocks[j, i].T
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
-            x_diag_blocks[j] = (
-                a.local_blocks[j, j]
-                - temp_1 @ a.local_blocks[i, j]
-            )
+            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
         if invert_last_block:
             x_diag_blocks[-1] = xp.linalg.inv(x_diag_blocks[-1])
@@ -449,14 +467,14 @@ class RGFDist(GFSolver):
                 )
 
     def _upward_schur(
-        self, 
-        a: DBSparse, 
-        x_diag_blocks: list[NDArray], 
+        self,
+        a: DBSparse,
+        x_diag_blocks: list[NDArray],
         invert_last_block: bool,
-        bl: DBSparse = None, 
-        xl_diag_blocks: list[NDArray] = None, 
-        bg: DBSparse = None, 
-        xg_diag_blocks: list[NDArray] = None, 
+        bl: DBSparse = None,
+        xl_diag_blocks: list[NDArray] = None,
+        bg: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
     ):
         x_diag_blocks[-1] = a.local_blocks[-1, -1]
         if self.solve_lesser:
@@ -482,25 +500,18 @@ class RGFDist(GFSolver):
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     xl_diag_blocks[j]
-                    + a.local_blocks[j, i]
-                    @ xl_diag_blocks[i]
-                    @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i] @ xl_diag_blocks[i] @ a.local_blocks[j, i].T
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
             if self.solve_greater:
                 xg_diag_blocks[j] = (
                     xg_diag_blocks[j]
-                    + a.local_blocks[j, i]
-                    @ xg_diag_blocks[i]
-                    @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i] @ xg_diag_blocks[i] @ a.local_blocks[j, i].T
                     - bg.local_blocks[j, i] @ temp_2
                     - temp_1 @ bg.local_blocks[i, j]
                 )
-            x_diag_blocks[j] = (
-                a.local_blocks[j, j]
-                - temp_1 @ a.local_blocks[i, j]
-            )
+            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
         if invert_last_block:
             x_diag_blocks[0] = xp.linalg.inv(x_diag_blocks[0])
@@ -601,21 +612,15 @@ class RGFDist(GFSolver):
                     - bl_buffer_lower[i - 1]
                     @ x_diag_blocks[i].T
                     @ a.local_blocks[i + 1, i].T
-                    - buffer_lower[i - 1]
-                    @ x_diag_blocks[i]
-                    @ bl.local_blocks[i, i + 1]
+                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl.local_blocks[i, i + 1]
                 )
                 xl_diag_blocks[0] = (
                     xl_diag_blocks[0]
-                    + buffer_lower[i - 1]
-                    @ xl_diag_blocks[i]
-                    @ buffer_lower[i - 1].T
+                    + buffer_lower[i - 1] @ xl_diag_blocks[i] @ buffer_lower[i - 1].T
                     - bl_buffer_lower[i - 1]
                     @ x_diag_blocks[i].T
                     @ buffer_lower[i - 1].T
-                    - buffer_lower[i - 1]
-                    @ x_diag_blocks[i]
-                    @ bl_buffer_upper[i - 1]
+                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl_buffer_upper[i - 1]
                 )
 
             if self.solve_greater:
@@ -654,33 +659,27 @@ class RGFDist(GFSolver):
                     - bg_buffer_lower[i - 1]
                     @ x_diag_blocks[i].T
                     @ a.local_blocks[i + 1, i].T
-                    - buffer_lower[i - 1]
-                    @ x_diag_blocks[i]
-                    @ bl.local_blocks[i, i + 1]
+                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl.local_blocks[i, i + 1]
                 )
                 xg_diag_blocks[0] = (
                     xg_diag_blocks[0]
-                    + buffer_lower[i - 1]
-                    @ xg_diag_blocks[i]
-                    @ buffer_lower[i - 1].T
+                    + buffer_lower[i - 1] @ xg_diag_blocks[i] @ buffer_lower[i - 1].T
                     - bg_buffer_lower[i - 1]
                     @ x_diag_blocks[i].T
                     @ buffer_lower[i - 1].T
-                    - buffer_lower[i - 1]
-                    @ x_diag_blocks[i]
-                    @ bg_buffer_upper[i - 1]
+                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bg_buffer_upper[i - 1]
                 )
 
     def _downward_selinv(
-        self, 
-        a: DBSparse, 
-        x_diag_blocks: list[NDArray], 
+        self,
+        a: DBSparse,
+        x_diag_blocks: list[NDArray],
         out: DBSparse,
-        bl: DBSparse = None, 
-        xl_diag_blocks: list[NDArray] = None, 
+        bl: DBSparse = None,
+        xl_diag_blocks: list[NDArray] = None,
         xl_out: DBSparse = None,
-        bg: DBSparse = None, 
-        xg_diag_blocks: list[NDArray] = None, 
+        bg: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
 
@@ -696,9 +695,7 @@ class RGFDist(GFSolver):
                 xl_upper_block = (
                     -temp_1 @ xl_diag_blocks[i + 1]
                     - xl_diag_blocks[i] @ temp_4
-                    + x_diag_blocks[i]
-                    @ bl.local_blocks[i, j]
-                    @ x_diag_blocks[i + 1].T
+                    + x_diag_blocks[i] @ bl.local_blocks[i, j] @ x_diag_blocks[i + 1].T
                 )
 
                 temp_lower_lesser = bl.local_blocks[j, i]
@@ -706,9 +703,7 @@ class RGFDist(GFSolver):
                 xl_lower_block = (
                     -xl_diag_blocks[i + 1] @ temp_2
                     - temp_3 @ xl_diag_blocks[i]
-                    + x_diag_blocks[i + 1]
-                    @ bl.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[i + 1] @ bl.local_blocks[j, i] @ x_diag_blocks[i].T
                 )
                 xl_diag_blocks[i] = (
                     xl_diag_blocks[i]
@@ -734,18 +729,14 @@ class RGFDist(GFSolver):
                 xg_upper_block = (
                     -temp_1 @ xg_diag_blocks[i + 1]
                     - xg_diag_blocks[i] @ temp_4
-                    + x_diag_blocks[i]
-                    @ bg.local_blocks[i, j]
-                    @ x_diag_blocks[i + 1].T
+                    + x_diag_blocks[i] @ bg.local_blocks[i, j] @ x_diag_blocks[i + 1].T
                 )
 
                 temp_2 = a.local_blocks[i, j].T @ x_diag_blocks[i].T
                 xg_lower_block = (
                     -xg_diag_blocks[i + 1] @ temp_2
                     - temp_3 @ xg_diag_blocks[i]
-                    + x_diag_blocks[i + 1]
-                    @ bg.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[i + 1] @ bg.local_blocks[j, i] @ x_diag_blocks[i].T
                 )
 
                 xg_diag_blocks[i] = (
@@ -771,9 +762,7 @@ class RGFDist(GFSolver):
             x_upper_block = -temp_1 @ x_diag_blocks[j]
             x_diag_blocks[i] = (
                 x_diag_blocks[i]
-                - a.local_blocks[i, j]
-                @ a.local_blocks[j, i]
-                @ x_diag_blocks[i]
+                - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
             )
             # Streaming/Sparsifying back to DDSBSparse
             out.local_blocks[j, i] = x_lower_block
@@ -792,15 +781,15 @@ class RGFDist(GFSolver):
             out.local_blocks[i, i] = x_diag_blocks[i] """
 
     def _upward_selinv(
-        self, 
-        a: DBSparse, 
-        x_diag_blocks: list[NDArray], 
+        self,
+        a: DBSparse,
+        x_diag_blocks: list[NDArray],
         out: DBSparse,
-        bl: DBSparse = None, 
-        xl_diag_blocks: list[NDArray] = None, 
+        bl: DBSparse = None,
+        xl_diag_blocks: list[NDArray] = None,
         xl_out: DBSparse = None,
-        bg: DBSparse = None, 
-        xg_diag_blocks: list[NDArray] = None, 
+        bg: DBSparse = None,
+        xg_diag_blocks: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
 
@@ -814,18 +803,14 @@ class RGFDist(GFSolver):
                 xl_upper_block = (
                     -temp_1 @ xl_diag_blocks[i]
                     - xl_diag_blocks[j] @ temp_4
-                    + x_diag_blocks[j]
-                    @ bl.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[j] @ bl.local_blocks[j, i] @ x_diag_blocks[i].T
                 )
 
                 temp_2 = a.local_blocks[j, i].T @ x_diag_blocks[j].T
                 xl_lower_block = (
                     -xl_diag_blocks[i] @ temp_2
                     - temp_3 @ xl_diag_blocks[j]
-                    + x_diag_blocks[i]
-                    @ bl.local_blocks[i, j]
-                    @ x_diag_blocks[j].T
+                    + x_diag_blocks[i] @ bl.local_blocks[i, j] @ x_diag_blocks[j].T
                 )
 
                 xl_diag_blocks[i] = (
@@ -852,18 +837,14 @@ class RGFDist(GFSolver):
                 xg_upper_block = (
                     -temp_1 @ xg_diag_blocks[i]
                     - xg_diag_blocks[j] @ temp_4
-                    + x_diag_blocks[j]
-                    @ bg.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    + x_diag_blocks[j] @ bg.local_blocks[j, i] @ x_diag_blocks[i].T
                 )
 
                 temp_2 = a.local_blocks[j, i].T @ x_diag_blocks[j].T
                 xg_lower_block = (
                     -xg_diag_blocks[i] @ temp_2
                     - temp_3 @ xg_diag_blocks[j]
-                    + x_diag_blocks[i]
-                    @ bg.local_blocks[i, j]
-                    @ x_diag_blocks[j].T
+                    + x_diag_blocks[i] @ bg.local_blocks[i, j] @ x_diag_blocks[j].T
                 )
 
                 xg_diag_blocks[i] = (
@@ -885,13 +866,11 @@ class RGFDist(GFSolver):
                 xg_out.local_blocks[i, j] = xg_lower_block
                 xg_out.local_blocks[i, i] = xg_diag_blocks[i]
 
-            x_upper_block = - temp_1 @ x_diag_blocks[i]
-            x_lower_block = - temp_3 @ x_diag_blocks[j]
+            x_upper_block = -temp_1 @ x_diag_blocks[i]
+            x_lower_block = -temp_3 @ x_diag_blocks[j]
             x_diag_blocks[i] = (
                 x_diag_blocks[i]
-                - a.local_blocks[i, j]
-                @ a.local_blocks[j, i]
-                @ x_diag_blocks[i]
+                - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
             )
             # Streaming/Sparsifying back to DDSBSparse
             out.local_blocks[j, i] = x_upper_block
@@ -1030,10 +1009,7 @@ class RGFDist(GFSolver):
                     )
                     @ x_diag_blocks[i].T
                     + x_diag_blocks[i]
-                    @ (
-                        (B1) @ a.local_blocks[i + 1, i]
-                        + (B2) @ buffer_lower[i - 1]
-                    )
+                    @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xl_diag_blocks[i]
                     + xl_diag_blocks[i].T
                     @ (
@@ -1071,7 +1047,7 @@ class RGFDist(GFSolver):
                 xl_out.local_blocks[i + 1, i] = bl_lower_block
                 xl_out.local_blocks[i, i + 1] = bl_upper_block
                 xl_out.local_blocks[i, i] = xl_diag_blocks[i]
-                
+
             if self.solve_greater:
                 temp_B_13 = xg_buffer_upper[i - 1]
                 temp_B_31 = xg_buffer_lower[i - 1]
@@ -1155,10 +1131,7 @@ class RGFDist(GFSolver):
                     )
                     @ x_diag_blocks[i].T
                     + x_diag_blocks[i]
-                    @ (
-                        (B1) @ a.local_blocks[i + 1, i]
-                        + (B2) @ buffer_lower[i - 1]
-                    )
+                    @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xg_diag_blocks[i]
                     + xg_diag_blocks[i].T
                     @ (
@@ -1295,7 +1268,9 @@ class RGFDist(GFSolver):
             return self.selected_inv(a, out, comm)
 
         # Initialize temporary buffers.
-        reduced_system = ReducedSystem(comm=comm, solve_lesser=bl is not None, solve_greater=bg is not None)
+        reduced_system = ReducedSystem(
+            comm=comm, solve_lesser=bl is not None, solve_greater=bg is not None
+        )
 
         buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
         buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
@@ -1320,8 +1295,8 @@ class RGFDist(GFSolver):
         if comm.rank == 0:
             # Direction: downward Schur-complement
             self._downward_schur(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 invert_last_block=False,
                 bl=bl,
                 xl_diag_blocks=xl_diag_blocks,
@@ -1331,8 +1306,8 @@ class RGFDist(GFSolver):
         elif comm.rank == comm.size - 1:
             # Direction: upward Schur-complement
             self._upward_schur(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 invert_last_block=False,
                 bl=bl,
                 xl_diag_blocks=xl_diag_blocks,
@@ -1342,8 +1317,8 @@ class RGFDist(GFSolver):
         else:
             # Permuted Schur-complement
             self._permuted_schur(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 buffer_lower=buffer_lower,
                 buffer_upper=buffer_upper,
                 bl=bl,
@@ -1358,42 +1333,42 @@ class RGFDist(GFSolver):
 
         # Construct the reduced system.
         reduced_system.gather(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
-                buffer_lower=buffer_lower,
-                buffer_upper=buffer_upper,
-                bl=bl,
-                xl_diag_blocks=xl_diag_blocks,
-                bl_buffer_lower=bl_buffer_lower,
-                bl_buffer_upper=bl_buffer_upper,
-                bg=bg,
-                xg_diag_blocks=xg_diag_blocks,
-                bg_buffer_lower=bg_buffer_lower,
-                bg_buffer_upper=bg_buffer_upper,
-            )
+            a=a,
+            x_diag_blocks=x_diag_blocks,
+            buffer_lower=buffer_lower,
+            buffer_upper=buffer_upper,
+            bl=bl,
+            xl_diag_blocks=xl_diag_blocks,
+            bl_buffer_lower=bl_buffer_lower,
+            bl_buffer_upper=bl_buffer_upper,
+            bg=bg,
+            xg_diag_blocks=xg_diag_blocks,
+            bg_buffer_lower=bg_buffer_lower,
+            bg_buffer_upper=bg_buffer_upper,
+        )
         # Perform selected-inversion on the reduced system.
         reduced_system.solve()
         # Scatter the result to the output matrix.
         reduced_system.scatter(
-                x_diag_blocks=x_diag_blocks, 
-                buffer_lower=buffer_lower,
-                buffer_upper=buffer_upper,
-                out=out,
-                xl_diag_blocks=xl_diag_blocks,
-                bl_buffer_lower=bl_buffer_lower,
-                bl_buffer_upper=bl_buffer_upper,
-                xl_out=xl_out,
-                xg_diag_blocks=xg_diag_blocks,
-                bg_buffer_lower=bg_buffer_lower,
-                bg_buffer_upper=bg_buffer_upper,
-                xg_out=xg_out,
-            )
+            x_diag_blocks=x_diag_blocks,
+            buffer_lower=buffer_lower,
+            buffer_upper=buffer_upper,
+            out=out,
+            xl_diag_blocks=xl_diag_blocks,
+            bl_buffer_lower=bl_buffer_lower,
+            bl_buffer_upper=bl_buffer_upper,
+            xl_out=xl_out,
+            xg_diag_blocks=xg_diag_blocks,
+            bg_buffer_lower=bg_buffer_lower,
+            bg_buffer_upper=bg_buffer_upper,
+            xg_out=xg_out,
+        )
 
         if comm.rank == 0:
             # Direction: upward sell-inv
             self._downward_selinv(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 out=out,
                 bl=bl,
                 xl_diag_blocks=xl_diag_blocks,
@@ -1405,8 +1380,8 @@ class RGFDist(GFSolver):
         elif comm.rank == comm.size - 1:
             # Direction: downward sell-inv
             self._upward_selinv(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 out=out,
                 bl=bl,
                 xl_diag_blocks=xl_diag_blocks,
@@ -1418,8 +1393,8 @@ class RGFDist(GFSolver):
         else:
             # Permuted Sell-inv
             self._permuted_selinv(
-                a=a, 
-                x_diag_blocks=x_diag_blocks, 
+                a=a,
+                x_diag_blocks=x_diag_blocks,
                 buffer_lower=buffer_lower,
                 buffer_upper=buffer_upper,
                 out=out,
@@ -1434,4 +1409,3 @@ class RGFDist(GFSolver):
                 xg_buffer_upper=bg_buffer_upper,
                 xg_out=xg_out,
             )
-

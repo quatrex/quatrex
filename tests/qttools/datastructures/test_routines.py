@@ -5,15 +5,14 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import (
-    DSBSparse,
     DBSparse,
-    DBCOO,
+    DSBSparse,
     bd_matmul,
+    bd_matmul_distr,
     bd_sandwich,
+    bd_sandwich_distr,
     btd_matmul,
     btd_sandwich,
-    bd_matmul_distr,
-    bd_sandwich_distr,
 )
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -240,19 +239,21 @@ def test_bd_matmul_distr(
     """Tests the in-place addition of a DSBSparse matrix."""
     coo = _create_btd_coo(block_sizes)
     coo = comm.bcast(coo, root=0)
-    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes)  # , global_stack_shape)
     dense = dsbsparse.to_dense()
 
     # Initalize the output matrix with the correct sparsity pattern.
 
-    out = dbsparse_type.from_sparray(coo @ coo, block_sizes) #, global_stack_shape)
+    out = dbsparse_type.from_sparray(coo @ coo, block_sizes)  # , global_stack_shape)
     out.local_data[:] = 0
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
-    bd_matmul_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block)
+    bd_matmul_distr(
+        dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block
+    )
 
     ref = dense @ dense
     val = out.to_dense()
@@ -269,22 +270,25 @@ def test_bd_sandwich_distr(
     """Tests the in-place addition of a DSBSparse matrix."""
     coo = _create_btd_coo(block_sizes)
     coo = comm.bcast(coo, root=0)
-    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes)  # , global_stack_shape)
     dense = dsbsparse.to_dense()
 
     # Initalize the output matrix with the correct sparsity pattern.
 
-    out = dbsparse_type.from_sparray(coo @ coo @ coo, block_sizes) #, global_stack_shape)
+    out = dbsparse_type.from_sparray(
+        coo @ coo @ coo, block_sizes
+    )  # , global_stack_shape)
     out.local_data[:] = 0
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
-    bd_sandwich_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block)
+    bd_sandwich_distr(
+        dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block
+    )
 
     assert xp.allclose(dense @ dense @ dense, out.to_dense())
-
 
 
 @pytest.mark.mpi
@@ -296,7 +300,7 @@ def test_bd_matmul_distr_spillover(
     """Tests the in-place addition of a DSBSparse matrix."""
     coo = _create_btd_coo(block_sizes)
     coo = comm.bcast(coo, root=0)
-    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes)  # , global_stack_shape)
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
     NBC = 1
@@ -335,14 +339,22 @@ def test_bd_matmul_distr_spillover(
     # Initalize the output matrix with the correct sparsity pattern.
 
     out = dbsparse_type.from_sparray(
-        sparse.coo_matrix(_get_last_2d(ref)), block_sizes) #, global_stack_shape)
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes
+    )  # , global_stack_shape)
     out.local_data[:] = 0
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
-    bd_matmul_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block, spillover_correction=True)
+    bd_matmul_distr(
+        dsbsparse,
+        dsbsparse,
+        out,
+        start_block=start_block,
+        end_block=end_block,
+        spillover_correction=True,
+    )
 
     assert xp.allclose(ref, out.to_dense())
 
@@ -356,7 +368,7 @@ def test_bd_sandwich_distr_spillover(
     """Tests the in-place addition of a DSBSparse matrix."""
     coo = _create_btd_coo(block_sizes)
     coo = comm.bcast(coo, root=0)
-    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes) #, global_stack_shape)
+    dsbsparse = dbsparse_type.from_sparray(coo, block_sizes)  # , global_stack_shape)
     dense = dsbsparse.to_dense()
     dense_shape = list(dense.shape)
     NBC = 1
@@ -394,19 +406,25 @@ def test_bd_sandwich_distr_spillover(
     # Initalize the output matrix with the correct sparsity pattern.
 
     out = dbsparse_type.from_sparray(
-        sparse.coo_matrix(_get_last_2d(ref)), block_sizes) #, global_stack_shape)
+        sparse.coo_matrix(_get_last_2d(ref)), block_sizes
+    )  # , global_stack_shape)
     out.local_data[:] = 0
 
     local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[:comm.rank])
+    start_block = sum(local_blocks[: comm.rank])
     end_block = start_block + local_blocks[comm.rank]
 
-    bd_sandwich_distr(dsbsparse, dsbsparse, out, start_block=start_block, end_block=end_block, spillover_correction=True)
+    bd_sandwich_distr(
+        dsbsparse,
+        dsbsparse,
+        out,
+        start_block=start_block,
+        end_block=end_block,
+        spillover_correction=True,
+    )
 
     assert xp.allclose(ref, out.to_dense())
 
 
 if __name__ == "__main__":
-    pytest.main(['--only-mpi', __file__])
-
-
+    pytest.main(["--only-mpi", __file__])

@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from contextlib import nullcontext
+from typing import Callable
 
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
@@ -10,12 +11,15 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
+def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    if symmetric_sparsity:
+        coo = coo + coo.T
+        coo.data[:] = rng.uniform(size=coo.nnz)
     coo.data += 1j * rng.uniform(size=coo.nnz)
     return coo
 
@@ -153,6 +157,29 @@ class TestConversion:
         dsbsparse.ltranspose()
 
         assert xp.allclose(dense, dsbsparse.to_dense())
+
+    def test_symmetrize(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        op: Callable[[NDArray, NDArray], NDArray],
+    ):
+        """Tests that we can transpose a DSBSparse matrix."""
+        coo = _create_coo(block_sizes, symmetric_sparsity=True)
+
+        dense = coo.toarray()
+        symmetrized = 0.5 * op(dense, dense.transpose().conj())
+        reference = xp.broadcast_to(symmetrized, global_stack_shape + symmetrized.shape)
+
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dsbsparse.symmetrize(op)
+
+        assert xp.allclose(reference, dsbsparse.to_dense())
 
 
 class TestAccess:

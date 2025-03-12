@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+from typing import Callable
+
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, host_xp, sparse, xp
@@ -551,8 +553,10 @@ class DSBCSR(DSBSparse):
         return self if copy else None
 
     @profiler.profile(level="api")
-    def symmetrize(self, op=xp.add) -> None:
+    def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix.
+
+        NOTE: Assumes that the natrix's sparsity pattern is symmetric.
 
         Parameters
         ----------

@@ -2,7 +2,7 @@
 
 import pytest
 
-from qttools import NDArray, host_xp
+from qttools import NDArray, host_xp, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
@@ -55,6 +55,11 @@ BLOCK_CHANGE_FACTORS = [
     pytest.param(2.0, id="double-change"),
 ]
 
+OPS = [
+    pytest.param(xp.add, id="add"),
+    pytest.param(xp.subtract, id="subtract"),
+]
+
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
@@ -98,4 +103,9 @@ def stack_index(request: pytest.FixtureRequest) -> tuple:
 
 @pytest.fixture(params=BLOCK_CHANGE_FACTORS)
 def block_change_factor(request):
+    return request.param
+
+
+@pytest.fixture(params=OPS)
+def op(request):
     return request.param

@@ -300,13 +300,15 @@ class Beyn(NEVP):
                 # Recover the full eigenvectors from the subspace.
                 ws[i, :len_w] = w[i]
                 if left:
-                    vs[i, :, :len_w] = xp.linalg.solve(v[i], p_back[i]).conj().T
+                    vs[i, :, :len_w] = (
+                        xp.linalg.solve(v[i], p_back[i]).conj().swapaxes(-2, -1)
+                    )
                 else:
                     vs[i, :, :len_w] = p_back[i] @ v[i]
         else:
             ws = w
             if left:
-                vs = xp.linalg.solve(v, p_back).conj().T
+                vs = xp.linalg.solve(v, p_back).conj().swapaxes(-2, -1)
             else:
                 vs = p_back @ v
 

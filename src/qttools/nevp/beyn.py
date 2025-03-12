@@ -291,17 +291,24 @@ class Beyn(NEVP):
         )
 
         # Get the eigenvalues and eigenvectors.
-        ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vs = Y.copy()
+        if isinstance(a, list):
+            ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
+            vs = Y.copy()
 
-        for i in range(batchsize):
-            len_w = len(w[i])
-            # Recover the full eigenvectors from the subspace.
-            ws[i, :len_w] = w[i]
+            for i in range(batchsize):
+                len_w = len(w[i])
+                # Recover the full eigenvectors from the subspace.
+                ws[i, :len_w] = w[i]
+                if left:
+                    vs[i, :, :len_w] = xp.linalg.solve(v[i], p_back[i]).conj().T
+                else:
+                    vs[i, :, :len_w] = p_back[i] @ v[i]
+        else:
+            ws = w
             if left:
-                vs[i, :, :len_w] = xp.linalg.solve(v[i], p_back[i]).conj().T
+                vs = xp.linalg.solve(v, p_back).conj().T
             else:
-                vs[i, :, :len_w] = p_back[i] @ v[i]
+                vs = p_back @ v
 
         return ws, vs
 

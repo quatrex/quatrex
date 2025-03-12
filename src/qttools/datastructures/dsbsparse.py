@@ -798,7 +798,7 @@ class _DStackView:
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)
         self._stack_index = stack_index
-        self._block_indexer = _DSBlockIndexer(self._dsbsparse, self._stack_index)
+        self._block_indexer = _DSBlockIndexer(self._dsbsparse, self._stack_index, cache_stack=True)
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:
         """Replaces ellipsis with the correct number of slices.

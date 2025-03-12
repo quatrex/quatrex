@@ -67,9 +67,13 @@ def bd_matmul(
     if out is not None:
         out.data = 0
         out_block = False
+        out_ = out.stack[...]
     else:
         out_block = True
         out = {}
+    
+    a_ = a.stack[...]
+    b_ = b.stack[...]
 
     for i in range(num_blocks):
         for j in range(
@@ -80,7 +84,7 @@ def bd_matmul(
                     (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
                 )
             else:
-                partsum = (out.blocks[i, j]).astype(accumulator_dtype)
+                partsum = (out_.blocks[i, j]).astype(accumulator_dtype)
 
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
@@ -92,14 +96,14 @@ def bd_matmul(
                     if out_range:
                         i_a, k_a = correct_out_range_index(i, k, num_blocks)
                         k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        partsum += a.blocks[i_a, k_a] @ b.blocks[k_b, j_b]
+                        partsum += a_.blocks[i_a, k_a] @ b_.blocks[k_b, j_b]
                     else:
-                        partsum += a.blocks[i, k] @ b.blocks[k, j]
+                        partsum += a_.blocks[i, k] @ b_.blocks[k, j]
 
             if out_block:
                 out[i, j] = partsum
             else:
-                out.blocks[i, j] = partsum
+                out_.blocks[i, j] = partsum
 
     if out_block:
         return out
@@ -153,9 +157,13 @@ def bd_sandwich(
     if out is not None:
         out.data = 0
         out_block = False
+        out_ = out.stack[...]
     else:
         out_block = True
         out = {}
+    
+    a_ = a.stack[...]
+    b_ = b.stack[...]
 
     for i in range(num_blocks):
 
@@ -172,7 +180,7 @@ def bd_sandwich(
                 else:
                     a_i, a_m = i, m
 
-            a_im = a.blocks[a_i, a_m]
+            a_im = a_.blocks[a_i, a_m]
 
             for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
@@ -184,11 +192,11 @@ def bd_sandwich(
                     else:
                         b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = (a_im @ b.blocks[b_m, b_k]).astype(
+                    ab_ik[k] = (a_im @ b_.blocks[b_m, b_k]).astype(
                         accumulator_dtype
                     )  # cast data type
                 else:
-                    ab_ik[k] += (a_im @ b.blocks[b_m, b_k]).astype(
+                    ab_ik[k] += (a_im @ b_.blocks[b_m, b_k]).astype(
                         accumulator_dtype
                     )  # cast data type
 
@@ -201,7 +209,7 @@ def bd_sandwich(
                     (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
                 )
             else:
-                partsum = (out.blocks[i, j]).astype(accumulator_dtype)  # cast data type
+                partsum = (out_.blocks[i, j]).astype(accumulator_dtype)  # cast data type
 
             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks)
@@ -214,14 +222,14 @@ def bd_sandwich(
                         a_k, a_j = k, j
                 if ab_ik[k] is None:
                     continue
-                partsum += (ab_ik[k] @ a.blocks[a_k, a_j]).astype(
+                partsum += (ab_ik[k] @ a_.blocks[a_k, a_j]).astype(
                     accumulator_dtype
                 )  # cast data type
 
             if out_block:
                 out[i, j] = partsum
             else:
-                out.blocks[i, j] = partsum
+                out_.blocks[i, j] = partsum
 
     if out_block:
         return out
@@ -260,21 +268,25 @@ def btd_matmul(
     # Make sure the output matrix is initialized to zero.
     out.data = 0
 
+    out_ = out.stack[...]
+    a_ = a.stack[...]
+    b_ = b.stack[...]
+
     for i in range(num_blocks):
         for j in range(max(0, i - 2), min(num_blocks, i + 3)):
             out_ij = out.blocks[i, j]
             for k in range(max(0, i - 1), min(num_blocks, i + 2)):
-                out_ij += a.blocks[i, k] @ b.blocks[k, j]
+                out_ij += a_.blocks[i, k] @ b_.blocks[k, j]
 
-            out.blocks[i, j] = out_ij
+            out_.blocks[i, j] = out_ij
 
     if not spillover_correction:
         return
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    out.blocks[0, 0] += a.blocks[1, 0] @ b.blocks[0, 1]
-    out.blocks[-1, -1] += a.blocks[-2, -1] @ b.blocks[-1, -2]
+    out_.blocks[0, 0] += a_.blocks[1, 0] @ b_.blocks[0, 1]
+    out_.blocks[-1, -1] += a_.blocks[-2, -1] @ b_.blocks[-1, -2]
 
 
 @profiler.profile(level="api")
@@ -310,33 +322,37 @@ def btd_sandwich(
     # Make sure the output matrix is initialized to zero.
     out.data = 0
 
+    out_ = out.stack[...]
+    a_ = a.stack[...]
+    b_ = b.stack[...]
+
     for i in range(num_blocks):
         for j in range(max(0, i - 3), min(num_blocks, i + 4)):
-            out_ij = out.blocks[i, j]
+            out_ij = out_.blocks[i, j]
             for k in range(max(0, i - 2), min(num_blocks, i + 3)):
-                a_kj = a.blocks[k, j]
+                a_kj = a_.blocks[k, j]
                 for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    out_ij += a.blocks[i, m] @ b.blocks[m, k] @ a_kj
+                    out_ij += a_.blocks[i, m] @ b_.blocks[m, k] @ a_kj
 
-            out.blocks[i, j] = out_ij
+            out_.blocks[i, j] = out_ij
 
     if not spillover_correction:
         return
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    out.blocks[0, 0] += (
-        a.blocks[1, 0] @ b.blocks[0, 1] @ a.blocks[0, 0]
-        + a.blocks[0, 0] @ b.blocks[1, 0] @ a.blocks[0, 1]
-        + a.blocks[1, 0] @ b.blocks[0, 0] @ a.blocks[0, 1]
+    out_.blocks[0, 0] += (
+        a_.blocks[1, 0] @ b_.blocks[0, 1] @ a_.blocks[0, 0]
+        + a_.blocks[0, 0] @ b_.blocks[1, 0] @ a_.blocks[0, 1]
+        + a_.blocks[1, 0] @ b_.blocks[0, 0] @ a_.blocks[0, 1]
     )
-    out.blocks[0, 1] += a.blocks[1, 0] @ b.blocks[0, 1] @ a.blocks[0, 1]
-    out.blocks[1, 0] += a.blocks[1, 0] @ b.blocks[1, 0] @ a.blocks[0, 1]
+    out_.blocks[0, 1] += a_.blocks[1, 0] @ b_.blocks[0, 1] @ a_.blocks[0, 1]
+    out_.blocks[1, 0] += a_.blocks[1, 0] @ b_.blocks[1, 0] @ a_.blocks[0, 1]
 
-    out.blocks[-1, -1] += (
-        a.blocks[-2, -1] @ b.blocks[-1, -2] @ a.blocks[-1, -1]
-        + a.blocks[-1, -1] @ b.blocks[-2, -1] @ a.blocks[-1, -2]
-        + a.blocks[-2, -1] @ b.blocks[-1, -1] @ a.blocks[-1, -2]
+    out_.blocks[-1, -1] += (
+        a_.blocks[-2, -1] @ b_.blocks[-1, -2] @ a_.blocks[-1, -1]
+        + a_.blocks[-1, -1] @ b_.blocks[-2, -1] @ a_.blocks[-1, -2]
+        + a_.blocks[-2, -1] @ b_.blocks[-1, -1] @ a_.blocks[-1, -2]
     )
-    out.blocks[-1, -2] += a.blocks[-2, -1] @ b.blocks[-1, -2] @ a.blocks[-1, -2]
-    out.blocks[-2, -1] += a.blocks[-2, -1] @ b.blocks[-2, -1] @ a.blocks[-1, -2]
+    out_.blocks[-1, -2] += a_.blocks[-2, -1] @ b_.blocks[-1, -2] @ a_.blocks[-1, -2]
+    out_.blocks[-2, -1] += a_.blocks[-2, -1] @ b_.blocks[-2, -1] @ a_.blocks[-1, -2]

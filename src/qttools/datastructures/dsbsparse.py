@@ -200,7 +200,7 @@ class DSBSparse(ABC):
 
         self._block_indexer = _DSBlockIndexer(self)
         self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
-        # self._stack_indexer = _DStackIndexer(self)
+        self._stack_indexer = _DStackIndexer(self)
     
     def _add_block_config(self, num_blocks: int, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
         self._block_config[num_blocks] = BlockConfig(block_sizes, block_offsets, block_slice_cache)
@@ -272,8 +272,7 @@ class DSBSparse(ABC):
     @property
     def stack(self) -> "_DStackIndexer":
         """Returns a stack indexer."""
-        # return self._stack_indexer
-        return _DStackIndexer(self)
+        return self._stack_indexer
 
     @property
     def data(self) -> NDArray:
@@ -889,7 +888,7 @@ class _DSBlockIndexer:
             stack_index = (stack_index,)
         # self._stack_index = stack_index
         if cache_stack:
-            self._arg = self._dsbsparse.data[*self._stack_index]
+            self._arg = self._dsbsparse.data[stack_index]
             self._is_index = False
         else:
             self._arg = stack_index

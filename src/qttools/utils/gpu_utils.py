@@ -158,12 +158,13 @@ def get_any_location_pinned(
             xp.cuda.runtime.pointerGetAttributes(arr.ctypes.data).type
             != xp.cuda.runtime.memoryTypeHost
         ):
-            array_tmp = empty_like_pinned(arr)
-            array_tmp[:] = arr_in
-            arr_in = array_tmp
+            arr_in = empty_like_pinned(arr)
+            arr_in[:] = arr
 
     arr_out = None
     if input_module == "cupy" and output_module == "numpy" and xp.__name__ == "cupy":
+        # Fix issue that for get/asnumpy, both arrays need to be contiguous
+        arr = xp.ascontiguousarray(arr)
         arr_out = empty_like_pinned(arr)
 
     return get_any_location(arr_in, output_module, out=arr_out)

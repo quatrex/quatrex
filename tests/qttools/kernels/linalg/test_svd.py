@@ -41,7 +41,13 @@ def test_svd_numba_ndarray(
 
 
 @pytest.mark.usefixtures(
-    "m", "n", "full_matrices", "compute_module", "input_module", "output_module"
+    "m",
+    "n",
+    "full_matrices",
+    "compute_module",
+    "input_module",
+    "output_module",
+    "use_pinned_memory",
 )
 def test_svd(
     m: int,
@@ -50,6 +56,7 @@ def test_svd(
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the svd function."""
 
@@ -70,6 +77,7 @@ def test_svd(
         compute_module=compute_module,
         output_module=output_module,
         full_matrices=full_matrices,
+        use_pinned_memory=use_pinned_memory,
     )
 
     u = get_host(u)
@@ -94,6 +102,7 @@ def test_svd(
     "compute_module",
     "input_module",
     "output_module",
+    "use_pinned_memory",
 )
 def test_svd_batched(
     m: int,
@@ -103,6 +112,7 @@ def test_svd_batched(
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the svd function."""
 
@@ -123,6 +133,7 @@ def test_svd_batched(
         compute_module=compute_module,
         output_module=output_module,
         full_matrices=full_matrices,
+        use_pinned_memory=use_pinned_memory,
     )
 
     u = get_host(u)

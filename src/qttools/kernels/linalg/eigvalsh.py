@@ -2,7 +2,11 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_any_location, get_array_module_name
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 
 profiler = Profiler()
 
@@ -48,6 +52,7 @@ def eigvalsh(
     B: NDArray | None = None,
     compute_module: str = "cupy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> NDArray:
     """Compute eigenvalues of a hermitain generalized eigenvalue problem.
 
@@ -65,6 +70,9 @@ def eigvalsh(
         The location where to compute the eigenvalues.
     output_module : str, optional
         The location where to store the resulting eigenvalues.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -86,7 +94,10 @@ def eigvalsh(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    A = get_any_location(A, compute_module)
+    if use_pinned_memory:
+        A = get_any_location_pinned(A, compute_module)
+    else:
+        A = get_any_location(A, compute_module)
 
     if B is None:
         if compute_module == "numpy":
@@ -99,4 +110,7 @@ def eigvalsh(
         elif compute_module == "cupy":
             w = _eigvalsh(A, B, xp)
 
-    return get_any_location(w, output_module)
+    if use_pinned_memory:
+        return get_any_location_pinned(w, output_module)
+    else:
+        return get_any_location(w, output_module)

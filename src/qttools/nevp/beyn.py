@@ -9,11 +9,6 @@ from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import (
-    get_any_location,
-    get_any_location_pinned,
-    get_array_module_name,
-)
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -131,28 +126,14 @@ class Beyn(NEVP):
         """
         batchsize = P_0.shape[0]
         d = P_0.shape[-1]
-        input_location = get_array_module_name(P_0)
-
-        if self.use_pinned_memory:
-            P_0 = get_any_location_pinned(P_0, self.project_compute_location)
-        else:
-            P_0 = get_any_location(P_0, self.project_compute_location)
 
         # Perform an SVD on the linear subspace projector.
         u, s, vh = linalg.svd(
-            P_0, full_matrices=False, compute_module=self.project_compute_location
+            P_0,
+            full_matrices=False,
+            compute_module=self.project_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
         )
-
-        # NOTE: this can lead to an extra memory copy on the host
-        # kernels could be change to accept an output and the cache
-        if self.use_pinned_memory:
-            u = get_any_location_pinned(u, input_location)
-            s = get_any_location_pinned(s, input_location)
-            vh = get_any_location_pinned(vh, input_location)
-        else:
-            u = get_any_location(u, input_location)
-            s = get_any_location(s, input_location)
-            vh = get_any_location(vh, input_location)
 
         a = []
         u_out = []
@@ -202,29 +183,20 @@ class Beyn(NEVP):
             The projectors.
 
         """
-        input_location = get_array_module_name(P_0)
-
-        P_0 = get_any_location_pinned(P_0, self.project_compute_location)
 
         # Perform an QR on the linear subspace projector.
         if left:
             q, r = linalg.qr(
                 P_0.conj().swapaxes(-2, -1),
                 compute_module=self.project_compute_location,
+                use_pinned_memory=self.use_pinned_memory,
             )
         else:
-            q, r = linalg.qr(P_0, compute_module=self.project_compute_location)
-
-        # NOTE: this can lead to an extra memory copy on the host
-        # kernels could be change to accept an output and the cache
-        if self.use_pinned_memory:
-            # NOTE: this can lead to bugs if copies would async
-            # and q/r have the same size (alias of the pinned buffers)
-            q = get_any_location_pinned(q, input_location)
-            r = get_any_location_pinned(r, input_location)
-        else:
-            q = get_any_location(q, input_location)
-            r = get_any_location(r, input_location)
+            q, r = linalg.qr(
+                P_0,
+                compute_module=self.project_compute_location,
+                use_pinned_memory=self.use_pinned_memory,
+            )
 
         if left:
             a = xp.linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
@@ -306,46 +278,17 @@ class Beyn(NEVP):
         """Solve the reduced system"""
 
         in_type = a[0].dtype
-        input_location = get_array_module_name(Y)
         if isinstance(a, list):
             batchsize = len(a)
         else:
             batchsize = a.shape[0]
 
-        if self.eig_compute_location == "numpy" and xp.__name__ == "cupy":
-
-            if self.use_pinned_memory:
-                if isinstance(a, list):
-                    a = [
-                        get_any_location_pinned(ai, self.eig_compute_location)
-                        for ai in a
-                    ]
-                else:
-                    a = get_any_location_pinned(a, self.eig_compute_location)
-            else:
-                if isinstance(a, list):
-                    a = [get_any_location(ai, self.eig_compute_location) for ai in a]
-                else:
-                    a = get_any_location(a, self.eig_compute_location)
-
         # solve the reduced system
-        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
-
-        if self.eig_compute_location == "numpy" and xp.__name__ == "cupy":
-            if self.use_pinned_memory:
-                if isinstance(a, list):
-                    w = [get_any_location_pinned(wi, input_location) for wi in w]
-                    v = [get_any_location_pinned(vi, input_location) for vi in v]
-                else:
-                    w = get_any_location_pinned(w, input_location)
-                    v = get_any_location_pinned(v, input_location)
-            else:
-                if isinstance(a, list):
-                    w = [get_any_location(wi, input_location) for wi in w]
-                    v = [get_any_location(vi, input_location) for vi in v]
-                else:
-                    w = get_any_location(w, input_location)
-                    v = get_any_location(v, input_location)
+        w, v = linalg.eig(
+            a,
+            compute_module=self.eig_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
         # Get the eigenvalues and eigenvectors.
         ws = xp.zeros((batchsize, self.m_0), dtype=in_type)

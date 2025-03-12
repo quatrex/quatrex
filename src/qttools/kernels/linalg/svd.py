@@ -5,7 +5,11 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_any_location, get_array_module_name
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 
 profiler = Profiler()
 
@@ -66,6 +70,7 @@ def svd(
     full_matrices: bool = True,
     compute_module: str = "numpy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray, NDArray]:
     """Computes the singular value decomposition of a matrix on a given location.
 
@@ -85,6 +90,9 @@ def svd(
         The location where to store the singular value decomposition.
         Can be either "numpy"
         or "cupy". If None, the output location is the same as the input location
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -107,7 +115,10 @@ def svd(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    A = get_any_location(A, compute_module)
+    if use_pinned_memory:
+        A = get_any_location_pinned(A, compute_module)
+    else:
+        A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
         u, s, vh = xp.linalg.svd(A, full_matrices=full_matrices)
@@ -128,10 +139,17 @@ def svd(
             vh = vh.reshape((*batch_shape, k, n))
         s = s.reshape((*batch_shape, k))
 
-    u, s, vh = (
-        get_any_location(u, output_module),
-        get_any_location(s, output_module),
-        get_any_location(vh, output_module),
-    )
+    if use_pinned_memory:
+        u, s, vh = (
+            get_any_location_pinned(u, output_module),
+            get_any_location_pinned(s, output_module),
+            get_any_location_pinned(vh, output_module),
+        )
+    else:
+        u, s, vh = (
+            get_any_location(u, output_module),
+            get_any_location(s, output_module),
+            get_any_location(vh, output_module),
+        )
 
     return u, s, vh

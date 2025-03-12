@@ -7,11 +7,6 @@ from qttools.kernels import linalg
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.lyapunov.utils import system_reduction
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import (
-    get_any_location,
-    get_any_location_pinned,
-    get_array_module_name,
-)
 
 profiler = Profiler()
 
@@ -77,21 +72,11 @@ class Spectral(LyapunovSolver):
 
         """
 
-        input_location = get_array_module_name(a)
-
-        if self.use_pinned_memory:
-            a_in = get_any_location_pinned(a, self.eig_compute_location)
-        else:
-            a_in = get_any_location(a, self.eig_compute_location)
-
-        ws, vs = linalg.eig(a_in, compute_module=self.eig_compute_location)
-
-        if self.use_pinned_memory:
-            ws = get_any_location_pinned(ws, input_location)
-            vs = get_any_location_pinned(vs, input_location)
-        else:
-            ws = get_any_location(ws, input_location)
-            vs = get_any_location(vs, input_location)
+        ws, vs = linalg.eig(
+            a,
+            compute_module=self.eig_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

@@ -6,7 +6,11 @@ from numba.typed import List
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_any_location, get_array_module_name
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 
 profiler = Profiler()
 
@@ -124,6 +128,7 @@ def eig(
     A: NDArray | list[NDArray],
     compute_module: str = "numpy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray] | tuple[list[NDArray], list[NDArray]]:
     """Computes the eigenvalues and eigenvectors of matrices on a given location.
 
@@ -147,6 +152,9 @@ def eig(
         The location where to store the eigenvalues and eigenvectors.
         Can be either "numpy"
         or "cupy". If None, the output location is the same as the input location
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -177,9 +185,15 @@ def eig(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     if isinstance(A, (List, list)):
-        A = [get_any_location(a, compute_module) for a in A]
+        if use_pinned_memory:
+            A = [get_any_location_pinned(a, compute_module) for a in A]
+        else:
+            A = [get_any_location(a, compute_module) for a in A]
     else:
-        A = get_any_location(A, compute_module)
+        if use_pinned_memory:
+            A = get_any_location_pinned(A, compute_module)
+        else:
+            A = get_any_location(A, compute_module)
 
     if compute_module == "cupy":
         w, v = _eig_cupy(A)
@@ -187,9 +201,20 @@ def eig(
         w, v = _eig_numpy(A)
 
     if isinstance(w, (List, list)):
-        w = [get_any_location(w, output_module) for w in w]
-        v = [get_any_location(v, output_module) for v in v]
+        if use_pinned_memory:
+            w = [get_any_location_pinned(w, output_module) for w in w]
+            v = [get_any_location_pinned(v, output_module) for v in v]
+        else:
+            w = [get_any_location(w, output_module) for w in w]
+            v = [get_any_location(v, output_module) for v in v]
     else:
-        w, v = get_any_location(w, output_module), get_any_location(v, output_module)
+        if use_pinned_memory:
+            w, v = get_any_location_pinned(w, output_module), get_any_location_pinned(
+                v, output_module
+            )
+        else:
+            w, v = get_any_location(w, output_module), get_any_location(
+                v, output_module
+            )
 
     return w, v

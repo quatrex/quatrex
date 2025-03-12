@@ -27,13 +27,16 @@ def test_qr_numba_ndarray(m: int, n: int, batch_shape: tuple[int, ...]):
     assert xp.allclose(A, q @ r)
 
 
-@pytest.mark.usefixtures("m", "n", "compute_module", "input_module", "output_module")
+@pytest.mark.usefixtures(
+    "m", "n", "compute_module", "input_module", "output_module", "use_pinned_memory"
+)
 def test_qr(
     m: int,
     n: int,
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the qr function."""
 
@@ -53,6 +56,7 @@ def test_qr(
         A,
         compute_module=compute_module,
         output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
     )
 
     # check residual on the host
@@ -71,6 +75,7 @@ def test_qr(
     "compute_module",
     "input_module",
     "output_module",
+    "use_pinned_memory",
 )
 def test_qr_batched(
     m: int,
@@ -79,6 +84,7 @@ def test_qr_batched(
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the qr function."""
 
@@ -98,6 +104,7 @@ def test_qr_batched(
         A,
         compute_module=compute_module,
         output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
     )
 
     q = get_host(q)

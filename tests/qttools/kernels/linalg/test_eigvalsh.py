@@ -7,8 +7,16 @@ from qttools.kernels import linalg
 from qttools.utils.gpu_utils import get_device, get_host
 
 
-@pytest.mark.usefixtures("n", "compute_module", "input_module", "output_module")
-def test_eigvalsh(n: int, compute_module: str, input_module: str, output_module: str):
+@pytest.mark.usefixtures(
+    "n", "compute_module", "input_module", "output_module", "use_pinned_memory"
+)
+def test_eigvalsh(
+    n: int,
+    compute_module: str,
+    input_module: str,
+    output_module: str,
+    use_pinned_memory: bool,
+):
     """Tests the eig function."""
 
     if xp.__name__ == "numpy" and (
@@ -25,7 +33,12 @@ def test_eigvalsh(n: int, compute_module: str, input_module: str, output_module:
     if compute_module == "cupy":
         A = get_device(A)
 
-    w = linalg.eigvalsh(A, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(
+        A,
+        compute_module=compute_module,
+        output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
+    )
 
     # check residual on the host
     w = get_host(w)
@@ -40,7 +53,12 @@ def test_eigvalsh(n: int, compute_module: str, input_module: str, output_module:
 
 
 @pytest.mark.usefixtures(
-    "n", "batch_shape", "compute_module", "input_module", "output_module"
+    "n",
+    "batch_shape",
+    "compute_module",
+    "input_module",
+    "output_module",
+    "use_pinned_memory",
 )
 def test_eigvalsh_batched(
     n: int,
@@ -48,6 +66,7 @@ def test_eigvalsh_batched(
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the eig function."""
 
@@ -65,7 +84,12 @@ def test_eigvalsh_batched(
     if compute_module == "cupy":
         A = get_device(A)
 
-    w = linalg.eigvalsh(A, compute_module=compute_module, output_module=output_module)
+    w = linalg.eigvalsh(
+        A,
+        compute_module=compute_module,
+        output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
+    )
 
     assert w.shape[:-1] == batch_shape
 
@@ -84,7 +108,11 @@ def test_eigvalsh_batched(
 
 @pytest.mark.usefixtures("n", "compute_module", "input_module", "output_module")
 def test_eigvalsh_generalized(
-    n: int, compute_module: str, input_module: str, output_module: str
+    n: int,
+    compute_module: str,
+    input_module: str,
+    output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the eig function."""
 
@@ -108,7 +136,11 @@ def test_eigvalsh_generalized(
         A = get_device(A)
 
     w = linalg.eigvalsh(
-        A, B=B, compute_module=compute_module, output_module=output_module
+        A,
+        B=B,
+        compute_module=compute_module,
+        output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
     )
 
     w = get_host(w)
@@ -124,7 +156,12 @@ def test_eigvalsh_generalized(
 
 
 @pytest.mark.usefixtures(
-    "n", "batch_shape", "compute_module", "input_module", "output_module"
+    "n",
+    "batch_shape",
+    "compute_module",
+    "input_module",
+    "output_module",
+    "use_pinned_memory",
 )
 def test_eigvalsh_generalized_batched(
     n: int,
@@ -132,6 +169,7 @@ def test_eigvalsh_generalized_batched(
     compute_module: str,
     input_module: str,
     output_module: str,
+    use_pinned_memory: bool,
 ):
     """Tests the eig function."""
 
@@ -162,7 +200,11 @@ def test_eigvalsh_generalized_batched(
         A = get_device(A)
 
     w = linalg.eigvalsh(
-        A, B=B, compute_module=compute_module, output_module=output_module
+        A,
+        B=B,
+        compute_module=compute_module,
+        output_module=output_module,
+        use_pinned_memory=use_pinned_memory,
     )
 
     assert w.shape[:-1] == batch_shape

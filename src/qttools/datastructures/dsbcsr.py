@@ -551,6 +551,55 @@ class DSBCSR(DSBSparse):
         return self if copy else None
 
     @profiler.profile(level="api")
+    def symmetrize(self, op=xp.add) -> None:
+        """Symmetrizes the matrix.
+
+        Parameters
+        ----------
+        op : callable, optional
+            The operation to perform on the symmetric elements. Default
+            is addition.
+
+        """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError("Cannot transpose when distributed through nnz.")
+
+        if not (
+            hasattr(self, "_inds_bcsr2bcsr_t")
+            and hasattr(self, "_rowptr_map_t")
+            and hasattr(self, "_cols_t")
+        ):
+            # These indices are sorted by block-row and -column.
+            rows, cols = self.spy()
+
+            # Transpose.
+            rows_t, cols_t = cols, rows
+
+            # Canonical ordering of the transpose.
+            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
+            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
+
+            # Compute index for sorting the transpose by block and the
+            # transpose rowptr map.
+            inds_canonical2bcsr_t, rowptr_map_t = dsbcsr_kernels.compute_rowptr_map(
+                canonical_rows_t, canonical_cols_t, self.block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
+
+            # Cache the necessary objects.
+            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
+            self._rowptr_map_t = rowptr_map_t
+            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
+
+        self.data[:] = 0.5 * op(
+            self.data, self.data[..., self._inds_bcsr2bcsr_t].conj()
+        )
+
+    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 

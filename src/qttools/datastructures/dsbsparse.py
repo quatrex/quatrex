@@ -729,6 +729,19 @@ class DSBSparse(ABC):
         """
         ...
 
+    @abstractmethod
+    def symmetrize(self, op=xp.add) -> None:
+        """Symmetrizes the matrix.
+
+        Parameters
+        ----------
+        op : callable, optional
+            The operation to perform on the symmetric elements. Default
+            is addition.
+
+        """
+        ...
+
     @profiler.profile(level="api")
     def to_dense(self) -> NDArray:
         """Converts the local data to a dense array.

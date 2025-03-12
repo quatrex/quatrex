@@ -609,6 +609,54 @@ class DSBCOO(DSBSparse):
         return self if copy else None
 
     @profiler.profile(level="api")
+    def symmetrize(self, op=xp.add) -> None:
+        """Symmetrizes the matrix.
+
+        Parameters
+        ----------
+        op : callable, optional
+            The operation to perform on the symmetric elements. Default
+            is addition.
+
+        """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
+
+        if not (
+            hasattr(self, "_inds_bcoo2bcoo_t")
+            and hasattr(self, "_rows_t")
+            and hasattr(self, "_cols_t")
+            and hasattr(self, "_block_slice_cache_t")
+        ):
+            # Transpose.
+            rows_t, cols_t = self.cols, self.rows
+
+            # Canonical ordering of the transpose.
+            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
+            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
+
+            # Compute index for sorting the transpose by block.
+            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
+                canonical_rows_t, canonical_cols_t, self.block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
+
+            # Cache the necessary objects.
+            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
+            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
+            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
+
+            self._block_slice_cache_t = {}
+
+        self.data[:] = 0.5 * op(
+            self.data, self.data[..., self._inds_bcoo2bcoo_t].conj()
+        )
+
+    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 

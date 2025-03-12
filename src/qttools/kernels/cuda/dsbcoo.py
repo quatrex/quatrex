@@ -211,6 +211,94 @@ def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     block[..., rows, cols] = data[:]
 
 
+@jit.rawkernel()
+def _densify_block_kernel(
+    block: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    data: NDArray,
+    batch_stride: int,
+    num_rows: int,
+    num_cols: int,
+    block_start: int,
+    block_stop: int,
+    row_offset: int,
+    col_offset: int,
+):
+    """Fills the dense block with the given data.
+
+    Parameters
+    ----------
+    block : NDArray
+        The dense block to fill.
+    rows : NDArray
+        The rows at which to fill the block.
+    cols : NDArray
+        The columns at which to fill the block.
+    data : NDArray
+        The data to fill the block with.
+
+    """
+    batch_idx = int(jit.blockIdx.x)
+    block_idx = int(jit.threadIdx.x)
+    num_threads = int(jit.blockDim.x)
+    batch_start = batch_idx * batch_stride
+    block_size = num_rows * num_cols
+
+    for idx in range(block_idx, block_size, num_threads):
+        block[batch_idx * block_size + idx] = 0
+    jit.syncthreads()
+
+    for idx in range(block_start + block_idx, block_stop, num_threads):
+        row = rows[idx]
+        col = cols[idx]
+        block[
+            batch_idx * block_size + (row - row_offset) * num_cols + (col - col_offset)
+        ] = data[batch_start + idx]
+
+
+# _densify_block_kernel = cp.RawKernel(r'''
+#     #include <cupy/complex.cuh>
+#     extern "C" __global__
+#     void densify_block(
+#         complex<double>* block,
+#         int* rows,
+#         int* cols,
+#         complex<double>* data,
+#         int batch_stride,
+#         int num_rows,
+#         int num_cols,
+#         int block_start,
+#         int block_stop,
+#         int row_offset,
+#         int col_offset
+#     ) {
+#         int batch_idx = blockIdx.x;
+#         int block_idx = threadIdx.x;
+#         int num_threads = blockDim.x;
+#         int batch_start = batch_idx * batch_stride;
+
+#         if (block_idx < num_rows * num_cols) {
+#             for (int idx = block_idx; idx < num_rows * num_cols; idx += num_threads) {
+#                 block[batch_idx * num_rows * num_cols + idx] = 0;
+#             }
+#         }
+#         __syncthreads();
+
+
+#         if (block_start + block_idx < block_stop) {
+#             for (int idx = block_start + block_idx; idx < block_stop; idx += num_threads) {
+#                 int row = rows[idx];
+#                 int col = cols[idx];
+#                 block[batch_idx * num_rows * num_cols + (row - row_offset) * num_cols + (col - col_offset)] = data[batch_start + idx];
+#             }
+#         }
+#         __syncthreads();
+
+#     }
+# ''', 'densify_block')
+
+
 @profiler.profile(level="api")
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
@@ -264,7 +352,9 @@ def compute_block_sort_index(
     """
     num_blocks = block_sizes.shape[0]
     # block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
-    block_offsets = host_xp.hstack((host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+    block_offsets = host_xp.hstack(
+        (host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+    )
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     mask = cp.zeros(len(coo_cols), dtype=cp.bool_)

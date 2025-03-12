@@ -1,8 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import functools
+
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -55,6 +57,8 @@ class DSBCOO(DSBSparse):
 
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
+
+        self._use_kernel = False
 
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
@@ -222,7 +226,9 @@ class DSBCOO(DSBSparse):
 
         """
         # block_slice = self._block_slice_cache.get((row, col), None)
-        block_slice = self._block_config[self.num_blocks].block_slice_cache.get((row, col), None)
+        block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
+            (row, col), None
+        )
 
         if block_slice is None:
             # Cache miss, compute the slice.
@@ -238,7 +244,9 @@ class DSBCOO(DSBSparse):
 
     @profiler.profile(level="debug")
     # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
-    def _get_block(self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True) -> NDArray | tuple:
+    def _get_block(
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+    ) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -280,27 +288,63 @@ class DSBCOO(DSBSparse):
             cols = self.cols[block_slice] - self.block_offsets[col]
             return rows, cols, data_stack[..., block_slice]
 
-        block = xp.zeros(
-            data_stack.shape[:-1]
-            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-            dtype=self.dtype,
-        )
-        if block_slice.start is None and block_slice.stop is None:
-            # No data in this block, return an empty block.
-            return block
+        if not self._use_kernel:
 
-        dsbcoo_kernels.densify_block(
-            block,
-            self.rows[block_slice] - self.block_offsets[row],
-            self.cols[block_slice] - self.block_offsets[col],
-            data_stack[..., block_slice],
-        )
+            block = xp.zeros(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+                dtype=self.dtype,
+            )
+            if block_slice.start is None and block_slice.stop is None:
+                # No data in this block, return an empty block.
+                return block
+
+            dsbcoo_kernels.densify_block(
+                block,
+                self.rows[block_slice] - self.block_offsets[row],
+                self.cols[block_slice] - self.block_offsets[col],
+                data_stack[..., block_slice],
+            )
+
+        else:
+
+            block = xp.empty(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+                dtype=self.dtype,
+            )
+
+            if block_slice.start is None and block_slice.stop is None:
+                # No data in this block, return an empty block.
+                block[:] = 0
+                return block
+
+            num_threads = 128
+            num_blocks = functools.reduce(lambda x, y: x * y, data_stack.shape[:-1], 1)
+            batch_stride = data_stack.shape[-1]
+            dsbcoo_kernels._densify_block_kernel[num_blocks, num_threads](
+                block.reshape(-1),
+                self.rows,
+                self.cols,
+                data_stack.reshape(-1),
+                batch_stride,
+                self.block_sizes[row],
+                self.block_sizes[col],
+                block_slice.start or 0,
+                block_slice.stop,
+                self.block_offsets[row],
+                self.block_offsets[col],
+            )
 
         return block
 
     def _get_sparse_block(
         # self, stack_index: tuple, row: int, col: int
-        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        is_index: bool = True,
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -342,7 +386,12 @@ class DSBCOO(DSBSparse):
     @profiler.profile(level="debug")
     def _set_block(
         # self, stack_index: tuple, row: int, col: int, block: NDArray
-        self, arg: tuple | NDArray, row: int, col: int, block: NDArray, is_index: bool = True
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        block: NDArray,
+        is_index: bool = True,
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -486,7 +535,9 @@ class DSBCOO(DSBSparse):
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
         block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(
+            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+        )
         self.num_blocks = len(block_sizes)
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
@@ -553,7 +604,10 @@ class DSBCOO(DSBSparse):
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows
 
-        self._block_config[self.num_blocks].block_slice_cache, self._block_slice_cache_t = (
+        (
+            self._block_config[self.num_blocks].block_slice_cache,
+            self._block_slice_cache_t,
+        ) = (
             self._block_slice_cache_t,
             self._block_config[self.num_blocks].block_slice_cache,
         )

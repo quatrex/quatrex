@@ -51,7 +51,9 @@ class ReducedSystem:
 
     """
 
-    def __init__(self, comm: MPI.Comm, solve_lesser: bool, solve_greater: bool) -> None:
+    def __init__(
+        self, comm: MPI.Comm, solve_lesser: bool = False, solve_greater: bool = False
+    ) -> None:
         """Initializes the reduced system."""
         self.num_diags = 2 * (comm.size - 1)
 
@@ -69,7 +71,7 @@ class ReducedSystem:
         if self.solve_greater:
             self.diag_blocks_greater: list[NDArray | None] = [None] * self.num_diags
             self.upper_blocks_greater: list[NDArray | None] = [None] * self.num_diags
-            self.lower_blocks_greater: list[NDArray | None] = [None] * self.num
+            self.lower_blocks_greater: list[NDArray | None] = [None] * self.num_diags
 
         self.comm = comm
 
@@ -758,18 +760,19 @@ class RGFDist(GFSolver):
                 xg_out.local_blocks[i, j] = xg_upper_block
                 xg_out.local_blocks[i, i] = xg_diag_blocks[i]
 
-            x_lower_block = -temp_3 @ x_diag_blocks[i]
-            x_upper_block = -temp_1 @ x_diag_blocks[j]
-            x_diag_blocks[i] = (
-                x_diag_blocks[i]
-                - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
-            )
-            # Streaming/Sparsifying back to DDSBSparse
-            out.local_blocks[j, i] = x_lower_block
-            out.local_blocks[i, j] = x_upper_block
-            out.local_blocks[i, i] = x_diag_blocks[i]
+            # NOTE: The commented out stuff does not work.
+            # x_lower_block = -temp_3 @ x_diag_blocks[i]
+            # x_upper_block = -temp_1 @ x_diag_blocks[j]
+            # x_diag_blocks[i] = (
+            #     x_diag_blocks[i]
+            #     - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
+            # )
+            # # Streaming/Sparsifying back to DDSBSparse
+            # out.local_blocks[j, i] = x_lower_block
+            # out.local_blocks[i, j] = x_upper_block
+            # out.local_blocks[i, i] = x_diag_blocks[i]
 
-            """ temp_lower = -x_diag_blocks[j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
+            temp_lower = -x_diag_blocks[j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
             out.local_blocks[j, i] = temp_lower
             out.local_blocks[i, j] = (
                 -x_diag_blocks[i] @ a.local_blocks[i, j] @ x_diag_blocks[j]
@@ -778,7 +781,7 @@ class RGFDist(GFSolver):
                 x_diag_blocks[i] - x_diag_blocks[i] @ a.local_blocks[i, j] @ temp_lower
             )
             # Streaming/Sparsifying back to DDSBSparse
-            out.local_blocks[i, i] = x_diag_blocks[i] """
+            out.local_blocks[i, i] = x_diag_blocks[i]
 
     def _upward_selinv(
         self,
@@ -866,18 +869,19 @@ class RGFDist(GFSolver):
                 xg_out.local_blocks[i, j] = xg_lower_block
                 xg_out.local_blocks[i, i] = xg_diag_blocks[i]
 
-            x_upper_block = -temp_1 @ x_diag_blocks[i]
-            x_lower_block = -temp_3 @ x_diag_blocks[j]
-            x_diag_blocks[i] = (
-                x_diag_blocks[i]
-                - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
-            )
-            # Streaming/Sparsifying back to DDSBSparse
-            out.local_blocks[j, i] = x_upper_block
-            out.local_blocks[i, j] = x_lower_block
-            out.local_blocks[i, i] = x_diag_blocks[i]
+            # NOTE: The commented out stuff does not work.
+            # x_upper_block = -temp_1 @ x_diag_blocks[i]
+            # x_lower_block = -temp_3 @ x_diag_blocks[j]
+            # x_diag_blocks[i] = (
+            #     x_diag_blocks[i]
+            #     - a.local_blocks[i, j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
+            # )
+            # # Streaming/Sparsifying back to DDSBSparse
+            # out.local_blocks[j, i] = x_upper_block
+            # out.local_blocks[i, j] = x_lower_block
+            # out.local_blocks[i, i] = x_diag_blocks[i]
 
-            """ x_ji = -x_diag_blocks[j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
+            x_ji = -x_diag_blocks[j] @ a.local_blocks[j, i] @ x_diag_blocks[i]
             out.local_blocks[j, i] = x_ji
 
             out.local_blocks[i, j] = (
@@ -887,7 +891,7 @@ class RGFDist(GFSolver):
                 x_diag_blocks[i] - x_diag_blocks[i] @ a.local_blocks[i, j] @ x_ji
             )
             # Streaming/Sparsifying back to DDSBSparse
-            out.local_blocks[i, i] = x_diag_blocks[i] """
+            out.local_blocks[i, i] = x_diag_blocks[i]
 
     def _permuted_selinv(
         self,

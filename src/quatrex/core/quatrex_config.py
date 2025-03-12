@@ -280,6 +280,29 @@ class PhononConfig(BaseModel):
         return self
 
 
+class OutputConfig(BaseModel):
+    """Options for the output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Only the spectral currents are saved by default.
+    contact_currents: bool = True
+    device_currents: bool = True
+
+    potential: bool = False
+
+    electron_ldos: bool = False
+    electron_density: bool = False
+    hole_density: bool = False
+
+    polarization_density: bool = False
+    coulomb_screening_density: bool = False
+
+    self_energy_density: bool = False
+
+    profiling_stats: bool = False
+
+
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
 
@@ -299,6 +322,11 @@ class QuatrexConfig(BaseModel):
     # --- Directory paths ----------------------------------------------
     config_dir: Path
     simulation_dir: Path = Path("./quatrex/")
+    input_dir: Path | None = None
+    output_dir: Path | None = None
+
+    # --- Output options -----------------------------------------------
+    outputs: OutputConfig = OutputConfig()
 
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:
@@ -312,10 +340,24 @@ class QuatrexConfig(BaseModel):
         self.simulation_dir = (self.config_dir / self.simulation_dir).resolve()
         return self
 
-    @property
-    def input_dir(self) -> Path:
+    @model_validator(mode="after")
+    def set_output_dir(self):
+        """Resolves the simulation directory path."""
+        if self.output_dir is not None:
+            self.output_dir = Path(self.output_dir).resolve()
+            return self
+
+        self.output_dir = self.simulation_dir / "outputs/"
+        return self
+
+    @model_validator(mode="after")
+    def set_input_dir(self) -> Path:
         """Returns the input directory path."""
-        return self.simulation_dir / "inputs/"
+        if self.input_dir is not None:
+            self.input_dir = Path(self.input_dir).resolve()
+            return self
+        self.input_dir = self.simulation_dir / "inputs/"
+        return self
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:

@@ -2,10 +2,13 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
+from qttools.profiling import Profiler
 
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
+
+profiler = Profiler()
 
 
 class SigmaPhonon(ScatteringSelfEnergy):
@@ -73,6 +76,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
 
+    @profiler.profile(level="basic")
     def compute(
         self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
     ) -> None:

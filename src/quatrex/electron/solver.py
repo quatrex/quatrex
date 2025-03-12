@@ -6,6 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -20,7 +21,10 @@ from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
 
+profiler = Profiler()
 
+
+@profiler.profile(level="debug")
 def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
     """Subtracts b from a on the block-tridiagonal.
 
@@ -39,6 +43,7 @@ def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
             a.blocks[i, j] -= b.blocks[i, j]
 
 
+@decorate_methods(profiler.profile(level="api"), exclude=["solve"])
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 
@@ -370,6 +375,7 @@ class ElectronSolver(SubsystemSolver):
         g_greater.data[local_mask] = 0.0
         g_retarded.data[local_mask] = 0.0
 
+    @profiler.profile(level="basic")
     def solve(
         self,
         sse_lesser: DSBSparse,
@@ -416,6 +422,8 @@ class ElectronSolver(SubsystemSolver):
                     self.right_fermi_level + self.delta_fermi_level_conduction_band,
                 ),
                 (self.left_mid_gap_energy, self.right_mid_gap_energy),
+                use_eigvalsh=self.compute_config.band_edge.use_eigvalsh,
+                eigvalsh_compute_location=self.compute_config.band_edge.eigvalsh_compute_location,
             )
             self._update_fermi_levels(e_0_left, e_0_right)
         t1 = time.perf_counter()

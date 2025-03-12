@@ -8,6 +8,7 @@ from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
@@ -24,6 +25,8 @@ from quatrex.electron import (
 )
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
+
+profiler = Profiler()
 
 
 class SCBAData:
@@ -305,6 +308,7 @@ class SCBA:
         self.data.sigma_lesser._data[:] = 0.0
         self.data.sigma_greater._data[:] = 0.0
 
+    @profiler.profile(level="api")
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
@@ -345,6 +349,7 @@ class SCBA:
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
 
+    @profiler.profile(level="api")
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
@@ -367,6 +372,7 @@ class SCBA:
 
         return False  # TODO: :-)
 
+    @profiler.profile(level="api")
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
         if self.quatrex_config.phonon.model == "negf":
@@ -383,10 +389,12 @@ class SCBA:
                 ),
             )
 
+    @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
         raise NotImplementedError
 
+    @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
         times = []
@@ -440,6 +448,7 @@ class SCBA:
                 f"Time for Coulomb screening self-energy: {t_sigma:.2f} s", flush=True
             )
 
+    @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
         self.observables.electron_ldos = -density(
@@ -486,6 +495,7 @@ class SCBA:
             self.electron_solver.overlap_sparray,
         ) / (2 * xp.pi)
 
+    @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
         self.observables.p_retarded_density = -density(self.data.p_retarded) / (
             2 * xp.pi
@@ -496,85 +506,78 @@ class SCBA:
         self.observables.w_lesser_density = density(self.data.w_lesser) / (2 * xp.pi)
         self.observables.w_greater_density = -density(self.data.w_greater) / (2 * xp.pi)
 
+    @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
+
+        if self.quatrex_config.outputs.profiling_stats:
+            profiler.dump_stats(self.quatrex_config.output_dir / "profiling_stats")
 
         if comm.rank != 0:
             return
 
-        print(f"Writing output for iteration {iteration}...", flush=True)
+        outputs = {}
 
-        output_dir = self.quatrex_config.simulation_dir / "outputs"
-        if not os.path.exists(output_dir):
-            os.mkdir(output_dir)
-
-        xp.save(
-            f"{output_dir}/electron_ldos_{iteration}.npy",
-            self.observables.electron_ldos,
-        )
-        xp.save(
-            f"{output_dir}/electron_density_{iteration}.npy",
-            self.observables.electron_density,
-        )
-        xp.save(
-            f"{output_dir}/hole_density_{iteration}.npy", self.observables.hole_density
-        )
-        xp.save(
-            f"{output_dir}/i_left_{iteration}.npy",
-            self.observables.electron_current["left"],
-        )
-        xp.save(
-            f"{output_dir}/i_right_{iteration}.npy",
-            self.observables.electron_current["right"],
-        )
-
-        xp.save(
-            f"{output_dir}/device_current_{iteration}.npy",
-            self.observables.electron_current["device"],
-        )
-
-        if self.quatrex_config.electron.solver.compute_current:
-            xp.save(
-                f"{output_dir}/meir_wingreen_current_{iteration}.npy",
-                self.observables.electron_current["meir-wingreen"],
+        if self.quatrex_config.outputs.electron_ldos:
+            outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
+        if self.quatrex_config.outputs.electron_density:
+            outputs[f"electron_density_{iteration}.npy"] = (
+                self.observables.electron_density
             )
+        if self.quatrex_config.outputs.hole_density:
+            outputs[f"hole_density_{iteration}.npy"] = self.observables.hole_density
+
+        if self.quatrex_config.outputs.contact_currents:
+            outputs.update(
+                {
+                    f"i_{contact}_{iteration}.npy": current
+                    for contact, current in self.observables.electron_current.items()
+                }
+            )
+        if self.quatrex_config.outputs.device_currents:
+            outputs[f"device_current_{iteration}.npy"] = (
+                self.observables.electron_current["device"]
+            )
+            if self.quatrex_config.electron.solver.compute_current:
+                outputs[f"meir_wingreen_current_{iteration}.npy"] = (
+                    self.observables.electron_current["meir-wingreen"]
+                )
 
         if self.quatrex_config.scba.coulomb_screening:
-            xp.save(
-                f"{output_dir}/p_lesser_density_{iteration}.npy",
-                self.observables.p_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/p_greater_density_{iteration}.npy",
-                self.observables.p_greater_density,
-            )
-            xp.save(
-                f"{output_dir}/p_retarded_density_{iteration}.npy",
-                self.observables.p_retarded_density,
+            if self.quatrex_config.outputs.polarization_density:
+                outputs.update(
+                    {
+                        f"p_lesser_density_{iteration}.npy": self.observables.p_lesser_density,
+                        f"p_greater_density_{iteration}.npy": self.observables.p_greater_density,
+                        f"p_retarded_density_{iteration}.npy": self.observables.p_retarded_density,
+                    }
+                )
+            if self.quatrex_config.outputs.coulomb_screening_density:
+                outputs.update(
+                    {
+                        f"w_lesser_density_{iteration}.npy": self.observables.w_lesser_density,
+                        f"w_greater_density_{iteration}.npy": self.observables.w_greater_density,
+                    }
+                )
+
+        if self.quatrex_config.outputs.self_energy_density:
+            outputs.update(
+                {
+                    f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
+                    f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
+                    f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
+                }
             )
 
-            xp.save(
-                f"{output_dir}/w_lesser_density_{iteration}.npy",
-                self.observables.w_lesser_density,
-            )
-            xp.save(
-                f"{output_dir}/w_greater_density_{iteration}.npy",
-                self.observables.w_greater_density,
-            )
+        print(f"Writing output for iteration {iteration}...", flush=True)
 
-        xp.save(
-            f"{output_dir}/sigma_retarded_density_{iteration}.npy",
-            self.observables.sigma_retarded_density,
-        )
-        xp.save(
-            f"{output_dir}/sigma_lesser_density_{iteration}.npy",
-            self.observables.sigma_lesser_density,
-        )
-        xp.save(
-            f"{output_dir}/sigma_greater_density_{iteration}.npy",
-            self.observables.sigma_greater_density,
-        )
+        if not os.path.exists(self.quatrex_config.output_dir):
+            os.mkdir(self.quatrex_config.output_dir)
 
+        for filename, data in outputs.items():
+            xp.save(self.quatrex_config.output_dir / filename, data)
+
+    @profiler.profile(level="basic")
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
@@ -685,6 +688,15 @@ class SCBA:
             t_iteration = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+
+            free_memory, total_memory = xp.cuda.Device().mem_info
+            usage = (total_memory - free_memory) / total_memory
+            average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+            if comm.rank == 0:
+                print(
+                    f"Rank-average device memory usage: {average_usage:.4f}%",
+                    flush=True,
+                )
 
             if i % self.quatrex_config.scba.output_interval == 0:
                 times.append(time.perf_counter())

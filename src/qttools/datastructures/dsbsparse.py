@@ -8,12 +8,15 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_current_stream
+from qttools.utils.gpu_utils import get_host, get_nccl_communicator, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
+
+nccl_comm = get_nccl_communicator()
+NCCL_AVAILABLE = nccl_comm is not None
 
 
 @profiler.profile(level="debug")
@@ -545,10 +548,23 @@ class DSBSparse(ABC):
         # This does nothing if the data is already contiguous.
         self._data = xp.ascontiguousarray(self._data)
 
-        synchronize_current_stream()
-        if xp.__name__ == "numpy" or GPU_AWARE_MPI:
-            comm.Alltoall(MPI.IN_PLACE, self._data)
+        if NCCL_AVAILABLE:
+            # Always use NCCL if available.
+            receive_buffer = xp.empty_like(self._data)
+            synchronize_device()
+            nccl_comm.all_to_all(self._data, receive_buffer)
+            synchronize_device()
+            self._data = receive_buffer
+        elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
+            # Use MPI if we are not on GPU or if we have GPU-aware MPI.
+            receive_buffer = xp.empty_like(self._data)
+            synchronize_device()
+            comm.Alltoall(self._data, receive_buffer)
+            synchronize_device()
+            self._data = receive_buffer
         else:
+            # Use the host memory if we are on GPU and do not have
+            # GPU-aware MPI.
             _data_host = get_host(self._data)
             comm.Alltoall(MPI.IN_PLACE, _data_host)
             self._data = xp.array(_data_host)
@@ -694,8 +710,8 @@ class DSBSparse(ABC):
         """
         ...
 
-    @profiler.profile(level="api")
     @classmethod
+    @profiler.profile(level="api")
     def zeros_like(cls, dsbsparse: "DSBSparse") -> "DSBSparse":
         """Creates a new DSBSparse matrix with the same shape and dtype.
 

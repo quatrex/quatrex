@@ -17,6 +17,9 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import xp
 from qttools.profiling.utils import get_cuda_devices
 
+NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
+
+
 # Set the whether to profile the GPU.
 PROFILE_GPU = os.environ.get("PROFILE_GPU", "false").lower()
 if PROFILE_GPU in ("y", "yes", "t", "true", "on", "1"):
@@ -389,12 +392,19 @@ class Profiler:
                     # Record start events for each device.
                     self._record_events(start_events)
 
+                # Push a range to NVTX if available.
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePush(name)
+
                 host_time = -time.perf_counter()
 
                 # Call the function.
                 result = func(*args, **kwargs)
 
                 host_time += time.perf_counter()
+
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePop()
 
                 device_times = []
                 if PROFILE_GPU:
@@ -481,6 +491,10 @@ class Profiler:
                 # Record start events for each device.
                 self._record_events(start_events)
 
+            # Push a range to NVTX if available.
+            if NVTX_AVAILABLE:
+                xp.cuda.nvtx.RangePush(name)
+
             host_time = -time.perf_counter()
 
             yield
@@ -488,6 +502,9 @@ class Profiler:
         finally:
 
             host_time += time.perf_counter()
+
+            if NVTX_AVAILABLE:
+                xp.cuda.nvtx.RangePop()
 
             device_times = []
             if PROFILE_GPU:

@@ -72,8 +72,12 @@ def test_profiler_profile_range(profiler):
     with profiler.profile_range("test_range", level="basic"):
         pass
 
+    with profiler.profile_range("other_test_range", level="debug"):
+        __ = 1 + 1
+
     # Check that "test_range" can be found in the eventlog.
     assert any("test_range" in event[1] for event in profiler.eventlog)
+    assert not any("other_test_range" in event[1] for event in profiler.eventlog)
 
 
 def test_profiler_dump(profiler, tmp_path):

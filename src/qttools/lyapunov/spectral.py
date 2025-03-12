@@ -7,6 +7,11 @@ from qttools.kernels import linalg
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.lyapunov.utils import system_reduction
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 
 profiler = Profiler()
 
@@ -25,6 +30,9 @@ class Spectral(LyapunovSolver):
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     """
 
@@ -34,12 +42,14 @@ class Spectral(LyapunovSolver):
         warning_threshold: float = 1e-1,
         eig_compute_location: str = "numpy",
         reduce_sparsity: bool = True,
+        use_pinned_memory: bool = True,
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
         self.warning_threshold = warning_threshold
         self.eig_compute_location = eig_compute_location
         self.reduce_sparsity = reduce_sparsity
+        self.use_pinned_memory = use_pinned_memory
 
     @profiler.profile(level="debug")
     def _solve(
@@ -67,7 +77,21 @@ class Spectral(LyapunovSolver):
 
         """
 
-        ws, vs = linalg.eig(a, compute_module=self.eig_compute_location)
+        input_location = get_array_module_name(a)
+
+        if self.use_pinned_memory:
+            a_in = get_any_location_pinned(a, self.eig_compute_location)
+        else:
+            a_in = get_any_location(a, self.eig_compute_location)
+
+        ws, vs = linalg.eig(a_in, compute_module=self.eig_compute_location)
+
+        if self.use_pinned_memory:
+            ws = get_any_location_pinned(ws, input_location)
+            vs = get_any_location_pinned(vs, input_location)
+        else:
+            ws = get_any_location(ws, input_location)
+            vs = get_any_location(vs, input_location)
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

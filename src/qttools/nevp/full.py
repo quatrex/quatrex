@@ -4,6 +4,11 @@ from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 
 profiler = Profiler()
 
@@ -27,15 +32,20 @@ class Full(NEVP):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     """
 
     def __init__(
         self,
         eig_compute_location: str = "numpy",
+        use_pinned_memory: bool = True,
     ):
         """Initializes the Full NEVP solver."""
         self.eig_compute_location = eig_compute_location
+        self.use_pinned_memory = use_pinned_memory
 
     @profiler.profile(level="debug")
     def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
@@ -58,6 +68,8 @@ class Full(NEVP):
             The right eigenvectors.
 
         """
+        input_location = get_array_module_name(a_xx[0])
+
         inverse = xp.linalg.inv(sum(a_xx))
 
         # NOTE: CuPy does not expose a `block` function.
@@ -70,7 +82,19 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
+        if self.use_pinned_memory:
+            A = get_any_location_pinned(A, self.eig_compute_location)
+        else:
+            A = get_any_location(A, self.eig_compute_location)
+
         w, v = linalg.eig(A, compute_module=self.eig_compute_location)
+
+        if self.use_pinned_memory:
+            w = get_any_location_pinned(w, input_location)
+            v = get_any_location_pinned(v, input_location)
+        else:
+            w = get_any_location(w, input_location)
+            v = get_any_location(v, input_location)
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

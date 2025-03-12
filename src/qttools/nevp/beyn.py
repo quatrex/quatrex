@@ -9,6 +9,11 @@ from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
 from qttools.profiling import Profiler, decorate_methods
+from qttools.utils.gpu_utils import (
+    get_any_location,
+    get_any_location_pinned,
+    get_array_module_name,
+)
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -60,6 +65,9 @@ class Beyn(NEVP):
     contour_batch_size : int, optional
         The batch size for the contour integration kernel. If `None`,
         the batch size is set to `num_quad_points`.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     """
 
@@ -74,6 +82,7 @@ class Beyn(NEVP):
         project_compute_location: str = "numpy",
         use_qr: bool = False,
         contour_batch_size: int | None = None,
+        use_pinned_memory: bool = True,
     ):
         """Initializes the Beyn NEVP solver."""
         self.r_o = r_o
@@ -96,6 +105,7 @@ class Beyn(NEVP):
         self.contour_displacements = np.cumsum(
             np.concatenate(([0], np.array(contour_counts)))
         )
+        self.use_pinned_memory = use_pinned_memory
 
     def _project_svd(
         self, P_0: NDArray, P_1: NDArray, left: bool = False
@@ -121,11 +131,28 @@ class Beyn(NEVP):
         """
         batchsize = P_0.shape[0]
         d = P_0.shape[-1]
+        input_location = get_array_module_name(P_0)
+
+        if self.use_pinned_memory:
+            P_0 = get_any_location_pinned(P_0, self.project_compute_location)
+        else:
+            P_0 = get_any_location(P_0, self.project_compute_location)
 
         # Perform an SVD on the linear subspace projector.
         u, s, vh = linalg.svd(
             P_0, full_matrices=False, compute_module=self.project_compute_location
         )
+
+        # NOTE: this can lead to an extra memory copy on the host
+        # kernels could be change to accept an output and the cache
+        if self.use_pinned_memory:
+            u = get_any_location_pinned(u, input_location)
+            s = get_any_location_pinned(s, input_location)
+            vh = get_any_location_pinned(vh, input_location)
+        else:
+            u = get_any_location(u, input_location)
+            s = get_any_location(s, input_location)
+            vh = get_any_location(vh, input_location)
 
         a = []
         u_out = []
@@ -175,6 +202,9 @@ class Beyn(NEVP):
             The projectors.
 
         """
+        input_location = get_array_module_name(P_0)
+
+        P_0 = get_any_location_pinned(P_0, self.project_compute_location)
 
         # Perform an QR on the linear subspace projector.
         if left:
@@ -184,6 +214,17 @@ class Beyn(NEVP):
             )
         else:
             q, r = linalg.qr(P_0, compute_module=self.project_compute_location)
+
+        # NOTE: this can lead to an extra memory copy on the host
+        # kernels could be change to accept an output and the cache
+        if self.use_pinned_memory:
+            # NOTE: this can lead to bugs if copies would async
+            # and q/r have the same size (alias of the pinned buffers)
+            q = get_any_location_pinned(q, input_location)
+            r = get_any_location_pinned(r, input_location)
+        else:
+            q = get_any_location(q, input_location)
+            r = get_any_location(r, input_location)
 
         if left:
             a = xp.linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
@@ -255,6 +296,72 @@ class Beyn(NEVP):
 
         return q0, q1
 
+    def _solve_reduced_system(
+        self,
+        a: list[NDArray] | NDArray,
+        Y: NDArray,
+        p_back: list[NDArray] | NDArray,
+        left: bool = False,
+    ) -> tuple[NDArray, NDArray]:
+        """Solve the reduced system"""
+
+        in_type = a[0].dtype
+        input_location = get_array_module_name(Y)
+        if isinstance(a, list):
+            batchsize = len(a)
+        else:
+            batchsize = a.shape[0]
+
+        if self.eig_compute_location == "numpy" and xp.__name__ == "cupy":
+
+            if self.use_pinned_memory:
+                if isinstance(a, list):
+                    a = [
+                        get_any_location_pinned(ai, self.eig_compute_location)
+                        for ai in a
+                    ]
+                else:
+                    a = get_any_location_pinned(a, self.eig_compute_location)
+            else:
+                if isinstance(a, list):
+                    a = [get_any_location(ai, self.eig_compute_location) for ai in a]
+                else:
+                    a = get_any_location(a, self.eig_compute_location)
+
+        # solve the reduced system
+        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
+
+        if self.eig_compute_location == "numpy" and xp.__name__ == "cupy":
+            if self.use_pinned_memory:
+                if isinstance(a, list):
+                    w = [get_any_location_pinned(wi, input_location) for wi in w]
+                    v = [get_any_location_pinned(vi, input_location) for vi in v]
+                else:
+                    w = get_any_location_pinned(w, input_location)
+                    v = get_any_location_pinned(v, input_location)
+            else:
+                if isinstance(a, list):
+                    w = [get_any_location(wi, input_location) for wi in w]
+                    v = [get_any_location(vi, input_location) for vi in v]
+                else:
+                    w = get_any_location(w, input_location)
+                    v = get_any_location(v, input_location)
+
+        # Get the eigenvalues and eigenvectors.
+        ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
+        vs = Y.copy()
+
+        for i in range(batchsize):
+            len_w = len(w[i])
+            # Recover the full eigenvectors from the subspace.
+            ws[i, :len_w] = w[i]
+            if left:
+                vs[i, :, :len_w] = xp.linalg.solve(v[i], p_back[i]).conj().T
+            else:
+                vs[i, :, :len_w] = p_back[i] @ v[i]
+
+        return ws, vs
+
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
@@ -276,11 +383,6 @@ class Beyn(NEVP):
 
         """
         d = a_xx[0].shape[-1]
-        in_type = a_xx[0].dtype
-
-        # Allow for batched input.
-        if a_xx[0].ndim == 2:
-            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         batchsize = a_xx[0].shape[0]
 
@@ -302,19 +404,7 @@ class Beyn(NEVP):
         else:
             a, p_back = self._project_svd(P_0, P_1)
 
-        # solve the reduced system
-        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
-
-        # Get the eigenvalues and eigenvectors.
-        ws = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vs = Y.copy()
-        for i in range(batchsize):
-            len_w = len(w[i])
-            # Recover the full eigenvectors from the subspace.
-            ws[i, :len_w] = w[i]
-            vs[i, :, :len_w] = p_back[i] @ v[i]
-
-        return ws, vs
+        return self._solve_reduced_system(a, Y, p_back)
 
     def _two_sided(
         self, a_xx: tuple[NDArray, ...]
@@ -343,11 +433,6 @@ class Beyn(NEVP):
 
         """
         d = a_xx[0].shape[-1]
-        in_type = a_xx[0].dtype
-
-        # Allow for batched input.
-        if a_xx[0].ndim == 2:
-            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         batchsize = a_xx[0].shape[0]
 
@@ -377,24 +462,8 @@ class Beyn(NEVP):
             a, p_back = self._project_svd(P_0, P_1)
             a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
 
-        # solve the reduced system
-        w, v = linalg.eig(a, compute_module=self.eig_compute_location)
-        w_hat, v_hat = linalg.eig(a_hat, compute_module=self.eig_compute_location)
-
-        # Get the eigenvalues and eigenvectors.
-        wrs = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vrs = Y.copy()
-        wls = xp.zeros((batchsize, self.m_0), dtype=in_type)
-        vls = Y_hat.copy()
-        for i in range(batchsize):
-            len_w = len(w[i])
-            len_w_hat = len(w_hat[i])
-            # Recover the full eigenvectors from the subspace.
-            wrs[i, :len_w] = w[i]
-            wls[i, :len_w_hat] = w_hat[i]
-
-            vrs[i, :, :len_w] = p_back[i] @ v[i]
-            vls[i, :, :len_w_hat] = xp.linalg.solve(v_hat[i], p_back_hat[i]).conj().T
+        wrs, vrs = self._solve_reduced_system(a, Y, p_back)
+        wls, vls = self._solve_reduced_system(a_hat, Y_hat, p_back_hat, left=True)
 
         return wrs, vrs, wls, vls
 
@@ -429,8 +498,17 @@ class Beyn(NEVP):
             Returned only if `left` is `True`.
 
         """
+        # Allow for batched input.
+        if a_xx[0].ndim == 2:
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
-        if a_xx[0].shape[-1] < self.m_0 and self.use_qr:
+        batch_shape = a_xx[0].shape[:-2]
+        d = a_xx[0].shape[-1]
+
+        # allow for higher dimensional inputs
+        a_xx = tuple(a_x.reshape(-1, d, d) for a_x in a_xx)
+
+        if d < self.m_0 and self.use_qr:
             warnings.warn(
                 f"Subspace guess {self.m_0} is larger than the "
                 f"dimension of the system {a_xx[0].shape[-1]}. "
@@ -440,9 +518,18 @@ class Beyn(NEVP):
             self.m_0 = a_xx[0].shape[-1]
 
         if left:
-            out = self._two_sided(a_xx)
+            wrs, vrs, wls, vls = self._two_sided(a_xx)
+            wrs = wrs.reshape(*batch_shape, self.m_0)
+            vrs = vrs.reshape(*batch_shape, d, self.m_0)
+            wls = wls.reshape(*batch_shape, self.m_0)
+            vls = vls.reshape(*batch_shape, d, self.m_0)
+            out = (wrs, vrs, wls, vls)
+
         else:
-            out = self._one_sided(a_xx)
+            ws, vs = self._one_sided(a_xx)
+            ws = ws.reshape(*batch_shape, self.m_0)
+            vs = vs.reshape(*batch_shape, d, self.m_0)
+            out = (ws, vs)
 
         # reset subspace guess
         if hasattr(self, "old_m_0"):

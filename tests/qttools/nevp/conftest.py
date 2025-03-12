@@ -25,19 +25,24 @@ for BATCH_SIZE in BATCH_SIZES:
         False,
         True,
     ]:
-        SUBSPACE_NEVP_SOLVERS.append(
-            pytest.param(
-                Beyn(
-                    r_o=1.2,
-                    r_i=0.9,
-                    m_0=60,
-                    num_quad_points=200,
-                    use_qr=use_qr,
-                    contour_batch_size=BATCH_SIZE,
-                ),
-                id=f"Beyn with QR batch size {BATCH_SIZE} and use_qr {use_qr}",
+        for use_pinned_memory in [
+            False,
+            True,
+        ]:
+            SUBSPACE_NEVP_SOLVERS.append(
+                pytest.param(
+                    Beyn(
+                        r_o=1.2,
+                        r_i=0.9,
+                        m_0=60,
+                        num_quad_points=200,
+                        use_qr=use_qr,
+                        contour_batch_size=BATCH_SIZE,
+                        use_pinned_memory=use_pinned_memory,
+                    ),
+                    id=f"Beyn with QR batch size {BATCH_SIZE} and use_qr {use_qr}",
+                )
             )
-        )
 
 
 LEFT = [pytest.param(True, id="both"), pytest.param(False, id="right")]

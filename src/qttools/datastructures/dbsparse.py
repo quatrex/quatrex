@@ -1,12 +1,17 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import copy
 from abc import ABC, abstractmethod
+from typing import Callable
 
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.kernels import dsbcoo_kernels
+from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+
+profiler = Profiler()
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
@@ -62,6 +67,19 @@ class DBSparse(ABC):
         """Sets the block at the specified row and column."""
         ...
 
+    @abstractmethod
+    def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
+        """Symmetrizes the matrix.
+
+        Parameters
+        ----------
+        op : callable, optional
+            The operation to perform on the symmetric elements. Default
+            is addition.
+
+        """
+        ...
+
     @classmethod
     @abstractmethod
     def from_sparray(
@@ -74,6 +92,29 @@ class DBSparse(ABC):
     def to_dense(self) -> NDArray:
         """Converts the DBSparse matrix to a dense matrix."""
         ...
+
+    @classmethod
+    @profiler.profile(level="api")
+    def zeros_like(cls, dsbsparse: "DBSparse") -> "DBSparse":
+        """Creates a new DBSparse matrix with the same shape and dtype.
+
+        All non-zero elements are set to zero, but the sparsity pattern
+        is preserved.
+
+        Parameters
+        ----------
+        dsbsparse : DBSparse
+            The matrix to copy the shape and dtype from.
+
+        Returns
+        -------
+        DBSparse
+            The new DBSparse matrix.
+
+        """
+        out = copy.deepcopy(dsbsparse)
+        out.local_data[:] = 0.0
+        return out
 
 
 class DBCOO(DBSparse):
@@ -192,6 +233,56 @@ class DBCOO(DBSparse):
             self.local_rows[block_slice] - self.local_block_offsets[row],
             self.local_cols[block_slice] - self.local_block_offsets[col],
             self.local_data[block_slice],
+        )
+
+    @profiler.profile(level="api")
+    def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
+        """Symmetrizes the matrix.
+
+        NOTE: Assumes that the natrix's sparsity pattern is symmetric.
+
+        Parameters
+        ----------
+        op : callable, optional
+            The operation to perform on the symmetric elements. Default
+            is addition.
+
+        """
+        # if self.distribution_state == "nnz":
+        #     raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
+
+        if not (
+            hasattr(self, "_inds_bcoo2bcoo_t")
+            and hasattr(self, "_rows_t")
+            and hasattr(self, "_cols_t")
+            and hasattr(self, "_block_slice_cache_t")
+        ):
+            # Transpose.
+            rows_t, cols_t = self.local_cols, self.local_rows
+
+            # Canonical ordering of the transpose.
+            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
+            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
+
+            # Compute index for sorting the transpose by block.
+            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
+                canonical_rows_t, canonical_cols_t, self.local_block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
+
+            # Cache the necessary objects.
+            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
+            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
+            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
+
+            self._block_slice_cache_t = {}
+
+        self.local_data[:] = 0.5 * op(
+            self.local_data, self.local_data[..., self._inds_bcoo2bcoo_t].conj()
         )
 
     def to_dense(self):

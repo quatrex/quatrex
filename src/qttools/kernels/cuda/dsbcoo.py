@@ -419,7 +419,16 @@ def compute_block_slice(
 
 
 @profiler.profile(level="api")
-def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
+# def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
+def densify_block(
+    block: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    data: NDArray,
+    block_slice: slice,
+    row_offset: int,
+    col_offset: int,
+):
     """Fills the dense block with the given data.
 
     Note
@@ -444,10 +453,41 @@ def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     # will just use the CuPy API directly. Since for very large blocks
     # (10'000x10'000) this starts to break even, this needs to be
     # revisited!
-    block[..., rows, cols] = data[:]
+    if not use_kernel:
+        block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
+            data[..., block_slice]
+        )
+
+    else:
+        THREADS_PER_BLOCK
+        stack_size = data.size // data.shape[-1]
+        stack_stride = data.shape[-1]
+        block_start = block_slice.start or 0
+        nnz_per_block = block_slice.stop - block_start
+        num_blocks = (
+            stack_size * nnz_per_block + THREADS_PER_BLOCK - 1
+        ) // THREADS_PER_BLOCK
+        _densify_block_kernel(
+            (num_blocks,),
+            (THREADS_PER_BLOCK,),
+            (
+                block.reshape(-1),
+                rows,
+                cols,
+                data.reshape(-1),
+                stack_size,
+                stack_stride,
+                nnz_per_block,
+                block.shape[-2],
+                block.shape[-1],
+                block_start,
+                row_offset,
+                col_offset,
+            ),
+        )
 
 
-if USE_CUPY_JIT:
+if IS_NVIDIA:
 
     @jit.rawkernel()
     def _densify_block_kernel(
@@ -455,11 +495,12 @@ if USE_CUPY_JIT:
         rows: NDArray,
         cols: NDArray,
         data: NDArray,
-        batch_stride: int,
+        stack_size: int,
+        stack_stride: int,
+        nnz_per_block: int,
         num_rows: int,
         num_cols: int,
         block_start: int,
-        block_stop: int,
         row_offset: int,
         col_offset: int,
     ):
@@ -477,24 +518,23 @@ if USE_CUPY_JIT:
             The data to fill the block with.
 
         """
-        batch_idx = int(jit.blockIdx.x)
-        block_idx = int(jit.threadIdx.x)
-        num_threads = int(jit.blockDim.x)
-        batch_start = batch_idx * batch_stride
-        block_size = num_rows * num_cols
 
-        for idx in range(block_idx, block_size, num_threads):
-            block[batch_idx * block_size + idx] = 0
-        jit.syncthreads()
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        nnz_total = stack_size * nnz_per_block
 
-        for idx in range(block_start + block_idx, block_stop, num_threads):
-            row = rows[idx]
-            col = cols[idx]
+        if i < nnz_total:
+            stack_idx = i // nnz_per_block
+            stack_start = stack_idx * stack_stride
+            nnz_idx = i % nnz_per_block + block_start
+            block_size = num_rows * num_cols
+
+            row = rows[nnz_idx]
+            col = cols[nnz_idx]
             block[
-                batch_idx * block_size
+                stack_idx * block_size
                 + (row - row_offset) * num_cols
                 + (col - col_offset)
-            ] = data[batch_start + idx]
+            ] = data[stack_start + nnz_idx]
 
 else:
     _densify_block_kernel = cp.RawKernel(
@@ -506,40 +546,37 @@ else:
             int* rows,
             int* cols,
             complex<double>* data,
-            int batch_stride,
+            int stack_size,
+            int stack_stride,
+            int nnz_per_block,
             int num_rows,
             int num_cols,
             int block_start,
-            int block_stop,
             int row_offset,
             int col_offset
         ) {
-            int batch_idx = blockIdx.x;
-            int block_idx = threadIdx.x;
-            int num_threads = blockDim.x;
-            int batch_start = batch_idx * batch_stride;
+            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            int nnz_total = stack_size * nnz_per_block;
 
-            if (block_idx < num_rows * num_cols) {
-                for (int idx = block_idx; idx < num_rows * num_cols; idx += num_threads) {
-                    block[batch_idx * num_rows * num_cols + idx] = 0;
-                }
-            }
-            __syncthreads();
+            if (i < nnz_total) {
+                int stack_idx = i / nnz_per_block;
+                int stack_start = stack_idx * stack_stride;
+                int nnz_idx = i % nnz_per_block + block_start;
+                int block_size = num_rows * num_cols;
 
+                int row = rows[nnz_idx];
+                int col = cols[nnz_idx];
 
-            if (block_start + block_idx < block_stop) {
-                for (int idx = block_start + block_idx; idx < block_stop; idx += num_threads) {
-                    int row = rows[idx];
-                    int col = cols[idx];
-                    block[batch_idx * num_rows * num_cols + (row - row_offset) * num_cols + (col - col_offset)] = data[batch_start + idx];
-                }
-            }
-            __syncthreads();
+                // printf("row: %d, col: %d, nnz_idx: %d, stack_idx: %d, stack_start: %d, block_start: %d, row_offset: %d, col_offset: %d\n", row, col, nnz_idx, stack_idx, stack_start, block_start, row_offset, col_offset);
 
+                block[stack_idx * block_size + (row - row_offset) * num_cols + (col - col_offset)] = data[stack_start + nnz_idx];
+            } 
         }
     """,
         "densify_block",
     )
+
+
 
 
 @profiler.profile(level="api")

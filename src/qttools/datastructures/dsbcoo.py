@@ -1,7 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import functools
-
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, host_xp, sparse, xp
@@ -57,9 +55,6 @@ class DSBCOO(DSBSparse):
 
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
-
-        # Whether to use a fused custom kernel for densifying blocks.
-        self._use_kernel = False
 
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
@@ -285,50 +280,21 @@ class DSBCOO(DSBSparse):
             cols = self.cols[block_slice] - self.block_offsets[col]
             return rows, cols, data_stack[..., block_slice]
 
-        if not self._use_kernel:
-
-            block = xp.zeros(
-                data_stack.shape[:-1]
-                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-                dtype=self.dtype,
-            )
-            if block_slice.start is None and block_slice.stop is None:
-                # No data in this block, return an empty block.
-                return block
-
-            dsbcoo_kernels.densify_block(
-                block,
-                self.rows[block_slice] - self.block_offsets[row],
-                self.cols[block_slice] - self.block_offsets[col],
-                data_stack[..., block_slice],
-            )
-
-            return block
-
-        block = xp.empty(
+        block = xp.zeros(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
-
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
-            block[:] = 0
             return block
 
-        num_threads = 128
-        num_blocks = functools.reduce(lambda x, y: x * y, data_stack.shape[:-1], 1)
-        batch_stride = data_stack.shape[-1]
-        dsbcoo_kernels._densify_block_kernel[num_blocks, num_threads](
-            block.reshape(-1),
+        dsbcoo_kernels.densify_block(
+            block,
             self.rows,
             self.cols,
-            data_stack.reshape(-1),
-            batch_stride,
-            self.block_sizes[row],
-            self.block_sizes[col],
-            block_slice.start or 0,
-            block_slice.stop,
+            data_stack,
+            block_slice,
             self.block_offsets[row],
             self.block_offsets[col],
         )

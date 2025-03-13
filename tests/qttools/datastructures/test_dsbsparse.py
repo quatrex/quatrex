@@ -36,6 +36,9 @@ class TestCreation:
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
+        # with xp.printoptions(threshold=xp.inf, linewidth=xp.inf):
+        #     print(dsbsparse.to_dense()[0].real)
+        #     print(coo.toarray().real)
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
     def test_zeros_like(

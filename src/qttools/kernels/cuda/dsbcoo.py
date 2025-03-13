@@ -11,112 +11,197 @@ from qttools.profiling import Profiler
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-use_new = False
+IS_NVIDIA = False
+
+use_new = True
 
 
-@jit.rawkernel()
-def _find_inds_kernel(
-    self_rows: NDArray,
-    self_cols: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    full_inds: NDArray,
-    counts: NDArray,
-):
-    """Finds the corresponding indices of the given rows and columns.
+if IS_NVIDIA:
 
-    This also counts the number of matches found, which is used to check
-    if the indices contain duplicates.
+    @jit.rawkernel()
+    def _find_inds_kernel(
+        self_rows: NDArray,
+        self_cols: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        full_inds: NDArray,
+        counts: NDArray,
+        num_self_rows: int,
+        num_rows: int,
+    ):
+        """Finds the corresponding indices of the given rows and columns.
 
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-    full_inds : NDArray
-        The indices of the given rows and columns.
-    counts : NDArray
-        The number of matches found.
+        This also counts the number of matches found, which is used to check
+        if the indices contain duplicates.
 
-
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < self_rows.shape[0]:
-        for j in range(rows.shape[0]):
-            cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
-            full_inds[i] = full_inds[i] * (1 - cond) + j * cond
-            counts[i] += cond
+        Parameters
+        ----------
+        self_rows : NDArray
+            The rows of this matrix.
+        self_cols : NDArray
+            The columns of this matrix.
+        rows : NDArray
+            The rows to find the indices for.
+        cols : NDArray
+            The columns to find the indices for.
+        full_inds : NDArray
+            The indices of the given rows and columns.
+        counts : NDArray
+            The number of matches found.
 
 
-@jit.rawkernel()
-def _find_inds_kernel_new(
-    self_rows: NDArray,
-    self_cols: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    full_inds: NDArray,
-    counts: NDArray,
-    num_rows: int,
-):
-    """Finds the corresponding indices of the given rows and columns.
+        """
+        i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+        if i < num_self_rows:
+            for j in range(num_rows):
+                cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
+                full_inds[i] = full_inds[i] * (1 - cond) + j * cond
+                counts[i] += cond
 
-    This also counts the number of matches found, which is used to check
-    if the indices contain duplicates.
+else:
+    _find_inds_kernel = cp.RawKernel(
+        r"""
+        extern "C" __global__
+        void find_inds(
+            int* self_rows,
+            int* self_cols,
+            int* rows,
+            int* cols,
+            int* full_inds,
+            short* counts,
+            int num_self_rows,
+            int num_rows
+        ) {
+            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i < num_self_rows) {
+                for (int j = 0; j < num_rows; j++) {
+                    int cond = (self_rows[i] == rows[j]) & (self_cols[i] == cols[j]);
+                    full_inds[i] = full_inds[i] * (1 - cond) + j * cond;
+                    counts[i] += cond;
+                }
+            }
+        }
+    """,
+        "find_inds",
+    )
 
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-    full_inds : NDArray
-        The indices of the given rows and columns.
-    counts : NDArray
-        The number of matches found.
+if IS_NVIDIA:
+
+    @jit.rawkernel()
+    def _find_inds_kernel_new(
+        self_rows: NDArray,
+        self_cols: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        full_inds: NDArray,
+        counts: NDArray,
+        num_self_rows: int,
+        num_rows: int,
+    ):
+        """Finds the corresponding indices of the given rows and columns.
+
+        This also counts the number of matches found, which is used to check
+        if the indices contain duplicates.
+
+        Parameters
+        ----------
+        self_rows : NDArray
+            The rows of this matrix.
+        self_cols : NDArray
+            The columns of this matrix.
+        rows : NDArray
+            The rows to find the indices for.
+        cols : NDArray
+            The columns to find the indices for.
+        full_inds : NDArray
+            The indices of the given rows and columns.
+        counts : NDArray
+            The number of matches found.
 
 
-    """
-    i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
-    tid = int(jit.threadIdx.x)
-    cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
-    cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        tid = int(jit.threadIdx.x)
+        cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+        cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
 
-    if i < self_rows.shape[0]:
-        my_row = self_rows[i]
-        my_col = self_cols[i]
-    else:
-        my_row = -1
-        my_col = -1
+        if i < num_self_rows:
+            my_row = self_rows[i]
+            my_col = self_cols[i]
+        else:
+            my_row = -1
+            my_col = -1
 
-    my_full_ind = 0
-    my_count = 0
+        my_full_ind = 0
+        my_count = 0
 
-    for j in range(0, num_rows, THREADS_PER_BLOCK):
-        if j + tid < num_rows:
-            cache_rows[tid] = rows[j + tid]
-            cache_cols[tid] = cols[j + tid]
-        jit.syncthreads()
+        for j in range(0, num_rows, THREADS_PER_BLOCK):
+            if j + tid < num_rows:
+                cache_rows[tid] = rows[j + tid]
+                cache_cols[tid] = cols[j + tid]
+            jit.syncthreads()
 
-        for idx in range(j, min(j + THREADS_PER_BLOCK, num_rows)):
-            cond = int(
-                (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
-            )
-            my_full_ind = my_full_ind * (1 - cond) + idx * cond
-            my_count += cond
-        jit.syncthreads()
+            for idx in range(j, min(j + THREADS_PER_BLOCK, num_rows)):
+                cond = int(
+                    (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
+                )
+                my_full_ind = my_full_ind * (1 - cond) + idx * cond
+                my_count += cond
+            jit.syncthreads()
 
-    if i < self_rows.shape[0]:
-        full_inds[i] = my_full_ind
-        counts[i] = my_count
+        if i < self_rows.shape[0]:
+            full_inds[i] = my_full_ind
+            counts[i] = my_count
+
+else:
+    _find_inds_kernel_new = cp.RawKernel(
+        f"""
+        extern "C" __global__
+        void find_inds(
+            int* self_rows,
+            int* self_cols,
+            int* rows,
+            int* cols,
+            int* full_inds,
+            short* counts,
+            int num_self_rows,
+            int num_rows
+        ) {{
+            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            int tid = threadIdx.x;
+            __shared__ int cache_rows[{THREADS_PER_BLOCK}];
+            __shared__ int cache_cols[{THREADS_PER_BLOCK}];
+                                         
+
+            int my_row = (i < num_self_rows) ? self_rows[i] : -1;
+            int my_col = (i < num_self_rows) ? self_cols[i] : -1;
+                                
+            int my_full_ind = 0;
+            int my_count = 0;
+                                        
+            for (int j = 0; j < num_rows; j += {THREADS_PER_BLOCK}) {{
+                if (j + tid < num_rows) {{
+                    cache_rows[tid] = rows[j + tid];
+                    cache_cols[tid] = cols[j + tid];
+                }}
+                __syncthreads();
+                                         
+                for (int idx = j; idx < min(j + {THREADS_PER_BLOCK}, num_rows); idx++) {{
+                    int cond = (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j]);
+                    my_full_ind = my_full_ind * (1 - cond) + idx * cond;
+                    my_count += cond;
+                }}
+                __syncthreads();
+            }}
+                                         
+            if (i < num_self_rows) {{
+                full_inds[i] = my_full_ind;
+                counts[i] = my_count;
+            }}
+        }}
+    """,
+        "find_inds",
+    )
 
 
 @profiler.profile(level="api")
@@ -146,6 +231,8 @@ def find_inds(
         The maximum number of matches found.
 
     """
+    rows = rows.astype(cp.int32)
+    cols = cols.astype(cp.int32)
     full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32)
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
@@ -154,13 +241,31 @@ def find_inds(
         _find_inds_kernel_new(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
-            (self_rows, self_cols, rows, cols, full_inds, counts, rows.shape[0]),
+            (
+                self_rows,
+                self_cols,
+                rows,
+                cols,
+                full_inds,
+                counts,
+                self_rows.shape[0],
+                rows.shape[0],
+            ),
         )
     else:
         _find_inds_kernel(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
-            (self_rows, self_cols, rows, cols, full_inds, counts),
+            (
+                self_rows,
+                self_cols,
+                rows,
+                cols,
+                full_inds,
+                counts,
+                self_rows.shape[0],
+                rows.shape[0],
+            ),
         )
 
     # Find the valid indices.

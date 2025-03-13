@@ -181,3 +181,9 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     sort_index = dsbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
 
     assert xp.all(sort_index == reference_sort_index)
+
+
+if __name__ == "__main__":
+    # pytest.main([__file__])
+    for i in range(10):
+        test_find_inds((1000, 1000), 1000)

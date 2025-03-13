@@ -62,6 +62,17 @@ else:
         host_xp = xp
         pinned_xp = None
 
+# TODO: adapt testing suite to test both JIT and non-JIT versions
+# Implemented with a env variable to allow for easy switching
+USE_CUPY_JIT = os.environ.get("USE_CUPY_JIT", "true").lower()
+if USE_CUPY_JIT in ("y", "yes", "t", "true", "on", "1"):
+    USE_CUPY_JIT = True
+elif USE_CUPY_JIT in ("n", "no", "f", "false", "off", "0"):
+    USE_CUPY_JIT = False
+else:
+    warn(f"Invalid truth value {USE_CUPY_JIT=}. Defaulting to 'true'.")
+    USE_CUPY_JIT = True
+
 # Some type aliases for the array module.
 _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
 _DType = xp.dtype[_ScalarType]
@@ -76,4 +87,5 @@ __all__ = [
     "sparse",
     "NDArray",
     "ArrayLike",
+    "USE_CUPY_JIT",
 ]

@@ -1,9 +1,12 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import os
+import warnings
+
 import cupy as cp
 from cupyx import jit
 
-from qttools import NDArray, host_xp
+from qttools import USE_CUPY_JIT, NDArray, host_xp
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 
@@ -11,12 +14,16 @@ from qttools.profiling import Profiler
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-IS_NVIDIA = False
+USE_FIND_INDS = os.environ.get("USE_FIND_INDS", "false").lower()
+if USE_FIND_INDS in ("y", "yes", "t", "true", "on", "1"):
+    USE_FIND_INDS = True
+elif USE_FIND_INDS in ("n", "no", "f", "false", "off", "0"):
+    USE_FIND_INDS = False
+else:
+    warnings.warn(f"Invalid truth value {USE_FIND_INDS=}. Defaulting to 'true'.")
+    USE_FIND_INDS = True
 
-use_new = True
-
-
-if IS_NVIDIA:
+if USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_inds_kernel(
@@ -85,7 +92,7 @@ else:
         "find_inds",
     )
 
-if IS_NVIDIA:
+if USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_inds_kernel_new(
@@ -237,7 +244,7 @@ def find_inds(
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    if use_new:
+    if USE_FIND_INDS:
         _find_inds_kernel_new(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
@@ -275,44 +282,75 @@ def find_inds(
     return inds, value_inds, int(cp.max(counts))
 
 
-@jit.rawkernel()
-def _compute_coo_block_mask_kernel(
-    rows: NDArray,
-    cols: NDArray,
-    row_start: int,
-    row_stop: int,
-    col_start: int,
-    col_stop: int,
-    mask: NDArray,
-):
-    """Computes the mask for the block in the coordinates.
+if USE_CUPY_JIT:
 
-    Parameters
-    ----------
-    rows : NDArray
-        The row indices of the matrix.
-    cols : NDArray
-        The column indices of the matrix.
-    row_start : int
-        The start row index of the block.
-    row_stop : int
-        The stop row index of the block.
-    col_start : int
-        The start column index of the block.
-    col_stop : int
-        The stop column index of the block.
-    mask : NDArray
-        The mask to store the result.
+    @jit.rawkernel()
+    def _compute_coo_block_mask_kernel(
+        rows: NDArray,
+        cols: NDArray,
+        row_start: int,
+        row_stop: int,
+        col_start: int,
+        col_stop: int,
+        mask: NDArray,
+        rows_len: int,
+    ):
+        """Computes the mask for the block in the coordinates.
 
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < rows.shape[0]:
-        mask[i] = (
-            (rows[i] >= row_start)
-            & (rows[i] < row_stop)
-            & (cols[i] >= col_start)
-            & (cols[i] < col_stop)
-        )
+        Parameters
+        ----------
+        rows : NDArray
+            The row indices of the matrix.
+        cols : NDArray
+            The column indices of the matrix.
+        row_start : int
+            The start row index of the block.
+        row_stop : int
+            The stop row index of the block.
+        col_start : int
+            The start column index of the block.
+        col_stop : int
+            The stop column index of the block.
+        mask : NDArray
+            The mask to store the result.
+
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        if i < rows_len:
+            mask[i] = (
+                (rows[i] >= row_start)
+                & (rows[i] < row_stop)
+                & (cols[i] >= col_start)
+                & (cols[i] < col_stop)
+            )
+
+else:
+    _compute_coo_block_mask_kernel = cp.RawKernel(
+        r"""
+        extern "C" __global__
+        void _compute_coo_block_mask_kernel(
+            int *rows,
+            int *cols,
+            int row_start,
+            int row_stop,
+            int col_start,
+            int col_stop,
+            bool *mask,
+            int rows_len
+        ){
+            int tid = blockDim.x * blockIdx.x + threadIdx.x;
+            if (tid < rows_len) {
+                mask[tid] = (
+                    (rows[tid] >= row_start)
+                    && (rows[tid] < row_stop)
+                    && (cols[tid] >= col_start)
+                    && (cols[tid] < col_stop)
+                );
+            }
+        }
+    """,
+        "_compute_coo_block_mask_kernel",
+    )
 
 
 @profiler.profile(level="api")
@@ -343,14 +381,30 @@ def compute_block_slice(
 
     """
     mask = cp.zeros(rows.shape[0], dtype=cp.bool_)
-    row_start, row_stop = int(block_offsets[row]), int(block_offsets[row + 1])
-    col_start, col_stop = int(block_offsets[col]), int(block_offsets[col + 1])
+    row_start, row_stop = host_xp.int32(block_offsets[row]), host_xp.int32(
+        block_offsets[row + 1]
+    )
+    col_start, col_stop = host_xp.int32(block_offsets[col]), host_xp.int32(
+        block_offsets[col + 1]
+    )
+
+    rows = rows.astype(cp.int32)
+    cols = cols.astype(cp.int32)
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     _compute_coo_block_mask_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (rows, cols, row_start, row_stop, col_start, col_stop, mask),
+        (
+            rows,
+            cols,
+            row_start,
+            row_stop,
+            col_start,
+            col_stop,
+            mask,
+            host_xp.int32(rows.shape[0]),
+        ),
     )
     if cp.sum(mask) == 0:
         # No data in this block, return an empty slice.
@@ -359,6 +413,8 @@ def compute_block_slice(
     # NOTE: The data is sorted by block-row and -column, so
     # we can safely assume that the block is contiguous.
     inds = cp.nonzero(mask)[0]
+
+    # NOTE: this copies back to the host
     return int(inds[0]), int(inds[-1] + 1)
 
 
@@ -391,92 +447,99 @@ def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     block[..., rows, cols] = data[:]
 
 
-@jit.rawkernel()
-def _densify_block_kernel(
-    block: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    data: NDArray,
-    batch_stride: int,
-    num_rows: int,
-    num_cols: int,
-    block_start: int,
-    block_stop: int,
-    row_offset: int,
-    col_offset: int,
-):
-    """Fills the dense block with the given data.
+if USE_CUPY_JIT:
 
-    Parameters
-    ----------
-    block : NDArray
-        The dense block to fill.
-    rows : NDArray
-        The rows at which to fill the block.
-    cols : NDArray
-        The columns at which to fill the block.
-    data : NDArray
-        The data to fill the block with.
+    @jit.rawkernel()
+    def _densify_block_kernel(
+        block: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        data: NDArray,
+        batch_stride: int,
+        num_rows: int,
+        num_cols: int,
+        block_start: int,
+        block_stop: int,
+        row_offset: int,
+        col_offset: int,
+    ):
+        """Fills the dense block with the given data.
 
-    """
-    batch_idx = int(jit.blockIdx.x)
-    block_idx = int(jit.threadIdx.x)
-    num_threads = int(jit.blockDim.x)
-    batch_start = batch_idx * batch_stride
-    block_size = num_rows * num_cols
+        Parameters
+        ----------
+        block : NDArray
+            The dense block to fill.
+        rows : NDArray
+            The rows at which to fill the block.
+        cols : NDArray
+            The columns at which to fill the block.
+        data : NDArray
+            The data to fill the block with.
 
-    for idx in range(block_idx, block_size, num_threads):
-        block[batch_idx * block_size + idx] = 0
-    jit.syncthreads()
+        """
+        batch_idx = int(jit.blockIdx.x)
+        block_idx = int(jit.threadIdx.x)
+        num_threads = int(jit.blockDim.x)
+        batch_start = batch_idx * batch_stride
+        block_size = num_rows * num_cols
 
-    for idx in range(block_start + block_idx, block_stop, num_threads):
-        row = rows[idx]
-        col = cols[idx]
-        block[
-            batch_idx * block_size + (row - row_offset) * num_cols + (col - col_offset)
-        ] = data[batch_start + idx]
+        for idx in range(block_idx, block_size, num_threads):
+            block[batch_idx * block_size + idx] = 0
+        jit.syncthreads()
+
+        for idx in range(block_start + block_idx, block_stop, num_threads):
+            row = rows[idx]
+            col = cols[idx]
+            block[
+                batch_idx * block_size
+                + (row - row_offset) * num_cols
+                + (col - col_offset)
+            ] = data[batch_start + idx]
+
+else:
+    _densify_block_kernel = cp.RawKernel(
+        r"""
+        #include <cupy/complex.cuh>
+        extern "C" __global__
+        void densify_block(
+            complex<double>* block,
+            int* rows,
+            int* cols,
+            complex<double>* data,
+            int batch_stride,
+            int num_rows,
+            int num_cols,
+            int block_start,
+            int block_stop,
+            int row_offset,
+            int col_offset
+        ) {
+            int batch_idx = blockIdx.x;
+            int block_idx = threadIdx.x;
+            int num_threads = blockDim.x;
+            int batch_start = batch_idx * batch_stride;
+
+            if (block_idx < num_rows * num_cols) {
+                for (int idx = block_idx; idx < num_rows * num_cols; idx += num_threads) {
+                    block[batch_idx * num_rows * num_cols + idx] = 0;
+                }
+            }
+            __syncthreads();
 
 
-# _densify_block_kernel = cp.RawKernel(r'''
-#     #include <cupy/complex.cuh>
-#     extern "C" __global__
-#     void densify_block(
-#         complex<double>* block,
-#         int* rows,
-#         int* cols,
-#         complex<double>* data,
-#         int batch_stride,
-#         int num_rows,
-#         int num_cols,
-#         int block_start,
-#         int block_stop,
-#         int row_offset,
-#         int col_offset
-#     ) {
-#         int batch_idx = blockIdx.x;
-#         int block_idx = threadIdx.x;
-#         int num_threads = blockDim.x;
-#         int batch_start = batch_idx * batch_stride;
+            if (block_start + block_idx < block_stop) {
+                for (int idx = block_start + block_idx; idx < block_stop; idx += num_threads) {
+                    int row = rows[idx];
+                    int col = cols[idx];
+                    block[batch_idx * num_rows * num_cols + (row - row_offset) * num_cols + (col - col_offset)] = data[batch_start + idx];
+                }
+            }
+            __syncthreads();
 
-#         if (block_idx < num_rows * num_cols) {
-#             for (int idx = block_idx; idx < num_rows * num_cols; idx += num_threads) {
-#                 block[batch_idx * num_rows * num_cols + idx] = 0;
-#             }
-#         }
-#         __syncthreads();
-
-
-#         if (block_start + block_idx < block_stop) {
-#             for (int idx = block_start + block_idx; idx < block_stop; idx += num_threads) {
-#                 int row = rows[idx];
-#                 int col = cols[idx];
-#                 block[batch_idx * num_rows * num_cols + (row - row_offset) * num_cols + (col - col_offset)] = data[batch_start + idx];
-#             }
-#         }
-#         __syncthreads();
-
-#     }
-# ''', 'densify_block')
+        }
+    """,
+        "densify_block",
+    )
 
 
 @profiler.profile(level="api")
@@ -537,6 +600,8 @@ def compute_block_sort_index(
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
+    coo_rows = coo_rows.astype(cp.int32)
+    coo_cols = coo_cols.astype(cp.int32)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
@@ -552,6 +617,7 @@ def compute_block_sort_index(
                 host_xp.int32(block_offsets[j]),
                 host_xp.int32(block_offsets[j + 1]),
                 mask,
+                host_xp.int32(len(coo_cols)),
             ),
         )
 

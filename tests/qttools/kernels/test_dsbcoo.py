@@ -120,10 +120,10 @@ def test_compute_block_slice(
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = xp.array(
-        [a.size for a in xp.array_split(xp.arange(shape[0]), num_blocks)]
+    block_sizes = host_xp.array(
+        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)]
     )
-    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
 
     sort_index = _reference_compute_block_sort_index(coo.row, coo.col, block_sizes)
     rows, cols = coo.row[sort_index], coo.col[sort_index]

@@ -233,8 +233,8 @@ class DSBCOO(DSBSparse):
                     self.rows, self.cols, self.block_offsets, row, col
                 )
             )
-
-        self._block_config[self.num_blocks].block_slice_cache[(row, col)] = block_slice
+            self._block_config[self.num_blocks].block_slice_cache[(row, col)] = block_slice
+        
         return block_slice
 
     @profiler.profile(level="debug")

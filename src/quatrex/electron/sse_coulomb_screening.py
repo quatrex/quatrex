@@ -17,6 +17,55 @@ from quatrex.core.sse import ScatteringSelfEnergy
 profiler = Profiler()
 
 
+def fft_convolve_fock_with_hilbert(
+    a_lesser: NDArray,
+    a_greater: NDArray,
+    b_lesser: NDArray,
+    b_greater: NDArray,
+    energies: NDArray,
+    eta=1e-8,
+    work_space=None,
+    out=None,
+):
+    if out is not None:
+        c_lesser, c_greater = out
+    if work_space is not None:
+        (a_x_fft, b_lesser_fft, b_greater_fft, c_x_fft) = work_space
+    m = a_lesser.shape[0]
+    n = a_lesser.shape[0] + a_greater.shape[0] - 1
+
+    a_x_fft = xp.fft.fft(a_lesser, n, axis=0)
+    b_lesser_fft = xp.fft.fft(b_lesser, n, axis=0)
+    b_greater_fft = xp.fft.fft(b_greater, n, axis=0)
+
+    c_x_fft = xp.multiply(a_x_fft, b_lesser_fft)
+    c_x_fft -= xp.multiply(a_x_fft, b_greater_fft.conj())  # negative energy part
+    c_lesser = xp.fft.ifft(c_x_fft)[:m]
+
+    a_x_fft = xp.fft.fft(a_greater, n, axis=0)
+    c_x_fft = xp.multiply(a_x_fft, b_greater_fft)
+    c_x_fft -= xp.multiply(a_x_fft, b_lesser_fft.conj())  # negative energy part
+    c_greater = xp.fft.ifft(c_x_fft)[:m]
+
+    # Compute retarded self-energy with a Hilbert transform.
+    c_antihermitian = 1j * xp.imag(c_greater - c_lesser)
+
+    # Add a small imaginary part to avoid singularity.
+    energy_differences = (energies - energies[0]).reshape(-1, 1)
+    ne = energies.size
+    # eta for removing the singularity. See Cauchy principal value.
+    c_x_fft = xp.fft.fft(c_antihermitian, n, axis=0)
+    a_x_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
+    b_lesser_fft = xp.multiply(c_x_fft, a_x_fft)
+    b_lesser_fft -= xp.multiply(c_x_fft, a_x_fft.conj())  # negative energy part
+    c_retarded = xp.fft.ifft(b_lesser_fft)[:ne]
+    c_retarded /= (2 * xp.pi) * (energies[1] - energies[0])
+    c_retarded = 1j * c_retarded + c_antihermitian / 2
+
+    if out is None:
+        return c_lesser, c_greater, c_retarded
+
+
 @profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using FFT.

@@ -544,11 +544,6 @@ class DSBSparse(ABC):
         """Negation of the data."""
         ...
 
-    @abstractmethod
-    def __matmul__(self, other: "DSBSparse") -> "DSBSparse":
-        """Matrix multiplication of two DSBSparse matrices."""
-        ...
-
     @profiler.profile(level="api")
     def block_diagonal(self, offset: int = 0) -> list[NDArray]:
         """Returns the block diagonal of the matrix.

@@ -9,7 +9,7 @@ from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import densify_selected_blocks, product_sparsity_pattern
+from qttools.utils.sparse_utils import densify_selected_blocks
 
 profiler = Profiler()
 
@@ -375,45 +375,6 @@ class DSBCSR(DSBSparse):
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
         )
-
-    def __matmul__(self, other: "DSBSparse") -> None:
-        """Matrix multiplication of two DSBSparse matrices."""
-        if sparse.isspmatrix(other):
-            raise NotImplementedError(
-                "Matrix multiplication with sparse matrices  is not implemented."
-            )
-        if not isinstance(other, DSBSparse):
-            raise TypeError("Can only multiply DSBSparse matrices.")
-        if self.shape[-1] != other.shape[-2]:
-            raise ValueError("Matrix shapes do not match.")
-        if host_xp.any(self.block_sizes != other.block_sizes):
-            raise ValueError("Block sizes do not match.")
-        stack_indices = xp.ndindex(self.data.shape[:-1])
-        product_rows, product_cols = product_sparsity_pattern(
-            sparse.csr_matrix((xp.ones(self.nnz), (self.spy())), shape=self.shape[-2:]),
-            sparse.csr_matrix(
-                (xp.ones(other.nnz), (other.spy())), shape=other.shape[-2:]
-            ),
-        )
-        block_sort_index, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
-            product_rows, product_cols, self.block_sizes
-        )
-        product = DSBCSR(
-            data=xp.zeros(self.stack_shape + (product_rows.size,), dtype=self.dtype),
-            cols=product_cols[block_sort_index],
-            rowptr_map=rowptr_map,
-            block_sizes=self.block_sizes,
-            global_stack_shape=self.global_stack_shape,
-        )
-        # TODO: This is a naive implementation. Should be revisited. Same for dsbcoo.
-        for stack_index in stack_indices:
-            temp_product = sparse.csr_matrix(
-                (self.data[stack_index], (self.spy())), shape=self.shape[-2:]
-            ) @ sparse.csr_matrix(
-                (other.data[stack_index], (other.spy())), shape=other.shape[-2:]
-            )
-            product.data[stack_index, :] = temp_product[product.spy()]
-        return product
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:

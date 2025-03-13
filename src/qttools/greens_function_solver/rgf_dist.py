@@ -174,19 +174,21 @@ class ReducedSystem:
                 self.diag_blocks_lesser[i] = (
                     self.diag_blocks[i]
                     @ self.diag_blocks_lesser[i]
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 )
             if self.solve_greater:
                 self.diag_blocks_greater[i] = (
                     self.diag_blocks[i]
                     @ self.diag_blocks_greater[i]
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
             # Update the next diagonal block
             temp_1 = self.lower_blocks[i] @ self.diag_blocks[i]
             if self.solve_lesser or self.solve_greater:
-                temp_2 = self.diag_blocks[i].T @ self.lower_blocks[i].T
+                temp_2 = self.diag_blocks[i].conj().swapaxes(
+                    -2, -1
+                ) @ self.lower_blocks[i].conj().swapaxes(-2, -1)
 
             self.diag_blocks[i + 1] = (
                 self.diag_blocks[i + 1] - temp_1 @ self.upper_blocks[i]
@@ -196,7 +198,7 @@ class ReducedSystem:
                     self.diag_blocks_lesser[i + 1]
                     + self.lower_blocks[i]
                     @ self.diag_blocks_lesser[i]
-                    @ self.lower_blocks[i].T
+                    @ self.lower_blocks[i].conj().swapaxes(-2, -1)
                     - self.lower_blocks_lesser[i] @ temp_2
                     - temp_1 @ self.upper_blocks_lesser[i]
                 )
@@ -205,7 +207,7 @@ class ReducedSystem:
                     self.diag_blocks_greater[i + 1]
                     + self.lower_blocks[i]
                     @ self.diag_blocks_greater[i]
-                    @ self.lower_blocks[i].T
+                    @ self.lower_blocks[i].conj().swapaxes(-2, -1)
                     - self.lower_blocks_greater[i] @ temp_2
                     - temp_1 @ self.upper_blocks_greater[i]
                 )
@@ -216,13 +218,13 @@ class ReducedSystem:
             self.diag_blocks_lesser[-1] = (
                 self.diag_blocks[-1]
                 @ self.diag_blocks_lesser[-1]
-                @ self.diag_blocks[-1].T
+                @ self.diag_blocks[-1].conj().swapaxes(-2, -1)
             )
         if self.solve_greater:
             self.diag_blocks_greater[-1] = (
                 self.diag_blocks[-1]
                 @ self.diag_blocks_greater[-1]
-                @ self.diag_blocks[-1].T
+                @ self.diag_blocks[-1].conj().swapaxes(-2, -1)
             )
 
         # Backwards pass.
@@ -232,73 +234,85 @@ class ReducedSystem:
 
             if self.solve_lesser:
                 temp_upper_lesser = self.upper_blocks_lesser[i]
-                temp_4 = self.lower_blocks[i].T @ self.diag_blocks[i + 1].T
+                temp_4 = self.lower_blocks[i].conj().swapaxes(
+                    -2, -1
+                ) @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                 self.upper_blocks_lesser[i] = (
                     -temp_1 @ self.diag_blocks_lesser[i + 1]
                     - self.diag_blocks_lesser[i] @ temp_4
                     + self.diag_blocks[i]
                     @ self.upper_blocks_lesser[i]
-                    @ self.diag_blocks[i + 1].T
+                    @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                 )
 
                 temp_lower_lesser = self.lower_blocks_lesser[i]
-                temp_2 = self.upper_blocks[i].T @ self.diag_blocks[i].T
+                temp_2 = self.upper_blocks[i].conj().swapaxes(
+                    -2, -1
+                ) @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 self.lower_blocks_lesser[i] = (
                     -self.diag_blocks_lesser[i + 1] @ temp_2
                     - temp_3 @ self.diag_blocks_lesser[i]
                     + self.diag_blocks[i + 1]
                     @ self.lower_blocks_lesser[i]
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 self.diag_blocks_lesser[i] = (
                     self.diag_blocks_lesser[i]
                     + temp_1 @ self.diag_blocks_lesser[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ self.diag_blocks_lesser[i]
-                    + self.diag_blocks_lesser[i].T @ temp_4 @ temp_2
+                    + self.diag_blocks_lesser[i].conj().swapaxes(-2, -1)
+                    @ temp_4
+                    @ temp_2
                     - temp_1
                     @ self.diag_blocks[i + 1]
                     @ temp_lower_lesser
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                     - self.diag_blocks[i]
                     @ temp_upper_lesser
-                    @ self.diag_blocks[i + 1].T
+                    @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     @ temp_2
                 )
 
             if self.solve_greater:
                 temp_upper_greater = self.upper_blocks_greater[i]
-                temp_4 = self.lower_blocks[i].T @ self.diag_blocks[i + 1].T
+                temp_4 = self.lower_blocks[i].conj().swapaxes(
+                    -2, -1
+                ) @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                 self.upper_blocks_greater[i] = (
                     -temp_1 @ self.diag_blocks_greater[i + 1]
                     - self.diag_blocks_greater[i] @ temp_4
                     + self.diag_blocks[i]
                     @ self.upper_blocks_greater[i]
-                    @ self.diag_blocks[i + 1].T
+                    @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                 )
 
                 temp_lower_greater = self.lower_blocks_greater[i]
-                temp_2 = self.upper_blocks[i].T @ self.diag_blocks[i].T
+                temp_2 = self.upper_blocks[i].conj().swapaxes(
+                    -2, -1
+                ) @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 self.lower_blocks_greater[i] = (
                     -self.diag_blocks_greater[i + 1] @ temp_2
                     - temp_3 @ self.diag_blocks_greater[i]
                     + self.diag_blocks[i + 1]
                     @ self.lower_blocks_greater[i]
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 self.diag_blocks_greater[i] = (
                     self.diag_blocks_greater[i]
                     + temp_1 @ self.diag_blocks_greater[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ self.diag_blocks_greater[i]
-                    + self.diag_blocks_greater[i].T @ temp_4 @ temp_2
+                    + self.diag_blocks_greater[i].conj().swapaxes(-2, -1)
+                    @ temp_4
+                    @ temp_2
                     - temp_1
                     @ self.diag_blocks[i + 1]
                     @ temp_lower_greater
-                    @ self.diag_blocks[i].T
+                    @ self.diag_blocks[i].conj().swapaxes(-2, -1)
                     - self.diag_blocks[i]
                     @ temp_upper_greater
-                    @ self.diag_blocks[i + 1].T
+                    @ self.diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     @ temp_2
                 )
 
@@ -433,30 +447,40 @@ class RGFDist(GFSolver):
             x_diag_blocks[i] = xp.linalg.inv(x_diag_blocks[i])
             if self.solve_lesser:
                 xl_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xl_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xl_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
             if self.solve_greater:
                 xg_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xg_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xg_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
             temp_1 = a.local_blocks[j, i] @ x_diag_blocks[i]
             if self.solve_lesser or self.solve_greater:
-                temp_2 = x_diag_blocks[i].T @ a.local_blocks[j, i].T
+                temp_2 = x_diag_blocks[i].conj().swapaxes(-2, -1) @ a.local_blocks[
+                    j, i
+                ].conj().swapaxes(-2, -1)
 
             x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     bl.local_blocks[j, j]
-                    + a.local_blocks[j, i] @ xl_diag_blocks[i] @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i]
+                    @ xl_diag_blocks[i]
+                    @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
             if self.solve_greater:
                 xg_diag_blocks[j] = (
                     bg.local_blocks[j, j]
-                    + a.local_blocks[j, i] @ xg_diag_blocks[i] @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i]
+                    @ xg_diag_blocks[i]
+                    @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
@@ -465,11 +489,15 @@ class RGFDist(GFSolver):
             x_diag_blocks[-1] = xp.linalg.inv(x_diag_blocks[-1])
             if self.solve_lesser:
                 xl_diag_blocks[-1] = (
-                    x_diag_blocks[-1] @ xl_diag_blocks[-1] @ x_diag_blocks[-1].T
+                    x_diag_blocks[-1]
+                    @ xl_diag_blocks[-1]
+                    @ x_diag_blocks[-1].conj().swapaxes(-2, -1)
                 )
             if self.solve_greater:
                 xg_diag_blocks[-1] = (
-                    x_diag_blocks[-1] @ xg_diag_blocks[-1] @ x_diag_blocks[-1].T
+                    x_diag_blocks[-1]
+                    @ xg_diag_blocks[-1]
+                    @ x_diag_blocks[-1].conj().swapaxes(-2, -1)
                 )
 
     def _upward_schur(
@@ -493,30 +521,40 @@ class RGFDist(GFSolver):
             x_diag_blocks[i] = xp.linalg.inv(x_diag_blocks[i])
             if self.solve_lesser:
                 xl_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xl_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xl_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
             if self.solve_greater:
                 xg_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xg_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xg_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
             temp_1 = a.local_blocks[j, i] @ x_diag_blocks[i]
             if self.solve_lesser or self.solve_greater:
-                temp_2 = x_diag_blocks[i].T @ a.local_blocks[j, i].T
+                temp_2 = x_diag_blocks[i].conj().swapaxes(-2, -1) @ a.local_blocks[
+                    j, i
+                ].conj().swapaxes(-2, -1)
 
             x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     bl.local_blocks[j, j]
-                    + a.local_blocks[j, i] @ xl_diag_blocks[i] @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i]
+                    @ xl_diag_blocks[i]
+                    @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
             if self.solve_greater:
                 xg_diag_blocks[j] = (
                     bg.local_blocks[j, j]
-                    + a.local_blocks[j, i] @ xg_diag_blocks[i] @ a.local_blocks[j, i].T
+                    + a.local_blocks[j, i]
+                    @ xg_diag_blocks[i]
+                    @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
                     - bg.local_blocks[j, i] @ temp_2
                     - temp_1 @ bg.local_blocks[i, j]
                 )
@@ -525,11 +563,15 @@ class RGFDist(GFSolver):
             x_diag_blocks[0] = xp.linalg.inv(x_diag_blocks[0])
             if self.solve_lesser:
                 xl_diag_blocks[0] = (
-                    x_diag_blocks[0] @ xl_diag_blocks[0] @ x_diag_blocks[0].T
+                    x_diag_blocks[0]
+                    @ xl_diag_blocks[0]
+                    @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
             if self.solve_greater:
                 xg_diag_blocks[0] = (
-                    x_diag_blocks[0] @ xg_diag_blocks[0] @ x_diag_blocks[0].T
+                    x_diag_blocks[0]
+                    @ xg_diag_blocks[0]
+                    @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
 
     def _permuted_schur(
@@ -586,83 +628,99 @@ class RGFDist(GFSolver):
 
             if self.solve_lesser:
                 xl_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xl_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xl_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 xl_diag_blocks[i + 1] = (
                     bl.local_blocks[i + 1, i + 1]
                     + a.local_blocks[i + 1, i]
                     @ xl_diag_blocks[i]
-                    @ a.local_blocks[i + 1, i].T
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - bl.local_blocks[i + 1, i][i]
-                    @ x_diag_blocks[i].T
-                    @ a.local_blocks[i + 1, i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
                     @ x_diag_blocks[i]
                     @ bl.local_blocks[i, i + 1]
                 )
                 bl_buffer_upper[i] = (
-                    a.local_blocks[i + 1, i] @ xl_diag_blocks[i] @ buffer_lower[i - 1].T
+                    a.local_blocks[i + 1, i]
+                    @ xl_diag_blocks[i]
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - bl.local_blocks[i + 1, i][i]
-                    @ x_diag_blocks[i].T
-                    @ buffer_lower[i - 1].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
                     @ x_diag_blocks[i]
                     @ bl_buffer_upper[i - 1]
                 )
                 bl_buffer_lower[i] = (
-                    buffer_lower[i - 1] @ xl_diag_blocks[i] @ a.local_blocks[i + 1, i].T
+                    buffer_lower[i - 1]
+                    @ xl_diag_blocks[i]
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - bl_buffer_lower[i - 1]
-                    @ x_diag_blocks[i].T
-                    @ a.local_blocks[i + 1, i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl.local_blocks[i, i + 1]
                 )
                 xl_diag_blocks[0] = (
                     xl_diag_blocks[0]
-                    + buffer_lower[i - 1] @ xl_diag_blocks[i] @ buffer_lower[i - 1].T
+                    + buffer_lower[i - 1]
+                    @ xl_diag_blocks[i]
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - bl_buffer_lower[i - 1]
-                    @ x_diag_blocks[i].T
-                    @ buffer_lower[i - 1].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl_buffer_upper[i - 1]
                 )
 
             if self.solve_greater:
                 xg_diag_blocks[i] = (
-                    x_diag_blocks[i] @ xg_diag_blocks[i] @ x_diag_blocks[i].T
+                    x_diag_blocks[i]
+                    @ xg_diag_blocks[i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 xg_diag_blocks[i + 1] = (
                     bg.local_blocks[i + 1, i + 1]
                     + a.local_blocks[i + 1, i]
                     @ xg_diag_blocks[i]
-                    @ a.local_blocks[i + 1, i].T
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - bl.local_blocks[i + 1, i][i]
-                    @ x_diag_blocks[i].T
-                    @ a.local_blocks[i + 1, i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
                     @ x_diag_blocks[i]
                     @ bl.local_blocks[i, i + 1]
                 )
                 bg_buffer_upper[i] = (
-                    a.local_blocks[i + 1, i] @ xg_diag_blocks[i] @ buffer_lower[i - 1].T
+                    a.local_blocks[i + 1, i]
+                    @ xg_diag_blocks[i]
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - bl.local_blocks[i + 1, i][i]
-                    @ x_diag_blocks[i].T
-                    @ buffer_lower[i - 1].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
                     @ x_diag_blocks[i]
                     @ bg_buffer_upper[i - 1]
                 )
                 bg_buffer_lower[i] = (
-                    buffer_lower[i - 1] @ xg_diag_blocks[i] @ a.local_blocks[i + 1, i].T
+                    buffer_lower[i - 1]
+                    @ xg_diag_blocks[i]
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - bg_buffer_lower[i - 1]
-                    @ x_diag_blocks[i].T
-                    @ a.local_blocks[i + 1, i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl.local_blocks[i, i + 1]
                 )
                 xg_diag_blocks[0] = (
                     xg_diag_blocks[0]
-                    + buffer_lower[i - 1] @ xg_diag_blocks[i] @ buffer_lower[i - 1].T
+                    + buffer_lower[i - 1]
+                    @ xg_diag_blocks[i]
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - bg_buffer_lower[i - 1]
-                    @ x_diag_blocks[i].T
-                    @ buffer_lower[i - 1].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
+                    @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - buffer_lower[i - 1] @ x_diag_blocks[i] @ bg_buffer_upper[i - 1]
                 )
 
@@ -686,32 +744,40 @@ class RGFDist(GFSolver):
             temp_3 = x_diag_blocks[j] @ a.local_blocks[j, i]
 
             if self.solve_lesser:
-                temp_4 = a.local_blocks[j, i].T @ x_diag_blocks[j].T
+                temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    j
+                ].conj().swapaxes(-2, -1)
                 xl_upper_block = (
                     -temp_1 @ xl_diag_blocks[j]
                     - xl_diag_blocks[i] @ temp_4
-                    + x_diag_blocks[i] @ bl.local_blocks[i, j] @ x_diag_blocks[j].T
+                    + x_diag_blocks[i]
+                    @ bl.local_blocks[i, j]
+                    @ x_diag_blocks[j].conj().swapaxes(-2, -1)
                 )
 
-                temp_2 = a.local_blocks[i, j].T @ x_diag_blocks[i].T
+                temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    i
+                ].conj().swapaxes(-2, -1)
                 xl_lower_block = (
                     -xl_diag_blocks[j] @ temp_2
                     - temp_3 @ xl_diag_blocks[i]
-                    + x_diag_blocks[j] @ bl.local_blocks[j, i] @ x_diag_blocks[i].T
+                    + x_diag_blocks[j]
+                    @ bl.local_blocks[j, i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 xl_diag_blocks[i] = (
                     xl_diag_blocks[i]
                     + temp_1 @ xl_diag_blocks[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].T @ temp_4 @ temp_2
+                    + xl_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_4 @ temp_2
                     - temp_1
                     @ x_diag_blocks[i + 1]
                     @ bl.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ bl.local_blocks[i, j]
-                    @ x_diag_blocks[i + 1].T
+                    @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     @ temp_2
                 )
                 # Streaming/Sparsifying back to DDSBSparse
@@ -720,32 +786,40 @@ class RGFDist(GFSolver):
                 xl_out.local_blocks[i, i] = xl_diag_blocks[i]
 
             if self.solve_greater:
-                temp_4 = a.local_blocks[j, i].T @ x_diag_blocks[i + 1].T
+                temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    i + 1
+                ].conj().swapaxes(-2, -1)
                 xg_upper_block = (
                     -temp_1 @ xg_diag_blocks[i + 1]
                     - xg_diag_blocks[i] @ temp_4
-                    + x_diag_blocks[i] @ bg.local_blocks[i, j] @ x_diag_blocks[i + 1].T
+                    + x_diag_blocks[i]
+                    @ bg.local_blocks[i, j]
+                    @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                 )
 
-                temp_2 = a.local_blocks[i, j].T @ x_diag_blocks[i].T
+                temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    i
+                ].conj().swapaxes(-2, -1)
                 xg_lower_block = (
                     -xg_diag_blocks[i + 1] @ temp_2
                     - temp_3 @ xg_diag_blocks[i]
-                    + x_diag_blocks[i + 1] @ bg.local_blocks[j, i] @ x_diag_blocks[i].T
+                    + x_diag_blocks[i + 1]
+                    @ bg.local_blocks[j, i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 xg_diag_blocks[i] = (
                     xg_diag_blocks[i]
                     + temp_1 @ xg_diag_blocks[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].T @ temp_4 @ temp_2
+                    + xg_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_4 @ temp_2
                     - temp_1
                     @ x_diag_blocks[i + 1]
                     @ bg.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ bg.local_blocks[i, j]
-                    @ x_diag_blocks[i + 1].T
+                    @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     @ temp_2
                 )
                 # Streaming/Sparsifying back to DDSBSparse
@@ -783,32 +857,40 @@ class RGFDist(GFSolver):
             temp_3 = x_diag_blocks[i] @ a.local_blocks[i, j]
 
             if self.solve_lesser:
-                temp_4 = a.local_blocks[i, j].T @ x_diag_blocks[i].T
+                temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    i
+                ].conj().swapaxes(-2, -1)
                 xl_upper_block = (
                     -temp_1 @ xl_diag_blocks[i]
                     - xl_diag_blocks[j] @ temp_4
-                    + x_diag_blocks[j] @ bl.local_blocks[j, i] @ x_diag_blocks[i].T
+                    + x_diag_blocks[j]
+                    @ bl.local_blocks[j, i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                temp_2 = a.local_blocks[j, i].T @ x_diag_blocks[j].T
+                temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    j
+                ].conj().swapaxes(-2, -1)
                 xl_lower_block = (
                     -xl_diag_blocks[i] @ temp_2
                     - temp_3 @ xl_diag_blocks[j]
-                    + x_diag_blocks[i] @ bl.local_blocks[i, j] @ x_diag_blocks[j].T
+                    + x_diag_blocks[i]
+                    @ bl.local_blocks[i, j]
+                    @ x_diag_blocks[j].conj().swapaxes(-2, -1)
                 )
 
                 xl_diag_blocks[i] = (
                     xl_diag_blocks[i]
                     + temp_3 @ xl_diag_blocks[j] @ temp_4
                     + temp_3 @ temp_1 @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].T @ temp_2 @ temp_4
+                    + xl_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_2 @ temp_4
                     - temp_3
                     @ x_diag_blocks[j]
                     @ bl.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ bl.local_blocks[i, j]
-                    @ x_diag_blocks[j].T
+                    @ x_diag_blocks[j].conj().swapaxes(-2, -1)
                     @ temp_4
                 )
                 # Streaming/Sparsifying back to DDSBSparse
@@ -817,32 +899,40 @@ class RGFDist(GFSolver):
                 xl_out.local_blocks[i, i] = xl_diag_blocks[i]
 
             if self.solve_greater:
-                temp_4 = a.local_blocks[i, j].T @ x_diag_blocks[i].T
+                temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    i
+                ].conj().swapaxes(-2, -1)
                 xg_upper_block = (
                     -temp_1 @ xg_diag_blocks[i]
                     - xg_diag_blocks[j] @ temp_4
-                    + x_diag_blocks[j] @ bg.local_blocks[j, i] @ x_diag_blocks[i].T
+                    + x_diag_blocks[j]
+                    @ bg.local_blocks[j, i]
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                temp_2 = a.local_blocks[j, i].T @ x_diag_blocks[j].T
+                temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ x_diag_blocks[
+                    j
+                ].conj().swapaxes(-2, -1)
                 xg_lower_block = (
                     -xg_diag_blocks[i] @ temp_2
                     - temp_3 @ xg_diag_blocks[j]
-                    + x_diag_blocks[i] @ bg.local_blocks[i, j] @ x_diag_blocks[j].T
+                    + x_diag_blocks[i]
+                    @ bg.local_blocks[i, j]
+                    @ x_diag_blocks[j].conj().swapaxes(-2, -1)
                 )
 
                 xg_diag_blocks[i] = (
                     xg_diag_blocks[i]
                     + temp_3 @ xg_diag_blocks[j] @ temp_4
                     + temp_3 @ temp_1 @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].T @ temp_2 @ temp_4
+                    + xg_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_2 @ temp_4
                     - temp_3
                     @ x_diag_blocks[j]
                     @ bg.local_blocks[j, i]
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ bg.local_blocks[i, j]
-                    @ x_diag_blocks[j].T
+                    @ x_diag_blocks[j].conj().swapaxes(-2, -1)
                     @ temp_4
                 )
                 # Streaming/Sparsifying back to DDSBSparse
@@ -910,13 +1000,17 @@ class RGFDist(GFSolver):
                     )
                     - xl_diag_blocks[i]
                     @ (
-                        a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
-                        + buffer_lower[i - 1].T @ buffer_upper[i].T
+                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                        + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                        @ buffer_upper[i].conj().swapaxes(-2, -1)
                     )
                     + x_diag_blocks[i]
                     @ (
-                        bl.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
-                        + xl_buffer_upper[i - 1] @ buffer_upper[i].T
+                        bl.local_blocks[i, i + 1]
+                        @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                        + xl_buffer_upper[i - 1]
+                        @ buffer_upper[i].conj().swapaxes(-2, -1)
                     )
                 )
                 xl_buffer_upper[i - 1] = (
@@ -927,41 +1021,49 @@ class RGFDist(GFSolver):
                     )
                     - xl_diag_blocks[i]
                     @ (
-                        a.local_blocks[i + 1, i].T @ buffer_lower[i].T
-                        + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        @ buffer_lower[i].conj().swapaxes(-2, -1)
+                        + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                        @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
                     + x_diag_blocks[i]
                     @ (
-                        bl.local_blocks[i, i + 1] @ buffer_lower[i].T
-                        + xl_buffer_upper[i - 1] @ x_diag_blocks[0].T
+                        bl.local_blocks[i, i + 1]
+                        @ buffer_lower[i].conj().swapaxes(-2, -1)
+                        + xl_buffer_upper[i - 1]
+                        @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
                 )
 
                 bl_lower_block = (
                     -(
-                        xl_diag_blocks[i + 1] @ a.local_blocks[i, i + 1].T
-                        + xl_buffer_upper[i] @ buffer_upper[i - 1].T
+                        xl_diag_blocks[i + 1]
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                        + xl_buffer_upper[i]
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - (C1) @ xl_diag_blocks[i]
                     + (
                         x_diag_blocks[i + 1] @ bl.local_blocks[i + 1, i]
                         + buffer_upper[i] @ xl_buffer_lower[i - 1]
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 xl_buffer_lower[i - 1] = (
                     -(
-                        xl_buffer_lower[i] @ a.local_blocks[i, i + 1].T
-                        + xl_diag_blocks[0] @ buffer_upper[i - 1].T
+                        xl_buffer_lower[i]
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                        + xl_diag_blocks[0]
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - (C2) @ xl_diag_blocks[i]
                     + (
                         buffer_lower[i] @ bl.local_blocks[i + 1, i]
                         + x_diag_blocks[0] @ xl_buffer_lower[i - 1]
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 xl_diag_blocks[i] = (
@@ -972,48 +1074,54 @@ class RGFDist(GFSolver):
                             a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
                             + buffer_upper[i - 1] @ xl_buffer_lower[i]
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
                             a.local_blocks[i, i + 1] @ xl_buffer_upper[i]
                             + buffer_upper[i - 1] @ xl_diag_blocks[0]
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     + x_diag_blocks[i]
                     @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].T
+                    + xl_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ (
                         (
-                            a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
-                            + buffer_lower[i - 1].T @ buffer_upper[i].T
+                            a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                            @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                            + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                            @ buffer_upper[i].conj().swapaxes(-2, -1)
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
-                            a.local_blocks[i + 1, i].T @ buffer_lower[i].T
-                            + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                            a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                            @ buffer_lower[i].conj().swapaxes(-2, -1)
+                            + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                            @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ ((B1) @ bl.local_blocks[i + 1, i] + (B2) @ temp_B_31)
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ (
                         (
-                            bl.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
-                            + temp_B_13 @ buffer_upper[i].T
+                            bl.local_blocks[i, i + 1]
+                            @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                            + temp_B_13 @ buffer_upper[i].conj().swapaxes(-2, -1)
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
-                            bl.local_blocks[i, i + 1] @ buffer_lower[i].T
-                            + temp_B_13 @ x_diag_blocks[0].T
+                            bl.local_blocks[i, i + 1]
+                            @ buffer_lower[i].conj().swapaxes(-2, -1)
+                            + temp_B_13 @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 # Streaming/Sparsifying back to DDSBSparse
                 xl_out.local_blocks[i + 1, i] = bl_lower_block
@@ -1032,13 +1140,17 @@ class RGFDist(GFSolver):
                     )
                     - xg_diag_blocks[i]
                     @ (
-                        a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
-                        + buffer_lower[i - 1].T @ buffer_upper[i].T
+                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                        + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                        @ buffer_upper[i].conj().swapaxes(-2, -1)
                     )
                     + x_diag_blocks[i]
                     @ (
-                        bg.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
-                        + xg_buffer_upper[i - 1] @ buffer_upper[i].T
+                        bg.local_blocks[i, i + 1]
+                        @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                        + xg_buffer_upper[i - 1]
+                        @ buffer_upper[i].conj().swapaxes(-2, -1)
                     )
                 )
                 xg_buffer_upper[i - 1] = (
@@ -1049,41 +1161,49 @@ class RGFDist(GFSolver):
                     )
                     - xg_diag_blocks[i]
                     @ (
-                        a.local_blocks[i + 1, i].T @ buffer_lower[i].T
-                        + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        @ buffer_lower[i].conj().swapaxes(-2, -1)
+                        + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                        @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
                     + x_diag_blocks[i]
                     @ (
-                        bg.local_blocks[i, i + 1] @ buffer_lower[i].T
-                        + xg_buffer_upper[i - 1] @ x_diag_blocks[0].T
+                        bg.local_blocks[i, i + 1]
+                        @ buffer_lower[i].conj().swapaxes(-2, -1)
+                        + xg_buffer_upper[i - 1]
+                        @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
                 )
 
                 bg_lower_block = (
                     -(
-                        xg_diag_blocks[i + 1] @ a.local_blocks[i, i + 1].T
-                        + xg_buffer_upper[i] @ buffer_upper[i - 1].T
+                        xg_diag_blocks[i + 1]
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                        + xg_buffer_upper[i]
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - (C1) @ xg_diag_blocks[i]
                     + (
                         x_diag_blocks[i + 1] @ bg.local_blocks[i + 1, i]
                         + buffer_upper[i] @ xg_buffer_lower[i - 1]
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 xg_buffer_lower[i - 1] = (
                     -(
-                        xg_buffer_lower[i] @ a.local_blocks[i, i + 1].T
-                        + xg_diag_blocks[0] @ buffer_upper[i - 1].T
+                        xg_buffer_lower[i]
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                        + xg_diag_blocks[0]
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - (C2) @ xg_diag_blocks[i]
                     + (
                         buffer_lower[i] @ bg.local_blocks[i + 1, i]
                         + x_diag_blocks[0] @ xg_buffer_lower[i - 1]
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 xg_diag_blocks[i] = (
@@ -1094,48 +1214,54 @@ class RGFDist(GFSolver):
                             a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
                             + buffer_upper[i - 1] @ xg_buffer_lower[i]
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
                             a.local_blocks[i, i + 1] @ xg_buffer_upper[i]
                             + buffer_upper[i - 1] @ xg_diag_blocks[0]
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     + x_diag_blocks[i]
                     @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].T
+                    + xg_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ (
                         (
-                            a.local_blocks[i + 1, i].T @ x_diag_blocks[i + 1].T
-                            + buffer_lower[i - 1].T @ buffer_upper[i].T
+                            a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                            @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                            + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                            @ buffer_upper[i].conj().swapaxes(-2, -1)
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
-                            a.local_blocks[i + 1, i].T @ buffer_lower[i].T
-                            + buffer_lower[i - 1].T @ x_diag_blocks[0].T
+                            a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                            @ buffer_lower[i].conj().swapaxes(-2, -1)
+                            + buffer_lower[i - 1].conj().swapaxes(-2, -1)
+                            @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ ((B1) @ bg.local_blocks[i + 1, i] + (B2) @ temp_B_31)
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     - x_diag_blocks[i]
                     @ (
                         (
-                            bg.local_blocks[i, i + 1] @ x_diag_blocks[i + 1].T
-                            + temp_B_13 @ buffer_upper[i].T
+                            bg.local_blocks[i, i + 1]
+                            @ x_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+                            + temp_B_13 @ buffer_upper[i].conj().swapaxes(-2, -1)
                         )
-                        @ a.local_blocks[i, i + 1].T
+                        @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                         + (
-                            bg.local_blocks[i, i + 1] @ buffer_lower[i].T
-                            + temp_B_13 @ x_diag_blocks[0].T
+                            bg.local_blocks[i, i + 1]
+                            @ buffer_lower[i].conj().swapaxes(-2, -1)
+                            + temp_B_13 @ x_diag_blocks[0].conj().swapaxes(-2, -1)
                         )
-                        @ buffer_upper[i - 1].T
+                        @ buffer_upper[i - 1].conj().swapaxes(-2, -1)
                     )
-                    @ x_diag_blocks[i].T
+                    @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
                 # Streaming/Sparsifying back to DDSBSparse
                 xg_out.local_blocks[i + 1, i] = bg_lower_block
@@ -1158,14 +1284,14 @@ class RGFDist(GFSolver):
             # Streaming/Sparsifying back to DDSBSparse
             out.local_blocks[i, i] = x_diag_blocks[i]
 
-        a.local_blocks[1, 0] = buffer_upper[0]
-        a.local_blocks[0, 1] = buffer_lower[0]
+        out.local_blocks[1, 0] = buffer_upper[0]
+        out.local_blocks[0, 1] = buffer_lower[0]
         if self.solve_lesser:
-            bl.local_blocks[1, 0] = xl_buffer_upper[0]
-            bl.local_blocks[0, 1] = xl_buffer_lower[0]
+            xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
+            xl_out.local_blocks[0, 1] = xl_buffer_lower[0]
         if self.solve_greater:
-            bg.local_blocks[1, 0] = xg_buffer_upper[0]
-            bg.local_blocks[0, 1] = xg_buffer_lower[0]
+            xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
+            xg_out.local_blocks[0, 1] = xg_buffer_lower[0]
 
     def selected_inv(
         self,

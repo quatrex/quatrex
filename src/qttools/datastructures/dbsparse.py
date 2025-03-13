@@ -156,8 +156,10 @@ class DBCOO(DBSparse):
         self.num_local_blocks = section_sizes[comm.rank]
         self.local_block_sizes = block_sizes[..., int(section_offsets[comm.rank]) :]
 
-        self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
-        self.local_block_offsets = xp.hstack(([0], xp.cumsum(self.local_block_sizes)))
+        self.block_offsets = xp.hstack(([0], xp.cumsum(xp.array(self.block_sizes))))
+        self.local_block_offsets = xp.hstack(
+            ([0], xp.cumsum(xp.array(self.local_block_sizes)))
+        )
 
         # Since the data is block-wise contiguous, we can cache block
         # *slices* for faster access.
@@ -352,7 +354,7 @@ class DBCOO(DBSparse):
         # TODO: Allow more options, e.g., block row-wise partitioning.
         section_sizes, __ = get_section_sizes(len(block_sizes), comm.size)
         section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
-        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        block_offsets = xp.hstack(([0], xp.cumsum(xp.array(block_sizes))))
         start_idx = block_offsets[section_offsets[comm.rank]]
         end_idx = block_offsets[section_offsets[comm.rank + 1]]
         indices = xp.logical_and(

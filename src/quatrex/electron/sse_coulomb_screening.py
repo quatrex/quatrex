@@ -32,7 +32,7 @@ def fft_convolve_fock_with_hilbert(
     if work_space is not None:
         (a_x_fft, b_lesser_fft, b_greater_fft, c_x_fft) = work_space
     m = a_lesser.shape[0]
-    n = a_lesser.shape[0] + a_greater.shape[0] - 1
+    n = xp.power(2,xp.int32(xp.log2(a_lesser.shape[0] + a_greater.shape[0] - 1) + 1))
 
     a_x_fft = xp.fft.fft(a_lesser, n, axis=0)
     b_lesser_fft = xp.fft.fft(b_lesser, n, axis=0)

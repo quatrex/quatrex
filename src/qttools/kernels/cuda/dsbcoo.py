@@ -20,6 +20,7 @@ def _find_inds_kernel(
     cols: NDArray,
     full_inds: NDArray,
     counts: NDArray,
+    num_rows: int,
 ):
     """Finds the corresponding indices of the given rows and columns.
 
@@ -43,12 +44,31 @@ def _find_inds_kernel(
 
 
     """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+    i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+    tid = int(jit.threadIdx.x)
+    cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+    cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+
     if i < self_rows.shape[0]:
-        for j in range(rows.shape[0]):
-            cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
-            full_inds[i] = full_inds[i] * (1 - cond) + j * cond
+        my_row = self_rows[i]
+        my_col = self_cols[i]
+    else:
+        my_row = -1
+        my_col = -1
+
+    for j in range(0, num_rows, THREADS_PER_BLOCK):
+        if j + tid < num_rows:
+            cache_rows[tid] = rows[j + tid]
+            cache_cols[tid] = cols[j + tid]
+        jit.syncthreads()
+
+        for idx in range(j, min(j + THREADS_PER_BLOCK, num_rows)):
+            cond = int(
+                (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
+            )
+            full_inds[i] = full_inds[i] * (1 - cond) + idx * cond
             counts[i] += cond
+        jit.syncthreads()
 
 
 @profiler.profile(level="api")
@@ -85,7 +105,7 @@ def find_inds(
     _find_inds_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (self_rows, self_cols, rows, cols, full_inds, counts),
+        (self_rows, self_cols, rows, cols, full_inds, counts, rows.shape[0]),
     )
 
     # Find the valid indices.

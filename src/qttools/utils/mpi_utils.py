@@ -151,3 +151,41 @@ def check_gpu_aware_mpi() -> bool:
         or "CRAY MPICH" in MPI.Get_library_version()
     )
     return comm.allreduce(gpu_aware, op=MPI.LAND)
+
+
+def split_comm(
+    global_comm: MPI.Comm, block_comm_size: int
+) -> tuple[MPI.Comm, MPI.Comm]:
+    """Splits a communicator into "block" and "stack" subcommunicators.
+
+    The "block" communicator contains the ranks that will collectively
+    contain all nnz elements of a distributed sparse matrix. The "stack"
+    communicator contains the ranks that will collectively contain all
+    stack elements of a distributed sparse matrix.
+
+    Parameters
+    ----------
+    global_comm : MPI.Comm
+        The communicator to split.
+    block_comm_size : int
+        The number of ranks in the "block" communicator.
+
+    Returns
+    -------
+    block_comm : MPI.Comm
+        The "block" communicator.
+    stack_comm : MPI.Comm
+        The "stack" communicator.
+
+    """
+    if global_comm.size % block_comm_size != 0:
+        raise ValueError(f"Number of ranks must be a multiple of {block_comm_size}")
+
+    # Compute the color and key for each rank.
+    color = global_comm.rank % (global_comm.size // block_comm_size)
+    key = global_comm.rank // (global_comm.size // block_comm_size)
+
+    # Split the communicator twice.
+    block_comm = global_comm.Split(color=color, key=key)
+    stack_comm = global_comm.Split(color=key, key=color)
+    return block_comm, stack_comm

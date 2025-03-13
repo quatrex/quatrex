@@ -6,11 +6,7 @@ from numba.typed import List
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import (
-    get_any_location,
-    get_any_location_pinned,
-    get_array_module_name,
-)
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 profiler = Profiler()
 
@@ -185,15 +181,12 @@ def eig(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     if isinstance(A, (List, list)):
-        if use_pinned_memory:
-            A = [get_any_location_pinned(a, compute_module) for a in A]
-        else:
-            A = [get_any_location(a, compute_module) for a in A]
+        A = [
+            get_any_location(a, compute_module, use_pinned_memory=use_pinned_memory)
+            for a in A
+        ]
     else:
-        if use_pinned_memory:
-            A = get_any_location_pinned(A, compute_module)
-        else:
-            A = get_any_location(A, compute_module)
+        A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if compute_module == "cupy":
         w, v = _eig_cupy(A)
@@ -201,20 +194,17 @@ def eig(
         w, v = _eig_numpy(A)
 
     if isinstance(w, (List, list)):
-        if use_pinned_memory:
-            w = [get_any_location_pinned(w, output_module) for w in w]
-            v = [get_any_location_pinned(v, output_module) for v in v]
-        else:
-            w = [get_any_location(w, output_module) for w in w]
-            v = [get_any_location(v, output_module) for v in v]
+        return (
+            [
+                get_any_location(wi, output_module, use_pinned_memory=use_pinned_memory)
+                for wi in w
+            ],
+            [
+                get_any_location(vi, output_module, use_pinned_memory=use_pinned_memory)
+                for vi in v
+            ],
+        )
     else:
-        if use_pinned_memory:
-            w, v = get_any_location_pinned(w, output_module), get_any_location_pinned(
-                v, output_module
-            )
-        else:
-            w, v = get_any_location(w, output_module), get_any_location(
-                v, output_module
-            )
-
-    return w, v
+        return get_any_location(
+            w, output_module, use_pinned_memory=use_pinned_memory
+        ), get_any_location(v, output_module, use_pinned_memory=use_pinned_memory)

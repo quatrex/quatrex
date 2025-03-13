@@ -5,11 +5,7 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import (
-    get_any_location,
-    get_any_location_pinned,
-    get_array_module_name,
-)
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 profiler = Profiler()
 
@@ -115,10 +111,7 @@ def svd(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    if use_pinned_memory:
-        A = get_any_location_pinned(A, compute_module)
-    else:
-        A = get_any_location(A, compute_module)
+    A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if compute_module == "cupy":
         u, s, vh = xp.linalg.svd(A, full_matrices=full_matrices)
@@ -139,17 +132,8 @@ def svd(
             vh = vh.reshape((*batch_shape, k, n))
         s = s.reshape((*batch_shape, k))
 
-    if use_pinned_memory:
-        u, s, vh = (
-            get_any_location_pinned(u, output_module),
-            get_any_location_pinned(s, output_module),
-            get_any_location_pinned(vh, output_module),
-        )
-    else:
-        u, s, vh = (
-            get_any_location(u, output_module),
-            get_any_location(s, output_module),
-            get_any_location(vh, output_module),
-        )
-
-    return u, s, vh
+    return (
+        get_any_location(u, output_module, use_pinned_memory=use_pinned_memory),
+        get_any_location(s, output_module, use_pinned_memory=use_pinned_memory),
+        get_any_location(vh, output_module, use_pinned_memory=use_pinned_memory),
+    )

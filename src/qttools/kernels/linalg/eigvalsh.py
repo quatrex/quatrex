@@ -2,11 +2,7 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import (
-    get_any_location,
-    get_any_location_pinned,
-    get_array_module_name,
-)
+from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
 profiler = Profiler()
 
@@ -94,10 +90,7 @@ def eigvalsh(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    if use_pinned_memory:
-        A = get_any_location_pinned(A, compute_module)
-    else:
-        A = get_any_location(A, compute_module)
+    A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if B is None:
         if compute_module == "numpy":
@@ -110,7 +103,4 @@ def eigvalsh(
         elif compute_module == "cupy":
             w = _eigvalsh(A, B, xp)
 
-    if use_pinned_memory:
-        return get_any_location_pinned(w, output_module)
-    else:
-        return get_any_location(w, output_module)
+    return get_any_location(w, output_module, use_pinned_memory=use_pinned_memory)

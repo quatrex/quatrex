@@ -91,48 +91,17 @@ def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
         return out
     if out is None:
         return xp.asarray(arr)
-    out.set(arr)
+    out[:] = xp.asarray(arr)
     return out
 
 
 @profiler.profile(level="debug")
 def get_any_location(
-    arr: NDArray, output_module: str, out: None | NDArray = None
-) -> NDArray:
-    """Returns the array in the desired location.
-
-    Parameters
-    ----------
-    arr : NDArray
-        The array to convert.
-    output_module : str
-        The desired location.
-        The location can be either "numpy" or "cupy".
-    out : NDArray, optional
-        The output array.
-
-    Returns
-    -------
-    NDArray
-        The equivalent array in the desired location.
-
-    """
-
-    if output_module == "numpy":
-        return get_host(arr, out)
-    elif output_module == "cupy":
-        return get_device(arr, out)
-    else:
-        raise ValueError(f"Invalid output location: {output_module}")
-
-
-@profiler.profile(level="debug")
-def get_any_location_pinned(
     arr: NDArray,
     output_module: str,
+    use_pinned_memory: bool = False,
 ):
     """Returns the array in the desired location.
-    If a cuda memcpy happens, the relevant arrays are pinned.
 
     Parameters
     ----------
@@ -141,6 +110,9 @@ def get_any_location_pinned(
     output_module : str
         The desired location.
         The location can be either "numpy" or "cupy".
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -152,22 +124,40 @@ def get_any_location_pinned(
     input_module = get_array_module_name(arr)
 
     arr_in = arr
-    if input_module == "numpy" and output_module == "cupy" and xp.__name__ == "cupy":
+    if (
+        use_pinned_memory
+        and input_module == "numpy"
+        and output_module == "cupy"
+        and xp.__name__ == "cupy"
+    ):
         # detect if host memory is not pinned
         if (
             xp.cuda.runtime.pointerGetAttributes(arr.ctypes.data).type
             != xp.cuda.runtime.memoryTypeHost
         ):
             arr_in = empty_like_pinned(arr)
+            # TODO: error in linalg test occured if not synchronized
+            # should be further investigated
+            synchronize_current_stream()
             arr_in[:] = arr
 
     arr_out = None
-    if input_module == "cupy" and output_module == "numpy" and xp.__name__ == "cupy":
+    if (
+        use_pinned_memory
+        and input_module == "cupy"
+        and output_module == "numpy"
+        and xp.__name__ == "cupy"
+    ):
         # Fix issue that for get/asnumpy, both arrays need to be contiguous
-        arr = xp.ascontiguousarray(arr)
-        arr_out = empty_like_pinned(arr)
+        arr_in = xp.ascontiguousarray(arr)
+        arr_out = empty_like_pinned(arr_in)
 
-    return get_any_location(arr_in, output_module, out=arr_out)
+    if output_module == "numpy":
+        return get_host(arr_in, arr_out)
+    elif output_module == "cupy":
+        return get_device(arr_in, arr_out)
+    else:
+        raise ValueError(f"Invalid output location: {output_module}")
 
 
 @profiler.profile(level="debug")

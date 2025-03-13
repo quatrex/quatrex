@@ -67,6 +67,12 @@ class BlockConfig(object):
         The size of each block in the sparse matrix.
     block_offsets : NDArray
         The block offsets of the block-sparse matrix.
+    inds_canonical2lock : NDArray, optional
+        A mapping from canonical to block-sorted indices. Default is
+        None.
+    rowptr_map : dict, optional
+        A mapping from block-coordinates to row-pointers. Default is
+        None.
     block_slice_cache : dict, optional
         A cache for the block slices. Default is None.
 
@@ -76,11 +82,15 @@ class BlockConfig(object):
         self,
         block_sizes: NDArray,
         block_offsets: NDArray,
-        block_slice_cache: dict = None,
+        inds_canonical2bcoo: NDArray | None = None,
+        rowptr_map: dict | None = None,
+        block_slice_cache: dict | None = None,
     ):
         """Initializes the block config."""
         self.block_sizes = block_sizes
         self.block_offsets = block_offsets
+        self.inds_canonical2block = inds_canonical2bcoo
+        self.rowptr_map = rowptr_map or {}
         self.block_slice_cache = block_slice_cache or {}
 
 

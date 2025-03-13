@@ -423,15 +423,43 @@ class DSBCSR(DSBSparse):
             The new block sizes.
 
         """
-        num_blocks = len(block_sizes)
-        if num_blocks in self._block_config:
-            # Block configuration already exists.
-            self.num_blocks = num_blocks
-            return
         if self.distribution_state == "nnz":
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
             )
+
+        num_blocks = len(block_sizes)
+        # Check if configuration already exists.
+        if num_blocks in self._block_config:
+            # Compute canonical ordering of the matrix.
+
+            if self._block_config[num_blocks].inds_canonical2block is None:
+                rows, cols = self.spy()
+                inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))
+                canonical_rows = rows[inds_bcsr2canonical]
+                canonical_cols = cols[inds_bcsr2canonical]
+                # Compute the index for sorting by the new block-sizes.
+                inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+                    canonical_rows, canonical_cols, block_sizes
+                )
+                self._block_config[num_blocks].inds_canonical2block = (
+                    inds_canonical2bcsr
+                )
+                self._block_config[num_blocks].rowptr_map = rowptr_map
+
+            self.rowptr_map = self._block_config[num_blocks].rowptr_map
+
+            # Mapping directly from original block-ordering to the new
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcsr2bcsr = inds_bcsr2canonical[
+                self._block_config[num_blocks].inds_canonical2block
+            ]
+            self.data[:] = self.data[..., inds_bcsr2bcsr]
+            self.cols = self.cols[inds_bcsr2bcsr]
+
+            self.num_blocks = num_blocks
+            return
+
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes do not match matrix shape.")
         rows, cols = self.spy()
@@ -454,7 +482,7 @@ class DSBCSR(DSBSparse):
         block_offsets = host_xp.hstack(
             ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
         )
-        self.num_blocks = len(block_sizes)
+        self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")

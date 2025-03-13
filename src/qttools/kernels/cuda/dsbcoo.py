@@ -23,6 +23,15 @@ else:
     warnings.warn(f"Invalid truth value {USE_FIND_INDS=}. Defaulting to 'true'.")
     USE_FIND_INDS = True
 
+USE_DENSIFY_BLOCKS = os.environ.get("USE_DENSIFY_BLOCK", "false").lower()
+if USE_DENSIFY_BLOCKS in ("y", "yes", "t", "true", "on", "1"):
+    USE_DENSIFY_BLOCKS = True
+elif USE_DENSIFY_BLOCKS in ("n", "no", "f", "false", "off", "0"):
+    USE_DENSIFY_BLOCKS = False
+else:
+    warnings.warn(f"Invalid truth value {USE_DENSIFY_BLOCKS=}. Defaulting to 'false'.")
+    USE_DENSIFY_BLOCKS = False
+
 if USE_CUPY_JIT:
 
     @jit.rawkernel()
@@ -453,7 +462,7 @@ def densify_block(
     # will just use the CuPy API directly. Since for very large blocks
     # (10'000x10'000) this starts to break even, this needs to be
     # revisited!
-    if not use_kernel:
+    if not USE_DENSIFY_BLOCKS:
         block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
             data[..., block_slice]
         )
@@ -487,7 +496,7 @@ def densify_block(
         )
 
 
-if IS_NVIDIA:
+if USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _densify_block_kernel(
@@ -575,8 +584,6 @@ else:
     """,
         "densify_block",
     )
-
-
 
 
 @profiler.profile(level="api")

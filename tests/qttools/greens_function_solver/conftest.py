@@ -2,7 +2,7 @@
 
 import pytest
 
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 

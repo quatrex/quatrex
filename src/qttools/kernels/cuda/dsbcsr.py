@@ -310,7 +310,9 @@ def compute_rowptr_map(
     """
     num_blocks = block_sizes.shape[0]
     # block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
-    block_offsets = host_xp.hstack((host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+    block_offsets = host_xp.hstack(
+        (host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+    )
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     rowptr_map = {}

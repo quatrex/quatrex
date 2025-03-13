@@ -21,9 +21,9 @@ if ARRAY_MODULE is not None:
     elif ARRAY_MODULE == "cupy":
         # Attempt to import cupy, defaulting to numpy if it fails.
         try:
-            import numpy as host_xp
             import cupy as xp
             import cupyx as pinned_xp
+            import numpy as host_xp
             from cupyx.scipy import sparse
 
             # Check if cupy is actually working. This could still raise
@@ -45,9 +45,9 @@ else:
     # If the user does not specify the array module, prioritize cupy but
     # default to numpy if cupy is not available or not working.
     try:
-        import numpy as host_xp
         import cupy as xp
         import cupyx as pinned_xp
+        import numpy as host_xp
         from cupyx.scipy import sparse
 
         # Check if cupy is actually working. This could still raise
@@ -68,4 +68,12 @@ _DType = xp.dtype[_ScalarType]
 NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
 
-__all__ = ["__version__", "xp", "host_xp", "pinned_xp", "sparse", "NDArray", "ArrayLike"]
+__all__ = [
+    "__version__",
+    "xp",
+    "host_xp",
+    "pinned_xp",
+    "sparse",
+    "NDArray",
+    "ArrayLike",
+]

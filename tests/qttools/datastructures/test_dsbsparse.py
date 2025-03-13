@@ -5,7 +5,7 @@ from contextlib import nullcontext
 import pytest
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -88,7 +88,9 @@ def _unsign_index(row: int, col: int, num_blocks) -> tuple:
 def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     """Returns the equivalent dense indices for a block."""
     # block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+    block_offsets = host_xp.hstack(
+        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+    )
     num_blocks = len(block_sizes)
 
     # Normalize negative indices.

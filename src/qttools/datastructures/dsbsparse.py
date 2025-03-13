@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import ArrayLike, NDArray, sparse, xp, host_xp, pinned_xp
+from qttools import ArrayLike, NDArray, host_xp, sparse, xp
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, get_nccl_communicator, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
@@ -59,7 +59,12 @@ def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray
 
 
 class BlockConfig(object):
-    def __init__(self, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
+    def __init__(
+        self,
+        block_sizes: NDArray,
+        block_offsets: NDArray,
+        block_slice_cache: dict = None,
+    ):
         self.block_sizes = block_sizes
         self.block_offsets = block_offsets
         self.block_slice_cache = block_slice_cache or {}
@@ -191,9 +196,11 @@ class DSBSparse(ABC):
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
         block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(
+            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+        )
         self.num_blocks = len(block_sizes)
-        self._block_config : dict[int, BlockConfig] = {}
+        self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
         self.return_dense = return_dense
@@ -201,9 +208,17 @@ class DSBSparse(ABC):
         self._block_indexer = _DSBlockIndexer(self)
         self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
         self._stack_indexer = _DStackIndexer(self)
-    
-    def _add_block_config(self, num_blocks: int, block_sizes: NDArray, block_offsets: NDArray, block_slice_cache: dict = None):
-        self._block_config[num_blocks] = BlockConfig(block_sizes, block_offsets, block_slice_cache)
+
+    def _add_block_config(
+        self,
+        num_blocks: int,
+        block_sizes: NDArray,
+        block_offsets: NDArray,
+        block_slice_cache: dict = None,
+    ):
+        self._block_config[num_blocks] = BlockConfig(
+            block_sizes, block_offsets, block_slice_cache
+        )
 
     @property
     def block_sizes(self) -> ArrayLike:
@@ -215,7 +230,7 @@ class DSBSparse(ABC):
     def block_sizes(self, block_sizes: ArrayLike) -> None:
         """Sets the block sizes."""
         ...
-    
+
     @property
     def block_offsets(self) -> ArrayLike:
         """Returns the block sizes."""
@@ -363,7 +378,12 @@ class DSBSparse(ABC):
     @abstractmethod
     def _set_block(
         # self, stack_index: tuple, row: int, col: int, block: NDArray
-        self, arg: tuple | NDArray, row: int, col: int, block: NDArray, is_index: bool = True
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        block: NDArray,
+        is_index: bool = True,
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -388,7 +408,9 @@ class DSBSparse(ABC):
 
     @abstractmethod
     # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
-    def _get_block(self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True) -> NDArray | tuple:
+    def _get_block(
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+    ) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -418,7 +440,11 @@ class DSBSparse(ABC):
     @abstractmethod
     def _get_sparse_block(
         # self, stack_index: tuple, row: int, col: int
-        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        is_index: bool = True,
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -797,7 +823,9 @@ class _DStackView:
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)
         self._stack_index = stack_index
-        self._block_indexer = _DSBlockIndexer(self._dsbsparse, self._stack_index, cache_stack=True)
+        self._block_indexer = _DSBlockIndexer(
+            self._dsbsparse, self._stack_index, cache_stack=True
+        )
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:
         """Replaces ellipsis with the correct number of slices.
@@ -899,8 +927,10 @@ class _DSBlockIndexer:
         """Adjusts the sign to allow negative indices and checks bounds."""
         row = self._dsbsparse.num_blocks + row if row < 0 else row
         col = self._dsbsparse.num_blocks + col if col < 0 else col
-        if not (0 <= row < self._dsbsparse.num_blocks and
-                0 <= col < self._dsbsparse.num_blocks):
+        if not (
+            0 <= row < self._dsbsparse.num_blocks
+            and 0 <= col < self._dsbsparse.num_blocks
+        ):
             raise IndexError("Block index out of bounds.")
 
         return row, col

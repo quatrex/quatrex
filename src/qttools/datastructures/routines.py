@@ -71,7 +71,7 @@ def bd_matmul(
     else:
         out_block = True
         out = {}
-    
+
     a_ = a.stack[...]
     b_ = b.stack[...]
 
@@ -161,7 +161,7 @@ def bd_sandwich(
     else:
         out_block = True
         out = {}
-    
+
     a_ = a.stack[...]
     b_ = b.stack[...]
 
@@ -209,7 +209,9 @@ def bd_sandwich(
                     (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
                 )
             else:
-                partsum = (out_.blocks[i, j]).astype(accumulator_dtype)  # cast data type
+                partsum = (out_.blocks[i, j]).astype(
+                    accumulator_dtype
+                )  # cast data type
 
             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks)

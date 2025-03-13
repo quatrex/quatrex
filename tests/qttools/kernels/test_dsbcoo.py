@@ -2,7 +2,7 @@
 
 import pytest
 
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.kernels import dsbcoo_kernels
 
 
@@ -27,7 +27,9 @@ def _reference_compute_block_sort_index(
 
     """
     num_blocks = len(block_sizes)
-    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32)
+    block_offsets = host_xp.hstack(
+        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+    )
 
     sort_index = xp.zeros(len(coo_cols), dtype=int)
     offset = 0

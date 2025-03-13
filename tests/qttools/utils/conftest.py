@@ -2,10 +2,8 @@
 
 import pytest
 
-
 from qttools import NDArray, host_xp
 from qttools.datastructures import DBCOO, DSBCOO, DSBCSR, DBSparse, DSBSparse
-
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
 DBSPARSE_TYPES = [DBCOO]

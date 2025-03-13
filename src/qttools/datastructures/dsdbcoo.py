@@ -598,7 +598,7 @@ class DSDBCOO(DSDBSparse):
 
         # Compute the block-sorting index.
         block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-            coo.row, coo.col, block_sizes
+            coo.row, coo.col, xp.asarray(block_sizes)
         )
 
         data = coo.data[block_sort_index]
@@ -611,7 +611,7 @@ class DSDBCOO(DSDBSparse):
         section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
         section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
-        block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+        block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
         start_idx = block_offsets[section_offsets[block_comm.rank]]
         end_idx = block_offsets[section_offsets[block_comm.rank + 1]]
         local_mask = ((rows >= start_idx) & (cols >= start_idx)) & (
@@ -619,7 +619,7 @@ class DSDBCOO(DSDBSparse):
         )
 
         local_data = xp.zeros(
-            local_stack_shape + (local_mask.size,), dtype=coo.data.dtype
+            local_stack_shape + (int(local_mask.sum()),), dtype=coo.data.dtype
         )
         local_data[..., :] = data[local_mask]
         local_rows = rows[local_mask] - start_idx
@@ -630,6 +630,7 @@ class DSDBCOO(DSDBSparse):
             local_rows=local_rows,
             local_cols=local_cols,
             block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
             block_comm=block_comm,
             stack_comm=stack_comm,
         )

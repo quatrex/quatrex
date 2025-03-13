@@ -8,7 +8,7 @@ import numpy as np
 from mpi4py import MPI
 
 from qttools import ArrayLike, NDArray, sparse, xp
-from qttools.datastructures.utils import _block_view
+from qttools.datastructures.dsbsparse import _block_view
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, get_nccl_communicator, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
@@ -488,7 +488,9 @@ class DSDBSparse(ABC):
         #     old_shape[-1] * comm.size,
         # )
 
-        self._data = _block_view(self._data, axis=block_axis)
+        self._data = _block_view(
+            self._data, axis=block_axis, num_blocks=self.stack_comm.size
+        )
         if discard:
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0

@@ -13,7 +13,7 @@ from qttools.datastructures import (
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
-    offsets = xp.hstack(([0], xp.cumsum(sizes)))
+    offsets = xp.hstack(([0], xp.cumsum(xp.asarray(sizes))))
 
     arr = xp.zeros((size, size), dtype=xp.complex128)
     for i in range(len(sizes)):

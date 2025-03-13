@@ -2,7 +2,7 @@
 
 import pytest
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
@@ -11,8 +11,8 @@ GFSOLVERS_TYPE = [Inv, RGF]
 DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
 
 BLOCK_SIZES = [
-    pytest.param(xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(host_xp.array([2] * 10), id="constant-block-size"),
+    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
 
@@ -64,7 +64,7 @@ def _random_block(m: int, n: int) -> NDArray:
 @pytest.fixture(scope="function", autouse=False)
 def bt_dense(block_sizes: NDArray) -> NDArray:
     """Generates a random block-tridiagonal matrix."""
-    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+    block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
     num_blocks = len(block_sizes)
     size = int(xp.sum(block_sizes))
 

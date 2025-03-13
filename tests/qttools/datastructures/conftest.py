@@ -2,14 +2,14 @@
 
 import pytest
 
-from qttools import NDArray, xp
+from qttools import NDArray, host_xp
 from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(host_xp.array([2] * 10), id="constant-block-size"),
+    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
 DENSIFY_BLOCKS = [

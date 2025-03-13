@@ -2,7 +2,7 @@
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -92,7 +92,7 @@ class DSBCSR(DSBSparse):
 
         """
         inds, value_inds = dsbcsr_kernels.find_inds(
-            self.rowptr_map, self.block_offsets, self.cols, rows, cols
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
 
         data_stack = self.data[stack_index]
@@ -137,7 +137,7 @@ class DSBCSR(DSBSparse):
 
         """
         inds, value_inds = dsbcsr_kernels.find_inds(
-            self.rowptr_map, self.block_offsets, self.cols, rows, cols
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
 
         if len(inds) == 0:
@@ -179,7 +179,9 @@ class DSBCSR(DSBSparse):
         return
 
     @profiler.profile(level="debug")
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+    ) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -188,12 +190,16 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the block in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -204,7 +210,10 @@ class DSBCSR(DSBSparse):
             arrays `(rowptr, cols, data)`.
 
         """
-        data_stack = self.data[*stack_index]
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         rowptr = self.rowptr_map.get((row, col), None)
 
         if not self.return_dense:
@@ -239,7 +248,11 @@ class DSBCSR(DSBSparse):
         return block
 
     def _get_sparse_block(
-        self, stack_index: tuple, row: int, col: int
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        is_index: bool = True,
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -249,12 +262,16 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -263,7 +280,10 @@ class DSBCSR(DSBSparse):
             representation of the block.
 
         """
-        data_stack = self.data[*stack_index]
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         rowptr = self.rowptr_map.get((row, col), None)
 
         if rowptr is None:
@@ -280,7 +300,12 @@ class DSBCSR(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: NDArray
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        block: NDArray,
+        is_index: bool = True,
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -288,8 +313,10 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the block in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
@@ -297,8 +324,14 @@ class DSBCSR(DSBSparse):
         block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         """
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         rowptr = self.rowptr_map.get((row, col), None)
         if rowptr is None:
             # No data in this block, nothing to do.
@@ -309,7 +342,7 @@ class DSBCSR(DSBSparse):
             block_offset=self.block_offsets[col],
             self_cols=self.cols,
             rowptr=rowptr,
-            data=self.data[*stack_index],
+            data=data_stack,
         )
 
     @profiler.profile(level="debug")
@@ -321,7 +354,7 @@ class DSBCSR(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
@@ -351,7 +384,7 @@ class DSBCSR(DSBSparse):
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
         stack_indices = xp.ndindex(self.data.shape[:-1])
         product_rows, product_cols = product_sparsity_pattern(
@@ -394,6 +427,39 @@ class DSBCSR(DSBSparse):
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
             )
+
+        num_blocks = len(block_sizes)
+        # Check if configuration already exists.
+        if num_blocks in self._block_config:
+            # Compute canonical ordering of the matrix.
+
+            if self._block_config[num_blocks].inds_canonical2block is None:
+                rows, cols = self.spy()
+                inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))
+                canonical_rows = rows[inds_bcsr2canonical]
+                canonical_cols = cols[inds_bcsr2canonical]
+                # Compute the index for sorting by the new block-sizes.
+                inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+                    canonical_rows, canonical_cols, block_sizes
+                )
+                self._block_config[num_blocks].inds_canonical2block = (
+                    inds_canonical2bcsr
+                )
+                self._block_config[num_blocks].rowptr_map = rowptr_map
+
+            self.rowptr_map = self._block_config[num_blocks].rowptr_map
+
+            # Mapping directly from original block-ordering to the new
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcsr2bcsr = inds_bcsr2canonical[
+                self._block_config[num_blocks].inds_canonical2block
+            ]
+            self.data[:] = self.data[..., inds_bcsr2bcsr]
+            self.cols = self.cols[inds_bcsr2bcsr]
+
+            self.num_blocks = num_blocks
+            return
+
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes do not match matrix shape.")
         rows, cols = self.spy()
@@ -412,9 +478,12 @@ class DSBCSR(DSBSparse):
         self.data[:] = self.data[..., inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
-        self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self._block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-        self.num_blocks = len(block_sizes)
+        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(
+            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+        )
+        self.num_blocks = num_blocks
+        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCSR":

@@ -1,8 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import functools
+
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -53,12 +55,11 @@ class DSBCOO(DSBSparse):
         """Initializes the DBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
-        self.rows = rows.astype(int)
-        self.cols = cols.astype(int)
+        self.rows = rows.astype(xp.int32)
+        self.cols = cols.astype(xp.int32)
 
-        # Since the data is block-wise contiguous, we can cache block
-        # *slices* for faster access.
-        self._block_slice_cache = {}
+        # Whether to use a fused custom kernel for densifying blocks.
+        self._use_kernel = False
 
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
@@ -221,7 +222,9 @@ class DSBCOO(DSBSparse):
             The slice of the data corresponding to the block.
 
         """
-        block_slice = self._block_slice_cache.get((row, col), None)
+        block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
+            (row, col), None
+        )
 
         if block_slice is None:
             # Cache miss, compute the slice.
@@ -231,11 +234,13 @@ class DSBCOO(DSBSparse):
                 )
             )
 
-        self._block_slice_cache[(row, col)] = block_slice
+        self._block_config[self.num_blocks].block_slice_cache[(row, col)] = block_slice
         return block_slice
 
     @profiler.profile(level="debug")
-    def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
+    def _get_block(
+        self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
+    ) -> NDArray | tuple:
         """Gets a block from the data structure.
 
         This is supposed to be a low-level method that does not perform
@@ -244,12 +249,16 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -260,7 +269,11 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
-        data_stack = self.data[*stack_index]
+
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
@@ -272,26 +285,62 @@ class DSBCOO(DSBSparse):
             cols = self.cols[block_slice] - self.block_offsets[col]
             return rows, cols, data_stack[..., block_slice]
 
-        block = xp.zeros(
+        if not self._use_kernel:
+
+            block = xp.zeros(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+                dtype=self.dtype,
+            )
+            if block_slice.start is None and block_slice.stop is None:
+                # No data in this block, return an empty block.
+                return block
+
+            dsbcoo_kernels.densify_block(
+                block,
+                self.rows[block_slice] - self.block_offsets[row],
+                self.cols[block_slice] - self.block_offsets[col],
+                data_stack[..., block_slice],
+            )
+
+            return block
+
+        block = xp.empty(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
+
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
+            block[:] = 0
             return block
 
-        dsbcoo_kernels.densify_block(
-            block,
-            self.rows[block_slice] - self.block_offsets[row],
-            self.cols[block_slice] - self.block_offsets[col],
-            data_stack[..., block_slice],
+        num_threads = 128
+        num_blocks = functools.reduce(lambda x, y: x * y, data_stack.shape[:-1], 1)
+        batch_stride = data_stack.shape[-1]
+        dsbcoo_kernels._densify_block_kernel[num_blocks, num_threads](
+            block.reshape(-1),
+            self.rows,
+            self.cols,
+            data_stack.reshape(-1),
+            batch_stride,
+            self.block_sizes[row],
+            self.block_sizes[col],
+            block_slice.start or 0,
+            block_slice.stop,
+            self.block_offsets[row],
+            self.block_offsets[col],
         )
 
         return block
 
     def _get_sparse_block(
-        self, stack_index: tuple, row: int, col: int
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        is_index: bool = True,
     ) -> sparse.spmatrix | tuple:
         """Gets a block from the data structure in a sparse representation.
 
@@ -301,12 +350,16 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -315,7 +368,10 @@ class DSBCOO(DSBSparse):
             representation of the block.
 
         """
-        data_stack = self.data[*stack_index]
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
@@ -328,7 +384,12 @@ class DSBCOO(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        self, stack_index: tuple, row: int, col: int, block: NDArray
+        self,
+        arg: tuple | NDArray,
+        row: int,
+        col: int,
+        block: NDArray,
+        is_index: bool = True,
     ) -> None:
         """Sets a block throughout the stack in the data structure.
 
@@ -336,8 +397,10 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
@@ -345,8 +408,14 @@ class DSBCOO(DSBSparse):
         block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         """
+        if is_index:
+            data_stack = self.data[*arg]
+        else:
+            data_stack = arg
         block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
@@ -356,7 +425,7 @@ class DSBCOO(DSBSparse):
             block,
             self.rows[block_slice] - self.block_offsets[row],
             self.cols[block_slice] - self.block_offsets[col],
-            self.data[*stack_index][..., block_slice],
+            data_stack[..., block_slice],
         )
 
     @profiler.profile(level="debug")
@@ -368,7 +437,7 @@ class DSBCOO(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if xp.any(self.rows != other.rows):
@@ -398,7 +467,7 @@ class DSBCOO(DSBSparse):
             raise TypeError("Can only multiply DSBSparse matrices.")
         if self.shape[-1] != other.shape[-2]:
             raise ValueError("Matrix shapes do not match.")
-        if xp.any(self.block_sizes != other.block_sizes):
+        if host_xp.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
         product_rows, product_cols = product_sparsity_pattern(
             sparse.csr_matrix(
@@ -444,6 +513,36 @@ class DSBCOO(DSBSparse):
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
             )
+
+        num_blocks = len(block_sizes)
+        # Check if configuration already exists.
+        if num_blocks in self._block_config:
+            # Compute canonical ordering of the matrix.
+            inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
+
+            if self._block_config[num_blocks].inds_canonical2block is None:
+                canonical_rows = self.rows[inds_bcoo2canonical]
+                canonical_cols = self.cols[inds_bcoo2canonical]
+                # Compute the index for sorting by the new block-sizes.
+                inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
+                    canonical_rows, canonical_cols, block_sizes
+                )
+                self._block_config[num_blocks].inds_canonical2block = (
+                    inds_canonical2bcoo
+                )
+
+            # Mapping directly from original block-ordering to the new
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcoo2bcoo = inds_bcoo2canonical[
+                self._block_config[num_blocks].inds_canonical2block
+            ]
+            self.data[:] = self.data[..., inds_bcoo2bcoo]
+            self.rows = self.rows[inds_bcoo2bcoo]
+            self.cols = self.cols[inds_bcoo2bcoo]
+
+            self.num_blocks = num_blocks
+            return
+
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
         # Compute canonical ordering of the matrix.
@@ -461,10 +560,12 @@ class DSBCOO(DSBSparse):
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
-        self._block_sizes = xp.asarray(block_sizes, dtype=int)
-        self.block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
-        self.num_blocks = len(block_sizes)
-        self._block_slice_cache = {}
+        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
+        block_offsets = host_xp.hstack(
+            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
+        )
+        self.num_blocks = num_blocks
+        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSBCOO":
@@ -529,9 +630,12 @@ class DSBCOO(DSBSparse):
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows
 
-        self._block_slice_cache, self._block_slice_cache_t = (
+        (
+            self._block_config[self.num_blocks].block_slice_cache,
             self._block_slice_cache_t,
-            self._block_slice_cache,
+        ) = (
+            self._block_slice_cache_t,
+            self._block_config[self.num_blocks].block_slice_cache,
         )
 
         return self if copy else None

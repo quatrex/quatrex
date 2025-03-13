@@ -15,10 +15,15 @@ if ARRAY_MODULE is not None:
         import numpy as xp
         from scipy import sparse
 
+        host_xp = xp
+        pinned_xp = None
+
     elif ARRAY_MODULE == "cupy":
         # Attempt to import cupy, defaulting to numpy if it fails.
         try:
             import cupy as xp
+            import cupyx as pinned_xp
+            import numpy as host_xp
             from cupyx.scipy import sparse
 
             # Check if cupy is actually working. This could still raise
@@ -30,6 +35,9 @@ if ARRAY_MODULE is not None:
             import numpy as xp
             from scipy import sparse
 
+            host_xp = xp
+            pinned_xp = None
+
     else:
         raise ValueError(f"Unrecognized ARRAY_MODULE '{ARRAY_MODULE}'")
 
@@ -38,6 +46,8 @@ else:
     # default to numpy if cupy is not available or not working.
     try:
         import cupy as xp
+        import cupyx as pinned_xp
+        import numpy as host_xp
         from cupyx.scipy import sparse
 
         # Check if cupy is actually working. This could still raise
@@ -49,10 +59,21 @@ else:
         import numpy as xp
         from scipy import sparse
 
+        host_xp = xp
+        pinned_xp = None
+
 # Some type aliases for the array module.
 _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
 _DType = xp.dtype[_ScalarType]
 NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
 
-__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]
+__all__ = [
+    "__version__",
+    "xp",
+    "host_xp",
+    "pinned_xp",
+    "sparse",
+    "NDArray",
+    "ArrayLike",
+]

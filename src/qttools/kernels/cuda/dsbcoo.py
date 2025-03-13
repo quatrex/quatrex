@@ -51,7 +51,7 @@ if IS_NVIDIA:
 
 
         """
-        i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
         if i < num_self_rows:
             for j in range(num_rows):
                 cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))

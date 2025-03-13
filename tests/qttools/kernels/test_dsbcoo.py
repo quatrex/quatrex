@@ -186,4 +186,4 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
 if __name__ == "__main__":
     # pytest.main([__file__])
     for i in range(10):
-        test_find_inds((1000, 1000), 1000)
+        test_find_inds((2000, 2000), 2000)

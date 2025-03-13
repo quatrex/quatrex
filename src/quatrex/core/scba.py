@@ -9,6 +9,7 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
@@ -52,7 +53,9 @@ class SCBAData:
         electron_energies = distributed_load(
             quatrex_config.input_dir / "electron_energies.npy"
         )
-        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        block_sizes = get_host(
+            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        )
 
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0

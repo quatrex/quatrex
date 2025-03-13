@@ -11,9 +11,50 @@ from qttools.profiling import Profiler
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
+use_new = False
+
 
 @jit.rawkernel()
 def _find_inds_kernel(
+    self_rows: NDArray,
+    self_cols: NDArray,
+    rows: NDArray,
+    cols: NDArray,
+    full_inds: NDArray,
+    counts: NDArray,
+):
+    """Finds the corresponding indices of the given rows and columns.
+
+    This also counts the number of matches found, which is used to check
+    if the indices contain duplicates.
+
+    Parameters
+    ----------
+    self_rows : NDArray
+        The rows of this matrix.
+    self_cols : NDArray
+        The columns of this matrix.
+    rows : NDArray
+        The rows to find the indices for.
+    cols : NDArray
+        The columns to find the indices for.
+    full_inds : NDArray
+        The indices of the given rows and columns.
+    counts : NDArray
+        The number of matches found.
+
+
+    """
+    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+    if i < self_rows.shape[0]:
+        for j in range(rows.shape[0]):
+            cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
+            full_inds[i] = full_inds[i] * (1 - cond) + j * cond
+            counts[i] += cond
+
+
+@jit.rawkernel()
+def _find_inds_kernel_new(
     self_rows: NDArray,
     self_cols: NDArray,
     rows: NDArray,
@@ -56,6 +97,9 @@ def _find_inds_kernel(
         my_row = -1
         my_col = -1
 
+    my_full_ind = 0
+    my_count = 0
+
     for j in range(0, num_rows, THREADS_PER_BLOCK):
         if j + tid < num_rows:
             cache_rows[tid] = rows[j + tid]
@@ -66,9 +110,13 @@ def _find_inds_kernel(
             cond = int(
                 (my_row == cache_rows[idx - j]) & (my_col == cache_cols[idx - j])
             )
-            full_inds[i] = full_inds[i] * (1 - cond) + idx * cond
-            counts[i] += cond
+            my_full_ind = my_full_ind * (1 - cond) + idx * cond
+            my_count += cond
         jit.syncthreads()
+
+    if i < self_rows.shape[0]:
+        full_inds[i] = my_full_ind
+        counts[i] = my_count
 
 
 @profiler.profile(level="api")
@@ -102,11 +150,18 @@ def find_inds(
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    _find_inds_kernel(
-        (blocks_per_grid,),
-        (THREADS_PER_BLOCK,),
-        (self_rows, self_cols, rows, cols, full_inds, counts, rows.shape[0]),
-    )
+    if use_new:
+        _find_inds_kernel_new(
+            (blocks_per_grid,),
+            (THREADS_PER_BLOCK,),
+            (self_rows, self_cols, rows, cols, full_inds, counts, rows.shape[0]),
+        )
+    else:
+        _find_inds_kernel(
+            (blocks_per_grid,),
+            (THREADS_PER_BLOCK,),
+            (self_rows, self_cols, rows, cols, full_inds, counts),
+        )
 
     # Find the valid indices.
     inds = cp.nonzero(counts)[0]

@@ -309,7 +309,6 @@ def compute_rowptr_map(
 
     """
     num_blocks = block_sizes.shape[0]
-    # block_offsets = cp.hstack((cp.array([0]), cp.cumsum(block_sizes)))
     block_offsets = host_xp.hstack(
         (host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32
     )
@@ -334,19 +333,6 @@ def compute_rowptr_map(
                 mask,
             ),
         )
-        # _compute_coo_block_mask_kernel(
-        #     (blocks_per_grid,),
-        #     (THREADS_PER_BLOCK,),
-        #     (
-        #         coo_rows,
-        #         coo_cols,
-        #         block_offsets[i],
-        #         block_offsets[i + 1],
-        #         block_offsets[j],
-        #         block_offsets[j + 1],
-        #         mask,
-        #     ),
-        # )
 
         bnnz = cp.sum(mask)
 

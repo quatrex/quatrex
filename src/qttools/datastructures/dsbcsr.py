@@ -179,7 +179,6 @@ class DSBCSR(DSBSparse):
         return
 
     @profiler.profile(level="debug")
-    # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
     def _get_block(
         self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> NDArray | tuple:
@@ -191,12 +190,16 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the block in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -207,7 +210,6 @@ class DSBCSR(DSBSparse):
             arrays `(rowptr, cols, data)`.
 
         """
-        # data_stack = self.data[*stack_index]
         if is_index:
             data_stack = self.data[*arg]
         else:
@@ -246,7 +248,6 @@ class DSBCSR(DSBSparse):
         return block
 
     def _get_sparse_block(
-        # self, stack_index: tuple, row: int, col: int
         self,
         arg: tuple | NDArray,
         row: int,
@@ -261,12 +262,16 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -275,7 +280,6 @@ class DSBCSR(DSBSparse):
             representation of the block.
 
         """
-        # data_stack = self.data[*stack_index]
         if is_index:
             data_stack = self.data[*arg]
         else:
@@ -296,7 +300,6 @@ class DSBCSR(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        # self, stack_index: tuple, row: int, col: int, block: NDArray
         self,
         arg: tuple | NDArray,
         row: int,
@@ -310,8 +313,10 @@ class DSBCSR(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the block in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
@@ -319,6 +324,8 @@ class DSBCSR(DSBSparse):
         block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         """
         if is_index:
@@ -335,7 +342,6 @@ class DSBCSR(DSBSparse):
             block_offset=self.block_offsets[col],
             self_cols=self.cols,
             rowptr=rowptr,
-            # data=self.data[*stack_index],
             data=data_stack,
         )
 

@@ -67,6 +67,7 @@ def bd_matmul(
     if out is not None:
         out.data = 0
         out_block = False
+        # NOTE: Using the stack attribute to force caching of the data view.
         out_ = out.stack[...]
     else:
         out_block = True
@@ -157,6 +158,7 @@ def bd_sandwich(
     if out is not None:
         out.data = 0
         out_block = False
+        # NOTE: Using the stack attribute to force caching of the data view.
         out_ = out.stack[...]
     else:
         out_block = True
@@ -270,6 +272,7 @@ def btd_matmul(
     # Make sure the output matrix is initialized to zero.
     out.data = 0
 
+    # NOTE: Using the stack attribute to force caching of the data view.
     out_ = out.stack[...]
     a_ = a.stack[...]
     b_ = b.stack[...]
@@ -324,6 +327,7 @@ def btd_sandwich(
     # Make sure the output matrix is initialized to zero.
     out.data = 0
 
+    # NOTE: Using the stack attribute to force caching of the data view.
     out_ = out.stack[...]
     a_ = a.stack[...]
     b_ = b.stack[...]

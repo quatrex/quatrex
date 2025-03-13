@@ -58,11 +58,8 @@ class DSBCOO(DSBSparse):
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
 
+        # Whether to use a fused custom kernel for densifying blocks.
         self._use_kernel = False
-
-        # Since the data is block-wise contiguous, we can cache block
-        # *slices* for faster access.
-        # self._block_slice_cache = {}
 
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
@@ -225,7 +222,6 @@ class DSBCOO(DSBSparse):
             The slice of the data corresponding to the block.
 
         """
-        # block_slice = self._block_slice_cache.get((row, col), None)
         block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
             (row, col), None
         )
@@ -238,12 +234,10 @@ class DSBCOO(DSBSparse):
                 )
             )
 
-        # self._block_slice_cache[(row, col)] = block_slice
         self._block_config[self.num_blocks].block_slice_cache[(row, col)] = block_slice
         return block_slice
 
     @profiler.profile(level="debug")
-    # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
     def _get_block(
         self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> NDArray | tuple:
@@ -255,12 +249,16 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -272,7 +270,6 @@ class DSBCOO(DSBSparse):
 
         """
 
-        # data_stack = self.data[*stack_index]
         if is_index:
             data_stack = self.data[*arg]
         else:
@@ -306,40 +303,39 @@ class DSBCOO(DSBSparse):
                 data_stack[..., block_slice],
             )
 
-        else:
+            return block
 
-            block = xp.empty(
-                data_stack.shape[:-1]
-                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-                dtype=self.dtype,
-            )
+        block = xp.empty(
+            data_stack.shape[:-1]
+            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+            dtype=self.dtype,
+        )
 
-            if block_slice.start is None and block_slice.stop is None:
-                # No data in this block, return an empty block.
-                block[:] = 0
-                return block
+        if block_slice.start is None and block_slice.stop is None:
+            # No data in this block, return an empty block.
+            block[:] = 0
+            return block
 
-            num_threads = 128
-            num_blocks = functools.reduce(lambda x, y: x * y, data_stack.shape[:-1], 1)
-            batch_stride = data_stack.shape[-1]
-            dsbcoo_kernels._densify_block_kernel[num_blocks, num_threads](
-                block.reshape(-1),
-                self.rows,
-                self.cols,
-                data_stack.reshape(-1),
-                batch_stride,
-                self.block_sizes[row],
-                self.block_sizes[col],
-                block_slice.start or 0,
-                block_slice.stop,
-                self.block_offsets[row],
-                self.block_offsets[col],
-            )
+        num_threads = 128
+        num_blocks = functools.reduce(lambda x, y: x * y, data_stack.shape[:-1], 1)
+        batch_stride = data_stack.shape[-1]
+        dsbcoo_kernels._densify_block_kernel[num_blocks, num_threads](
+            block.reshape(-1),
+            self.rows,
+            self.cols,
+            data_stack.reshape(-1),
+            batch_stride,
+            self.block_sizes[row],
+            self.block_sizes[col],
+            block_slice.start or 0,
+            block_slice.stop,
+            self.block_offsets[row],
+            self.block_offsets[col],
+        )
 
         return block
 
     def _get_sparse_block(
-        # self, stack_index: tuple, row: int, col: int
         self,
         arg: tuple | NDArray,
         row: int,
@@ -354,12 +350,16 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index in the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
             Column index of the block.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         Returns
         -------
@@ -368,7 +368,6 @@ class DSBCOO(DSBSparse):
             representation of the block.
 
         """
-        # data_stack = self.data[*stack_index]
         if is_index:
             data_stack = self.data[*arg]
         else:
@@ -385,7 +384,6 @@ class DSBCOO(DSBSparse):
 
     @profiler.profile(level="debug")
     def _set_block(
-        # self, stack_index: tuple, row: int, col: int, block: NDArray
         self,
         arg: tuple | NDArray,
         row: int,
@@ -399,8 +397,10 @@ class DSBCOO(DSBSparse):
 
         Parameters
         ----------
-        stack_index : tuple
-            The index of the stack.
+        arg : tuple | NDArray
+            The index of the stack or a view of the data stack. The
+            is_index flag indicates whether the argument is an index or
+            a view.
         row : int
             Row index of the block.
         col : int
@@ -408,6 +408,8 @@ class DSBCOO(DSBSparse):
         block : NDArray
             The block to set. This must be an array of shape
             `(*local_stack_shape, block_sizes[row], block_sizes[col])`.
+        is_index : bool, optional
+            Whether the argument is an index or a view. Default is True.
 
         """
         if is_index:
@@ -423,7 +425,6 @@ class DSBCOO(DSBSparse):
             block,
             self.rows[block_slice] - self.block_offsets[row],
             self.cols[block_slice] - self.block_offsets[col],
-            # self.data[*stack_index][..., block_slice],
             data_stack[..., block_slice],
         )
 

@@ -59,12 +59,26 @@ def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray
 
 
 class BlockConfig(object):
+    """Configuration of block-sizes and block-slices for a DSBSparse matrix.
+
+    Parameters
+    ----------
+    block_sizes : NDArray
+        The size of each block in the sparse matrix.
+    block_offsets : NDArray
+        The block offsets of the block-sparse matrix.
+    block_slice_cache : dict, optional
+        A cache for the block slices. Default is None.
+
+    """
+
     def __init__(
         self,
         block_sizes: NDArray,
         block_offsets: NDArray,
         block_slice_cache: dict = None,
     ):
+        """Initializes the block config."""
         self.block_sizes = block_sizes
         self.block_offsets = block_offsets
         self.block_slice_cache = block_slice_cache or {}
@@ -216,6 +230,23 @@ class DSBSparse(ABC):
         block_offsets: NDArray,
         block_slice_cache: dict = None,
     ):
+        """Adds a block configuration to the block config cache.
+
+        The assumption is that the number of blocks uniquely identifies
+        the block configuration.
+
+        Parameters
+        ----------
+        num_blocks : int
+            The number of blocks in the block configuration.
+        block_sizes : NDArray
+            The size of each block in the block configuration.
+        block_offsets : NDArray
+            The block offsets of the block configuration.
+        block_slice_cache : dict, optional
+            A cache for the block slices. Default is None.
+
+        """
         self._block_config[num_blocks] = BlockConfig(
             block_sizes, block_offsets, block_slice_cache
         )
@@ -281,7 +312,7 @@ class DSBSparse(ABC):
 
     @property
     def sparse_blocks(self) -> "_DSBlockIndexer":
-        """Returns a block indexer."""
+        """Returns a sparse block indexer."""
         return self._sparse_block_indexer
 
     @property
@@ -377,7 +408,6 @@ class DSBSparse(ABC):
 
     @abstractmethod
     def _set_block(
-        # self, stack_index: tuple, row: int, col: int, block: NDArray
         self,
         arg: tuple | NDArray,
         row: int,
@@ -407,7 +437,6 @@ class DSBSparse(ABC):
         ...
 
     @abstractmethod
-    # def _get_block(self, stack_index: tuple, row: int, col: int) -> NDArray | tuple:
     def _get_block(
         self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> NDArray | tuple:
@@ -439,7 +468,6 @@ class DSBSparse(ABC):
 
     @abstractmethod
     def _get_sparse_block(
-        # self, stack_index: tuple, row: int, col: int
         self,
         arg: tuple | NDArray,
         row: int,
@@ -900,6 +928,9 @@ class _DSBlockIndexer:
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
+    cache_stack : bool, optional
+        Whether to cache the stack index. This is useful for persisting
+        stack views.
 
     """
 
@@ -914,7 +945,6 @@ class _DSBlockIndexer:
         self._dsbsparse = dsbsparse
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
-        # self._stack_index = stack_index
         if cache_stack:
             self._arg = self._dsbsparse.data[stack_index]
             self._is_index = False
@@ -955,13 +985,10 @@ class _DSBlockIndexer:
         """Gets the requested block from the data structure."""
         row, col = self._normalize_index(index)
         if self._return_dense:
-            # return self._dsbsparse._get_block(self._stack_index, row, col)
             return self._dsbsparse._get_block(self._arg, row, col, self._is_index)
-        # return self._dsbsparse._get_sparse_block(self._stack_index, row, col)
         return self._dsbsparse._get_sparse_block(self._arg, row, col, self._is_index)
 
     def __setitem__(self, index: tuple, block: NDArray) -> None:
         """Sets the requested block in the data structure."""
         row, col = self._normalize_index(index)
-        # self._dsbsparse._set_block(self._stack_index, row, col, block)
         self._dsbsparse._set_block(self._arg, row, col, block, self._is_index)

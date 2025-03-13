@@ -7,6 +7,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -305,7 +306,9 @@ class SigmaFock(ScatteringSelfEnergy):
         ).tocoo()
 
         # Load block sizes for the coulomb matrix.
-        block_sizes = distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        block_sizes = get_host(
+            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        )
 
         # Create the DSBSparse object.
         # TODO: This is pretty wasteful memory-wise.

@@ -3,10 +3,11 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, xp, host_xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -53,7 +54,7 @@ class ElectronSolver(SubsystemSolver):
         The quatrex simulation configuration.
     compute_config : ComputeConfig
         The compute configuration.
-    energies : np.ndarray
+    energies : host_xp.ndarray
         The energies at which to solve.
 
     """
@@ -74,10 +75,10 @@ class ElectronSolver(SubsystemSolver):
         self.hamiltonian_sparray = distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"
         ).astype(xp.complex128)
-        self.block_sizes = distributed_load(
-            quatrex_config.input_dir / "block_sizes.npy"
+        self.block_sizes = get_host(
+            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
         )
-        self.block_offsets = xp.hstack(([0], xp.cumsum(self.block_sizes)))
+        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
         if self.block_sizes.sum() != self.hamiltonian_sparray.shape[0]:
             raise ValueError(
@@ -368,7 +369,7 @@ class ElectronSolver(SubsystemSolver):
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
         section_sizes, __ = get_section_sizes(self.energies.size, comm.size)
-        section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
+        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
         local_mask = mask[section_offsets[comm.rank] : section_offsets[comm.rank + 1]]
 
         g_lesser.data[local_mask] = 0.0

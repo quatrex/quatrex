@@ -3,11 +3,12 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, xp, host_xp
 from qttools.datastructures import DSBSparse
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -122,9 +123,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         ).tocoo()
 
         # Load block sizes.
-        self.small_block_sizes = distributed_load(
-            quatrex_config.input_dir / "block_sizes.npy"
-        ).astype(xp.int32)
+        self.small_block_sizes = get_host(
+            distributed_load(quatrex_config.input_dir / "block_sizes.npy").astype(
+                xp.int32
+            )
+        )
         if not _check_block_sizes(
             coulomb_matrix_sparray.row,
             coulomb_matrix_sparray.col,
@@ -350,7 +353,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
         section_sizes, __ = get_section_sizes(self.energies.size, comm.size)
-        section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
+        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
         local_mask = mask[section_offsets[comm.rank] : section_offsets[comm.rank + 1]]
 
         w_lesser.data[local_mask] = 0.0

@@ -326,34 +326,34 @@ class ReducedSystem:
         xg_out: DBSparse = None,
     ):
         self._mapback_reduced_system(
-            x_diag_blocks,
-            buffer_upper,
-            buffer_lower,
-            out,
-            self.diag_blocks,
-            self.upper_blocks,
-            self.lower_blocks,
+            x_diag_blocks=x_diag_blocks,
+            buffer_upper=buffer_upper,
+            buffer_lower=buffer_lower,
+            out=out,
+            diag_block_reduced_system=self.diag_blocks,
+            upper_block_reduced_system=self.upper_blocks,
+            lower_block_reduced_system=self.lower_blocks,
         )
 
         if self.solve_lesser:
             self._mapback_reduced_system(
-                xl_diag_blocks,
-                xl_buffer_upper,
-                xl_buffer_lower,
-                xl_out,
-                self.diag_blocks_lesser,
-                self.upper_blocks_lesser,
-                self.lower_blocks_lesser,
+                x_diag_blocks=xl_diag_blocks,
+                buffer_upper=xl_buffer_upper,
+                buffer_lower=xl_buffer_lower,
+                out=xl_out,
+                diag_block_reduced_system=self.diag_blocks_lesser,
+                upper_block_reduced_system=self.upper_blocks_lesser,
+                lower_block_reduced_system=self.lower_blocks_lesser,
             )
         if self.solve_greater:
             self._mapback_reduced_system(
-                xg_diag_blocks,
-                xg_buffer_upper,
-                xg_buffer_lower,
-                xg_out,
-                self.diag_blocks_greater,
-                self.upper_blocks_greater,
-                self.lower_blocks_greater,
+                x_diag_blocks=xg_diag_blocks,
+                buffer_upper=xg_buffer_upper,
+                buffer_lower=xg_buffer_lower,
+                out=xg_out,
+                diag_block_reduced_system=self.diag_blocks_greater,
+                upper_block_reduced_system=self.upper_blocks_greater,
+                lower_block_reduced_system=self.lower_blocks_greater,
             )
 
     def _mapback_reduced_system(
@@ -443,6 +443,9 @@ class RGFDist(GFSolver):
             temp_1 = a.local_blocks[j, i] @ x_diag_blocks[i]
             if self.solve_lesser or self.solve_greater:
                 temp_2 = x_diag_blocks[i].T @ a.local_blocks[j, i].T
+
+            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
+
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     bl.local_blocks[j, j]
@@ -457,7 +460,6 @@ class RGFDist(GFSolver):
                     - bl.local_blocks[j, i] @ temp_2
                     - temp_1 @ bl.local_blocks[i, j]
                 )
-            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
         if invert_last_block:
             x_diag_blocks[-1] = xp.linalg.inv(x_diag_blocks[-1])
@@ -501,6 +503,9 @@ class RGFDist(GFSolver):
             temp_1 = a.local_blocks[j, i] @ x_diag_blocks[i]
             if self.solve_lesser or self.solve_greater:
                 temp_2 = x_diag_blocks[i].T @ a.local_blocks[j, i].T
+
+            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
+
             if self.solve_lesser:
                 xl_diag_blocks[j] = (
                     bl.local_blocks[j, j]
@@ -515,7 +520,6 @@ class RGFDist(GFSolver):
                     - bg.local_blocks[j, i] @ temp_2
                     - temp_1 @ bg.local_blocks[i, j]
                 )
-            x_diag_blocks[j] = a.local_blocks[j, j] - temp_1 @ a.local_blocks[i, j]
 
         if invert_last_block:
             x_diag_blocks[0] = xp.linalg.inv(x_diag_blocks[0])
@@ -1243,17 +1247,17 @@ class RGFDist(GFSolver):
         buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
         buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
         if reduced_system.solve_lesser:
-            xl_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-            bl_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
-            bl_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xl_diag_blocks: list[NDArray | None] = [None] * bl.num_local_blocks
+            bl_buffer_lower: list[NDArray | None] = [None] * bl.num_local_blocks
+            bl_buffer_upper: list[NDArray | None] = [None] * bl.num_local_blocks
         else:
             xl_diag_blocks = None
             bl_buffer_lower = None
             bl_buffer_upper = None
         if reduced_system.solve_greater:
-            xg_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-            bg_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
-            bg_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xg_diag_blocks: list[NDArray | None] = [None] * bg.num_local_blocks
+            bg_buffer_lower: list[NDArray | None] = [None] * bg.num_local_blocks
+            bg_buffer_upper: list[NDArray | None] = [None] * bg.num_local_blocks
         else:
             xg_diag_blocks = None
             bg_buffer_lower = None

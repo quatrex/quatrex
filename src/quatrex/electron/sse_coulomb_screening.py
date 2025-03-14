@@ -24,13 +24,7 @@ def fft_convolve_fock_with_hilbert(
     b_greater: NDArray,
     energies: NDArray,
     eta=1e-8,
-    work_space=None,
-    out=None,
 ):
-    if out is not None:
-        c_lesser, c_greater, c_retarded = out
-    if work_space is not None:
-        (a_x_fft, b_lesser_fft, b_greater_fft, c_x_fft) = work_space
     m = a_lesser.shape[0]
     n = xp.power(2, xp.int32(xp.log2(a_lesser.shape[0] + a_greater.shape[0] - 1) + 1))
 
@@ -62,9 +56,8 @@ def fft_convolve_fock_with_hilbert(
         c_retarded / (2 * xp.pi) * (energies[1] - energies[0]) * 1j
         + c_antihermitian / 2
     )
-
-    if out is None:
-        return c_lesser, c_greater, c_retarded
+    
+    return c_lesser, c_greater, c_retarded
 
 
 @profiler.profile(level="api")
@@ -266,18 +259,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
-                out = (
+                (
                     sigma_lesser._data[:, batch],
                     sigma_greater._data[:, batch],
                     sigma_retarded._data[:batch],
-                )
-                fft_convolve_fock_with_hilbert(
+                ) = fft_convolve_fock_with_hilbert(
                     g_lesser._data[:, batch],
                     g_greater._data[:, batch],
                     w_lesser._data[:, batch],
                     w_greater._data[:, batch],
-                    self.energies,
-                    out=out,
+                    self.energies,                    
                 )
 
                 # Compute the full self-energy using the convolution theorem.

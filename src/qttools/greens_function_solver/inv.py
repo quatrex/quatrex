@@ -1,12 +1,18 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.solvers_utils import get_batches
 
 profiler = Profiler()
+
+
+if xp.__name__ == "cupy":
+    from cupy.cublas import set_batched_gesv_limit
+
+    set_batched_gesv_limit(1024)
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["__init__"])
@@ -27,9 +33,16 @@ class Inv(GFSolver):
 
     """
 
-    def __init__(self, max_batch_size: int = 100) -> None:
+    def _invert(self, a: NDArray) -> NDArray:
+        return xp.linalg.inv(a)
+
+    def _solve(self, a: NDArray) -> NDArray:
+        return xp.linalg.solve(a, xp.broadcast_to(xp.eye(a.shape[-1]), a.shape))
+
+    def __init__(self, max_batch_size: int = 100, solve: bool = False) -> None:
         """Initializes the selected inversion solver."""
         self.max_batch_size = max_batch_size
+        self.solve = solve
 
     def selected_inv(
         self,
@@ -90,7 +103,10 @@ class Inv(GFSolver):
                 b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
                 a_dense[:, b_, b_] -= block[stack_slice]
 
-            inv_a[: batches_sizes[i]] = xp.linalg.inv(a_dense)
+            if self.solve:
+                inv_a[: batches_sizes[i]] = self._solve(a_dense)
+            else:
+                inv_a[: batches_sizes[i]] = self._invert(a_dense)
 
             out.data[stack_slice] = inv_a[: batches_sizes[i], ..., rows, cols]
 
@@ -204,7 +220,10 @@ class Inv(GFSolver):
                 if block_g is not None:
                     sigma_greater_dense[:, b_, b_] -= block_g[stack_slice]
 
-            x_r[: batches_sizes[i]] = xp.linalg.inv(a_dense)
+            if self.solve:
+                x_r[: batches_sizes[i]] = self._solve(a_dense)
+            else:
+                x_r[: batches_sizes[i]] = self._invert(a_dense)
             x_l[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
                 @ sigma_lesser_dense

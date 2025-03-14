@@ -14,6 +14,7 @@ def test_selected_solve(
     max_batch_size: int,
     block_sizes: NDArray,
     global_stack_shape: int | tuple,
+    solve: bool,
 ):
     """Tests the selected solve method of a Green's function solver."""
     coo_A = sparse.coo_matrix(bt_dense)
@@ -40,7 +41,7 @@ def test_selected_solve(
     Bl = dsbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
     Bg = dsbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
 
-    solver = gfsolver_type(max_batch_size=max_batch_size)
+    solver = gfsolver_type(max_batch_size=max_batch_size, solve=solve)
 
     if out:
         Xr = dsbsparse_type.zeros_like(A)

@@ -8,6 +8,11 @@ from qttools.utils.solvers_utils import get_batches
 
 profiler = Profiler()
 
+if xp.__name__ == "cupy":
+    from cupy.cublas import set_batched_gesv_limit
+
+    set_batched_gesv_limit(1024)
+
 
 @decorate_methods(profiler.profile(level="api"), exclude=["__init__"])
 class RGF(GFSolver):
@@ -21,9 +26,16 @@ class RGF(GFSolver):
 
     """
 
-    def __init__(self, max_batch_size: int = 100) -> None:
+    def _invert(self, a: NDArray) -> NDArray:
+        return xp.linalg.inv(a)
+
+    def _solve(self, a: NDArray) -> NDArray:
+        return xp.linalg.solve(a, xp.broadcast_to(xp.eye(a.shape[-1]), a.shape))
+
+    def __init__(self, max_batch_size: int = 100, solve: bool = False) -> None:
         """Initializes the selected inversion solver."""
         self.max_batch_size = max_batch_size
+        self.solve = solve
 
     def selected_inv(
         self,
@@ -76,7 +88,10 @@ class RGF(GFSolver):
                 a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc[stack_slice]
             )
 
-            x_diag_blocks[0] = xp.linalg.inv(a_00)
+            if self.solve:
+                x_diag_blocks[0] = self._solve(a_00)
+            else:
+                x_diag_blocks[0] = self._invert(a_00)
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -90,9 +105,14 @@ class RGF(GFSolver):
                     else a_.blocks[j, j] - obc[stack_slice]
                 )
 
-                x_diag_blocks[j] = xp.linalg.inv(
-                    a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
-                )
+                if self.solve:
+                    x_diag_blocks[j] = self._solve(
+                        a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
+                    )
+                else:
+                    x_diag_blocks[j] = self._invert(
+                        a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
+                    )
 
             # We need to write the last diagonal block to the output.
             x_.blocks[j, j] = x_diag_blocks[j]
@@ -227,7 +247,10 @@ class RGF(GFSolver):
                 else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             )
 
-            xr_00 = xp.linalg.inv(a_00)
+            if self.solve:
+                xr_00 = self._solve(a_00)
+            else:
+                xr_00 = self._invert(a_00)
             xr_00_dagger = xr_00.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_00
             xl_diag_blocks[0] = xr_00 @ sl_00 @ xr_00_dagger
@@ -269,7 +292,10 @@ class RGF(GFSolver):
                 a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
                 a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
 
-                xr_jj = xp.linalg.inv(a_jj - a_ji @ xr_ii @ a_.blocks[i, j])
+                if self.solve:
+                    xr_jj = self._solve(a_jj - a_ji @ xr_ii @ a_.blocks[i, j])
+                else:
+                    xr_jj = self._invert(a_jj - a_ji @ xr_ii @ a_.blocks[i, j])
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 

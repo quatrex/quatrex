@@ -82,6 +82,11 @@ FULL_MATRICES = [
     pytest.param(False, id="False"),
 ]
 
+USE_PINNED_MEMORY = [
+    pytest.param(True, id="True"),
+    pytest.param(False, id="False"),
+]
+
 
 @pytest.fixture(params=NUM_INDS)
 def num_inds(request: pytest.FixtureRequest):
@@ -155,4 +160,9 @@ def output_module(request: pytest.FixtureRequest):
 
 @pytest.fixture(params=INPUT_MODULE)
 def input_module(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=USE_PINNED_MEMORY)
+def use_pinned_memory(request: pytest.FixtureRequest):
     return request.param

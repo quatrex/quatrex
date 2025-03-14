@@ -27,15 +27,20 @@ class Full(NEVP):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     """
 
     def __init__(
         self,
         eig_compute_location: str = "numpy",
+        use_pinned_memory: bool = True,
     ):
         """Initializes the Full NEVP solver."""
         self.eig_compute_location = eig_compute_location
+        self.use_pinned_memory = use_pinned_memory
 
     @profiler.profile(level="debug")
     def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
@@ -58,6 +63,7 @@ class Full(NEVP):
             The right eigenvectors.
 
         """
+
         inverse = xp.linalg.inv(sum(a_xx))
 
         # NOTE: CuPy does not expose a `block` function.
@@ -70,7 +76,11 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        w, v = linalg.eig(A, compute_module=self.eig_compute_location)
+        w, v = linalg.eig(
+            A,
+            compute_module=self.eig_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

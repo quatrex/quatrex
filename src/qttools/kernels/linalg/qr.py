@@ -55,6 +55,7 @@ def qr(
     A: NDArray,
     compute_module: str = "numpy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray]:
     """Computes the QR decomposition of a batch of matrices.
 
@@ -72,6 +73,9 @@ def qr(
         The location where to store the QR decomposition.
         Can be either "numpy"
         or "cupy". If None, the output location is the same as the input location
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -93,7 +97,7 @@ def qr(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    A = get_any_location(A, compute_module)
+    A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if compute_module == "cupy":
         q, r = xp.linalg.qr(A)
@@ -109,6 +113,6 @@ def qr(
         q = q.reshape((*batch_shape, m, k))
         r = r.reshape((*batch_shape, k, n))
 
-    q, r = get_any_location(q, output_module), get_any_location(r, output_module)
-
-    return q, r
+    return get_any_location(
+        q, output_module, use_pinned_memory=use_pinned_memory
+    ), get_any_location(r, output_module, use_pinned_memory=use_pinned_memory)

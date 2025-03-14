@@ -124,6 +124,7 @@ def eig(
     A: NDArray | list[NDArray],
     compute_module: str = "numpy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray] | tuple[list[NDArray], list[NDArray]]:
     """Computes the eigenvalues and eigenvectors of matrices on a given location.
 
@@ -147,6 +148,9 @@ def eig(
         The location where to store the eigenvalues and eigenvectors.
         Can be either "numpy"
         or "cupy". If None, the output location is the same as the input location
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -177,9 +181,12 @@ def eig(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     if isinstance(A, (List, list)):
-        A = [get_any_location(a, compute_module) for a in A]
+        A = [
+            get_any_location(a, compute_module, use_pinned_memory=use_pinned_memory)
+            for a in A
+        ]
     else:
-        A = get_any_location(A, compute_module)
+        A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if compute_module == "cupy":
         w, v = _eig_cupy(A)
@@ -187,9 +194,17 @@ def eig(
         w, v = _eig_numpy(A)
 
     if isinstance(w, (List, list)):
-        w = [get_any_location(w, output_module) for w in w]
-        v = [get_any_location(v, output_module) for v in v]
+        return (
+            [
+                get_any_location(wi, output_module, use_pinned_memory=use_pinned_memory)
+                for wi in w
+            ],
+            [
+                get_any_location(vi, output_module, use_pinned_memory=use_pinned_memory)
+                for vi in v
+            ],
+        )
     else:
-        w, v = get_any_location(w, output_module), get_any_location(v, output_module)
-
-    return w, v
+        return get_any_location(
+            w, output_module, use_pinned_memory=use_pinned_memory
+        ), get_any_location(v, output_module, use_pinned_memory=use_pinned_memory)

@@ -25,6 +25,9 @@ class Spectral(LyapunovSolver):
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     """
 
@@ -34,12 +37,14 @@ class Spectral(LyapunovSolver):
         warning_threshold: float = 1e-1,
         eig_compute_location: str = "numpy",
         reduce_sparsity: bool = True,
+        use_pinned_memory: bool = True,
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
         self.warning_threshold = warning_threshold
         self.eig_compute_location = eig_compute_location
         self.reduce_sparsity = reduce_sparsity
+        self.use_pinned_memory = use_pinned_memory
 
     @profiler.profile(level="debug")
     def _solve(
@@ -67,7 +72,11 @@ class Spectral(LyapunovSolver):
 
         """
 
-        ws, vs = linalg.eig(a, compute_module=self.eig_compute_location)
+        ws, vs = linalg.eig(
+            a,
+            compute_module=self.eig_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
         inv_vs = xp.linalg.inv(vs)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)

@@ -48,6 +48,7 @@ def eigvalsh(
     B: NDArray | None = None,
     compute_module: str = "cupy",
     output_module: str | None = None,
+    use_pinned_memory: bool = True,
 ) -> NDArray:
     """Compute eigenvalues of a hermitain generalized eigenvalue problem.
 
@@ -65,6 +66,9 @@ def eigvalsh(
         The location where to compute the eigenvalues.
     output_module : str, optional
         The location where to store the resulting eigenvalues.
+    use_pinned_memory : bool, optional
+        Whether to use pinnend memory if cupy is used.
+        Default is `True`.
 
     Returns
     -------
@@ -86,7 +90,7 @@ def eigvalsh(
         raise ValueError("Cannot do gpu computation with numpy as xp.")
 
     # memcopy to correct location
-    A = get_any_location(A, compute_module)
+    A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if B is None:
         if compute_module == "numpy":
@@ -94,9 +98,12 @@ def eigvalsh(
         elif compute_module == "cupy":
             w = xp.linalg.eigvalsh(A)
     else:
+
+        B = get_any_location(B, compute_module, use_pinned_memory=use_pinned_memory)
+
         if compute_module == "numpy":
             w = _eigvalsh(A, B, np)
         elif compute_module == "cupy":
             w = _eigvalsh(A, B, xp)
 
-    return get_any_location(w, output_module)
+    return get_any_location(w, output_module, use_pinned_memory=use_pinned_memory)

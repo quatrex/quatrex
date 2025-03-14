@@ -428,7 +428,6 @@ def compute_block_slice(
 
 
 @profiler.profile(level="api")
-# def densify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
 def densify_block(
     block: NDArray,
     rows: NDArray,
@@ -455,6 +454,12 @@ def densify_block(
         The data to fill the block with.
     block : NDArray
         Preallocated dense block. Should be filled with zeros.
+    block_slice : slice
+        The slice of the block to fill.
+    row_offset : int
+        The row offset of the block.
+    col_offset : int
+        The column offset of the block
 
     """
     # TODO: The bare API implementation on the GPU is faster than the

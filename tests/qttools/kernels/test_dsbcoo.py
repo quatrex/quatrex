@@ -147,7 +147,9 @@ def test_densify_block(shape: tuple[int, int]):
     reference_block = coo.toarray()
 
     block = xp.zeros_like(reference_block)
-    dsbcoo_kernels.densify_block(block, coo.row, coo.col, coo.data)
+    dsbcoo_kernels.densify_block(
+        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0
+    )
 
     assert xp.allclose(block, reference_block)
 

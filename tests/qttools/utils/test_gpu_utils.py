@@ -26,8 +26,8 @@ def test_get_any_location(
     use_pinned_memory: bool,
 ):
     """Test the empty_pinned function."""
-
-    if xp.__name__ == "numpy" and input_module != "numpy" and output_module != "numpy":
+    print(xp.__name__)
+    if xp.__name__ == "numpy" and (input_module == "cupy" or output_module == "cupy"):
         return
 
     if xp.__name__ == "numpy":

@@ -277,6 +277,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     w_lesser._data[:, batch],
                     w_greater._data[:, batch],
                     self.energies,
+                    out=out,
                 )
 
                 # Compute the full self-energy using the convolution theorem.

@@ -90,8 +90,10 @@ def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
         out[:] = arr
         return out
     if out is None:
-        return xp.asarray(arr)
-    out[:] = xp.asarray(arr)
+        out = xp.empty_like(arr)
+        out.set(arr)
+        return out
+    out.set(arr)
     return out
 
 
@@ -136,9 +138,6 @@ def get_any_location(
             != xp.cuda.runtime.memoryTypeHost
         ):
             arr_in = empty_like_pinned(arr)
-            # TODO: error in linalg test occured if not synchronized
-            # should be further investigated
-            synchronize_current_stream()
             arr_in[:] = arr
 
     arr_out = None
@@ -155,7 +154,13 @@ def get_any_location(
     if output_module == "numpy":
         return get_host(arr_in, arr_out)
     elif output_module == "cupy":
-        return get_device(arr_in, arr_out)
+        arr_out = get_device(arr_in, arr_out)
+        # IF pinnend memory is used,
+        # then the h2d copy is asynchronous and we need to synchronize
+        # else it seems there is an issue with the pinned memory pool
+        # TODO: further investigation and reporting to cupy
+        synchronize_current_stream()
+        return arr_out
     else:
         raise ValueError(f"Invalid output location: {output_module}")
 

@@ -78,6 +78,23 @@ _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
 _DType = xp.dtype[_ScalarType]
 NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
+# Check if NCCL is available.
+NCCL_AVAILABLE = False
+if xp.__name__ == "cupy":
+
+    from cupy.cuda import nccl
+
+    if nccl.available:
+        NCCL_AVAILABLE = True
+
+        from cupyx import distributed
+        from mpi4py.MPI import COMM_WORLD as mpi_comm
+
+        # TODO: This will probably not work with communicators other than
+        # MPI.COMM_WORLD. We need to fix this if we want to use other
+        # communicators.
+        nccl_comm = distributed.NCCLBackend(mpi_comm.size, mpi_comm.rank, use_mpi=True)
+
 
 __all__ = [
     "__version__",
@@ -88,4 +105,6 @@ __all__ = [
     "NDArray",
     "ArrayLike",
     "USE_CUPY_JIT",
+    "NCCL_AVAILABLE",
+    "nccl_comm",
 ]

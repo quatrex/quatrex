@@ -157,8 +157,6 @@ def get_any_location(
         arr_out = get_device(arr_in, arr_out)
         # IF pinnend memory is used,
         # then the h2d copy is asynchronous and we need to synchronize
-        # else it seems there is an issue with the pinned memory pool
-        # TODO: further investigation and reporting to cupy
         synchronize_current_stream()
         return arr_out
     else:

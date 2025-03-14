@@ -80,6 +80,7 @@ NDArray: TypeAlias = xp.ndarray[Any, _DType]
 
 # Check if NCCL is available.
 NCCL_AVAILABLE = False
+nccl_comm = None
 if xp.__name__ == "cupy":
 
     from cupy.cuda import nccl

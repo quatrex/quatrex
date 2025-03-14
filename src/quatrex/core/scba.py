@@ -454,60 +454,77 @@ class SCBA:
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
-        self.observables.electron_ldos = -density(
-            self.data.g_retarded,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.electron_density = density(
-            self.data.g_lesser,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.hole_density = -density(
-            self.data.g_greater,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.electron_ldos:
+            self.observables.electron_ldos = -density(
+                self.data.g_retarded,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.electron_density:
+            self.observables.electron_density = density(
+                self.data.g_lesser,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.hole_density:
+            self.observables.hole_density = -density(
+                self.data.g_greater,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
 
-        self.observables.electron_current = dict(
-            zip(
-                ("left", "right"),
-                contact_currents(
-                    self.data.g_lesser,
-                    self.data.g_greater,
-                    self.electron_solver.obc_blocks,
-                ),
+        if self.quatrex_config.outputs.contact_currents:
+            self.observables.electron_current = dict(
+                zip(
+                    ("left", "right"),
+                    contact_currents(
+                        self.data.g_lesser,
+                        self.data.g_greater,
+                        self.electron_solver.obc_blocks,
+                    ),
+                )
             )
-        )
-        self.observables.electron_current["device"] = device_current(
-            self.data.g_lesser, self.electron_solver.hamiltonian_sparray
-        )
-        if self.quatrex_config.electron.solver.compute_current:
-            self.observables.electron_current["meir-wingreen"] = xp.vstack(
-                comm.allgather(self.electron_solver.meir_wingreen_current)
+        if self.quatrex_config.outputs.device_currents:
+            self.observables.electron_current["device"] = device_current(
+                self.data.g_lesser, self.electron_solver.hamiltonian_sparray
             )
+            if self.quatrex_config.electron.solver.compute_current:
+                self.observables.electron_current["meir-wingreen"] = xp.vstack(
+                    comm.allgather(self.electron_solver.meir_wingreen_current)
+                )
 
-        self.observables.sigma_retarded_density = -density(
-            self.data.sigma_retarded,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.sigma_lesser_density = density(
-            self.data.sigma_lesser,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.sigma_greater_density = -density(
-            self.data.sigma_greater,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.self_energy_density:
+            self.observables.sigma_retarded_density = -density(
+                self.data.sigma_retarded,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.sigma_lesser_density = density(
+                self.data.sigma_lesser,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.sigma_greater_density = -density(
+                self.data.sigma_greater,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
-        self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-            2 * xp.pi
-        )
-        self.observables.p_lesser_density = density(self.data.p_lesser) / (2 * xp.pi)
-        self.observables.p_greater_density = -density(self.data.p_greater) / (2 * xp.pi)
 
-        self.observables.w_lesser_density = density(self.data.w_lesser) / (2 * xp.pi)
-        self.observables.w_greater_density = -density(self.data.w_greater) / (2 * xp.pi)
+        if self.quatrex_config.outputs.polarization_density:
+            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
+                2 * xp.pi
+            )
+            self.observables.p_lesser_density = density(self.data.p_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.p_greater_density = -density(self.data.p_greater) / (
+                2 * xp.pi
+            )
+
+        if self.quatrex_config.outputs.coulomb_screening_density:
+            self.observables.w_lesser_density = density(self.data.w_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.w_greater_density = -density(self.data.w_greater) / (
+                2 * xp.pi
+            )
 
     @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):

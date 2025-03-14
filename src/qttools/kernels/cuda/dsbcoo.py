@@ -14,7 +14,7 @@ from qttools.profiling import Profiler
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-USE_FIND_INDS = os.environ.get("USE_FIND_INDS", "false").lower()
+USE_FIND_INDS = os.environ.get("USE_FIND_INDS", "true").lower()
 if USE_FIND_INDS in ("y", "yes", "t", "true", "on", "1"):
     USE_FIND_INDS = True
 elif USE_FIND_INDS in ("n", "no", "f", "false", "off", "0"):

@@ -40,6 +40,21 @@ def test_sse(num_energies, batch_size):
     assert xp.allclose(e2, f2)
     assert xp.allclose(e3, f3)
 
+    ####
+
+    f1 = xp.zeros_like(a)
+    f2 = xp.zeros_like(a)
+    f3 = xp.zeros_like(a)
+
+    fft_convolve_fock_with_hilbert(a, b, c, d, energies, out=(f1, f2, f3))
+
+    sig = xp.imag(f2 - f1) * 1j
+    e3 = hilbert_transform(sig, energies) * 1j + sig / 2
+
+    assert xp.allclose(e1, f1)
+    assert xp.allclose(e2, f2)
+    assert xp.allclose(e3, f3)
+
 
 if __name__ == "__main__":
 

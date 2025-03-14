@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, xp
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
@@ -357,8 +357,14 @@ class SCBA:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        max_diff = xp.max(xp.abs(diff))
-        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+        local_max_diff = xp.max(xp.abs(diff))
+        if not NCCL_AVAILABLE:
+            max_diff = comm.allreduce(local_max_diff, op=MPI.MAX)
+        else:
+            max_diff = xp.empty_like(local_max_diff)
+            synchronize_device()
+            nccl_comm.all_reduce(local_max_diff, max_diff, op="max")
+            synchronize_device()
 
         i_left = xp.real(self.observables.electron_current.get("left", 0.0))
         i_right = xp.real(self.observables.electron_current.get("right", 0.0))
@@ -454,60 +460,102 @@ class SCBA:
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
-        self.observables.electron_ldos = -density(
-            self.data.g_retarded,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.electron_density = density(
-            self.data.g_lesser,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.hole_density = -density(
-            self.data.g_greater,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.electron_ldos:
+            self.observables.electron_ldos = -density(
+                self.data.g_retarded,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.electron_density:
+            self.observables.electron_density = density(
+                self.data.g_lesser,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.hole_density:
+            self.observables.hole_density = -density(
+                self.data.g_greater,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
 
-        self.observables.electron_current = dict(
-            zip(
-                ("left", "right"),
-                contact_currents(
-                    self.data.g_lesser,
-                    self.data.g_greater,
-                    self.electron_solver.obc_blocks,
-                ),
+        if self.quatrex_config.outputs.contact_currents:
+            self.observables.electron_current = dict(
+                zip(
+                    ("left", "right"),
+                    contact_currents(
+                        self.data.g_lesser,
+                        self.data.g_greater,
+                        self.electron_solver.obc_blocks,
+                    ),
+                )
             )
-        )
-        self.observables.electron_current["device"] = device_current(
-            self.data.g_lesser, self.electron_solver.hamiltonian_sparray
-        )
-        if self.quatrex_config.electron.solver.compute_current:
-            self.observables.electron_current["meir-wingreen"] = xp.vstack(
-                comm.allgather(self.electron_solver.meir_wingreen_current)
+        if self.quatrex_config.outputs.device_currents:
+            self.observables.electron_current["device"] = device_current(
+                self.data.g_lesser, self.electron_solver.hamiltonian_sparray
             )
+            if self.quatrex_config.electron.solver.compute_current:
+                if not NCCL_AVAILABLE:
+                    meir_wingreen_current = xp.vstack(
+                        comm.allgather(self.electron_solver.meir_wingreen_current)
+                    )
+                else:
+                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+                    local_current = self.electron_solver.meir_wingreen_current
+                    pad_width = (
+                        self.data.g_lesser.total_stack_size // comm.size
+                        - local_current.shape[0]
+                    )
+                    local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
+                    meir_wingreen_current = xp.empty(
+                        (self.data.g_lesser.total_stack_size, local_current.shape[-1]),
+                        dtype=local_current.dtype,
+                    )
+                    synchronize_device()
+                    nccl_comm.all_gather(
+                        local_current, meir_wingreen_current, local_current.size
+                    )
+                    synchronize_device()
+                    meir_wingreen_current = meir_wingreen_current[
+                        self.data.g_lesser._stack_padding_mask, ...
+                    ]
 
-        self.observables.sigma_retarded_density = -density(
-            self.data.sigma_retarded,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.sigma_lesser_density = density(
-            self.data.sigma_lesser,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
-        self.observables.sigma_greater_density = -density(
-            self.data.sigma_greater,
-            self.electron_solver.overlap_sparray,
-        ) / (2 * xp.pi)
+                self.observables.electron_current["meir-wingreen"] = (
+                    meir_wingreen_current
+                )
+
+        if self.quatrex_config.outputs.self_energy_density:
+            self.observables.sigma_retarded_density = -density(
+                self.data.sigma_retarded,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.sigma_lesser_density = density(
+                self.data.sigma_lesser,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
+            self.observables.sigma_greater_density = -density(
+                self.data.sigma_greater,
+                self.electron_solver.overlap_sparray,
+            ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
-        self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-            2 * xp.pi
-        )
-        self.observables.p_lesser_density = density(self.data.p_lesser) / (2 * xp.pi)
-        self.observables.p_greater_density = -density(self.data.p_greater) / (2 * xp.pi)
 
-        self.observables.w_lesser_density = density(self.data.w_lesser) / (2 * xp.pi)
-        self.observables.w_greater_density = -density(self.data.w_greater) / (2 * xp.pi)
+        if self.quatrex_config.outputs.polarization_density:
+            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
+                2 * xp.pi
+            )
+            self.observables.p_lesser_density = density(self.data.p_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.p_greater_density = -density(self.data.p_greater) / (
+                2 * xp.pi
+            )
+
+        if self.quatrex_config.outputs.coulomb_screening_density:
+            self.observables.w_lesser_density = density(self.data.w_lesser) / (
+                2 * xp.pi
+            )
+            self.observables.w_greater_density = -density(self.data.w_greater) / (
+                2 * xp.pi
+            )
 
     @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
@@ -694,10 +742,17 @@ class SCBA:
 
             free_memory, total_memory = xp.cuda.Device().mem_info
             usage = (total_memory - free_memory) / total_memory
-            average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+            if not NCCL_AVAILABLE:
+                average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+            else:
+                average_usage = xp.empty(1)
+                synchronize_device()
+                nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
+                synchronize_device()
+                average_usage = float(average_usage[0]) / comm.size
             if comm.rank == 0:
                 print(
-                    f"Rank-average device memory usage: {average_usage:.4f}%",
+                    f"Rank-average device memory usage: {average_usage * 100:.4f}%",
                     flush=True,
                 )
 

@@ -111,20 +111,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 np.concatenate(([0], np.array(batch_counts)))
             )
 
-            # TODO: the datastructures does not allow for easy slicing of the
-            # data. This is a workaround.
-            rows, cols = p_lesser.spy()
-            rows = rows[
-                p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
-                    comm.rank + 1
-                ]
-            ]
-            cols = cols[
-                p_lesser.nnz_section_offsets[comm.rank] : p_lesser.nnz_section_offsets[
-                    comm.rank + 1
-                ]
-            ]
-
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
@@ -132,10 +118,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
                 )
                 p_l_full = -p_g_full[::-1].conj()
+                # TODO: the datastructures does not allow for easy slicing of the
+                # data. This is a workaround.
                 # Fill the matrices with the data. Take second part of the
                 # energy convolution.
-                p_lesser[rows[batch], cols[batch]] = p_l_full[self.ne - 1 :]
-                p_greater[rows[batch], cols[batch]] = p_g_full[self.ne - 1 :]
+                p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
+                    self.ne - 1 :
+                ]
+                p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
+                    self.ne - 1 :
+                ]
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):

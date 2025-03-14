@@ -3,11 +3,11 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -364,7 +364,22 @@ class ElectronSolver(SubsystemSolver):
             (-xp.diagonal(g_retarded.blocks[b, b], axis1=-2, axis2=-1).imag).mean(-1)
             for b in range(g_retarded.num_blocks)
         ]
-        dos = xp.hstack(comm.allgather(local_dos))
+
+        if not NCCL_AVAILABLE:
+            dos = xp.hstack(comm.allgather(local_dos))
+        else:
+            # NOTE: NCCL does not expose all_gather_v. This is a hack.
+            local_dos = xp.array(local_dos)
+            pad_width = g_lesser.total_stack_size // comm.size - local_dos.shape[1]
+            local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
+            dos = xp.empty(
+                (local_dos.shape[0], g_lesser.total_stack_size), dtype=local_dos.dtype
+            )
+            synchronize_device()
+            nccl_comm.all_gather(local_dos, dos, local_dos.size)
+            synchronize_device()
+            dos = dos[..., g_lesser._stack_padding_mask]
+
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
@@ -474,8 +489,31 @@ class ElectronSolver(SubsystemSolver):
             local_right_dos = -xp.mean(
                 xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
             )
-            left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
-            right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
+
+            if not NCCL_AVAILABLE:
+                left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
+                right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
+            else:
+                # NOTE: NCCL does not expose all_gather_v. This is a hack.
+                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
+
+                left_dos = xp.pad(left_dos, (0, pad_width))
+                right_dos = xp.pad(right_dos, (0, pad_width))
+
+                full_left_dos = xp.empty(
+                    (g_retarded.total_stack_size,), dtype=left_dos.dtype
+                )
+                full_right_dos = xp.empty(
+                    (g_retarded.total_stack_size,), dtype=right_dos.dtype
+                )
+                synchronize_device()
+                nccl_comm.all_gather(left_dos, full_left_dos, left_dos.size)
+                synchronize_device()
+                nccl_comm.all_gather(right_dos, full_right_dos, right_dos.size)
+                synchronize_device()
+
+                left_dos = full_left_dos[g_retarded._stack_padding_mask]
+                right_dos = full_right_dos[g_retarded._stack_padding_mask]
 
             e_0_left = find_dos_peaks(left_dos, self.energies)
             e_0_right = find_dos_peaks(right_dos, self.energies)

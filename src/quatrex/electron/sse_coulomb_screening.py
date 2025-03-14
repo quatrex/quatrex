@@ -40,12 +40,12 @@ def fft_convolve_fock_with_hilbert(
 
     c_x_fft = xp.multiply(a_x_fft, b_lesser_fft)
     c_x_fft -= xp.multiply(a_x_fft, b_greater_fft.conj())  # negative energy part
-    c_lesser = xp.fft.ifft(c_x_fft)[:m]
+    c_lesser = xp.fft.ifft(c_x_fft, axis=0)[:m]
 
     a_x_fft = xp.fft.fft(a_greater, n, axis=0)
     c_x_fft = xp.multiply(a_x_fft, b_greater_fft)
     c_x_fft -= xp.multiply(a_x_fft, b_lesser_fft.conj())  # negative energy part
-    c_greater = xp.fft.ifft(c_x_fft)[:m]
+    c_greater = xp.fft.ifft(c_x_fft, axis=0)[:m]
 
     # Compute retarded self-energy with a Hilbert transform.
     c_antihermitian = 1j * xp.imag(c_greater - c_lesser)
@@ -57,7 +57,7 @@ def fft_convolve_fock_with_hilbert(
     a_x_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
     b_lesser_fft = xp.multiply(c_x_fft, a_x_fft)
     b_lesser_fft -= xp.multiply(c_x_fft, a_x_fft.conj())  # negative energy part
-    c_retarded = xp.fft.ifft(b_lesser_fft)[:m]
+    c_retarded = xp.fft.ifft(b_lesser_fft, axis=0)[:m]
     c_retarded = (
         c_retarded / (2 * xp.pi) * (energies[1] - energies[0]) * 1j
         + c_antihermitian / 2

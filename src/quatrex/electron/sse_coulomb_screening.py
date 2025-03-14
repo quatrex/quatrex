@@ -206,27 +206,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 np.concatenate(([0], np.array(batch_counts)))
             )
 
-            # TODO: the datastructures does not allow for easy slicing of the
-            # data. This is a workaround.
-            rows, cols = g_greater.spy()
-            rows = rows[
-                g_greater.nnz_section_offsets[
-                    comm.rank
-                ] : g_greater.nnz_section_offsets[comm.rank + 1]
-            ]
-            cols = cols[
-                g_greater.nnz_section_offsets[
-                    comm.rank
-                ] : g_greater.nnz_section_offsets[comm.rank + 1]
-            ]
-
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
                 # Compute the full self-energy using the convolution theorem.
                 # Second term are corrections for negative frequencies that
                 # where cut off by the polarization calculation.
-                sigma_lesser[rows[batch], cols[batch]] += self.prefactor * (
+                # TODO: the datastructures does not allow for easy slicing of the
+                # data. This is a workaround.
+                sigma_lesser._data[
+                    sigma_lesser._stack_padding_mask, ..., batch
+                ] += self.prefactor * (
                     fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
                         : self.num_energies
                     ]
@@ -234,7 +224,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         g_lesser.data[:, batch], w_greater.data[:, batch].conj()
                     )[self.num_energies - 1 :]
                 )
-                sigma_greater[rows[batch], cols[batch]] += self.prefactor * (
+                sigma_greater._data[
+                    sigma_greater._stack_padding_mask, ..., batch
+                ] += self.prefactor * (
                     fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
                         : self.num_energies
                     ]
@@ -248,9 +240,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
                 )
                 sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-                sigma_retarded[rows[batch], cols[batch]] += (
-                    1j * sigma_hermitian + sigma_antihermitian / 2
-                )
+                sigma_retarded._data[
+                    sigma_retarded._stack_padding_mask, ..., batch
+                ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):

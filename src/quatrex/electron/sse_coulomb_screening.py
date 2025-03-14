@@ -56,7 +56,7 @@ def fft_convolve_fock_with_hilbert(
         c_retarded / (2 * xp.pi) * (energies[1] - energies[0]) * 1j
         + c_antihermitian / 2
     )
-    
+
     return c_lesser, c_greater, c_retarded
 
 
@@ -248,8 +248,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 self.batch_size = g_greater.data.shape[-1]
 
             batch_counts, _ = get_section_sizes(
-                g_greater._data.shape[-1],
-                int(np.ceil(g_greater._data.shape[-1] / self.batch_size)),
+                g_greater.data.shape[-1],
+                int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
             )
 
             batch_displacements = np.cumsum(
@@ -260,15 +260,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 batch = slice(start, end)
 
                 (
-                    sigma_lesser._data[:, batch],
-                    sigma_greater._data[:, batch],
-                    sigma_retarded._data[:batch],
+                    sigma_lesser._data[sigma_lesser._stack_padding_mask, batch],
+                    sigma_greater._data[sigma_lesser._stack_padding_mask, batch],
+                    sigma_retarded._data[sigma_lesser._stack_padding_mask, batch],
                 ) = fft_convolve_fock_with_hilbert(
-                    g_lesser._data[:, batch],
-                    g_greater._data[:, batch],
-                    w_lesser._data[:, batch],
-                    w_greater._data[:, batch],
-                    self.energies,                    
+                    g_lesser.data[:, batch],
+                    g_greater.data[:, batch],
+                    w_lesser.data[:, batch],
+                    w_greater.data[:, batch],
+                    self.energies,
                 )
 
                 # Compute the full self-energy using the convolution theorem.

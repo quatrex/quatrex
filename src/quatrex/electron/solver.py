@@ -3,7 +3,7 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp, host_xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods

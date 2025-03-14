@@ -3,12 +3,12 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, host_xp, sparse, xp  # , nccl_comm, NCCL_AVAILABLE
+from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host  # , synchronize_device
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -348,21 +348,20 @@ class CoulombScreeningSolver(SubsystemSolver):
             ).mean(-1)
             local_dos.append(0.5 * (w_greater_density - w_lesser_density))
 
-        dos = xp.hstack(comm.allgather(local_dos))
-        # if not NCCL_AVAILABLE:
-        #     dos = xp.hstack(comm.allgather(local_dos))
-        # else:
-        #     # NOTE: NCCL does not expose all_gather_v. This is a hack.
-        #     local_dos = xp.array(local_dos)
-        #     pad_width = w_lesser.total_stack_size // comm.size - local_dos.shape[1]
-        #     local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
-        #     dos = xp.empty(
-        #         (local_dos.shape[0], w_lesser.total_stack_size), dtype=local_dos.dtype
-        #     )
-        #     synchronize_device()
-        #     nccl_comm.all_gather(local_dos, dos, local_dos.size)
-        #     synchronize_device()
-        #     dos = dos[..., w_lesser._stack_padding_mask]
+        if not NCCL_AVAILABLE:
+            dos = xp.hstack(comm.allgather(local_dos))
+        else:
+            # NOTE: NCCL does not expose all_gather_v. This is a hack.
+            local_dos = xp.array(local_dos)
+            pad_width = w_lesser.total_stack_size // comm.size - local_dos.shape[1]
+            local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
+            dos = xp.empty(
+                (local_dos.shape[0], w_lesser.total_stack_size), dtype=local_dos.dtype
+            )
+            synchronize_device()
+            nccl_comm.all_gather(local_dos, dos, local_dos.size)
+            synchronize_device()
+            dos = dos[..., w_lesser._stack_padding_mask]
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit

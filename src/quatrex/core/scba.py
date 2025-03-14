@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, xp  # , nccl_comm, NCCL_AVAILABLE
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host  # synchronize_device
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
@@ -357,17 +357,15 @@ class SCBA:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
-        max_diff = xp.max(xp.abs(diff))
-        max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        # if not NCCL_AVAILABLE:
-        #     max_diff = xp.max(xp.abs(diff))
-        #     max_diff = comm.allreduce(max_diff, op=MPI.MAX)
-        # else:
-        #     local_max_diff = xp.max(xp.abs(diff))
-        #     max_diff = xp.empty_like(local_max_diff)
-        #     synchronize_device()
-        #     nccl_comm.all_reduce(local_max_diff, max_diff, op="max")
-        #     synchronize_device()
+        if not NCCL_AVAILABLE:
+            max_diff = xp.max(xp.abs(diff))
+            max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+        else:
+            local_max_diff = xp.max(xp.abs(diff))
+            max_diff = xp.empty_like(local_max_diff)
+            synchronize_device()
+            nccl_comm.all_reduce(local_max_diff, max_diff, op="max")
+            synchronize_device()
 
         i_left = xp.real(self.observables.electron_current.get("left", 0.0))
         i_right = xp.real(self.observables.electron_current.get("right", 0.0))
@@ -495,33 +493,30 @@ class SCBA:
                 self.data.g_lesser, self.electron_solver.hamiltonian_sparray
             )
             if self.quatrex_config.electron.solver.compute_current:
-                meir_wingreen_current = xp.vstack(
-                    comm.allgather(self.electron_solver.meir_wingreen_current)
-                )
-                # if not NCCL_AVAILABLE:
-                #     meir_wingreen_current = xp.vstack(
-                #         comm.allgather(self.electron_solver.meir_wingreen_current)
-                #     )
-                # else:
-                #     # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                #     local_current = self.electron_solver.meir_wingreen_current
-                #     pad_width = (
-                #         self.data.g_lesser.total_stack_size // comm.size
-                #         - local_current.shape[0]
-                #     )
-                #     local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
-                #     meir_wingreen_current = xp.empty(
-                #         (self.data.g_lesser.total_stack_size, local_current.shape[-1]),
-                #         dtype=local_current.dtype,
-                #     )
-                #     synchronize_device()
-                #     nccl_comm.all_gather(
-                #         local_current, meir_wingreen_current, local_current.size
-                #     )
-                #     synchronize_device()
-                #     meir_wingreen_current = meir_wingreen_current[
-                #         self.data.g_lesser._stack_padding_mask, ...
-                #     ]
+                if not NCCL_AVAILABLE:
+                    meir_wingreen_current = xp.vstack(
+                        comm.allgather(self.electron_solver.meir_wingreen_current)
+                    )
+                else:
+                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+                    local_current = self.electron_solver.meir_wingreen_current
+                    pad_width = (
+                        self.data.g_lesser.total_stack_size // comm.size
+                        - local_current.shape[0]
+                    )
+                    local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
+                    meir_wingreen_current = xp.empty(
+                        (self.data.g_lesser.total_stack_size, local_current.shape[-1]),
+                        dtype=local_current.dtype,
+                    )
+                    synchronize_device()
+                    nccl_comm.all_gather(
+                        local_current, meir_wingreen_current, local_current.size
+                    )
+                    synchronize_device()
+                    meir_wingreen_current = meir_wingreen_current[
+                        self.data.g_lesser._stack_padding_mask, ...
+                    ]
 
                 self.observables.electron_current["meir-wingreen"] = (
                     meir_wingreen_current
@@ -748,15 +743,14 @@ class SCBA:
 
             free_memory, total_memory = xp.cuda.Device().mem_info
             usage = (total_memory - free_memory) / total_memory
-            average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
-            # if not NCCL_AVAILABLE:
-            #     average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
-            # else:
-            #     average_usage = xp.empty(1)
-            #     synchronize_device()
-            #     nccl_comm.all_reduce(usage, average_usage, op="sum")
-            #     synchronize_device()
-            #     average_usage = float(average_usage[0]) / comm.size
+            if not NCCL_AVAILABLE:
+                average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+            else:
+                average_usage = xp.empty(1)
+                synchronize_device()
+                nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
+                synchronize_device()
+                average_usage = float(average_usage[0]) / comm.size
             if comm.rank == 0:
                 print(
                     f"Rank-average device memory usage: {average_usage * 100:.4f}%",

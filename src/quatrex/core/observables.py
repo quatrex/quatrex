@@ -3,11 +3,10 @@
 from functools import partial
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, sparse, xp  # , NCCL_AVAILABLE, nccl_comm
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
-
-# from qttools.utils.gpu_utils import synchronize_device
+from qttools.utils.gpu_utils import synchronize_device
 
 
 def get_block(
@@ -71,20 +70,20 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     """
     if overlap is None:
         local_density = x.diagonal().imag
-        return xp.vstack(comm.allgather(local_density))
-        # if not NCCL_AVAILABLE:
-        #     return xp.vstack(comm.allgather(local_density))
+        # return xp.vstack(comm.allgather(local_density))
+        if not NCCL_AVAILABLE:
+            return xp.vstack(comm.allgather(local_density))
 
-        # # NOTE: NCCL does not expose all_gather_v. This is a hack.
-        # pad_width = x.total_stack_size // comm.size - local_density.shape[0]
-        # local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
-        # density = xp.empty(
-        #     (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
-        # )
-        # synchronize_device()
-        # nccl_comm.all_gather(local_density, density, local_density.size)
-        # synchronize_device()
-        # return density[x._stack_padding_mask, ...]
+        # NOTE: NCCL does not expose all_gather_v. This is a hack.
+        pad_width = x.total_stack_size // comm.size - local_density.shape[0]
+        local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
+        density = xp.empty(
+            (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
+        )
+        synchronize_device()
+        nccl_comm.all_gather(local_density, density, local_density.size)
+        synchronize_device()
+        return density[x._stack_padding_mask, ...]
 
     local_density = []
     overlap = overlap.tocoo()
@@ -111,22 +110,22 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
         local_density.append(local_density_slice.imag)
 
     local_density = xp.hstack(local_density)
-    return xp.vstack(comm.allgather(local_density))
+    # return xp.vstack(comm.allgather(local_density))
 
-    # if not NCCL_AVAILABLE:
-    #     return xp.vstack(comm.allgather(local_density))
+    if not NCCL_AVAILABLE:
+        return xp.vstack(comm.allgather(local_density))
 
-    # # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    # local_density = xp.vstack(local_density)
-    # pad_width = x.total_stack_size // comm.size - local_density.shape[0]
-    # local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
-    # density = xp.empty(
-    #     (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
-    # )
-    # synchronize_device()
-    # nccl_comm.all_gather(local_density, density, local_density.size)
-    # synchronize_device()
-    # return density[x._stack_padding_mask, ...]
+    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+    local_density = xp.vstack(local_density)
+    pad_width = x.total_stack_size // comm.size - local_density.shape[0]
+    local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
+    density = xp.empty(
+        (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
+    )
+    synchronize_device()
+    nccl_comm.all_gather(local_density, density, local_density.size)
+    synchronize_device()
+    return density[x._stack_padding_mask, ...]
 
 
 def contact_currents(
@@ -163,30 +162,30 @@ def contact_currents(
         axis2=-1,
     )
 
-    i_left = xp.hstack(comm.allgather(i_left))
-    i_right = xp.hstack(comm.allgather(i_right))
-    return i_left, i_right
+    # i_left = xp.hstack(comm.allgather(i_left))
+    # i_right = xp.hstack(comm.allgather(i_right))
+    # return i_left, i_right
 
-    # if not NCCL_AVAILABLE:
-    #     i_left = xp.hstack(comm.allgather(i_left))
-    #     i_right = xp.hstack(comm.allgather(i_right))
-    #     return i_left, i_right
+    if not NCCL_AVAILABLE:
+        i_left = xp.hstack(comm.allgather(i_left))
+        i_right = xp.hstack(comm.allgather(i_right))
+        return i_left, i_right
 
-    # # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    # pad_width = x_lesser.total_stack_size // comm.size - i_left.shape[0]
-    # i_left = xp.pad(i_left, (0, pad_width))
-    # i_right = xp.pad(i_right, (0, pad_width))
-    # full_i_left = xp.empty((x_lesser.total_stack_size,), dtype=i_left.dtype)
-    # full_i_right = xp.empty((x_lesser.total_stack_size,), dtype=i_right.dtype)
-    # synchronize_device()
-    # nccl_comm.all_gather(i_left, full_i_left, i_left.size)
-    # synchronize_device()
-    # nccl_comm.all_gather(i_right, full_i_right, i_right.size)
-    # synchronize_device()
-    # return (
-    #     full_i_left[x_lesser._stack_padding_mask],
-    #     full_i_right[x_lesser._stack_padding_mask],
-    # )
+    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+    pad_width = x_lesser.total_stack_size // comm.size - i_left.shape[0]
+    i_left = xp.pad(i_left, (0, pad_width))
+    i_right = xp.pad(i_right, (0, pad_width))
+    full_i_left = xp.empty((x_lesser.total_stack_size,), dtype=i_left.dtype)
+    full_i_right = xp.empty((x_lesser.total_stack_size,), dtype=i_right.dtype)
+    synchronize_device()
+    nccl_comm.all_gather(i_left, full_i_left, i_left.size)
+    synchronize_device()
+    nccl_comm.all_gather(i_right, full_i_right, i_right.size)
+    synchronize_device()
+    return (
+        full_i_left[x_lesser._stack_padding_mask],
+        full_i_right[x_lesser._stack_padding_mask],
+    )
 
 
 def device_current(x_lesser: DSBSparse, operator: sparse.spmatrix) -> NDArray:
@@ -218,20 +217,19 @@ def device_current(x_lesser: DSBSparse, operator: sparse.spmatrix) -> NDArray:
         ).sum(axis=(-1, -2))
         local_current.append(layer_current)
 
-    local_current = xp.vstack(local_current).T
-    return xp.vstack(comm.allgather(local_current))
+    local_current = xp.ascontiguousarray(xp.vstack(local_current).T)
 
-    # if not NCCL_AVAILABLE:
-    #     return xp.vstack(comm.allgather(local_current))
+    if not NCCL_AVAILABLE:
+        return xp.vstack(comm.allgather(local_current))
 
-    # # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    # pad_width = x_lesser.total_stack_size // comm.size - local_current.shape[0]
-    # local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
+    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+    pad_width = x_lesser.total_stack_size // comm.size - local_current.shape[0]
+    local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
 
-    # device_current = xp.empty(
-    #     (x_lesser.total_stack_size, local_current.shape[-1]), dtype=local_current.dtype
-    # )
-    # synchronize_device()
-    # nccl_comm.all_gather(local_current, device_current, local_current.size)
-    # synchronize_device()
-    # return device_current[x_lesser._stack_padding_mask, ...]
+    device_current = xp.empty(
+        (x_lesser.total_stack_size, local_current.shape[-1]), dtype=local_current.dtype
+    )
+    synchronize_device()
+    nccl_comm.all_gather(local_current, device_current, local_current.size)
+    synchronize_device()
+    return device_current[x_lesser._stack_padding_mask, ...]

@@ -98,6 +98,9 @@ def eigvalsh(
         elif compute_module == "cupy":
             w = xp.linalg.eigvalsh(A)
     else:
+
+        B = get_any_location(B, compute_module, use_pinned_memory=use_pinned_memory)
+
         if compute_module == "numpy":
             w = _eigvalsh(A, B, np)
         elif compute_module == "cupy":

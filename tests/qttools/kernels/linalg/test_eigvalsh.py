@@ -30,7 +30,7 @@ def test_eigvalsh(
 
     A = (A + A.conj().swapaxes(-1, -2)) / 2
 
-    if compute_module == "cupy":
+    if input_module == "cupy":
         A = get_device(A)
 
     w = linalg.eigvalsh(
@@ -81,7 +81,7 @@ def test_eigvalsh_batched(
 
     A = (A + A.conj().swapaxes(-1, -2)) / 2
 
-    if compute_module == "cupy":
+    if input_module == "cupy":
         A = get_device(A)
 
     w = linalg.eigvalsh(
@@ -131,7 +131,7 @@ def test_eigvalsh_generalized(
     B = (B + B.conj().swapaxes(-1, -2)) / 2
     B += n * np.eye(n)
 
-    if compute_module == "cupy":
+    if input_module == "cupy":
         B = get_device(B)
         A = get_device(A)
 
@@ -195,7 +195,7 @@ def test_eigvalsh_generalized_batched(
 
     B = B.reshape((*batch_shape, n, n))
 
-    if compute_module == "cupy":
+    if input_module == "cupy":
         B = get_device(B)
         A = get_device(A)
 

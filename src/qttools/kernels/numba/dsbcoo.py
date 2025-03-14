@@ -111,6 +111,9 @@ def densify_block(
     rows: NDArray,
     cols: NDArray,
     data: NDArray,
+    block_slice: slice,
+    row_offset: int,
+    col_offset: int,
 ):
     """Fills the dense block with the given data.
 
@@ -130,10 +133,23 @@ def densify_block(
         The columns at which to fill the block.
     data : NDArray
         The data to fill the block with.
+    block_slice : slice
+        The slice of the block to fill.
+    row_offset : int
+        The row offset of the block.
+    col_offset : int
+        The column offset of the block
 
     """
-    for i in nb.prange(rows.shape[0]):
-        block[..., rows[i], cols[i]] = data[..., i]
+    # NOTE: We assume that the block is contiguous.
+    # Will not work if the block is not contiguous.
+    block_start = block_slice.start or 0
+    nnz_per_block = block_slice.stop - block_start
+
+    for idx in nb.prange(block_start, block_start + nnz_per_block):
+        row_idx = rows[idx] - row_offset
+        col_idx = cols[idx] - col_offset
+        block[..., row_idx, col_idx] = data[..., idx]
 
 
 @profiler.profile(level="api")

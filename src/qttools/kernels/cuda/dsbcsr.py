@@ -3,109 +3,191 @@
 import cupy as cp
 from cupyx import jit
 
-from qttools import NDArray, host_xp
+from qttools import USE_CUPY_JIT, NDArray, host_xp
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 from qttools.profiling import Profiler
 
 profiler = Profiler()
 
+if USE_CUPY_JIT:
 
-@jit.rawkernel()
-def _find_bcoords_kernel(
-    block_offsets: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    brows: NDArray,
-    bcols: NDArray,
-):
-    """Finds the block coordinates of the given rows and columns.
+    @jit.rawkernel()
+    def _find_bcoords_kernel(
+        block_offsets: NDArray,
+        rows: NDArray,
+        cols: NDArray,
+        brows: NDArray,
+        bcols: NDArray,
+        rows_len: int,
+        block_offsets_len: int,
+    ):
+        """Finds the block coordinates of the given rows and columns.
 
-    Parameters
-    ----------
-    block_offsets : NDArray
-        The offsets of the blocks.
-    rows : NDArray
-        The row indices.
-    cols : NDArray
-        The column indices.
-    brows : NDArray
-        The block row indices.
-    bcols : NDArray
-        The block column indices.
+        Parameters
+        ----------
+        block_offsets : NDArray
+            The offsets of the blocks.
+        rows : NDArray
+            The row indices.
+        cols : NDArray
+            The column indices.
+        brows : NDArray
+            The block row indices.
+        bcols : NDArray
+            The block column indices.
 
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < rows.shape[0]:
-        for j in range(block_offsets.shape[0]):
-            cond_rows = int(block_offsets[j] <= rows[i])
-            brows[i] = brows[i] * (1 - cond_rows) + j * cond_rows
-            cond_cols = int(block_offsets[j] <= cols[i])
-            bcols[i] = bcols[i] * (1 - cond_cols) + j * cond_cols
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        if i < rows_len:
+            for j in range(block_offsets_len):
+                cond_rows = int(block_offsets[j] <= rows[i])
+                brows[i] = brows[i] * (1 - cond_rows) + j * cond_rows
+                cond_cols = int(block_offsets[j] <= cols[i])
+                bcols[i] = bcols[i] * (1 - cond_cols) + j * cond_cols
 
+else:
+    _find_bcoords_kernel = cp.RawKernel(
+        r"""
+        extern "C" __global__
+        void _find_bcoords_kernel(
+            int *block_offsets,
+            int *rows,
+            int *cols,
+            int *brows,
+            int *bcols,
+            int rows_len,
+            int block_offsets_len
+        ) {
+            int tid = blockDim.x * blockIdx.x + threadIdx.x;
+            if (tid < rows_len) {
+                for (int j = 0; j < block_offsets_len; j++) {
+                    int cond_rows = block_offsets[j] <= rows[tid];
+                    brows[tid] = brows[tid] * (1 - cond_rows) + j * cond_rows;
+                    int cond_cols = block_offsets[j] <= cols[tid];
+                    bcols[tid] = bcols[tid] * (1 - cond_cols) + j * cond_cols;
+                }
+            }
+        }
+    """,
+        "_find_bcoords_kernel",
+    )
 
-@jit.rawkernel()
-def _compute_block_mask_kernel(
-    brows: NDArray,
-    bcols: NDArray,
-    brow: int,
-    bcol: int,
-    mask: NDArray,
-):
-    """Computes the mask for the given block coordinates.
+if USE_CUPY_JIT:
 
-    Parameters
-    ----------
-    brows : NDArray
-        The block row indices.
-    bcols : NDArray
-        The block column indices.
-    brow : int
-        The block row.
-    bcol : int
-        The block column.
-    mask : NDArray
-        The mask for the given block coordinates.
+    @jit.rawkernel()
+    def _compute_block_mask_kernel(
+        brows: NDArray,
+        bcols: NDArray,
+        brow: int,
+        bcol: int,
+        mask: NDArray,
+        brows_len: int,
+    ):
+        """Computes the mask for the given block coordinates.
 
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < brows.shape[0]:
-        mask[i] = (brows[i] == brow) & (bcols[i] == bcol)
+        Parameters
+        ----------
+        brows : NDArray
+            The block row indices.
+        bcols : NDArray
+            The block column indices.
+        brow : int
+            The block row.
+        bcol : int
+            The block column.
+        mask : NDArray
+            The mask for the given block coordinates.
 
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        if i < brows_len:
+            mask[i] = (brows[i] == brow) & (bcols[i] == bcol)
 
-@jit.rawkernel()
-def _compute_block_inds_kernel(
-    rr: NDArray,
-    cc: NDArray,
-    self_cols: NDArray,
-    rowptr: NDArray,
-    block_inds: NDArray,
-):
-    """Finds the indices of the given block.
+else:
+    _compute_block_mask_kernel = cp.RawKernel(
+        r"""
+        extern "C" __global__
+        void _compute_block_mask_kernel(
+            int *brows,
+            int *bcols,
+            int brow,
+            int bcol,
+            bool *mask,
+            int brows_len
+        ) {
+            int tid = blockDim.x * blockIdx.x + threadIdx.x;
+            if (tid < brows_len) {
+                mask[tid] = (brows[tid] == brow) & (bcols[tid] == bcol);
+            }
+        }
+    """,
+        "_compute_block_mask_kernel",
+    )
 
-    Parameters
-    ----------
-    rr : NDArray
-        The row indices.
-    cc : NDArray
-        The column indices.
-    self_cols : NDArray
-        The columns of this matrix.
-    rowptr : NDArray
-        The row pointer.
-    block_inds : NDArray
-        The indices of the given block
+if USE_CUPY_JIT:
 
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < rr.shape[0]:
-        r = rr[i]
-        ind = -1
-        for j in range(rowptr[r], rowptr[r + 1]):
-            cond = int(self_cols[j] == cc[i])
-            ind = ind * (1 - cond) + j * cond
+    @jit.rawkernel()
+    def _compute_block_inds_kernel(
+        rr: NDArray,
+        cc: NDArray,
+        self_cols: NDArray,
+        rowptr: NDArray,
+        block_inds: NDArray,
+        rr_len: int,
+    ):
+        """Finds the indices of the given block.
 
-        block_inds[i] = ind
+        Parameters
+        ----------
+        rr : NDArray
+            The row indices.
+        cc : NDArray
+            The column indices.
+        self_cols : NDArray
+            The columns of this matrix.
+        rowptr : NDArray
+            The row pointer.
+        block_inds : NDArray
+            The indices of the given block
+
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        if i < rr_len:
+            r = rr[i]
+            ind = -1
+            for j in range(rowptr[r], rowptr[r + 1]):
+                cond = int(self_cols[j] == cc[i])
+                ind = ind * (1 - cond) + j * cond
+
+            block_inds[i] = ind
+
+else:
+    _compute_block_inds_kernel = cp.RawKernel(
+        r"""
+        extern "C" __global__
+        void _compute_block_inds_kernel(
+            int *rr,
+            int *cc,
+            int *self_cols,
+            int *rowptr,
+            int *block_inds,
+            int rr_len
+        ) {
+            int tid = blockDim.x * blockIdx.x + threadIdx.x;
+            if (tid < rr_len) {
+                int r = rr[tid];
+                int ind = -1;
+                for (int j = rowptr[r]; j < rowptr[r + 1]; j++) {
+                    int cond = self_cols[j] == cc[tid];
+                    ind = ind * (1 - cond) + j * cond;
+                }
+                block_inds[tid] = ind;
+            }
+        }
+    """,
+        "_compute_block_inds_kernel",
+    )
 
 
 @profiler.profile(level="api")
@@ -139,8 +221,12 @@ def find_inds(
         The matching indices of this matrix.
 
     """
-    brows = cp.zeros(rows.shape[0], dtype=cp.int16)
-    bcols = cp.zeros(cols.shape[0], dtype=cp.int16)
+    brows = cp.zeros(rows.shape[0], dtype=cp.int32)
+    bcols = cp.zeros(cols.shape[0], dtype=cp.int32)
+    block_offsets = block_offsets.astype(cp.int32)
+    rows = rows.astype(cp.int32)
+    cols = cols.astype(cp.int32)
+    self_cols = self_cols.astype(cp.int32)
 
     bcoords_blocks_per_grid = (
         rows.shape[0] + THREADS_PER_BLOCK - 1
@@ -149,7 +235,15 @@ def find_inds(
     _find_bcoords_kernel(
         (bcoords_blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (block_offsets, rows, cols, brows, bcols),
+        (
+            block_offsets,
+            rows,
+            cols,
+            brows,
+            bcols,
+            host_xp.int32(rows.shape[0]),
+            host_xp.int32(block_offsets.shape[0]),
+        ),
     )
     # Get an ordered list of unique blocks.
     unique_blocks = dict.fromkeys(zip(map(int, brows), map(int, bcols))).keys()
@@ -167,7 +261,14 @@ def find_inds(
         _compute_block_mask_kernel(
             (block_mask_blocks_per_grid,),
             (THREADS_PER_BLOCK,),
-            (brows, bcols, brow, bcol, mask),
+            (
+                brows,
+                bcols,
+                brow,
+                bcol,
+                mask,
+                host_xp.int32(brows.shape[0]),
+            ),
         )
         mask_inds = cp.nonzero(mask)[0]
 
@@ -175,12 +276,21 @@ def find_inds(
         rr = rows[mask] - block_offsets[brow]
         cc = cols[mask]
 
+        rowptr = rowptr.astype(cp.int32)
+
         block_inds = cp.zeros(rr.shape[0], dtype=cp.int32)
         blocks_per_grid = (rr.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
         _compute_block_inds_kernel(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
-            (rr, cc, self_cols, rowptr, block_inds),
+            (
+                rr,
+                cc,
+                self_cols,
+                rowptr,
+                block_inds,
+                host_xp.int32(rr.shape[0]),
+            ),
         )
 
         valid = block_inds != -1
@@ -191,22 +301,44 @@ def find_inds(
     return cp.array(inds, dtype=int), cp.array(value_inds, dtype=int)
 
 
-@jit.rawkernel()
-def _expand_rows_kernel(rows: NDArray, rowptr: NDArray):
-    """Expands the rowptr into actual rows.
+if USE_CUPY_JIT:
 
-    Parameters
-    ----------
-    rows : NDArray
-        The rows to fill.
-    rowptr : NDArray
-        The row pointer.
+    @jit.rawkernel()
+    def _expand_rows_kernel(rows: NDArray, rowptr: NDArray, rowptr_len: int):
+        """Expands the rowptr into actual rows.
 
-    """
-    i = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    if i < rowptr.shape[0] - 1:
-        for j in range(rowptr[i], rowptr[i + 1]):
-            rows[j] = i
+        Parameters
+        ----------
+        rows : NDArray
+            The rows to fill.
+        rowptr : NDArray
+            The row pointer.
+
+        """
+        i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
+        if i < rowptr_len - 1:
+            for j in range(rowptr[i], rowptr[i + 1]):
+                rows[j] = i
+
+else:
+    _expand_rows_kernel = cp.RawKernel(
+        r"""
+    extern "C" __global__
+    void _expand_rows_kernel(
+        int *rows,
+        int *rowptr,
+        int rowptr_len
+    ) {
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < rowptr_len - 1) {
+            for (int j = rowptr[tid]; j < rowptr[tid + 1]; j++) {
+                rows[j] = tid;
+            }
+        }
+    }
+    """,
+        "_expand_rows_kernel",
+    )
 
 
 @profiler.profile(level="api")
@@ -236,10 +368,17 @@ def densify_block(
     cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
     rows = cp.zeros(cols.shape[0], dtype=cp.int32)
     blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK - 2) // THREADS_PER_BLOCK
+
+    rowptr = rowptr.astype(cp.int32)
+
     _expand_rows_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (rows, rowptr - rowptr[0]),
+        (
+            rows,
+            rowptr - rowptr[0],
+            host_xp.int32(rowptr.shape[0]),
+        ),
     )
     block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
 
@@ -271,10 +410,17 @@ def sparsify_block(
     cols = self_cols[rowptr[0] : rowptr[-1]] - block_offset
     rows = cp.zeros(cols.shape[0], dtype=cp.int32)
     blocks_per_grid = (rowptr.shape[0] + THREADS_PER_BLOCK) // THREADS_PER_BLOCK
+
+    rowptr = rowptr.astype(cp.int32)
+
     _expand_rows_kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (rows, rowptr - rowptr[0]),
+        (
+            rows,
+            rowptr - rowptr[0],
+            host_xp.int32(rowptr.shape[0]),
+        ),
     )
     data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
 
@@ -317,6 +463,9 @@ def compute_rowptr_map(
     rowptr_map = {}
     mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
 
+    coo_rows = coo_rows.astype(cp.int32)
+    coo_cols = coo_cols.astype(cp.int32)
+
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
     for i, j in cp.ndindex(num_blocks, num_blocks):
@@ -331,6 +480,7 @@ def compute_rowptr_map(
                 host_xp.int32(block_offsets[j]),
                 host_xp.int32(block_offsets[j + 1]),
                 mask,
+                host_xp.int32(len(coo_rows)),
             ),
         )
 

@@ -62,10 +62,39 @@ else:
         host_xp = xp
         pinned_xp = None
 
+# TODO: adapt testing suite to test both JIT and non-JIT versions
+# Implemented with a env variable to allow for easy switching
+USE_CUPY_JIT = os.environ.get("USE_CUPY_JIT", "true").lower()
+if USE_CUPY_JIT in ("y", "yes", "t", "true", "on", "1"):
+    USE_CUPY_JIT = True
+elif USE_CUPY_JIT in ("n", "no", "f", "false", "off", "0"):
+    USE_CUPY_JIT = False
+else:
+    warn(f"Invalid truth value {USE_CUPY_JIT=}. Defaulting to 'true'.")
+    USE_CUPY_JIT = True
+
 # Some type aliases for the array module.
 _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
 _DType = xp.dtype[_ScalarType]
 NDArray: TypeAlias = xp.ndarray[Any, _DType]
+
+# Check if NCCL is available.
+NCCL_AVAILABLE = False
+nccl_comm = None
+if xp.__name__ == "cupy":
+
+    from cupy.cuda import nccl
+
+    if nccl.available:
+        NCCL_AVAILABLE = True
+
+        from cupyx import distributed
+        from mpi4py.MPI import COMM_WORLD as mpi_comm
+
+        # TODO: This will probably not work with communicators other than
+        # MPI.COMM_WORLD. We need to fix this if we want to use other
+        # communicators.
+        nccl_comm = distributed.NCCLBackend(mpi_comm.size, mpi_comm.rank, use_mpi=True)
 
 
 __all__ = [
@@ -76,4 +105,7 @@ __all__ = [
     "sparse",
     "NDArray",
     "ArrayLike",
+    "USE_CUPY_JIT",
+    "NCCL_AVAILABLE",
+    "nccl_comm",
 ]

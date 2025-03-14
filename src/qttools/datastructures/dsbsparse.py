@@ -6,17 +6,14 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import ArrayLike, NDArray, host_xp, sparse, xp
+from qttools import NCCL_AVAILABLE, ArrayLike, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, get_nccl_communicator, synchronize_device
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
-
-nccl_comm = get_nccl_communicator()
-NCCL_AVAILABLE = nccl_comm is not None
 
 
 @profiler.profile(level="debug")

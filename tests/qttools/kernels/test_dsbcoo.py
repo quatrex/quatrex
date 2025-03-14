@@ -120,10 +120,10 @@ def test_compute_block_slice(
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = xp.array(
-        [a.size for a in xp.array_split(xp.arange(shape[0]), num_blocks)]
+    block_sizes = host_xp.array(
+        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)]
     )
-    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
 
     sort_index = _reference_compute_block_sort_index(coo.row, coo.col, block_sizes)
     rows, cols = coo.row[sort_index], coo.col[sort_index]
@@ -147,7 +147,9 @@ def test_densify_block(shape: tuple[int, int]):
     reference_block = coo.toarray()
 
     block = xp.zeros_like(reference_block)
-    dsbcoo_kernels.densify_block(block, coo.row, coo.col, coo.data)
+    dsbcoo_kernels.densify_block(
+        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0
+    )
 
     assert xp.allclose(block, reference_block)
 
@@ -181,3 +183,9 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     sort_index = dsbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
 
     assert xp.all(sort_index == reference_sort_index)
+
+
+if __name__ == "__main__":
+    # pytest.main([__file__])
+    for i in range(10):
+        test_find_inds((2000, 2000), 2000)

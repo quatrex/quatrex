@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import NDArray, xp
+from qttools import USE_CUPY_JIT, NDArray, xp
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -8,50 +8,108 @@ profiler = Profiler()
 if xp.__name__ == "cupy":
     import cupyx as cpx
 
-    @cpx.jit.rawkernel()
-    def _contour_operator(
-        output: NDArray,
-        a_xx: NDArray,
-        z: NDArray,
-        batchsize,
-        num_quatrature_points,
-        blocksize,
-        b,
-    ):
-        # assumes c order of output and a_xx
+    if USE_CUPY_JIT:
 
-        idx = int(cpx.jit.blockIdx.x * cpx.jit.blockDim.x + cpx.jit.threadIdx.x)
-        if idx < batchsize * num_quatrature_points * blocksize * blocksize:
+        @cpx.jit.rawkernel()
+        def _contour_operator(
+            output: NDArray,
+            a_xx: NDArray,
+            z: NDArray,
+            batchsize,
+            num_quatrature_points,
+            blocksize,
+            b,
+        ):
+            # assumes c order of output and a_xx
 
-            # batch index
-            ie = idx // (num_quatrature_points * blocksize * blocksize)
+            idx = int(cpx.jit.blockIdx.x * cpx.jit.blockDim.x + cpx.jit.threadIdx.x)
+            if idx < batchsize * num_quatrature_points * blocksize * blocksize:
 
-            # index within the batch
-            ijk = idx % (num_quatrature_points * blocksize * blocksize)
+                # batch index
+                ie = idx // (num_quatrature_points * blocksize * blocksize)
 
-            # quatrature point index
-            i = ijk // (blocksize * blocksize)
+                # index within the batch
+                ijk = idx % (num_quatrature_points * blocksize * blocksize)
 
-            # index within the block
-            jk = ijk % (blocksize * blocksize)
+                # quatrature point index
+                i = ijk // (blocksize * blocksize)
 
-            # row index
-            j = jk // blocksize
+                # index within the block
+                jk = ijk % (blocksize * blocksize)
 
-            # column index
-            k = jk % blocksize
+                # row index
+                j = jk // blocksize
 
-            # access quatraure point
-            z_i = z[i]
+                # column index
+                k = jk % blocksize
 
-            for h in range(0, 2 * b + 1):
-                # offset in list of blocks
-                m_idx = h * blocksize * blocksize * batchsize
-                # batch offset
-                m_idx += ie * blocksize * blocksize
-                # block index
-                m_idx += j * blocksize + k
-                output[idx] += a_xx[m_idx] * z_i ** (h - b)
+                # access quatraure point
+                z_i = z[i]
+
+                for h in range(0, 2 * b + 1):
+                    # offset in list of blocks
+                    m_idx = h * blocksize * blocksize * batchsize
+                    # batch offset
+                    m_idx += ie * blocksize * blocksize
+                    # block index
+                    m_idx += j * blocksize + k
+                    output[idx] += a_xx[m_idx] * z_i ** (h - b)
+
+    else:
+        _contour_operator = xp.RawKernel(
+            r"""
+            // include complex number support
+            #include <cupy/complex.cuh>
+
+            extern "C" __global__
+            void _contour_operator(
+                complex<double> *output,
+                complex<double> *a_xx,
+                complex<double> *z,
+                int batchsize,
+                int num_quatrature_points,
+                int blocksize,
+                int b
+            ){
+                int idx = blockDim.x * blockIdx.x + threadIdx.x;
+                if (idx < batchsize * num_quatrature_points * blocksize * blocksize) {
+                    
+                    // batch index
+                    int ie = idx / (num_quatrature_points * blocksize * blocksize);
+                                        
+                    // index within the batch
+                    int ijk = idx % (num_quatrature_points * blocksize * blocksize);
+
+                    // quatrature point index
+                    int i = ijk / (blocksize * blocksize);
+                                        
+                    // index within the block
+                    int jk = ijk % (blocksize * blocksize);
+                                        
+                    // row index
+                    int j = jk / blocksize;
+                                        
+                    // column index
+                    int k = jk % blocksize;
+                                        
+                    // access quatraure point
+                    complex<double> z_i = z[i];
+
+                    for (int h = 0; h < 2 * b + 1; h++) {
+                        // offset in list of blocks
+                        int m_idx = h * blocksize * blocksize * batchsize;
+                        // batch offset
+                        m_idx += ie * blocksize * blocksize;
+                        // block index
+                        m_idx += j * blocksize + k;
+                        // output[idx] = cuCadd(output[idx], cuCmul(a_xx[m_idx], make_cuDoubleComplex(pow(z_i, h - b), 0.0)));
+                        output[idx] = output[idx] + a_xx[m_idx] * pow(z_i, h - b);
+                    }
+                }
+            }
+        """,
+            "_contour_operator",
+        )
 
 
 @profiler.profile(level="debug")
@@ -107,14 +165,18 @@ def operator_inverse(
         # NOTE: this lead to memory copy
         # better to always have a_xx as a high dim array
         a_xx = xp.array(a_xx)
-        _contour_operator[num_blocks, num_threads](
-            operator.reshape(-1),
-            a_xx.reshape(-1),
-            z.reshape(-1),
-            batchsize,
-            num_quatrature_points,
-            blocksize,
-            b,
+        _contour_operator(
+            (num_blocks,),
+            (num_threads,),
+            (
+                operator.reshape(-1),
+                a_xx.reshape(-1),
+                z.reshape(-1),
+                batchsize,
+                num_quatrature_points,
+                blocksize,
+                b,
+            ),
         )
 
     return xp.linalg.inv(operator.astype(contour_type)).astype(in_type)

@@ -291,8 +291,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 self.batch_size = g_greater.data.shape[-1]
 
             batch_counts, _ = get_section_sizes(
-                g_greater.data.shape[-1],
-                int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+                g_greater._data.shape[-1],
+                int(np.ceil(g_greater._data.shape[-1] / self.batch_size)),
             )
 
             batch_displacements = np.cumsum(

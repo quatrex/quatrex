@@ -357,11 +357,10 @@ class SCBA:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        local_max_diff = xp.max(xp.abs(diff))
         if not NCCL_AVAILABLE:
-            max_diff = xp.max(xp.abs(diff))
-            max_diff = comm.allreduce(max_diff, op=MPI.MAX)
+            max_diff = comm.allreduce(local_max_diff, op=MPI.MAX)
         else:
-            local_max_diff = xp.max(xp.abs(diff))
             max_diff = xp.empty_like(local_max_diff)
             synchronize_device()
             nccl_comm.all_reduce(local_max_diff, max_diff, op="max")

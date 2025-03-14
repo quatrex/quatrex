@@ -70,7 +70,6 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     """
     if overlap is None:
         local_density = x.diagonal().imag
-        # return xp.vstack(comm.allgather(local_density))
         if not NCCL_AVAILABLE:
             return xp.vstack(comm.allgather(local_density))
 
@@ -110,7 +109,6 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
         local_density.append(local_density_slice.imag)
 
     local_density = xp.hstack(local_density)
-    # return xp.vstack(comm.allgather(local_density))
 
     if not NCCL_AVAILABLE:
         return xp.vstack(comm.allgather(local_density))
@@ -161,10 +159,6 @@ def contact_currents(
         axis1=-2,
         axis2=-1,
     )
-
-    # i_left = xp.hstack(comm.allgather(i_left))
-    # i_right = xp.hstack(comm.allgather(i_right))
-    # return i_left, i_right
 
     if not NCCL_AVAILABLE:
         i_left = xp.hstack(comm.allgather(i_left))

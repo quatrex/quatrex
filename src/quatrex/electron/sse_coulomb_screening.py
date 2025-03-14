@@ -28,11 +28,11 @@ def fft_convolve_fock_with_hilbert(
     out=None,
 ):
     if out is not None:
-        c_lesser, c_greater = out
+        c_lesser, c_greater, c_retarded = out
     if work_space is not None:
         (a_x_fft, b_lesser_fft, b_greater_fft, c_x_fft) = work_space
     m = a_lesser.shape[0]
-    n = xp.power(2,xp.int32(xp.log2(a_lesser.shape[0] + a_greater.shape[0] - 1) + 1))
+    n = xp.power(2, xp.int32(xp.log2(a_lesser.shape[0] + a_greater.shape[0] - 1) + 1))
 
     a_x_fft = xp.fft.fft(a_lesser, n, axis=0)
     b_lesser_fft = xp.fft.fft(b_lesser, n, axis=0)
@@ -52,15 +52,16 @@ def fft_convolve_fock_with_hilbert(
 
     # Add a small imaginary part to avoid singularity.
     energy_differences = (energies - energies[0]).reshape(-1, 1)
-    ne = energies.size
     # eta for removing the singularity. See Cauchy principal value.
     c_x_fft = xp.fft.fft(c_antihermitian, n, axis=0)
     a_x_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
     b_lesser_fft = xp.multiply(c_x_fft, a_x_fft)
     b_lesser_fft -= xp.multiply(c_x_fft, a_x_fft.conj())  # negative energy part
-    c_retarded = xp.fft.ifft(b_lesser_fft)[:ne]
-    c_retarded /= (2 * xp.pi) * (energies[1] - energies[0])
-    c_retarded = 1j * c_retarded + c_antihermitian / 2
+    c_retarded = xp.fft.ifft(b_lesser_fft)[:m]
+    c_retarded = (
+        c_retarded / (2 * xp.pi) * (energies[1] - energies[0]) * 1j
+        + c_antihermitian / 2
+    )
 
     if out is None:
         return c_lesser, c_greater, c_retarded
@@ -254,8 +255,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 self.batch_size = g_greater.data.shape[-1]
 
             batch_counts, _ = get_section_sizes(
-                g_greater.data.shape[-1],
-                int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+                g_greater._data.shape[-1],
+                int(np.ceil(g_greater._data.shape[-1] / self.batch_size)),
             )
 
             batch_displacements = np.cumsum(
@@ -265,40 +266,54 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
+                out = (
+                    sigma_lesser._data[:, batch],
+                    sigma_greater._data[:, batch],
+                    sigma_retarded._data[:batch],
+                )
+                fft_convolve_fock_with_hilbert(
+                    g_lesser._data[:, batch],
+                    g_greater._data[:, batch],
+                    w_lesser._data[:, batch],
+                    w_greater._data[:, batch],
+                    self.energies,
+                )
+
                 # Compute the full self-energy using the convolution theorem.
                 # Second term are corrections for negative frequencies that
                 # where cut off by the polarization calculation.
                 # TODO: the datastructures does not allow for easy slicing of the
                 # data. This is a workaround.
+                # sigma_lesser._data[
+                #     sigma_lesser._stack_padding_mask, ..., batch
+                # ] += self.prefactor * (
+                #     fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
+                #         : self.num_energies
+                #     ]
+                #     - fft_correlate(
+                #         g_lesser.data[:, batch], w_greater.data[:, batch].conj()
+                #     )[self.num_energies - 1 :]
+                # )
+                # sigma_greater._data[
+                #     sigma_greater._stack_padding_mask, ..., batch
+                # ] += self.prefactor * (
+                #     fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
+                #         : self.num_energies
+                #     ]
+                #     - fft_correlate(
+                #         g_greater.data[:, batch], w_lesser.data[:, batch].conj()
+                #     )[self.num_energies - 1 :]
+                # )
+                
 
-                sigma_lesser._data[
-                    sigma_lesser._stack_padding_mask, ..., batch
-                ] += self.prefactor * (
-                    fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
-                        : self.num_energies
-                    ]
-                    - fft_correlate(
-                        g_lesser.data[:, batch], w_greater.data[:, batch].conj()
-                    )[self.num_energies - 1 :]
-                )
-                sigma_greater._data[
-                    sigma_greater._stack_padding_mask, ..., batch
-                ] += self.prefactor * (
-                    fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
-                        : self.num_energies
-                    ]
-                    - fft_correlate(
-                        g_greater.data[:, batch], w_lesser.data[:, batch].conj()
-                    )[self.num_energies - 1 :]
-                )
                 # Compute retarded self-energy with a Hilbert transform.
-                sigma_antihermitian = 1j * xp.imag(
-                    sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
-                )
-                sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-                sigma_retarded._data[
-                    sigma_retarded._stack_padding_mask, ..., batch
-                ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
+                # sigma_antihermitian = 1j * xp.imag(
+                #     sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
+                # )
+                # sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
+                # sigma_retarded._data[
+                #     sigma_retarded._stack_padding_mask, ..., batch
+                # ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
 
         synchronize_device()
         t_sse += time.perf_counter()

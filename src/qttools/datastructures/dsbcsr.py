@@ -456,7 +456,10 @@ class DSBCSR(DSBSparse):
             inds_bcsr2bcsr = inds_bcsr2canonical[
                 self._block_config[num_blocks].inds_canonical2block
             ]
-            self.data[:] = self.data[..., inds_bcsr2bcsr]
+            data = self.data.reshape(-1, self.data.shape[-1])
+            for stack_idx in range(data.shape[0]):
+                data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
+            # self.data[:] = self.data[..., inds_bcsr2bcsr]
             self.cols = self.cols[inds_bcsr2bcsr]
 
             self.num_blocks = num_blocks
@@ -477,7 +480,10 @@ class DSBCSR(DSBSparse):
         # Mapping directly from original block-ordering to the new
         # block-ordering is achieved by chaining the two mappings.
         inds_bcsr2bcsr = inds_bcsr2canonical[inds_canonical2bcsr]
-        self.data[:] = self.data[..., inds_bcsr2bcsr]
+        data = self.data.reshape(-1, self.data.shape[-1])
+        for stack_idx in range(data.shape[0]):
+            data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
+        # self.data[:] = self.data[..., inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
         block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
@@ -545,7 +551,10 @@ class DSBCSR(DSBSparse):
             self._rowptr_map_t = rowptr_map_t
             self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
-        self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
+        data = self.data.reshape(-1, self.data.shape[-1])
+        for stack_idx in range(data.shape[0]):
+            data[stack_idx] = data[stack_idx, inds_bcsr2bcsr_t]
+        # self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
         self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
@@ -599,9 +608,14 @@ class DSBCSR(DSBSparse):
             self._rowptr_map_t = rowptr_map_t
             self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
-        self.data[:] = 0.5 * op(
-            self.data, self.data[..., self._inds_bcsr2bcsr_t].conj()
-        )
+        data = self.data.reshape(-1, self.data.shape[-1])
+        for stack_idx in range(data.shape[0]):
+            data[stack_idx] = 0.5 * op(
+                data[stack_idx], data[stack_idx, self._inds_bcsr2bcsr_t].conj()
+            )
+        # self.data[:] = 0.5 * op(
+        #     self.data, self.data[..., self._inds_bcsr2bcsr_t].conj()
+        # )
 
     @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:

@@ -553,7 +553,7 @@ class DSBCSR(DSBSparse):
 
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
-            data[stack_idx] = data[stack_idx, inds_bcsr2bcsr_t]
+            data[stack_idx] = data[stack_idx, self._inds_bcsr2bcsr_t]
         # self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
         self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols

@@ -459,7 +459,6 @@ class DSBCSR(DSBSparse):
             data = self.data.reshape(-1, self.data.shape[-1])
             for stack_idx in range(data.shape[0]):
                 data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
-            # self.data[:] = self.data[..., inds_bcsr2bcsr]
             self.cols = self.cols[inds_bcsr2bcsr]
 
             self.num_blocks = num_blocks
@@ -483,7 +482,6 @@ class DSBCSR(DSBSparse):
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
-        # self.data[:] = self.data[..., inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
         block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)

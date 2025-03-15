@@ -47,5 +47,7 @@ def test_memoizer(
     a[..., row_slice, col_slice] = 0
     a[..., row_slice, col_slice] = 0
 
+    # do not allow fallback
+    lyapunov_solver.force_memoizing = True
     x = lyapunov_solver(a, q, "contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

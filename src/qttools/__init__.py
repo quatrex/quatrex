@@ -81,6 +81,18 @@ NDArray: TypeAlias = xp.ndarray[Any, _DType]
 # Check if NCCL is available.
 NCCL_AVAILABLE = False
 nccl_comm = None
+
+# TODO: This is a temporary solution. We need to find a better way to
+# handle this. Very specific to mpich.
+CUDA_AWARE_MPI = os.environ.get("MPICH_GPU_SUPPORT_ENABLED", "false").lower()
+if CUDA_AWARE_MPI in ("y", "yes", "t", "true", "on", "1"):
+    CUDA_AWARE_MPI = True
+elif CUDA_AWARE_MPI in ("n", "no", "f", "false", "off", "0"):
+    CUDA_AWARE_MPI = False
+else:
+    warn(f"Invalid truth value {CUDA_AWARE_MPI=}. Defaulting to 'false'.")
+    CUDA_AWARE_MPI = False
+
 if xp.__name__ == "cupy":
 
     from cupy.cuda import nccl

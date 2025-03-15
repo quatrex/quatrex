@@ -84,7 +84,7 @@ def get_device(arr: NDArray, out: None | NDArray = None) -> NDArray:
         The equivalent cupy array.
 
     """
-    if get_array_module_name(arr) == "cupy":
+    if get_array_module_name(arr) == "cupy" or xp.__name__ == "numpy":
         if out is None:
             return arr
         out[:] = arr

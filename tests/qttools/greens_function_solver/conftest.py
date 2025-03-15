@@ -38,11 +38,6 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((9, 2, 4), id="3D-stack"),
 ]
 
-SOLVE = [
-    pytest.param(True, id="solve_true"),
-    pytest.param(False, id="solve_false"),
-]
-
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
@@ -125,9 +120,4 @@ def return_retarded(request: pytest.FixtureRequest) -> bool:
 
 @pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
-    return request.param
-
-
-@pytest.fixture(params=SOLVE, autouse=True)
-def solve(request: pytest.FixtureRequest) -> bool:
     return request.param

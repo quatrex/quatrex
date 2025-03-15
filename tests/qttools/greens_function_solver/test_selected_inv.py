@@ -13,7 +13,6 @@ def test_selected_inv(
     max_batch_size: int,
     block_sizes: NDArray,
     global_stack_shape: int | tuple,
-    solve: bool,
 ):
     """Tests the selected inversion method of a Green's function solver."""
     bt_mask = bt_dense.astype(bool)
@@ -24,7 +23,7 @@ def test_selected_inv(
     block_sizes = block_sizes
     dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
 
-    solver = gfsolver_type(max_batch_size=max_batch_size, solve=solve)
+    solver = gfsolver_type(max_batch_size=max_batch_size)
 
     if out:
         gf_inv = dsbsparse_type.zeros_like(dsbsparse)

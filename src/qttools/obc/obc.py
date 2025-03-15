@@ -201,7 +201,9 @@ class OBCMemoizer:
         synchronize_current_stream()
 
         if comm.rank == 0:
-            print(f"{memoizing} out of {comm.size} ranks want to memoize OBC")
+            print(
+                f"{memoizing} out of {comm.size} ranks want to memoize OBC", flush=True
+            )
 
         # NOTE: it would be possible to memoize even if few energies did not converge
         if memoizing != comm.size and not self.force_memoizing:

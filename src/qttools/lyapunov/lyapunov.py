@@ -196,7 +196,10 @@ class LyapunovMemoizer:
         synchronize_current_stream()
 
         if comm.rank == 0:
-            print(f"{memoizing} out of {comm.size} ranks want to memoize OBC")
+            print(
+                f"{memoizing} out of {comm.size} ranks want to memoize Lyapunov",
+                flush=True,
+            )
 
         if memoizing != comm.size and not self.force_memoizing:
             # If the result did not converge, recompute it from scratch.

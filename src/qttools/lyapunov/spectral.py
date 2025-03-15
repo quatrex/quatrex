@@ -82,13 +82,16 @@ class Spectral(LyapunovSolver):
         )
 
         inv_vs = xp.linalg.inv(vs)
+        inv_vs = xp.broadcast_to(inv_vs, q.shape)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)
 
-        phi = xp.ones_like(a) - xp.einsum("e...i, e...j -> e...ij", ws, ws.conj())
+        phi = xp.ones_like(a) - xp.einsum("...i, ...j -> ...ij", ws, ws.conj())
+        phi = xp.broadcast_to(phi, q.shape)
         x_tilde = 1 / phi * gamma
 
         x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
 
+        a = xp.broadcast_to(a, q.shape)
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
             x = q + a @ x @ a.conj().swapaxes(-2, -1)
@@ -122,6 +125,8 @@ class Spectral(LyapunovSolver):
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
+        The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
+
         Parameters
         ----------
         a : NDArray
@@ -141,9 +146,8 @@ class Spectral(LyapunovSolver):
 
         """
 
-        if a.ndim == 2:
-            a = a[xp.newaxis, ...]
-            q = q[xp.newaxis, ...]
+        assert q.shape[-2:] == a.shape[-2:]
+        assert q.ndim >= a.ndim
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:

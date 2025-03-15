@@ -64,6 +64,7 @@ class Doubling(LyapunovSolver):
 
         """
 
+        a = xp.broadcast_to(a, q.shape)
         a_i = a.copy()
         x = q.copy()
 
@@ -95,6 +96,8 @@ class Doubling(LyapunovSolver):
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
+        The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
+
         Parameters
         ----------
         a : NDArray
@@ -114,9 +117,8 @@ class Doubling(LyapunovSolver):
 
         """
 
-        if a.ndim == 2:
-            a = a[xp.newaxis, ...]
-            q = q[xp.newaxis, ...]
+        assert q.shape[-2:] == a.shape[-2:]
+        assert q.ndim >= a.ndim
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:

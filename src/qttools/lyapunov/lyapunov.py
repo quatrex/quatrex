@@ -193,6 +193,8 @@ class LyapunovMemoizer:
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
+        The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
+
         This is a memoized wrapper around a Lyapunov solver.
 
         Parameters
@@ -214,9 +216,8 @@ class LyapunovMemoizer:
 
         """
 
-        if a.ndim == 2:
-            a = a[xp.newaxis, ...]
-            q = q[xp.newaxis, ...]
+        assert q.shape[-2:] == a.shape[-2:]
+        assert q.ndim >= a.ndim
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:

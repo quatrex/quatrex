@@ -34,15 +34,18 @@ def _system_reduction_rows(
 
     """
 
-    a_hat = a[:, rows_to_reduce, rows_to_reduce]
+    a_hat = a[..., rows_to_reduce, rows_to_reduce]
+    a = xp.broadcast_to(a, q.shape)
 
     x = q.copy()
-    x[:, rows_to_reduce, rows_to_reduce] = 0
-    q_hat = q[:, rows_to_reduce, rows_to_reduce] + (
-        a[:, rows_to_reduce, :] @ x @ a[:, rows_to_reduce, :].conj().swapaxes(-2, -1)
+    x[..., rows_to_reduce, rows_to_reduce] = 0
+    q_hat = q[..., rows_to_reduce, rows_to_reduce] + (
+        a[..., rows_to_reduce, :]
+        @ x
+        @ a[..., rows_to_reduce, :].conj().swapaxes(-2, -1)
     )
 
-    x[:, rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat, contact)
+    x[..., rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat, contact)
 
     return x
 
@@ -77,14 +80,15 @@ def _system_reduction_cols(
 
     """
 
-    a_hat = a[:, cols_to_reduce, cols_to_reduce]
+    a_hat = a[..., cols_to_reduce, cols_to_reduce]
 
-    q_hat = q[:, cols_to_reduce, cols_to_reduce]
+    q_hat = q[..., cols_to_reduce, cols_to_reduce]
 
     x_hat = solve(a_hat, q_hat, contact)
 
-    x = q.copy() + a[:, :, cols_to_reduce] @ x_hat @ a[
-        :, :, cols_to_reduce
+    a = xp.broadcast_to(a, q.shape)
+    x = q.copy() + a[..., :, cols_to_reduce] @ x_hat @ a[
+        ..., :, cols_to_reduce
     ].conj().swapaxes(-2, -1)
 
     return x
@@ -103,6 +107,8 @@ def system_reduction(
     The system is reduced by rows of A (AXA^H - X + Q = 0) that are all zero.
     This results in a system which is only of size n x n, where n is the number
     of rows with non-zero elements.
+
+    The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
 
     Parameters
     ----------
@@ -125,28 +131,21 @@ def system_reduction(
 
     """
 
-    batch_shape = a.shape[:-2]
-
-    assert a.shape == q.shape
     if out is not None:
-        assert out.shape == a.shape
+        assert out.shape == q.shape
 
-    a = a.reshape(-1, *a.shape[-2:])
-    q = q.reshape(-1, *q.shape[-2:])
-
-    if a.ndim == 2:
-        a = a[xp.newaxis, ...]
-        q = q[xp.newaxis, ...]
+    assert q.shape[-2:] == a.shape[-2:]
+    assert q.ndim >= a.ndim
 
     # get first and last row/cols with non-zero elements
     nnz_rows = xp.sum(xp.abs(a), axis=-1) > 0
     nnz_cols = xp.sum(xp.abs(a), axis=-2) > 0
 
     row_start = xp.argmax(nnz_rows, axis=-1)
-    row_end = a.shape[-1] - xp.argmax(nnz_rows[:, ::-1], axis=-1)
+    row_end = a.shape[-1] - xp.argmax(nnz_rows[..., ::-1], axis=-1)
 
     col_start = xp.argmax(nnz_cols, axis=-1)
-    col_end = a.shape[-2] - xp.argmax(nnz_cols[:, ::-1], axis=-1)
+    col_end = a.shape[-2] - xp.argmax(nnz_cols[..., ::-1], axis=-1)
 
     any_rows = xp.any(nnz_rows, axis=-1)
     any_cols = xp.any(nnz_cols, axis=-1)
@@ -169,8 +168,6 @@ def system_reduction(
         x = _system_reduction_rows(a, q, contact, solve, rows_to_reduce)
     else:
         x = _system_reduction_cols(a, q, contact, solve, cols_to_reduce)
-
-    x = x.reshape(*batch_shape, *x.shape[-2:])
 
     if out is None:
         return x

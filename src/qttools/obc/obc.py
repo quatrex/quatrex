@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, xp
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler
 
@@ -172,10 +172,16 @@ class OBCMemoizer:
             xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
             / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
         )
-        converged = recursion_error < self.convergence_tol
-        converged = comm.allreduce(converged, op=MPI.LAND)
 
-        if converged:
+        local_converged = xp.array(recursion_error < self.convergence_tol, dtype=int)
+        converged = xp.empty_like(local_converged)
+        # NCCL allreduce does not support op="and"
+        if not NCCL_AVAILABLE:
+            comm.Allreduce(local_converged, converged, op=MPI.SUM)
+        else:
+            nccl_comm.all_reduce(local_converged, converged, op="sum")
+
+        if converged == comm.size:
             self._cache[contact] = x_ii_ref.copy()
             if out is None:
                 return x_ii_ref

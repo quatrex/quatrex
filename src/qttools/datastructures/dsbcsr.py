@@ -552,7 +552,6 @@ class DSBCSR(DSBSparse):
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = data[stack_idx, self._inds_bcsr2bcsr_t]
-        # self.data[:] = self.data[..., self._inds_bcsr2bcsr_t]
         self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
@@ -611,9 +610,6 @@ class DSBCSR(DSBSparse):
             data[stack_idx] = 0.5 * op(
                 data[stack_idx], data[stack_idx, self._inds_bcsr2bcsr_t].conj()
             )
-        # self.data[:] = 0.5 * op(
-        #     self.data, self.data[..., self._inds_bcsr2bcsr_t].conj()
-        # )
 
     @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:

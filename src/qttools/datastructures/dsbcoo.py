@@ -530,7 +530,6 @@ class DSBCOO(DSBSparse):
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
-        # self.data[:] = self.data[..., inds_bcoo2bcoo]
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
@@ -602,7 +601,6 @@ class DSBCOO(DSBSparse):
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = data[stack_idx, self._inds_bcoo2bcoo_t]
-        # self.data[:] = self.data[..., self._inds_bcoo2bcoo_t]
         self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
         self.cols, self._cols_t = self._cols_t, self.cols
         self.rows, self._rows_t = self._rows_t, self.rows

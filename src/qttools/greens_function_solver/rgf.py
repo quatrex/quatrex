@@ -298,10 +298,10 @@ class RGF(GFSolver):
 
             # We need to write the last diagonal blocks to the output.
             xl_.blocks[-1, -1] = 0.5 * (
-                xl_diag_blocks[-1] - xl_diag_blocks[-1].cong().swapaxes(-2, -1)
+                xl_diag_blocks[-1] - xl_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
             xg_.blocks[-1, -1] = 0.5 * (
-                xg_diag_blocks[-1] - xg_diag_blocks[-1].cong().swapaxes(-2, -1)
+                xg_diag_blocks[-1] - xg_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
             # xl_.blocks[-1, -1] = xl_diag_blocks[-1]
             # xg_.blocks[-1, -1] = xg_diag_blocks[-1]

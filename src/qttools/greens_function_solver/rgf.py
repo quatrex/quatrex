@@ -297,8 +297,14 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xl_.blocks[-1, -1] = xl_diag_blocks[-1]
-            xg_.blocks[-1, -1] = xg_diag_blocks[-1]
+            xl_.blocks[-1, -1] = 0.5 * (
+                xl_diag_blocks[-1] - xl_diag_blocks[-1].cong().swapaxes(-2, -1)
+            )
+            xg_.blocks[-1, -1] = 0.5 * (
+                xg_diag_blocks[-1] - xg_diag_blocks[-1].cong().swapaxes(-2, -1)
+            )
+            # xl_.blocks[-1, -1] = xl_diag_blocks[-1]
+            # xg_.blocks[-1, -1] = xg_diag_blocks[-1]
             if return_retarded:
                 xr_.blocks[-1, -1] = xr_diag_blocks[-1]
 
@@ -425,19 +431,37 @@ class RGF(GFSolver):
 
                 temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
 
-                # NOTE: Cursed Python multiple assignment syntax.
-                xl_.blocks[i, i] = xl_diag_blocks[i] = (
+                xl_diag_blocks[i] = (
                     xl_ii
                     + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_l
                     + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
                 )
-                xg_.blocks[i, i] = xg_diag_blocks[i] = (
+                xl_.blocks[i, i] = 0.5 * (
+                    xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
+                )
+                xg_diag_blocks[i] = (
                     xg_ii
                     + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
                     - temp_1_g
                     + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
                 )
+                xg_.blocks[i, i] = 0.5 * (
+                    xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
+                )
+                # NOTE: Cursed Python multiple assignment syntax.
+                # xl_.blocks[i, i] = xl_diag_blocks[i] = (
+                #     xl_ii
+                #     + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
+                #     - temp_1_l
+                #     + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
+                # )
+                # xg_.blocks[i, i] = xg_diag_blocks[i] = (
+                #     xg_ii
+                #     + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
+                #     - temp_1_g
+                #     + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
+                # )
                 xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]

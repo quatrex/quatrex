@@ -3,6 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
+from qttools.kernels.linalg import inv
 from qttools.obc.obc import OBCSolver
 from qttools.profiling import Profiler
 
@@ -70,7 +71,7 @@ class SanchoRubio(OBCSolver):
 
         delta = float("inf")
         for __ in range(self.max_iterations):
-            inverse = xp.linalg.inv(epsilon)
+            inverse = inv(epsilon)
 
             epsilon = epsilon - alpha @ inverse @ beta - beta @ inverse @ alpha
             epsilon_s = epsilon_s - alpha @ inverse @ beta
@@ -88,7 +89,7 @@ class SanchoRubio(OBCSolver):
         else:  # Did not break, i.e. max_iterations reached.
             warnings.warn("Surface Green's function did not converge.", RuntimeWarning)
 
-        x_ii = xp.linalg.inv(epsilon_s)
+        x_ii = inv(epsilon_s)
 
         if out is not None:
             out[...] = x_ii

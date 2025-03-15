@@ -3,6 +3,7 @@
 from qttools import xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
+from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.solvers_utils import get_batches
 
@@ -90,7 +91,7 @@ class Inv(GFSolver):
                 b_ = slice(a.block_offsets[j], a.block_offsets[j + 1], 1)
                 a_dense[:, b_, b_] -= block[stack_slice]
 
-            inv_a[: batches_sizes[i]] = xp.linalg.inv(a_dense)
+            inv_a[: batches_sizes[i]] = inv(a_dense)
 
             out.data[stack_slice] = inv_a[: batches_sizes[i], ..., rows, cols]
 
@@ -204,7 +205,7 @@ class Inv(GFSolver):
                 if block_g is not None:
                     sigma_greater_dense[:, b_, b_] -= block_g[stack_slice]
 
-            x_r[: batches_sizes[i]] = xp.linalg.inv(a_dense)
+            x_r[: batches_sizes[i]] = inv(a_dense)
             x_l[: batches_sizes[i]] = (
                 x_r[: batches_sizes[i]]
                 @ sigma_lesser_dense

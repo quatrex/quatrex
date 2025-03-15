@@ -6,6 +6,7 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
+from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -162,9 +163,9 @@ class OBCMemoizer:
 
         # Do refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
-            x_ii = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+            x_ii = inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        x_ii_ref = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+        x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Check for convergence accross all MPI ranks.
         recursion_error = xp.max(

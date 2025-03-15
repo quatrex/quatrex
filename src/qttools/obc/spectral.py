@@ -4,6 +4,7 @@ import warnings
 
 from qttools import NDArray, xp
 from qttools.datastructures.dsbsparse import _block_view
+from qttools.kernels.linalg import inv
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
 from qttools.profiling import Profiler, decorate_methods
@@ -508,13 +509,13 @@ class Spectral(OBCSolver):
                 w = ws[i, m]
                 # Moore-Penrose pseudoinverse.
                 if self.two_sided:
-                    v_inv = xp.linalg.inv(vl.conj().T @ vr) @ vl.conj().T
+                    v_inv = inv(vl.conj().T @ vr) @ vl.conj().T
                 else:
-                    v_inv = xp.linalg.inv(vr.conj().T @ vr) @ vr.conj().T
+                    v_inv = inv(vr.conj().T @ vr) @ vr.conj().T
                 x_ii_a_ij[i] = vr / w @ v_inv
 
             # Calculate the surface Green's function.
-            return xp.linalg.inv(a_ii + a_ji @ x_ii_a_ij)
+            return inv(a_ii + a_ji @ x_ii_a_ij)
 
         if self.x_ii_formula == "direct":
             # Equation (15).
@@ -523,7 +524,7 @@ class Spectral(OBCSolver):
                 vr = vrs[i][:, m]
                 w = ws[i, m]
                 # "More stable" computation of the surface Green's function.
-                inverse = xp.linalg.inv(
+                inverse = inv(
                     vr.conj().T @ a_ii[i] @ vr + vr.conj().T @ a_ji[i] @ vr / w
                 )
                 x_ii[i] = vr @ inverse @ vr.conj().T
@@ -660,9 +661,9 @@ class Spectral(OBCSolver):
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
-            x_ii = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+            x_ii = inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        x_ii_ref = xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+        x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Check the batch average recursion error.
         recursion_error = xp.mean(
@@ -690,8 +691,7 @@ class Spectral(OBCSolver):
 
             # Compute injection vector
             injection = (
-                -a_ji[0, :, :] @ vrs_inj @ xp.linalg.inv(wrs_inj)
-                - sigma_retarded @ vrs_inj
+                -a_ji[0, :, :] @ vrs_inj @ inv(wrs_inj) - sigma_retarded @ vrs_inj
             )
 
             return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]

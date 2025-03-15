@@ -5,7 +5,13 @@ profiler = Profiler()
 
 
 @profiler.profile(level="debug")
-def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
+def _system_reduction_rows(
+    a: NDArray,
+    q: NDArray,
+    contact: str,
+    solve,
+    rows_to_reduce: slice,
+):
     """Reduces the system by rows of A that are all zero.
 
     Parameters
@@ -14,6 +20,8 @@ def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
         The system matrix.
     q : NDArray
         The right-hand side matrix.
+    contact : str
+        The contact to which the boundary blocks belong.
     solve : function
         The solver to use for the reduced system.
     rows_to_reduce : slice
@@ -34,7 +42,7 @@ def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
         a[:, rows_to_reduce, :] @ x @ a[:, rows_to_reduce, :].conj().swapaxes(-2, -1)
     )
 
-    x[:, rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat)
+    x[:, rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat, contact)
 
     return x
 
@@ -43,8 +51,9 @@ def _system_reduction_rows(a: NDArray, q: NDArray, solve, rows_to_reduce):
 def _system_reduction_cols(
     a: NDArray,
     q: NDArray,
+    contact: str,
     solve,
-    cols_to_reduce,
+    cols_to_reduce: slice,
 ):
     """Reduces the system by columns of A that are all zero.
 
@@ -54,6 +63,8 @@ def _system_reduction_cols(
         The system matrix.
     q : NDArray
         The right-hand side matrix.
+    contact : str
+        The contact to which the boundary blocks belong.
     solve : function
         The solver to use for the reduced system.
     cols_to_reduce : slice
@@ -70,7 +81,7 @@ def _system_reduction_cols(
 
     q_hat = q[:, cols_to_reduce, cols_to_reduce]
 
-    x_hat = solve(a_hat, q_hat)
+    x_hat = solve(a_hat, q_hat, contact)
 
     x = q.copy() + a[:, :, cols_to_reduce] @ x_hat @ a[
         :, :, cols_to_reduce
@@ -83,6 +94,7 @@ def _system_reduction_cols(
 def system_reduction(
     a: NDArray,
     q: NDArray,
+    contact: str,
     solve,
     out: None | NDArray = None,
 ):
@@ -98,6 +110,8 @@ def system_reduction(
         The system matrix.
     q : NDArray
         The right-hand side matrix.
+    contact : str
+        The contact to which the boundary blocks belong.
     solve : function
         The solver to use for the reduced system.
     out : NDArray, optional
@@ -152,9 +166,9 @@ def system_reduction(
     # Furthermore, possible to reduce to non contiguous rows/cols
 
     if length_row < length_col:
-        x = _system_reduction_rows(a, q, solve, rows_to_reduce)
+        x = _system_reduction_rows(a, q, contact, solve, rows_to_reduce)
     else:
-        x = _system_reduction_cols(a, q, solve, cols_to_reduce)
+        x = _system_reduction_cols(a, q, contact, solve, cols_to_reduce)
 
     x = x.reshape(*batch_shape, *x.shape[-2:])
 

@@ -68,8 +68,11 @@ class LyapunovMemoizer:
         The Lyapunov solver to wrap.
     num_ref_iterations : int, optional
         The number of refinement iterations to do.
-    memoize_tol : float, optional
-        The required accuracy to only memoize.
+    memoize_rel_tol : float, optional
+        The required relative accuracy to only memoize.
+    memoize_abs_tol : float, optional
+        The required absolute accuracy to only memoize.
+        If either of the tolerances is met, the result is memoized.
     warning_threshold : float, optional
         The threshold for the relative recursion error to issue a warning.
     reduce_sparsity : bool, optional
@@ -85,7 +88,8 @@ class LyapunovMemoizer:
         self,
         lyapunov_solver: LyapunovSolver,
         num_ref_iterations: int = 10,
-        memoize_tol: float = 1e-2,
+        memoize_rel_tol: float = 1e-1,
+        memoize_abs_tol: float = 1e-8,
         warning_threshold: float = 1e-4,
         reduce_sparsity: bool = True,
         force_memoizing: bool = False,
@@ -93,7 +97,8 @@ class LyapunovMemoizer:
         """Initializes the memoizer."""
         self.lyapunov_solver = lyapunov_solver
         self.num_ref_iterations = num_ref_iterations
-        self.memoize_tol = memoize_tol
+        self.memoize_rel_tol = memoize_rel_tol
+        self.memoize_abs_tol = memoize_abs_tol
         self.warning_threshold = warning_threshold
         self._cache = {}
         self.reduce_sparsity = reduce_sparsity
@@ -185,13 +190,19 @@ class LyapunovMemoizer:
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         # Check for convergence accross all MPI ranks.
-        recursion_error = xp.max(
-            xp.linalg.norm(x_ref - x, axis=(-2, -1))
-            / xp.linalg.norm(x_ref, axis=(-2, -1))
+        absolute_recursion_errors = xp.linalg.norm(x_ref - x, axis=(-2, -1))
+        relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
+            x_ref, axis=(-2, -1)
         )
         x = x_ref
 
-        local_memoizing = xp.array(recursion_error < self.memoize_tol, dtype=int)
+        local_memoizing = xp.array(
+            xp.all(
+                (absolute_recursion_errors < self.memoize_abs_tol)
+                | (relative_recursion_errors < self.memoize_rel_tol)
+            ),
+            dtype=int,
+        )
         memoizing = xp.empty_like(local_memoizing)
 
         # NCCL allreduce does not support op="and"
@@ -226,16 +237,17 @@ class LyapunovMemoizer:
 
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
-        recursion_error = xp.max(
+        relative_recursion_error = xp.max(
             xp.linalg.norm(x_ref - x, axis=(-2, -1))
             / xp.linalg.norm(x_ref, axis=(-2, -1))
         )
         x = x_ref
 
         # TODO: we should allow data gathering of the final recursion error
-        if recursion_error > self.warning_threshold:
+        if relative_recursion_error > self.warning_threshold:
             warnings.warn(
-                f"High relative recursion error: {recursion_error:.2e}",
+                f"High relative recursion error: {relative_recursion_error:.2e} "
+                + f"at rank {comm.rank} for {contact} Lyapunov",
                 RuntimeWarning,
             )
 

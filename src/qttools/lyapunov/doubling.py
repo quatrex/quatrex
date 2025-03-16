@@ -17,8 +17,11 @@ class Doubling(LyapunovSolver):
     ----------
     max_iterations : int, optional
         The maximum number of iterations to perform.
-    convergence_tol : float, optional
-        The required accuracy for convergence.
+    convergence_rel_tol : float, optional
+        The required relative accuracy for convergence.
+    convergence_abs_tol : float, optional
+        The required absolute accuracy for convergence.
+        Either convergence_rel_tol or convergence_abs_tol must be satisfied.
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix
 
@@ -26,13 +29,15 @@ class Doubling(LyapunovSolver):
 
     def __init__(
         self,
-        max_iterations: int = 100,
-        convergence_tol: float = 1e-6,
+        max_iterations: int = 10,
+        convergence_rel_tol: float = 1e-5,
+        convergence_abs_tol: float = 1e-8,
         reduce_sparsity: bool = True,
     ) -> None:
         """Initializes the solver."""
         self.max_iterations = max_iterations
-        self.convergence_tol = convergence_tol
+        self.convergence_rel_tol = convergence_rel_tol
+        self.convergence_abs_tol = convergence_abs_tol
         self.reduce_sparsity = reduce_sparsity
 
     @profiler.profile(level="debug")
@@ -71,11 +76,19 @@ class Doubling(LyapunovSolver):
         for __ in range(self.max_iterations):
             x_i = x + a_i @ x @ a_i.conj().swapaxes(-1, -2)
 
-            if xp.linalg.norm(x_i - x, axis=(-2, -1)).max() < self.convergence_tol:
+            absolute_recursion_errors = xp.linalg.norm(x_i - x, axis=(-2, -1))
+            relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
+                x_i, axis=(-2, -1)
+            )
+            x = x_i
+
+            if xp.all(
+                (relative_recursion_errors < self.convergence_rel_tol)
+                | (absolute_recursion_errors < self.convergence_abs_tol)
+            ):
                 break
 
             a_i = a_i @ a_i
-            x = x_i
 
         else:  # Did not break, i.e. max_iterations reached.
             warnings.warn("Lyapunov equation did not converge.", RuntimeWarning)

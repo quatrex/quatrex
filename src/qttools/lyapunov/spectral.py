@@ -99,7 +99,7 @@ class Spectral(LyapunovSolver):
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         # Check the batch average recursion error.
-        recursion_error = xp.mean(
+        recursion_error = xp.max(
             xp.linalg.norm(x_ref - x, axis=(-2, -1))
             / xp.linalg.norm(x_ref, axis=(-2, -1))
         )

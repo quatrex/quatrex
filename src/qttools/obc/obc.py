@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import warnings
 from abc import ABC, abstractmethod
 
 from mpi4py import MPI
@@ -72,6 +73,8 @@ class OBCMemoizer:
         The maximum number of refinement iterations to do.
     memoize_tol : float, optional
         The required accuracy to only memoize.
+    warning_threshold : float, optional
+        The threshold for the relative recursion error to issue a warning.
     force_memoizing: bool, optionak
         Force memoizing using q as the initial guess.
 
@@ -82,14 +85,23 @@ class OBCMemoizer:
         obc_solver: "OBCSolver",
         num_ref_iterations: int = 3,
         memoize_tol: float = 1e-2,
+        warning_threshold: float = 1e-4,
         force_memoizing: bool = False,
     ) -> None:
         """Initalizes the memoizer."""
         self.obc_solver = obc_solver
         self.num_ref_iterations = num_ref_iterations
         self.memoize_tol = memoize_tol
+        self.warning_threshold = warning_threshold
         self.force_memoizing = force_memoizing
         self._cache = {}
+
+        if num_ref_iterations < 2:
+            warnings.warn(
+                "The number of refinement iterations should be at least 2. Defaulting to 2.",
+                RuntimeWarning,
+            )
+            self.num_ref_iterations = 2
 
     @profiler.profile(level="debug")
     def _call_with_cache(
@@ -214,10 +226,23 @@ class OBCMemoizer:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
 
         # Do refinement iterations.
-        for __ in range(self.num_ref_iterations - 1):
+        for __ in range(self.num_ref_iterations - 2):
             x_ii = inv(a_ii - a_ji @ x_ii @ a_ij)
 
+        x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
+
+        recursion_error = xp.max(
+            xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+            / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+        )
+        x_ii = x_ii_ref
+
         # TODO: we should allow data gathering of the final recursion error
+        if recursion_error > self.warning_threshold:
+            warnings.warn(
+                f"High relative recursion error: {recursion_error:.2e}",
+                RuntimeWarning,
+            )
 
         self._cache[contact] = x_ii.copy()
         if out is None:

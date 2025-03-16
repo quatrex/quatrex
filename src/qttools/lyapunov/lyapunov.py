@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import warnings
 from abc import ABC, abstractmethod
 
 from mpi4py import MPI
@@ -69,6 +70,8 @@ class LyapunovMemoizer:
         The number of refinement iterations to do.
     memoize_tol : float, optional
         The required accuracy to only memoize.
+    warning_threshold : float, optional
+        The threshold for the relative recursion error to issue a warning.
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix.
         If sparsity of any obc is changed during runtime, then the cache
@@ -83,6 +86,7 @@ class LyapunovMemoizer:
         lyapunov_solver: LyapunovSolver,
         num_ref_iterations: int = 10,
         memoize_tol: float = 1e-2,
+        warning_threshold: float = 1e-4,
         reduce_sparsity: bool = True,
         force_memoizing: bool = False,
     ) -> None:
@@ -90,9 +94,17 @@ class LyapunovMemoizer:
         self.lyapunov_solver = lyapunov_solver
         self.num_ref_iterations = num_ref_iterations
         self.memoize_tol = memoize_tol
+        self.warning_threshold = warning_threshold
         self._cache = {}
         self.reduce_sparsity = reduce_sparsity
         self.force_memoizing = force_memoizing
+
+        if num_ref_iterations < 2:
+            warnings.warn(
+                "The number of refinement iterations should be at least 2. Defaulting to 2.",
+                RuntimeWarning,
+            )
+            self.num_ref_iterations = 2
 
     @profiler.profile(level="debug")
     def _call_with_cache(
@@ -173,7 +185,7 @@ class LyapunovMemoizer:
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         # Check for convergence accross all MPI ranks.
-        recursion_error = xp.mean(
+        recursion_error = xp.max(
             xp.linalg.norm(x_ref - x, axis=(-2, -1))
             / xp.linalg.norm(x_ref, axis=(-2, -1))
         )
@@ -209,10 +221,23 @@ class LyapunovMemoizer:
             return self._call_with_cache(a, q, contact, out=out)
 
         # Do refinement iterations.
-        for __ in range(self.num_ref_iterations - 1):
+        for __ in range(self.num_ref_iterations - 2):
             x = q + a @ x @ a.conj().swapaxes(-2, -1)
 
+        x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
+
+        recursion_error = xp.max(
+            xp.linalg.norm(x_ref - x, axis=(-2, -1))
+            / xp.linalg.norm(x_ref, axis=(-2, -1))
+        )
+        x = x_ref
+
         # TODO: we should allow data gathering of the final recursion error
+        if recursion_error > self.warning_threshold:
+            warnings.warn(
+                f"High relative recursion error: {recursion_error:.2e}",
+                RuntimeWarning,
+            )
 
         self._cache[contact] = x.copy()
         if out is None:

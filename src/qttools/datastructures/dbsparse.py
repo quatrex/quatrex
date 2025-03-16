@@ -6,7 +6,7 @@ from typing import Callable
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, host_xp, sparse, xp
 from qttools.kernels import dsbcoo_kernels
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
@@ -156,9 +156,9 @@ class DBCOO(DBSparse):
         self.num_local_blocks = section_sizes[comm.rank]
         self.local_block_sizes = block_sizes[..., int(section_offsets[comm.rank]) :]
 
-        self.block_offsets = xp.hstack(([0], xp.cumsum(xp.array(self.block_sizes))))
-        self.local_block_offsets = xp.hstack(
-            ([0], xp.cumsum(xp.array(self.local_block_sizes)))
+        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
+        self.local_block_offsets = host_xp.hstack(
+            ([0], host_xp.cumsum(self.local_block_sizes))
         )
 
         # Since the data is block-wise contiguous, we can cache block
@@ -216,9 +216,12 @@ class DBCOO(DBSparse):
 
         dsbcoo_kernels.densify_block(
             block,
-            self.local_rows[block_slice] - self.local_block_offsets[row],
-            self.local_cols[block_slice] - self.local_block_offsets[col],
-            self.local_data[block_slice],
+            self.local_rows,
+            self.local_cols,
+            self.local_data,
+            block_slice,
+            self.local_block_offsets[row],
+            self.local_block_offsets[col],
         )
 
         return block

@@ -5,12 +5,15 @@ from abc import ABC, abstractmethod
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import CUDA_AWARE_MPI, NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream
+from qttools.utils.mpi_utils import check_gpu_aware_mpi
 
 profiler = Profiler()
+
+GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 class OBCSolver(ABC):
@@ -189,7 +192,7 @@ class OBCMemoizer:
         # NCCL allreduce does not support op="and"
         if NCCL_AVAILABLE:
             nccl_comm.all_reduce(local_memoizing, memoizing, op="sum")
-        elif CUDA_AWARE_MPI:
+        elif GPU_AWARE_MPI:
             comm.Allreduce(local_memoizing, memoizing, op=MPI.SUM)
         else:
             local_memoizing = get_host(local_memoizing)

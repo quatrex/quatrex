@@ -131,8 +131,7 @@ class DSDBCOO(DSDBSparse):
 
         return data_stack[
             ...,
-            inds[ranks == self.stack_comm.rank]
-            - self.nnz_section_offsets[self.stack_comm.rank],
+            inds[ranks == stack_comm.rank] - self.nnz_section_offsets[stack_comm.rank],
         ]
 
     @profiler.profile(level="debug")
@@ -200,14 +199,13 @@ class DSDBCOO(DSDBSparse):
 
         # If the rank does not hold any of the requested elements, we do
         # nothing.
-        if not any(ranks == self.stack_comm.rank):
+        if not any(ranks == stack_comm.rank):
             return
 
         stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
         stack_inds, nnz_inds = xp.ix_(
             stack_padding_inds,
-            inds[ranks == self.stack_comm.rank]
-            - self.nnz_section_offsets[self.stack_comm.rank],
+            inds[ranks == stack_comm.rank] - self.nnz_section_offsets[stack_comm.rank],
         )
         # We need to access the full data buffer directly to set the
         # value since we are using advanced indexing.
@@ -217,8 +215,8 @@ class DSDBCOO(DSDBSparse):
 
         self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value[
             ...,
-            value_inds[ranks == self.stack_comm.rank]
-            - value_inds[ranks == self.stack_comm.rank][0],
+            value_inds[ranks == stack_comm.rank]
+            - value_inds[ranks == stack_comm.rank][0],
         ]
         return
 
@@ -319,7 +317,7 @@ class DSDBCOO(DSDBSparse):
             block,
             self.rows,
             self.cols,
-            self.data,
+            data_stack,
             block_slice,
             self.local_block_offsets[row],
             self.local_block_offsets[col],
@@ -468,15 +466,13 @@ class DSDBCOO(DSDBSparse):
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
 
-        block_section_sizes, __ = get_section_sizes(
-            len(block_sizes), self.block_comm.size
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
         block_section_offsets = host_xp.hstack(
             ([0], host_xp.cumsum(block_section_sizes))
         )
 
-        local_block_sizes = block_sizes[block_section_offsets[self.block_comm.rank] :]
-        if sum(local_block_sizes[: block_section_sizes[self.block_comm.rank]]) != sum(
+        local_block_sizes = block_sizes[block_section_offsets[block_comm.rank] :]
+        if sum(local_block_sizes[: block_section_sizes[block_comm.rank]]) != sum(
             self.local_block_sizes[: self.num_local_blocks]
         ):
             raise ValueError(
@@ -493,7 +489,7 @@ class DSDBCOO(DSDBSparse):
                 canonical_cols = self.cols[inds_bcoo2canonical]
                 # Compute the index for sorting by the new block-sizes.
                 inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
-                    canonical_rows, canonical_cols, block_sizes
+                    canonical_rows, canonical_cols, local_block_sizes
                 )
                 self._block_config[num_blocks].inds_canonical2block = (
                     inds_canonical2bcoo
@@ -513,9 +509,9 @@ class DSDBCOO(DSDBSparse):
             self.block_section_offsets = block_section_offsets
             # We need to know our local block sizes and those of all
             # subsequent ranks.
-            self.num_local_blocks = block_section_sizes[self.block_comm.rank]
+            self.num_local_blocks = block_section_sizes[block_comm.rank]
             self.local_block_sizes = block_sizes[
-                self.block_section_offsets[self.block_comm.rank] :
+                self.block_section_offsets[block_comm.rank] :
             ]
             self.local_block_offsets = host_xp.hstack(
                 ([0], host_xp.cumsum(self.local_block_sizes))
@@ -530,7 +526,7 @@ class DSDBCOO(DSDBSparse):
         canonical_cols = self.cols[inds_bcoo2canonical]
         # Compute the index for sorting by the new block-sizes.
         inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
-            canonical_rows, canonical_cols, block_sizes
+            canonical_rows, canonical_cols, local_block_sizes
         )
         # Mapping directly from original block-ordering to the new
         # block-ordering is achieved by chaining the two mappings.
@@ -542,21 +538,22 @@ class DSDBCOO(DSDBSparse):
         self.cols = self.cols[inds_bcoo2bcoo]
 
         # Update the block sizes and offsets as in the initializer.
-        self.num_blocks = len(block_sizes)
+        self.num_blocks = num_blocks
 
         block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
 
         self.block_section_offsets = block_section_offsets
         # We need to know our local block sizes and those of all
         # subsequent ranks.
-        self.num_local_blocks = block_section_sizes[self.block_comm.rank]
+        self.num_local_blocks = block_section_sizes[block_comm.rank]
         self.local_block_sizes = block_sizes[
-            self.block_section_offsets[self.block_comm.rank] :
+            self.block_section_offsets[block_comm.rank] :
         ]
         self.local_block_offsets = host_xp.hstack(
             ([0], host_xp.cumsum(self.local_block_sizes))
         )
-        self._add_block_config(self.num_blocks, block_sizes, block_offsets)
+        self._add_block_config(num_blocks, block_sizes, block_offsets)
+        self._block_config[num_blocks].inds_canonical2block = inds_canonical2bcoo
 
     @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
@@ -574,7 +571,17 @@ class DSDBCOO(DSDBSparse):
             Column indices of the non-zero elements.
 
         """
-        return self.rows, self.cols
+        rows = block_comm.allgather(self.rows)
+        cols = block_comm.allgather(self.cols)
+        rank_max = xp.hstack(
+            block_comm.allgather(sum(self.local_block_sizes[: self.num_local_blocks]))
+        )
+        rank_offset = xp.hstack(([0], xp.cumsum(rank_max)))
+
+        for i in range(1, block_comm.size):
+            rows[i] += rank_offset[i]
+            cols[i] += rank_offset[i]
+        return xp.hstack(rows), xp.hstack(cols)
 
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
@@ -750,18 +757,16 @@ class DSDBCOO(DSDBSparse):
             )
 
         # Gather rows, cols, and data.
-        rows = self.block_comm.allgather(self.rows)
-        cols = self.block_comm.allgather(self.cols)
-        data = xp.hstack(self.block_comm.allgather(self.data))
+        rows = block_comm.allgather(self.rows)
+        cols = block_comm.allgather(self.cols)
+        data = xp.concatenate(block_comm.allgather(self.data), axis=-1)
 
         rank_max = xp.hstack(
-            self.block_comm.allgather(
-                sum(self.local_block_sizes[: self.num_local_blocks])
-            )
+            block_comm.allgather(sum(self.local_block_sizes[: self.num_local_blocks]))
         )
         rank_offset = xp.hstack(([0], xp.cumsum(rank_max)))
 
-        for i in range(1, self.block_comm.size):
+        for i in range(1, block_comm.size):
             rows[i] += rank_offset[i]
             cols[i] += rank_offset[i]
 

@@ -12,7 +12,6 @@ from qttools import (
     NDArray,
     block_comm,
     host_xp,
-    nccl_block_comm,
     nccl_stack_comm,
     sparse,
     stack_comm,
@@ -101,12 +100,6 @@ class DSDBSparse(ABC):
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."
             )
-
-        self.block_comm = block_comm
-        self.stack_comm = stack_comm
-        # Optional NCCL communicators. These may be None.
-        self.nccl_stack_comm = nccl_stack_comm
-        self.nccl_block_comm = nccl_block_comm
 
         # Determine how the data is distributed across the stack.
         stack_section_sizes, total_stack_size = get_section_sizes(
@@ -284,14 +277,14 @@ class DSDBSparse(ABC):
         """Returns the local slice of the data, masking the padding."""
         if self.distribution_state == "stack":
             return self._data[
-                : self.stack_section_sizes[self.stack_comm.rank],
+                : self.stack_section_sizes[stack_comm.rank],
                 ...,
                 : sum(self.nnz_section_sizes),
             ]
         return self._data[
             self._stack_padding_mask,
             ...,
-            : self.nnz_section_sizes[self.stack_comm.rank],
+            : self.nnz_section_sizes[stack_comm.rank],
         ]
 
     @data.setter
@@ -299,7 +292,7 @@ class DSDBSparse(ABC):
         """Sets the local slice of the data."""
         if self.distribution_state == "stack":
             self._data[
-                : self.stack_section_sizes[self.stack_comm.rank],
+                : self.stack_section_sizes[stack_comm.rank],
                 ...,
                 : sum(self.nnz_section_sizes),
             ] = value
@@ -307,7 +300,7 @@ class DSDBSparse(ABC):
             self._data[
                 self._stack_padding_mask,
                 ...,
-                : self.nnz_section_sizes[self.stack_comm.rank],
+                : self.nnz_section_sizes[stack_comm.rank],
             ] = value
 
     def __repr__(self) -> str:
@@ -318,8 +311,8 @@ class DSDBSparse(ABC):
             f"block_sizes={self.block_sizes}, "
             f"global_stack_shape={self.global_stack_shape}, "
             f'distribution_state="{self.distribution_state}", '
-            f"stack_comm_rank={self.stack_comm.rank}, "
-            f"block_comm_rank={self.block_comm.rank})"
+            f"stack_comm_rank={stack_comm.rank}, "
+            f"block_comm_rank={block_comm.rank})"
         )
 
     @abstractmethod
@@ -540,7 +533,7 @@ class DSDBSparse(ABC):
 
         # TODO: This will probably give a list of lists. We will maybe
         # have to flatten this.
-        return _flatten_list(self.block_comm.allgather(local_blocks))
+        return _flatten_list(block_comm.allgather(local_blocks))
 
     @profiler.profile(level="api")
     def diagonal(self) -> NDArray:
@@ -567,7 +560,7 @@ class DSDBSparse(ABC):
         self.return_dense = original_return_dense
         local_diagonal = xp.concatenate(diagonals, axis=-1)
 
-        return xp.concatenate(self.block_comm.allgather(local_diagonal), axis=-1)
+        return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
 
     @profiler.profile(level="debug")
     def _dtranspose(
@@ -596,7 +589,7 @@ class DSDBSparse(ABC):
         # )
 
         self._data = _block_view(
-            self._data, axis=block_axis, num_blocks=self.stack_comm.size
+            self._data, axis=block_axis, num_blocks=stack_comm.size
         )
         if discard:
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
@@ -611,21 +604,21 @@ class DSDBSparse(ABC):
             # Always use NCCL if available.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
-            self.nccl_stack_comm.all_to_all(self._data, receive_buffer)
+            nccl_stack_comm.all_to_all(self._data, receive_buffer)
             synchronize_device()
             self._data = receive_buffer
         elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
             # Use MPI if we are not on GPU or if we have GPU-aware MPI.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
-            self.stack_comm.Alltoall(self._data, receive_buffer)
+            stack_comm.Alltoall(self._data, receive_buffer)
             synchronize_device()
             self._data = receive_buffer
         else:
             # Use the host memory if we are on GPU and do not have
             # GPU-aware MPI.
             _data_host = get_host(self._data)
-            self.stack_comm.Alltoall(MPI.IN_PLACE, _data_host)
+            stack_comm.Alltoall(MPI.IN_PLACE, _data_host)
             self._data = xp.array(_data_host)
 
         self._data = xp.concatenate(self._data, axis=concatenate_axis)

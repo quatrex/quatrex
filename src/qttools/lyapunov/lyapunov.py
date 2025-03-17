@@ -87,10 +87,10 @@ class LyapunovMemoizer:
     def __init__(
         self,
         lyapunov_solver: LyapunovSolver,
-        num_ref_iterations: int = 10,
-        memoize_rel_tol: float = 1e-1,
-        memoize_abs_tol: float = 1e-8,
-        warning_threshold: float = 1e-4,
+        num_ref_iterations: int = 3,
+        memoize_rel_tol: float = 2e-1,
+        memoize_abs_tol: float = 1e-6,
+        warning_threshold: float = 1e-5,
         reduce_sparsity: bool = True,
         force_memoizing: bool = False,
     ) -> None:

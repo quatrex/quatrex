@@ -7,6 +7,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -82,6 +83,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
         """
         p_lesser, p_greater, p_retarded = out
 
+        # Barrier to synchronize ranks.
+        synchronize_device()
+        comm.Barrier()
+
         with profiler.profile_range("stack->nnz transpose", level="debug"):
             # Transpose the matrices to nnz distribution.
             t0 = time.perf_counter()
@@ -91,10 +96,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
-
+        synchronize_device()
         t1 = time.perf_counter()
         if comm.rank == 0:
             print(f"PCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True)
+
+        synchronize_device()
+        t_polarization = -time.perf_counter()
+
+        time_fft = 0
+        time_index = 0
 
         with profiler.profile_range("Polarization computation", level="debug"):
             if self.batch_size is None:
@@ -114,20 +125,40 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
+                synchronize_device()
+                time_fft -= time.perf_counter()
                 p_g_full = self.prefactor * fft_correlate(
                     g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
                 )
                 p_l_full = -p_g_full[::-1].conj()
+                synchronize_device()
+                time_fft += time.perf_counter()
                 # TODO: the datastructures does not allow for easy slicing of the
                 # data. This is a workaround.
                 # Fill the matrices with the data. Take second part of the
                 # energy convolution.
+                time_index -= time.perf_counter()
                 p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
                     self.ne - 1 :
                 ]
                 p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
                     self.ne - 1 :
                 ]
+                synchronize_device()
+                time_index += time.perf_counter()
+
+        t_polarization += time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"PCoulombScreening: Polarization computation time: {t_polarization}",
+                flush=True,
+            )
+            print(f"    PCoulombScreening: FFT: {time_fft}", flush=True)
+            print(f"    PCoulombScreening: Indexing time: {time_index}", flush=True)
+
+        # Barrier before communication
+        synchronize_device()
+        comm.Barrier()
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
@@ -138,22 +169,26 @@ class PCoulombScreening(ScatteringSelfEnergy):
             # stack distribution, as they are needed in nnz distribution for
             # the other interactions.
 
+        synchronize_device()
+        comm.Barrier()
         t1 = time.perf_counter()
         if comm.rank == 0:
             print(f"PCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True)
 
         # Enforce anti-Hermitian symmetry and calculate Pr.
+        synchronize_device()
         t0 = time.perf_counter()
-        p_lesser.data = (p_lesser.data - p_lesser.ltranspose(copy=True).data.conj()) / 2
-        p_greater.data = (
-            p_greater.data - p_greater.ltranspose(copy=True).data.conj()
-        ) / 2
+
+        p_lesser.symmetrize(xp.subtract)
+        p_greater.symmetrize(xp.subtract)
 
         # Discard the real part.
         p_lesser._data.real = 0
         p_greater._data.real = 0
 
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
+
+        synchronize_device()
         t1 = time.perf_counter()
         if comm.rank == 0:
             print(f"PCoulombScreening: Symmetrization time: {t1-t0}", flush=True)

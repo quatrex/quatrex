@@ -39,15 +39,41 @@ class ReducedSystem:
     ----------
     comm : MPI.Comm
         The intranode MPI communicator.
+    solve_lesser : bool, optional
+        Whether to solve the quadratic system associated with the lesser right-hand-side,
+        by default False.
+    solve_greater : bool, optional
+        Whether to solve the quadratic system associated with the greater right-hand-side,
+        by default False.
 
     Attributes
     ----------
+    comm : MPI.Comm
+        The intranode MPI communicator.
+    num_diags : int
+        The number of diagonal blocks in the reduced system.
     diag_blocks : list[NDArray | None]
         The diagonal blocks of the reduced system.
     upper_blocks : list[NDArray | None]
         The upper off-diagonal blocks of the reduced system.
     lower_blocks : list[NDArray | None]
         The lower off-diagonal blocks of the reduced system
+    solve_lesser : bool
+        Whether to solve the quadratic system associated with the lesser righ-hand-sideS.
+    diag_blocks_lesser : list[NDArray | None]
+        The diagonal blocks of the reduced system associated with the lesser right-hand-side.
+    upper_blocks_lesser : list[NDArray | None]
+        The upper off-diagonal blocks of the reduced system associated with the lesser right-hand-side.
+    lower_blocks_lesser : list[NDArray | None]
+        The lower off-diagonal blocks of the reduced system associated with the lesser right-hand-side.
+    solve_greater : bool
+        Whether to solve the quadratic system associated with the greater right-hand-side.
+    diag_blocks_greater : list[NDArray | None]
+        The diagonal blocks of the reduced system associated with the greater right-hand-side.
+    upper_blocks_greater : list[NDArray | None]
+        The upper off-diagonal blocks of the reduced system associated with the greater right-hand-side.
+    lower_blocks_greater : list[NDArray | None]
+        The lower off-diagonal blocks of the reduced system associated with the greater right-hand-side.
 
     """
 
@@ -55,7 +81,8 @@ class ReducedSystem:
         self, comm: MPI.Comm, solve_lesser: bool = False, solve_greater: bool = False
     ) -> None:
         """Initializes the reduced system."""
-        self.num_diags = 2 * (comm.size - 1)
+        self.comm = comm
+        self.num_diags = 2 * (self.comm.size - 1)
 
         self.diag_blocks: list[NDArray | None] = [None] * self.num_diags
         self.upper_blocks: list[NDArray | None] = [None] * self.num_diags
@@ -73,8 +100,6 @@ class ReducedSystem:
             self.upper_blocks_greater: list[NDArray | None] = [None] * self.num_diags
             self.lower_blocks_greater: list[NDArray | None] = [None] * self.num_diags
 
-        self.comm = comm
-
     def gather(
         self,
         a: DBSparse,
@@ -90,7 +115,35 @@ class ReducedSystem:
         bg_buffer_upper: list[NDArray] = None,
         bg_buffer_lower: list[NDArray] = None,
     ):
-        """Gathers the reduced system across all ranks."""
+        """Gathers the reduced system across all ranks.
+
+        Parameters
+        ----------
+        a : DBSparse
+            The system matrix A in A X A^T = I/B.
+        x_diag_blocks : list[NDArray]
+            The diagonal blocks of the system matrix.
+        buffer_upper : list[NDArray]
+            The upper off-diagonal blocks of the system matrix.
+        buffer_lower : list[NDArray]
+            The lower off-diagonal blocks of the system matrix.
+        bl : DBSparse, optional
+            The system matrix Bl in A X Bl A^T = I/Bl, by default None.
+        xl_diag_blocks : list[NDArray], optional
+            The diagonal blocks of the system matrix Bl, by default None.
+        bl_buffer_upper : list[NDArray], optional
+            The upper off-diagonal blocks of the system matrix Bl, by default None.
+        bl_buffer_lower : list[NDArray], optional
+            The lower off-diagonal blocks of the system matrix Bl, by default None.
+        bg : DBSparse, optional
+            The system matrix Bg in A X Bg A^T = I/Bg, by default None.
+        xg_diag_blocks : list[NDArray], optional
+            The diagonal blocks of the system matrix Bg, by default None.
+        bg_buffer_upper : list[NDArray], optional
+            The upper off-diagonal blocks of the system matrix Bg, by default None.
+        bg_buffer_lower : list[NDArray], optional
+            The lower off-diagonal blocks of the system matrix Bg, by default None.
+        """
 
         (diag_blocks, upper_blocks, lower_blocks) = self._map_reduced_system(
             a, x_diag_blocks, buffer_upper, buffer_lower
@@ -139,6 +192,19 @@ class ReducedSystem:
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
     ):
+        """Maps the local partition to the reduced system.
+
+        Parameters
+        ----------
+        a : DBSparse
+            Local partition of the matrix to map.
+        x_diag_blocks : list[NDArray]
+            Local (densified) diagonal blocks of the matrix to map.
+        buffer_upper : list[NDArray]
+            Buffer blocks from the permutation of the matrix to map.
+        buffer_lower : list[NDArray]
+            Buffer blocks from the permutation of the matrix to map.
+        """
         i = a.num_local_blocks - 1
         j = i + 1
 
@@ -261,9 +327,7 @@ class ReducedSystem:
                     self.diag_blocks_lesser[i]
                     + temp_1 @ self.diag_blocks_lesser[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ self.diag_blocks_lesser[i]
-                    + self.diag_blocks_lesser[i].conj().swapaxes(-2, -1)
-                    @ temp_4
-                    @ temp_2
+                    + self.diag_blocks_lesser[i] @ temp_4 @ temp_2
                     - temp_1
                     @ self.diag_blocks[i + 1]
                     @ temp_lower_lesser
@@ -303,9 +367,7 @@ class ReducedSystem:
                     self.diag_blocks_greater[i]
                     + temp_1 @ self.diag_blocks_greater[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ self.diag_blocks_greater[i]
-                    + self.diag_blocks_greater[i].conj().swapaxes(-2, -1)
-                    @ temp_4
-                    @ temp_2
+                    + self.diag_blocks_greater[i] @ temp_4 @ temp_2
                     - temp_1
                     @ self.diag_blocks[i + 1]
                     @ temp_lower_greater
@@ -339,6 +401,36 @@ class ReducedSystem:
         xg_buffer_upper: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
+        """Scatters the reduced system across all ranks.
+
+        Parameters
+        ----------
+        x_diag_blocks : list[NDArray]
+            The diagonal blocks of the reduced system.
+        buffer_upper : list[NDArray]
+            The upper off-diagonal blocks of the reduced system.
+        buffer_lower : list[NDArray]
+            The lower off-diagonal blocks of the reduced system.
+        out : DBSparse
+            The distributed block-sparse matrix to scatter to.
+        xl_diag_blocks : list[NDArray], optional
+            The diagonal blocks of the reduced system associated with the lesser right-hand-side, by default None.
+        xl_buffer_lower : list[NDArray], optional
+            The lower off-diagonal blocks of the reduced system associated with the lesser right-hand-side, by default None.
+        xl_buffer_upper : list[NDArray], optional
+            The upper off-diagonal blocks of the reduced system associated with the lesser right-hand-side, by default None.
+        xl_out : DBSparse, optional
+            The distributed block-sparse matrix to scatter to associated with the lesser right-hand-side, by default None.
+        xg_diag_blocks : list[NDArray], optional
+            The diagonal blocks of the reduced system associated with the greater right-hand-side, by default None.
+        xg_buffer_lower : list[NDArray], optional
+            The lower off-diagonal blocks of the reduced system associated with the greater right-hand-side, by default None.
+        xg_buffer_upper : list[NDArray], optional
+            The upper off-diagonal blocks of the reduced system associated with the greater right-hand-side, by default None.
+        xg_out : DBSparse, optional
+            The distributed block-sparse matrix to scatter to associated with the greater right-hand-side, by default None.
+
+        """
         self._mapback_reduced_system(
             x_diag_blocks=x_diag_blocks,
             buffer_upper=buffer_upper,
@@ -380,6 +472,25 @@ class ReducedSystem:
         upper_block_reduced_system: list[NDArray],
         lower_block_reduced_system: list[NDArray],
     ):
+        """Maps the reduced system back to the local partition.
+
+        Parameters
+        ----------
+        x_diag_blocks : list[NDArray]
+            Local (densified) diagonal blocks of the matrix to map.
+        buffer_upper : list[NDArray]
+            Buffer blocks from the permutation of the matrix to map.
+        buffer_lower : list[NDArray]
+            Buffer blocks from the permutation of the matrix to map.
+        out : DBSparse
+            Local partition of the matrix to map.
+        diag_block_reduced_system : list[NDArray]
+            The diagonal blocks of the reduced system.
+        upper_block_reduced_system : list[NDArray]
+            The upper off-diagonal blocks of the reduced system.
+        lower_block_reduced_system : list[NDArray]
+            The lower off-diagonal blocks of the reduced system.
+        """
         i = out.num_local_blocks - 1
         j = i + 1
         if self.comm.rank == 0:
@@ -409,6 +520,12 @@ class RGFDist(GFSolver):
 
     Parameters
     ----------
+    solve_lesser : bool, optional
+        Whether to solve the quadratic system associated with the lesser right-hand-side,
+        by default False.
+    solve_greater : bool, optional
+        Whether to solve the quadratic system associated with the greater right-hand-side,
+        by default False.
     max_batch_size : int, optional
         Maximum batch size to use when inverting the matrix, by default
         100.
@@ -436,6 +553,7 @@ class RGFDist(GFSolver):
         bg: DBSparse = None,
         xg_diag_blocks: list[NDArray] = None,
     ):
+        """Performs the downward Schur complement decomposition."""
         x_diag_blocks[0] = a.local_blocks[0, 0]
         if self.solve_lesser:
             xl_diag_blocks[0] = bl.local_blocks[0, 0]
@@ -481,8 +599,8 @@ class RGFDist(GFSolver):
                     + a.local_blocks[j, i]
                     @ xg_diag_blocks[i]
                     @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
-                    - bl.local_blocks[j, i] @ temp_2
-                    - temp_1 @ bl.local_blocks[i, j]
+                    - bg.local_blocks[j, i] @ temp_2
+                    - temp_1 @ bg.local_blocks[i, j]
                 )
 
         if invert_last_block:
@@ -510,6 +628,7 @@ class RGFDist(GFSolver):
         bg: DBSparse = None,
         xg_diag_blocks: list[NDArray] = None,
     ):
+        """Performs the upward Schur complement decomposition."""
         x_diag_blocks[-1] = a.local_blocks[-1, -1]
         if self.solve_lesser:
             xl_diag_blocks[-1] = bl.local_blocks[-1, -1]
@@ -589,6 +708,7 @@ class RGFDist(GFSolver):
         bg_buffer_lower: list[NDArray] = None,
         bg_buffer_upper: list[NDArray] = None,
     ):
+        """Performs the permuted Schur complement decomposition."""
         buffer_lower[0] = a.local_blocks[0, 1]
         buffer_upper[0] = a.local_blocks[1, 0]
         x_diag_blocks[0] = a.local_blocks[0, 0]
@@ -637,7 +757,7 @@ class RGFDist(GFSolver):
                     + a.local_blocks[i + 1, i]
                     @ xl_diag_blocks[i]
                     @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    - bl.local_blocks[i + 1, i][i]
+                    - bl.local_blocks[i + 1, i]
                     @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
@@ -648,7 +768,7 @@ class RGFDist(GFSolver):
                     a.local_blocks[i + 1, i]
                     @ xl_diag_blocks[i]
                     @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    - bl.local_blocks[i + 1, i][i]
+                    - bl.local_blocks[i + 1, i]
                     @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
@@ -686,18 +806,18 @@ class RGFDist(GFSolver):
                     + a.local_blocks[i + 1, i]
                     @ xg_diag_blocks[i]
                     @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    - bl.local_blocks[i + 1, i][i]
+                    - bg.local_blocks[i + 1, i]
                     @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
                     @ x_diag_blocks[i]
-                    @ bl.local_blocks[i, i + 1]
+                    @ bg.local_blocks[i, i + 1]
                 )
                 bg_buffer_upper[i] = (
                     a.local_blocks[i + 1, i]
                     @ xg_diag_blocks[i]
                     @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    - bl.local_blocks[i + 1, i][i]
+                    - bg.local_blocks[i + 1, i]
                     @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     - a.local_blocks[i + 1, i]
@@ -711,7 +831,7 @@ class RGFDist(GFSolver):
                     - bg_buffer_lower[i - 1]
                     @ x_diag_blocks[i].conj().swapaxes(-2, -1)
                     @ a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bl.local_blocks[i, i + 1]
+                    - buffer_lower[i - 1] @ x_diag_blocks[i] @ bg.local_blocks[i, i + 1]
                 )
                 xg_diag_blocks[0] = (
                     xg_diag_blocks[0]
@@ -736,7 +856,7 @@ class RGFDist(GFSolver):
         xg_diag_blocks: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
-
+        """Performs the downward selected inversion."""
         for i in range(a.num_local_blocks - 2, -1, -1):
             j = i + 1
 
@@ -770,7 +890,7 @@ class RGFDist(GFSolver):
                     xl_diag_blocks[i]
                     + temp_1 @ xl_diag_blocks[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_4 @ temp_2
+                    + xl_diag_blocks[i] @ temp_4 @ temp_2
                     - temp_1
                     @ x_diag_blocks[i + 1]
                     @ bl.local_blocks[j, i]
@@ -812,7 +932,7 @@ class RGFDist(GFSolver):
                     xg_diag_blocks[i]
                     + temp_1 @ xg_diag_blocks[i + 1] @ temp_2
                     + temp_1 @ temp_3 @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_4 @ temp_2
+                    + xg_diag_blocks[i] @ temp_4 @ temp_2
                     - temp_1
                     @ x_diag_blocks[i + 1]
                     @ bg.local_blocks[j, i]
@@ -850,7 +970,7 @@ class RGFDist(GFSolver):
         xg_diag_blocks: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
-
+        """Performs the upward selected inversion."""
         for i in range(1, a.num_local_blocks):
             j = i - 1
             temp_1 = x_diag_blocks[j] @ a.local_blocks[j, i]
@@ -883,7 +1003,7 @@ class RGFDist(GFSolver):
                     xl_diag_blocks[i]
                     + temp_3 @ xl_diag_blocks[j] @ temp_4
                     + temp_3 @ temp_1 @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_2 @ temp_4
+                    + xl_diag_blocks[i] @ temp_2 @ temp_4
                     - temp_3
                     @ x_diag_blocks[j]
                     @ bl.local_blocks[j, i]
@@ -925,7 +1045,7 @@ class RGFDist(GFSolver):
                     xg_diag_blocks[i]
                     + temp_3 @ xg_diag_blocks[j] @ temp_4
                     + temp_3 @ temp_1 @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].conj().swapaxes(-2, -1) @ temp_2 @ temp_4
+                    + xg_diag_blocks[i] @ temp_2 @ temp_4
                     - temp_3
                     @ x_diag_blocks[j]
                     @ bg.local_blocks[j, i]
@@ -969,6 +1089,7 @@ class RGFDist(GFSolver):
         xg_buffer_upper: list[NDArray] = None,
         xg_out: DBSparse = None,
     ):
+        """Performs the permuted selected inversion."""
         for i in range(a.num_local_blocks - 2, 0, -1):
 
             B1 = (
@@ -1085,7 +1206,7 @@ class RGFDist(GFSolver):
                     + x_diag_blocks[i]
                     @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xl_diag_blocks[i]
-                    + xl_diag_blocks[i].conj().swapaxes(-2, -1)
+                    + xl_diag_blocks[i]
                     @ (
                         (
                             a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
@@ -1225,7 +1346,7 @@ class RGFDist(GFSolver):
                     + x_diag_blocks[i]
                     @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ buffer_lower[i - 1])
                     @ xg_diag_blocks[i]
-                    + xg_diag_blocks[i].conj().swapaxes(-2, -1)
+                    + xg_diag_blocks[i]
                     @ (
                         (
                             a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
@@ -1307,6 +1428,8 @@ class RGFDist(GFSolver):
             Matrix to invert.
         out : DDSBSparse, optional
             Preallocated output matrix, by default None.
+        comm : MPI.Comm, optional
+            MPI communicator, by default MPI.COMM_WORLD.
 
         Returns
         -------
@@ -1361,6 +1484,27 @@ class RGFDist(GFSolver):
         xg_out: DBSparse = None,
         comm: MPI.Comm = MPI.COMM_WORLD,
     ):
+        """Performs selected inversion of a block-tridiagonal matrix.
+        Can optionally solve the quadratic system associated with the
+        Bl and Bg matrices in the equation AXA^T = B.
+
+        Parameters
+        ----------
+        a : DDSBSparse
+            Matrix to invert.
+        out : DDSBSparse
+            Output matrix.
+        bl : DDSBSparse, optional
+            "Lesser" right-hand side matrix, by default None.
+        xl_out : DDSBSparse, optional
+            Output matrix for the "lesser" right-hand side, by default None.
+        bg : DDSBSparse, optional
+            "Greater" right-hand side matrix, by default None.
+        xg_out : DDSBSparse, optional
+            Output matrix for the "greater" right-hand side, by default None.
+        comm : MPI.Comm, optional
+            MPI communicator, by default MPI.COMM_WORLD.
+        """
         if bl is None and bg is None:
             return self.selected_inv(a, out, comm)
 

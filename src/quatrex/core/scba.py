@@ -329,28 +329,28 @@ class SCBA:
         )
 
         # Symmetrization.
-        self.data.sigma_lesser.data = 0.5 * (
-            self.data.sigma_lesser.data
-            - self.data.sigma_lesser.ltranspose(copy=True).data.conj()
-        )
-        self.data.sigma_greater.data = 0.5 * (
-            self.data.sigma_greater.data
-            - self.data.sigma_greater.ltranspose(copy=True).data.conj()
-        )
+        synchronize_device()
+        time_start = time.perf_counter()
+
+        self.data.sigma_lesser.symmetrize(xp.subtract)
+        self.data.sigma_greater.symmetrize(xp.subtract)
+
         self.data.sigma_lesser._data.real = 0
         self.data.sigma_greater._data.real = 0
 
         self.data.sigma_retarded._data.imag = 0.0
 
         # Make the remaining real part Hermitian.
-        self.data.sigma_retarded.data = 0.5 * (
-            self.data.sigma_retarded.data
-            + self.data.sigma_retarded.ltranspose(copy=True).data.conj()
-        )
+        self.data.sigma_retarded.symmetrize(xp.add)
+
         # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded.data += 0.5 * (
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"Symmetrization time: {time_end-time_start}", flush=True)
 
     @profiler.profile(level="api")
     def _has_converged(self) -> bool:
@@ -407,16 +407,18 @@ class SCBA:
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
         times = []
+        synchronize_device()
         times.append(time.perf_counter())
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
+        synchronize_device()
         t_polarization = time.perf_counter() - times.pop()
         if comm.rank == 0:
             print(f"Time for polarization: {t_polarization:.2f} s", flush=True)
-
+        synchronize_device()
         times.append(time.perf_counter())
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
@@ -424,21 +426,23 @@ class SCBA:
             self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater),
         )
+        synchronize_device()
         t_solve = time.perf_counter() - times.pop()
         if comm.rank == 0:
             print(f"Time for Coulomb screening solver: {t_solve:.2f} s", flush=True)
 
         self._compute_coulomb_screening_observables()
-
+        synchronize_device()
         times.append(time.perf_counter())
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
         )
+        synchronize_device()
         t_fock = time.perf_counter() - times.pop()
         if comm.rank == 0:
             print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
-
+        synchronize_device()
         times.append(time.perf_counter())
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
@@ -451,6 +455,7 @@ class SCBA:
                 self.data.sigma_retarded,
             ),
         )
+        synchronize_device()
         t_sigma = time.perf_counter() - times.pop()
         if comm.rank == 0:
             print(
@@ -636,6 +641,7 @@ class SCBA:
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
+            synchronize_device()
             times.append(time.perf_counter())
 
             times.append(time.perf_counter())
@@ -645,6 +651,7 @@ class SCBA:
                 self.data.sigma_retarded,
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
+            synchronize_device()
             t_solve = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
@@ -652,8 +659,10 @@ class SCBA:
             self._compute_electron_observables()
 
             # Stash current into previous self-energy buffer.
+            synchronize_device()
             times.append(time.perf_counter())
             self._stash_sigma()
+            synchronize_device()
             t_swap = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for swapping: {t_swap:.2f} s", flush=True)
@@ -662,6 +671,7 @@ class SCBA:
             # NOTE: While computing all interactions, we only ever need
             # to access the Green's function and the self-energies in
             # their nnz-distributed state.
+            synchronize_device()
             t0 = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=False)  # This must not be discarded.
@@ -673,13 +683,16 @@ class SCBA:
             ):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "nnz"
+            synchronize_device()
             t1 = time.perf_counter()
             if comm.rank == 0:
                 print(f"scba: Time for transposing forth: {t1 - t0:.2f} s", flush=True)
 
             if self.quatrex_config.scba.coulomb_screening:
+                synchronize_device()
                 times.append(time.perf_counter())
                 self._compute_coulomb_screening_interaction()
+                synchronize_device()
                 t_coulomb = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(
@@ -691,15 +704,17 @@ class SCBA:
                 self._compute_photon_interaction()
 
             if self.quatrex_config.scba.phonon:
+                synchronize_device()
                 times.append(time.perf_counter())
                 self._compute_phonon_interaction()
+                synchronize_device()
                 t_phonon = time.perf_counter() - times.pop()
                 (
                     print(f"Time for phonon interaction: {t_phonon:.2f} s", flush=True)
                     if comm.rank == 0
                     else None
                 )
-
+            synchronize_device()
             # Transpose back to stack distribution.
             t0 = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
@@ -712,30 +727,30 @@ class SCBA:
             ):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "stack"
+            synchronize_device()
             t1 = time.perf_counter()
             if comm.rank == 0:
                 print(f"scba: Time for transposing back: {t1 - t0:.2f} s", flush=True)
-
             times.append(time.perf_counter())
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)
 
                 break
-
+            synchronize_device()
             t_convergence = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for convergence check: {t_convergence:.2f} s", flush=True)
-
+            synchronize_device()
             times.append(time.perf_counter())
 
             # Update self-energy for next iteration with mixing factor.
             self._update_sigma()
-
+            synchronize_device()
             t_update = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for updating: {t_update:.2f} s", flush=True)
-
+            synchronize_device()
             t_iteration = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
@@ -757,8 +772,10 @@ class SCBA:
                 )
 
             if i % self.quatrex_config.scba.output_interval == 0:
+                synchronize_device()
                 times.append(time.perf_counter())
                 self._write_iteration_outputs(i)
+                synchronize_device()
                 t_outputs = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(f"Time for writing outputs: {t_outputs:.2f} s", flush=True)

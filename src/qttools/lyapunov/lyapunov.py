@@ -223,7 +223,7 @@ class LyapunovMemoizer:
 
         if comm.rank == 0:
             print(
-                f"{memoizing} out of {comm.size} ranks want to memoize Lyapunov",
+                f"{memoizing} out of {comm.size} ranks want to memoize {contact} Lyapunov",
                 flush=True,
             )
 

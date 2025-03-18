@@ -12,6 +12,8 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp, obc
 from qttools.utils.mpi_utils import distributed_load
 
+from qttools.datastructures.dsbsparse import _block_view
+
 if xp.__name__ == "numpy":
     from scipy.sparse.linalg import spsolve
 if xp.__name__ == "cupy":
@@ -27,6 +29,34 @@ from quatrex.core.quatrex_config import (
     OBCConfig,
     QuatrexConfig,
 )
+
+def get_periodic_superblocks_no_flip(
+    as0: NDArray, a10: NDArray, a01: NDArray, as1: NDArray, block_sections: int
+) -> NDArray:
+    
+    subblock_shape = a01.shape[:-2] + (a01.shape[-1] // block_sections,) * 2
+    orb_slab = a01.shape[0]
+
+    as0 = _block_view(as0, -2, 1)
+    a10 = _block_view(a10, -2, block_sections)
+    a01 = _block_view(a01, -1, block_sections)
+    as1 = _block_view(as1, -1, 1)
+    z_j = _block_view(xp.zeros((orb_slab,orb_slab*(block_sections-1))),-1, block_sections-1)
+    
+    periodic_layer = xp.vstack((as0, a10[block_sections::-1], a01[1:], as1, z_j))
+
+    # Stack the periodic layer to form a periodic superblock structure.
+    
+    periodic_blocks = xp.zeros(
+        (block_sections, 3 * block_sections, *subblock_shape),
+        dtype=a01.dtype,
+    )
+    for i in range(block_sections):
+        periodic_blocks[i, :] = xp.roll(periodic_layer, i, axis=0)
+
+    # Recover the correct superbblock structure form the subblocks.
+    periodic_blocks = xp.concatenate(xp.concatenate(periodic_blocks, -2), -1)
+    return _block_view(periodic_blocks, -1, 3)
 
 
 def distributed_load_contact(filename: Path) -> tuple[int, list, list, list, list]:
@@ -255,6 +285,7 @@ def compute_slab_mask_X(coords: NDArray, n_slabs: int, orbitals: NDArray) -> tup
             mask_orb_loc = xp.concatenate((mask_orb_loc,xp.arange(k1, k2)))
         
         mask_orb.append(mask_orb_loc[None,:])
+        print(f"Slab {i} has {mask_atoms[i].shape[0]} atoms and {mask_orb[i].shape[1]} orbitals", flush=True) if comm.rank == 0 else None
 
     return mask_atoms, mask_orb
 
@@ -273,12 +304,19 @@ class Contact:
     mask_orb_i: NDArray = None #Mask for the "in-coupling" orbitals in the contact slab
     mask_orb_j: NDArray = None #Mask for the "out-coupling" orbitals in the contact slab
 
+    mask_atoms_slab: NDArray = None
+    mask_orb_slab: NDArray = None
+    
+    N_coup: int = None #Number of sub-blocks in the contact block
+
     #Constructor
     def __init__(self, corner_1, corner_2, direction, name):
         self.corner_1 = corner_1
         self.corner_2 = corner_2
         self.direction = direction
         self.name = name
+
+        self.N_coup = 0
 
     def compute_mask(self,coords: NDArray, orbitals: NDArray, delta_corner: NDArray = xp.array([0,0,0])) -> tuple[NDArray, NDArray]:
         """
@@ -323,10 +361,10 @@ class Contact:
             k2 = int(orbitals[index+1].get() if hasattr(orbitals[index + 1], 'get') else orbitals[index + 1])
             mask_orb = xp.concatenate((mask_orb,xp.arange(k1, k2)))
         
-        return mask_atoms[None,:], mask_orb[None,:]
+        return mask_atoms, mask_orb
 
 
-    def set_mask(self,coords: NDArray, orbitals: NDArray):
+    def set_mask(self,coords: NDArray, orbitals: NDArray, ham: sparse.csr_matrix):
         """
         Sets the mask for the contact element.
 
@@ -337,21 +375,89 @@ class Contact:
         orbitals : NDArray
             The starting orbital (cumulative) for each atom.
         """
+
+        self.mask_atoms_slab, self.mask_orb_slab = self.compute_mask(coords,orbitals) #Compute the mask for the sub-slab out coupling element
+        self.mask_atoms_i = self.mask_atoms_slab.copy()
+        self.mask_orb_i = self.mask_orb_slab.copy()
+        self.mask_atoms_slab = self.mask_atoms_slab[None,:]
+        self.mask_orb_slab = self.mask_orb_slab[None,:]
         
-        #Compute mask for the contact element   
-        self.mask_atoms_i, self.mask_orb_i = self.compute_mask(coords,orbitals)
+        print(f"Contact {self.name}, slab {self.N_coup} has {self.mask_atoms_slab.shape[1]} atoms and {self.mask_orb_slab.shape[1]} orbitals", flush=True) if comm.rank == 0 else None
+
+        self.N_coup += 1
+
+        self.N_coup_force = -1
+
+        while True:
+            #Increase the corner of the contact element
+            delta_corner = xp.multiply(-self.direction*(self.N_coup),(self.corner_2-self.corner_1))
+
+            mask_atoms_to_append, mask_orb_to_append = self.compute_mask(coords,orbitals,delta_corner) #Compute the mask for the sub-slab out coupling element
+
+            if ham[self.mask_orb_slab.T,mask_orb_to_append[None,:]].nnz == 0:
+                if self.N_coup_force == -1:
+                    break
+                else:
+                    if self.N_coup_force < self.N_coup:
+                        raise Exception("Forcing a too small number of contacts element")
+                    if self.N_coup_force == self.N_coup:
+                        break
+                        
+
+            self.mask_atoms_i = xp.concatenate((self.mask_atoms_i,mask_atoms_to_append))
+            self.mask_orb_i = xp.concatenate((self.mask_orb_i,mask_orb_to_append))
+            print(f"Contact {self.name}, slab {self.N_coup} has {mask_atoms_to_append.shape[0]} atoms and {mask_orb_to_append.shape[0]} orbitals", flush=True) if comm.rank == 0 else None
+
+            self.N_coup += 1
+
+        n_block_slab = self.mask_orb_i.shape[0] // self.N_coup
+        
+        self.mask_orb_slab_last = self.mask_orb_i[-n_block_slab:][None,:]
+
+        self.mask_atoms_j = mask_atoms_to_append[None,:]
+        self.mask_orb_j = mask_orb_to_append[None,:]
+
+        self.mask_atoms_i = self.mask_atoms_i[None,:]
+        self.mask_orb_i = self.mask_orb_i[None,:]
+
+        
+
+        ##Compute mask for the contact element   
+        #self.mask_atoms_j, self.mask_orb_j = self.compute_mask(coords,orbitals)
 
         #Compute mask for the shifted contact element (needed for off-diagonal elements)
-        delta_corner = xp.multiply(-self.direction,(self.corner_2-self.corner_1))
-        self.mask_atoms_j, self.mask_orb_j = self.compute_mask(coords,orbitals,delta_corner)
+        #delta_corner = xp.multiply(-self.direction,(self.corner_2-self.corner_1))
+        #self.mask_atoms_j, self.mask_orb_j = self.compute_mask(coords,orbitals,delta_corner)
 
-        if self.mask_atoms_i.shape[1] != self.mask_atoms_j.shape[1]:
-            raise ValueError(
-                f"The number of {self.name} contact atoms in the slab i ({self.mask_atoms_i.shape[1]}) and slab j ({self.mask_atoms_j.shape[1]}) are different."
-            )
+        #if self.mask_atoms_i.shape[1] != self.mask_atoms_j.shape[1]:
+        #    raise ValueError(
+        #        f"The number of {self.name} contact atoms in the slab i ({self.mask_atoms_i.shape[1]}) and slab j ({self.mask_atoms_j.shape[1]}) are different."
+        #    )
 
         print(f"Contact {self.name} has {self.mask_atoms_i.shape[1]} atoms and {self.mask_orb_i.shape[1]} orbitals", flush=True) if comm.rank == 0 else None
+
+def get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray:
+    """
+    Computes the potential for each orbital.
+
+    Parameters
+    ----------
+    potential : NDArray
+        The potential.
+    orbitals : NDArray
+        The starting orbital (cumulative) for each atom.
     
+    Returns
+    -------
+    orb_potential : NDArray
+        The potential for each orbital.
+    """
+
+    orb_potential = xp.zeros((orbitals_per_atom[-1],1),dtype=xp.float64)
+    for i in range(potential.shape[0]):
+        orb_potential[orbitals_per_atom[i]:orbitals_per_atom[i+1]] = potential[i]
+
+    return orb_potential
 
 @dataclass
 class Observables:
@@ -450,10 +556,33 @@ class QTBM:
                 "Overlap matrix and Hamiltonian matrix have different shapes."
             )
 
-        #Load potential (TODO)
+        #Load potential
+
+        try: 
+            self.atom_potential = distributed_load(
+            self.quatrex_config.input_dir / "potential.npy"
+                )
+            self.orb_potential = get_orb_potential(self.atom_potential, self.orbitals_vec)
+
+            SV1 = self.overlap_sparray.multiply(self.orb_potential).tocsr()
+            SV2 = self.overlap_sparray.multiply(self.orb_potential.T).tocsr()
+            self.hamiltonian_sparray += (SV1+SV2)/2
+            self.hamiltonian_sparray.eliminate_zeros()
+        except FileNotFoundError:
+            print("No pot provided.")
+            
+        #for o in range(self.orb_potential.shape[0]):
+        #    orb_av = (self.orb_potential[o] + self.orb_potential)/2
+        #    orb_av=orb_av.T
+        #    V_o = self.overlap_sparray[o,:].multiply(orb_av).tocsr()
+        #    self.hamiltonian_sparray[o,:] += V_o
+        #    print(o,flush=True) if comm.rank == 0 else None
+
+        
 
         self.flatband = quatrex_config.electron.flatband
         self.eta_obc = quatrex_config.electron.eta_obc
+        self.block_sections = quatrex_config.electron.obc.block_sections
 
         # Load contact info
         self.n_cont,self.cont_names,self.corner1,self.corner2,self.corner_direction = distributed_load_contact(quatrex_config.input_dir / "cont.dat")
@@ -462,7 +591,7 @@ class QTBM:
         self.contacts = []
         for n in range(self.n_cont):
             self.contacts.append(Contact(self.corner1[n],self.corner2[n],self.corner_direction[n],self.cont_names[n]))
-            self.contacts[n].set_mask(self.coords, self.orbitals_vec)
+            self.contacts[n].set_mask(self.coords, self.orbitals_vec, self.hamiltonian_sparray)
 
         # CREATE MASK FOR EVERY SLAB
         self.n_slabs_x, self.n_slab_y = distributed_read_slabs(quatrex_config.input_dir / "slabs.dat")
@@ -587,7 +716,7 @@ class QTBM:
 
         return obc_solver
     
-    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, w: NDArray):
+    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, w: NDArray, S: list):
         """
         Compute observables for the current iteration.
 
@@ -603,21 +732,32 @@ class QTBM:
             The injected phase factor (per every injected vector)
         """
 
+        if phi.size == 0:
+            return
         #Compute transmissions for all the possible contact couples
         cont_1 = 0
         cont_2 = 1
         for n in range(self.n_transmissions):
 
-            #Get the all the wavefunction injected from contact 1 and extract the elements inside contact 2
-            phi_1 = phi[self.contacts[cont_2].mask_orb_j.T,inj_ind[cont_1]]
-            phi_2 = phi[self.contacts[cont_2].mask_orb_i.T,inj_ind[cont_1]]
 
-            #Get the transmission matrix between the two contact blocks
-            T01 = self.system_matrix[self.contacts[cont_2].mask_orb_j.T,self.contacts[cont_2].mask_orb_i]
+            #Get the all the wavefunction injected from contact 1 and extract the elements inside contact 2
+            phi_n = phi[self.contacts[cont_2].mask_orb_i.T,inj_ind[cont_1]]
 
             #Compute the transmission
-            if(phi_1.size != 0):
-                self.observables.electron_transmission_contacts[n,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
+            if(phi_n.size != 0):
+                self.observables.electron_transmission_contacts[n,i] = xp.trace(xp.real(1j*phi_n.T.conj() @ (S[cont_2]-S[cont_2].T.conj()) @phi_n))
+
+
+            ##Get the all the wavefunction injected from contact 1 and extract the elements inside contact 2
+            #phi_1 = phi[self.contacts[cont_2].mask_orb_j.T,inj_ind[cont_1]]
+            #phi_2 = phi[self.contacts[cont_2].mask_orb_slab_last.T,inj_ind[cont_1]]
+
+            #Get the transmission matrix between the two contact blocks
+            #T01 = self.system_matrix[self.contacts[cont_2].mask_orb_j.T,self.contacts[cont_2].mask_orb_slab_last]
+
+            #Compute the transmission
+            #if(phi_1.size != 0):
+            #    self.observables.electron_transmission_contacts[n,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
 
             cont_2 += 1
             if cont_2 == self.n_cont:
@@ -639,12 +779,19 @@ class QTBM:
                     self.observables.electron_transmission_x_slabs[n,s,i] = xp.trace(2*xp.imag(phi_1.T.conj() @ T01 @phi_2))
 
         #Compute DOS
-
         #Spill over correction
         phi_ortho = self.overlap_sparray @ phi #"Orthogonalize" the wavefunction
         for n in range(self.n_cont):
-            S_off_coup_cont = self.overlap_sparray[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i] #Get the off-diagonal elements of the overlap matrix in the contact
-
+            S_off_coup_cont,_,_ = get_periodic_superblocks_no_flip(
+                    self.overlap_sparray[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_slab].toarray(),
+                    self.overlap_sparray[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_slab].toarray(),
+                    self.overlap_sparray[self.contacts[n].mask_orb_slab.T,self.contacts[n].mask_orb_i].toarray(),
+                    self.overlap_sparray[self.contacts[n].mask_orb_slab.T,self.contacts[n].mask_orb_j].toarray(),
+                    block_sections=self.contacts[n].N_coup,
+                )
+            
+            
+            print(xp.count_nonzero(S_off_coup_cont),flush=True) if comm.rank == 0 else None
             w_sign = w.copy()
             w_sign[inj_ind[n]] = 1/w_sign[inj_ind[n]] #Change the sign of the injected wavefunction that propagates back in the contact
             
@@ -689,20 +836,63 @@ class QTBM:
             # Compute the boundary self-energy and the injection vector
             ind_0 = 0
             for n in range(self.n_cont):
+
+                #a_ii=self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray()
+                #a_ji=self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray()
+                #a_ij=self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray()
+
+                #if self.contacts[n].direction[0] == 1:
+                #    a_ii = xp.flip(a_ii,axis=(-2, -1))
+                #    a_ij = xp.flip(a_ij,axis=(-2, -1))
+                #    a_ji = xp.flip(a_ji,axis=(-2, -1))
+
+                #m_10, m_00, m_01 = get_periodic_superblocks(
+                #    a_ii,
+                #    a_ij,
+                #    a_ji,
+                #    block_sections=self.block_sections,
+                #)
+
+                m_10, m_00, m_01 = get_periodic_superblocks_no_flip(
+                    self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_slab].toarray(),
+                    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_slab].toarray(),
+                    self.system_matrix[self.contacts[n].mask_orb_slab.T,self.contacts[n].mask_orb_i].toarray(),
+                    self.system_matrix[self.contacts[n].mask_orb_slab.T,self.contacts[n].mask_orb_j].toarray(),
+                    block_sections=self.contacts[n].N_coup,
+                )
+
+                self.obc.block_sections = self.contacts[n].N_coup
+
                 _ , S_n, inj_n, w_n = self.obc(
-                    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray(),
-                    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray(),
-                    self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray(),
+                    m_00,
+                    m_01,
+                    m_10,
                     "left",
                     return_injected = True,
                 )
+
+                #if self.contacts[n].direction[0] == 1:
+                #    S_n = xp.flip(S_n,axis=(-2, -1))
+                #    inj_n = xp.flip(inj_n,axis=0)
+                #    w_n = 1/w_n
+
+                #_ , S_n, inj_n, w_n = self.obc(
+                #    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i].toarray(),
+                #    self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_j].toarray(),
+                #    self.system_matrix[self.contacts[n].mask_orb_j.T,self.contacts[n].mask_orb_i].toarray(),
+                #    "left",
+                #    return_injected = True,
+                #)
+
                 S.append(S_n)
                 inj.append(inj_n)
                 inj_ind.append(xp.arange(ind_0,ind_0+inj_n.shape[1])[None,:])
                 ind_0 += inj_n.shape[1]
                 w.append(w_n)
 
+            print(w,flush=True) if comm.rank == 0 else None
             w = xp.concatenate(w)
+            
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -748,7 +938,7 @@ class QTBM:
                 self.system_matrix[self.contacts[n].mask_orb_i.T,self.contacts[n].mask_orb_i] += S[n] #Add the self-energy back
             
             # Compute observables (DOS and Transmission)
-            self.compute_observables(phi,inj_ind,i,w)
+            self.compute_observables(phi,inj_ind,i,w,S)
 
             t_iteration = time.perf_counter() - times.pop()
             (

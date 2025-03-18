@@ -3,17 +3,21 @@
 import functools
 
 import pytest
-from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, sparse, xp
-from qttools.datastructures.dbsparse import DBSparse
+from qttools import NDArray, block_comm, global_comm, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import (
     product_sparsity_pattern,
-    product_sparsity_pattern_dbsparse,
     product_sparsity_pattern_dsbsparse,
+    product_sparsity_pattern_dsdbsparse,
 )
+
+GLOBAL_STACK_SHAPES = [
+    pytest.param((4,), id="1D-stack"),
+    pytest.param((5, 2), id="2D-stack"),
+]
 
 
 def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
@@ -190,10 +194,13 @@ def test_product_sparsity_dsbsparse_spillover(
     assert xp.allclose(ref, val)
 
 
-def test_product_sparsity_dbsparse(
-    dbsparse_type: DBSparse,
+@pytest.mark.mpi(min_size=2)
+@pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
+def test_product_sparsity_dsdbsparse(
+    dsdbsparse_type: DSDBSparse,
     num_matrices: int,
     block_sizes: NDArray,
+    global_stack_shape: tuple,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
     last_block_sizes = block_sizes[-3:]
@@ -202,9 +209,10 @@ def test_product_sparsity_dbsparse(
             (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
         )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
-    matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
+    matrices = [global_comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
-        dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
+        dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
+        for matrix in matrices
     ]
     dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
     for i in range(num_matrices):
@@ -214,31 +222,33 @@ def test_product_sparsity_dbsparse(
     product.data[:] = 1
     ref = product.toarray()
 
-    local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[: comm.rank])
-    end_block = start_block + local_blocks[comm.rank]
+    local_blocks, _ = get_section_sizes(len(block_sizes), block_comm.size)
+    start_block = sum(local_blocks[: block_comm.rank])
+    end_block = start_block + local_blocks[block_comm.rank]
 
-    rows, cols = product_sparsity_pattern_dbsparse(
+    rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsbsparse_matrices,
         in_num_diag=3,
         start_block=start_block,
         end_block=end_block,
-        comm=comm,
     )
     val = sparse.coo_matrix(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
-    if comm.rank == 0:
+    if global_comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
 
 
-def test_product_sparsity_dbsparse_spillover(
-    dbsparse_type: DBSparse,
+@pytest.mark.mpi
+@pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
+def test_product_sparsity_dsdbsparse_spillover(
+    dsdbsparse_type: DSDBSparse,
     num_matrices: int,
     block_sizes: NDArray,
+    global_stack_shape: tuple,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
     last_block_sizes = block_sizes[-3:]
@@ -247,9 +257,10 @@ def test_product_sparsity_dbsparse_spillover(
             (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
         )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
-    matrices = [comm.bcast(matrix, root=0) for matrix in matrices]
+    matrices = [global_comm.bcast(matrix, root=0) for matrix in matrices]
     dsbsparse_matrices = [
-        dbsparse_type.from_sparray(matrix, block_sizes) for matrix in matrices
+        dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
+        for matrix in matrices
     ]
     dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
     for i in range(num_matrices):
@@ -267,22 +278,21 @@ def test_product_sparsity_dbsparse_spillover(
     # product.data[:] = 1
     # ref = product.toarray()
 
-    local_blocks, _ = get_section_sizes(len(block_sizes), comm.size)
-    start_block = sum(local_blocks[: comm.rank])
-    end_block = start_block + local_blocks[comm.rank]
+    local_blocks, _ = get_section_sizes(len(block_sizes), block_comm.size)
+    start_block = sum(local_blocks[: block_comm.rank])
+    end_block = start_block + local_blocks[block_comm.rank]
 
-    rows, cols = product_sparsity_pattern_dbsparse(
+    rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsbsparse_matrices,
         in_num_diag=3,
         start_block=start_block,
         end_block=end_block,
-        comm=comm,
         spillover=True,
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
-    print(f"{comm.rank=}, {start_block=}, {end_block=}", flush=True)
-    if comm.rank == 0:
+    print(f"{block_comm.rank=}, {start_block=}, {end_block=}", flush=True)
+    if global_comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)

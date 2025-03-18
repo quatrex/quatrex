@@ -2,12 +2,9 @@
 
 import functools
 
-from mpi4py.MPI import COMM_WORLD as comm
-from mpi4py.MPI import Intracomm
-
-from qttools import NDArray, sparse, xp
-from qttools.datastructures.dbsparse import DBSparse
+from qttools import NDArray, block_comm, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
 from qttools.profiling import Profiler
 
@@ -206,16 +203,15 @@ def product_sparsity_pattern_dsbsparse(
     return c_rows, c_cols
 
 
-def product_sparsity_pattern_dbsparse(
-    *matrices: DBSparse,
+def product_sparsity_pattern_dsdbsparse(
+    *matrices: DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = None,
     start_block: int = 0,
     end_block: int = None,
-    comm: Intracomm = comm,
     spillover: bool = False,
 ) -> tuple[NDArray, NDArray]:
-    """Computes the sparsity pattern of the product of a sequence of DBSparse matrices.
+    """Computes the sparsity pattern of the product of a sequence of DSDBSparse matrices.
 
     Parameters
     ----------
@@ -234,7 +230,7 @@ def product_sparsity_pattern_dbsparse(
     assert len(matrices) > 1
 
     a = matrices[0]
-    a.local_data[:] = 1
+    a.data[:] = 1
 
     # Assuming that all matrices have the same number of blocks, same block sizes, and same block diagonals.
     num_blocks = a.num_blocks
@@ -261,7 +257,7 @@ def product_sparsity_pattern_dbsparse(
 
     for n, b in enumerate(matrices[1:]):
 
-        b.local_data[:] = 1
+        b.data[:] = 1
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
         b_num_diag = in_num_diag
         tmp_num_diag = a_num_diag + b_num_diag - 1
@@ -277,18 +273,17 @@ def product_sparsity_pattern_dbsparse(
             tmp_num_diag,
             start_block,
             end_block,
-            comm,
             False,
         )
 
         if spillover:
             if start_block == 0:
                 # Left spillover
-                print(f"left spillover, {comm.rank=}, {c_.origin=}")
+                print(f"left spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[0, 0] = c_[0, 0] + a_[1, 0] @ b_[0, 1]
             if end_block == num_blocks:
                 # Right spillover
-                print(f"right spillover, {comm.rank=}, {c_.origin=}")
+                print(f"right spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[num_blocks - 1, num_blocks - 1] = (
                     c_[num_blocks - 1, num_blocks - 1]
                     + a_[num_blocks - 2, num_blocks - 1]
@@ -320,14 +315,15 @@ def product_sparsity_pattern_dbsparse(
             if (i, j) not in local_keys:
                 continue
             c_block = c_[i, j]
-            c_block = sparse.coo_matrix(c_block)
+            m, n = c_block.shape[-2:]
+            c_block = sparse.coo_matrix(c_block.flat[: m * n].reshape(m, n))
             c_block.sum_duplicates()
             c_block.eliminate_zeros()
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
 
-    c_rows = comm.allgather(c_rows)
-    c_cols = comm.allgather(c_cols)
+    c_rows = block_comm.allgather(c_rows)
+    c_cols = block_comm.allgather(c_cols)
     c_rows = xp.concatenate(c_rows)
     c_cols = xp.concatenate(c_cols)
 

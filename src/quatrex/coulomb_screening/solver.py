@@ -5,7 +5,7 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
-from qttools.datastructures.routines import bd_matmul, bd_sandwich
+from qttools.datastructures.routines import bd_matmul, bd_sandwich, bd_matmul_rc, bd_sandwich_rcr
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -121,6 +121,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         coulomb_matrix_sparray = (
             0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T).tocoo()
         ).tocoo()
+        coulomb_matrix_sparray = sparse.coo_matrix(
+            (coulomb_matrix_sparray.data.real, (coulomb_matrix_sparray.row, coulomb_matrix_sparray.col)),
+            shape=coulomb_matrix_sparray.shape,
+        )
 
         # Load block sizes.
         self.small_block_sizes = get_host(
@@ -167,10 +171,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Workaround: We set the global_stack_shape to the number of MPI
         # ranks.
         self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
+            sparsity_pattern.astype(xp.float64),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
         )
+        self.coulomb_matrix._data = xp.empty_like(self.coulomb_matrix._data, dtype=xp.float64)
+        self.coulomb_matrix.dtype = xp.float64
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += coulomb_matrix_sparray
 
@@ -320,7 +326,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         synchronize_device()
         time_start = time.perf_counter()
-        bd_matmul(
+        bd_matmul_rc(
             self.coulomb_matrix,
             p_retarded,
             out=self.system_matrix,
@@ -428,13 +434,13 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_system_assemble = time.perf_counter() - times.pop()
 
         times.append(time.perf_counter())
-        bd_sandwich(
+        bd_sandwich_rcr(
             self.coulomb_matrix,
             p_lesser,
             out=self.l_lesser,
             spillover_correction=True,
         )
-        bd_sandwich(
+        bd_sandwich_rcr(
             self.coulomb_matrix,
             p_greater,
             out=self.l_greater,

@@ -317,12 +317,20 @@ class CoulombScreeningSolver(SubsystemSolver):
     def _assemble_system_matrix(self, p_retarded: DSBSparse) -> None:
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
+
+        synchronize_device()
+        time_start = time.perf_counter()
         bd_matmul(
             self.coulomb_matrix,
             p_retarded,
             out=self.system_matrix,
             spillover_correction=True,
         )
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Assembly BD MatMult time: {time_end-time_start}", flush=True)
+
         self.system_matrix._data = -self.system_matrix._data
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
@@ -398,14 +406,28 @@ class CoulombScreeningSolver(SubsystemSolver):
         """
         times = []
 
-        # Compute the product of the Coulomb matrix with the polarization.
+        # Barrier to synchronize all ranks.
+        synchronize_device()
+        comm.Barrier()
+
         times.append(time.perf_counter())
         # Change the block sizes to match the Coulomb matrix.
         self._set_block_sizes(self.small_block_sizes)
+        synchronize_device()
+        t_set_blocksize = time.perf_counter() - times.pop()
+
+        # Compute the product of the Coulomb matrix with the polarization.
+        synchronize_device()
+        times.append(time.perf_counter())
 
         # Assemble the system matrix (Includes matrix multiplication).
+        synchronize_device()
+        times.append(time.perf_counter())
         self._assemble_system_matrix(p_retarded)
+        synchronize_device()
+        t_system_assemble = time.perf_counter() - times.pop()
 
+        times.append(time.perf_counter())
         bd_sandwich(
             self.coulomb_matrix,
             p_lesser,
@@ -418,25 +440,34 @@ class CoulombScreeningSolver(SubsystemSolver):
             out=self.l_greater,
             spillover_correction=True,
         )
+        synchronize_device()
+        t_sandwich = time.perf_counter() - times.pop()
         t_obc_multiply = time.perf_counter() - times.pop()
-        times.append(time.perf_counter())
 
         if self.flatband:
             homogenize(self.system_matrix)
             homogenize(self.l_lesser)
             homogenize(self.l_greater)
 
+        synchronize_device()
+        times.append(time.perf_counter())
         # Go back to normal block sizes.
         self._set_block_sizes(self.block_sizes)
-        t_assemble = time.perf_counter() - times.pop()
+        synchronize_device()
+        t_set_blocksize += time.perf_counter() - times.pop()
 
         # Apply the OBC algorithm.
         times.append(time.perf_counter())
-
         self._compute_obc()
+        synchronize_device()
         t_obc = time.perf_counter() - times.pop()
 
+        # Barrier after OBC to synchronize all ranks
+        # before solving the system.
+        comm.Barrier()
+
         # Solve the system
+        synchronize_device()
         times.append(time.perf_counter())
         self.solver.selected_solve(
             a=self.system_matrix,
@@ -446,31 +477,28 @@ class CoulombScreeningSolver(SubsystemSolver):
             out=out,
             return_retarded=False,
         )
+        synchronize_device()
         t_solve = time.perf_counter() - times.pop()
 
-        w_lesser, w_greater, *__ = out
-        t0 = time.perf_counter()
-        w_lesser.data = 0.5 * (
-            w_lesser.data - w_lesser.ltranspose(copy=True).data.conj()
-        )
-        w_greater.data = 0.5 * (
-            w_greater.data - w_greater.ltranspose(copy=True).data.conj()
-        )
-        t1 = time.perf_counter()
-        if comm.rank == 0:
-            print(f"Symmetrization time: {t1-t0}", flush=True)
-
+        synchronize_device()
+        times.append(time.perf_counter())
         self._filter_peaks(out)
+        synchronize_device()
+        t_filter = time.perf_counter() - times.pop()
 
+        w_lesser, w_greater, *__ = out
         if comm.rank == 0:
             w_greater.data[0, :] = 0.0
             w_lesser.data[0, :] = 0.0
 
         if comm.rank == 0:
             print(
-                f"OBC Multiply: {t_obc_multiply}, "
-                f"Assemble: {t_assemble}, "
-                f"OBC: {t_obc}, "
-                f"Solve: {t_solve}",
+                f"Set block sizes: {t_set_blocksize},\n"
+                f"OBC Multiply: {t_obc_multiply},\n"
+                f"    System matrix assemble: {t_system_assemble},\n"
+                f"    Sandwich: {t_sandwich},\n"
+                f"OBC: {t_obc},\n"
+                f"Solve: {t_solve},\n",
+                f"Filter: {t_filter}",
                 flush=True,
             )

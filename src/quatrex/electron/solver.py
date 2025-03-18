@@ -39,9 +39,11 @@ def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
         The matrix to subtract.
 
     """
+    a_ = a.stack[...]
+    b_ = b.stack[...]
     for i in range(a.num_blocks):
         for j in range(max(0, i - 2), min(a.num_blocks, i + 3)):
-            a.blocks[i, j] -= b.blocks[i, j]
+            a_.blocks[i, j] -= b_.blocks[i, j]
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
@@ -340,14 +342,38 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
+        synchronize_device()
+        time_start = time.perf_counter()
         self.system_matrix.data = 0.0
         self.system_matrix += self.overlap_sparray
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Overlap matrix assembly: {time_end-time_start}", flush=True)
+
+        time_start = time.perf_counter()
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Energy scaling: {time_end-time_start}", flush=True)
+
+        time_start = time.perf_counter()
         self.system_matrix -= self.hamiltonian_sparray + sparse.diags(self.potential)
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Potential subtraction: {time_end-time_start}", flush=True)
+
+        time_start = time.perf_counter()
         _btd_subtract(self.system_matrix, sse_retarded)
+        synchronize_device()
+        time_end = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Self-energy subtraction: {time_end-time_start}", flush=True)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -416,16 +442,21 @@ class ElectronSolver(SubsystemSolver):
         """
         times = []
 
+        synchronize_device()
+        comm.Barrier()
+
         if self.flatband:
             homogenize(sse_greater)
             homogenize(sse_lesser)
             homogenize(sse_retarded)
 
+        synchronize_device()
         times.append(time.perf_counter())
         self._assemble_system_matrix(sse_retarded)
-        t_assemble = time.perf_counter() - times.pop()
+        synchronize_device()
+        t_system_assemble = time.perf_counter() - times.pop()
 
-        t0 = time.perf_counter()
+        times.append(time.perf_counter())
         if self.band_edge_tracking == "eigenvalues":
             e_0_left, e_0_right = find_renormalized_eigenvalues(
                 self.hamiltonian_sparray,
@@ -442,14 +473,18 @@ class ElectronSolver(SubsystemSolver):
                 eigvalsh_compute_location=self.compute_config.band_edge.eigvalsh_compute_location,
             )
             self._update_fermi_levels(e_0_left, e_0_right)
-        t1 = time.perf_counter()
-        if comm.rank == 0:
-            print(f"Band edge tracking: {t1-t0}", flush=True)
+        synchronize_device()
+        t_band_edges = time.perf_counter() - times.pop()
 
         times.append(time.perf_counter())
         self._compute_obc()
+        synchronize_device()
         t_obc = time.perf_counter() - times.pop()
 
+        # Barrier to ensure that all ranks have computed the OBC.
+        comm.Barrier()
+
+        synchronize_device()
         times.append(time.perf_counter())
         self.meir_wingreen_current = self.solver.selected_solve(
             a=self.system_matrix,
@@ -460,24 +495,18 @@ class ElectronSolver(SubsystemSolver):
             return_retarded=True,
             return_current=self.compute_meir_wingreen_current,
         )
+        synchronize_device()
         t_solve = time.perf_counter() - times.pop()
-        g_lesser, g_greater, g_retarded = out
+        _, _, g_retarded = out
 
-        # Make sure the Green's functions are skew-Hermitian.
-        t0 = time.perf_counter()
-        g_lesser.data = 0.5 * (
-            g_lesser.data - g_lesser.ltranspose(copy=True).data.conj()
-        )
-        g_greater.data = 0.5 * (
-            g_greater.data - g_greater.ltranspose(copy=True).data.conj()
-        )
-
+        synchronize_device()
+        times.append(time.perf_counter())
         self._filter_peaks(out)
-        t1 = time.perf_counter()
-        if comm.rank == 0:
-            print(f"Symmetrization: {t1-t0}", flush=True)
+        synchronize_device()
+        t_filter_peaks = time.perf_counter() - times.pop()
 
         if self.band_edge_tracking == "dos-peaks":
+            times.append(time.perf_counter())
             s_00 = self._get_block(self.overlap_sparray, (0, 0))
             s_nn = self._get_block(self.overlap_sparray, (-1, -1))
             g_00 = g_retarded.blocks[0, 0]
@@ -519,9 +548,14 @@ class ElectronSolver(SubsystemSolver):
             e_0_right = find_dos_peaks(right_dos, self.energies)
 
             self._update_fermi_levels(e_0_left, e_0_right)
+            synchronize_device()
+            t_dos_peaks = time.perf_counter() - times.pop()
+            if comm.rank == 0:
+                print(f"Peak tracking: {t_dos_peaks}", flush=True)
 
         if comm.rank == 0:
             print(
-                f"Assemble: {t_assemble}, OBC: {t_obc}, Solve: {t_solve}",
+                f"Assemble: {t_system_assemble}, OBC: {t_obc}, Solve: {t_solve}\n",
+                f"Filter: {t_filter_peaks}, Band edges: {t_band_edges}",
                 flush=True,
             )

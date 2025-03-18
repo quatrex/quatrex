@@ -7,7 +7,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -168,6 +168,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         sigma_lesser, sigma_greater, sigma_retarded = out
 
+        # Barrier to synchronize measurements
+        synchronize_device()
+        comm.Barrier()
+
         with profiler.profile_range("stack->nnz transpose", level="debug"):
             t0 = time.perf_counter()
             # Transpose the matrices to nnz distribution.
@@ -185,12 +189,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # the data here, as we cannot be sure that this is the
                 # first/only interaction.
                 m.dtranspose() if m.distribution_state != "nnz" else None
+            synchronize_device()
             t1 = time.perf_counter()
         if comm.rank == 0:
             print(
                 f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
             )
 
+        synchronize_device()
+        t_sse = -time.perf_counter()
         with profiler.profile_range("SSE computation", level="debug"):
             if self.batch_size is None:
                 # NOTE: This is a temporary solution. The batch size should be
@@ -214,6 +221,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # where cut off by the polarization calculation.
                 # TODO: the datastructures does not allow for easy slicing of the
                 # data. This is a workaround.
+
                 sigma_lesser._data[
                     sigma_lesser._stack_padding_mask, ..., batch
                 ] += self.prefactor * (
@@ -234,7 +242,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         g_greater.data[:, batch], w_lesser.data[:, batch].conj()
                     )[self.num_energies - 1 :]
                 )
-
                 # Compute retarded self-energy with a Hilbert transform.
                 sigma_antihermitian = 1j * xp.imag(
                     sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
@@ -244,15 +251,28 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_retarded._stack_padding_mask, ..., batch
                 ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
 
+        synchronize_device()
+        t_sse += time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"SigmaCoulombScreening: SSE computation time: {t_sse}",
+                flush=True,
+            )
+
+        # Barrier before communication
+        synchronize_device()
+        comm.Barrier()
+
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
+            synchronize_device()
             t0 = time.perf_counter()
             for m in (w_lesser, w_greater):
                 m.dtranspose(discard=True) if m.distribution_state != "stack" else None
             # NOTE: The electron Green's functions and self-energies must
             # not be transposed back to stack distribution, as they are
             # needed in nnz distribution for the other interactions.
-
+            synchronize_device()
             t1 = time.perf_counter()
             if comm.rank == 0:
                 print(

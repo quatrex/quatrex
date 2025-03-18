@@ -78,13 +78,14 @@ class ElectronSolver(SubsystemSolver):
             hamiltonian_unit_cells = distributed_load(
                 quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
             ).astype(xp.complex128)
-            self.hamiltonian_sparray, block_sizes = create_hamiltonian(
+            hamiltonian_sparray, block_sizes = create_hamiltonian(
                 hamiltonian_unit_cells,
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
-            ).astype(xp.complex128)
+            )
+            self.hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
             self.block_sizes = get_host(block_sizes)
 
         else:
@@ -108,13 +109,14 @@ class ElectronSolver(SubsystemSolver):
                 overlap_unit_cells = distributed_load(
                     quatrex_config.input_dir / "overlap_unit_cells.npy"
                 ).astype(xp.complex128)
-                self.overlap_sparray, __ = create_hamiltonian(
+                overlap_sparray, __ = create_hamiltonian(
                     overlap_unit_cells,
                     quatrex_config.device.number_of_supercells,
                     quatrex_config.device.transport_direction,
                     quatrex_config.device.unit_cell_per_supercell,
                     return_sparse=True,
-                ).astype(xp.complex128)
+                )
+                self.overlap_sparray = overlap_sparray.astype(xp.complex128)
             except FileNotFoundError:
                 # No overlap provided. Assume orthonormal basis.
                 self.overlap_sparray = sparse.eye(

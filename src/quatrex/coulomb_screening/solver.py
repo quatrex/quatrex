@@ -139,7 +139,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
-            ).astype(xp.complex128)
+            )
+            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
             self.small_block_sizes = get_host(small_block_sizes)
 
         else:

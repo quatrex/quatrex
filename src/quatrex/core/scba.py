@@ -60,12 +60,13 @@ class SCBAData:
                 quatrex_config.input_dir / "lattice_vectors.npy"
             )
 
-            device_cell = quatrex_config.device.unit_cell_per_supercell
+            device_cell = list(quatrex_config.device.unit_cell_per_supercell)
             device_cell[
                 "xyz".index(quatrex_config.device.transport_direction)
             ] *= quatrex_config.device.number_of_supercells
+            device_cell = tuple(device_cell)
 
-            grid = create_coordinate_grid(wannier_centers, lattice_vectors, device_cell)
+            grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
 
             # NOTE: this is a temporary solution to get the block sizes.
             # Should be create from wannier centers
@@ -78,7 +79,7 @@ class SCBAData:
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
-            ).astype(xp.complex128)
+            )
             block_sizes = get_host(block_sizes)
 
         else:

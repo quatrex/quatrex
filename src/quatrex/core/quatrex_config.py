@@ -15,7 +15,6 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
-from qttools import host_xp
 from typing_extensions import Self
 
 
@@ -331,7 +330,7 @@ class DeviceConfig(BaseModel):
     @model_validator(mode="after")
     def to_array(self) -> Self:
         """Transforms tuple to array."""
-        self.unit_cell_per_supercell = host_xp.array(self.unit_cell_per_supercell)
+        self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
         return self
 
 

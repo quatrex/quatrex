@@ -51,7 +51,7 @@ class DSBCOO(DSBSparse):
         global_stack_shape: tuple | int,
         return_dense: bool = True,
     ) -> None:
-        """Initializes the DBCOO matrix."""
+        """Initializes the DSBCOO matrix."""
         super().__init__(data, block_sizes, global_stack_shape, return_dense)
 
         self.rows = rows.astype(xp.int32)

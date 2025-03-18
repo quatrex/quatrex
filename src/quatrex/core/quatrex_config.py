@@ -15,6 +15,7 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
+from qttools import host_xp
 from typing_extensions import Self
 
 
@@ -318,12 +319,29 @@ class OutputConfig(BaseModel):
     profiling_stats: bool = False
 
 
+class DeviceConfig(BaseModel):
+
+    construct_from_unit_cell: bool = False
+
+    # --- Device geometry ---------------------------------------------
+    unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    number_of_supercells: PositiveInt = 1
+    transport_direction: Literal["x", "y", "z"] = "x"
+
+    @model_validator(mode="after")
+    def to_array(self) -> Self:
+        """Transforms tuple to array."""
+        self.unit_cell_per_supercell = host_xp.array(self.unit_cell_per_supercell)
+        return self
+
+
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
+    device: DeviceConfig = DeviceConfig()
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     poisson: PoissonConfig = PoissonConfig()

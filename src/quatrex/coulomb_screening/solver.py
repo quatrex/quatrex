@@ -9,6 +9,7 @@ from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_hamiltonian, read_hr_dat
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsbsparse
 
@@ -128,20 +129,33 @@ class CoulombScreeningSolver(SubsystemSolver):
         super().__init__(quatrex_config, compute_config, energies)
 
         # Load the Coulomb matrix.
-        coulomb_matrix_sparray = distributed_load(
-            quatrex_config.input_dir / "coulomb_matrix.npz"
-        ).astype(xp.complex128)
-        # Make sure that the Coulomb matrix is Hermitian.
-        coulomb_matrix_sparray = (
-            0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T).tocoo()
-        ).tocoo()
+        # Load the Coulomb matrix.
+        if quatrex_config.device.construct_from_unit_cell:
+            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
+            self.hamiltonian_sparray, self.small_block_sizes = create_hamiltonian(
+                unit_cell_hamiltonian,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            ).astype(xp.complex128)
 
-        # Load block sizes.
-        self.small_block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy").astype(
-                xp.int32
+        else:
+            coulomb_matrix_sparray = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix.npz"
+            ).astype(xp.complex128)
+            # Make sure that the Coulomb matrix is Hermitian.
+            coulomb_matrix_sparray = (
+                0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T).tocoo()
+            ).tocoo()
+
+            # Load block sizes.
+            self.small_block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy").astype(
+                    xp.int32
+                )
             )
-        )
+
         if not _check_block_sizes(
             coulomb_matrix_sparray.row,
             coulomb_matrix_sparray.col,

@@ -10,6 +10,12 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import ARRAY_MODULE, NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import (
+    create_coordinate_grid,
+    create_hamiltonian,
+    read_hr_dat,
+    read_wannier_wout,
+)
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.bandstructure.contact import contact_band_structure
@@ -51,10 +57,37 @@ class SCBAData:
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
-        grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+        if quatrex_config.device.construct_from_unit_cell:
+            wannier_centers, lattice_vectors = read_wannier_wout(
+                quatrex_config.input_dir / "wannier90.wout"
+            )
 
-        block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            device_cell = quatrex_config.device.unit_cell_per_supercell
+            device_cell[
+                "xyz".index(quatrex_config.device.transport_direction)
+            ] *= quatrex_config.device.number_of_supercells
+
+            grid = create_coordinate_grid(wannier_centers, lattice_vectors, device_cell)
+
+            # NOTE: this is a temporary solution to get the block sizes.
+            # Should be create from wannier centers
+            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
+            _, self.block_sizes = create_hamiltonian(
+                unit_cell_hamiltonian,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            ).astype(xp.complex128)
+
+        else:
+            grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+        electron_energies = distributed_load(
+            quatrex_config.input_dir / "electron_energies.npy"
         )
 
         # Find the maximum interaction cutoff.

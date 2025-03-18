@@ -8,6 +8,7 @@ from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_hamiltonian, read_hr_dat
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -73,12 +74,24 @@ class ElectronSolver(SubsystemSolver):
         super().__init__(quatrex_config, compute_config, energies)
 
         # Load the device Hamiltonian.
-        self.hamiltonian_sparray = distributed_load(
-            quatrex_config.input_dir / "hamiltonian.npz"
-        ).astype(xp.complex128)
-        self.block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        if quatrex_config.device.construct_from_unit_cell:
+            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
+            self.hamiltonian_sparray, self.block_sizes = create_hamiltonian(
+                unit_cell_hamiltonian,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            ).astype(xp.complex128)
+
+        else:
+            self.hamiltonian_sparray = distributed_load(
+                quatrex_config.input_dir / "hamiltonian.npz"
+            ).astype(xp.complex128)
+            self.block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
         if self.block_sizes.sum() != self.hamiltonian_sparray.shape[0]:
@@ -86,18 +99,38 @@ class ElectronSolver(SubsystemSolver):
                 "Block sizes do not match Hamiltonian. "
                 f"{self.block_sizes.sum()} != {self.hamiltonian_sparray.shape[0]}"
             )
-        # Load the overlap matrix.
-        try:
-            self.overlap_sparray = distributed_load(
-                quatrex_config.input_dir / "overlap.npz"
-            ).astype(xp.complex128)
-        except FileNotFoundError:
-            # No overlap provided. Assume orthonormal basis.
-            self.overlap_sparray = sparse.eye(
-                self.hamiltonian_sparray.shape[0],
-                format="coo",
-                dtype=self.hamiltonian_sparray.dtype,
-            )
+
+        if quatrex_config.device.construct_from_unit_cell:
+            try:
+                unit_cell_overlap = xp.load(quatrex_config.input_dir / "overlap.npy")
+                self.overlap_sparray, __ = create_hamiltonian(
+                    unit_cell_overlap,
+                    quatrex_config.device.number_of_supercells,
+                    quatrex_config.device.transport_direction,
+                    quatrex_config.device.unit_cell_per_supercell,
+                    return_sparse=True,
+                ).astype(xp.complex128)
+            except FileNotFoundError:
+                # No overlap provided. Assume orthonormal basis.
+                self.overlap_sparray = sparse.eye(
+                    self.hamiltonian_sparray.shape[0],
+                    format="coo",
+                    dtype=self.hamiltonian_sparray.dtype,
+                )
+
+        else:
+            # Load the overlap matrix.
+            try:
+                self.overlap_sparray = distributed_load(
+                    quatrex_config.input_dir / "overlap.npz"
+                ).astype(xp.complex128)
+            except FileNotFoundError:
+                # No overlap provided. Assume orthonormal basis.
+                self.overlap_sparray = sparse.eye(
+                    self.hamiltonian_sparray.shape[0],
+                    format="coo",
+                    dtype=self.hamiltonian_sparray.dtype,
+                )
 
         # Check that the overlap matrix and Hamiltonian matrix match.
         if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:

@@ -17,92 +17,6 @@ from quatrex.core.sse import ScatteringSelfEnergy
 profiler = Profiler()
 
 
-def fft_convolve_fock_with_hilbert(
-    a_lesser: NDArray,
-    a_greater: NDArray,
-    b_lesser: NDArray,
-    b_greater: NDArray,
-    energies: NDArray,
-    n=None,
-    eta=1e-8,
-    out=None,
-):
-    """Computes the Fock-type < > self-energy and the corresponding retarded component using FFT with the first axis as energy.
-
-    Parameters
-    ----------
-    a_lesser : NDArray
-        < component of the first array.
-    a_greater : NDArray
-        > component of the first array.
-    b_lesser : NDArray
-        < component of the first array.
-    b_greater : NDArray
-        > component of the first array.
-    energies : NDArray
-        Energies used in the Hilbert transformation.
-    n : int (optional)
-        FFT length
-    eta : float, optional
-        Small part to avoid singularity during the Hilbert transformation
-    out : tuple(NDArray, NDArray, NDArray), optional
-        The < > and retarded components of the output self-energy, accumulate on top if presented.
-
-    Returns
-    -------
-    NDArray, NDArray, NDArray
-        The < > and retarded components of the output self-energy
-
-    """
-    m = a_lesser.shape[0]
-    if n is None:
-        # Length of the transformed axis is set to 2^n
-        # Does CUPY tuning this automatically based on the hardware?
-        n = xp.power(
-            2, xp.int32(xp.log2(a_lesser.shape[0] + a_greater.shape[0] - 1) + 1)
-        )
-    if out is not None:
-        (c_lesser, c_greater, c_retarded) = out
-    else:
-        c_lesser = xp.zeros_like(a_lesser)
-        c_greater = xp.zeros_like(a_lesser)
-        c_retarded = xp.zeros_like(a_lesser)
-
-    a_x_fft = xp.fft.fft(a_lesser, n, axis=0)
-    b_lesser_fft = xp.fft.fft(b_lesser, n, axis=0)
-    b_greater_fft = xp.fft.fft(b_greater, n, axis=0)
-
-    c_x_fft = xp.multiply(a_x_fft, b_lesser_fft)
-    c_x_fft -= xp.multiply(a_x_fft, b_greater_fft.conj())  # negative energy part
-    c_lesser += xp.fft.ifft(c_x_fft, axis=0)[:m]
-
-    a_x_fft = xp.fft.fft(a_greater, n, axis=0)
-    c_x_fft = xp.multiply(a_x_fft, b_greater_fft)
-    c_x_fft -= xp.multiply(a_x_fft, b_lesser_fft.conj())  # negative energy part
-    c_greater += xp.fft.ifft(c_x_fft, axis=0)[:m]
-
-    # Compute retarded self-energy with a Hilbert transform.
-    c_antihermitian = 1j * xp.imag(c_greater - c_lesser)
-
-    # Add a small imaginary part to avoid singularity.
-    energy_differences = (energies - energies[0]).reshape(-1, 1)
-    # eta for removing the singularity. See Cauchy principal value.
-    c_x_fft = xp.fft.fft(c_antihermitian, n, axis=0)
-    a_x_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
-    b_lesser_fft = xp.multiply(c_x_fft, a_x_fft)
-    b_lesser_fft -= xp.multiply(c_x_fft, a_x_fft.conj())  # negative energy part
-    c_retarded += (
-        xp.fft.ifft(b_lesser_fft, axis=0)[:m]
-        / (2 * xp.pi)
-        * (energies[1] - energies[0])
-        * 1j
-        + c_antihermitian / 2
-    )
-
-    if out is None:
-        return c_lesser, c_greater, c_retarded
-
-
 @profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using FFT.
@@ -324,7 +238,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_lesser._stack_padding_mask, ..., batch
                 ] += lesser
 
-                antihermitian_fft = -sigma_x_fft
+                # antihermitian_fft = -sigma_x_fft
 
                 g_x_fft = xp.fft.fft(g_greater.data[:, batch], n, axis=0)
                 sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
@@ -336,17 +250,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_greater._stack_padding_mask, ..., batch
                 ] += greater
 
-                antihermitian_fft += sigma_x_fft
+                # antihermitian_fft += sigma_x_fft
 
                 # Compute retarded self-energy with a Hilbert transform.
                 antihermitian = 1j * xp.imag(greater - lesser)
-                # antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+                antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
                 # TODO check this: impose the causality in the FFT domain instead of taking the
                 # imaginary part in the real domain, we have one less fft to do
-                antihermitian_fft *= self.prefactor
-                antihermitian_fft -= (
-                    antihermitian_fft + xp.flip(antihermitian_fft.conj(), axis=0)
-                ) * 0.5  # remove the hermitian part X(-t) = X(t).conj()
+                # antihermitian_fft *= self.prefactor * 0.5
+                # antihermitian_fft -=  xp.flip(antihermitian_fft.conj(), axis=0) # remove the hermitian part X(-t) = X(t).conj()
 
                 sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
                 sigma_x_fft -= xp.multiply(

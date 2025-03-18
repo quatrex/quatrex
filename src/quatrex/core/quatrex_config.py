@@ -15,6 +15,7 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
+from qttools import host_xp
 from typing_extensions import Self
 
 

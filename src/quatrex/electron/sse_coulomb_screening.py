@@ -299,21 +299,67 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 np.concatenate(([0], np.array(batch_counts)))
             )
 
+            # # TODO: the datastructures does not allow for easy slicing of the
+            # # data. This is a workaround.
+            # rows, cols = g_greater.spy()
+            # rows = rows[
+            #     g_greater.nnz_section_offsets[
+            #         comm.rank
+            #     ] : g_greater.nnz_section_offsets[comm.rank + 1]
+            # ]
+            # cols = cols[
+            #     g_greater.nnz_section_offsets[
+            #         comm.rank
+            #     ] : g_greater.nnz_section_offsets[comm.rank + 1]
+            # ]
+
+            energy_differences = (self.energies - self.energies[0]).reshape(-1, 1)
+            eta = 1e-8
+            # Add a small imaginary part to avoid singularity.
+            # eta for removing the singularity. See Cauchy principal value.
+            n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
+
+            hilbert_kernel_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
+
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
-                out = (
-                    sigma_lesser._data[sigma_lesser._stack_padding_mask, batch],
-                    sigma_greater._data[sigma_lesser._stack_padding_mask, batch],
-                    sigma_retarded._data[sigma_lesser._stack_padding_mask, batch],
-                )
-                fft_convolve_fock_with_hilbert(
-                    g_lesser.data[:, batch],
-                    g_greater.data[:, batch],
-                    w_lesser.data[:, batch],
-                    w_greater.data[:, batch],
-                    self.energies,
-                    out=out,
+                g_x_fft = xp.fft.fft(g_lesser.data[:, batch], n, axis=0)
+                w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch], n, axis=0)
+                w_greater_fft = xp.fft.fft(w_greater.data[:, batch], n, axis=0)
+
+                sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
+                sigma_x_fft -= xp.multiply(
+                    g_x_fft, w_greater_fft.conj()
+                )  # negative energy part
+                sigma_lesser[sigma_lesser._stack_padding_mask, batch] += xp.fft.ifft(
+                    sigma_x_fft, axis=0
+                )[:m]
+
+                g_x_fft = xp.fft.fft(g_greater.data[:, batch], n, axis=0)
+                sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
+                sigma_x_fft -= xp.multiply(
+                    g_x_fft, w_lesser_fft.conj()
+                )  # negative energy part
+                sigma_greater[sigma_greater._stack_padding_mask, batch] += xp.fft.ifft(
+                    sigma_x_fft, axis=0
+                )[:m]
+
+                # Compute retarded self-energy with a Hilbert transform.
+                sigma_antihermitian = 1j * xp.imag(sigma_greater - sigma_lesser)
+
+                sigma_x_fft = xp.fft.fft(sigma_antihermitian, n, axis=0)
+
+                w_lesser_fft = xp.multiply(sigma_x_fft, hilbert_kernel_fft)
+                w_lesser_fft -= xp.multiply(
+                    sigma_x_fft, hilbert_kernel_fft.conj()
+                )  # negative energy part
+                sigma_retarded[sigma_retarded._stack_padding_mask, batch] += (
+                    xp.fft.ifft(w_lesser_fft, axis=0)[:m]
+                    / (2 * xp.pi)
+                    * (self.energies[1] - self.energies[0])
+                    * 1j
+                    + sigma_antihermitian / 2
                 )
 
                 # Compute the full self-energy using the convolution theorem.

@@ -5,6 +5,7 @@ from qttools import NDArray, block_comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
+from qttools.utils.solvers_utils import get_batches
 
 
 class RGFDist(GFSolver):
@@ -63,36 +64,61 @@ class RGFDist(GFSolver):
         if obc_blocks is None:
             obc_blocks = OBCBlocks(num_blocks=a.num_local_blocks)
 
-        if block_comm.rank == 0:
-            # Direction: downward Schur-complement
-            _serinv.downward_schur(
-                a, x_diag_blocks, obc_blocks, invert_last_block=False
-            )
-        elif block_comm.rank == block_comm.size - 1:
-            # Direction: upward Schur-complement
-            _serinv.upward_schur(a, x_diag_blocks, obc_blocks, invert_last_block=False)
-        else:
-            # Permuted Schur-complement
-            _serinv.permuted_schur(
-                a, x_diag_blocks, buffer_lower, buffer_upper, obc_blocks
-            )
+        batch_sizes, batch_offsets = get_batches(a.shape[0], self.max_batch_size)
 
-        # Construct the reduced system.
-        reduced_system.gather(a, x_diag_blocks, buffer_upper, buffer_lower)
-        # Perform selected-inversion on the reduced system.
-        reduced_system.solve()
-        # Scatter the result to the output matrix.
-        reduced_system.scatter(x_diag_blocks, buffer_upper, buffer_lower, out)
+        for i in range(len(batch_sizes)):
+            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
 
-        if block_comm.rank == 0:
-            # Direction: upward sell-inv
-            _serinv.downward_selinv(a, x_diag_blocks, out)
-        elif block_comm.rank == block_comm.size - 1:
-            # Direction: downward sell-inv
-            _serinv.upward_selinv(a, x_diag_blocks, out)
-        else:
-            # Permuted Sell-inv
-            _serinv.permuted_selinv(a, x_diag_blocks, buffer_lower, buffer_upper, out)
+            a_ = a.stack[stack_slice]
+            out_ = out.stack[stack_slice]
+
+            if block_comm.rank == 0:
+                # Direction: downward Schur-complement
+                _serinv.downward_schur(
+                    a_,
+                    x_diag_blocks,
+                    obc_blocks,
+                    stack_slice=stack_slice,
+                    invert_last_block=False,
+                )
+            elif block_comm.rank == block_comm.size - 1:
+                # Direction: upward Schur-complement
+                _serinv.upward_schur(
+                    a_,
+                    x_diag_blocks,
+                    obc_blocks,
+                    stack_slice=stack_slice,
+                    invert_last_block=False,
+                )
+            else:
+                # Permuted Schur-complement
+                _serinv.permuted_schur(
+                    a_,
+                    x_diag_blocks,
+                    buffer_lower,
+                    buffer_upper,
+                    obc_blocks,
+                    stack_slice=stack_slice,
+                )
+
+            # Construct the reduced system.
+            reduced_system.gather(a_, x_diag_blocks, buffer_upper, buffer_lower)
+            # Perform selected-inversion on the reduced system.
+            reduced_system.solve()
+            # Scatter the result to the output matrix.
+            reduced_system.scatter(x_diag_blocks, buffer_upper, buffer_lower, out_)
+
+            if block_comm.rank == 0:
+                # Direction: upward sell-inv
+                _serinv.downward_selinv(a_, x_diag_blocks, out_)
+            elif block_comm.rank == block_comm.size - 1:
+                # Direction: downward sell-inv
+                _serinv.upward_selinv(a_, x_diag_blocks, out_)
+            else:
+                # Permuted Sell-inv
+                _serinv.permuted_selinv(
+                    a_, x_diag_blocks, buffer_lower, buffer_upper, out_
+                )
 
     def selected_solve(
         self,
@@ -152,73 +178,89 @@ class RGFDist(GFSolver):
                 raise ValueError("Invalid number of output matrices.")
             xr_out = xr_out[0]
 
+        batch_sizes, batch_offsets = get_batches(a.shape[0], self.max_batch_size)
+
+        for i in range(len(batch_sizes)):
+            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+
+            a_ = a.stack[stack_slice]
+            sigma_lesser_ = sigma_lesser.stack[stack_slice]
+            sigma_greater_ = sigma_greater.stack[stack_slice]
+
+            xl_out_ = xl_out.stack[stack_slice]
+            xg_out_ = xg_out.stack[stack_slice]
+            xr_out_ = xr_out.stack[stack_slice] if return_retarded else None
+
         if block_comm.rank == 0:
             # Direction: downward Schur-complement
             _serinv.downward_schur(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
                 # OBC and settings.
                 obc_blocks=obc_blocks,
+                stack_slice=stack_slice,
                 invert_last_block=False,
                 selected_solve=True,
             )
         elif block_comm.rank == block_comm.size - 1:
             # Direction: upward Schur-complement
             _serinv.upward_schur(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
                 # OBC and settings.
                 obc_blocks=obc_blocks,
+                stack_slice=stack_slice,
                 invert_last_block=False,
                 selected_solve=True,
             )
         else:
             # Permuted Schur-complement
             _serinv.permuted_schur(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
                 xr_buffer_lower=xr_buffer_lower,
                 xr_buffer_upper=xr_buffer_upper,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
                 xl_buffer_lower=xl_buffer_lower,
                 xl_buffer_upper=xl_buffer_upper,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
                 xg_buffer_lower=xg_buffer_lower,
                 xg_buffer_upper=xg_buffer_upper,
                 # OBC and settings.
                 obc_blocks=obc_blocks,
+                stack_slice=stack_slice,
                 selected_solve=True,
             )
 
         # Construct the reduced system.
         reduced_system.gather(
-            a=a,
+            a=a_,
             xr_diag_blocks=xr_diag_blocks,
             xr_buffer_lower=xr_buffer_lower,
             xr_buffer_upper=xr_buffer_upper,
             # Lesser quantities.
-            sigma_lesser=sigma_lesser,
+            sigma_lesser=sigma_lesser_,
             xl_diag_blocks=xl_diag_blocks,
             xl_buffer_lower=xl_buffer_lower,
             xl_buffer_upper=xl_buffer_upper,
             # Greater quantities.
-            sigma_greater=sigma_greater,
+            sigma_greater=sigma_greater_,
             xg_diag_blocks=xg_diag_blocks,
             xg_buffer_lower=xg_buffer_lower,
             xg_buffer_upper=xg_buffer_upper,
@@ -230,70 +272,74 @@ class RGFDist(GFSolver):
             xr_diag_blocks=xr_diag_blocks,
             xr_buffer_lower=xr_buffer_lower,
             xr_buffer_upper=xr_buffer_upper,
-            xr_out=xr_out,
+            xr_out=xr_out_,
+            return_retarded=return_retarded,
             # Lesser quantities.
             xl_diag_blocks=xl_diag_blocks,
             xl_buffer_lower=xl_buffer_lower,
             xl_buffer_upper=xl_buffer_upper,
-            xl_out=xl_out,
+            xl_out=xl_out_,
             # Greater quantities.
             xg_diag_blocks=xg_diag_blocks,
             xg_buffer_lower=xg_buffer_lower,
             xg_buffer_upper=xg_buffer_upper,
-            xg_out=xg_out,
+            xg_out=xg_out_,
         )
 
         if block_comm.rank == 0:
             # Direction: upward sell-inv
             _serinv.downward_selinv(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
-                xr_out=xr_out,
+                xr_out=xr_out_,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
-                xl_out=xl_out,
+                xl_out=xl_out_,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
-                xg_out=xg_out,
+                xg_out=xg_out_,
                 selected_solve=True,
+                return_retarded=return_retarded,
             )
         elif block_comm.rank == block_comm.size - 1:
             # Direction: downward sell-inv
             _serinv.upward_selinv(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
-                xr_out=xr_out,
+                xr_out=xr_out_,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
-                xl_out=xl_out,
+                xl_out=xl_out_,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
-                xg_out=xg_out,
+                xg_out=xg_out_,
                 selected_solve=True,
+                return_retarded=return_retarded,
             )
         else:
             # Permuted Sell-inv
             _serinv.permuted_selinv(
-                a=a,
+                a=a_,
                 xr_diag_blocks=xr_diag_blocks,
                 xr_buffer_lower=xr_buffer_lower,
                 xr_buffer_upper=xr_buffer_upper,
-                xr_out=xr_out,
+                xr_out=xr_out_,
                 # Lesser quantities.
-                sigma_lesser=sigma_lesser,
+                sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
                 xl_buffer_lower=xl_buffer_lower,
                 xl_buffer_upper=xl_buffer_upper,
-                xl_out=xl_out,
+                xl_out=xl_out_,
                 # Greater quantities.
-                sigma_greater=sigma_greater,
+                sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
                 xg_buffer_lower=xg_buffer_lower,
                 xg_buffer_upper=xg_buffer_upper,
-                xg_out=xg_out,
+                xg_out=xg_out_,
                 selected_solve=True,
+                return_retarded=return_retarded,
             )

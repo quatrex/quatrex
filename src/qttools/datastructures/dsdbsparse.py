@@ -857,6 +857,11 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
+    def num_local_blocks(self) -> int:
+        """Returns the number of local blocks."""
+        return self._dsdbsparse.num_local_blocks
+
+    @property
     def local_blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer on the substack."""
         return self._block_indexer

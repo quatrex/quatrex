@@ -155,22 +155,22 @@ class ReducedSystem:
         xr_diag_blocks, xr_upper_blocks, xr_lower_blocks = self._map_reduced_system(
             a, xr_diag_blocks, xr_buffer_upper, xr_buffer_lower
         )
-        if self.selected_solve:
-            xl_diag_blocks, xl_upper_blocks, xl_lower_blocks = self._map_reduced_system(
-                sigma_lesser, xl_diag_blocks, xl_buffer_upper, xl_buffer_lower
-            )
-            xg_diag_blocks, xg_upper_blocks, xg_lower_blocks = self._map_reduced_system(
-                sigma_greater, xg_diag_blocks, xg_buffer_upper, xg_buffer_lower
-            )
 
         self.xr_diag_blocks = _flatten_list(block_comm.allgather(xr_diag_blocks))
         self.xr_upper_blocks = _flatten_list(block_comm.allgather(xr_upper_blocks))
         self.xr_lower_blocks = _flatten_list(block_comm.allgather(xr_lower_blocks))
 
         if self.selected_solve:
+            xl_diag_blocks, xl_upper_blocks, xl_lower_blocks = self._map_reduced_system(
+                sigma_lesser, xl_diag_blocks, xl_buffer_upper, xl_buffer_lower
+            )
             self.xl_diag_blocks = _flatten_list(block_comm.allgather(xl_diag_blocks))
             self.xl_upper_blocks = _flatten_list(block_comm.allgather(xl_upper_blocks))
             self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
+
+            xg_diag_blocks, xg_upper_blocks, xg_lower_blocks = self._map_reduced_system(
+                sigma_greater, xg_diag_blocks, xg_buffer_upper, xg_buffer_lower
+            )
             self.xg_diag_blocks = _flatten_list(block_comm.allgather(xg_diag_blocks))
             self.xg_upper_blocks = _flatten_list(block_comm.allgather(xg_upper_blocks))
             self.xg_lower_blocks = _flatten_list(block_comm.allgather(xg_lower_blocks))
@@ -385,6 +385,7 @@ class ReducedSystem:
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
         xr_out: DSDBSparse,
+        return_retarded: bool = True,
         xl_diag_blocks: list[NDArray] = None,
         xl_buffer_lower: list[NDArray] = None,
         xl_buffer_upper: list[NDArray] = None,
@@ -439,6 +440,7 @@ class ReducedSystem:
             buffer_upper=xr_buffer_upper,
             buffer_lower=xr_buffer_lower,
             x_out=xr_out,
+            write_x_out=return_retarded,
             diag_block_reduced_system=self.xr_diag_blocks,
             upper_block_reduced_system=self.xr_upper_blocks,
             lower_block_reduced_system=self.xr_lower_blocks,
@@ -450,6 +452,7 @@ class ReducedSystem:
                 buffer_upper=xl_buffer_upper,
                 buffer_lower=xl_buffer_lower,
                 x_out=xl_out,
+                write_x_out=True,
                 diag_block_reduced_system=self.xl_diag_blocks,
                 upper_block_reduced_system=self.xl_upper_blocks,
                 lower_block_reduced_system=self.xl_lower_blocks,
@@ -459,6 +462,7 @@ class ReducedSystem:
                 buffer_upper=xg_buffer_upper,
                 buffer_lower=xg_buffer_lower,
                 x_out=xg_out,
+                write_x_out=True,
                 diag_block_reduced_system=self.xg_diag_blocks,
                 upper_block_reduced_system=self.xg_upper_blocks,
                 lower_block_reduced_system=self.xg_lower_blocks,
@@ -470,6 +474,7 @@ class ReducedSystem:
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
         x_out: DSDBSparse,
+        write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
         lower_block_reduced_system: list[NDArray],
@@ -493,25 +498,36 @@ class ReducedSystem:
         lower_block_reduced_system : list[NDArray]
             The lower off-diagonal blocks of the reduced system.
         """
-        i = x_out.num_local_blocks - 1
-        j = i + 1
         if block_comm.rank == 0:
             x_diag_blocks[-1] = diag_block_reduced_system[0]
+            if not write_x_out:
+                return
+            i = x_out.num_local_blocks - 1
+            j = i + 1
             x_out.local_blocks[i, i] = diag_block_reduced_system[0]
 
             x_out.local_blocks[j, i] = lower_block_reduced_system[0]
             x_out.local_blocks[i, j] = upper_block_reduced_system[0]
         elif block_comm.rank == block_comm.size - 1:
             x_diag_blocks[0] = diag_block_reduced_system[-1]
+            if not write_x_out:
+                return
+
             x_out.local_blocks[0, 0] = diag_block_reduced_system[-1]
         else:
             x_diag_blocks[0] = diag_block_reduced_system[2 * block_comm.rank - 1]
             x_diag_blocks[-1] = diag_block_reduced_system[2 * block_comm.rank]
-            x_out.local_blocks[0, 0] = x_diag_blocks[0]
-            x_out.local_blocks[i, i] = x_diag_blocks[-1]
 
             buffer_upper[-2] = lower_block_reduced_system[2 * block_comm.rank - 1]
             buffer_lower[-2] = upper_block_reduced_system[2 * block_comm.rank - 1]
+
+            if not write_x_out:
+                return
+
+            i = x_out.num_local_blocks - 1
+            j = i + 1
+            x_out.local_blocks[0, 0] = x_diag_blocks[0]
+            x_out.local_blocks[i, i] = x_diag_blocks[-1]
 
             x_out.local_blocks[j, i] = lower_block_reduced_system[2 * block_comm.rank]
             x_out.local_blocks[i, j] = upper_block_reduced_system[2 * block_comm.rank]
@@ -525,25 +541,30 @@ def downward_schur(
     xl_diag_blocks: list[NDArray] = None,
     sigma_greater: DSDBSparse = None,
     xg_diag_blocks: list[NDArray] = None,
+    stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
 ):
     """Performs the downward Schur complement decomposition."""
     obc_r = obc_blocks.retarded[0]
-    a_00 = a.local_blocks[0, 0] if obc_r is None else a.local_blocks[0, 0] - obc_r
+    a_00 = (
+        a.local_blocks[0, 0]
+        if obc_r is None
+        else a.local_blocks[0, 0] - obc_r[stack_slice]
+    )
     xr_diag_blocks[0] = a_00
     if selected_solve:
         obc_l = obc_blocks.lesser[0]
         sl_00 = (
             sigma_lesser.local_blocks[0, 0]
             if obc_l is None
-            else sigma_lesser.local_blocks[0, 0] + obc_l
+            else sigma_lesser.local_blocks[0, 0] + obc_l[stack_slice]
         )
         obc_g = obc_blocks.greater[0]
         sg_00 = (
             sigma_greater.local_blocks[0, 0]
             if obc_g is None
-            else sigma_greater.local_blocks[0, 0] + obc_g
+            else sigma_greater.local_blocks[0, 0] + obc_g[stack_slice]
         )
 
         xl_diag_blocks[0] = sl_00
@@ -572,7 +593,11 @@ def downward_schur(
             ].conj().swapaxes(-2, -1)
 
         obc_r = obc_blocks.retarded[j]
-        a_jj = a.local_blocks[j, j] if obc_r is None else a.local_blocks[j, j] - obc_r
+        a_jj = (
+            a.local_blocks[j, j]
+            if obc_r is None
+            else a.local_blocks[j, j] - obc_r[stack_slice]
+        )
 
         xr_diag_blocks[j] = a_jj - temp_1 @ a.local_blocks[i, j]
 
@@ -581,13 +606,13 @@ def downward_schur(
             sl_jj = (
                 sigma_lesser.local_blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l
+                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[j]
             sg_jj = (
                 sigma_greater.local_blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g
+                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -631,6 +656,7 @@ def upward_schur(
     xl_diag_blocks: list[NDArray] = None,
     sigma_greater: DSDBSparse = None,
     xg_diag_blocks: list[NDArray] = None,
+    stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
     selected_solve: bool = False,
 ):
@@ -638,20 +664,24 @@ def upward_schur(
     n = a.num_local_blocks - 1
 
     obc_r = obc_blocks.retarded[n]
-    a_nn = a.local_blocks[n, n] if obc_r is None else a.local_blocks[n, n] - obc_r
+    a_nn = (
+        a.local_blocks[n, n]
+        if obc_r is None
+        else a.local_blocks[n, n] - obc_r[stack_slice]
+    )
     xr_diag_blocks[-1] = a_nn
     if selected_solve:
         obc_l = obc_blocks.lesser[n]
         sl_nn = (
             sigma_lesser.local_blocks[n, n]
             if obc_l is None
-            else sigma_lesser.local_blocks[n, n] + obc_l
+            else sigma_lesser.local_blocks[n, n] + obc_l[stack_slice]
         )
         obc_g = obc_blocks.greater[n]
         sg_nn = (
             sigma_greater.local_blocks[n, n]
             if obc_g is None
-            else sigma_greater.local_blocks[n, n] + obc_g
+            else sigma_greater.local_blocks[n, n] + obc_g[stack_slice]
         )
 
         xl_diag_blocks[-1] = sl_nn
@@ -679,7 +709,11 @@ def upward_schur(
             ].conj().swapaxes(-2, -1)
 
         obc_r = obc_blocks.retarded[j]
-        a_jj = a.local_blocks[j, j] if obc_r is None else a.local_blocks[j, j] - obc_r
+        a_jj = (
+            a.local_blocks[j, j]
+            if obc_r is None
+            else a.local_blocks[j, j] - obc_r[stack_slice]
+        )
 
         xr_diag_blocks[j] = a_jj - temp_1 @ a.local_blocks[i, j]
 
@@ -688,13 +722,13 @@ def upward_schur(
             sl_jj = (
                 sigma_lesser.local_blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l
+                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[j]
             sg_jj = (
                 sigma_greater.local_blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g
+                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -743,6 +777,7 @@ def permuted_schur(
     xg_diag_blocks: list[NDArray] = None,
     xg_buffer_lower: list[NDArray] = None,
     xg_buffer_upper: list[NDArray] = None,
+    stack_slice: slice = Ellipsis,
     selected_solve: bool = False,
 ):
     """Performs the permuted Schur complement decomposition."""
@@ -750,11 +785,19 @@ def permuted_schur(
     xr_buffer_upper[0] = a.local_blocks[1, 0]
 
     obc_r = obc_blocks.retarded[0]
-    a_00 = a.local_blocks[0, 0] if obc_r is None else a.local_blocks[0, 0] - obc_r
+    a_00 = (
+        a.local_blocks[0, 0]
+        if obc_r is None
+        else a.local_blocks[0, 0] - obc_r[stack_slice]
+    )
     xr_diag_blocks[0] = a_00
 
     obc_r = obc_blocks.retarded[1]
-    a_11 = a.local_blocks[1, 1] if obc_r is None else a.local_blocks[1, 1] - obc_r
+    a_11 = (
+        a.local_blocks[1, 1]
+        if obc_r is None
+        else a.local_blocks[1, 1] - obc_r[stack_slice]
+    )
     xr_diag_blocks[1] = a_11
     if selected_solve:
         xl_buffer_lower[0] = sigma_lesser.local_blocks[0, 1]
@@ -764,13 +807,13 @@ def permuted_schur(
         sl_00 = (
             sigma_lesser.local_blocks[0, 0]
             if obc_l is None
-            else sigma_lesser.local_blocks[0, 0] + obc_l
+            else sigma_lesser.local_blocks[0, 0] + obc_l[stack_slice]
         )
         obc_l = obc_blocks.lesser[1]
         sl_11 = (
             sigma_lesser.local_blocks[1, 1]
             if obc_l is None
-            else sigma_lesser.local_blocks[1, 1] + obc_l
+            else sigma_lesser.local_blocks[1, 1] + obc_l[stack_slice]
         )
 
         xl_diag_blocks[0] = sl_00
@@ -783,13 +826,13 @@ def permuted_schur(
         sg_00 = (
             sigma_greater.local_blocks[0, 0]
             if obc_g is None
-            else sigma_greater.local_blocks[0, 0] + obc_g
+            else sigma_greater.local_blocks[0, 0] + obc_g[stack_slice]
         )
         obc_g = obc_blocks.greater[1]
         sg_11 = (
             sigma_greater.local_blocks[1, 1]
             if obc_g is None
-            else sigma_greater.local_blocks[1, 1] + obc_g
+            else sigma_greater.local_blocks[1, 1] + obc_g[stack_slice]
         )
         xg_diag_blocks[0] = sg_00
         xg_diag_blocks[1] = sg_11
@@ -800,7 +843,11 @@ def permuted_schur(
         xr_diag_blocks[i] = linalg.inv(xr_diag_blocks[i])
         # Update next diagonal block.
         obc_r = obc_blocks.retarded[j]
-        a_jj = a.local_blocks[j, j] if obc_r is None else a.local_blocks[j, j] - obc_r
+        a_jj = (
+            a.local_blocks[j, j]
+            if obc_r is None
+            else a.local_blocks[j, j] - obc_r[stack_slice]
+        )
         xr_diag_blocks[j] = (
             a_jj - a.local_blocks[j, i] @ xr_diag_blocks[i] @ a.local_blocks[i, j]
         )
@@ -829,7 +876,7 @@ def permuted_schur(
             sl_jj = (
                 sigma_lesser.local_blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l
+                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -885,7 +932,7 @@ def permuted_schur(
             sg_jj = (
                 sigma_greater.local_blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g
+                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
             )
             xg_diag_blocks[j] = (
                 sg_jj
@@ -942,6 +989,7 @@ def downward_selinv(
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse = None,
     selected_solve: bool = False,
+    return_retarded: bool = True,
 ):
     """Performs the downward selected inversion."""
     for i in range(a.num_local_blocks - 2, -1, -1):
@@ -1038,6 +1086,9 @@ def downward_selinv(
         xr_diag_blocks[i] = (
             xr_diag_blocks[i] - x_upper_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
         )
+        if not return_retarded:
+            return
+
         # # Streaming/Sparsifying back to DSDBSparse
         xr_out.local_blocks[j, i] = x_lower_block
         xr_out.local_blocks[i, j] = x_upper_block
@@ -1055,6 +1106,7 @@ def upward_selinv(
     xg_diag_blocks: list[NDArray] = None,
     xg_out: DSDBSparse = None,
     selected_solve: bool = False,
+    return_retarded: bool = True,
 ):
     """Performs the upward selected inversion."""
     for i in range(1, a.num_local_blocks):
@@ -1151,6 +1203,9 @@ def upward_selinv(
         xr_diag_blocks[i] = (
             xr_diag_blocks[i] - x_lower_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
         )
+        if not return_retarded:
+            return
+
         # Streaming/Sparsifying back to DSDBSparse
         xr_out.local_blocks[j, i] = x_upper_block
         xr_out.local_blocks[i, j] = x_lower_block
@@ -1174,6 +1229,7 @@ def permuted_selinv(
     xg_buffer_upper: list[NDArray] = None,
     xg_out: DSDBSparse = None,
     selected_solve: bool = False,
+    return_retarded: bool = True,
 ):
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
@@ -1470,13 +1526,17 @@ def permuted_selinv(
             xg_out.local_blocks[i, i + 1] = bg_upper_block
             xg_out.local_blocks[i, i] = xg_diag_blocks[i]
 
-        xr_out.local_blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
+        if return_retarded:
+            xr_out.local_blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
+
         xr_buffer_upper[i - 1] = -xr_diag_blocks[i] @ B2
 
         D1 = a.local_blocks[i + 1, i]
         D2 = xr_buffer_lower[i - 1]
 
-        xr_out.local_blocks[i + 1, i] = -C1 @ xr_diag_blocks[i]
+        if return_retarded:
+            xr_out.local_blocks[i + 1, i] = -C1 @ xr_diag_blocks[i]
+
         xr_buffer_lower[i - 1] = -C2 @ xr_diag_blocks[i]
 
         xr_diag_blocks[i] = (
@@ -1484,13 +1544,15 @@ def permuted_selinv(
             + xr_diag_blocks[i] @ (B1 @ D1 + B2 @ D2) @ xr_diag_blocks[i]
         )
         # Streaming/Sparsifying back to DSDBSparse
-        xr_out.local_blocks[i, i] = xr_diag_blocks[i]
+        if return_retarded:
+            xr_out.local_blocks[i, i] = xr_diag_blocks[i]
 
-    xr_out.local_blocks[1, 0] = xr_buffer_upper[0]
-    xr_out.local_blocks[0, 1] = xr_buffer_lower[0]
+    if return_retarded:
+        xr_out.local_blocks[1, 0] = xr_buffer_upper[0]
+        xr_out.local_blocks[0, 1] = xr_buffer_lower[0]
     if selected_solve:
         xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
         xl_out.local_blocks[0, 1] = xl_buffer_lower[0]
-    if selected_solve:
+
         xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
         xg_out.local_blocks[0, 1] = xg_buffer_lower[0]

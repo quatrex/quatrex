@@ -10,12 +10,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import (
-    create_coordinate_grid,
-    create_hamiltonian,
-    read_hr_dat,
-    read_wannier_wout,
-)
+from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.bandstructure.contact import contact_band_structure

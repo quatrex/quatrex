@@ -104,9 +104,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
         synchronize_device()
         t_polarization = -time.perf_counter()
 
-        time_fft = 0
-        time_index = 0
-
         with profiler.profile_range("Polarization computation", level="debug"):
             if self.batch_size is None:
                 # NOTE: This is a temporary solution. The batch size should be
@@ -125,27 +122,20 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for start, end in zip(batch_displacements, batch_displacements[1:]):
                 batch = slice(start, end)
 
-                synchronize_device()
-                time_fft -= time.perf_counter()
                 p_g_full = self.prefactor * fft_correlate(
                     g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
                 )
                 p_l_full = -p_g_full[::-1].conj()
-                synchronize_device()
-                time_fft += time.perf_counter()
                 # TODO: the datastructures does not allow for easy slicing of the
                 # data. This is a workaround.
                 # Fill the matrices with the data. Take second part of the
                 # energy convolution.
-                time_index -= time.perf_counter()
                 p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
                     self.ne - 1 :
                 ]
                 p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
                     self.ne - 1 :
                 ]
-                synchronize_device()
-                time_index += time.perf_counter()
 
         t_polarization += time.perf_counter()
         if comm.rank == 0:
@@ -153,8 +143,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 f"PCoulombScreening: Polarization computation time: {t_polarization}",
                 flush=True,
             )
-            print(f"    PCoulombScreening: FFT: {time_fft}", flush=True)
-            print(f"    PCoulombScreening: Indexing time: {time_index}", flush=True)
 
         # Barrier before communication
         synchronize_device()

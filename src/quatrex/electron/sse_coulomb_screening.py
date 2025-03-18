@@ -197,9 +197,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             )
 
         synchronize_device()
-        time_compute = -time.perf_counter()
-        time_lesser_greater = 0
-        time_retarded = 0
+        t_sse = -time.perf_counter()
         with profiler.profile_range("SSE computation", level="debug"):
             if self.batch_size is None:
                 # NOTE: This is a temporary solution. The batch size should be
@@ -224,8 +222,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # TODO: the datastructures does not allow for easy slicing of the
                 # data. This is a workaround.
 
-                synchronize_device()
-                time_lesser_greater -= time.perf_counter()
                 sigma_lesser._data[
                     sigma_lesser._stack_padding_mask, ..., batch
                 ] += self.prefactor * (
@@ -246,11 +242,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         g_greater.data[:, batch], w_lesser.data[:, batch].conj()
                     )[self.num_energies - 1 :]
                 )
-                synchronize_device()
-                time_lesser_greater += time.perf_counter()
-
-                synchronize_device()
-                time_retarded -= time.perf_counter()
                 # Compute retarded self-energy with a Hilbert transform.
                 sigma_antihermitian = 1j * xp.imag(
                     sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
@@ -259,21 +250,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 sigma_retarded._data[
                     sigma_retarded._stack_padding_mask, ..., batch
                 ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
-                synchronize_device()
-                time_retarded += time.perf_counter()
 
         synchronize_device()
-        time_compute += time.perf_counter()
+        t_sse += time.perf_counter()
         if comm.rank == 0:
             print(
-                f"SigmaCoulombScreening: SSE computation time: {time_compute}",
+                f"SigmaCoulombScreening: SSE computation time: {t_sse}",
                 flush=True,
             )
-            print(
-                f"    SigmaCoulombScreening: lesser greater: {time_lesser_greater}",
-                flush=True,
-            )
-            print(f"    SigmaCoulombScreening: retarded: {time_retarded}", flush=True)
 
         # Barrier before communication
         synchronize_device()

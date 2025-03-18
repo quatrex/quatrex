@@ -39,9 +39,11 @@ def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
         The matrix to subtract.
 
     """
+    a_ = a.stack[...]
+    b_ = b.stack[...]
     for i in range(a.num_blocks):
         for j in range(max(0, i - 2), min(a.num_blocks, i + 3)):
-            a.blocks[i, j] -= b.blocks[i, j]
+            a_.blocks[i, j] -= b_.blocks[i, j]
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])

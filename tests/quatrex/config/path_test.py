@@ -11,7 +11,11 @@ quatrex_folder = Path(os.path.dirname(__file__)).parent.parent
 
 
 # @pytest.mark.parametrize(
-#     "toml_filename", ["examples/w90/cnt/config.toml", "examples/cp2k/cnt/config.toml"]
+#     "toml_filename",
+#     [
+#         "examples/w90/cnt/config.toml",
+#         "examples/cp2k/cnt/config.toml",
+#     ],
 # )
 @pytest.mark.parametrize(
     "toml_filename",

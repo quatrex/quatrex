@@ -173,7 +173,10 @@ __all__ = [
     "NDArray",
     "ArrayLike",
     "USE_CUPY_JIT",
-    "block_comm" "stack_comm" "NCCL_AVAILABLE",
+    "block_comm",
+    "stack_comm",
+    "NCCL_AVAILABLE",
     "nccl_comm",
-    "nccl_block_comm" "nccl_stack_comm",
+    "nccl_block_comm",
+    "nccl_stack_comm",
 ]

@@ -111,6 +111,113 @@ def bd_matmul(
 
 
 @profiler.profile(level="api")
+def bd_matmul_rc(
+    a: DSBSparse,
+    b: DSBSparse,
+    out: DSBSparse | None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 5,
+    spillover_correction: bool = False,
+    accumulator_dtype=None,
+):
+    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+    Matrix a is real, while matrix b is complex.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block diagonal matrix.
+    b : DSBSparse
+        The second block diagonal matrix.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a` and `b`. It will compute up to `out_num_diag` diagonals.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+
+    if accumulator_dtype is None:
+        accumulator_dtype = b.dtype
+
+    # Make sure the output matrix is initialized to zero.
+    if out is not None:
+        out.data = 0
+        out_block = False
+        # NOTE: Using the stack attribute to force caching of the data view.
+        out_ = out.stack[...]
+        stack_shape = out.global_stack_shape
+    else:
+        out_block = True
+        out = {}
+        stack_shape = b.global_stack_shape
+
+    a_ = a.stack[...]
+    b_ = b.stack[...]
+    # b_real = b.real()
+    # b_real_ = b_real.stack[...]
+    # b_imag = b.imag()
+    # b_imag_ = b_imag.stack[...]
+
+    # print(f"{a.dtype=}, {b.dtype=}, {b_real.dtype}, {b_imag.dtype}, {accumulator_dtype=}")
+
+    for i in range(num_blocks):
+        for j in range(
+            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+            if out_block:
+                partsum = xp.zeros(
+                    (*stack_shape, a.block_sizes[i], a.block_sizes[j]),
+                    dtype=accumulator_dtype,
+                ).view(a.dtype)
+            else:
+                partsum = xp.zeros(
+                    (*stack_shape, out.block_sizes[i], out.block_sizes[j]),
+                    dtype=accumulator_dtype,
+                ).view(a.dtype)
+                # partsum = (out_.blocks[i, j]).astype(accumulator_dtype).view(a.dtype)
+
+            for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+                if abs(j - k) > in_num_diag // 2:
+                    continue
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        i_a, k_a = correct_out_range_index(i, k, num_blocks)
+                        k_b, j_b = correct_out_range_index(k, j, num_blocks)
+                        partsum += a_.blocks[i_a, k_a] @ b_.blocks[k_b, j_b].view(
+                            a.dtype
+                        )
+                    else:
+                        partsum += a_.blocks[i, k] @ b_.blocks[k, j].view(a.dtype)
+
+            if out_block:
+                out[i, j] = partsum.view(b.dtype)
+            else:
+                out_.blocks[i, j] = partsum.view(b.dtype)
+
+    if out_block:
+        return out
+
+
+@profiler.profile(level="api")
 def bd_sandwich(
     a: DSBSparse,
     b: DSBSparse,
@@ -234,6 +341,169 @@ def bd_sandwich(
                 out[i, j] = partsum
             else:
                 out_.blocks[i, j] = partsum
+
+    if out_block:
+        return out
+
+
+@profiler.profile(level="api")
+def bd_sandwich_rcr(
+    a: DSBSparse,
+    b: DSBSparse,
+    out: DSBSparse | None,
+    in_num_diag: int = 3,
+    out_num_diag: int = 7,
+    spillover_correction: bool = False,
+    accumulator_dtype=None,
+    split_complex: bool = False,
+):
+    """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
+    Matrix a is real, while matrix b is complex.
+
+    Parameters
+    ----------
+    a : DSBSparse
+        The first block tridiagonal matrix.
+    b : DSBSparse
+        The second block tridiagonal matrix.
+    out : DSBSparse
+        The output matrix. This matrix must have the same block size as
+        `a`, and `b`. It will compute up to `out_num_diag` diagonals.
+    in_num_diag: int
+        The number of diagonals in input matrices
+    out_num_diag: int
+        The number of diagonals in output matrices
+    spillover_correction : bool, optional
+        Whether to apply spillover corrections to the output matrix.
+        This is necessary when the matrices represent open-ended
+        systems. The default is False.
+    accumulator_dtype : data type, optional
+        The data type of the temporary accumulator matrices. The default is complex128.
+
+    TODO: replace @ by appropriate gemm
+
+    """
+    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+        raise ValueError(
+            "Matrix multiplication is not supported for matrices in nnz distribution state."
+        )
+    num_blocks = len(a.block_sizes)
+
+    if accumulator_dtype is None:
+        accumulator_dtype = b.dtype
+
+    # Make sure the output matrix is initialized to zero.
+    if out is not None:
+        out.data = 0
+        out_block = False
+        # NOTE: Using the stack attribute to force caching of the data view.
+        out_ = out.stack[...]
+        stack_shape = out.global_stack_shape
+    else:
+        out_block = True
+        out = {}
+        stack_shape = b.global_stack_shape
+
+    a_ = a.stack[...]
+    b_ = b.stack[...]
+    # b_real = b.real()
+    # b_real_ = b_real.stack[...]
+    # b_imag = b.imag()
+    # b_imag_ = b_imag.stack[...]
+
+    for i in range(num_blocks):
+
+        ab_ik = [None] * num_blocks * 2
+
+        for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
+
+            out_range = (m < 0) or (m >= num_blocks)
+            if out_range and (not spillover_correction):
+                continue
+            else:
+                if out_range:
+                    a_i, a_m = correct_out_range_index(i, m, num_blocks)
+                else:
+                    a_i, a_m = i, m
+
+            a_im = a_.blocks[a_i, a_m]
+
+            for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
+                out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        b_m, b_k = correct_out_range_index(m, k, num_blocks)
+                    else:
+                        b_m, b_k = m, k
+                if ab_ik[k] is None:
+                    ab_ik[k] = a_im @ b_.blocks[b_m, b_k].view(a.dtype)
+                else:
+                    ab_ik[k] += a_im @ b_.blocks[b_m, b_k].view(a.dtype)
+
+        for j in range(
+            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+        ):
+
+            if out_block:
+                if split_complex:
+                    partsum_real = xp.zeros(
+                        (*stack_shape, a.block_sizes[i], a.block_sizes[j]),
+                        dtype=a.dtype,
+                    )
+                    partsum_imag = xp.zeros(
+                        (*stack_shape, a.block_sizes[i], a.block_sizes[j]),
+                        dtype=a.dtype,
+                    )
+                else:
+                    partsum = xp.zeros(
+                        (*stack_shape, a.block_sizes[i], a.block_sizes[j]),
+                        dtype=b.dtype,
+                    )
+            else:
+                if split_complex:
+                    partsum_real = xp.zeros(
+                        (*stack_shape, out.block_sizes[i], out.block_sizes[j]),
+                        dtype=a.dtype,
+                    )
+                    partsum_imag = xp.zeros(
+                        (*stack_shape, out.block_sizes[i], out.block_sizes[j]),
+                        dtype=a.dtype,
+                    )
+                else:
+                    partsum = xp.zeros(
+                        (*stack_shape, out.block_sizes[i], out.block_sizes[j]),
+                        dtype=b.dtype,
+                    )
+
+            for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
+                out_range = (k < 0) or (k >= num_blocks)
+                if out_range and (not spillover_correction):
+                    continue
+                else:
+                    if out_range:
+                        a_k, a_j = correct_out_range_index(k, j, num_blocks)
+                    else:
+                        a_k, a_j = k, j
+                if ab_ik[k] is None:
+                    continue
+                if split_complex:
+                    partsum_real += ab_ik[k].view(b.dtype).real @ a_.blocks[a_k, a_j]
+                    partsum_imag += ab_ik[k].view(b.dtype).imag @ a_.blocks[a_k, a_j]
+                else:
+                    partsum += ab_ik[k].view(b.dtype) @ a_.blocks[a_k, a_j]
+
+            if out_block:
+                if split_complex:
+                    out[i, j] = partsum_real + 1j * partsum_imag
+                else:
+                    out[i, j] = partsum
+            else:
+                if split_complex:
+                    out_.blocks[i, j] = partsum_real + 1j * partsum_imag
+                else:
+                    out_.blocks[i, j] = partsum
 
     if out_block:
         return out

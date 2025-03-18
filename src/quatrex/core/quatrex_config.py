@@ -389,4 +389,4 @@ def parse_config(config_file: Path) -> QuatrexConfig:
 
     config["config_dir"] = config_file.parent
 
-    return QuatrexConfig(**config)
+    return QuatrexConfig.model_validate(config)

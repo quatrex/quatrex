@@ -1,32 +1,34 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import pytest
-from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, host_xp, sparse, xp
-from qttools.datastructures.dbsparse import DBCOO
+from qttools import NDArray, block_comm, global_comm, host_xp, sparse, xp
+from qttools.datastructures import DSDBCOO
 from qttools.greens_function_solver.rgf_dist import RGFDist
 
 BLOCK_SIZES = [
     pytest.param(host_xp.array([10] * 5), id="constant-block-size"),
     pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size"),
 ]
+GLOBAL_STACK_SHAPES = [
+    pytest.param((4,), id="1D-stack"),
+    pytest.param((5, 2), id="2D-stack"),
+]
 
 
 @pytest.mark.mpi(min_size=2)
 @pytest.mark.parametrize("block_sizes", BLOCK_SIZES)
-def test_rgf_dist(
-    block_sizes: NDArray,
-):
+@pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
+def test_rgf_dist(block_sizes: NDArray, global_stack_shape: tuple):
     """Tests the selected solve method of a Green's function solver."""
 
-    global_block_sizes = xp.tile(block_sizes, comm.Get_size())
-    shape = (global_block_sizes.sum(), global_block_sizes.sum())
+    global_block_sizes = host_xp.tile(block_sizes, block_comm.size)
+    shape = (int(global_block_sizes.sum()), int(global_block_sizes.sum()))
 
     a_sparray = None
-    bl_sparray = None
-    bg_sparray = None
-    if comm.rank == 0:
+    sigma_lesser_sparray = None
+    sigma_greater_sparray = None
+    if global_comm.rank == 0:
         a_sparray = sparse.diags(
             xp.random.rand(11), xp.arange(-5, 6), shape=shape
         ).tocsr()
@@ -38,81 +40,95 @@ def test_rgf_dist(
             [20 * (1 + 1j) * xp.random.rand() * 1j], [0], shape=shape
         ).tocsr()
 
-        bl_sparray = sparse.diags(
+        sigma_lesser_sparray = sparse.diags(
             xp.random.rand(11), xp.arange(-5, 6), shape=shape
         ).tocsr()
-        bl_sparray.data = xp.random.rand(len(bl_sparray.data))
-        bl_sparray += sparse.diags(
+        sigma_lesser_sparray.data = xp.random.rand(len(sigma_lesser_sparray.data))
+        sigma_lesser_sparray += sparse.diags(
             xp.random.rand(11) * 1j, xp.arange(-5, 6), shape=shape
         ).tocsr()
-        bl_sparray = bl_sparray - bl_sparray.conj().T
+        sigma_lesser_sparray = sigma_lesser_sparray - sigma_lesser_sparray.conj().T
 
-        bg_sparray = sparse.diags(
+        sigma_greater_sparray = sparse.diags(
             xp.random.rand(11), xp.arange(-5, 6), shape=shape
         ).tocsr()
-        bg_sparray.data = xp.random.rand(len(bg_sparray.data))
-        bg_sparray += sparse.diags(
+        sigma_greater_sparray.data = xp.random.rand(len(sigma_greater_sparray.data))
+        sigma_greater_sparray += sparse.diags(
             xp.random.rand(11) * 1j, xp.arange(-5, 6), shape=shape
         ).tocsr()
-        bg_sparray = bg_sparray - bg_sparray.conj().T
+        sigma_greater_sparray = sigma_greater_sparray - sigma_greater_sparray.conj().T
 
-    a_sparray = comm.bcast(a_sparray, root=0)
-    bl_sparray = comm.bcast(bl_sparray, root=0)
-    bg_sparray = comm.bcast(bg_sparray, root=0)
+    a_sparray = global_comm.bcast(a_sparray, root=0)
+    sigma_lesser_sparray = global_comm.bcast(sigma_lesser_sparray, root=0)
+    sigma_greater_sparray = global_comm.bcast(sigma_greater_sparray, root=0)
 
     a_sparray = a_sparray.tocoo()
     a_sparray.sum_duplicates()
     a_sparray.eliminate_zeros()
-    a_dbcoo = DBCOO.from_sparray(a_sparray, global_block_sizes)
+    a_dsdbcoo = DSDBCOO.from_sparray(a_sparray, global_block_sizes, global_stack_shape)
 
-    bl_sparray = bl_sparray.tocoo()
-    bl_sparray.sum_duplicates()
-    bl_sparray.eliminate_zeros()
-    bl_dbcoo = DBCOO.from_sparray(bl_sparray, global_block_sizes)
+    sigma_lesser_sparray = sigma_lesser_sparray.tocoo()
+    sigma_lesser_sparray.sum_duplicates()
+    sigma_lesser_sparray.eliminate_zeros()
+    sigma_lesser_dsdbcoo = DSDBCOO.from_sparray(
+        sigma_lesser_sparray, global_block_sizes, global_stack_shape
+    )
 
-    bg_sparray = bg_sparray.tocoo()
-    bg_sparray.sum_duplicates()
-    bg_sparray.eliminate_zeros()
-    bg_dbcoo = DBCOO.from_sparray(bg_sparray, global_block_sizes)
+    sigma_greater_sparray = sigma_greater_sparray.tocoo()
+    sigma_greater_sparray.sum_duplicates()
+    sigma_greater_sparray.eliminate_zeros()
+    sigma_greater_dsdbcoo = DSDBCOO.from_sparray(
+        sigma_greater_sparray, global_block_sizes, global_stack_shape
+    )
 
     out_sparray = sparse.diags(
         xp.ones(11), xp.arange(-5, 6), shape=shape, dtype=a_sparray.dtype
     ).tocsr()
 
-    out_dbcoo = DBCOO.from_sparray(out_sparray, global_block_sizes)
-    out_dbcoo.local_data[:] = 0.0
+    xr_out_dsdbcoo = DSDBCOO.from_sparray(
+        out_sparray, global_block_sizes, global_stack_shape
+    )
+    xl_out_dsdbcoo = DSDBCOO.from_sparray(
+        out_sparray, global_block_sizes, global_stack_shape
+    )
+    xg_out_dsdbcoo = DSDBCOO.from_sparray(
+        out_sparray, global_block_sizes, global_stack_shape
+    )
 
-    xl_out_dbcoo = DBCOO.from_sparray(out_sparray, global_block_sizes)
-    xl_out_dbcoo.local_data[:] = 0.0
+    xr_out_dsdbcoo.data[:] = 0.0
+    xl_out_dsdbcoo.data[:] = 0.0
+    xg_out_dsdbcoo.data[:] = 0.0
 
-    xg_out_dbcoo = DBCOO.from_sparray(out_sparray, global_block_sizes)
-    xg_out_dbcoo.local_data[:] = 0.0
-
-    solver = RGFDist(solve_lesser=True, solve_greater=True)
+    solver = RGFDist()
 
     solver.selected_solve(
-        a=a_dbcoo,
-        out=out_dbcoo,
-        bl=bl_dbcoo,
-        xl_out=xl_out_dbcoo,
-        bg=bg_dbcoo,
-        xg_out=xg_out_dbcoo,
+        a=a_dsdbcoo,
+        sigma_lesser=sigma_lesser_dsdbcoo,
+        sigma_greater=sigma_greater_dsdbcoo,
+        out=(xl_out_dsdbcoo, xg_out_dsdbcoo, xr_out_dsdbcoo),
+        return_retarded=True,
     )
 
     # Make reference results
-    Xr_rgf = out_dbcoo.to_dense()
-    Xl_rgf = xl_out_dbcoo.to_dense()
-    Xg_rgf = xg_out_dbcoo.to_dense()
+    Xr_rgf = xr_out_dsdbcoo.to_dense()
+    Xl_rgf = xl_out_dsdbcoo.to_dense()
+    Xg_rgf = xg_out_dsdbcoo.to_dense()
 
-    _Xr_ref = xp.linalg.inv(a_sparray.toarray())
+    print("Got to reference results", flush=True)
+
+    _Xr_ref = xp.linalg.inv(a_dsdbcoo.to_dense())
     Xr_ref = xp.zeros_like(_Xr_ref)
     Xr_ref[*Xr_rgf.nonzero()] = _Xr_ref[*Xr_rgf.nonzero()]
 
-    _Xl_ref = _Xr_ref @ bl_sparray.toarray() @ _Xr_ref.conj().T
+    _Xl_ref = (
+        _Xr_ref @ sigma_lesser_dsdbcoo.to_dense() @ _Xr_ref.conj().swapaxes(-2, -1)
+    )
     Xl_ref = xp.zeros_like(_Xl_ref)
     Xl_ref[*Xl_rgf.nonzero()] = _Xl_ref[*Xl_rgf.nonzero()]
 
-    _Xg_ref = _Xr_ref @ bg_sparray.toarray() @ _Xr_ref.conj().T
+    _Xg_ref = (
+        _Xr_ref @ sigma_greater_dsdbcoo.to_dense() @ _Xr_ref.conj().swapaxes(-2, -1)
+    )
     Xg_ref = xp.zeros_like(_Xg_ref)
     Xg_ref[*Xg_rgf.nonzero()] = _Xg_ref[*Xg_rgf.nonzero()]
 

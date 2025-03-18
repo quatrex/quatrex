@@ -10,12 +10,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import ARRAY_MODULE, NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import (
-    create_coordinate_grid,
-    create_hamiltonian,
-    read_hr_dat,
-    read_wannier_wout,
-)
+from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.bandstructure.contact import contact_band_structure
@@ -58,8 +53,11 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
         if quatrex_config.device.construct_from_unit_cell:
-            wannier_centers, lattice_vectors = read_wannier_wout(
-                quatrex_config.input_dir / "wannier90.wout"
+            wannier_centers = distributed_load(
+                quatrex_config.input_dir / "wannier_centers.npy"
+            )
+            lattice_vectors = distributed_load(
+                quatrex_config.input_dir / "lattice_vectors.npy"
             )
 
             device_cell = quatrex_config.device.unit_cell_per_supercell
@@ -71,14 +69,17 @@ class SCBAData:
 
             # NOTE: this is a temporary solution to get the block sizes.
             # Should be create from wannier centers
-            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
-            _, self.block_sizes = create_hamiltonian(
-                unit_cell_hamiltonian,
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            )
+            _, block_sizes = create_hamiltonian(
+                hamiltonian_unit_cells,
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
             ).astype(xp.complex128)
+            block_sizes = get_host(block_sizes)
 
         else:
             grid = distributed_load(quatrex_config.input_dir / "grid.npy")

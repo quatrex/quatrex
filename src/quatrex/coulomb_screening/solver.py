@@ -9,7 +9,7 @@ from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian, read_hr_dat
+from qttools.utils.input_utils import create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsbsparse
 
@@ -129,16 +129,18 @@ class CoulombScreeningSolver(SubsystemSolver):
         super().__init__(quatrex_config, compute_config, energies)
 
         # Load the Coulomb matrix.
-        # Load the Coulomb matrix.
         if quatrex_config.device.construct_from_unit_cell:
-            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
-            self.hamiltonian_sparray, self.small_block_sizes = create_hamiltonian(
-                unit_cell_hamiltonian,
+            coulomb_matrix_unit_cells = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+            ).astype(xp.complex128)
+            coulomb_matrix_sparray, small_block_sizes = create_hamiltonian(
+                coulomb_matrix_unit_cells,
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
             ).astype(xp.complex128)
+            self.small_block_sizes = get_host(small_block_sizes)
 
         else:
             coulomb_matrix_sparray = distributed_load(

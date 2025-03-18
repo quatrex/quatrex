@@ -8,7 +8,7 @@ from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian, read_hr_dat
+from qttools.utils.input_utils import create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -75,14 +75,17 @@ class ElectronSolver(SubsystemSolver):
 
         # Load the device Hamiltonian.
         if quatrex_config.device.construct_from_unit_cell:
-            unit_cell_hamiltonian = read_hr_dat(quatrex_config.input_dir / "hr.dat")
-            self.hamiltonian_sparray, self.block_sizes = create_hamiltonian(
-                unit_cell_hamiltonian,
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            ).astype(xp.complex128)
+            self.hamiltonian_sparray, block_sizes = create_hamiltonian(
+                hamiltonian_unit_cells,
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
             ).astype(xp.complex128)
+            self.block_sizes = get_host(block_sizes)
 
         else:
             self.hamiltonian_sparray = distributed_load(
@@ -102,9 +105,11 @@ class ElectronSolver(SubsystemSolver):
 
         if quatrex_config.device.construct_from_unit_cell:
             try:
-                unit_cell_overlap = xp.load(quatrex_config.input_dir / "overlap.npy")
+                overlap_unit_cells = distributed_load(
+                    quatrex_config.input_dir / "overlap_unit_cells.npy"
+                ).astype(xp.complex128)
                 self.overlap_sparray, __ = create_hamiltonian(
-                    unit_cell_overlap,
+                    overlap_unit_cells,
                     quatrex_config.device.number_of_supercells,
                     quatrex_config.device.transport_direction,
                     quatrex_config.device.unit_cell_per_supercell,

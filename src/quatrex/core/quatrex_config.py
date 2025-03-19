@@ -172,6 +172,10 @@ class ElectronConfig(BaseModel):
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
 
+    energy_window_min: float | None = None
+    energy_window_max: float | None = None
+    energy_window_num: PositiveInt | None = None
+
     flatband: bool | None = None
 
     dos_peak_limit: PositiveFloat = 100.0

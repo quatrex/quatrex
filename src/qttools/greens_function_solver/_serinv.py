@@ -484,16 +484,16 @@ class ReducedSystem:
         xr_diag_blocks: list[NDArray],
         xr_buffer_upper: list[NDArray],
         xr_buffer_lower: list[NDArray],
-        xr_out: DSDBSparse,
+        xr_out: DSDBSparse | _DStackView,
         return_retarded: bool = True,
         xl_diag_blocks: list[NDArray] = None,
         xl_buffer_lower: list[NDArray] = None,
         xl_buffer_upper: list[NDArray] = None,
-        xl_out: DSDBSparse = None,
+        xl_out: DSDBSparse | _DStackView = None,
         xg_diag_blocks: list[NDArray] = None,
         xg_buffer_lower: list[NDArray] = None,
         xg_buffer_upper: list[NDArray] = None,
-        xg_out: DSDBSparse = None,
+        xg_out: DSDBSparse | _DStackView = None,
     ):
         """Scatters the reduced system across all ranks.
 
@@ -573,7 +573,7 @@ class ReducedSystem:
         x_diag_blocks: list[NDArray],
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
-        x_out: DSDBSparse,
+        x_out: DSDBSparse | _DStackView,
         write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
@@ -1105,15 +1105,15 @@ def permuted_schur(
 
 
 def downward_selinv(
-    a: DSDBSparse,
+    a: DSDBSparse | _DStackView,
     xr_diag_blocks: list[NDArray],
-    xr_out: DSDBSparse,
-    sigma_lesser: DSDBSparse = None,
+    xr_out: DSDBSparse | _DStackView,
+    sigma_lesser: DSDBSparse | _DStackView = None,
     xl_diag_blocks: list[NDArray] = None,
-    xl_out: DSDBSparse = None,
-    sigma_greater: DSDBSparse = None,
+    xl_out: DSDBSparse | _DStackView = None,
+    sigma_greater: DSDBSparse | _DStackView = None,
     xg_diag_blocks: list[NDArray] = None,
-    xg_out: DSDBSparse = None,
+    xg_out: DSDBSparse | _DStackView = None,
     selected_solve: bool = False,
     return_retarded: bool = True,
 ):
@@ -1121,97 +1121,174 @@ def downward_selinv(
     for i in range(a.num_local_blocks - 2, -1, -1):
         j = i + 1
 
-        temp_1 = xr_diag_blocks[i] @ a.local_blocks[i, j]
-        temp_3 = xr_diag_blocks[j] @ a.local_blocks[j, i]
+        # Get the blocks that are used multiple times.
+        xr_ii = xr_diag_blocks[i]
+        xr_jj = xr_diag_blocks[j]
+        a_ij = a.local_blocks[i, j]
+        a_ji = a.local_blocks[j, i]
+        xl_ii = xl_diag_blocks[i]
+        xl_jj = xl_diag_blocks[j]
+        xg_ii = xg_diag_blocks[i]
+        xg_jj = xg_diag_blocks[j]
+        sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
+        sigma_greater_ij = sigma_greater.local_blocks[i, j]
+
+        # Precompute the transposes that are used multiple times.
+        xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+        xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
+        a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
+
+        # Precompute the terms that are used multiple times.
+        a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
+        a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
+        xr_ii_a_ij = xr_ii @ a_ij
+        xr_jj_a_ji = xr_jj @ a_ji
+        xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
+        xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
+        xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
+        xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
+        xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
+
+        temp_1_l = xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
+
+        temp_1_g = xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
+
+        # temp_1 = xr_diag_blocks[i] @ a.local_blocks[i, j]
+        # temp_3 = xr_diag_blocks[j] @ a.local_blocks[j, i]
 
         if selected_solve:
-            temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                j
-            ].conj().swapaxes(-2, -1)
-            xl_upper_block = (
-                -temp_1 @ xl_diag_blocks[j]
-                - xl_diag_blocks[i] @ temp_4
-                + xr_diag_blocks[i]
-                @ sigma_lesser.local_blocks[i, j]
-                @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+
+            xl_ij = (
+                -xr_ii_a_ij_xl_jj
+                - xl_ii @ a_ji_dagger_xr_jj_dagger
+                + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
 
-            temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                i
-            ].conj().swapaxes(-2, -1)
-            xl_lower_block = (
-                -xl_diag_blocks[j] @ temp_2
-                - temp_3 @ xl_diag_blocks[i]
-                + xr_diag_blocks[j]
-                @ sigma_lesser.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            xl_out.local_blocks[i, j] = xl_ij
+            xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+
+            xg_ij = (
+                -xr_ii_a_ij_xg_jj
+                - xg_ii @ a_ji_dagger_xr_jj_dagger
+                + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
+
+            xg_out.local_blocks[i, j] = xg_ij
+            xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+
+            # temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     j
+            # ].conj().swapaxes(-2, -1)
+            # xl_upper_block = (
+            #     -temp_1 @ xl_diag_blocks[j]
+            #     - xl_diag_blocks[i] @ temp_4
+            #     + xr_diag_blocks[i]
+            #     @ sigma_lesser.local_blocks[i, j]
+            #     @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            # )
+
+            # temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     i
+            # ].conj().swapaxes(-2, -1)
+            # xl_lower_block = (
+            #     -xl_diag_blocks[j] @ temp_2
+            #     - temp_3 @ xl_diag_blocks[i]
+            #     + xr_diag_blocks[j]
+            #     @ sigma_lesser.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+
+            # xl_diag_blocks[i] = (
+            #     xl_diag_blocks[i]
+            #     + temp_1 @ xl_diag_blocks[i + 1] @ temp_2
+            #     + temp_1 @ temp_3 @ xl_diag_blocks[i]
+            #     + xl_diag_blocks[i] @ temp_4 @ temp_2
+            #     - temp_1
+            #     @ xr_diag_blocks[i + 1]
+            #     @ sigma_lesser.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - xr_diag_blocks[i]
+            #     @ sigma_lesser.local_blocks[i, j]
+            #     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+            #     @ temp_2
+            # )
+            # # Streaming/Sparsifying back to DSDBSparse
+            # xl_out.local_blocks[j, i] = xl_lower_block
+            # xl_out.local_blocks[i, j] = xl_upper_block
+            # xl_out.local_blocks[i, i] = xl_diag_blocks[i]
+
+            # temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     i + 1
+            # ].conj().swapaxes(-2, -1)
+            # xg_upper_block = (
+            #     -temp_1 @ xg_diag_blocks[i + 1]
+            #     - xg_diag_blocks[i] @ temp_4
+            #     + xr_diag_blocks[i]
+            #     @ sigma_greater.local_blocks[i, j]
+            #     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+            # )
+
+            # temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     i
+            # ].conj().swapaxes(-2, -1)
+            # xg_lower_block = (
+            #     -xg_diag_blocks[i + 1] @ temp_2
+            #     - temp_3 @ xg_diag_blocks[i]
+            #     + xr_diag_blocks[i + 1]
+            #     @ sigma_greater.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+
+            # xg_diag_blocks[i] = (
+            #     xg_diag_blocks[i]
+            #     + temp_1 @ xg_diag_blocks[i + 1] @ temp_2
+            #     + temp_1 @ temp_3 @ xg_diag_blocks[i]
+            #     + xg_diag_blocks[i] @ temp_4 @ temp_2
+            #     - temp_1
+            #     @ xr_diag_blocks[i + 1]
+            #     @ sigma_greater.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - xr_diag_blocks[i]
+            #     @ sigma_greater.local_blocks[i, j]
+            #     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+            #     @ temp_2
+            # )
+            # # Streaming/Sparsifying back to DSDBSparse
+            # xg_out.local_blocks[j, i] = xg_lower_block
+            # xg_out.local_blocks[i, j] = xg_upper_block
+            # xg_out.local_blocks[i, i] = xg_diag_blocks[i]
+
+            temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
+
+            temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
 
             xl_diag_blocks[i] = (
-                xl_diag_blocks[i]
-                + temp_1 @ xl_diag_blocks[i + 1] @ temp_2
-                + temp_1 @ temp_3 @ xl_diag_blocks[i]
-                + xl_diag_blocks[i] @ temp_4 @ temp_2
-                - temp_1
-                @ xr_diag_blocks[i + 1]
-                @ sigma_lesser.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ sigma_lesser.local_blocks[i, j]
-                @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                @ temp_2
+                xl_ii
+                + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
+                - temp_1_l
+                + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
             )
-            # Streaming/Sparsifying back to DSDBSparse
-            xl_out.local_blocks[j, i] = xl_lower_block
-            xl_out.local_blocks[i, j] = xl_upper_block
-            xl_out.local_blocks[i, i] = xl_diag_blocks[i]
-
-            temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                i + 1
-            ].conj().swapaxes(-2, -1)
-            xg_upper_block = (
-                -temp_1 @ xg_diag_blocks[i + 1]
-                - xg_diag_blocks[i] @ temp_4
-                + xr_diag_blocks[i]
-                @ sigma_greater.local_blocks[i, j]
-                @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
+            xl_out.local_blocks[i, i] = 0.5 * (
+                xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
-
-            temp_2 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                i
-            ].conj().swapaxes(-2, -1)
-            xg_lower_block = (
-                -xg_diag_blocks[i + 1] @ temp_2
-                - temp_3 @ xg_diag_blocks[i]
-                + xr_diag_blocks[i + 1]
-                @ sigma_greater.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
-
             xg_diag_blocks[i] = (
-                xg_diag_blocks[i]
-                + temp_1 @ xg_diag_blocks[i + 1] @ temp_2
-                + temp_1 @ temp_3 @ xg_diag_blocks[i]
-                + xg_diag_blocks[i] @ temp_4 @ temp_2
-                - temp_1
-                @ xr_diag_blocks[i + 1]
-                @ sigma_greater.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ sigma_greater.local_blocks[i, j]
-                @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                @ temp_2
+                xg_ii
+                + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
+                - temp_1_g
+                + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
             )
-            # Streaming/Sparsifying back to DSDBSparse
-            xg_out.local_blocks[j, i] = xg_lower_block
-            xg_out.local_blocks[i, j] = xg_upper_block
-            xg_out.local_blocks[i, i] = xg_diag_blocks[i]
+            xg_out.local_blocks[i, i] = 0.5 * (
+                xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
+            )
 
-        x_lower_block = -temp_3 @ xr_diag_blocks[i]
-        x_upper_block = -temp_1 @ xr_diag_blocks[j]
-        xr_diag_blocks[i] = (
-            xr_diag_blocks[i] - x_upper_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
-        )
+        x_lower_block = -xr_jj_a_ji @ xr_diag_blocks[i]
+        x_upper_block = -xr_ii_a_ij @ xr_diag_blocks[j]
+        # xr_diag_blocks[i] = (
+        #     xr_diag_blocks[i] - x_upper_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
+        # )
+        xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
         if not return_retarded:
             continue
 
@@ -1237,98 +1314,175 @@ def upward_selinv(
     """Performs the upward selected inversion."""
     for i in range(1, a.num_local_blocks):
         j = i - 1
-        temp_1 = xr_diag_blocks[j] @ a.local_blocks[j, i]
-        temp_3 = xr_diag_blocks[i] @ a.local_blocks[i, j]
+
+        # Get the blocks that are used multiple times.
+        xr_ii = xr_diag_blocks[i]
+        xr_jj = xr_diag_blocks[j]
+        a_ij = a.local_blocks[i, j]
+        a_ji = a.local_blocks[j, i]
+        xl_ii = xl_diag_blocks[i]
+        xl_jj = xl_diag_blocks[j]
+        xg_ii = xg_diag_blocks[i]
+        xg_jj = xg_diag_blocks[j]
+        sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
+        sigma_greater_ij = sigma_greater.local_blocks[i, j]
+
+        # Precompute the transposes that are used multiple times.
+        xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+        xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
+        a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
+
+        # Precompute the terms that are used multiple times.
+        a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
+        a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
+        xr_ii_a_ij = xr_ii @ a_ij
+        xr_jj_a_ji = xr_jj @ a_ji
+        xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
+        xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
+        xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
+        xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
+        xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
+
+        temp_1_l = xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
+
+        temp_1_g = xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
+
+        # temp_1 = xr_diag_blocks[j] @ a.local_blocks[j, i]
+        # temp_3 = xr_diag_blocks[i] @ a.local_blocks[i, j]
 
         if selected_solve:
-            temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                i
-            ].conj().swapaxes(-2, -1)
-            xl_upper_block = (
-                -temp_1 @ xl_diag_blocks[i]
-                - xl_diag_blocks[j] @ temp_4
-                + xr_diag_blocks[j]
-                @ sigma_lesser.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+
+            xl_ij = (
+                -xr_ii_a_ij_xl_jj
+                - xl_ii @ a_ji_dagger_xr_jj_dagger
+                + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
 
-            temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                j
-            ].conj().swapaxes(-2, -1)
-            xl_lower_block = (
-                -xl_diag_blocks[i] @ temp_2
-                - temp_3 @ xl_diag_blocks[j]
-                + xr_diag_blocks[i]
-                @ sigma_lesser.local_blocks[i, j]
-                @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            xl_out.local_blocks[i, j] = xl_ij
+            xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+
+            xg_ij = (
+                -xr_ii_a_ij_xg_jj
+                - xg_ii @ a_ji_dagger_xr_jj_dagger
+                + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
+
+            xg_out.local_blocks[i, j] = xg_ij
+            xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+
+            # temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     i
+            # ].conj().swapaxes(-2, -1)
+            # xl_upper_block = (
+            #     -temp_1 @ xl_diag_blocks[i]
+            #     - xl_diag_blocks[j] @ temp_4
+            #     + xr_diag_blocks[j]
+            #     @ sigma_lesser.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+
+            # temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     j
+            # ].conj().swapaxes(-2, -1)
+            # xl_lower_block = (
+            #     -xl_diag_blocks[i] @ temp_2
+            #     - temp_3 @ xl_diag_blocks[j]
+            #     + xr_diag_blocks[i]
+            #     @ sigma_lesser.local_blocks[i, j]
+            #     @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            # )
+
+            # xl_diag_blocks[i] = (
+            #     xl_diag_blocks[i]
+            #     + temp_3 @ xl_diag_blocks[j] @ temp_4
+            #     + temp_3 @ temp_1 @ xl_diag_blocks[i]
+            #     + xl_diag_blocks[i] @ temp_2 @ temp_4
+            #     - temp_3
+            #     @ xr_diag_blocks[j]
+            #     @ sigma_lesser.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - xr_diag_blocks[i]
+            #     @ sigma_lesser.local_blocks[i, j]
+            #     @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            #     @ temp_4
+            # )
+            # # Streaming/Sparsifying back to DSDBSparse
+            # xl_out.local_blocks[j, i] = xl_upper_block
+            # xl_out.local_blocks[i, j] = xl_lower_block
+            # xl_out.local_blocks[i, i] = xl_diag_blocks[i]
+
+            # temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     i
+            # ].conj().swapaxes(-2, -1)
+            # xg_upper_block = (
+            #     -temp_1 @ xg_diag_blocks[i]
+            #     - xg_diag_blocks[j] @ temp_4
+            #     + xr_diag_blocks[j]
+            #     @ sigma_greater.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+
+            # temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
+            #     j
+            # ].conj().swapaxes(-2, -1)
+            # xg_lower_block = (
+            #     -xg_diag_blocks[i] @ temp_2
+            #     - temp_3 @ xg_diag_blocks[j]
+            #     + xr_diag_blocks[i]
+            #     @ sigma_greater.local_blocks[i, j]
+            #     @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            # )
+
+            # xg_diag_blocks[i] = (
+            #     xg_diag_blocks[i]
+            #     + temp_3 @ xg_diag_blocks[j] @ temp_4
+            #     + temp_3 @ temp_1 @ xg_diag_blocks[i]
+            #     + xg_diag_blocks[i] @ temp_2 @ temp_4
+            #     - temp_3
+            #     @ xr_diag_blocks[j]
+            #     @ sigma_greater.local_blocks[j, i]
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - xr_diag_blocks[i]
+            #     @ sigma_greater.local_blocks[i, j]
+            #     @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
+            #     @ temp_4
+            # )
+            # # Streaming/Sparsifying back to DSDBSparse
+            # xg_out.local_blocks[j, i] = xg_upper_block
+            # xg_out.local_blocks[i, j] = xg_lower_block
+            # xg_out.local_blocks[i, i] = xg_diag_blocks[i]
+
+            temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
+
+            temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
 
             xl_diag_blocks[i] = (
-                xl_diag_blocks[i]
-                + temp_3 @ xl_diag_blocks[j] @ temp_4
-                + temp_3 @ temp_1 @ xl_diag_blocks[i]
-                + xl_diag_blocks[i] @ temp_2 @ temp_4
-                - temp_3
-                @ xr_diag_blocks[j]
-                @ sigma_lesser.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ sigma_lesser.local_blocks[i, j]
-                @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
-                @ temp_4
+                xl_ii
+                + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
+                - temp_1_l
+                + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
             )
-            # Streaming/Sparsifying back to DSDBSparse
-            xl_out.local_blocks[j, i] = xl_upper_block
-            xl_out.local_blocks[i, j] = xl_lower_block
-            xl_out.local_blocks[i, i] = xl_diag_blocks[i]
-
-        if selected_solve:
-            temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                i
-            ].conj().swapaxes(-2, -1)
-            xg_upper_block = (
-                -temp_1 @ xg_diag_blocks[i]
-                - xg_diag_blocks[j] @ temp_4
-                + xr_diag_blocks[j]
-                @ sigma_greater.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            xl_out.local_blocks[i, i] = 0.5 * (
+                xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
-
-            temp_2 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
-                j
-            ].conj().swapaxes(-2, -1)
-            xg_lower_block = (
-                -xg_diag_blocks[i] @ temp_2
-                - temp_3 @ xg_diag_blocks[j]
-                + xr_diag_blocks[i]
-                @ sigma_greater.local_blocks[i, j]
-                @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
-            )
-
             xg_diag_blocks[i] = (
-                xg_diag_blocks[i]
-                + temp_3 @ xg_diag_blocks[j] @ temp_4
-                + temp_3 @ temp_1 @ xg_diag_blocks[i]
-                + xg_diag_blocks[i] @ temp_2 @ temp_4
-                - temp_3
-                @ xr_diag_blocks[j]
-                @ sigma_greater.local_blocks[j, i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ sigma_greater.local_blocks[i, j]
-                @ xr_diag_blocks[j].conj().swapaxes(-2, -1)
-                @ temp_4
+                xg_ii
+                + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
+                - temp_1_g
+                + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
             )
-            # Streaming/Sparsifying back to DSDBSparse
-            xg_out.local_blocks[j, i] = xg_upper_block
-            xg_out.local_blocks[i, j] = xg_lower_block
-            xg_out.local_blocks[i, i] = xg_diag_blocks[i]
+            xg_out.local_blocks[i, i] = 0.5 * (
+                xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
+            )
 
-        x_upper_block = -temp_1 @ xr_diag_blocks[i]
-        x_lower_block = -temp_3 @ xr_diag_blocks[j]
-        xr_diag_blocks[i] = (
-            xr_diag_blocks[i] - x_lower_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
-        )
+        x_upper_block = -xr_jj_a_ji @ xr_diag_blocks[i]
+        x_lower_block = -xr_ii_a_ij @ xr_diag_blocks[j]
+        # xr_diag_blocks[i] = (
+        #     xr_diag_blocks[i] - x_lower_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
+        # )
+        xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
         if not return_retarded:
             continue
 

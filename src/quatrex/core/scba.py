@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import ARRAY_MODULE, NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load
@@ -50,9 +50,20 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
         grid = distributed_load(quatrex_config.input_dir / "grid.npy")
-        electron_energies = distributed_load(
-            quatrex_config.input_dir / "electron_energies.npy"
-        )
+        if (
+            (quatrex_config.electron.energy_window_max is not None)
+            and (quatrex_config.electron.energy_window_min is not None)
+            and (quatrex_config.electron.energy_window_num is not None)
+        ):
+            electron_energies = xp.linspace(
+                quatrex_config.electron.energy_window_min,
+                quatrex_config.electron.energy_window_max,
+                quatrex_config.electron.energy_window_num,
+            )
+        else:
+            electron_energies = distributed_load(
+                quatrex_config.input_dir / "electron_energies.npy"
+            )
         block_sizes = get_host(
             distributed_load(quatrex_config.input_dir / "block_sizes.npy")
         )
@@ -223,9 +234,21 @@ class SCBA:
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = distributed_load(
-            self.quatrex_config.input_dir / "electron_energies.npy"
-        )
+        if (
+            (self.quatrex_config.electron.energy_window_max is not None)
+            and (self.quatrex_config.electron.energy_window_min is not None)
+            and (self.quatrex_config.electron.energy_window_num is not None)
+        ):
+            self.electron_energies = xp.linspace(
+                self.quatrex_config.electron.energy_window_min,
+                self.quatrex_config.electron.energy_window_max,
+                self.quatrex_config.electron.energy_window_num,
+            )
+        else:
+            self.electron_energies = distributed_load(
+                self.quatrex_config.input_dir / "electron_energies.npy"
+            )
+
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
             self.compute_config,
@@ -755,21 +778,22 @@ class SCBA:
             if comm.rank == 0:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
-            free_memory, total_memory = xp.cuda.Device().mem_info
-            usage = (total_memory - free_memory) / total_memory
-            if not NCCL_AVAILABLE:
-                average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
-            else:
-                average_usage = xp.empty(1)
-                synchronize_device()
-                nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
-                synchronize_device()
-                average_usage = float(average_usage[0]) / comm.size
-            if comm.rank == 0:
-                print(
-                    f"Rank-average device memory usage: {average_usage * 100:.4f}%",
-                    flush=True,
-                )
+            if ARRAY_MODULE == "cupy":
+                free_memory, total_memory = xp.cuda.Device().mem_info
+                usage = (total_memory - free_memory) / total_memory
+                if not NCCL_AVAILABLE:
+                    average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+                else:
+                    average_usage = xp.empty(1)
+                    synchronize_device()
+                    nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
+                    synchronize_device()
+                    average_usage = float(average_usage[0]) / comm.size
+                if comm.rank == 0:
+                    print(
+                        f"Rank-average device memory usage: {average_usage * 100:.4f}%",
+                        flush=True,
+                    )
 
             if i % self.quatrex_config.scba.output_interval == 0:
                 synchronize_device()

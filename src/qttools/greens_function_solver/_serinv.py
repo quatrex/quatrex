@@ -1513,6 +1513,41 @@ def permuted_selinv(
 ):
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
+        # j = i + 1
+
+        # # Get the blocks that are used multiple times.
+        # xr_ii = xr_diag_blocks[i]
+        # xr_jj = xr_diag_blocks[j]
+        # a_ij = a.local_blocks[i, j]
+        # a_ji = a.local_blocks[j, i]
+        # xl_ii = xl_diag_blocks[i]
+        # xl_jj = xl_diag_blocks[j]
+        # xg_ii = xg_diag_blocks[i]
+        # xg_jj = xg_diag_blocks[j]
+        # sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
+        # sigma_greater_ij = sigma_greater.local_blocks[i, j]
+
+        # # Precompute the transposes that are used multiple times.
+        # xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+        # xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
+        # a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
+
+        # # Precompute the terms that are used multiple times.
+        # a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
+        # a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
+        # xr_ii_a_ij = xr_ii @ a_ij
+        # xr_jj_a_ji = xr_jj @ a_ji
+        # xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
+        # xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
+        # xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
+        # xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
+        # xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
+
+        # temp_1_l = xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        # temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
+
+        # temp_1_g = xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+        # temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
 
         B1 = (
             a.local_blocks[i, i + 1] @ xr_diag_blocks[i + 1]
@@ -1533,13 +1568,16 @@ def permuted_selinv(
 
         if selected_solve:
             temp_B_13 = xl_buffer_upper[i - 1]
-            temp_B_31 = xl_buffer_lower[i - 1]
+            # temp_B_31 = xl_buffer_lower[i - 1]
+            temp_B_31 = -xl_buffer_upper[i - 1].conj().swapaxes(-2, -1)
 
             bl_upper_block = (
                 -xr_diag_blocks[i]
                 @ (
                     a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
-                    + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
+                    - xr_buffer_upper[i - 1]
+                    @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
+                    # + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
                 )
                 - xl_diag_blocks[i]
                 @ (
@@ -1577,35 +1615,35 @@ def permuted_selinv(
                 )
             )
 
-            bl_lower_block = (
-                -(
-                    xl_diag_blocks[i + 1]
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + xl_buffer_upper[i]
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - (C1) @ xl_diag_blocks[i]
-                + (
-                    xr_diag_blocks[i + 1] @ sigma_lesser.local_blocks[i + 1, i]
-                    + xr_buffer_upper[i] @ xl_buffer_lower[i - 1]
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
-            xl_buffer_lower[i - 1] = (
-                -(
-                    xl_buffer_lower[i]
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + xl_diag_blocks[0] @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - (C2) @ xl_diag_blocks[i]
-                + (
-                    xr_buffer_lower[i] @ sigma_lesser.local_blocks[i + 1, i]
-                    + xr_diag_blocks[0] @ xl_buffer_lower[i - 1]
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
+            # bl_lower_block = (
+            #     -(
+            #         xl_diag_blocks[i + 1]
+            #         @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+            #         + xl_buffer_upper[i]
+            #         @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - (C1) @ xl_diag_blocks[i]
+            #     + (
+            #         xr_diag_blocks[i + 1] @ sigma_lesser.local_blocks[i + 1, i]
+            #         + xr_buffer_upper[i] @ xl_buffer_lower[i - 1]
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+            # xl_buffer_lower[i - 1] = (
+            #     -(
+            #         xl_buffer_lower[i]
+            #         @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+            #         + xl_diag_blocks[0] @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - (C2) @ xl_diag_blocks[i]
+            #     + (
+            #         xr_buffer_lower[i] @ sigma_lesser.local_blocks[i + 1, i]
+            #         + xr_diag_blocks[0] @ xl_buffer_lower[i - 1]
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
 
             xl_diag_blocks[i] = (
                 xl_diag_blocks[i]
@@ -1613,7 +1651,9 @@ def permuted_selinv(
                 @ (
                     (
                         a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
-                        + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
+                        - xr_buffer_upper[i - 1]
+                        @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
+                        # + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
                     )
                     @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
@@ -1665,18 +1705,24 @@ def permuted_selinv(
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             # Streaming/Sparsifying back to DSDBSparse
-            xl_out.local_blocks[i + 1, i] = bl_lower_block
+            # xl_out.local_blocks[i + 1, i] = bl_lower_block
             xl_out.local_blocks[i, i + 1] = bl_upper_block
-            xl_out.local_blocks[i, i] = xl_diag_blocks[i]
+            xl_out.local_blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
+            xl_out.local_blocks[i, i] = 0.5 * (
+                xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
+            )
 
             temp_B_13 = xg_buffer_upper[i - 1]
-            temp_B_31 = xg_buffer_lower[i - 1]
+            # temp_B_31 = xg_buffer_lower[i - 1]
+            temp_B_31 = -xg_buffer_upper[i - 1].conj().swapaxes(-2, -1)
 
             bg_upper_block = (
                 -xr_diag_blocks[i]
                 @ (
                     a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
-                    + xr_buffer_upper[i - 1] @ xg_buffer_lower[i]
+                    - xr_buffer_upper[i - 1]
+                    @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
+                    # + xr_buffer_upper[i - 1] @ xg_buffer_lower[i]
                 )
                 - xg_diag_blocks[i]
                 @ (
@@ -1714,35 +1760,35 @@ def permuted_selinv(
                 )
             )
 
-            bg_lower_block = (
-                -(
-                    xg_diag_blocks[i + 1]
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + xg_buffer_upper[i]
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - (C1) @ xg_diag_blocks[i]
-                + (
-                    xr_diag_blocks[i + 1] @ sigma_greater.local_blocks[i + 1, i]
-                    + xr_buffer_upper[i] @ xg_buffer_lower[i - 1]
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
-            xg_buffer_lower[i - 1] = (
-                -(
-                    xg_buffer_lower[i]
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + xg_diag_blocks[0] @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - (C2) @ xg_diag_blocks[i]
-                + (
-                    xr_buffer_lower[i] @ sigma_greater.local_blocks[i + 1, i]
-                    + xr_diag_blocks[0] @ xg_buffer_lower[i - 1]
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
+            # bg_lower_block = (
+            #     -(
+            #         xg_diag_blocks[i + 1]
+            #         @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+            #         + xg_buffer_upper[i]
+            #         @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - (C1) @ xg_diag_blocks[i]
+            #     + (
+            #         xr_diag_blocks[i + 1] @ sigma_greater.local_blocks[i + 1, i]
+            #         + xr_buffer_upper[i] @ xg_buffer_lower[i - 1]
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
+            # xg_buffer_lower[i - 1] = (
+            #     -(
+            #         xg_buffer_lower[i]
+            #         @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+            #         + xg_diag_blocks[0] @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            #     - (C2) @ xg_diag_blocks[i]
+            #     + (
+            #         xr_buffer_lower[i] @ sigma_greater.local_blocks[i + 1, i]
+            #         + xr_diag_blocks[0] @ xg_buffer_lower[i - 1]
+            #     )
+            #     @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+            # )
 
             xg_diag_blocks[i] = (
                 xg_diag_blocks[i]
@@ -1750,7 +1796,9 @@ def permuted_selinv(
                 @ (
                     (
                         a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
-                        + xr_buffer_upper[i - 1] @ xg_buffer_lower[i]
+                        - xr_buffer_upper[i - 1]
+                        @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
+                        # + xr_buffer_upper[i - 1] @ xg_buffer_lower[i]
                     )
                     @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
@@ -1802,9 +1850,12 @@ def permuted_selinv(
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             # Streaming/Sparsifying back to DSDBSparse
-            xg_out.local_blocks[i + 1, i] = bg_lower_block
+            # xg_out.local_blocks[i + 1, i] = bg_lower_block
             xg_out.local_blocks[i, i + 1] = bg_upper_block
-            xg_out.local_blocks[i, i] = xg_diag_blocks[i]
+            xg_out.local_blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
+            xg_out.local_blocks[i, i] = 0.5 * (
+                xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
+            )
 
         if return_retarded:
             xr_out.local_blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
@@ -1832,7 +1883,9 @@ def permuted_selinv(
         xr_out.local_blocks[0, 1] = xr_buffer_lower[0]
     if selected_solve:
         xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
-        xl_out.local_blocks[0, 1] = xl_buffer_lower[0]
+        # xl_out.local_blocks[0, 1] = xl_buffer_lower[0]
+        xl_out.local_blocks[0, 1] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
 
         xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
-        xg_out.local_blocks[0, 1] = xg_buffer_lower[0]
+        # xg_out.local_blocks[0, 1] = xg_buffer_lower[0]
+        xg_out.local_blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)

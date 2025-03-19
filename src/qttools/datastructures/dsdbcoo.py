@@ -436,6 +436,34 @@ class DSDBCOO(DSDBSparse):
         if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
+    def __iadd__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
+        """In-place addition of two DSDBCOO matrices."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self.data += csr[
+                self.rows + self.global_block_offset,
+                self.cols + self.global_block_offset,
+            ]
+            return self
+
+        self._check_commensurable(other)
+        self._data += other._data
+        return self
+
+    def __isub__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
+        """In-place subtraction of two DSDBCOO matrices."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self.data -= csr[
+                self.rows + self.global_block_offset,
+                self.cols + self.global_block_offset,
+            ]
+            return self
+
+        self._check_commensurable(other)
+        self._data -= other._data
+        return self
+
     def __neg__(self) -> "DSDBCOO":
         """Negation of the data."""
         return DSDBCOO(

@@ -471,33 +471,21 @@ class DSDBSparse(ABC):
         """Checks if two DSDBSparse matrices are commensurable."""
         ...
 
-    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
-        """In-place addition of two DSDBSparse matrices."""
-        if sparse.issparse(other):
-            csr = other.tocsr()
-            self.data += csr[*self.spy()]
-            return self
-
-        self._check_commensurable(other)
-        self._data += other._data
-        return self
-
-    def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
-        """In-place subtraction of two DSDBSparse matrices."""
-        if sparse.issparse(other):
-            csr = other.tocsr()
-            self.data -= csr[*self.spy()]
-            return self
-
-        self._check_commensurable(other)
-        self._data -= other._data
-        return self
-
     def __imul__(self, other: "DSDBSparse") -> "DSDBSparse":
         """In-place multiplication of two DSDBSparse matrices."""
         self._check_commensurable(other)
         self._data *= other._data
         return self
+
+    @abstractmethod
+    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place addition of two DSDBSparse matrices."""
+        ...
+
+    @abstractmethod
+    def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place subtraction of two DSDBSparse matrices."""
+        ...
 
     @abstractmethod
     def __neg__(self) -> "DSDBSparse":
@@ -531,8 +519,6 @@ class DSDBSparse(ABC):
         for b in range(self.num_local_blocks - abs(offset)):
             local_blocks.append(self.local_blocks[b, b + offset])
 
-        # TODO: This will probably give a list of lists. We will maybe
-        # have to flatten this.
         return _flatten_list(block_comm.allgather(local_blocks))
 
     @profiler.profile(level="api")

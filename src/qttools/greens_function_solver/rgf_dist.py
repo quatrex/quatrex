@@ -334,13 +334,13 @@ class RGFDist(GFSolver):
                 # Lesser quantities.
                 sigma_lesser=sigma_lesser_,
                 xl_diag_blocks=xl_diag_blocks,
-                xl_buffer_lower=xl_buffer_lower,
+                # xl_buffer_lower=xl_buffer_lower,
                 xl_buffer_upper=xl_buffer_upper,
                 xl_out=xl_out_,
                 # Greater quantities.
                 sigma_greater=sigma_greater_,
                 xg_diag_blocks=xg_diag_blocks,
-                xg_buffer_lower=xg_buffer_lower,
+                # xg_buffer_lower=xg_buffer_lower,
                 xg_buffer_upper=xg_buffer_upper,
                 xg_out=xg_out_,
                 selected_solve=True,

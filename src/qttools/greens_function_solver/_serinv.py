@@ -162,14 +162,22 @@ class ReducedSystem:
 
         if self.selected_solve:
             xl_diag_blocks, xl_upper_blocks, xl_lower_blocks = self._map_reduced_system(
-                sigma_lesser, xl_diag_blocks, xl_buffer_upper, xl_buffer_lower
+                sigma_lesser,
+                xl_diag_blocks,
+                xl_buffer_upper,
+                xl_buffer_lower,
+                is_retarded=False,
             )
             self.xl_diag_blocks = _flatten_list(block_comm.allgather(xl_diag_blocks))
             self.xl_upper_blocks = _flatten_list(block_comm.allgather(xl_upper_blocks))
             self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
 
             xg_diag_blocks, xg_upper_blocks, xg_lower_blocks = self._map_reduced_system(
-                sigma_greater, xg_diag_blocks, xg_buffer_upper, xg_buffer_lower
+                sigma_greater,
+                xg_diag_blocks,
+                xg_buffer_upper,
+                xg_buffer_lower,
+                is_retarded=False,
             )
             self.xg_diag_blocks = _flatten_list(block_comm.allgather(xg_diag_blocks))
             self.xg_upper_blocks = _flatten_list(block_comm.allgather(xg_upper_blocks))
@@ -181,6 +189,7 @@ class ReducedSystem:
         x_diag_blocks: list[NDArray],
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
+        is_retarded: bool = True,
     ):
         """Maps the local partition to the reduced system.
 
@@ -212,10 +221,14 @@ class ReducedSystem:
             diag_blocks.append(x_diag_blocks[0])
             diag_blocks.append(x_diag_blocks[-1])
 
+            # if is_retarded:
             lower_blocks.append(buffer_upper[-2])
             lower_blocks.append(a.local_blocks[j, i])
 
-            upper_blocks.append(buffer_lower[-2])
+            if is_retarded:
+                upper_blocks.append(buffer_lower[-2])
+            else:
+                upper_blocks.append(-buffer_upper[-2].conj().swapaxes(-2, -1))
             upper_blocks.append(a.local_blocks[i, j])
 
         return diag_blocks, upper_blocks, lower_blocks
@@ -556,6 +569,7 @@ class ReducedSystem:
                 diag_block_reduced_system=self.xl_diag_blocks,
                 upper_block_reduced_system=self.xl_upper_blocks,
                 lower_block_reduced_system=self.xl_lower_blocks,
+                is_retarded=False,
             )
             self._mapback_reduced_system(
                 x_diag_blocks=xg_diag_blocks,
@@ -566,6 +580,7 @@ class ReducedSystem:
                 diag_block_reduced_system=self.xg_diag_blocks,
                 upper_block_reduced_system=self.xg_upper_blocks,
                 lower_block_reduced_system=self.xg_lower_blocks,
+                is_retarded=False,
             )
 
     def _mapback_reduced_system(
@@ -578,6 +593,7 @@ class ReducedSystem:
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
         lower_block_reduced_system: list[NDArray],
+        is_retarded: bool = True,
     ):
         """Maps the reduced system back to the local partition.
 
@@ -1049,7 +1065,9 @@ def permuted_schur(
                 + xr_buffer_lower[i - 1]
                 @ xl_diag_blocks[i]
                 @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                - xl_buffer_lower[i - 1] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
+                + xl_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+                @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
+                # - xl_buffer_lower[i - 1] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
                 # @ xr_ii_dagger
                 # @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                 - xr_ji_xr_ii @ xl_buffer_upper[i - 1]
@@ -1097,7 +1115,9 @@ def permuted_schur(
                 + xr_buffer_lower[i - 1]
                 @ xg_diag_blocks[i]
                 @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                - xg_buffer_lower[i - 1] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
+                + xg_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+                @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
+                # - xg_buffer_lower[i - 1] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
                 # @ xr_ii_dagger
                 # @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                 - xr_ji_xr_ii @ xg_buffer_upper[i - 1]

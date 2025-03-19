@@ -103,7 +103,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
 
 @profiler.profile(level="debug")
-def get_local_slice(global_array: NDArray) -> NDArray:
+def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     """Returns the local slice of a distributed array.
 
     Parameters
@@ -117,7 +117,7 @@ def get_local_slice(global_array: NDArray) -> NDArray:
         The local slice of the global array.
 
     """
-    section_sizes, __ = get_section_sizes(global_array.shape[-1])
+    section_sizes, __ = get_section_sizes(global_array.shape[-1], comm.size)
     section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
     return global_array[

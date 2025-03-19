@@ -12,6 +12,7 @@ from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load
 
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -46,24 +47,12 @@ class SCBAData:
         self,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
+        electron_energies: NDArray,
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
         grid = distributed_load(quatrex_config.input_dir / "grid.npy")
-        if (
-            (quatrex_config.electron.energy_window_max is not None)
-            and (quatrex_config.electron.energy_window_min is not None)
-            and (quatrex_config.electron.energy_window_num is not None)
-        ):
-            electron_energies = xp.linspace(
-                quatrex_config.electron.energy_window_min,
-                quatrex_config.electron.energy_window_max,
-                quatrex_config.electron.energy_window_num,
-            )
-        else:
-            electron_energies = distributed_load(
-                quatrex_config.input_dir / "electron_energies.npy"
-            )
+
         block_sizes = get_host(
             distributed_load(quatrex_config.input_dir / "block_sizes.npy")
         )
@@ -229,10 +218,12 @@ class SCBA:
 
         self.compute_config = compute_config
 
-        self.data = SCBAData(quatrex_config, compute_config)
         self.observables = Observables()
+        electron_energies = xp.zeros((comm.Get_size(),))
+        self.data = SCBAData(
+            quatrex_config, compute_config, electron_energies=electron_energies
+        )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
-
         # ----- Electrons ----------------------------------------------
         if (
             (self.quatrex_config.electron.energy_window_max is not None)
@@ -245,9 +236,65 @@ class SCBA:
                 self.quatrex_config.electron.energy_window_num,
             )
         else:
-            self.electron_energies = distributed_load(
-                self.quatrex_config.input_dir / "electron_energies.npy"
-            )
+            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
+            if os.path.isfile(energies_path):
+                self.electron_energies = distributed_load(energies_path)
+            else:
+                if comm.rank == 0:
+                    message = f"""
+                                {'-'*40}
+                                # WARNING
+                                # since no information about electron energy grid is provided,
+                                # we decide to take an energy range enough to cover all the bands 
+                                # in the contact bandstructure. This can lead to unexpected memory usage.
+                                {'-'*40}
+                                """
+                    print(message)
+                # determine the energy window from the bandstructure
+                # for this, we will need to load the device hamiltonian first
+                electron_solver = ElectronSolver(
+                    self.quatrex_config,
+                    self.compute_config,
+                    electron_energies,
+                    sparsity_pattern=self.data.sparsity_pattern,
+                )
+                h_00 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (0, 0)
+                )
+                h_10 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (1, 0)
+                )
+                h_01 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (0, 1)
+                )
+                num_k_points = 3
+                e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
+                n = electron_solver.block_sizes.shape[0] - 1
+                h_00 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (n, n)
+                )
+                h_10 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (n, n - 1)
+                )
+                h_01 = electron_solver._get_block(
+                    electron_solver.hamiltonian_sparray, (n - 1, n)
+                )
+                e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
+                energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) + 1.0
+                energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0
+                energy_step = 1e-3  # an energy step of 1 meV
+                energy_window_num = (
+                    int((energy_window_max - energy_window_min) / energy_step) + 1
+                )
+                self.electron_energies = xp.linspace(
+                    energy_window_min,
+                    energy_window_max,
+                    energy_window_num,
+                )
+                if comm.rank == 0:
+                    print(
+                        f"Energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
+                    )
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
@@ -323,6 +370,10 @@ class SCBA:
 
             elif self.quatrex_config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
+
+        self.data = SCBAData(
+            quatrex_config, compute_config, electron_energies=self.electron_energies
+        )  # real data
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""

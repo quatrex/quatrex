@@ -678,14 +678,8 @@ class DSDBCOO(DSDBSparse):
             The new DSDBCOO matrix.
 
         """
-        out = cls(
-            local_data=xp.zeros_like(dsdbsparse.data),
-            local_rows=copy.deepcopy(dsdbsparse.rows),
-            local_cols=copy.deepcopy(dsdbsparse.cols),
-            block_sizes=copy.deepcopy(dsdbsparse.block_sizes),
-            global_stack_shape=copy.deepcopy(dsdbsparse.global_stack_shape),
-            return_dense=copy.deepcopy(dsdbsparse.return_dense),
-        )
+        out = copy.deepcopy(dsdbsparse)
+        out.data[:] = 0
         return out
 
     @classmethod

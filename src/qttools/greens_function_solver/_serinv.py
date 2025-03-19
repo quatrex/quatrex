@@ -573,14 +573,13 @@ def downward_schur(
     for i in range(a.num_local_blocks - 1):
         j = i + 1
         xr_diag_blocks[i] = linalg.inv(xr_diag_blocks[i])
-        xr_00_dagger = xr_diag_blocks[i].conj().swapaxes(-2, -1)
+        xr_ii_dagger = xr_diag_blocks[i].conj().swapaxes(-2, -1)
         if selected_solve:
-            xl_diag_blocks[i] = xr_diag_blocks[i] @ xl_diag_blocks[i] @ xr_00_dagger
-
-            xg_diag_blocks[i] = xr_diag_blocks[i] @ xg_diag_blocks[i] @ xr_00_dagger
+            xl_diag_blocks[i] = xr_diag_blocks[i] @ xl_diag_blocks[i] @ xr_ii_dagger
+            xg_diag_blocks[i] = xr_diag_blocks[i] @ xg_diag_blocks[i] @ xr_ii_dagger
 
         # Get the blocks that are used multiple times.
-        a_ji = a.blocks[j, i]
+        a_ji = a.local_blocks[j, i]
         xr_ii = xr_diag_blocks[i]
 
         # Precompute the transposes that are used multiple times.
@@ -590,8 +589,8 @@ def downward_schur(
         a_ji_xr_ii = a_ji @ xr_ii
         # temp_1 = a.local_blocks[j, i] @ xr_diag_blocks[i]
         if selected_solve:
-            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.blocks[i, j]
-            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.blocks[i, j]
+            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.local_blocks[i, j]
+            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.local_blocks[i, j]
             # temp_2 = xr_diag_blocks[i].conj().swapaxes(-2, -1) @ a.local_blocks[
             #     j, i
             # ].conj().swapaxes(-2, -1)
@@ -659,12 +658,12 @@ def downward_schur(
 
 
 def upward_schur(
-    a: DSDBSparse,
+    a: DSDBSparse | _DStackView,
     xr_diag_blocks: list[NDArray],
     obc_blocks: OBCBlocks,
-    sigma_lesser: DSDBSparse = None,
+    sigma_lesser: DSDBSparse | _DStackView = None,
     xl_diag_blocks: list[NDArray] = None,
-    sigma_greater: DSDBSparse = None,
+    sigma_greater: DSDBSparse | _DStackView = None,
     xg_diag_blocks: list[NDArray] = None,
     stack_slice: slice = Ellipsis,
     invert_last_block: bool = True,
@@ -700,23 +699,27 @@ def upward_schur(
     for i in range(n, 0, -1):
         j = i - 1
         xr_diag_blocks[i] = linalg.inv(xr_diag_blocks[i])
+        xr_ii_dagger = xr_diag_blocks[i].conj().swapaxes(-2, -1)
         if selected_solve:
-            xl_diag_blocks[i] = (
-                xr_diag_blocks[i]
-                @ xl_diag_blocks[i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
-            xg_diag_blocks[i] = (
-                xr_diag_blocks[i]
-                @ xg_diag_blocks[i]
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-            )
+            xl_diag_blocks[i] = xr_diag_blocks[i] @ xl_diag_blocks[i] @ xr_ii_dagger
+            xg_diag_blocks[i] = xr_diag_blocks[i] @ xg_diag_blocks[i] @ xr_ii_dagger
 
-        temp_1 = a.local_blocks[j, i] @ xr_diag_blocks[i]
+        # Get the blocks that are used multiple times.
+        a_ji = a.local_blocks[j, i]
+        xr_ii = xr_diag_blocks[i]
+
+        # Precompute the transposes that are used multiple times.
+        a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
+
+        # Precompute some terms that are used multiple times.
+        a_ji_xr_ii = a_ji @ xr_ii
+        # temp_1 = a.local_blocks[j, i] @ xr_diag_blocks[i]
         if selected_solve:
-            temp_2 = xr_diag_blocks[i].conj().swapaxes(-2, -1) @ a.local_blocks[
-                j, i
-            ].conj().swapaxes(-2, -1)
+            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.local_blocks[i, j]
+            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.local_blocks[i, j]
+            # temp_2 = xr_diag_blocks[i].conj().swapaxes(-2, -1) @ a.local_blocks[
+            #     j, i
+            # ].conj().swapaxes(-2, -1)
 
         obc_r = obc_blocks.retarded[j]
         a_jj = (
@@ -725,7 +728,7 @@ def upward_schur(
             else a.local_blocks[j, j] - obc_r[stack_slice]
         )
 
-        xr_diag_blocks[j] = a_jj - temp_1 @ a.local_blocks[i, j]
+        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.local_blocks[i, j]
 
         if selected_solve:
             obc_l = obc_blocks.lesser[j]
@@ -743,19 +746,25 @@ def upward_schur(
 
             xl_diag_blocks[j] = (
                 sl_jj
-                + a.local_blocks[j, i]
-                @ xl_diag_blocks[i]
-                @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
-                - sigma_lesser.local_blocks[j, i] @ temp_2
-                - temp_1 @ sigma_lesser.local_blocks[i, j]
+                + a_ji
+                # + a.local_blocks[j, i]
+                @ xl_diag_blocks[i] @ a_ji_dagger
+                # @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
+                + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
+                # - sigma_lesser.local_blocks[j, i] @ temp_2
+                - a_ji_xr_ii_sl_ij
+                # - temp_1 @ sigma_lesser.local_blocks[i, j]
             )
             xg_diag_blocks[j] = (
                 sg_jj
-                + a.local_blocks[j, i]
-                @ xg_diag_blocks[i]
-                @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
-                - sigma_greater.local_blocks[j, i] @ temp_2
-                - temp_1 @ sigma_greater.local_blocks[i, j]
+                + a_ji
+                # + a.local_blocks[j, i]
+                @ xg_diag_blocks[i] @ a_ji_dagger
+                # @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
+                + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
+                # - sigma_greater.local_blocks[j, i] @ temp_2
+                - a_ji_xr_ii_sg_ij
+                # - temp_1 @ sigma_greater.local_blocks[i, j]
             )
 
     if invert_last_block:

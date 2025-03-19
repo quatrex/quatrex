@@ -221,7 +221,6 @@ class ReducedSystem:
             diag_blocks.append(x_diag_blocks[0])
             diag_blocks.append(x_diag_blocks[-1])
 
-            # if is_retarded:
             lower_blocks.append(buffer_upper[-2])
             lower_blocks.append(a.local_blocks[j, i])
 
@@ -635,7 +634,8 @@ class ReducedSystem:
             x_diag_blocks[-1] = diag_block_reduced_system[2 * block_comm.rank]
 
             buffer_upper[-2] = lower_block_reduced_system[2 * block_comm.rank - 1]
-            buffer_lower[-2] = upper_block_reduced_system[2 * block_comm.rank - 1]
+            if is_retarded:
+                buffer_lower[-2] = upper_block_reduced_system[2 * block_comm.rank - 1]
 
             if not write_x_out:
                 return
@@ -937,7 +937,7 @@ def permuted_schur(
     if selected_solve:
         # xl_buffer_lower[0] = sigma_lesser.local_blocks[0, 1]
         xl_buffer_upper[0] = sigma_lesser.local_blocks[1, 0]
-        xl_buffer_lower[0] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
+        # xl_buffer_lower[0] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
 
         obc_l = obc_blocks.lesser[0]
         sl_00 = (
@@ -957,7 +957,7 @@ def permuted_schur(
 
         # xg_buffer_lower[0] = sigma_greater.local_blocks[0, 1]
         xg_buffer_upper[0] = sigma_greater.local_blocks[1, 0]
-        xg_buffer_lower[0] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
+        # xg_buffer_lower[0] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
 
         obc_g = obc_blocks.greater[0]
         sg_00 = (
@@ -1047,7 +1047,7 @@ def permuted_schur(
                 # @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                 - a_ji_xr_ii @ xl_buffer_upper[i - 1]
             )
-            xl_buffer_lower[i] = -xl_buffer_upper[i].conj().swapaxes(-2, -1)
+            # xl_buffer_lower[i] = -xl_buffer_upper[i].conj().swapaxes(-2, -1)
             # xl_buffer_lower[i] = (
             #     xr_buffer_lower[i - 1] @ xl_diag_blocks[i] @ a_ji_dagger
             #     # @ a.local_blocks[j, i].conj().swapaxes(-2, -1)
@@ -1102,7 +1102,7 @@ def permuted_schur(
                 # @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                 - a_ji_xr_ii @ xg_buffer_upper[i - 1]
             )
-            xg_buffer_lower[i] = -xg_buffer_upper[i].conj().swapaxes(-2, -1)
+            # xg_buffer_lower[i] = -xg_buffer_upper[i].conj().swapaxes(-2, -1)
             # xg_buffer_lower[i] = (
             #     xr_buffer_lower[i - 1] @ xg_diag_blocks[i] @ a_ji_dagger
             #     - xg_buffer_lower[i - 1] @ a_ji_xr_ii.conj().swapaxes(-2, -1)

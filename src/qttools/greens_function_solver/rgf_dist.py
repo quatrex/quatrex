@@ -165,11 +165,13 @@ class RGFDist(GFSolver):
         xr_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
         xl_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-        xl_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+        # xl_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+        xl_buffer_lower = None
         xl_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
         xg_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-        xg_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+        # xg_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
+        xg_buffer_lower = None
         xg_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
         if obc_blocks is None:

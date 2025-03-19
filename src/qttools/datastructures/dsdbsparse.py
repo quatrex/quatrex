@@ -516,8 +516,20 @@ class DSDBSparse(ABC):
 
         """
         local_blocks = []
-        for b in range(self.num_local_blocks - abs(offset)):
-            local_blocks.append(self.local_blocks[b, b + offset])
+        stack_view = self.stack[...]
+        if block_comm.rank != block_comm.size - 1:
+            # Only the last rank in the block-communicator needs to make
+            # sure that the offset does not exceed the number of local
+            # blocks.
+            num_blocks = self.num_local_blocks
+        else:
+            num_blocks = self.num_local_blocks - abs(offset)
+
+        col_offset = offset if offset > 0 else 0
+        row_offset = abs(offset) if offset < 0 else 0
+
+        for b in range(num_blocks):
+            local_blocks.append(stack_view.local_blocks[b + row_offset, b + col_offset])
 
         return _flatten_list(block_comm.allgather(local_blocks))
 
@@ -539,8 +551,11 @@ class DSDBSparse(ABC):
         self.return_dense = True
 
         diagonals = []
+        stack_view = self.stack[...]
         for b in range(self.num_local_blocks):
-            diagonals.append(xp.diagonal(self.local_blocks[b, b], axis1=-2, axis2=-1))
+            diagonals.append(
+                xp.diagonal(stack_view.local_blocks[b, b], axis1=-2, axis2=-1)
+            )
 
         # Restore the original return_dense state.
         self.return_dense = original_return_dense

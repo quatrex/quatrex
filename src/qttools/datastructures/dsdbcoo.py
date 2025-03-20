@@ -120,10 +120,13 @@ class DSDBCOO(DSDBSparse):
             arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
 
-        if len(inds) != rows.size:
-            # We cannot know which rank is supposed to hold an element
-            # that is not in the matrix, so we raise an error.
-            raise IndexError("Requested element not in matrix.")
+        # NOTE: This causes problems with the block-distribution, so
+        # this is commented out for now. If you request elements outside
+        # the sparsity pattern, you may get trouble.
+        # if len(inds) != rows.size:
+        #     # We cannot know which rank is supposed to hold an element
+        #     # that is not in the matrix, so we raise an error.
+        #     raise IndexError("Requested element not in matrix.")
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.

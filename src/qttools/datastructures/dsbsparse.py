@@ -337,9 +337,12 @@ class DSBSparse(ABC):
                 ...,
                 : sum(self.nnz_section_sizes),
             ]
+        indices = tuple(range(1, len(self._data.shape)))
         return self._data[
-            self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
-        ]
+            : self.nnz_section_sizes[comm.rank],
+            self._stack_padding_mask,
+            ...,
+        ].transpose((*indices, 0))
 
     @data.setter
     def data(self, value: NDArray) -> None:
@@ -351,9 +354,12 @@ class DSBSparse(ABC):
                 : sum(self.nnz_section_sizes),
             ] = value
         else:
+            indices = tuple(range(len(value.shape) - 1))
             self._data[
-                self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
-            ] = value
+                : self.nnz_section_sizes[comm.rank],
+                self._stack_padding_mask,
+                ...,
+            ] = value.transpose((-1, *indices))
 
     def __repr__(self) -> str:
         """Returns a string representation of the object."""
@@ -626,6 +632,12 @@ class DSBSparse(ABC):
         # )
 
         self._data = _block_view(self._data, axis=block_axis)
+        if block_axis == -1:
+            indices = tuple(range(1, len(self.global_stack_shape) + 1))
+            self._data = self._data.transpose((0, block_axis, *indices))
+        else:
+            indices = tuple(range(2, len(self.global_stack_shape) + 2))
+            self._data = self._data.transpose((0, *indices, block_axis))
         if discard:
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0
@@ -689,10 +701,12 @@ class DSBSparse(ABC):
 
         """
         if self.distribution_state == "stack":
-            self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
+            # self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
+            self._dtranspose(block_axis=-1, concatenate_axis=1, discard=discard)
             self.distribution_state = "nnz"
         else:
-            self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
+            # self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
+            self._dtranspose(block_axis=1, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
 
     @abstractmethod

@@ -172,12 +172,13 @@ class DSBCSR(DSBSparse):
         # We need to access the full data buffer directly to set the
         # value since we are using advanced indexing.
         if value.ndim == 0:
-            self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value
+            self._data[nnz_inds, stack_inds, stack_index[1:] or Ellipsis] = value
             return
 
-        self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value[
+        indices = tuple(range(len(value.shape) - 1))
+        self._data[nnz_inds, stack_inds, stack_index[1:] or Ellipsis] = value[
             ..., value_inds[ranks == comm.rank] - value_inds[ranks == comm.rank][0]
-        ]
+        ].transpose((-1, *indices))
         return
 
     @profiler.profile(level="debug")

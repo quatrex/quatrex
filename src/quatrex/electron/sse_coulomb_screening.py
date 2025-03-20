@@ -157,11 +157,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         """
 
         t_block_reorder_start = time.perf_counter()
-        if w_lesser.nnz != g_lesser.nnz:
-            raise ValueError(
-                "The sparsity pattern of w_lesser and g_lesser must match."
-                "Something went horribly wrong."
-            )
 
         # Save the block sizes for later.
         if self.big_block_sizes is None:

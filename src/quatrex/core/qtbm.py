@@ -486,7 +486,9 @@ def get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray
         The potential for each orbital.
     """
 
-    orb_potential = xp.zeros((orbitals_per_atom[-1],1),dtype=xp.float64)
+    n_orb_tot = orbitals_per_atom[-1].get().item() if hasattr(orbitals_per_atom[-1], 'get') else orbitals_per_atom[-1].item()
+
+    orb_potential = xp.zeros((n_orb_tot,1),dtype=xp.float64)
     for i in range(potential.shape[0]):
         orb_potential[orbitals_per_atom[i]:orbitals_per_atom[i+1]] = potential[i]
 

@@ -502,7 +502,7 @@ class SCBA:
         i_right = xp.real(self.observables.electron_current.get("right", 0.0))
 
         dE = self.electron_energies[1] - self.electron_energies[0]
-        current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
+        current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
@@ -999,7 +999,6 @@ class SCBA:
             t_sigma_update_end = time.perf_counter()
             comm.Barrier()
             t_sigma_update_end_all = time.perf_counter()
-
             if comm.rank == 0:
                 print(
                     f"Time for updating: {t_sigma_update_end - t_sigma_update_start:.3f} s",
@@ -1009,6 +1008,22 @@ class SCBA:
                     f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s",
                     flush=True,
                 )
+            if xp.__name__ == "cupy":
+                free_memory, total_memory = xp.cuda.Device().mem_info
+                usage = (total_memory - free_memory) / total_memory
+                if not NCCL_AVAILABLE:
+                    average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+                else:
+                    average_usage = xp.empty(1)
+                    synchronize_device()
+                    nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
+                    synchronize_device()
+                    average_usage = float(average_usage[0]) / comm.size
+                if comm.rank == 0:
+                    print(
+                        f"Rank-average device memory usage: {average_usage * 100:.4f}%",
+                        flush=True,
+                    )
 
             t_iteration = time.perf_counter() - t_iteration_start
             if comm.rank == 0:

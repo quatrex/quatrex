@@ -3,10 +3,7 @@
 import re
 from pathlib import Path
 
-from scipy import sparse
-
-from qttools import NDArray, _DType, xp
-from qttools.utils.gpu_utils import get_host
+from qttools import NDArray, _DType, host_xp, sparse, xp
 
 
 def read_hr_dat(
@@ -276,7 +273,7 @@ def create_coordinate_grid(
     grid = xp.zeros(
         (int(xp.prod(xp.asarray(super_cell)) * num_wann), 3), dtype=xp.float64
     )
-    for i, cell_ind in enumerate(xp.ndindex(super_cell)):
+    for i, cell_ind in enumerate(host_xp.ndindex(super_cell)):
         grid[i * num_wann : (i + 1) * num_wann, :] = (
             wannier_centers + xp.asarray(cell_ind) @ lattice_vectors
         )
@@ -400,9 +397,9 @@ def create_hamiltonian(
 
     if return_sparse:
         # Create sparse matrices of the blocks.
-        diag_block = sparse.coo_matrix(get_host(diag_block))
-        upper_block = sparse.coo_matrix(get_host(upper_block))
-        lower_block = sparse.coo_matrix(get_host(lower_block))
+        diag_block = sparse.coo_matrix(diag_block)
+        upper_block = sparse.coo_matrix(upper_block)
+        lower_block = sparse.coo_matrix(lower_block)
         # Canoncialize the sparse matrices.
         # NOTE: Not sure if this is necessary.
         for mat in [diag_block, upper_block, lower_block]:
@@ -444,7 +441,7 @@ def create_hamiltonian(
         block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
         return (
             sparse.coo_matrix(
-                (get_host(full_data), (get_host(full_rows), get_host(full_cols))),
+                (full_data, (full_rows, full_cols)),
                 shape=(matrix_shape, matrix_shape),
             ),
             block_sizes,

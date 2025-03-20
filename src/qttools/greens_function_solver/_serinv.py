@@ -1213,7 +1213,7 @@ def downward_selinv(
             xr_diag_blocks[i] - x_upper_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
         )
         if not return_retarded:
-            return
+            continue
 
         # # Streaming/Sparsifying back to DSDBSparse
         xr_out.local_blocks[j, i] = x_lower_block
@@ -1330,7 +1330,7 @@ def upward_selinv(
             xr_diag_blocks[i] - x_lower_block @ a.local_blocks[j, i] @ xr_diag_blocks[i]
         )
         if not return_retarded:
-            return
+            continue
 
         # Streaming/Sparsifying back to DSDBSparse
         xr_out.local_blocks[j, i] = x_upper_block

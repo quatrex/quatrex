@@ -181,55 +181,57 @@ class LyapunovMemoizer:
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 
-        if self.force_memoizing:
+        if self.force_memoizing and x is None:
             x = q
-
-        if x is None:
+        elif x is None:
             return self._call_with_cache(a, q, contact, out=out)
 
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
-        # Check for convergence accross all MPI ranks.
-        absolute_recursion_errors = xp.linalg.norm(x_ref - x, axis=(-2, -1))
-        relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
-            x_ref, axis=(-2, -1)
-        )
-        x = x_ref
+        if not self.force_memoizing:
 
-        local_memoizing = xp.array(
-            xp.all(
-                (absolute_recursion_errors < self.memoize_abs_tol)
-                | (relative_recursion_errors < self.memoize_rel_tol)
-            ),
-            dtype=int,
-        )
-        memoizing = xp.empty_like(local_memoizing)
-
-        # NCCL allreduce does not support op="and"
-        synchronize_current_stream()
-        # NCCL allreduce does not support op="and"
-        if NCCL_AVAILABLE:
-            nccl_comm.all_reduce(local_memoizing, memoizing, op="sum")
-        elif GPU_AWARE_MPI:
-            comm.Allreduce(local_memoizing, memoizing, op=MPI.SUM)
-        else:
-            local_memoizing = get_host(local_memoizing)
-            # TODO: this memcopy is not necessary
-            # but for consistency with the other cases
-            memoizing = get_host(memoizing)
-            comm.Allreduce(local_memoizing, memoizing, op=MPI.SUM)
-            memoizing = get_device(memoizing)
-        synchronize_current_stream()
-
-        if comm.rank == 0:
-            print(
-                f"{memoizing} out of {comm.size} ranks want to memoize {contact} Lyapunov",
-                flush=True,
+            # Check for convergence accross all MPI ranks.
+            absolute_recursion_errors = xp.linalg.norm(x_ref - x, axis=(-2, -1))
+            relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
+                x_ref, axis=(-2, -1)
             )
 
-        if memoizing != comm.size and not self.force_memoizing:
-            # If the result did not converge, recompute it from scratch.
-            return self._call_with_cache(a, q, contact, out=out)
+            local_memoizing = xp.array(
+                xp.all(
+                    (absolute_recursion_errors < self.memoize_abs_tol)
+                    | (relative_recursion_errors < self.memoize_rel_tol)
+                ),
+                dtype=int,
+            )
+            memoizing = xp.empty_like(local_memoizing)
+
+            # NCCL allreduce does not support op="and"
+            synchronize_current_stream()
+            # NCCL allreduce does not support op="and"
+            if NCCL_AVAILABLE:
+                nccl_comm.all_reduce(local_memoizing, memoizing, op="sum")
+            elif GPU_AWARE_MPI:
+                comm.Allreduce(local_memoizing, memoizing, op=MPI.SUM)
+            else:
+                local_memoizing = get_host(local_memoizing)
+                # TODO: this memcopy is not necessary
+                # but for consistency with the other cases
+                memoizing = get_host(memoizing)
+                comm.Allreduce(local_memoizing, memoizing, op=MPI.SUM)
+                memoizing = get_device(memoizing)
+            synchronize_current_stream()
+
+            if comm.rank == 0:
+                print(
+                    f"{memoizing} out of {comm.size} ranks want to memoize {contact} Lyapunov",
+                    flush=True,
+                )
+
+            if memoizing != comm.size:
+                # If the result did not converge, recompute it from scratch.
+                return self._call_with_cache(a, q, contact, out=out)
+
+        x = x_ref
 
         # Do refinement iterations.
         for __ in range(self.num_ref_iterations - 2):

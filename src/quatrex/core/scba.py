@@ -225,16 +225,34 @@ class SCBA:
         )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
         # ----- Electrons ----------------------------------------------
-        if (
-            (self.quatrex_config.electron.energy_window_max is not None)
-            and (self.quatrex_config.electron.energy_window_min is not None)
-            and (self.quatrex_config.electron.energy_window_num is not None)
+        if (self.quatrex_config.electron.energy_window_max is not None) and (
+            self.quatrex_config.electron.energy_window_min is not None
         ):
-            self.electron_energies = xp.linspace(
-                self.quatrex_config.electron.energy_window_min,
-                self.quatrex_config.electron.energy_window_max,
-                self.quatrex_config.electron.energy_window_num,
-            )
+            if self.quatrex_config.electron.energy_window_num is not None:
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    self.quatrex_config.electron.energy_window_num,
+                )
+            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                energy_window_num = (
+                    self.quatrex_config.electron.energy_window_num_per_rank
+                    * comm.Get_size()
+                )
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    energy_window_num,
+                )
+                message = (
+                    f"Electron energy window with {energy_window_num} grid points."
+                )
+                if comm.rank == 0:
+                    print(message)
+            else:
+                raise ValueError(
+                    "Cannot set both electron `energy_window_num` and `energy_window_num_per_rank` in the config."
+                )
         else:
             energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
             if os.path.isfile(energies_path):
@@ -250,57 +268,14 @@ class SCBA:
                                 {'-'*40}
                                 """
                     print(message)
-                # determine the energy window from the bandstructure
-                # for this, we will need to load the device hamiltonian first
-                electron_solver = ElectronSolver(
-                    self.quatrex_config,
-                    self.compute_config,
-                    electron_energies,
-                    sparsity_pattern=self.data.sparsity_pattern,
+                self.electron_energies = self._determine_electron_energy_window(
+                    quatrex_config, compute_config
                 )
-                h_00 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (0, 0)
-                )
-                h_10 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (1, 0)
-                )
-                h_01 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (0, 1)
-                )
-                num_k_points = 3
-                e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
-                n = electron_solver.block_sizes.shape[0] - 1
-                h_00 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (n, n)
-                )
-                h_10 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (n, n - 1)
-                )
-                h_01 = electron_solver._get_block(
-                    electron_solver.hamiltonian_sparray, (n - 1, n)
-                )
-                e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
-                energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) + 1.0
-                energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0
-                energy_step = 1e-3  # an energy step of 1 meV
-                energy_window_num = (
-                    int((energy_window_max - energy_window_min) / energy_step) + 1
-                )
-                self.electron_energies = xp.linspace(
-                    energy_window_min,
-                    energy_window_max,
-                    energy_window_num,
-                )
-                if comm.rank == 0:
-                    print(
-                        f"Energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
-                    )
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
             self.compute_config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -374,6 +349,46 @@ class SCBA:
         self.data = SCBAData(
             quatrex_config, compute_config, electron_energies=self.electron_energies
         )  # real data
+
+    def _determine_electron_energy_window(
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
+    ):
+        """Determine the energy window from the bandstructure."""
+        electron_energies = xp.zeros((comm.Get_size(),))
+        electron_solver = ElectronSolver(
+            quatrex_config,
+            compute_config,
+            electron_energies,
+        )
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 0))
+        h_10 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (1, 0))
+        h_01 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 1))
+        num_k_points = 3
+        e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        n = electron_solver.block_sizes.shape[0] - 1
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (n, n))
+        h_10 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n, n - 1)
+        )
+        h_01 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n - 1, n)
+        )
+        e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) - 1.0
+        energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0
+        energy_step = 1e-3  # an energy step of 1 meV
+        energy_window_num = (
+            int((energy_window_max - energy_window_min) / energy_step) + 1
+        )
+        if comm.rank == 0:
+            print(
+                f"Electron energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
+            )
+        return xp.linspace(
+            energy_window_min,
+            energy_window_max,
+            energy_window_num,
+        )
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""

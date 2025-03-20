@@ -175,6 +175,7 @@ class ElectronConfig(BaseModel):
     energy_window_min: float | None = None
     energy_window_max: float | None = None
     energy_window_num: PositiveInt | None = None
+    energy_window_num_per_rank: PositiveInt | None = None
 
     flatband: bool | None = None
 

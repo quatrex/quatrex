@@ -2,7 +2,7 @@
 
 import numpy as np
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_device, get_host
+from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
 from scipy.optimize import minimize_scalar
 
 from quatrex.core.statistics import fermi_dirac
@@ -45,8 +45,10 @@ def contact_band_structure(
         + h_00
         + h_10 * xp.exp(1j * k)[:, xp.newaxis, xp.newaxis]
     )
-
-    e_k = get_device(np.linalg.eigvals(get_host(h_k)))
+    if get_array_module_name(h_k) == "cupy":
+        e_k = get_device(np.linalg.eigvals(get_host(h_k)))
+    else:
+        e_k = np.linalg.eigvals(h_k)
     return xp.sort(e_k.real, axis=1)
 
 

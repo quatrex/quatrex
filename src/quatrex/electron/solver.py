@@ -68,7 +68,6 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)

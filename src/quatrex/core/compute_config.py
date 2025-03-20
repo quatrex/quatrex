@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator
-from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
 
 
 class LyapunovConfig(BaseModel):
@@ -57,6 +57,7 @@ class ComputeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     dsbsparse_type: DSBSparse = DSBCOO
+    dsdbsparse_type: DSDBSparse = DSDBCOO
 
     convolve: ConvolveConfig = ConvolveConfig()
     nevp: NEVPConfig = NEVPConfig()
@@ -70,6 +71,13 @@ class ComputeConfig(BaseModel):
             return DSBCSR
         elif value == "DSBCOO":
             return DSBCOO
+        raise ValueError(f"Invalid value '{value}' for dbsparse")
+
+    @field_validator("dsdbsparse_type", mode="before")
+    def set_dsdbsparse(cls, value) -> DSDBSparse:
+        """Converts the string value to the corresponding DSDBSparse object."""
+        if value == "DSDBCOO":
+            return DSDBCOO
         raise ValueError(f"Invalid value '{value}' for dbsparse")
 
 

@@ -71,11 +71,17 @@ def get_periodic_superblocks_no_flip(
     a10 = _block_view(a10, -2, block_sections)
     a01 = _block_view(a01, -1, block_sections)
     as1 = _block_view(as1, -1, 1)
-    #Add a zero block
-    z_j = _block_view(xp.zeros((orb_slab,orb_slab*(block_sections-1))),-1, block_sections-1)
+
+    if block_sections > 1:
+        #Add a zero block
+        z_j = _block_view(xp.zeros((orb_slab,orb_slab*(block_sections-1))),-1, block_sections-1)
+         #Stack the blocks in the right (transport) order
+        periodic_layer = xp.vstack((as0, a10[block_sections::-1], a01[1:], as1, z_j))
+    else:
+         #Stack the blocks in the right (transport) order
+        periodic_layer = xp.vstack((as0, a10[block_sections::-1], a01[1:], as1))
     
-    #Stack the blocks in the right (transport) order
-    periodic_layer = xp.vstack((as0, a10[block_sections::-1], a01[1:], as1, z_j))
+   
 
     # Stack the periodic layer to form a periodic superblock structure.
     

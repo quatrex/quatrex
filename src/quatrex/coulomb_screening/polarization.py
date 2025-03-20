@@ -104,38 +104,40 @@ class PCoulombScreening(ScatteringSelfEnergy):
         synchronize_device()
         t_polarization = -time.perf_counter()
 
-        with profiler.profile_range("Polarization computation", level="debug"):
-            if self.batch_size is None:
-                # NOTE: This is a temporary solution. The batch size should be
-                # calculated in the configuration.
-                self.batch_size = p_greater.data.shape[-1]
+        if p_greater.data.shape[-1] != 0:
 
-            batch_counts, _ = get_section_sizes(
-                p_greater.data.shape[-1],
-                int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
-            )
+            with profiler.profile_range("Polarization computation", level="debug"):
+                if self.batch_size is None:
+                    # NOTE: This is a temporary solution. The batch size should be
+                    # calculated in the configuration.
+                    self.batch_size = p_greater.data.shape[-1]
 
-            batch_displacements = np.cumsum(
-                np.concatenate(([0], np.array(batch_counts)))
-            )
-
-            for start, end in zip(batch_displacements, batch_displacements[1:]):
-                batch = slice(start, end)
-
-                p_g_full = self.prefactor * fft_correlate(
-                    g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+                batch_counts, _ = get_section_sizes(
+                    p_greater.data.shape[-1],
+                    int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
                 )
-                p_l_full = -p_g_full[::-1].conj()
-                # TODO: the datastructures does not allow for easy slicing of the
-                # data. This is a workaround.
-                # Fill the matrices with the data. Take second part of the
-                # energy convolution.
-                p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
-                    self.ne - 1 :
-                ]
-                p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
-                    self.ne - 1 :
-                ]
+
+                batch_displacements = np.cumsum(
+                    np.concatenate(([0], np.array(batch_counts)))
+                )
+
+                for start, end in zip(batch_displacements, batch_displacements[1:]):
+                    batch = slice(start, end)
+
+                    p_g_full = self.prefactor * fft_correlate(
+                        g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+                    )
+                    p_l_full = -p_g_full[::-1].conj()
+                    # TODO: the datastructures does not allow for easy slicing of the
+                    # data. This is a workaround.
+                    # Fill the matrices with the data. Take second part of the
+                    # energy convolution.
+                    p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
+                        self.ne - 1 :
+                    ]
+                    p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
+                        self.ne - 1 :
+                    ]
 
         t_polarization += time.perf_counter()
         if comm.rank == 0:

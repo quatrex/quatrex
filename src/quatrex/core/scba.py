@@ -642,6 +642,7 @@ class SCBA:
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
             synchronize_device()
+            comm.Barrier()
             times.append(time.perf_counter())
 
             times.append(time.perf_counter())
@@ -751,6 +752,7 @@ class SCBA:
             if comm.rank == 0:
                 print(f"Time for updating: {t_update:.2f} s", flush=True)
             synchronize_device()
+            comm.Barrier()
             t_iteration = time.perf_counter() - times.pop()
             if comm.rank == 0:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)

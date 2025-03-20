@@ -16,8 +16,10 @@ from qttools.datastructures.dsbsparse import _block_view
 
 if xp.__name__ == "numpy":
     from scipy.sparse.linalg import spsolve
+    from scipy.sparse.linalg import splu
 if xp.__name__ == "cupy":
     from cupyx.scipy.sparse.linalg import spsolve
+    from cupyx.scipy.sparse.linalg import splu
 
 if xp.__name__ == "numpy":
     from numpy.linalg import lstsq
@@ -917,7 +919,10 @@ class QTBM:
             times.append(time.perf_counter())
 
             # Solve for the wavefunction
-            phi = spsolve(self.system_matrix, inj_V)
+            #phi = spsolve(self.system_matrix, inj_V)
+
+            lu = splu(self.system_matrix)
+            phi = lu.solve(inj_V)
 
             t_solve = time.perf_counter() - times.pop()
             (

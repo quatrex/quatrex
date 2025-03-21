@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import copy
+import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
@@ -620,29 +621,88 @@ class DSBSparse(ABC):
         #     old_shape[-1] * comm.size,
         # )
 
-        self._data = _block_view(self._data, axis=block_axis)
         if discard:
+            t_discard_start = time.perf_counter()
+            self._data = _block_view(self._data, axis=block_axis)
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0
+            synchronize_device()
+            t_discard_end = time.perf_counter()
+            comm.Barrier()
+            t_discard_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"        Discard time: {t_discard_end - t_discard_start:.3f} seconds",
+                    flush=True,
+                )
+                print(
+                    f"        Discard time all: {t_discard_end_all - t_discard_start:.3f} seconds",
+                    flush=True,
+                )
             return
 
         # We need to make sure that the block-view is memory-contiguous.
         # This does nothing if the data is already contiguous.
+        t_block_view_start = time.perf_counter()
+        self._data = _block_view(self._data, axis=block_axis)
         self._data = xp.ascontiguousarray(self._data)
+        synchronize_device()
+        t_block_view_end = time.perf_counter()
+        comm.Barrier()
+        t_block_view_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"        Block view time: {t_block_view_end - t_block_view_start:.3f} seconds",
+                flush=True,
+            )
+            print(
+                f"        Block view time all: {t_block_view_end_all - t_block_view_start:.3f} seconds",
+                flush=True,
+            )
 
         if NCCL_AVAILABLE:
             # Always use NCCL if available.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
+            comm.Barrier()
+            t_nccl_start = time.perf_counter()
             nccl_comm.all_to_all(self._data, receive_buffer)
             synchronize_device()
+            t_nccl_end = time.perf_counter()
+            comm.Barrier()
+            t_nccl_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"        NCCL Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+                print(
+                    f"        NCCL Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+
             self._data = receive_buffer
         elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
             # Use MPI if we are not on GPU or if we have GPU-aware MPI.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
+            comm.Barrier()
+            t_nccl_start = time.perf_counter()
             comm.Alltoall(self._data, receive_buffer)
             synchronize_device()
+            t_nccl_end = time.perf_counter()
+            comm.Barrier()
+            t_nccl_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"        MPI Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+                print(
+                    f"        MPI Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+
             self._data = receive_buffer
         else:
             # Use the host memory if we are on GPU and do not have
@@ -651,7 +711,21 @@ class DSBSparse(ABC):
             comm.Alltoall(MPI.IN_PLACE, _data_host)
             self._data = xp.array(_data_host)
 
+        t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
+        synchronize_device()
+        t_concatenate_end = time.perf_counter()
+        comm.Barrier()
+        t_concatenate_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"        Concatenate time: {t_concatenate_end - t_concatenate_start:.3f} seconds",
+                flush=True,
+            )
+            print(
+                f"        Concatenate time all: {t_concatenate_end_all - t_concatenate_start:.3f} seconds",
+                flush=True,
+            )
 
         # NOTE: There are a few things commented out here, since there
         # may be an alternative way to do the correct reshaping after

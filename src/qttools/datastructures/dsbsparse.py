@@ -167,6 +167,8 @@ class DSBSparse(ABC):
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> None:
         """Initializes the DSBSparse matrix."""
         if isinstance(global_stack_shape, int):
@@ -178,6 +180,8 @@ class DSBSparse(ABC):
             )
 
         self.global_stack_shape = global_stack_shape
+        self.symmetry = symmetry
+        self.symmetry_op = symmetry_op
 
         # Determine how the data is distributed across the ranks.
         stack_section_sizes, total_stack_size = get_section_sizes(

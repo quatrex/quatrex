@@ -468,8 +468,7 @@ class ElectronSolver(SubsystemSolver):
                     self.right_fermi_level + self.delta_fermi_level_conduction_band,
                 ),
                 (self.left_mid_gap_energy, self.right_mid_gap_energy),
-                use_eigvalsh=self.compute_config.band_edge.use_eigvalsh,
-                eigvalsh_compute_location=self.compute_config.band_edge.eigvalsh_compute_location,
+                band_edge_config=self.compute_config.band_edge,
             )
             self._update_fermi_levels(e_0_left, e_0_right)
 

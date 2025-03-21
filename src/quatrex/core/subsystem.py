@@ -87,6 +87,7 @@ class SubsystemSolver(ABC):
                 project_compute_location=compute_config.nevp.project_compute_location,
                 use_qr=compute_config.nevp.use_qr,
                 contour_batch_size=compute_config.nevp.contour_batch_size,
+                use_pinned_memory=compute_config.nevp.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
             return Full(eig_compute_location=compute_config.nevp.eig_compute_location)
@@ -141,9 +142,12 @@ class SubsystemSolver(ABC):
 
         if obc_config.memoizer.enable:
             obc_solver = obc.OBCMemoizer(
-                obc_solver,
-                obc_config.memoizer.num_ref_iterations,
-                obc_config.memoizer.convergence_tol,
+                obc_solver=obc_solver,
+                num_ref_iterations=obc_config.memoizer.num_ref_iterations,
+                memoize_rel_tol=obc_config.memoizer.relative_tol,
+                memoize_abs_tol=obc_config.memoizer.absolute_tol,
+                warning_threshold=obc_config.memoizer.warning_threshold,
+                force_memoizing=obc_config.memoizer.force,
             )
 
         return obc_solver
@@ -168,13 +172,15 @@ class SubsystemSolver(ABC):
             lyapunov_solver = lyapunov.Spectral(
                 num_ref_iterations=lyapunov_config.num_ref_iterations,
                 warning_threshold=lyapunov_config.warning_threshold,
+                eig_compute_location=compute_config.lyapunov.eig_compute_location,
                 reduce_sparsity=lyapunov_config.reduce_sparsity,
-                eig_compute_location=compute_config.nevp.eig_compute_location,
+                use_pinned_memory=compute_config.lyapunov.use_pinned_memory,
             )
         elif lyapunov_config.algorithm == "doubling":
             lyapunov_solver = lyapunov.Doubling(
                 max_iterations=lyapunov_config.max_iterations,
-                convergence_tol=lyapunov_config.convergence_tol,
+                convergence_rel_tol=lyapunov_config.relative_tol,
+                convergence_abs_tol=lyapunov_config.absolute_tol,
                 reduce_sparsity=lyapunov_config.reduce_sparsity,
             )
         else:
@@ -184,9 +190,13 @@ class SubsystemSolver(ABC):
 
         if lyapunov_config.memoizer.enable:
             lyapunov_solver = lyapunov.LyapunovMemoizer(
-                lyapunov_solver,
-                lyapunov_config.memoizer.num_ref_iterations,
-                lyapunov_config.memoizer.convergence_tol,
+                lyapunov_solver=lyapunov_solver,
+                num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
+                memoize_rel_tol=lyapunov_config.memoizer.relative_tol,
+                memoize_abs_tol=lyapunov_config.memoizer.absolute_tol,
+                warning_threshold=lyapunov_config.memoizer.warning_threshold,
+                force_memoizing=lyapunov_config.memoizer.force,
+                reduce_sparsity=lyapunov_config.reduce_sparsity,
             )
         return lyapunov_solver
 

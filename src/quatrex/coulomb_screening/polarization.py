@@ -16,6 +16,9 @@ from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
 
+if xp.__name__ == "cupy":
+    cache = xp.fft.config.get_plan_cache()
+
 
 @profiler.profile(level="api")
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
@@ -124,6 +127,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
                     self.batch_size = batch_size
+                    cache.set_memsize(2 * ne * batch_size * 16)
                     if comm.rank == 0:
                         print(
                             f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",

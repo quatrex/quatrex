@@ -215,8 +215,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.block_sections = quatrex_config.coulomb_screening.obc.block_sections
 
         self.flatband = quatrex_config.electron.flatband
-        self.call_count = 0
-        self.max_filter_count = quatrex_config.coulomb_screening.max_filter_count
+        self.solve_call_count = 0
+        self.filtering_iteration_limit = (
+            quatrex_config.coulomb_screening.filtering_iteration_limit
+        )
 
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
@@ -549,7 +551,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.
-        if self.call_count < self.max_filter_count:
+        if self.solve_call_count < self.filtering_iteration_limit:
             self._filter_peaks(out)
 
         w_lesser, w_greater, *__ = out
@@ -565,4 +567,4 @@ class CoulombScreeningSolver(SubsystemSolver):
             print(f"    Filter: {t_filter_end-t_filter_start:.3f}", flush=True)
             print(f"    Filter all: {t_filter_end_all-t_filter_start:.3f}", flush=True)
 
-        self.call_count += 1
+        self.solve_call_count += 1

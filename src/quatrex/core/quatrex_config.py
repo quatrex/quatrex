@@ -181,7 +181,7 @@ class ElectronConfig(BaseModel):
 
     dos_peak_limit: PositiveFloat = 100.0
 
-    max_filter_count: PositiveInt = 1
+    filtering_iteration_limit: PositiveInt = 1
 
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
@@ -247,7 +247,7 @@ class CoulombScreeningConfig(BaseModel):
 
     dos_peak_limit: PositiveFloat = 100.0
 
-    max_filter_count: PositiveInt = 1
+    filtering_iteration_limit: PositiveInt = 1
 
 
 class PhotonConfig(BaseModel):

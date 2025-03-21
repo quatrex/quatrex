@@ -99,7 +99,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    PCoulombScreening: stack->nnz transpose time: {t_all2all_end-t_all2all_start:.3f}")
+            print(
+                f"    PCoulombScreening: stack->nnz transpose time: {t_all2all_end-t_all2all_start:.3f}"
+            )
             print(
                 f"    PCoulombScreening: stack->nnz transpose time all: {t_all2all_end_all-t_all2all_start:.3f}"
             )
@@ -136,9 +138,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
                         self.ne - 1 :
                     ]
-                    p_greater._data[p_greater._stack_padding_mask, ..., batch] = p_g_full[
-                        self.ne - 1 :
-                    ]
+                    p_greater._data[p_greater._stack_padding_mask, ..., batch] = (
+                        p_g_full[self.ne - 1 :]
+                    )
 
         # Barrier before communication
         synchronize_device()
@@ -146,14 +148,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_polarization_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    PCoulombScreening: Polarization computation time: {t_polarization_end-t_polarization_start:.3f}")
-            print(f"    PCoulombScreening: Polarization computation time all: {t_polarization_end_all-t_polarization_start:.3f}")
-
+            print(
+                f"    PCoulombScreening: Polarization computation time: {t_polarization_end-t_polarization_start:.3f}"
+            )
+            print(
+                f"    PCoulombScreening: Polarization computation time all: {t_polarization_end_all-t_polarization_start:.3f}"
+            )
 
         t_all2all2_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
-            t0 = time.perf_counter()
             for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None
             # NOTE: The Green's functions must not be transposed back to
@@ -164,8 +168,12 @@ class PCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_all2all2_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    PCoulombScreening: nnz->stack transpose time: {t_all2all2_end-t_all2all2_start:.3f}")
-            print(f"    PCoulombScreening: nnz->stack transpose time all: {t_all2all2_end_all-t_all2all2_start:.3f}")
+            print(
+                f"    PCoulombScreening: nnz->stack transpose time: {t_all2all2_end-t_all2all2_start:.3f}"
+            )
+            print(
+                f"    PCoulombScreening: nnz->stack transpose time all: {t_all2all2_end_all-t_all2all2_start:.3f}"
+            )
 
         # Enforce anti-Hermitian symmetry and calculate Pr.
         t_symmetrization_start = time.perf_counter()
@@ -183,5 +191,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_symmetrization_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    PCoulombScreening: Symmetrization time: {t_symmetrization_end-t_symmetrization_start:.3f}")
-            print(f"    PCoulombScreening: Symmetrization time all: {t_symmetrization_end_all-t_symmetrization_start:.3f}")
+            print(
+                f"    PCoulombScreening: Symmetrization time: {t_symmetrization_end-t_symmetrization_start:.3f}"
+            )
+            print(
+                f"    PCoulombScreening: Symmetrization time all: {t_symmetrization_end_all-t_symmetrization_start:.3f}"
+            )

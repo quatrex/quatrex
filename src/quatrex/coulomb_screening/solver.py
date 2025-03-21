@@ -272,7 +272,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_obc_r_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True)
-            print(f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}", flush=True)
+            print(
+                f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
+                flush=True,
+            )
 
         t_lyapunov_start = time.perf_counter()
         # Compute and apply the lesser boundary self-energy.
@@ -330,9 +333,13 @@ class CoulombScreeningSolver(SubsystemSolver):
         comm.Barrier()
         t_lyapunov_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}", flush=True)
-            print(f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}", flush=True)
-
+            print(
+                f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}", flush=True
+            )
+            print(
+                f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
+                flush=True,
+            )
 
     def _assemble_system_matrix(self, p_retarded: DSBSparse) -> None:
         """Assembles the system matrix."""
@@ -426,8 +433,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         comm.Barrier()
         t_set_blocksize_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}", flush=True)
-            print(f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}", flush=True)
+            print(
+                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
+                flush=True,
+            )
+            print(
+                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
+                flush=True,
+            )
 
         # Compute the product of the Coulomb matrix with the polarization.
 
@@ -440,7 +453,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_assembly_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Assembly: {t_assembly_end-t_assembly_start:.3f}", flush=True)
-            print(f"    Assembly all: {t_assembly_end_all-t_assembly_start:.3f}", flush=True)
+            print(
+                f"    Assembly all: {t_assembly_end_all-t_assembly_start:.3f}",
+                flush=True,
+            )
 
         t_sandwich_start = time.perf_counter()
         bd_sandwich(
@@ -461,7 +477,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_sandwich_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Sandwich: {t_sandwich_end-t_sandwich_start:.3f}", flush=True)
-            print(f"    Sandwich all: {t_sandwich_end_all-t_sandwich_start:.3f}", flush=True)
+            print(
+                f"    Sandwich all: {t_sandwich_end_all-t_sandwich_start:.3f}",
+                flush=True,
+            )
 
         if self.flatband:
             t_homogenize_start = time.perf_counter()
@@ -472,8 +491,14 @@ class CoulombScreeningSolver(SubsystemSolver):
             comm.Barrier()
             t_homogenize_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Homogenize: {t_homogenize_end-t_homogenize_start:.3f}", flush=True)
-                print(f"    Homogenize all: {t_homogenize_end_all-t_homogenize_start:.3f}", flush=True)
+                print(
+                    f"    Homogenize: {t_homogenize_end-t_homogenize_start:.3f}",
+                    flush=True,
+                )
+                print(
+                    f"    Homogenize all: {t_homogenize_end_all-t_homogenize_start:.3f}",
+                    flush=True,
+                )
 
         t_set_blocksize_start = time.perf_counter()
         # Go back to normal block sizes.
@@ -482,8 +507,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         comm.Barrier()
         t_set_blocksize_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}", flush=True)
-            print(f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}", flush=True)
+            print(
+                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
+                flush=True,
+            )
+            print(
+                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
+                flush=True,
+            )
 
         # Apply the OBC algorithm.
         t_obc_start = time.perf_counter()

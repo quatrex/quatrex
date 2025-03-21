@@ -247,11 +247,6 @@ class SCBA:
                     self.quatrex_config.electron.energy_window_max,
                     energy_window_num,
                 )
-                message = (
-                    f"Electron energy window with {energy_window_num} grid points."
-                )
-                if comm.rank == 0:
-                    print(message)
             else:
                 raise ValueError(
                     "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
@@ -274,6 +269,16 @@ class SCBA:
                 self.electron_energies = self._determine_electron_energy_window(
                     quatrex_config, compute_config
                 )
+        
+        min_energy = self.electron_energies[0]
+        max_energy = self.electron_energies[-1]
+        num_energies = len(self.electron_energies)
+        energy_resolution = self.electron_energies[1] - self.electron_energies[0]
+        num_energies_per_rank = num_energies // comm.size
+        if comm.rank == 0:
+            print(f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.", flush=True)
+            print(f"Resolution is {energy_resolution} eV.", flush=True)
+            print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
@@ -974,7 +979,7 @@ class SCBA:
             if comm.rank == 0:
                 print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
 
-            if ARRAY_MODULE == "cupy":
+            if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info
                 usage = (total_memory - free_memory) / total_memory
                 if not NCCL_AVAILABLE:

@@ -249,6 +249,7 @@ class CoulombScreeningConfig(BaseModel):
 
     max_filter_count: PositiveInt = 1
 
+
 class PhotonConfig(BaseModel):
     """Options for the optical degrees of freedom."""
 

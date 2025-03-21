@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import ARRAY_MODULE, NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load
 
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -46,13 +47,12 @@ class SCBAData:
         self,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
+        electron_energies: NDArray,
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
         grid = distributed_load(quatrex_config.input_dir / "grid.npy")
-        electron_energies = distributed_load(
-            quatrex_config.input_dir / "electron_energies.npy"
-        )
+
         block_sizes = get_host(
             distributed_load(quatrex_config.input_dir / "block_sizes.npy")
         )
@@ -218,19 +218,68 @@ class SCBA:
 
         self.compute_config = compute_config
 
-        self.data = SCBAData(quatrex_config, compute_config)
         self.observables = Observables()
+        electron_energies = xp.zeros((comm.Get_size(),))
+        self.data = SCBAData(
+            quatrex_config, compute_config, electron_energies=electron_energies
+        )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
-
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = distributed_load(
-            self.quatrex_config.input_dir / "electron_energies.npy"
-        )
+        if (self.quatrex_config.electron.energy_window_max is not None) and (
+            self.quatrex_config.electron.energy_window_min is not None
+        ):
+            if self.quatrex_config.electron.energy_window_num is not None:
+                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                    raise ValueError(
+                        "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                    )
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    self.quatrex_config.electron.energy_window_num,
+                )
+            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                energy_window_num = (
+                    self.quatrex_config.electron.energy_window_num_per_rank
+                    * comm.size
+                )
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    energy_window_num,
+                )
+                message = (
+                    f"Electron energy window with {energy_window_num} grid points."
+                )
+                if comm.rank == 0:
+                    print(message)
+            else:
+                raise ValueError(
+                    "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                )
+        else:
+            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
+            if os.path.isfile(energies_path):
+                self.electron_energies = distributed_load(energies_path)
+            else:
+                if comm.rank == 0:
+                    message = f"""
+                                {'-'*40}
+                                # WARNING
+                                # since no information about electron energy grid is provided,
+                                # we decide to take an energy range enough to cover all the bands 
+                                # in the contact bandstructure. This can lead to unexpected memory usage.
+                                {'-'*40}
+                                """
+                    print(message)
+                self.electron_energies = self._determine_electron_energy_window(
+                    quatrex_config, compute_config
+                )
+
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
             self.compute_config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -300,6 +349,50 @@ class SCBA:
 
             elif self.quatrex_config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
+
+        self.data = SCBAData(
+            quatrex_config, compute_config, electron_energies=self.electron_energies
+        )  # real data
+
+    def _determine_electron_energy_window(
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
+    ):
+        """Determine the energy window from the bandstructure."""
+        electron_energies = xp.zeros((comm.Get_size(),))
+        electron_solver = ElectronSolver(
+            quatrex_config,
+            compute_config,
+            electron_energies,
+        )
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 0))
+        h_10 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (1, 0))
+        h_01 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 1))
+        num_k_points = 3
+        e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        n = electron_solver.block_sizes.shape[0] - 1
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (n, n))
+        h_10 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n, n - 1)
+        )
+        h_01 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n - 1, n)
+        )
+        e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) - 1.0
+        energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0
+        energy_step = 1e-3  # an energy step of 1 meV
+        energy_window_num = (
+            int((energy_window_max - energy_window_min) / energy_step) + 1
+        )
+        if comm.rank == 0:
+            print(
+                f"Electron energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
+            )
+        return xp.linspace(
+            energy_window_min,
+            energy_window_max,
+            energy_window_num,
+        )
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -807,21 +900,22 @@ class SCBA:
             if comm.rank == 0:
                 print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
 
-            free_memory, total_memory = xp.cuda.Device().mem_info
-            usage = (total_memory - free_memory) / total_memory
-            if not NCCL_AVAILABLE:
-                average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
-            else:
-                average_usage = xp.empty(1)
-                synchronize_device()
-                nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
-                synchronize_device()
-                average_usage = float(average_usage[0]) / comm.size
-            if comm.rank == 0:
-                print(
-                    f"Rank-average device memory usage: {average_usage * 100:.4f}%",
-                    flush=True,
-                )
+            if ARRAY_MODULE == "cupy":
+                free_memory, total_memory = xp.cuda.Device().mem_info
+                usage = (total_memory - free_memory) / total_memory
+                if not NCCL_AVAILABLE:
+                    average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
+                else:
+                    average_usage = xp.empty(1)
+                    synchronize_device()
+                    nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
+                    synchronize_device()
+                    average_usage = float(average_usage[0]) / comm.size
+                if comm.rank == 0:
+                    print(
+                        f"Rank-average device memory usage: {average_usage * 100:.4f}%",
+                        flush=True,
+                    )
 
             if i % self.quatrex_config.scba.output_interval == 0:
                 synchronize_device()

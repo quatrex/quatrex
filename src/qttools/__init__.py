@@ -38,6 +38,8 @@ if ARRAY_MODULE is not None:
             host_xp = xp
             pinned_xp = None
 
+            ARRAY_MODULE = "numpy"
+
     else:
         raise ValueError(f"Unrecognized ARRAY_MODULE '{ARRAY_MODULE}'")
 
@@ -61,6 +63,8 @@ else:
 
         host_xp = xp
         pinned_xp = None
+
+        ARRAY_MODULE = "numpy"
 
 # TODO: adapt testing suite to test both JIT and non-JIT versions
 # Implemented with a env variable to allow for easy switching

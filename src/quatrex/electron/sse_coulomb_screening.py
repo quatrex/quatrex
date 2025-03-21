@@ -209,11 +209,25 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         if g_greater.data.shape[-1] != 0:
 
             with profiler.profile_range("SSE computation", level="debug"):
-                self.batch_size = None
-                if self.batch_size is None:
-                    # NOTE: This is a temporary solution. The batch size should be
-                    # calculated in the configuration.
-                    self.batch_size = g_greater.data.shape[-1]
+
+                if xp.__name__ == "cupy":
+                    free_memory, _ = xp.cuda.Device().mem_info
+                    num_buffers = 10  # closer to 8 but overapproximating
+                    avail_buffer_size = free_memory // num_buffers
+                    ne = g_lesser.data.shape[0]
+                    no = g_greater.data.shape[-1]
+                    batch_size = avail_buffer_size // (2 * ne * 16)  # 16 bytes for complex128
+                    batch_size = min(batch_size, no)
+                    batches = int(np.ceil(no / batch_size))
+                    batch_size = int(np.ceil(no / batches))  # Balance last batch
+                    self.batch_size = batch_size
+                    if comm.rank == 0:
+                        print(f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}", flush=True)
+                else:
+                    if self.batch_size is None:
+                        # NOTE: This is a temporary solution. The batch size should be
+                        # calculated in the configuration.
+                        self.batch_size = g_greater.data.shape[-1]
 
                 batch_counts, _ = get_section_sizes(
                     g_greater.data.shape[-1],

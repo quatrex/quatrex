@@ -325,11 +325,11 @@ class DeviceConfig(BaseModel):
     # --- Device geometry ---------------------------------------------
     unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     number_of_supercells: PositiveInt = 1
-    transport_direction: Literal["x", "y", "z"] = "x"
+    transport_direction: Literal["x", "y", "z"] = "z"
 
     @model_validator(mode="after")
-    def to_array(self) -> Self:
-        """Transforms tuple to array."""
+    def to_tuple(self) -> Self:
+        """Transforms list to tuple."""
         self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
         return self
 

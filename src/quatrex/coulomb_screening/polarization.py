@@ -133,6 +133,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                             f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
                             flush=True,
                         )
+                        print(cache.show_info(), flush=True)
                 else:
                     if self.batch_size is None:
                         # NOTE: This is a temporary solution. The batch size should be

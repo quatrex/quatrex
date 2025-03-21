@@ -51,6 +51,7 @@ class Spectral(LyapunovSolver):
         self,
         a: NDArray,
         q: NDArray,
+        contact: str,
         out: None | NDArray = None,
     ):
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -61,6 +62,8 @@ class Spectral(LyapunovSolver):
             The system matrix.
         q : NDArray
             The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
         out : NDArray, optional
             The array to store the result in. If not provided, a new
             array is returned.
@@ -79,13 +82,16 @@ class Spectral(LyapunovSolver):
         )
 
         inv_vs = xp.linalg.inv(vs)
+        inv_vs = xp.broadcast_to(inv_vs, q.shape)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)
 
-        phi = xp.ones_like(a) - xp.einsum("e...i, e...j -> e...ij", ws, ws.conj())
+        phi = xp.ones_like(a) - xp.einsum("...i, ...j -> ...ij", ws, ws.conj())
+        phi = xp.broadcast_to(phi, q.shape)
         x_tilde = 1 / phi * gamma
 
         x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
 
+        a = xp.broadcast_to(a, q.shape)
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
             x = q + a @ x @ a.conj().swapaxes(-2, -1)
@@ -93,7 +99,7 @@ class Spectral(LyapunovSolver):
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         # Check the batch average recursion error.
-        recursion_error = xp.mean(
+        recursion_error = xp.max(
             xp.linalg.norm(x_ref - x, axis=(-2, -1))
             / xp.linalg.norm(x_ref, axis=(-2, -1))
         )
@@ -119,6 +125,8 @@ class Spectral(LyapunovSolver):
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
+        The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
+
         Parameters
         ----------
         a : NDArray
@@ -138,12 +146,11 @@ class Spectral(LyapunovSolver):
 
         """
 
-        if a.ndim == 2:
-            a = a[xp.newaxis, ...]
-            q = q[xp.newaxis, ...]
+        assert q.shape[-2:] == a.shape[-2:]
+        assert q.ndim >= a.ndim
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:
-            return system_reduction(a, q, self._solve, out=out)
+            return system_reduction(a, q, contact, self._solve, out=out)
 
-        return self._solve(a, q, out=out)
+        return self._solve(a, q, contact, out=out)

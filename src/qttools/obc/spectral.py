@@ -666,7 +666,7 @@ class Spectral(OBCSolver):
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Check the batch average recursion error.
-        recursion_error = xp.mean(
+        recursion_error = xp.max(
             xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
             / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
         )

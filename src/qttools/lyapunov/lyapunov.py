@@ -181,9 +181,7 @@ class LyapunovMemoizer:
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 
-        if self.force_memoizing and x is None:
-            x = q
-        elif x is None:
+        if x is None:
             return self._call_with_cache(a, q, contact, out=out)
 
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)

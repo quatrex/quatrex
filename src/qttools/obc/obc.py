@@ -186,9 +186,7 @@ class OBCMemoizer:
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)
 
-        if self.force_memoizing and x_ii is None:
-            x_ii = inv(a_ii)
-        elif x_ii is None:
+        if x_ii is None:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
 
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)

@@ -35,9 +35,9 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
 
     """
     n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fft(a, n, axis=0)
-    b_fft = xp.fft.fft(b[::-1], n, axis=0)
-    return xp.fft.ifft(a_fft * b_fft, axis=0)
+    a_fft = xp.fft.fft(a.T, n, axis=1)
+    b_fft = xp.fft.fft(b.T[::-1], n, axis=1)
+    return xp.fft.ifft(a_fft * b_fft, axis=1).T
 
 
 class PCoulombScreening(ScatteringSelfEnergy):
@@ -108,6 +108,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         if p_greater.data.shape[-1] != 0:
 
             with profiler.profile_range("Polarization computation", level="debug"):
+                self.batch_size = None
                 if self.batch_size is None:
                     # NOTE: This is a temporary solution. The batch size should be
                     # calculated in the configuration.

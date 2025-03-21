@@ -209,6 +209,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         if g_greater.data.shape[-1] != 0:
 
             with profiler.profile_range("SSE computation", level="debug"):
+                self.batch_size = None
                 if self.batch_size is None:
                     # NOTE: This is a temporary solution. The batch size should be
                     # calculated in the configuration.
@@ -230,41 +231,41 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
                 ne = g_lesser.data.shape[0]
 
-                hilbert_kernel_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
+                hilbert_kernel_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0).T
 
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    g_x_fft = xp.fft.fft(g_lesser.data[:, batch], n, axis=0)
-                    w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch], n, axis=0)
-                    w_greater_fft = xp.fft.fft(w_greater.data[:, batch], n, axis=0)
+                    g_x_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
+                    w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch].T, n, axis=1)
+                    w_greater_fft = xp.fft.fft(w_greater.data[:, batch].T, n, axis=1)
 
                     sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
                     sigma_x_fft -= xp.multiply(
                         g_x_fft, w_greater_fft.conj()
                     )  # negative energy part
-                    lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                     sigma_lesser._data[
                         sigma_lesser._stack_padding_mask, ..., batch
-                    ] += lesser
+                    ] += lesser.T
 
                     # antihermitian_fft = -sigma_x_fft
 
-                    g_x_fft = xp.fft.fft(g_greater.data[:, batch], n, axis=0)
+                    g_x_fft = xp.fft.fft(g_greater.data[:, batch].T, n, axis=1)
                     sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
                     sigma_x_fft -= xp.multiply(
                         g_x_fft, w_lesser_fft.conj()
                     )  # negative energy part
-                    greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                     sigma_greater._data[
                         sigma_greater._stack_padding_mask, ..., batch
-                    ] += greater
+                    ] += greater.T
 
                     # antihermitian_fft += sigma_x_fft
 
                     # Compute retarded self-energy with a Hilbert transform.
                     antihermitian = 1j * xp.imag(greater - lesser)
-                    antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+                    antihermitian_fft = xp.fft.fft(antihermitian, n, axis=1)
                     # TODO check this: impose the causality in the FFT domain instead of taking the
                     # imaginary part in the real domain, we have one less fft to do
                     # antihermitian_fft *= self.prefactor * 0.5
@@ -277,9 +278,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_retarded._data[
                         sigma_retarded._stack_padding_mask, ..., batch
                     ] += (
-                        self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                        self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                         + antihermitian / 2
-                    )
+                    ).T
 
                     # Compute the full self-energy using the convolution theorem.
                     # Second term are corrections for negative frequencies that

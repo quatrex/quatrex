@@ -342,38 +342,17 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
-        # synchronize_device()
-        # time_start = time.perf_counter()
+
         self.system_matrix.data = 0.0
         self.system_matrix += self.overlap_sparray
-        # synchronize_device()
-        # time_end = time.perf_counter()
-        # if comm.rank == 0:
-            # print(f"    Overlap matrix assembly: {time_end-time_start}", flush=True)
 
-        # time_start = time.perf_counter()
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
-        # synchronize_device()
-        # time_end = time.perf_counter()
-        # if comm.rank == 0:
-            # print(f"    Energy scaling: {time_end-time_start}", flush=True)
 
-        # time_start = time.perf_counter()
         self.system_matrix -= self.hamiltonian_sparray + sparse.diags(self.potential)
-        # synchronize_device()
-        # time_end = time.perf_counter()
-        # if comm.rank == 0:
-            # print(f"    Potential subtraction: {time_end-time_start}", flush=True)
-
-        # time_start = time.perf_counter()
         _btd_subtract(self.system_matrix, sse_retarded)
-        # synchronize_device()
-        # time_end = time.perf_counter()
-        # if comm.rank == 0:
-            # print(f"    Self-energy subtraction: {time_end-time_start}", flush=True)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -440,10 +419,9 @@ class ElectronSolver(SubsystemSolver):
             retarded).
 
         """
-        times = []
 
         if self.flatband:
-            time_homogenize_start = time.perf_counter()            
+            time_homogenize_start = time.perf_counter()
             homogenize(sse_greater)
             homogenize(sse_lesser)
             homogenize(sse_retarded)
@@ -452,10 +430,15 @@ class ElectronSolver(SubsystemSolver):
             comm.Barrier()
             time_homogenize_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Homogenize: {time_homogenize_end-time_homogenize_start}", flush=True)
-                print(f"    Homogenize all: {time_homogenize_end_all-time_homogenize_start}", flush=True)
+                print(
+                    f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
+                    flush=True,
+                )
+                print(
+                    f"    Homogenize all: {time_homogenize_end_all-time_homogenize_start}",
+                    flush=True,
+                )
 
-        
         t_assemble_start = time.perf_counter()
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
@@ -464,7 +447,9 @@ class ElectronSolver(SubsystemSolver):
         t_assemble_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
-            print(f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True)
+            print(
+                f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
+            )
 
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
@@ -489,8 +474,13 @@ class ElectronSolver(SubsystemSolver):
             comm.Barrier()
             t_band_edges_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True)
-                print(f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}", flush=True)
+                print(
+                    f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
+                )
+                print(
+                    f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+                    flush=True,
+                )
 
         t_obc_start = time.perf_counter()
         self._compute_obc()
@@ -501,7 +491,6 @@ class ElectronSolver(SubsystemSolver):
         if comm.rank == 0:
             print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
             print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
-
 
         t_solve_start = time.perf_counter()
         self.meir_wingreen_current = self.solver.selected_solve(
@@ -522,7 +511,6 @@ class ElectronSolver(SubsystemSolver):
             print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
             print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
-
         t_filter_peaks_start = time.perf_counter()
         self._filter_peaks(out)
         synchronize_device()
@@ -530,9 +518,15 @@ class ElectronSolver(SubsystemSolver):
         comm.Barrier()
         t_filter_peaks_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}", flush=True)
-            print(f"    Filter peaks all: {t_filter_peaks_end_all-t_filter_peaks_start}", flush=True)
-        
+            print(
+                f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
+                flush=True,
+            )
+            print(
+                f"    Filter peaks all: {t_filter_peaks_end_all-t_filter_peaks_start}",
+                flush=True,
+            )
+
         if self.band_edge_tracking == "dos-peaks":
 
             t_dos_peaks_start = time.perf_counter()
@@ -585,4 +579,7 @@ class ElectronSolver(SubsystemSolver):
             t_dos_peaks_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
-                print(f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}", flush=True)
+                print(
+                    f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
+                    flush=True,
+                )

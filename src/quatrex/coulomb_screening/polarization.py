@@ -36,7 +36,7 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """
     n = a.shape[0] + b.shape[0] - 1
     a_fft = xp.fft.fft(a.T, n, axis=1)
-    b_fft = xp.fft.fft(b.T[::-1], n, axis=1)
+    b_fft = xp.fft.fft(b[::-1].T, n, axis=1)
     return xp.fft.ifft(a_fft * b_fft, axis=1).T
 
 

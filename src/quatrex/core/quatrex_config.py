@@ -71,8 +71,13 @@ class MemoizerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enable: bool = False
-    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    convergence_tol: PositiveFloat = 1e-4
+    force: bool = False
+
+    num_ref_iterations: PositiveInt = Field(default=2, ge=2)
+    relative_tol: PositiveFloat = 2e-1
+    absolute_tol: PositiveFloat = 1e-6
+
+    warning_threshold: PositiveFloat = 1e-1
 
 
 class SolverConfig(BaseModel):
@@ -137,7 +142,8 @@ class LyapunovConfig(BaseModel):
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 100
-    convergence_tol: PositiveFloat = 1e-6
+    relative_tol: PositiveFloat = 1e-4
+    absolute_tol: PositiveFloat = 1e-8
 
     # Parameter for spectral Lyapunov solver.
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)

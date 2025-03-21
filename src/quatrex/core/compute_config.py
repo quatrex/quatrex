@@ -14,6 +14,7 @@ class LyapunovConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    use_pinned_memory: bool = True
 
 
 class NEVPConfig(BaseModel):
@@ -23,6 +24,7 @@ class NEVPConfig(BaseModel):
 
     eig_compute_location: Literal["numpy", "cupy"] = "numpy"
     project_compute_location: Literal["numpy", "cupy"] = "numpy"
+    use_pinned_memory: bool = True
 
     use_qr: bool = False
     contour_batch_size: PositiveInt | None = None
@@ -36,6 +38,7 @@ class BandEdgeConfig(BaseModel):
 
     use_eigvalsh: bool = False
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "cupy"
+    use_pinned_memory: bool = True
 
 
 class ConvolveConfig(BaseModel):

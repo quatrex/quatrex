@@ -229,6 +229,10 @@ class SCBA:
             self.quatrex_config.electron.energy_window_min is not None
         ):
             if self.quatrex_config.electron.energy_window_num is not None:
+                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                    raise ValueError(
+                        "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                    )
                 self.electron_energies = xp.linspace(
                     self.quatrex_config.electron.energy_window_min,
                     self.quatrex_config.electron.energy_window_max,
@@ -237,7 +241,7 @@ class SCBA:
             elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
                 energy_window_num = (
                     self.quatrex_config.electron.energy_window_num_per_rank
-                    * comm.Get_size()
+                    * comm.size
                 )
                 self.electron_energies = xp.linspace(
                     self.quatrex_config.electron.energy_window_min,
@@ -251,7 +255,7 @@ class SCBA:
                     print(message)
             else:
                 raise ValueError(
-                    "Cannot set both electron `energy_window_num` and `energy_window_num_per_rank` in the config."
+                    "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
                 )
         else:
             energies_path = self.quatrex_config.input_dir / "electron_energies.npy"

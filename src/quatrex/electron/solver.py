@@ -182,6 +182,9 @@ class ElectronSolver(SubsystemSolver):
         self.obc_blocks = OBCBlocks(num_blocks=self.block_sizes.size)
         self.block_sections = quatrex_config.electron.obc.block_sections
 
+        self.call_count = 0
+        self.max_filter_count = quatrex_config.coulomb_screening.max_filter_count
+
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 
@@ -511,7 +514,8 @@ class ElectronSolver(SubsystemSolver):
             print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
-        self._filter_peaks(out)
+        if self.call_count < self.max_filter_count:
+            self._filter_peaks(out)
         synchronize_device()
         t_filter_peaks_end = time.perf_counter()
         comm.Barrier()
@@ -582,3 +586,5 @@ class ElectronSolver(SubsystemSolver):
                     f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
                     flush=True,
                 )
+
+        self.call_count += 1

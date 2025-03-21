@@ -181,6 +181,8 @@ class ElectronConfig(BaseModel):
 
     dos_peak_limit: PositiveFloat = 100.0
 
+    filtering_iteration_limit: PositiveInt = 1
+
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
@@ -244,6 +246,8 @@ class CoulombScreeningConfig(BaseModel):
     num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
 
     dos_peak_limit: PositiveFloat = 100.0
+
+    filtering_iteration_limit: PositiveInt = 1
 
 
 class PhotonConfig(BaseModel):

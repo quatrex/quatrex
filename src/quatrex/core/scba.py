@@ -240,8 +240,7 @@ class SCBA:
                 )
             elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
                 energy_window_num = (
-                    self.quatrex_config.electron.energy_window_num_per_rank
-                    * comm.size
+                    self.quatrex_config.electron.energy_window_num_per_rank * comm.size
                 )
                 self.electron_energies = xp.linspace(
                     self.quatrex_config.electron.energy_window_min,

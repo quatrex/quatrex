@@ -186,9 +186,7 @@ class OBCMemoizer:
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)
 
-        if self.force_memoizing and x_ii is None:
-            x_ii = inv(a_ii)
-        elif x_ii is None:
+        if x_ii is None:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
 
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
@@ -245,16 +243,19 @@ class OBCMemoizer:
 
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        relative_recursion_error = xp.max(
-            xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
-            / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+        absolute_recursion_errors = xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+        relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
+            x_ii_ref, axis=(-2, -1)
         )
         x_ii = x_ii_ref
 
         # TODO: we should allow data gathering of the final recursion error
-        if relative_recursion_error > self.warning_threshold:
+        if xp.any(
+            (relative_recursion_errors > self.warning_threshold)
+            & (absolute_recursion_errors > self.memoize_abs_tol)
+        ):
             warnings.warn(
-                f"High relative recursion error: {relative_recursion_error:.2e} "
+                f"High relative recursion error: {xp.max(relative_recursion_errors):.2e} "
                 + f"at rank {comm.rank} for {contact} OBC",
                 RuntimeWarning,
             )

@@ -84,26 +84,27 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_lesser, p_greater, p_retarded = out
 
         # Barrier to synchronize ranks.
-        synchronize_device()
-        comm.Barrier()
-
+        t_all2all_start = time.perf_counter()
         with profiler.profile_range("stack->nnz transpose", level="debug"):
             # Transpose the matrices to nnz distribution.
-            t0 = time.perf_counter()
             for m in (g_lesser, g_greater):
                 # These should ideally already be in nnz-distribution.
                 m.dtranspose() if m.distribution_state != "nnz" else None
             for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
+
         synchronize_device()
-        t1 = time.perf_counter()
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"PCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True)
+            print(f"    PCoulombScreening: stack->nnz transpose time: {t_all2all_end-t_all2all_start:.3f}")
+            print(
+                f"    PCoulombScreening: stack->nnz transpose time all: {t_all2all_end_all-t_all2all_start:.3f}"
+            )
 
-        synchronize_device()
-        t_polarization = -time.perf_counter()
-
+        t_polarization_start = time.perf_counter()
         if p_greater.data.shape[-1] != 0:
 
             with profiler.profile_range("Polarization computation", level="debug"):
@@ -139,17 +140,17 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         self.ne - 1 :
                     ]
 
-        t_polarization += time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"PCoulombScreening: Polarization computation time: {t_polarization}",
-                flush=True,
-            )
-
         # Barrier before communication
         synchronize_device()
+        t_polarization_end = time.perf_counter()
         comm.Barrier()
+        t_polarization_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    PCoulombScreening: Polarization computation time: {t_polarization_end-t_polarization_start:.3f}")
+            print(f"    PCoulombScreening: Polarization computation time all: {t_polarization_end_all-t_polarization_start:.3f}")
 
+
+        t_all2all2_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
             t0 = time.perf_counter()
@@ -158,17 +159,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
             # NOTE: The Green's functions must not be transposed back to
             # stack distribution, as they are needed in nnz distribution for
             # the other interactions.
-
         synchronize_device()
+        t_all2all2_end = time.perf_counter()
         comm.Barrier()
-        t1 = time.perf_counter()
+        t_all2all2_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"PCoulombScreening: nnz->stack transpose time: {t1-t0}", flush=True)
+            print(f"    PCoulombScreening: nnz->stack transpose time: {t_all2all2_end-t_all2all2_start:.3f}")
+            print(f"    PCoulombScreening: nnz->stack transpose time all: {t_all2all2_end_all-t_all2all2_start:.3f}")
 
         # Enforce anti-Hermitian symmetry and calculate Pr.
-        synchronize_device()
-        t0 = time.perf_counter()
-
+        t_symmetrization_start = time.perf_counter()
         p_lesser.symmetrize(xp.subtract)
         p_greater.symmetrize(xp.subtract)
 
@@ -179,6 +179,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
 
         synchronize_device()
-        t1 = time.perf_counter()
+        t_symmetrization_end = time.perf_counter()
+        comm.Barrier()
+        t_symmetrization_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"PCoulombScreening: Symmetrization time: {t1-t0}", flush=True)
+            print(f"    PCoulombScreening: Symmetrization time: {t_symmetrization_end-t_symmetrization_start:.3f}")
+            print(f"    PCoulombScreening: Symmetrization time all: {t_symmetrization_end_all-t_symmetrization_start:.3f}")

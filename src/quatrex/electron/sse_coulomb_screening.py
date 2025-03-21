@@ -151,6 +151,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_lesser, sigma_greater, sigma_retarded.
 
         """
+
+        t_block_reorder_start = time.perf_counter()
         if w_lesser.nnz != g_lesser.nnz:
             raise ValueError(
                 "The sparsity pattern of w_lesser and g_lesser must match."
@@ -168,12 +170,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         sigma_lesser, sigma_greater, sigma_retarded = out
 
-        # Barrier to synchronize measurements
         synchronize_device()
+        t_block_reorder_end = time.perf_counter()
         comm.Barrier()
+        t_block_reorder_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaCoulombScreening: block reorder: {t_block_reorder_end - t_block_reorder_start:.3f} s", flush=True)
+            print(f"    SigmaCoulombScreening: block reorder all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s", flush=True)
 
+        t_all2all_start = time.perf_counter()
         with profiler.profile_range("stack->nnz transpose", level="debug"):
-            t0 = time.perf_counter()
             # Transpose the matrices to nnz distribution.
             for m in (
                 w_lesser,
@@ -189,16 +195,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # the data here, as we cannot be sure that this is the
                 # first/only interaction.
                 m.dtranspose() if m.distribution_state != "nnz" else None
-            synchronize_device()
-            t1 = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"SigmaCoulombScreening: stack->nnz transpose time: {t1-t0}", flush=True
-            )
-
         synchronize_device()
-        t_sse = -time.perf_counter()
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaCoulombScreening: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
+            print(f"    SigmaCoulombScreening: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
 
+
+        t_sse_start = time.perf_counter()
         # Because of padding there could be no ij elements
         if g_greater.data.shape[-1] != 0:
 
@@ -312,37 +318,40 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     # ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
 
         synchronize_device()
-        t_sse += time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"SigmaCoulombScreening: SSE computation time: {t_sse}",
-                flush=True,
-            )
-
-        # Barrier before communication
-        synchronize_device()
+        t_sse_end = time.perf_counter()
         comm.Barrier()
+        t_sse_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaCoulombScreening: SSE computation: {t_sse_end - t_sse_start:.3f} s", flush=True)
+            print(f"    SigmaCoulombScreening: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s", flush=True)
 
+        t_all2all_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
-            synchronize_device()
-            t0 = time.perf_counter()
             for m in (w_lesser, w_greater):
                 m.dtranspose(discard=True) if m.distribution_state != "stack" else None
             # NOTE: The electron Green's functions and self-energies must
             # not be transposed back to stack distribution, as they are
             # needed in nnz distribution for the other interactions.
-            synchronize_device()
-            t1 = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"SigmaCoulombScreening: nnz->stack transpose time: {t1-t0}",
-                    flush=True,
-                )
 
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaCoulombScreening: nnz->stack transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
+            print(f"    SigmaCoulombScreening: nnz->stack transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
+
+        t_block_reorder_start = time.perf_counter()
         # Recover original block sizes.
         w_lesser.block_sizes = self.big_block_sizes
         w_greater.block_sizes = self.big_block_sizes
+        synchronize_device()
+        t_block_reorder_end = time.perf_counter()
+        comm.Barrier()
+        t_block_reorder_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaCoulombScreening: block reorder back: {t_block_reorder_end - t_block_reorder_start:.3f} s", flush=True)
+            print(f"    SigmaCoulombScreening: block reorder back all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s", flush=True)
 
 
 class SigmaFock(ScatteringSelfEnergy):
@@ -410,18 +419,31 @@ class SigmaFock(ScatteringSelfEnergy):
         """
         # TODO: Check again if we really need to transpose the matrices
         # here.
+        t_all2all_start = time.perf_counter()
         (sigma_retarded,) = out
-        t0 = time.perf_counter()
         for m in (g_lesser, sigma_retarded):
             # These should both already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
-        t1 = time.perf_counter()
+        synchronize_device()
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"SigmaFock: stack->nnz transpose time: {t1-t0}", flush=True)
+            print(f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
+            print(f"    SigmaFock: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
 
+
+        t_sse_start = time.perf_counter()
         # Compute the electron density by summing over energies.
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
+        synchronize_device()
+        t_sse_end = time.perf_counter()
+        comm.Barrier()
+        t_sse_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s", flush=True)
+            print(f"    SigmaFock: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s", flush=True)
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

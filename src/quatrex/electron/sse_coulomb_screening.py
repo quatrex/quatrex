@@ -175,8 +175,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_block_reorder_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaCoulombScreening: block reorder: {t_block_reorder_end - t_block_reorder_start:.3f} s", flush=True)
-            print(f"    SigmaCoulombScreening: block reorder all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s", flush=True)
+            print(
+                f"    SigmaCoulombScreening: block reorder: {t_block_reorder_end - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: block reorder all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
 
         t_all2all_start = time.perf_counter()
         with profiler.profile_range("stack->nnz transpose", level="debug"):
@@ -200,19 +206,44 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaCoulombScreening: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
-            print(f"    SigmaCoulombScreening: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
-
+            print(
+                f"    SigmaCoulombScreening: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
 
         t_sse_start = time.perf_counter()
         # Because of padding there could be no ij elements
         if g_greater.data.shape[-1] != 0:
 
             with profiler.profile_range("SSE computation", level="debug"):
-                if self.batch_size is None:
-                    # NOTE: This is a temporary solution. The batch size should be
-                    # calculated in the configuration.
-                    self.batch_size = g_greater.data.shape[-1]
+
+                if xp.__name__ == "cupy":
+                    free_memory, _ = xp.cuda.Device().mem_info
+                    num_buffers = 10  # closer to 8 but overapproximating
+                    avail_buffer_size = free_memory // num_buffers
+                    ne = g_lesser.data.shape[0]
+                    no = g_greater.data.shape[-1]
+                    batch_size = avail_buffer_size // (
+                        2 * ne * 16
+                    )  # 16 bytes for complex128
+                    batch_size = min(batch_size, no)
+                    batches = int(np.ceil(no / batch_size))
+                    batch_size = int(np.ceil(no / batches))  # Balance last batch
+                    self.batch_size = batch_size
+                    if comm.rank == 0:
+                        print(
+                            f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
+                            flush=True,
+                        )
+                else:
+                    if self.batch_size is None:
+                        # NOTE: This is a temporary solution. The batch size should be
+                        # calculated in the configuration.
+                        self.batch_size = g_greater.data.shape[-1]
 
                 batch_counts, _ = get_section_sizes(
                     g_greater.data.shape[-1],
@@ -230,41 +261,43 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
                 ne = g_lesser.data.shape[0]
 
-                hilbert_kernel_fft = xp.fft.fft(1 / (energy_differences + eta), n, axis=0)
+                hilbert_kernel_fft = xp.fft.fft(
+                    1 / (energy_differences + eta), n, axis=0
+                ).T
 
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    g_x_fft = xp.fft.fft(g_lesser.data[:, batch], n, axis=0)
-                    w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch], n, axis=0)
-                    w_greater_fft = xp.fft.fft(w_greater.data[:, batch], n, axis=0)
+                    g_x_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
+                    w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch].T, n, axis=1)
+                    w_greater_fft = xp.fft.fft(w_greater.data[:, batch].T, n, axis=1)
 
                     sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
                     sigma_x_fft -= xp.multiply(
                         g_x_fft, w_greater_fft.conj()
                     )  # negative energy part
-                    lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                     sigma_lesser._data[
                         sigma_lesser._stack_padding_mask, ..., batch
-                    ] += lesser
+                    ] += lesser.T
 
                     # antihermitian_fft = -sigma_x_fft
 
-                    g_x_fft = xp.fft.fft(g_greater.data[:, batch], n, axis=0)
+                    g_x_fft = xp.fft.fft(g_greater.data[:, batch].T, n, axis=1)
                     sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
                     sigma_x_fft -= xp.multiply(
                         g_x_fft, w_lesser_fft.conj()
                     )  # negative energy part
-                    greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                     sigma_greater._data[
                         sigma_greater._stack_padding_mask, ..., batch
-                    ] += greater
+                    ] += greater.T
 
                     # antihermitian_fft += sigma_x_fft
 
                     # Compute retarded self-energy with a Hilbert transform.
                     antihermitian = 1j * xp.imag(greater - lesser)
-                    antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+                    antihermitian_fft = xp.fft.fft(antihermitian, n, axis=1)
                     # TODO check this: impose the causality in the FFT domain instead of taking the
                     # imaginary part in the real domain, we have one less fft to do
                     # antihermitian_fft *= self.prefactor * 0.5
@@ -277,9 +310,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_retarded._data[
                         sigma_retarded._stack_padding_mask, ..., batch
                     ] += (
-                        self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                        self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
                         + antihermitian / 2
-                    )
+                    ).T
 
                     # Compute the full self-energy using the convolution theorem.
                     # Second term are corrections for negative frequencies that
@@ -306,7 +339,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     #         g_greater.data[:, batch], w_lesser.data[:, batch].conj()
                     #     )[self.num_energies - 1 :]
                     # )
-                    
 
                     # Compute retarded self-energy with a Hilbert transform.
                     # sigma_antihermitian = 1j * xp.imag(
@@ -322,8 +354,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_sse_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaCoulombScreening: SSE computation: {t_sse_end - t_sse_start:.3f} s", flush=True)
-            print(f"    SigmaCoulombScreening: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s", flush=True)
+            print(
+                f"    SigmaCoulombScreening: SSE computation: {t_sse_end - t_sse_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
+                flush=True,
+            )
 
         t_all2all_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
@@ -338,8 +376,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaCoulombScreening: nnz->stack transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
-            print(f"    SigmaCoulombScreening: nnz->stack transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
+            print(
+                f"    SigmaCoulombScreening: nnz->stack transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: nnz->stack transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
 
         t_block_reorder_start = time.perf_counter()
         # Recover original block sizes.
@@ -350,8 +394,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         comm.Barrier()
         t_block_reorder_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaCoulombScreening: block reorder back: {t_block_reorder_end - t_block_reorder_start:.3f} s", flush=True)
-            print(f"    SigmaCoulombScreening: block reorder back all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s", flush=True)
+            print(
+                f"    SigmaCoulombScreening: block reorder back: {t_block_reorder_end - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: block reorder back all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
 
 
 class SigmaFock(ScatteringSelfEnergy):
@@ -429,9 +479,14 @@ class SigmaFock(ScatteringSelfEnergy):
         comm.Barrier()
         t_all2all_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s", flush=True)
-            print(f"    SigmaFock: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s", flush=True)
-
+            print(
+                f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaFock: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
 
         t_sse_start = time.perf_counter()
         # Compute the electron density by summing over energies.
@@ -442,8 +497,14 @@ class SigmaFock(ScatteringSelfEnergy):
         comm.Barrier()
         t_sse_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s", flush=True)
-            print(f"    SigmaFock: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s", flush=True)
+            print(
+                f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaFock: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
+                flush=True,
+            )
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

@@ -511,10 +511,16 @@ class SCBA:
         comm.Barrier()
         t_polarization_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"  Time for polarization: {t_polarization_end - t_polarization_start:.3f} s", flush=True)
-            print(f"  Time for polarization all: {t_polarization_end_all - t_polarization_start:.3f} s", flush=True)
+            print(
+                f"  Time for polarization: {t_polarization_end - t_polarization_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for polarization all: {t_polarization_end_all - t_polarization_start:.3f} s",
+                flush=True,
+            )
 
-        t_coulomb_start = time.perf_counter()        
+        t_coulomb_start = time.perf_counter()
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
@@ -526,8 +532,14 @@ class SCBA:
         comm.Barrier()
         t_coulomb_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"  Time for Coulomb screening: {t_coulomb_end - t_coulomb_start:.3f} s", flush=True)
-            print(f"  Time for Coulomb screening all: {t_coulomb_end_all - t_coulomb_start:.3f} s", flush=True)
+            print(
+                f"  Time for Coulomb screening: {t_coulomb_end - t_coulomb_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening all: {t_coulomb_end_all - t_coulomb_start:.3f} s",
+                flush=True,
+            )
 
         t_coulomb_observables = time.perf_counter()
         self._compute_coulomb_screening_observables()
@@ -536,8 +548,14 @@ class SCBA:
         comm.Barrier()
         t_coulomb_observables_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"  Time for Coulomb screening observables: {t_coulomb_observables_end - t_coulomb_observables:.3f} s", flush=True)
-            print(f"  Time for Coulomb screening observables all: {t_coulomb_observables_end_all - t_coulomb_observables:.3f} s", flush=True)
+            print(
+                f"  Time for Coulomb screening observables: {t_coulomb_observables_end - t_coulomb_observables:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening observables all: {t_coulomb_observables_end_all - t_coulomb_observables:.3f} s",
+                flush=True,
+            )
 
         t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
@@ -549,8 +567,14 @@ class SCBA:
         comm.Barrier()
         t_sigma_fock_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s", flush=True)
-            print(f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s", flush=True)
+            print(
+                f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s",
+                flush=True,
+            )
 
         t_sigma_start = time.perf_counter()
         self.sigma_coulomb_screening.compute(
@@ -569,8 +593,14 @@ class SCBA:
         comm.Barrier()
         t_sigma_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"  Time for Coulomb screening self-energy: {t_sigma_end - t_sigma_start:.3f} s", flush=True)
-            print(f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s", flush=True)
+            print(
+                f"  Time for Coulomb screening self-energy: {t_sigma_end - t_sigma_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s",
+                flush=True,
+            )
 
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
@@ -767,21 +797,31 @@ class SCBA:
             comm.Barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for electron solver: {t_solve_end - t_solve_start:.3f} s", flush=True)
-                print(f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s", flush=True)
-
+                print(
+                    f"Time for electron solver: {t_solve_end - t_solve_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s",
+                    flush=True,
+                )
 
             t_oberservables_start = time.perf_counter()
             self._compute_electron_observables()
             synchronize_device()
-            t_oberservables_end = time.perf_counter()            
+            t_oberservables_end = time.perf_counter()
             comm.Barrier()
 
             t_oberservables_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for computing observables: {t_oberservables_end - t_oberservables_start:.3f} s", flush=True)
-                print(f"Time for computing observables all: {t_oberservables_end_all - t_oberservables_start:.3f} s", flush=True)
-    
+                print(
+                    f"Time for computing observables: {t_oberservables_end - t_oberservables_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for computing observables all: {t_oberservables_end_all - t_oberservables_start:.3f} s",
+                    flush=True,
+                )
 
             # Stash current into previous self-energy buffer.
             t_stash_start = time.perf_counter()
@@ -791,8 +831,14 @@ class SCBA:
             comm.Barrier()
             t_stash_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for swapping: {t_stash_end - t_stash_start:.3f} s", flush=True)
-                print(f"Time for swapping all: {t_stash_end_all - t_stash_start:.3f} s", flush=True)
+                print(
+                    f"Time for swapping: {t_stash_end - t_stash_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for swapping all: {t_stash_end_all - t_stash_start:.3f} s",
+                    flush=True,
+                )
 
             # Transpose to nnz distribution.
             # NOTE: While computing all interactions, we only ever need
@@ -814,8 +860,14 @@ class SCBA:
             comm.Barrier()
             t_end_transpose_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"scba: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s", flush=True)
-                print(f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s", flush=True)
+                print(
+                    f"scba: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
+                    flush=True,
+                )
 
             if self.quatrex_config.scba.coulomb_screening:
                 t_start_coulomb = time.perf_counter()
@@ -845,8 +897,14 @@ class SCBA:
                 comm.Barrier()
                 t_end_phonon_all = time.perf_counter()
                 if comm.rank == 0:
-                    print(f"Time for phonon interaction: {t_end_phonon - t_start_phonon:.3f} s", flush=True)
-                    print(f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s", flush=True)
+                    print(
+                        f"Time for phonon interaction: {t_end_phonon - t_start_phonon:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s",
+                        flush=True,
+                    )
 
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()
@@ -866,8 +924,14 @@ class SCBA:
             t_transpose_sigma_end_all = time.perf_counter()
 
             if comm.rank == 0:
-                print(f"scba: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s", flush=True)
-                print(f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s", flush=True)
+                print(
+                    f"scba: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
 
             t_convergence_start = time.perf_counter()
             if self._has_converged():
@@ -880,9 +944,14 @@ class SCBA:
             comm.Barrier()
             t_convergence_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for convergence check: {t_convergence_end - t_convergence_start:.3f} s", flush=True)
-                print(f"Time for convergence check all: {t_convergence_end_all - t_convergence_start:.3f} s", flush=True)
-            
+                print(
+                    f"Time for convergence check: {t_convergence_end - t_convergence_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for convergence check all: {t_convergence_end_all - t_convergence_start:.3f} s",
+                    flush=True,
+                )
 
             t_sigma_update_start = time.perf_counter()
             # Update self-energy for next iteration with mixing factor.
@@ -893,9 +962,15 @@ class SCBA:
             t_sigma_update_end_all = time.perf_counter()
 
             if comm.rank == 0:
-                print(f"Time for updating: {t_sigma_update_end - t_sigma_update_start:.3f} s", flush=True)
-                print(f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s", flush=True)
-            
+                print(
+                    f"Time for updating: {t_sigma_update_end - t_sigma_update_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s",
+                    flush=True,
+                )
+
             t_iteration = time.perf_counter() - t_iteration_start
             if comm.rank == 0:
                 print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
@@ -927,8 +1002,14 @@ class SCBA:
                 comm.Barrier()
                 t_write_end_all = time.perf_counter()
                 if comm.rank == 0:
-                    print(f"Time for writing outputs: {t_write_end_all - t_write_start:.3f} s", flush=True)
-                    print(f"Time for writing outputs all: {t_write_end - t_write_start:.3f} s", flush=True)
+                    print(
+                        f"Time for writing outputs: {t_write_end_all - t_write_start:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for writing outputs all: {t_write_end - t_write_start:.3f} s",
+                        flush=True,
+                    )
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:

@@ -3,13 +3,14 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
+from qttools import NCCL_AVAILABLE, NDArray, _DType, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.sparse_utils import product_sparsity_pattern_dsbsparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -84,6 +85,19 @@ def _spillover_matmul(
     c[i_, i_] += a[j_, i_] @ b[i_, j_]
 
     return c.tocoo()
+
+
+@profiler.profile(level="debug")
+def _compute_sparsity_pattern(
+    *matrices: DSBSparse, dtype: _DType = None
+) -> sparse.coo_matrix:
+    """Computes the sparsity pattern of the product of two DSBSparse matrices."""
+    rows, cols = product_sparsity_pattern_dsbsparse(*matrices, spillover=True)
+    shape = matrices[0].shape[-2:]
+    dtype = dtype or matrices[0].dtype
+    return sparse.coo_matrix(
+        (xp.ones_like(rows), (rows, cols)), shape=shape, dtype=dtype
+    )
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
@@ -174,8 +188,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += coulomb_matrix_sparray
 
-        v_times_p_sparsity_pattern = _spillover_matmul(
-            sparsity_pattern, sparsity_pattern, self.small_block_sizes
+        # v_times_p_sparsity_pattern = _spillover_matmul(
+        #     sparsity_pattern, sparsity_pattern, self.small_block_sizes
+        # )
+        v_times_p_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix, self.coulomb_matrix
         )
         # Allocate memory for the System matrix (1 - V @ P).
         self.system_matrix = compute_config.dsbsparse_type.from_sparray(
@@ -185,8 +202,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.system_matrix.data = 0.0
 
-        l_sparsity_pattern = _spillover_matmul(
-            v_times_p_sparsity_pattern, sparsity_pattern, self.block_sizes
+        # l_sparsity_pattern = _spillover_matmul(
+        #     v_times_p_sparsity_pattern, sparsity_pattern, self.block_sizes
+        # )
+        l_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
         )
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dsbsparse_type.from_sparray(

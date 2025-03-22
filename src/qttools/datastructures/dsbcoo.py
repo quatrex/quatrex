@@ -53,8 +53,15 @@ class DSBCOO(DSBSparse):
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
     ) -> None:
-        """Initializes the DSBCOO matrix."""
-        super().__init__(data, block_sizes, global_stack_shape, return_dense)
+        """Initializes the DBCOO matrix."""
+        super().__init__(
+            data,
+            block_sizes,
+            global_stack_shape,
+            return_dense,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
 
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
@@ -235,38 +242,20 @@ class DSBCOO(DSBSparse):
             The slice of the data corresponding to the block.
 
         """
-        if self.symmetry:
-            block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
-                (min(row, col), max(row, col)), None
-            )
-        else:
-            block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
-                (row, col), None
-            )
+        block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
+            (row, col), None
+        )
 
         if block_slice is None:
             # Cache miss, compute the slice.
-            if self.symmetry:
-                block_slice = slice(
-                    *dsbcoo_kernels.compute_block_slice(
-                        self.rows,
-                        self.cols,
-                        self.block_offsets,
-                        (min(row, col), max(row, col)),
-                    )
+            block_slice = slice(
+                *dsbcoo_kernels.compute_block_slice(
+                    self.rows, self.cols, self.block_offsets, row, col
                 )
-                self._block_config[self.num_blocks].block_slice_cache[
-                    (min(row, col), max(row, col))
-                ] = block_slice
-            else:
-                block_slice = slice(
-                    *dsbcoo_kernels.compute_block_slice(
-                        self.rows, self.cols, self.block_offsets, row, col
-                    )
-                )
-                self._block_config[self.num_blocks].block_slice_cache[
-                    (row, col)
-                ] = block_slice
+            )
+            self._block_config[self.num_blocks].block_slice_cache[
+                (row, col)
+            ] = block_slice
 
         return block_slice
 
@@ -302,12 +291,17 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
-
+        # print(self.symmetry)
+        # print(self.symmetry_op)
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        block_slice = self._get_block_slice(row, col)
+
+        if self.symmetry and (col < row):
+            block_slice = self._get_block_slice(col, row)
+        else:
+            block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
             if block_slice.start is None and block_slice.stop is None:
@@ -322,28 +316,39 @@ class DSBCOO(DSBSparse):
 
             return rows, cols, data_stack[..., block_slice]
 
-        block = xp.zeros(
-            data_stack.shape[:-1]
-            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-            dtype=self.dtype,
-        )
+        if self.symmetry and (col < row):
+            block = xp.zeros(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[col]), int(self.block_sizes[row])),
+                dtype=self.dtype,
+            )
+        else:
+            block = xp.zeros(
+                data_stack.shape[:-1]
+                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+                dtype=self.dtype,
+            )
+
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block
 
         if self.symmetry and (col < row):
+            block_upper = xp.zeros_like(block.swapaxes(-1, -2))
             dsbcoo_kernels.densify_block(
-                block,
-                self.cols,
+                block_upper,
                 self.rows,
-                self.symmetry_op(data_stack),
+                self.cols,
+                data_stack,
                 block_slice,
                 self.block_offsets[col],
                 self.block_offsets[row],
             )
+            block = self.symmetry_op(block_upper.swapaxes(-1, -2))
         elif self.symmetry and (col == row):
+            block_upper = xp.zeros_like(block)
             dsbcoo_kernels.densify_block(
-                block,
+                block_upper,
                 self.rows,
                 self.cols,
                 data_stack,
@@ -351,8 +356,11 @@ class DSBCOO(DSBSparse):
                 self.block_offsets[row],
                 self.block_offsets[col],
             )
-            block += self.symmetry_op(block.T)
-        else:
+            block = block_upper + self.symmetry_op(block_upper.swapaxes(-1, -2))
+            block[..., range(block.shape[-1]), range(block.shape[-1])] = (
+                block[..., range(block.shape[-1]), range(block.shape[-1])] / 2
+            )
+        else:  # no symmetry or upper off-diagonal block
             dsbcoo_kernels.densify_block(
                 block,
                 self.rows,
@@ -773,18 +781,17 @@ class DSBCOO(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        if symmetry:
-            lil: sparse.lil_matrix = arr.tolil().copy()
-            lil = lil + symmetry_op(lil.T)
-            coo = (xp.triu(lil)).tocoo()
-        else:
-            coo: sparse.coo_matrix = arr.tocoo().copy()
+        coo: sparse.coo_matrix = arr.tocoo().copy()
 
         if densify_blocks is not None:
             coo = densify_selected_blocks(coo, block_sizes, densify_blocks)
 
         # Canonicalizes the COO format.
         coo.sum_duplicates()
+
+        if symmetry:
+            coo = (coo + symmetry_op(coo.T)) / 2
+            coo = sparse.triu(coo, format="coo")
 
         # Compute the block-sorting index.
         block_sort_index = dsbcoo_kernels.compute_block_sort_index(
@@ -802,4 +809,6 @@ class DSBCOO(DSBSparse):
             cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )

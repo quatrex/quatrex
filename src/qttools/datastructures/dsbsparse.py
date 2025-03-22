@@ -910,6 +910,8 @@ class DSBSparse(ABC):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> "DSBSparse":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 

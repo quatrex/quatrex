@@ -28,6 +28,24 @@ def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_
 class TestCreation:
     """Tests the creation methods of DSBSparse."""
 
+    def test_from_sparray_hermitian(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: int | tuple,
+        densify_blocks: list[tuple] | None,
+    ):
+        """Tests the creation of DSBSparse matrices from hermitian sparse arrays."""
+        from qttools.datastructures import DSBCOO
+
+        if dsbsparse_type == DSBCOO:
+            coo = _create_coo(block_sizes)
+            coo = (coo + coo.conj().T) / 2
+            dsbsparse = dsbsparse_type.from_sparray(
+                coo, block_sizes, global_stack_shape, densify_blocks, symmetry=True
+            )
+            assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
+
     def test_from_sparray(
         self,
         dsbsparse_type: DSBSparse,

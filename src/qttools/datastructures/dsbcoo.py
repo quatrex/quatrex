@@ -81,6 +81,14 @@ class DSBCOO(DSBSparse):
             - self._diag_value_inds[ranks == comm.rank][0]
         )
 
+    def _upper_triangle(rows, cols) -> bool:
+        """Returns upper triangular rows and cols."""
+        mask = cols < rows
+        temp = rows[mask]
+        rows[mask] = cols[mask]
+        cols[mask] = temp
+        return rows, cols, mask
+
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -115,6 +123,11 @@ class DSBCOO(DSBSparse):
             The requested items.
 
         """
+        if self.symmetry:
+            rows, cols, mask_transposed = self._upper_triangle(
+                rows, cols
+            )  # items of upper triangle of the matrix
+
         inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
             self.rows, self.cols, rows, cols
         )
@@ -128,6 +141,10 @@ class DSBCOO(DSBSparse):
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
             arr[..., value_inds] = data_stack[..., inds]
+            if self.symmetry:
+                arr[..., value_inds[mask_transposed]] = self.symmetry_op(
+                    arr[..., value_inds[mask_transposed]]
+                )
             return xp.squeeze(arr)
 
         if len(inds) != rows.size:
@@ -316,18 +333,11 @@ class DSBCOO(DSBSparse):
 
             return rows, cols, data_stack[..., block_slice]
 
-        if self.symmetry and (col < row):
-            block = xp.zeros(
-                data_stack.shape[:-1]
-                + (int(self.block_sizes[col]), int(self.block_sizes[row])),
-                dtype=self.dtype,
-            )
-        else:
-            block = xp.zeros(
-                data_stack.shape[:-1]
-                + (int(self.block_sizes[row]), int(self.block_sizes[col])),
-                dtype=self.dtype,
-            )
+        block = xp.zeros(
+            data_stack.shape[:-1]
+            + (int(self.block_sizes[row]), int(self.block_sizes[col])),
+            dtype=self.dtype,
+        )
 
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
@@ -410,7 +420,10 @@ class DSBCOO(DSBSparse):
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        block_slice = self._get_block_slice(row, col)
+        if self.symmetry and (col < row):
+            block_slice = self._get_block_slice(col, row)
+        else:
+            block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
@@ -459,16 +472,19 @@ class DSBCOO(DSBSparse):
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        block_slice = self._get_block_slice(row, col)
+        if self.symmetry and (col < row):
+            block_slice = self._get_block_slice(col, row)
+        else:
+            block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
         if self.symmetry and (col < row):
             dsbcoo_kernels.sparsify_block(
-                block,
+                self.symmetry_op(block),
                 self.cols[block_slice] - self.block_offsets[col],
                 self.rows[block_slice] - self.block_offsets[row],
-                self.symmetry_op(data_stack[..., block_slice]),
+                data_stack[..., block_slice],
             )
         else:
             dsbcoo_kernels.sparsify_block(

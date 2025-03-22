@@ -16,6 +16,9 @@ from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
 
+if xp.__name__ == "cupy":
+    cache = xp.fft.config.get_plan_cache()
+
 
 @profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
@@ -233,12 +236,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     batch_size = min(batch_size, no)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
+                    if self.batch_size is not None and batch_size < self.batch_size:
+                        cache.clear()
                     self.batch_size = batch_size
                     if comm.rank == 0:
                         print(
                             f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
                             flush=True,
                         )
+                        print(cache.show_info(), flush=True)
                 else:
                     if self.batch_size is None:
                         # NOTE: This is a temporary solution. The batch size should be

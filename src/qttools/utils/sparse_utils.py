@@ -118,7 +118,9 @@ def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
     return blocks
 
 
-def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, NDArray]:
+def product_sparsity_pattern_dsbsparse(
+    *matrices: DSBSparse, spillover: bool = False
+) -> tuple[NDArray, NDArray]:
     """Computes the sparsity pattern of the product of a sequence of DSBSparse matrices.
 
     Parameters
@@ -139,7 +141,7 @@ def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, N
 
     a = matrices[0]
 
-    # Assuming that all matrices have the same numober of blocks and block sizes.
+    # Assuming that all matrices have the same number of blocks and block sizes.
     num_blocks = a.num_blocks
     block_sizes = a.block_sizes
     block_offsets = a.block_offsets
@@ -165,6 +167,15 @@ def product_sparsity_pattern_dsbsparse(*matrices: DSBSparse) -> tuple[NDArray, N
                         (block_sizes[i], block_sizes[j]), dtype=xp.float32
                     )
                 c_blocks[i, j] = c_block
+
+        if spillover:
+            # Left spillover
+            c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
+            # Right spillover
+            c_blocks[num_blocks - 1, num_blocks - 1] += (
+                a_blocks[num_blocks - 2, num_blocks - 1]
+                @ b_blocks[num_blocks - 1, num_blocks - 2]
+            )
 
         a_blocks = c_blocks
 

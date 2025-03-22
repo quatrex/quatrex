@@ -5,7 +5,8 @@ import time
 from qttools import NDArray, global_comm, sparse, stack_comm, xp
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.compute_config import ComputeConfig
@@ -39,18 +40,33 @@ class SigmaFockDist(ScatteringSelfEnergy):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
-        coulomb_matrix_sparray = distributed_load(
-            quatrex_config.input_dir / "coulomb_matrix.npz"
-        ).astype(xp.complex128)
-        # Make sure that the Coulomb matrix is Hermitian.
-        coulomb_matrix_sparray = (
-            0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
-        ).tocoo()
+        if quatrex_config.device.construct_from_unit_cell:
+            coulomb_matrix_unit_cells = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+            ).astype(xp.complex128)
+            coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                coulomb_matrix_unit_cells,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            )
+            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+            block_sizes = get_host(block_sizes)
 
-        # Load block sizes for the coulomb matrix.
-        block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        else:
+            coulomb_matrix_sparray = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix.npz"
+            ).astype(xp.complex128)
+            # Make sure that the Coulomb matrix is Hermitian.
+            coulomb_matrix_sparray = (
+                0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
+            ).tocoo()
+
+            # Load block sizes for the coulomb matrix.
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
 
         # Create the DSDBSparse object.
         # TODO: This is pretty wasteful memory-wise.
@@ -80,18 +96,42 @@ class SigmaFockDist(ScatteringSelfEnergy):
         """
         # TODO: Check again if we really need to transpose the matrices
         # here.
+        t_all2all_start = time.perf_counter()
         (sigma_retarded,) = out
-        t0 = time.perf_counter()
         for m in (g_lesser, sigma_retarded):
             # These should both already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
-        t1 = time.perf_counter()
+        synchronize_device()
+        t_all2all_end = time.perf_counter()
+        global_comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
         if global_comm.rank == 0:
-            print(f"SigmaFock: stack->nnz transpose time: {t1-t0}", flush=True)
+            print(
+                f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaFock: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
 
         # Compute the electron density by summing over energies.
+        t_sse_start = time.perf_counter()
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
+        synchronize_device()
+        t_sse_end = time.perf_counter()
+        global_comm.Barrier()
+        t_sse_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaFock: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
+                flush=True,
+            )
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

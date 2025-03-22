@@ -18,6 +18,7 @@ from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -85,7 +86,6 @@ class ElectronSolverDist(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -96,12 +96,28 @@ class ElectronSolverDist(SubsystemSolver):
         )
 
         # Load the device Hamiltonian.
-        self.hamiltonian_sparray = distributed_load(
-            quatrex_config.input_dir / "hamiltonian.npz"
-        ).astype(xp.complex128)
-        self.block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        if quatrex_config.device.construct_from_unit_cell:
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            ).astype(xp.complex128)
+            hamiltonian_sparray, block_sizes = create_hamiltonian(
+                hamiltonian_unit_cells,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            )
+            self.hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+            self.block_sizes = get_host(block_sizes)
+
+        else:
+            self.hamiltonian_sparray = distributed_load(
+                quatrex_config.input_dir / "hamiltonian.npz"
+            ).astype(xp.complex128)
+            self.block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
         if self.block_sizes.sum() != self.hamiltonian_sparray.shape[0]:
@@ -109,18 +125,41 @@ class ElectronSolverDist(SubsystemSolver):
                 "Block sizes do not match Hamiltonian. "
                 f"{self.block_sizes.sum()} != {self.hamiltonian_sparray.shape[0]}"
             )
-        # Load the overlap matrix.
-        try:
-            self.overlap_sparray = distributed_load(
-                quatrex_config.input_dir / "overlap.npz"
-            ).astype(xp.complex128)
-        except FileNotFoundError:
-            # No overlap provided. Assume orthonormal basis.
-            self.overlap_sparray = sparse.eye(
-                self.hamiltonian_sparray.shape[0],
-                format="coo",
-                dtype=self.hamiltonian_sparray.dtype,
-            )
+
+        if quatrex_config.device.construct_from_unit_cell:
+            try:
+                overlap_unit_cells = distributed_load(
+                    quatrex_config.input_dir / "overlap_unit_cells.npy"
+                ).astype(xp.complex128)
+                overlap_sparray, __ = create_hamiltonian(
+                    overlap_unit_cells,
+                    quatrex_config.device.number_of_supercells,
+                    quatrex_config.device.transport_direction,
+                    quatrex_config.device.unit_cell_per_supercell,
+                    return_sparse=True,
+                )
+                self.overlap_sparray = overlap_sparray.astype(xp.complex128)
+            except FileNotFoundError:
+                # No overlap provided. Assume orthonormal basis.
+                self.overlap_sparray = sparse.eye(
+                    self.hamiltonian_sparray.shape[0],
+                    format="coo",
+                    dtype=self.hamiltonian_sparray.dtype,
+                )
+
+        else:
+            # Load the overlap matrix.
+            try:
+                self.overlap_sparray = distributed_load(
+                    quatrex_config.input_dir / "overlap.npz"
+                ).astype(xp.complex128)
+            except FileNotFoundError:
+                # No overlap provided. Assume orthonormal basis.
+                self.overlap_sparray = sparse.eye(
+                    self.hamiltonian_sparray.shape[0],
+                    format="coo",
+                    dtype=self.hamiltonian_sparray.dtype,
+                )
 
         # Check that the overlap matrix and Hamiltonian matrix match.
         if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:
@@ -174,6 +213,10 @@ class ElectronSolverDist(SubsystemSolver):
                 "Current computation not implemented in distributed mode."
             )
 
+        # self.compute_meir_wingreen_current = (
+        #     quatrex_config.electron.solver.compute_current
+        # )
+
         self.dos_peak_limit = quatrex_config.electron.dos_peak_limit
 
         # Band edges and Fermi levels.
@@ -205,6 +248,11 @@ class ElectronSolverDist(SubsystemSolver):
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
         self.block_sections = quatrex_config.electron.obc.block_sections
+
+        self.call_count = 0
+        self.filtering_iteration_limit = (
+            quatrex_config.coulomb_screening.filtering_iteration_limit
+        )
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -452,24 +500,40 @@ class ElectronSolverDist(SubsystemSolver):
             retarded).
 
         """
-        times = []
-
-        synchronize_device()
-        global_comm.Barrier()
 
         if self.flatband:
+            time_homogenize_start = time.perf_counter()
             homogenize(sse_greater)
             homogenize(sse_lesser)
             homogenize(sse_retarded)
+            synchronize_device()
+            time_homogenize_end = time.perf_counter()
+            global_comm.Barrier()
+            time_homogenize_end_all = time.perf_counter()
+            if global_comm.rank == 0:
+                print(
+                    f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
+                    flush=True,
+                )
+                print(
+                    f"    Homogenize all: {time_homogenize_end_all-time_homogenize_start}",
+                    flush=True,
+                )
 
-        synchronize_device()
-        times.append(time.perf_counter())
+        t_assemble_start = time.perf_counter()
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
-        t_system_assemble = time.perf_counter() - times.pop()
+        t_assemble_end = time.perf_counter()
+        global_comm.Barrier()
+        t_assemble_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
+            print(
+                f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
+            )
 
-        times.append(time.perf_counter())
         if self.band_edge_tracking == "eigenvalues":
+            t_band_edges_start = time.perf_counter()
             e_0_left, e_0_right = find_renormalized_eigenvalues(
                 self.hamiltonian_sparray,
                 self.overlap_sparray,
@@ -481,23 +545,34 @@ class ElectronSolverDist(SubsystemSolver):
                     self.right_fermi_level + self.delta_fermi_level_conduction_band,
                 ),
                 (self.left_mid_gap_energy, self.right_mid_gap_energy),
-                use_eigvalsh=self.compute_config.band_edge.use_eigvalsh,
-                eigvalsh_compute_location=self.compute_config.band_edge.eigvalsh_compute_location,
+                band_edge_config=self.compute_config.band_edge,
             )
             self._update_fermi_levels(e_0_left, e_0_right)
-        synchronize_device()
-        t_band_edges = time.perf_counter() - times.pop()
 
-        times.append(time.perf_counter())
+            synchronize_device()
+            t_band_edges_end = time.perf_counter()
+            global_comm.Barrier()
+            t_band_edges_end_all = time.perf_counter()
+            if global_comm.rank == 0:
+                print(
+                    f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
+                )
+                print(
+                    f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+                    flush=True,
+                )
+
+        t_obc_start = time.perf_counter()
         self._compute_obc()
         synchronize_device()
-        t_obc = time.perf_counter() - times.pop()
-
-        # Barrier to ensure that all ranks have computed the OBC.
+        t_obc_end = time.perf_counter()
         global_comm.Barrier()
+        t_obc_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
+            print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
 
-        synchronize_device()
-        times.append(time.perf_counter())
+        t_solve_start = time.perf_counter()
         self.solver_dist.selected_solve(
             a=self.system_matrix,
             sigma_lesser=sse_lesser,
@@ -507,17 +582,35 @@ class ElectronSolverDist(SubsystemSolver):
             return_retarded=True,
         )
         synchronize_device()
-        t_solve = time.perf_counter() - times.pop()
-        _, _, g_retarded = out
+        t_solve_end = time.perf_counter()
+        global_comm.Barrier()
+        t_solve_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+            print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
+        t_filter_peaks_start = time.perf_counter()
+        if self.call_count < self.filtering_iteration_limit:
+            self._filter_peaks(out)
         synchronize_device()
-        times.append(time.perf_counter())
-        self._filter_peaks(out)
-        synchronize_device()
-        t_filter_peaks = time.perf_counter() - times.pop()
+        t_filter_peaks_end = time.perf_counter()
+        global_comm.Barrier()
+        t_filter_peaks_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
+                flush=True,
+            )
+            print(
+                f"    Filter peaks all: {t_filter_peaks_end_all-t_filter_peaks_start}",
+                flush=True,
+            )
 
         if self.band_edge_tracking == "dos-peaks":
-            times.append(time.perf_counter())
+
+            t_dos_peaks_start = time.perf_counter()
+
+            _, _, g_retarded = out
             e_0_left, e_0_right = None, None
 
             if block_comm.rank == 0:
@@ -590,13 +683,14 @@ class ElectronSolverDist(SubsystemSolver):
 
             self._update_fermi_levels(e_0_left, e_0_right)
             synchronize_device()
-            t_dos_peaks = time.perf_counter() - times.pop()
+            t_dos_peaks_end = time.perf_counter()
+            global_comm.Barrier()
+            t_dos_peaks_end_all = time.perf_counter()
             if global_comm.rank == 0:
-                print(f"Peak tracking: {t_dos_peaks}", flush=True)
+                print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
+                print(
+                    f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
+                    flush=True,
+                )
 
-        if global_comm.rank == 0:
-            print(
-                f"Assemble: {t_system_assemble}, OBC: {t_obc}, Solve: {t_solve}\n",
-                f"Filter: {t_filter_peaks}, Band edges: {t_band_edges}",
-                flush=True,
-            )
+        self.call_count += 1

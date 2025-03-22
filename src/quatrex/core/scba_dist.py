@@ -10,8 +10,10 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load
 
+from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables_dist import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -46,16 +48,46 @@ class SCBADataDist:
         self,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
+        electron_energies: NDArray,
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
-        grid = distributed_load(quatrex_config.input_dir / "grid.npy")
-        electron_energies = distributed_load(
-            quatrex_config.input_dir / "electron_energies.npy"
-        )
-        block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        if quatrex_config.device.construct_from_unit_cell:
+            wannier_centers = distributed_load(
+                quatrex_config.input_dir / "wannier_centers.npy"
+            )
+            lattice_vectors = distributed_load(
+                quatrex_config.input_dir / "lattice_vectors.npy"
+            )
+
+            device_cell = list(quatrex_config.device.unit_cell_per_supercell)
+            device_cell[
+                "xyz".index(quatrex_config.device.transport_direction)
+            ] *= quatrex_config.device.number_of_supercells
+            device_cell = tuple(device_cell)
+
+            grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
+
+            # NOTE: this is a temporary solution to get the block sizes.
+            # Should be create from wannier centers
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            )
+            _, block_sizes = create_hamiltonian(
+                hamiltonian_unit_cells,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            )
+            block_sizes = get_host(block_sizes)
+
+        else:
+            grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
 
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0
@@ -218,19 +250,76 @@ class SCBADist:
 
         self.compute_config = compute_config
 
-        self.data = SCBADataDist(quatrex_config, compute_config)
         self.observables = Observables()
+        electron_energies = xp.zeros((comm.Get_size(),))
+        self.data = SCBADataDist(
+            quatrex_config, compute_config, electron_energies=electron_energies
+        )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = distributed_load(
-            self.quatrex_config.input_dir / "electron_energies.npy"
-        )
+        if (self.quatrex_config.electron.energy_window_max is not None) and (
+            self.quatrex_config.electron.energy_window_min is not None
+        ):
+            if self.quatrex_config.electron.energy_window_num is not None:
+                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                    raise ValueError(
+                        "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                    )
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    self.quatrex_config.electron.energy_window_num,
+                )
+            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
+                energy_window_num = (
+                    self.quatrex_config.electron.energy_window_num_per_rank * comm.size
+                )
+                self.electron_energies = xp.linspace(
+                    self.quatrex_config.electron.energy_window_min,
+                    self.quatrex_config.electron.energy_window_max,
+                    energy_window_num,
+                )
+            else:
+                raise ValueError(
+                    "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                )
+        else:
+            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
+            if os.path.isfile(energies_path):
+                self.electron_energies = distributed_load(energies_path)
+            else:
+                if comm.rank == 0:
+                    message = f"""
+                                {'-'*40}
+                                # WARNING
+                                # since no information about electron energy grid is provided,
+                                # we decide to take an energy range enough to cover all the bands 
+                                # in the contact bandstructure. This can lead to unexpected memory usage.
+                                {'-'*40}
+                                """
+                    print(message)
+                self.electron_energies = self._determine_electron_energy_window(
+                    quatrex_config, compute_config
+                )
+
+        min_energy = self.electron_energies[0]
+        max_energy = self.electron_energies[-1]
+        num_energies = len(self.electron_energies)
+        energy_resolution = self.electron_energies[1] - self.electron_energies[0]
+        num_energies_per_rank = num_energies // comm.size
+        if comm.rank == 0:
+            print(
+                f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.",
+                flush=True,
+            )
+            print(f"Resolution is {energy_resolution} eV.", flush=True)
+            print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
+
         self.electron_solver = ElectronSolverDist(
             self.quatrex_config,
             self.compute_config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -300,6 +389,50 @@ class SCBADist:
 
             elif self.quatrex_config.phonon.model == "pseudo-scattering":
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
+
+        self.data = SCBADataDist(
+            quatrex_config, compute_config, electron_energies=self.electron_energies
+        )  # real data
+
+    def _determine_electron_energy_window(
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
+    ):
+        """Determine the energy window from the bandstructure."""
+        electron_energies = xp.zeros((comm.Get_size(),))
+        electron_solver = ElectronSolverDist(
+            quatrex_config,
+            compute_config,
+            electron_energies,
+        )
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 0))
+        h_10 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (1, 0))
+        h_01 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 1))
+        num_k_points = 3
+        e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        n = electron_solver.block_sizes.shape[0] - 1
+        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (n, n))
+        h_10 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n, n - 1)
+        )
+        h_01 = electron_solver._get_block(
+            electron_solver.hamiltonian_sparray, (n - 1, n)
+        )
+        e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
+        energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) - 1.0
+        energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0
+        energy_step = 1e-3  # an energy step of 1 meV
+        energy_window_num = (
+            int((energy_window_max - energy_window_min) / energy_step) + 1
+        )
+        if comm.rank == 0:
+            print(
+                f"Electron energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
+            )
+        return xp.linspace(
+            energy_window_min,
+            energy_window_max,
+            energy_window_num,
+        )
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -406,20 +539,28 @@ class SCBADist:
     @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
-        times = []
-        synchronize_device()
-        times.append(time.perf_counter())
+
+        t_polarization_start = time.perf_counter()
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
         synchronize_device()
-        t_polarization = time.perf_counter() - times.pop()
+        t_polarization_end = time.perf_counter()
+        comm.Barrier()
+        t_polarization_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"Time for polarization: {t_polarization:.2f} s", flush=True)
-        synchronize_device()
-        times.append(time.perf_counter())
+            print(
+                f"  Time for polarization: {t_polarization_end - t_polarization_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for polarization all: {t_polarization_end_all - t_polarization_start:.3f} s",
+                flush=True,
+            )
+
+        t_coulomb_start = time.perf_counter()
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
@@ -427,23 +568,55 @@ class SCBADist:
             out=(self.data.w_lesser, self.data.w_greater),
         )
         synchronize_device()
-        t_solve = time.perf_counter() - times.pop()
+        t_coulomb_end = time.perf_counter()
+        comm.Barrier()
+        t_coulomb_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"Time for Coulomb screening solver: {t_solve:.2f} s", flush=True)
+            print(
+                f"  Time for Coulomb screening: {t_coulomb_end - t_coulomb_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening all: {t_coulomb_end_all - t_coulomb_start:.3f} s",
+                flush=True,
+            )
 
+        t_coulomb_observables = time.perf_counter()
         self._compute_coulomb_screening_observables()
         synchronize_device()
-        times.append(time.perf_counter())
+        t_coulomb_observables_end = time.perf_counter()
+        comm.Barrier()
+        t_coulomb_observables_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"  Time for Coulomb screening observables: {t_coulomb_observables_end - t_coulomb_observables:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening observables all: {t_coulomb_observables_end_all - t_coulomb_observables:.3f} s",
+                flush=True,
+            )
+
+        t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
         )
         synchronize_device()
-        t_fock = time.perf_counter() - times.pop()
+        t_sigma_fock_end = time.perf_counter()
+        comm.Barrier()
+        t_sigma_fock_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"Time for Fock self-energy: {t_fock:.2f} s", flush=True)
-        synchronize_device()
-        times.append(time.perf_counter())
+            print(
+                f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s",
+                flush=True,
+            )
+
+        t_sigma_start = time.perf_counter()
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -456,10 +629,17 @@ class SCBADist:
             ),
         )
         synchronize_device()
-        t_sigma = time.perf_counter() - times.pop()
+        t_sigma_end = time.perf_counter()
+        comm.Barrier()
+        t_sigma_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
-                f"Time for Coulomb screening self-energy: {t_sigma:.2f} s", flush=True
+                f"  Time for Coulomb screening self-energy: {t_sigma_end - t_sigma_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s",
+                flush=True,
             )
 
     @profiler.profile(level="debug")
@@ -637,14 +817,15 @@ class SCBADist:
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
-        times = []
+
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
             synchronize_device()
-            times.append(time.perf_counter())
+            comm.Barrier()
+            t_iteration_start = time.perf_counter()
 
-            times.append(time.perf_counter())
+            t_solve_start = time.perf_counter()
             self.electron_solver.solve(
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
@@ -652,27 +833,58 @@ class SCBADist:
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
             synchronize_device()
-            t_solve = time.perf_counter() - times.pop()
+            t_solve_end = time.perf_counter()
+            comm.Barrier()
+            t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
+                print(
+                    f"Time for electron solver: {t_solve_end - t_solve_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s",
+                    flush=True,
+                )
 
+            t_oberservables_start = time.perf_counter()
             self._compute_electron_observables()
+            synchronize_device()
+            t_oberservables_end = time.perf_counter()
+            comm.Barrier()
+
+            t_oberservables_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for computing observables: {t_oberservables_end - t_oberservables_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for computing observables all: {t_oberservables_end_all - t_oberservables_start:.3f} s",
+                    flush=True,
+                )
 
             # Stash current into previous self-energy buffer.
-            synchronize_device()
-            times.append(time.perf_counter())
+            t_stash_start = time.perf_counter()
             self._stash_sigma()
             synchronize_device()
-            t_swap = time.perf_counter() - times.pop()
+            t_stash_end = time.perf_counter()
+            comm.Barrier()
+            t_stash_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for swapping: {t_swap:.2f} s", flush=True)
+                print(
+                    f"Time for swapping: {t_stash_end - t_stash_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for swapping all: {t_stash_end_all - t_stash_start:.3f} s",
+                    flush=True,
+                )
 
             # Transpose to nnz distribution.
             # NOTE: While computing all interactions, we only ever need
             # to access the Green's function and the self-energies in
             # their nnz-distributed state.
-            synchronize_device()
-            t0 = time.perf_counter()
+            t_start_transpose = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "nnz"
@@ -684,19 +896,33 @@ class SCBADist:
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "nnz"
             synchronize_device()
-            t1 = time.perf_counter()
+            t_end_transpose = time.perf_counter()
+            comm.Barrier()
+            t_end_transpose_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"scba: Time for transposing forth: {t1 - t0:.2f} s", flush=True)
+                print(
+                    f"scba: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
+                    flush=True,
+                )
 
             if self.quatrex_config.scba.coulomb_screening:
-                synchronize_device()
-                times.append(time.perf_counter())
+                t_start_coulomb = time.perf_counter()
                 self._compute_coulomb_screening_interaction()
                 synchronize_device()
-                t_coulomb = time.perf_counter() - times.pop()
+                t_end_coulomb = time.perf_counter()
+                comm.Barrier()
+                t_end_coulomb_all = time.perf_counter()
                 if comm.rank == 0:
                     print(
-                        f"Time for Coulomb screening interaction: {t_coulomb:.2f} s",
+                        f"Time for Coulomb screening interaction: {t_end_coulomb - t_start_coulomb:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
                         flush=True,
                     )
 
@@ -704,19 +930,24 @@ class SCBADist:
                 self._compute_photon_interaction()
 
             if self.quatrex_config.scba.phonon:
-                synchronize_device()
-                times.append(time.perf_counter())
+                t_start_phonon = time.perf_counter()
                 self._compute_phonon_interaction()
                 synchronize_device()
-                t_phonon = time.perf_counter() - times.pop()
-                (
-                    print(f"Time for phonon interaction: {t_phonon:.2f} s", flush=True)
-                    if comm.rank == 0
-                    else None
-                )
-            synchronize_device()
+                t_end_phonon = time.perf_counter()
+                comm.Barrier()
+                t_end_phonon_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(
+                        f"Time for phonon interaction: {t_end_phonon - t_start_phonon:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s",
+                        flush=True,
+                    )
+
             # Transpose back to stack distribution.
-            t0 = time.perf_counter()
+            t_transpose_sigma_start = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "stack"
@@ -728,32 +959,60 @@ class SCBADist:
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "stack"
             synchronize_device()
-            t1 = time.perf_counter()
+            t_transpose_sigma_end = time.perf_counter()
+            comm.Barrier()
+            t_transpose_sigma_end_all = time.perf_counter()
+
             if comm.rank == 0:
-                print(f"scba: Time for transposing back: {t1 - t0:.2f} s", flush=True)
-            times.append(time.perf_counter())
+                print(
+                    f"scba: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
+
+            t_convergence_start = time.perf_counter()
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)
 
                 break
             synchronize_device()
-            t_convergence = time.perf_counter() - times.pop()
+            t_convergence_end = time.perf_counter()
+            comm.Barrier()
+            t_convergence_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for convergence check: {t_convergence:.2f} s", flush=True)
-            synchronize_device()
-            times.append(time.perf_counter())
+                print(
+                    f"Time for convergence check: {t_convergence_end - t_convergence_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for convergence check all: {t_convergence_end_all - t_convergence_start:.3f} s",
+                    flush=True,
+                )
 
             # Update self-energy for next iteration with mixing factor.
+            t_sigma_update_start = time.perf_counter()
             self._update_sigma()
             synchronize_device()
-            t_update = time.perf_counter() - times.pop()
+            t_sigma_update_end = time.perf_counter()
+            comm.Barrier()
+            t_sigma_update_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"Time for updating: {t_update:.2f} s", flush=True)
-            synchronize_device()
-            t_iteration = time.perf_counter() - times.pop()
+                print(
+                    f"Time for updating: {t_sigma_update_end - t_sigma_update_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s",
+                    flush=True,
+                )
+
+            t_iteration = time.perf_counter() - t_iteration_start
             if comm.rank == 0:
-                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+                print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
 
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info
@@ -774,12 +1033,22 @@ class SCBADist:
 
             if i % self.quatrex_config.scba.output_interval == 0:
                 synchronize_device()
-                times.append(time.perf_counter())
+                comm.Barrier()
+                t_write_start = time.perf_counter()
                 self._write_iteration_outputs(i)
                 synchronize_device()
-                t_outputs = time.perf_counter() - times.pop()
+                t_write_end = time.perf_counter()
+                comm.Barrier()
+                t_write_end_all = time.perf_counter()
                 if comm.rank == 0:
-                    print(f"Time for writing outputs: {t_outputs:.2f} s", flush=True)
+                    print(
+                        f"Time for writing outputs: {t_write_end_all - t_write_start:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for writing outputs all: {t_write_end - t_write_start:.3f} s",
+                        flush=True,
+                    )
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:

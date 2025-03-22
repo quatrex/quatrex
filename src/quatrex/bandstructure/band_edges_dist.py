@@ -10,6 +10,8 @@ from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import get_section_sizes
 from scipy import linalg as spla
 
+from quatrex.core.compute_config import BandEdgeConfig
+
 profiler = Profiler()
 
 if xp.__name__ == "numpy":
@@ -93,8 +95,7 @@ def _compute_eigenvalues(
     sigma_retarded: DSDBSparse,
     ind: int,
     side: str,
-    use_eigvalsh: bool = False,
-    eigvalsh_compute_location: str = "cupy",
+    band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
     """Computes the eigenvalues for the left or right contact."""
     if side == "left":
@@ -119,13 +120,18 @@ def _compute_eigenvalues(
     s_0 = sum(_get_block(overlap, index=block) for block in blocks)
 
     h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
-    if use_eigvalsh:
+    if band_edge_config.use_eigvalsh:
         # NOTE: In this case we use only the real part of the retarded
         # self-energy.
         h_0 += sum(
             xp.real(sigma_retarded.local_blocks[*block][ind]) for block in sigma_blocks
         )
-        e_0 = eigvalsh(h_0, s_0, compute_module=eigvalsh_compute_location)
+        e_0 = eigvalsh(
+            h_0,
+            s_0,
+            compute_module=band_edge_config.eigvalsh_compute_location,
+            use_pinned_memory=band_edge_config.use_pinned_memory,
+        )
         return xp.sort(e_0.real)
 
     h_0 += sum(sigma_retarded.local_blocks[*block][ind] for block in sigma_blocks)
@@ -145,6 +151,7 @@ def find_renormalized_eigenvalues(
     num_ref_iterations: int = 2,
     use_eigvalsh: bool = False,
     eigvalsh_compute_location: str = "cupy",
+    band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ) -> tuple[NDArray, NDArray]:
     """Computes renormalized eigenvalues for left and right contacts.
 
@@ -209,8 +216,7 @@ def find_renormalized_eigenvalues(
                     sigma_retarded=sigma_retarded,
                     ind=local_ind,
                     side="left",
-                    use_eigvalsh=use_eigvalsh,
-                    eigvalsh_compute_location=eigvalsh_compute_location,
+                    band_edge_config=band_edge_config,
                 )
                 left_valence_band, left_conduction_band_guess = find_band_edges(
                     e_0_left, left_mid_gap_energy
@@ -240,8 +246,7 @@ def find_renormalized_eigenvalues(
                     sigma_retarded=sigma_retarded,
                     ind=local_ind,
                     side="right",
-                    use_eigvalsh=use_eigvalsh,
-                    eigvalsh_compute_location=eigvalsh_compute_location,
+                    band_edge_config=band_edge_config,
                 )
                 right_valence_band, right_conduction_band_guess = find_band_edges(
                     e_0_right, right_mid_gap_energy

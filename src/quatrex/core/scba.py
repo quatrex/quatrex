@@ -256,6 +256,7 @@ class SCBA:
             quatrex_config, compute_config, electron_energies=electron_energies
         )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
+
         # ----- Electrons ----------------------------------------------
         if (self.quatrex_config.electron.energy_window_max is not None) and (
             self.quatrex_config.electron.energy_window_min is not None
@@ -992,8 +993,8 @@ class SCBA:
                     flush=True,
                 )
 
-            t_sigma_update_start = time.perf_counter()
             # Update self-energy for next iteration with mixing factor.
+            t_sigma_update_start = time.perf_counter()
             self._update_sigma()
             synchronize_device()
             t_sigma_update_end = time.perf_counter()
@@ -1008,22 +1009,6 @@ class SCBA:
                     f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s",
                     flush=True,
                 )
-            if xp.__name__ == "cupy":
-                free_memory, total_memory = xp.cuda.Device().mem_info
-                usage = (total_memory - free_memory) / total_memory
-                if not NCCL_AVAILABLE:
-                    average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
-                else:
-                    average_usage = xp.empty(1)
-                    synchronize_device()
-                    nccl_comm.all_reduce(xp.array(usage), average_usage, op="sum")
-                    synchronize_device()
-                    average_usage = float(average_usage[0]) / comm.size
-                if comm.rank == 0:
-                    print(
-                        f"Rank-average device memory usage: {average_usage * 100:.4f}%",
-                        flush=True,
-                    )
 
             t_iteration = time.perf_counter() - t_iteration_start
             if comm.rank == 0:

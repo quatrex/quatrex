@@ -545,7 +545,6 @@ class ElectronSolver(SubsystemSolver):
             return_retarded=True,
             return_current=self.compute_meir_wingreen_current,
         )
-
         synchronize_device()
         t_solve_end = time.perf_counter()
         comm.Barrier()

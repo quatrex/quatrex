@@ -505,8 +505,8 @@ class SigmaFock(ScatteringSelfEnergy):
                 flush=True,
             )
 
-        t_sse_start = time.perf_counter()
         # Compute the electron density by summing over energies.
+        t_sse_start = time.perf_counter()
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
         synchronize_device()

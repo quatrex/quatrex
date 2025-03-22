@@ -92,7 +92,7 @@ def _spillover_matmul(
 def _compute_sparsity_pattern(
     *matrices: DSBSparse, dtype: _DType = None
 ) -> sparse.coo_matrix:
-    """Computes the sparsity pattern of the product of two DSBSparse matrices."""
+    """Computes the sparsity pattern of the product of several DSBSparse matrices."""
     rows, cols = product_sparsity_pattern_dsbsparse(*matrices, spillover=True)
     shape = matrices[0].shape[-2:]
     dtype = dtype or matrices[0].dtype
@@ -541,8 +541,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     flush=True,
                 )
 
-        t_set_blocksize_start = time.perf_counter()
         # Go back to normal block sizes.
+        t_set_blocksize_start = time.perf_counter()
         self._set_block_sizes(self.block_sizes)
         t_set_blocksize_end = time.perf_counter()
         comm.Barrier()

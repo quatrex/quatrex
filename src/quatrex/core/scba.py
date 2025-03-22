@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import ARRAY_MODULE, NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
@@ -88,9 +88,6 @@ class SCBAData:
             block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
-        electron_energies = distributed_load(
-            quatrex_config.input_dir / "electron_energies.npy"
-        )
 
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0
@@ -304,14 +301,17 @@ class SCBA:
                 self.electron_energies = self._determine_electron_energy_window(
                     quatrex_config, compute_config
                 )
-        
+
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
         energy_resolution = self.electron_energies[1] - self.electron_energies[0]
         num_energies_per_rank = num_energies // comm.size
         if comm.rank == 0:
-            print(f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.", flush=True)
+            print(
+                f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.",
+                flush=True,
+            )
             print(f"Resolution is {energy_resolution} eV.", flush=True)
             print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
 

@@ -442,10 +442,18 @@ class ElectronSolverDist(SubsystemSolver):
 
         """
         g_lesser, g_greater, g_retarded = out
-        local_dos = [
-            (-xp.diagonal(block, axis1=-2, axis2=-1).imag).mean(-1)
-            for block in g_retarded.block_diagonal()
-        ]
+        # local_dos = [
+        #     (-xp.diagonal(block, axis1=-2, axis2=-1).imag).mean(-1)
+        #     for block in g_retarded.block_diagonal()
+        # ]
+
+        g_retarded_diag = g_retarded.diagonal()
+        block_sizes = g_retarded.block_sizes
+        block_offsets = g_retarded.block_offsets
+        local_dos = []
+        for i, (bsz, boff) in enumerate(zip(block_sizes, block_offsets)):
+            g_retarded_density = -g_retarded_diag[..., boff : boff + bsz].imag.mean(-1)
+            local_dos.append(g_retarded_density)
 
         if not NCCL_AVAILABLE:
             dos = xp.hstack(stack_comm.allgather(local_dos))

@@ -429,15 +429,25 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         w_lesser, w_greater, *__ = out
         local_dos = []
 
-        for w_lesser_block, w_greater_block in zip(
-            w_lesser.block_diagonal(), w_greater.block_diagonal()
-        ):
-            w_lesser_density = xp.diagonal(
-                w_lesser_block, axis1=-2, axis2=-1
-            ).imag.mean(-1)
-            w_greater_density = (
-                -xp.diagonal(w_greater_block, axis1=-2, axis2=-1).imag
-            ).mean(-1)
+        # for w_lesser_block, w_greater_block in zip(
+        #     w_lesser.block_diagonal(), w_greater.block_diagonal()
+        # ):
+        #     w_lesser_density = xp.diagonal(
+        #         w_lesser_block, axis1=-2, axis2=-1
+        #     ).imag.mean(-1)
+        #     w_greater_density = (
+        #         -xp.diagonal(w_greater_block, axis1=-2, axis2=-1).imag
+        #     ).mean(-1)
+        #     local_dos.append(0.5 * (w_greater_density - w_lesser_density))
+
+        w_lesser_diag = w_lesser.diagonal()
+        w_greater_diag = w_greater.diagonal()
+
+        block_sizes = w_lesser.block_sizes
+        block_offsets = w_lesser.block_offsets
+        for i, (bzs, boff) in enumerate(zip(block_sizes, block_offsets)):
+            w_lesser_density = w_lesser_diag[..., boff : boff + bzs].imag.mean(-1)
+            w_greater_density = -w_greater_diag[..., boff : boff + bzs].imag.mean(-1)
             local_dos.append(0.5 * (w_greater_density - w_lesser_density))
 
         if not NCCL_AVAILABLE:

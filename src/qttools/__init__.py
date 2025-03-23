@@ -136,6 +136,7 @@ if BLOCK_COMM_SIZE is not None:
         nccl_block_comm = distributed.NCCLBackend(
             global_comm.size, global_comm.rank, use_mpi=True
         )
+        nccl_block_comm._n_devices = block_comm.size
         nccl_block_comm._mpi_comm = block_comm
         nccl_block_comm._mpi_rank = nccl_block_comm._mpi_comm.Get_rank()
         nccl_block_comm._mpi_comm.Barrier()
@@ -152,6 +153,7 @@ if BLOCK_COMM_SIZE is not None:
         nccl_stack_comm = distributed.NCCLBackend(
             global_comm.size, global_comm.rank, use_mpi=True
         )
+        nccl_stack_comm._n_devices = stack_comm.size
         nccl_stack_comm._mpi_comm = stack_comm
         nccl_stack_comm._mpi_rank = nccl_stack_comm._mpi_comm.Get_rank()
         nccl_stack_comm._mpi_comm.Barrier()

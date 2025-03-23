@@ -150,6 +150,13 @@ def system_reduction(
     any_rows = xp.any(nnz_rows, axis=-1)
     any_cols = xp.any(nnz_cols, axis=-1)
 
+    # test if all rows/cols are zero
+    if not xp.any(any_rows) or not xp.any(any_cols):
+        if out is None:
+            return q
+        out[:] = q
+        return
+
     # account for only zero rows/cols
     # else will not reduce
     rows_to_reduce = slice(xp.min(row_start[any_rows]), xp.max(row_end[any_rows]))

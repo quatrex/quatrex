@@ -17,8 +17,23 @@ def test_correctness(
 
     a, q, _, _ = inputs
 
-    print(a.shape)
-    print(q.shape)
+    x = lyapunov_solver(a, q, "contact")
+
+    assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
+
+
+@pytest.mark.parametrize("reduce_sparsity", [True, False])
+def test_correctness_zeros(
+    inputs: tuple[NDArray, NDArray],
+    lyapunov_solver: LyapunovSolver,
+    reduce_sparsity: bool,
+):
+
+    lyapunov_solver.reduce_sparsity = reduce_sparsity
+
+    a, q, _, _ = inputs
+
+    a[:] = 0
 
     x = lyapunov_solver(a, q, "contact")
 

@@ -29,6 +29,7 @@ def homogenize(matrix: DSBSparse) -> None:
 def compute_sparsity_pattern(
     positions: NDArray,
     cutoff_distance: float,
+    transport_direction: str = "x",
     strategy: str = "box",
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern for the interaction matrix.
@@ -39,6 +40,8 @@ def compute_sparsity_pattern(
         The grid points.
     interaction_cutoff : float
         The interaction cutoff.
+    transport_direction : str, optional
+        The transport direction, by default 'x'.
     strategy : str, optional
         The strategy to use, by default "box", where only the distance
         along the transport direction is considered. The other option is
@@ -59,9 +62,11 @@ def compute_sparsity_pattern(
 
     elif strategy == "box":
 
+        idx = {"x": 0, "y": 1, "z": 2}[transport_direction]
+
         def distance(x, y):
             """Distance along transport direction."""
-            return xp.abs(x[..., 0] - y[..., 0])
+            return xp.abs(x[..., idx] - y[..., idx])
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")

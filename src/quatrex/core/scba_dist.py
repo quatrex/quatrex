@@ -683,7 +683,7 @@ class SCBADist:
             )
         if self.quatrex_config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(
-                self.data.g_lesser, self.electron_solver.hamiltonian_sparray
+                self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.quatrex_config.electron.solver.compute_current:
                 if not NCCL_AVAILABLE:

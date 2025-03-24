@@ -1,4 +1,4 @@
-from qttools import xp
+from qttools import sparse, xp
 from qttools.kernels import dsbcoo_kernels
 from qttools.utils.mpi_utils import distributed_load
 
@@ -52,21 +52,21 @@ def test_solve(
     cols = cols[reordering]
     # Create the DSBSparse objects
     number_of_kpoints = quatrex_config.electron.number_of_kpoints
-    sigma_lesser = compute_config.dbsparse_type(
+    sigma_lesser = compute_config.dsbsparse_type(
         sl_data,
         rows,
         cols,
         block_sizes,
         (sl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    sigma_greater = compute_config.dbsparse_type(
+    sigma_greater = compute_config.dsbsparse_type(
         sg_data,
         rows,
         cols,
         block_sizes,
         (sg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    sigma_retarded = compute_config.dbsparse_type(
+    sigma_retarded = compute_config.dsbsparse_type(
         sr_data,
         rows,
         cols,
@@ -74,11 +74,14 @@ def test_solve(
         (sr_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
     # Initialize the output objects
-    g_lesser = compute_config.dbsparse_type.zeros_like(sigma_lesser)
-    g_greater = compute_config.dbsparse_type.zeros_like(sigma_greater)
-    g_retarded = compute_config.dbsparse_type.zeros_like(sigma_retarded)
+    g_lesser = compute_config.dsbsparse_type.zeros_like(sigma_lesser)
+    g_greater = compute_config.dsbsparse_type.zeros_like(sigma_greater)
+    g_retarded = compute_config.dsbsparse_type.zeros_like(sigma_retarded)
     # Initialize the solver object
-    electron_solver = ElectronSolver(quatrex_config, compute_config, electron_energies)
+    sparsity_pattern = sparse.coo_matrix((xp.ones_like(rows), (rows, cols)))
+    electron_solver = ElectronSolver(
+        quatrex_config, compute_config, electron_energies, sparsity_pattern
+    )
     # Compute the green's functions
     electron_solver.solve(
         sigma_lesser,

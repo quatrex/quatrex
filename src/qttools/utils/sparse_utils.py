@@ -230,7 +230,6 @@ def product_sparsity_pattern_dsdbsparse(
     assert len(matrices) > 1
 
     a = matrices[0]
-    a.data[:] = 1
 
     # Assuming that all matrices have the same number of blocks, same block sizes, and same block diagonals.
     num_blocks = a.num_blocks
@@ -257,7 +256,6 @@ def product_sparsity_pattern_dsdbsparse(
 
     for n, b in enumerate(matrices[1:]):
 
-        b.data[:] = 1
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
         b_num_diag = in_num_diag
         tmp_num_diag = a_num_diag + b_num_diag - 1

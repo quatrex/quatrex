@@ -95,21 +95,22 @@ class ElectronSolverDist(SubsystemSolver):
             max_batch_size=quatrex_config.electron.solver.max_batch_size,
         )
 
-        # Determine the local slice of the data.
-        # NOTE: This is arrow-wise partitioning.
-        # TODO: Allow more options, e.g., block row-wise partitioning.
-        section_sizes, __ = get_section_sizes(
-            quatrex_config.device.number_of_supercells, block_comm.size
-        )
-        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-        start_block = section_offsets[block_comm.rank]
-        end_block = section_offsets[block_comm.rank + 1]
-
         # Load the device Hamiltonian.
         if quatrex_config.device.construct_from_unit_cell:
             hamiltonian_unit_cells = distributed_load(
                 quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
             ).astype(xp.complex128)
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, block_comm.size
+            )
+            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+            start_block = section_offsets[block_comm.rank]
+            end_block = section_offsets[block_comm.rank + 1]
+
             hamiltonian_sparray, block_sizes = create_hamiltonian(
                 hamiltonian_unit_cells,
                 quatrex_config.device.number_of_supercells,
@@ -120,26 +121,54 @@ class ElectronSolverDist(SubsystemSolver):
                 return_sparse=True,
             )
             hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+            hamiltonian_sparray.sum_duplicates()
             block_sizes = get_host(block_sizes)
-            self.block_sizes = [
-                block_sizes[0]
-            ] * quatrex_config.device.number_of_supercells
+            self.block_sizes = host_xp.asarray(
+                [block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
 
             from qttools.kernels import dsbcoo_kernels
 
             block_sort_index = dsbcoo_kernels.compute_block_sort_index(
-                hamiltonian_sparray.row, hamiltonian_sparray.col, block_sizes
+                hamiltonian_sparray.row, hamiltonian_sparray.col, self.block_sizes
             )
             data = hamiltonian_sparray.data[block_sort_index]
             rows = hamiltonian_sparray.row[block_sort_index]
             cols = hamiltonian_sparray.col[block_sort_index]
+            block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
+            start_idx = block_offsets[section_offsets[block_comm.rank]]
+            end_idx = block_offsets[section_offsets[block_comm.rank + 1]]
+            local_mask = ((rows >= start_idx) & (cols >= start_idx)) & (
+                (rows < end_idx) | (cols < end_idx)
+            )
+            local_data = xp.zeros(
+                (1,) + (int(local_mask.sum()),), dtype=hamiltonian_sparray.data.dtype
+            )
+            local_data[..., :] = data[local_mask]
+            local_rows = rows[local_mask] - start_idx
+            local_cols = cols[local_mask] - start_idx
             self.hamiltonian = compute_config.dsdbsparse_type(
-                data, rows, cols, self.block_sizes, (stack_comm.size,)
+                local_data, local_rows, local_cols, self.block_sizes, (stack_comm.size,)
             )
 
             # Allocate memory for the system matrix.
+            # We only distribute the first dimension of the stack.
+            stack_section_sizes, __ = get_section_sizes(
+                self.energies.shape[0], stack_comm.size
+            )
+            section_size = stack_section_sizes[stack_comm.rank]
+            local_stack_shape = (section_size,) + self.energies.shape[1:]
+            local_data = xp.zeros(
+                local_stack_shape + (int(local_mask.sum()),),
+                dtype=hamiltonian_sparray.data.dtype,
+            )
+            local_data[..., :] = data[local_mask]
             self.system_matrix = compute_config.dsdbsparse_type(
-                data, rows, cols, self.block_sizes, self.energies.shape
+                local_data,
+                local_rows,
+                local_cols,
+                self.block_sizes,
+                self.energies.shape,
             )
 
         else:

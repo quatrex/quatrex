@@ -129,7 +129,7 @@ class ElectronSolver(SubsystemSolver):
                 self.overlap_sparray = sparse.eye(
                     self.hamiltonian.shape[-2],
                     format="coo",
-                    dtype=self.hamiltonian.shape[-2].dtype,
+                    dtype=self.hamiltonian.dtype,
                 )
 
         else:

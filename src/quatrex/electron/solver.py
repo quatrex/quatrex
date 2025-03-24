@@ -99,7 +99,7 @@ class ElectronSolver(SubsystemSolver):
         self.hamiltonian = compute_config.dsbsparse_type.from_sparray(
             hamiltonian_sparray,
             block_sizes=self.block_sizes,
-            global_stack_shape=comm.size,
+            global_stack_shape=(comm.size,),
         )
         self.hamiltonian.symmetrize()
 
@@ -162,14 +162,11 @@ class ElectronSolver(SubsystemSolver):
         ).tocoo()
 
         # Allocate memory for the system matrix.
-        # self.system_matrix = compute_config.dsbsparse_type.from_sparray(
-        #     self.hamiltonian_sparray.astype(  # We want the full Hamiltonian.
-        #         xp.complex128
-        #     ),
-        #     block_sizes=self.block_sizes,
-        #     global_stack_shape=self.energies.shape,
-        # )
-        self.system_matrix = compute_config.dsbsparse_type.zeros_like(self.hamiltonian)
+        self.system_matrix = compute_config.dsbsparse_type.from_sparray(
+            hamiltonian_sparray,
+            block_sizes=self.block_sizes,
+            global_stack_shape=self.energies.shape,
+        )
 
         # Load the potential.
         try:
@@ -403,7 +400,8 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies + 1j * self.eta,
         )
 
-        self.system_matrix -= self.hamiltonian + sparse.diags(self.potential)
+        self.system_matrix._data -= self.hamiltonian._data
+        self.system_matrix += sparse.diags(self.potential, format="coo")
         _btd_subtract(self.system_matrix, sse_retarded)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
@@ -506,7 +504,7 @@ class ElectronSolver(SubsystemSolver):
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
             e_0_left, e_0_right = find_renormalized_eigenvalues(
-                self.hamiltonian_sparray,
+                self.hamiltonian,
                 self.overlap_sparray,
                 self.potential,
                 sse_retarded,

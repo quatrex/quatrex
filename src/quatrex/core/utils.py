@@ -31,6 +31,8 @@ def compute_sparsity_pattern(
     cutoff_distance: float,
     transport_direction: str = "x",
     strategy: str = "box",
+    start_idx: int = 0,
+    end_idx: int = None,
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern for the interaction matrix.
 
@@ -71,15 +73,20 @@ def compute_sparsity_pattern(
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
+    end_idx = end_idx or len(positions)
+
     rows, cols = [], []
-    for i, position in enumerate(positions):
+    for i, position in enumerate(positions[start_idx:end_idx]):
         distances = distance(positions, position)
         interacting = xp.where(distances < cutoff_distance)[0]
         cols.extend(interacting)
-        rows.extend([i] * len(interacting))
+        rows.extend([i + start_idx] * len(interacting))
 
     rows, cols = xp.array(rows), xp.array(cols)
-    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
+    return sparse.coo_matrix(
+        (xp.ones_like(rows, dtype=xp.float32), (rows, cols)),
+        shape=(len(positions), len(positions)),
+    )
 
 
 def compute_num_connected_blocks(

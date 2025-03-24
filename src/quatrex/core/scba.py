@@ -110,7 +110,9 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        self.sparsity_pattern = compute_sparsity_pattern(grid, max_interaction_cutoff)
+        self.sparsity_pattern = compute_sparsity_pattern(
+            grid, max_interaction_cutoff, quatrex_config.device.transport_direction
+        )
 
         dsbsparse_type = compute_config.dsbsparse_type
 
@@ -674,7 +676,7 @@ class SCBA:
             )
         if self.quatrex_config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(
-                self.data.g_lesser, self.electron_solver.hamiltonian_sparray
+                self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.quatrex_config.electron.solver.compute_current:
                 if not NCCL_AVAILABLE:

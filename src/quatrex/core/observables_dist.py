@@ -17,7 +17,7 @@ from qttools.utils.gpu_utils import synchronize_device
 
 
 def get_block(
-    coo: sparse.coo_matrix,
+    coo: sparse.coo_matrix | DSDBSparse,
     block_sizes: NDArray,
     block_offsets: NDArray,
     index: tuple,
@@ -42,6 +42,10 @@ def get_block(
 
     """
     row, col = index
+
+    if isinstance(coo, DSDBSparse):
+        start_block = coo.block_section_offsets[block_comm.rank]
+        return coo.local_blocks[row - start_block, col - start_block]
 
     mask = (
         (block_offsets[row] <= coo.row)
@@ -201,7 +205,9 @@ def contact_currents(
     )
 
 
-def device_current(x_lesser: DSDBSparse, operator: sparse.spmatrix) -> NDArray:
+def device_current(
+    x_lesser: DSDBSparse, operator: sparse.spmatrix | DSDBSparse
+) -> NDArray:
     """Computes the current from the lesser Green's function.
 
     Parameters
@@ -217,21 +223,34 @@ def device_current(x_lesser: DSDBSparse, operator: sparse.spmatrix) -> NDArray:
         The current, gathered across all participating ranks.
 
     """
-    operator = operator.tocoo()
+    if isinstance(operator, sparse.spmatrix):
+        operator = operator.tocoo()
     _operator_block = partial(
         get_block, operator, x_lesser.block_sizes, x_lesser.block_offsets
     )
-    local_current = []
-    x_lesser_upper_blocks = x_lesser.block_diagonal(offset=1)
-    x_lesser_lower_blocks = x_lesser.block_diagonal(offset=-1)
+    # local_current = []
+    # x_lesser_upper_blocks = x_lesser.block_diagonal(offset=1)
+    # x_lesser_lower_blocks = x_lesser.block_diagonal(offset=-1)
 
-    for i in range(x_lesser.num_blocks - 1):
+    # for i in range(x_lesser.num_blocks - 1):
+    #     j = i + 1
+    #     layer_current = (
+    #         _operator_block((i, j)) * (x_lesser_lower_blocks[i].swapaxes(-2, -1))
+    #         - x_lesser_upper_blocks[i] * _operator_block((j, i)).swapaxes(-2, -1)
+    #     ).sum(axis=(-1, -2))
+    #     local_current.append(layer_current)
+    local_current = []
+    start_block = x_lesser.block_section_offsets[block_comm.rank]
+    for i in range(x_lesser.num_local_blocks - 1):
         j = i + 1
         layer_current = (
-            _operator_block((i, j)) * (x_lesser_lower_blocks[i].swapaxes(-2, -1))
-            - x_lesser_upper_blocks[i] * _operator_block((j, i)).swapaxes(-2, -1)
+            _operator_block((i + start_block, j + start_block))
+            * x_lesser.local_blocks[j, i].swapaxes(-2, -1)
+            - x_lesser.local_blocks[i, j]
+            * _operator_block((j + start_block, i + start_block)).swapaxes(-2, -1)
         ).sum(axis=(-1, -2))
         local_current.append(layer_current)
+    local_current = xp.vstack(block_comm.allgather(local_current))
 
     local_current = xp.ascontiguousarray(xp.vstack(local_current).T)
 

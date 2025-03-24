@@ -85,23 +85,30 @@ class ElectronSolver(SubsystemSolver):
                 quatrex_config.device.unit_cell_per_supercell,
                 return_sparse=True,
             )
-            self.hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
             self.block_sizes = get_host(block_sizes)
 
         else:
-            self.hamiltonian_sparray = distributed_load(
+            hamiltonian_sparray = distributed_load(
                 quatrex_config.input_dir / "hamiltonian.npz"
             ).astype(xp.complex128)
             self.block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
 
+        self.hamiltonian = compute_config.dsbsparse_type.from_sparray(
+            hamiltonian_sparray,
+            block_sizes=self.block_sizes,
+            global_stack_shape=(comm.size,),
+        )
+        self.hamiltonian.symmetrize()
+
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
-        if self.block_sizes.sum() != self.hamiltonian_sparray.shape[0]:
+        if self.block_sizes.sum() != self.hamiltonian.shape[-2]:
             raise ValueError(
                 "Block sizes do not match Hamiltonian. "
-                f"{self.block_sizes.sum()} != {self.hamiltonian_sparray.shape[0]}"
+                f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
             )
 
         if quatrex_config.device.construct_from_unit_cell:
@@ -120,9 +127,9 @@ class ElectronSolver(SubsystemSolver):
             except FileNotFoundError:
                 # No overlap provided. Assume orthonormal basis.
                 self.overlap_sparray = sparse.eye(
-                    self.hamiltonian_sparray.shape[0],
+                    self.hamiltonian.shape[-2],
                     format="coo",
-                    dtype=self.hamiltonian_sparray.dtype,
+                    dtype=self.hamiltonian.dtype,
                 )
 
         else:
@@ -134,31 +141,29 @@ class ElectronSolver(SubsystemSolver):
             except FileNotFoundError:
                 # No overlap provided. Assume orthonormal basis.
                 self.overlap_sparray = sparse.eye(
-                    self.hamiltonian_sparray.shape[0],
+                    self.hamiltonian.shape[-2],
                     format="coo",
-                    dtype=self.hamiltonian_sparray.dtype,
+                    dtype=self.hamiltonian.dtype,
                 )
 
         # Check that the overlap matrix and Hamiltonian matrix match.
-        if self.overlap_sparray.shape != self.hamiltonian_sparray.shape:
+        if self.overlap_sparray.shape != self.hamiltonian.shape[-2:]:
             raise ValueError(
                 "Overlap matrix and Hamiltonian matrix have different shapes."
             )
 
         # Make sure that the Hamiltonian and overlap matrices are
         # Hermitian.
-        self.hamiltonian_sparray = (
-            0.5 * (self.hamiltonian_sparray + self.hamiltonian_sparray.conj().T)
-        ).tocoo()
+        # self.hamiltonian_sparray = (
+        #     0.5 * (self.hamiltonian_sparray + self.hamiltonian_sparray.conj().T)
+        # ).tocoo()
         self.overlap_sparray = (
             0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
         ).tocoo()
 
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsbsparse_type.from_sparray(
-            self.hamiltonian_sparray.astype(  # We want the full Hamiltonian.
-                xp.complex128
-            ),
+            hamiltonian_sparray,
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
@@ -168,14 +173,14 @@ class ElectronSolver(SubsystemSolver):
             self.potential = distributed_load(
                 quatrex_config.input_dir / "potential.npy"
             )
-            if self.potential.size != self.hamiltonian_sparray.shape[0]:
+            if self.potential.size != self.hamiltonian.shape[-2]:
                 raise ValueError(
                     "Potential matrix and Hamiltonian have different shapes."
                 )
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
-                self.hamiltonian_sparray.shape[0], dtype=self.hamiltonian_sparray.dtype
+                self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
             )
         self.eta = quatrex_config.electron.eta
 
@@ -395,7 +400,8 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies + 1j * self.eta,
         )
 
-        self.system_matrix -= self.hamiltonian_sparray + sparse.diags(self.potential)
+        self.system_matrix._data -= self.hamiltonian._data
+        self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
@@ -498,7 +504,7 @@ class ElectronSolver(SubsystemSolver):
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
             e_0_left, e_0_right = find_renormalized_eigenvalues(
-                self.hamiltonian_sparray,
+                self.hamiltonian,
                 self.overlap_sparray,
                 self.potential,
                 sse_retarded,

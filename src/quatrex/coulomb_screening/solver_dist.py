@@ -155,24 +155,49 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             coulomb_matrix_unit_cells = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
             ).astype(xp.complex128)
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, block_comm.size
+            )
+            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+            start_block = section_offsets[block_comm.rank]
+            end_block = section_offsets[block_comm.rank + 1]
+
             coulomb_matrix_sparray, small_block_sizes = create_hamiltonian(
                 coulomb_matrix_unit_cells,
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
                 return_sparse=True,
             )
             coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
-            self.small_block_sizes = get_host(small_block_sizes)
+            coulomb_matrix_sparray.sum_duplicates()
+            small_block_sizes = get_host(small_block_sizes)
+            self.small_block_sizes = host_xp.asarray(
+                [small_block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
+            # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+            #     coulomb_matrix_sparray,
+            #     block_sizes=self.small_block_sizes,
+            #     global_stack_shape=(stack_comm.size,),
+            # )
+            self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+                sparsity_pattern.astype(xp.complex128),
+                block_sizes=self.small_block_sizes,
+                global_stack_shape=(stack_comm.size,),
+            )
+            self.coulomb_matrix.data = 0.0
+            self.coulomb_matrix += coulomb_matrix_sparray
 
         else:
             coulomb_matrix_sparray = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix.npz"
             ).astype(xp.complex128)
-            # Make sure that the Coulomb matrix is Hermitian.
-            coulomb_matrix_sparray = (
-                0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T).tocoo()
-            ).tocoo()
 
             # Load block sizes.
             self.small_block_sizes = get_host(
@@ -181,12 +206,16 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 )
             )
 
-        if not _check_block_sizes(
-            coulomb_matrix_sparray.row,
-            coulomb_matrix_sparray.col,
-            self.small_block_sizes,
-        ):
-            raise ValueError("Block sizes do not match Coulomb matrix.")
+            self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+                sparsity_pattern.astype(xp.complex128),
+                block_sizes=self.small_block_sizes,
+                global_stack_shape=(stack_comm.size,),
+            )
+            self.coulomb_matrix.data = 0.0
+            self.coulomb_matrix += coulomb_matrix_sparray
+
+        # Make sure that the Coulomb matrix is Hermitian.
+        self.coulomb_matrix.symmetrize()
 
         self.num_connected_blocks = (
             quatrex_config.coulomb_screening.num_connected_blocks
@@ -209,23 +238,23 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             * self.num_connected_blocks
         )
         # Check that the provided block sizes match the coulomb matrix.
-        if self.small_block_sizes.sum() != coulomb_matrix_sparray.shape[0]:
+        if self.small_block_sizes.sum() != self.coulomb_matrix.shape[-2]:
             raise ValueError(
                 "Block sizes do not match Coulomb matrix. "
-                f"{self.small_block_sizes.sum()} != {coulomb_matrix_sparray.shape[0]}"
+                f"{self.small_block_sizes.sum()} != {self.coulomb_matrix.shape[-2]}"
             )
 
         # Create DBSparse matrix from the Coulomb matrix.
         # TODO: Waste of memory. Not an energy-dependent matrix.
         # Workaround: We set the global_stack_shape to the number of MPI
         # ranks.
-        self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
-            block_sizes=self.small_block_sizes,
-            global_stack_shape=(stack_comm.size,),
-        )
-        self.coulomb_matrix.data = 0.0
-        self.coulomb_matrix += coulomb_matrix_sparray
+        # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+        #     sparsity_pattern.astype(xp.complex128),
+        #     block_sizes=self.small_block_sizes,
+        #     global_stack_shape=(stack_comm.size,),
+        # )
+        # self.coulomb_matrix.data = 0.0
+        # self.coulomb_matrix += coulomb_matrix_sparray
 
         # v_times_p_sparsity_pattern = _spillover_matmul(
         #     sparsity_pattern, sparsity_pattern, self.small_block_sizes

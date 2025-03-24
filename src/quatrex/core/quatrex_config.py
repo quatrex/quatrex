@@ -15,7 +15,6 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
-from qttools import host_xp
 from typing_extensions import Self
 
 
@@ -326,7 +325,7 @@ class DeviceConfig(BaseModel):
     # --- Device geometry ---------------------------------------------
     unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     number_of_supercells: PositiveInt = 1
-    transport_direction: Literal["x", "y", "z"] = "z"
+    transport_direction: Literal["x", "y", "z"]
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

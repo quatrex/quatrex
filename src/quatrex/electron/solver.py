@@ -401,7 +401,7 @@ class ElectronSolver(SubsystemSolver):
         )
 
         self.system_matrix._data -= self.hamiltonian._data
-        self.system_matrix += sparse.diags(self.potential, format="coo")
+        self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:

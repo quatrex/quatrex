@@ -110,7 +110,9 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        self.sparsity_pattern = compute_sparsity_pattern(grid, max_interaction_cutoff)
+        self.sparsity_pattern = compute_sparsity_pattern(
+            grid, max_interaction_cutoff, quatrex_config.device.transport_direction
+        )
 
         dsbsparse_type = compute_config.dsbsparse_type
 

@@ -56,6 +56,6 @@ def number_of_kpoints(quatrex_config):
     return quatrex_config.electron.number_of_kpoints
 
 
-@pytest.fixture(params=[0, 1, 2])
+@pytest.fixture(params=[0, 1, 2], ids=["first", "second", "third"])
 def iteration(request):
     return request.param

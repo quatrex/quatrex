@@ -192,7 +192,9 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 global_stack_shape=(stack_comm.size,),
             )
             self.coulomb_matrix.data = 0.0
-            self.coulomb_matrix += coulomb_matrix_sparray
+            self.coulomb_matrix += (
+                coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+            )
 
         else:
             coulomb_matrix_sparray = distributed_load(
@@ -212,7 +214,9 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 global_stack_shape=(stack_comm.size,),
             )
             self.coulomb_matrix.data = 0.0
-            self.coulomb_matrix += coulomb_matrix_sparray
+            self.coulomb_matrix += (
+                coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+            )
 
         # Make sure that the Coulomb matrix is Hermitian.
         self.coulomb_matrix.symmetrize()

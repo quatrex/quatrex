@@ -77,7 +77,9 @@ class SigmaFockDist(ScatteringSelfEnergy):
             global_stack_shape=(stack_comm.size,),
         )
         coulomb_matrix.data = 0.0
-        coulomb_matrix += coulomb_matrix_sparray
+        coulomb_matrix += (
+            coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+        )
         coulomb_matrix.dtranspose()
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 

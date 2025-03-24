@@ -203,7 +203,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             global_stack_shape=(comm.size,),
         )
         self.coulomb_matrix.data = 0.0
-        self.coulomb_matrix += coulomb_matrix_sparray
+        self.coulomb_matrix += (
+            coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+        )
 
         # v_times_p_sparsity_pattern = _spillover_matmul(
         #     sparsity_pattern, sparsity_pattern, self.small_block_sizes

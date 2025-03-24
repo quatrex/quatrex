@@ -245,6 +245,8 @@ class CoulombScreeningConfig(BaseModel):
 
     temperature: PositiveFloat = 300.0  # K
 
+    epsilon_r: PositiveFloat = 1.0
+
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
 

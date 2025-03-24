@@ -340,7 +340,7 @@ class QuatrexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
-    device: DeviceConfig = DeviceConfig()
+    device: DeviceConfig
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     poisson: PoissonConfig = PoissonConfig()

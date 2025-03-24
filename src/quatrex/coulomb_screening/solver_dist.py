@@ -181,11 +181,18 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             self.small_block_sizes = host_xp.asarray(
                 [small_block_sizes[0]] * quatrex_config.device.number_of_supercells
             )
+            # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+            #     coulomb_matrix_sparray,
+            #     block_sizes=self.small_block_sizes,
+            #     global_stack_shape=(stack_comm.size,),
+            # )
             self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-                coulomb_matrix_sparray,
+                sparsity_pattern.astype(xp.complex128),
                 block_sizes=self.small_block_sizes,
                 global_stack_shape=(stack_comm.size,),
             )
+            self.coulomb_matrix.data = 0.0
+            self.coulomb_matrix += coulomb_matrix_sparray
 
         else:
             coulomb_matrix_sparray = distributed_load(

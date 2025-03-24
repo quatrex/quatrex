@@ -22,7 +22,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import get_periodic_superblocks, homogenize, assemble_kpoint_dsb
+from quatrex.core.utils import assemble_kpoint_dsb, get_periodic_superblocks, homogenize
 
 profiler = Profiler()
 

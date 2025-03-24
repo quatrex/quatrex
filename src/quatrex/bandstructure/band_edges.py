@@ -24,7 +24,7 @@ else:
 
 
 def get_block(
-    coo: sparse.coo_matrix,
+    coo: sparse.coo_matrix | DSBSparse,
     block_sizes: NDArray,
     block_offsets: NDArray,
     index: tuple,
@@ -51,6 +51,9 @@ def get_block(
     row, col = index
     row = row + len(block_sizes) if row < 0 else row
     col = col + len(block_sizes) if col < 0 else col
+
+    if isinstance(coo, DSBSparse):
+        return coo.blocks[row, col]
 
     mask = (
         (block_offsets[row] <= coo.row)
@@ -136,7 +139,7 @@ def _compute_eigenvalues(
 
 @profiler.profile(level="api")
 def find_renormalized_eigenvalues(
-    hamiltonian: sparse.spmatrix,
+    hamiltonian: sparse.spmatrix | DSBSparse,
     overlap: sparse.spmatrix,
     potential: NDArray,
     sigma_retarded: DSBSparse,

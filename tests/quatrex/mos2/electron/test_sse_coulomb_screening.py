@@ -1,4 +1,4 @@
-from qttools import xp
+from qttools import sparse, xp
 from qttools.kernels.numba.dsbcoo import compute_block_sort_index
 from qttools.utils.mpi_utils import distributed_load
 
@@ -54,73 +54,47 @@ def test_compute(
     rows = rows[reordering]
     cols = cols[reordering]
     # Create the DSBSparse objects
-    g_lesser = compute_config.dbsparse_type(
+    g_lesser = compute_config.dsbsparse_type(
         gl_data,
         rows,
         cols,
         block_sizes,
         (gl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
     )
-    g_greater = compute_config.dbsparse_type(
+    g_greater = compute_config.dsbsparse_type(
         gg_data,
         rows,
         cols,
         block_sizes,
         (gg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
     )
-    w_lesser = compute_config.dbsparse_type(
+    w_lesser = compute_config.dsbsparse_type(
         wl_data,
         rows,
         cols,
         block_sizes,
         (wl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
     )
-    w_greater = compute_config.dbsparse_type(
+    w_greater = compute_config.dsbsparse_type(
         wg_data,
         rows,
         cols,
         block_sizes,
         (wg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
     )
-    s_lesser = compute_config.dbsparse_type.zeros_like(g_lesser)
-    s_greater = compute_config.dbsparse_type.zeros_like(g_greater)
-    s_retarded = compute_config.dbsparse_type.zeros_like(g_greater)
-    # Create the expected results
-    s_lesser_expected = compute_config.dbsparse_type(
-        sl_data,
-        rows,
-        cols,
-        block_sizes,
-        (sl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
-    )
-    s_greater_expected = compute_config.dbsparse_type(
-        sg_data,
-        rows,
-        cols,
-        block_sizes,
-        (sg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
-    )
-    s_retarded_expected = compute_config.dbsparse_type(
-        sr_data,
-        rows,
-        cols,
-        block_sizes,
-        (sr_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
-        densify_blocks=[(i, i) for i in range(len(block_sizes))],
-    )
+    s_lesser = compute_config.dsbsparse_type.zeros_like(g_lesser)
+    s_greater = compute_config.dsbsparse_type.zeros_like(g_greater)
+    s_retarded = compute_config.dsbsparse_type.zeros_like(g_greater)
     # Initialize the self-energy object
     sigma_coulomb_screening = SigmaCoulombScreening(
         quatrex_config,
         compute_config,
         electron_energies,
     )
-    sigma_fock = SigmaFock(quatrex_config, compute_config, electron_energies)
+    sparsity_pattern = sparse.coo_matrix((xp.ones_like(rows), (rows, cols)))
+    sigma_fock = SigmaFock(
+        quatrex_config, compute_config, electron_energies, sparsity_pattern
+    )
     # Compute the GW self-energy
     sigma_coulomb_screening.compute(
         g_lesser,
@@ -135,6 +109,7 @@ def test_compute(
         out=(s_retarded,),
     )
     # Compare the results
-    assert xp.allclose(s_lesser.data, s_lesser_expected.data)
-    assert xp.allclose(s_greater.data, s_greater_expected.data)
-    assert xp.allclose(s_retarded.data, s_retarded_expected.data)
+    # They are shifted in energy (should fix old code?)
+    assert xp.allclose(s_lesser.data, sl_data)
+    assert xp.allclose(s_greater.data, sg_data)
+    assert xp.allclose(s_retarded.data, sr_data)

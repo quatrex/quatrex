@@ -1,41 +1,65 @@
-simulation_dir = ".."
+simulation_dir = "."
 
-[scba]
-max_iterations = 2
-mixing_factor = 0.25
-phonon = false
+[scba] # =============================================================
+max_iterations = 15
+mixing_factor = 0.5
+
 coulomb_screening = true
 
-[electron]
+[outputs] # ==========================================================
+electron_ldos = true
+
+
+[electron] # =========================================================
 number_of_kpoints = [1, 3, 1]
+
 left_fermi_level = -1.1  # eV
 right_fermi_level = -1.1 # eV
-solver = "rgf"
-eta = 1e-8
 
-[electron.obc]
-algorithm = "spectral" # "sancho-rubio"
+fermi_level = -1.1 # eV
+conduction_band_edge = -0.3187 # eV
+valence_band_edge = -2.0026 # eV
 
-nevp_solver = "full"  # "beyn"
-r_o = 1000.0
-r_i = 0.9
-c_hat = 25
-num_quad_points = 26
+band_edge_tracking = "eigenvalues"
 
-[electron.obc.memoizer]
-enable = true
-num_ref_iterations = 4
-convergence_tol = 1e-2
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+solver.compute_current = true # Compute Meir-Wingreen current.
 
-[coulomb_screening]
-solver = "rgf"
-relative_permittivity = 5
+obc.algorithm = "spectral"
+obc.nevp_solver = "beyn"
+obc.block_sections = 1
 
-[coulomb_screening.obc]
-algorithm = "spectral" # "sancho-rubio"
-block_sections = 1
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 3
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 31
+obc.num_quad_points = 31
 
-[phonon]
-model = "pseudo-scattering"
-phonon_energy = 40e-3         # eV
-deformation_potential = 75e-3 # eV
+[coulomb_screening] # ===============================================
+interaction_cutoff = 8 # Å
+
+relative_permittivity = 5.0
+
+num_connected_blocks = "auto" # Can be 1, 2, 3, or "auto"
+
+solver.algorithm = "rgf"
+solver.max_batch_size = 1000
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "beyn"
+obc.block_sections = 2
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 3
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 32
+obc.num_quad_points = 31
+
+lyapunov.algorithm = "spectral"

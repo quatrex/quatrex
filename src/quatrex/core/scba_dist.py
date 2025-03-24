@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import NCCL_AVAILABLE, NDArray, block_comm, host_xp, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
-from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
@@ -110,10 +110,20 @@ class SCBADataDist:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
+        # Determine the local slice of the data.
+        # NOTE: This is arrow-wise partitioning.
+        # TODO: Allow more options, e.g., block row-wise partitioning.
+        section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
+        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
+        start_idx = block_offsets[section_offsets[block_comm.rank]]
+        end_idx = block_offsets[section_offsets[block_comm.rank + 1]]
         self.sparsity_pattern = compute_sparsity_pattern(
             grid,
             max_interaction_cutoff,
             transport_direction=quatrex_config.device.transport_direction,
+            start_idx=start_idx,
+            end_idx=end_idx,
         )
         if comm.rank == 0:
             print(

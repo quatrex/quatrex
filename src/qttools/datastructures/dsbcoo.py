@@ -126,25 +126,37 @@ class DSBCOO(DSBSparse):
         if self.symmetry:
             rows, cols, mask_transposed = self._upper_triangle(
                 rows, cols
-            )  # items of upper triangle of the matrix
+            )  # find and send items in lower traingle to upper triangle
 
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-            self.rows, self.cols, rows, cols
-        )
-        if max_counts not in (0, 1):
-            raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
+            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows[~mask_transposed], cols[~mask_transposed]
             )
+            inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows[mask_transposed], cols[mask_transposed]
+            )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
+            if max_counts not in (0, 1) or max_counts_t not in (0, 1):
+                raise IndexError(
+                    "Request contains repeated indices. Only unique indices are supported."
+                )
+        else:
+            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows, cols
+            )
+            if max_counts not in (0, 1):
+                raise IndexError(
+                    "Request contains repeated indices. Only unique indices are supported."
+                )
 
         data_stack = self.data[*stack_index]
 
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
-            arr[..., value_inds] = data_stack[..., inds]
+
             if self.symmetry:
-                arr[..., value_inds[mask_transposed]] = self.symmetry_op(
-                    arr[..., value_inds[mask_transposed]]
-                )
+                arr[..., value_inds] = data_stack[..., inds]
+                arr[..., value_inds_t] = self.symmetry_op(data_stack[..., inds_t])
+            else:
+                arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
 
         if len(inds) != rows.size:
@@ -193,12 +205,17 @@ class DSBCOO(DSBSparse):
             The value to set.
 
         """
+        if self.symmetry:
+            rows, cols, mask_transposed = self._upper_triangle(
+                rows, cols
+            )  # items of upper triangle of the matrix
+
         inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
             self.rows, self.cols, rows, cols
         )
         if max_counts not in (0, 1):
             raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
+                "Request contains repeated (equivalent) indices. Only unique indices are supported."
             )
 
         if len(inds) == 0:
@@ -209,9 +226,15 @@ class DSBCOO(DSBSparse):
         if self.distribution_state == "stack":
             if value.ndim == 0:
                 self.data[*stack_index][..., inds] = value
+                self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
+                    value
+                )
                 return
 
             self.data[*stack_index][..., inds] = value[..., value_inds]
+            self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
+                value[..., value_inds[mask_transposed]]
+            )
             return
 
         # If nnz are distributed accross the stack, we need to find the

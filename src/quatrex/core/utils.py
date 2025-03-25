@@ -77,7 +77,8 @@ def compute_sparsity_pattern(
     end_idx = end_idx or len(positions)
 
     rows, cols = [], []
-    for i in range(0, positions.shape[0], batch_size):
+
+    for i in range(start_idx, end_idx, batch_size):
         positions_batch = positions[i : i + batch_size]
         distances = distance(positions, positions_batch)
 

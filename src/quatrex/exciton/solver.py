@@ -12,16 +12,16 @@ from qttools import NDArray
 from qttools.datastructures import DSBCOO, DSBSparse
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream, xp
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, distributed_load
-from qttools.utils.sparse_utils import product_sparsity_pattern
-from qttools.utils.stack_utils import scale_stack
+# from qttools.utils.sparse_utils import product_sparsity_pattern
+# from qttools.utils.stack_utils import scale_stack
 from scipy import sparse
 from serinv.algs import ddbtasinv
 
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.core.statistics import bose_einstein
-from quatrex.core.subsystem import SubsystemSolver
-from quatrex.coulomb_screening.utils import assemble_boundary_blocks
+# from quatrex.core.compute_config import ComputeConfig
+# from quatrex.core.quatrex_config import QuatrexConfig
+# from quatrex.core.statistics import bose_einstein
+# from quatrex.core.subsystem import SubsystemSolver
+# from quatrex.coulomb_screening.utils import assemble_boundary_blocks
 
 GPU_AWARE = check_gpu_aware_mpi()
 
@@ -803,15 +803,8 @@ class BSESolver:
                 col = int(self.inverse_table[i, j])
                 self.kernel[row, col] += W[i, j]
 
-        # for row in range(len(self.sparsity.row)):
-        #     col = row
-        #     i = self.sparsity.row[row]
-        #     j = self.sparsity.col[row]
-        #     self.kernel[row, col] += W[i, j]
-
         self.kernel *= 1j
         # coo = self.kernel.tocoo()
-
         # BLOCK_SIZES = xp.array([self.blocksize] * self.num_blocks)
         # GLOBAL_STACK_SHAPE = (comm.size,)
         # self.kernel = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
@@ -958,9 +951,9 @@ class BSESolver:
 
                 # impose sparsity pattern of BTA, for a proper comparison with selected solver
 
-                # _impose_bta_sparsity(
-                #     invA, self.blocksize, self.tipsize, self.num_blocks, out= invA
-                # )                
+                _impose_bta_sparsity(
+                    invA, self.blocksize, self.tipsize, self.num_blocks, out= invA
+                )                
 
                 # multiply RHS
                 A = invA @ L0
@@ -980,11 +973,7 @@ class BSESolver:
                     # polarization including the vertex $P2(13) = P3(113)$
                     reorder = self.permuted_sparsity.row[: self.tipsize]
                     P2[ie, reorder[:, None], reorder] = -1j * A[: self.tipsize, : self.tipsize]
-                    # for row in range(self.tipsize):
-                    #     for col in range(self.tipsize):
-                    #         i = self.permuted_sparsity.row[row]
-                    #         j = self.permuted_sparsity.row[col]
-                    #         P2[ie, i, j] = -1j * A[row, col]
+                    
         if return_chi:
             return chi
         

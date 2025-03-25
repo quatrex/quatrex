@@ -84,10 +84,10 @@ def compute_sparsity_pattern(
 
         interacting = xp.where(distances < cutoff_distance)
 
-        cols.extend(interacting[0])
-        rows.extend(i + interacting[1])
+        cols.append(interacting[0])
+        rows.append(i + interacting[1])
 
-    rows, cols = xp.array(rows), xp.array(cols)
+    rows, cols = xp.hstack(rows), xp.hstack(cols)
     return sparse.coo_matrix(
         (xp.ones_like(rows, dtype=xp.float32), (rows, cols)),
         shape=(len(positions), len(positions)),

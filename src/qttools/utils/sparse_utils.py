@@ -204,7 +204,7 @@ def product_sparsity_pattern_dsbsparse(
 
 
 def product_sparsity_pattern_dsdbsparse(
-    *matrices: DSDBSparse,
+    *matrices: DSBSparse | DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = None,
     start_block: int = 0,
@@ -277,11 +277,11 @@ def product_sparsity_pattern_dsdbsparse(
         if spillover:
             if start_block == 0:
                 # Left spillover
-                print(f"left spillover, {block_comm.rank=}, {c_.origin=}")
+                # print(f"left spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[0, 0] = c_[0, 0] + a_[1, 0] @ b_[0, 1]
             if end_block == num_blocks:
                 # Right spillover
-                print(f"right spillover, {block_comm.rank=}, {c_.origin=}")
+                # print(f"right spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[num_blocks - 1, num_blocks - 1] = (
                     c_[num_blocks - 1, num_blocks - 1]
                     + a_[num_blocks - 2, num_blocks - 1]
@@ -320,9 +320,10 @@ def product_sparsity_pattern_dsdbsparse(
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
 
-    c_rows = block_comm.allgather(c_rows)
-    c_cols = block_comm.allgather(c_cols)
-    c_rows = xp.concatenate(c_rows)
-    c_cols = xp.concatenate(c_cols)
+    if block_comm is not None:
+        c_rows = block_comm.allgather(c_rows)
+        c_cols = block_comm.allgather(c_cols)
+        c_rows = xp.concatenate(c_rows)
+        c_cols = xp.concatenate(c_cols)
 
     return c_rows, c_cols

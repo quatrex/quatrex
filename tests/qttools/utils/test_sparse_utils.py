@@ -36,7 +36,7 @@ def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
-    offsets = xp.hstack(([0], xp.cumsum(sizes)))
+    offsets = xp.hstack(([0], xp.cumsum(xp.asarray(sizes))))
 
     arr = xp.zeros((size, size), dtype=xp.float32)
     for i in range(len(sizes)):
@@ -190,6 +190,83 @@ def test_product_sparsity_dsbsparse_spillover(
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
     print(xp.nonzero(ref - val))
+
+    assert xp.allclose(ref, val)
+
+
+@pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
+def test_product_sparsity_dsbsparse_2(
+    dsbsparse_type: DSBSparse,
+    num_matrices: int,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the computation of the matrix product's sparsity pattern."""
+    matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    dsbsparse_matrices = [
+        dsbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
+        for matrix in matrices
+    ]
+    dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
+    for i in range(num_matrices):
+        assert xp.allclose(dense_matrices[i], matrices[i].toarray())
+
+    product = functools.reduce(lambda x, y: x @ y, matrices)
+    product.data[:] = 1
+    ref = product.toarray()
+
+    rows, cols = product_sparsity_pattern_dsdbsparse(
+        *dsbsparse_matrices,
+        in_num_diag=3,
+    )
+    val = sparse.coo_matrix(
+        (xp.ones(len(rows)), (rows, cols)), shape=product.shape
+    ).toarray()
+
+    if global_comm.rank == 0:
+        print(xp.nonzero(ref - val))
+
+    assert xp.allclose(ref, val)
+
+
+@pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
+def test_product_sparsity_dsbsparse_spillover_2(
+    dsbsparse_type: DSDBSparse,
+    num_matrices: int,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+):
+    """Tests the computation of the matrix product's sparsity pattern."""
+    matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    dsbsparse_matrices = [
+        dsbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
+        for matrix in matrices
+    ]
+    dense_matrices = [matrix.to_dense() for matrix in dsbsparse_matrices]
+    for i in range(num_matrices):
+        assert xp.allclose(dense_matrices[i], matrices[i].toarray())
+
+    shape = matrices[0].shape
+    expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
+    product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
+    product.data[:] = 1
+    ref = product.toarray()[
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+    ]
+    # product = functools.reduce(lambda x, y: _spillover_matmul(x, y, block_sizes), matrices)
+    # product.data[:] = 1
+    # ref = product.toarray()
+
+    rows, cols = product_sparsity_pattern_dsdbsparse(
+        *dsbsparse_matrices,
+        in_num_diag=3,
+        spillover=True,
+    )
+    val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
+
+    if global_comm.rank == 0:
+        print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
 

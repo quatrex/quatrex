@@ -33,6 +33,7 @@ def compute_sparsity_pattern(
     strategy: str = "box",
     start_idx: int = 0,
     end_idx: int = None,
+    batch_size: int = 1,
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern for the interaction matrix.
 
@@ -60,7 +61,7 @@ def compute_sparsity_pattern(
 
         def distance(x, y):
             """Euclidean distance."""
-            return xp.linalg.norm(x - y, axis=-1)
+            return xp.linalg.norm(x[...,xp.newaxis,:] - y[xp.newaxis,...], axis=-1)
 
     elif strategy == "box":
 
@@ -68,7 +69,7 @@ def compute_sparsity_pattern(
 
         def distance(x, y):
             """Distance along transport direction."""
-            return xp.abs(x[..., idx] - y[..., idx])
+            return xp.abs(x[..., idx][...,xp.newaxis] - y[..., idx][xp.newaxis,...])
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
@@ -76,11 +77,14 @@ def compute_sparsity_pattern(
     end_idx = end_idx or len(positions)
 
     rows, cols = [], []
-    for i, position in enumerate(positions[start_idx:end_idx]):
-        distances = distance(positions, position)
-        interacting = xp.where(distances < cutoff_distance)[0]
-        cols.extend(interacting)
-        rows.extend([i + start_idx] * len(interacting))
+    for i in range(0, positions.shape[0], batch_size):
+        positions_batch = positions[i : i + batch_size]
+        distances = distance(positions, positions_batch)
+
+        interacting = xp.where(distances < cutoff_distance)
+
+        cols.extend(interacting[0])
+        rows.extend(i + interacting[1])
 
     rows, cols = xp.array(rows), xp.array(cols)
     return sparse.coo_matrix(

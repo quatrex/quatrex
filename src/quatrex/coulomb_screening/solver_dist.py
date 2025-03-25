@@ -193,7 +193,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             )
             self.coulomb_matrix.data = 0.0
             self.coulomb_matrix += (
-                coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+                coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
             )
 
         else:
@@ -215,7 +215,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             )
             self.coulomb_matrix.data = 0.0
             self.coulomb_matrix += (
-                coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+                coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
             )
 
         # Make sure that the Coulomb matrix is Hermitian.

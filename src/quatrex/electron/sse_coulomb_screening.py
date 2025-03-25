@@ -468,7 +468,7 @@ class SigmaFock(ScatteringSelfEnergy):
         )
         coulomb_matrix.data = 0.0
         coulomb_matrix += (
-            coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
         )
         coulomb_matrix.dtranspose()
         self.coulomb_matrix_data = coulomb_matrix.data[0]

@@ -204,7 +204,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += (
-            coulomb_matrix_sparray / self.quatrex_config.coulomb_screening.epsilon_r
+            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
         )
 
         # v_times_p_sparsity_pattern = _spillover_matmul(

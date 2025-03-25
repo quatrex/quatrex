@@ -2,7 +2,7 @@
 
 import time
 
-from qttools import NDArray, block_comm, global_comm, nccl_block_comm, xp
+from qttools import NDArray, block_comm, global_comm, host_xp, nccl_block_comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
@@ -281,7 +281,9 @@ class RGFDist(GFSolver):
 
         # Construct the reduced system.
         func = reduced_system.gather
-        if nccl_block_comm is not None and xp.all(a.block_sizes == a.block_sizes[0]):
+        if nccl_block_comm is not None and host_xp.all(
+            a.block_sizes == a.block_sizes[0]
+        ):
             func = reduced_system.gather_nccl
         func(
             a=a_,

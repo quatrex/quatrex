@@ -7,6 +7,7 @@ case of solving lesser, greater, and retarded Green's functions.
 For more information see https://github.com/vincent-maillou/serinv
 """
 
+import functools
 import itertools
 
 from qttools import NDArray, block_comm, nccl_block_comm, xp
@@ -228,7 +229,13 @@ class ReducedSystem:
             The lower off-diagonal blocks of the system matrix Bg, by default None.
         """
 
-        bsz = a.block_sizes[0]
+        if isinstance(a, DSDBSparse):
+            ssz = a._data.shape[:-1]
+            bsz = a.block_sizes[0]
+        else:
+            ssz = a._block_indexer._arg.shape[:-1]
+            bsz = a._dsdbsparse.block_sizes[0]
+        count = functools.reduce(lambda x, y: x * y, ssz, 2 * bsz * bsz)
 
         xr_diag_blocks, xr_upper_blocks, xr_lower_blocks = (
             self._map_reduced_system_nccl(
@@ -239,20 +246,20 @@ class ReducedSystem:
         # self.xr_diag_blocks = _flatten_list(block_comm.allgather(xr_diag_blocks))
         # self.xr_upper_blocks = _flatten_list(block_comm.allgather(xr_upper_blocks))
         # self.xr_lower_blocks = _flatten_list(block_comm.allgather(xr_lower_blocks))
-        nccl_block_comm.allgather(
-            xr_diag_blocks[2 * nccl_block_comm.rank].flat,
-            xr_diag_blocks.flat,
-            2 * bsz * bsz,
+        nccl_block_comm.all_gather(
+            xr_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_diag_blocks.reshape(-1),
+            count,
         )
-        nccl_block_comm.allgather(
-            xr_upper_blocks[2 * nccl_block_comm.rank].flat,
-            xr_upper_blocks.flat,
-            2 * bsz * bsz,
+        nccl_block_comm.all_gather(
+            xr_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_upper_blocks.reshape(-1),
+            count,
         )
-        nccl_block_comm.allgather(
-            xr_lower_blocks[2 * nccl_block_comm.rank].flat,
-            xr_lower_blocks.flat,
-            2 * bsz * bsz,
+        nccl_block_comm.all_gather(
+            xr_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_lower_blocks.reshape(-1),
+            count,
         )
         self.xr_diag_blocks = xr_diag_blocks[1:-1]
         self.xr_upper_blocks = xr_upper_blocks[1:-2]
@@ -271,20 +278,20 @@ class ReducedSystem:
             # self.xl_diag_blocks = _flatten_list(block_comm.allgather(xl_diag_blocks))
             # self.xl_upper_blocks = _flatten_list(block_comm.allgather(xl_upper_blocks))
             # self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
-            nccl_block_comm.allgather(
-                xl_diag_blocks[2 * nccl_block_comm.rank].flat,
-                xl_diag_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xl_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_diag_blocks.reshape(-1),
+                count,
             )
-            nccl_block_comm.allgather(
-                xl_upper_blocks[2 * nccl_block_comm.rank].flat,
-                xl_upper_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xl_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_upper_blocks.reshape(-1),
+                count,
             )
-            nccl_block_comm.allgather(
-                xl_lower_blocks[2 * nccl_block_comm.rank].flat,
-                xl_lower_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xl_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_lower_blocks.reshape(-1),
+                count,
             )
             self.xl_diag_blocks = xl_diag_blocks[1:-1]
             self.xl_upper_blocks = xl_upper_blocks[1:-2]
@@ -302,20 +309,20 @@ class ReducedSystem:
             # self.xg_diag_blocks = _flatten_list(block_comm.allgather(xg_diag_blocks))
             # self.xg_upper_blocks = _flatten_list(block_comm.allgather(xg_upper_blocks))
             # self.xg_lower_blocks = _flatten_list(block_comm.allgather(xg_lower_blocks))
-            nccl_block_comm.allgather(
-                xg_diag_blocks[2 * nccl_block_comm.rank].flat,
-                xg_diag_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xg_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_diag_blocks.reshape(-1),
+                count,
             )
-            nccl_block_comm.allgather(
-                xg_upper_blocks[2 * nccl_block_comm.rank].flat,
-                xg_upper_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xg_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_upper_blocks.reshape(-1),
+                count,
             )
-            nccl_block_comm.allgather(
-                xg_lower_blocks[2 * nccl_block_comm.rank].flat,
-                xg_lower_blocks.flat,
-                2 * bsz * bsz,
+            nccl_block_comm.all_gather(
+                xg_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_lower_blocks.reshape(-1),
+                count,
             )
             self.xg_diag_blocks = xg_diag_blocks[1:-1]
             self.xg_upper_blocks = xg_upper_blocks[1:-2]
@@ -377,7 +384,7 @@ class ReducedSystem:
         buffer_upper: list[NDArray],
         buffer_lower: list[NDArray],
         is_retarded: bool = True,
-    ):
+    ) -> tuple[NDArray, NDArray, NDArray]:
         """Maps the local partition to the reduced system.
 
         Parameters
@@ -395,11 +402,19 @@ class ReducedSystem:
         i = a.num_local_blocks - 1
         j = i + 1
 
-        bsz = a.block_sizes[0]
+        if isinstance(a, DSDBSparse):
+            ssz = a._data.shape[:-1]
+            bsz = a.block_sizes[0]
+            dtype = a.dtype
+        else:
+            ssz = a._block_indexer._arg.shape[:-1]
+            bsz = a._dsdbsparse.block_sizes[0]
+            dtype = a._dsdbsparse.dtype
 
-        diag_blocks = xp.empty((2 * nccl_block_comm.size, bsz, bsz), dtype=a.dtype)
-        upper_blocks = xp.empty((2 * nccl_block_comm.size, bsz, bsz), dtype=a.dtype)
-        lower_blocks = xp.empty((2 * nccl_block_comm.size, bsz, bsz), dtype=a.dtype)
+        diag_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
+        upper_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
+        lower_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
+
         if block_comm.rank == 0:
             # diag_blocks.append(x_diag_blocks[-1])
             diag_blocks[1] = x_diag_blocks[-1]

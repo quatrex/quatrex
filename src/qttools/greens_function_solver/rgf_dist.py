@@ -1,10 +1,13 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import NDArray, block_comm
+import time
+
+from qttools import NDArray, block_comm, global_comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.solvers_utils import get_batches
 
 profiler = Profiler()
@@ -157,6 +160,9 @@ class RGFDist(GFSolver):
             along with lesser and greater, by default False
 
         """
+
+        t_init_start = time.perf_counter()
+
         # Initialize temporary buffers.
         reduced_system = _serinv.ReducedSystem(selected_solve=True)
 
@@ -195,6 +201,16 @@ class RGFDist(GFSolver):
             xl_out_ = xl_out.stack[stack_slice]
             xg_out_ = xg_out.stack[stack_slice]
             xr_out_ = xr_out.stack[stack_slice] if return_retarded else None
+
+        synchronize_device()
+        t_init_end = time.perf_counter()
+        block_comm.Barrier()
+        t_init_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"        Init: {t_init_end-t_init_start}", flush=True)
+            print(f"        Init all: {t_init_end_all-t_init_start}", flush=True)
+
+        t_schur_start = time.perf_counter()
 
         if block_comm.rank == 0:
             # Direction: downward Schur-complement
@@ -253,6 +269,16 @@ class RGFDist(GFSolver):
                 selected_solve=True,
             )
 
+        synchronize_device()
+        t_schur_end = time.perf_counter()
+        block_comm.Barrier()
+        t_schur_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"        Schur: {t_schur_end-t_schur_start}", flush=True)
+            print(f"        Schur all: {t_schur_end_all-t_schur_start}", flush=True)
+
+        t_reduce_gather_start = time.perf_counter()
+
         # Construct the reduced system.
         reduced_system.gather(
             a=a_,
@@ -270,8 +296,41 @@ class RGFDist(GFSolver):
             xg_buffer_lower=xg_buffer_lower,
             xg_buffer_upper=xg_buffer_upper,
         )
+        synchronize_device()
+        t_reduce_gather_end = time.perf_counter()
+        block_comm.Barrier()
+        t_reduce_gather_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"        Reduced gather: {t_reduce_gather_end-t_reduce_gather_start}",
+                flush=True,
+            )
+            print(
+                f"        Reduced gather all: {t_reduce_gather_end_all-t_reduce_gather_start}",
+                flush=True,
+            )
+
+        t_reduce_solve_start = time.perf_counter()
+
         # Perform selected-inversion on the reduced system.
         reduced_system.solve()
+
+        synchronize_device()
+        t_reduce_solve_end = time.perf_counter()
+        block_comm.Barrier()
+        t_reduce_solve_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"        Reduced solve: {t_reduce_solve_end-t_reduce_solve_start}",
+                flush=True,
+            )
+            print(
+                f"        Reduced solve all: {t_reduce_solve_end_all-t_reduce_solve_start}",
+                flush=True,
+            )
+
+        t_reduce_scatter_start = time.perf_counter()
+
         # Scatter the result to the output matrix.
         reduced_system.scatter(
             xr_diag_blocks=xr_diag_blocks,
@@ -290,6 +349,22 @@ class RGFDist(GFSolver):
             xg_buffer_upper=xg_buffer_upper,
             xg_out=xg_out_,
         )
+
+        synchronize_device()
+        t_reduce_scatter_end = time.perf_counter()
+        block_comm.Barrier()
+        t_reduce_scatter_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"        Reduced scatter: {t_reduce_scatter_end-t_reduce_scatter_start}",
+                flush=True,
+            )
+            print(
+                f"        Reduced scatter all: {t_reduce_scatter_end_all-t_reduce_scatter_start}",
+                flush=True,
+            )
+
+        t_selinv_start = time.perf_counter()
 
         if block_comm.rank == 0:
             # Direction: upward sell-inv
@@ -348,3 +423,11 @@ class RGFDist(GFSolver):
                 selected_solve=True,
                 return_retarded=return_retarded,
             )
+
+        synchronize_device()
+        t_selinv_end = time.perf_counter()
+        block_comm.Barrier()
+        t_selinv_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(f"        Selinv: {t_selinv_end-t_selinv_start}", flush=True)
+            print(f"        Selinv all: {t_selinv_end_all-t_selinv_start}", flush=True)

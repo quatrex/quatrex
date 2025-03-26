@@ -57,8 +57,20 @@ class DSBCOO(DSBSparse):
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
 
-        self._diag_mask = self.rows == self.cols
-        self._diag_inds = self.rows[self._diag_mask]
+        self._diag_inds = xp.where(self.rows == self.cols)[0]
+        self._diag_value_inds = self.rows[self._diag_inds]
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        if not any(ranks == comm.rank):
+            self._diag_inds_nnz = None
+            self._diag_value_inds_nnz = None
+            return
+        self._diag_inds_nnz = (
+            self._diag_inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
+        )
+        self._diag_value_inds_nnz = (
+            self._diag_value_inds[ranks == comm.rank]
+            - self._diag_value_inds[ranks == comm.rank][0]
+        )
 
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
@@ -429,26 +441,41 @@ class DSBCOO(DSBSparse):
             return_dense=self.return_dense,
         )
 
-    @profiler.profile(level="api")
-    def diagonal(self, val: NDArray = None) -> NDArray:
-        """Returns or sets the diagonal elements of the matrix.
+    # @profiler.profile(level="api")
+    # def diagonal(self, stack_index: tuple = (Ellipsis,), val: NDArray = None) -> NDArray:
+    #     """Returns or sets the diagonal elements of the matrix.
 
-        This temporarily sets the return_dense state to True.
+    #     This temporarily sets the return_dense state to True.
 
-        Returns
-        -------
-        diagonal : NDArray
-            The diagonal elements of the matrix.
+    #     Returns
+    #     -------
+    #     diagonal : NDArray
+    #         The diagonal elements of the matrix.
 
-        """
-        if val is None:
-            # Getter
-            diagonal = xp.zeros(((*self.shape[:-2], self.shape[-1])), dtype=self.dtype)
-            diagonal[..., self._diag_inds] = self.data[..., self._diag_mask]
-            return diagonal
-        else:
-            # Setter
-            self.data[..., self._diag_mask] = val[self._diag_inds]
+    #     """
+    #     if val is None:
+    #         # Getter
+    #         data_stack = self.data[*stack_index]
+    #         if self.distribution_state == "stack":
+    #             diagonal = xp.zeros((data_stack.shape[:-1] + (self.shape[-1],)), dtype=self.dtype)
+    #             diagonal[..., self._diag_value_inds] = data_stack[..., self._diag_inds]
+    #             return diagonal
+    #         else:
+    #             if self._diag_inds_nnz is not None:
+    #                 return data_stack[..., self._diag_inds_nnz]
+    #             return xp.empty(0)
+    #     else:
+    #         # Setter
+    #         if self.distribution_state == "stack":
+    #             self.data[*stack_index][..., self._diag_inds] = val[..., self._diag_value_inds]
+    #         else:
+    #             if self._diag_inds_nnz is not None:
+    #                 stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
+    #                 stack_inds, nnz_inds = xp.ix_(stack_padding_inds, self._diag_inds_nnz)
+    #                 # We need to access the full data buffer directly to set the
+    #                 # value since we are using advanced indexing.
+    #                 self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val[..., self._diag_value_inds_nnz]
+    #             return
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:

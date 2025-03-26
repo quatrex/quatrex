@@ -33,7 +33,7 @@ def compute_sparsity_pattern(
     strategy: str = "box",
     start_idx: int = 0,
     end_idx: int = None,
-    batch_size: int = 1,
+    batch_size: int = 1000,
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern for the interaction matrix.
 
@@ -61,7 +61,7 @@ def compute_sparsity_pattern(
 
         def distance(x, y):
             """Euclidean distance."""
-            return xp.linalg.norm(x[...,xp.newaxis,:] - y[xp.newaxis,...], axis=-1)
+            return xp.linalg.norm(x[..., xp.newaxis, :] - y[xp.newaxis, ...], axis=-1)
 
     elif strategy == "box":
 
@@ -69,7 +69,7 @@ def compute_sparsity_pattern(
 
         def distance(x, y):
             """Distance along transport direction."""
-            return xp.abs(x[..., idx][...,xp.newaxis] - y[..., idx][xp.newaxis,...])
+            return xp.abs(x[..., idx][..., xp.newaxis] - y[..., idx][xp.newaxis, ...])
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")

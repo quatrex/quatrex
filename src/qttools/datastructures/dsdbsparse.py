@@ -536,8 +536,8 @@ class DSDBSparse(ABC):
         return _flatten_list(block_comm.allgather(local_blocks))
 
     @profiler.profile(level="api")
-    def diagonal(self) -> NDArray:
-        """Returns the diagonal elements of the matrix.
+    def diagonal(self, val: NDArray = None) -> NDArray:
+        """Returns or sets the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True. Note that
         this will cause communication in the block-communicator.
@@ -548,22 +548,27 @@ class DSDBSparse(ABC):
             The diagonal elements of the whole matrix.
 
         """
-        # Store the current return_dense state and set it to True.
-        original_return_dense = self.return_dense
-        self.return_dense = True
+        if val is None:
+            # Getter
+            # Store the current return_dense state and set it to True.
+            original_return_dense = self.return_dense
+            self.return_dense = True
 
-        diagonals = []
-        stack_view = self.stack[...]
-        for b in range(self.num_local_blocks):
-            diagonals.append(
-                xp.diagonal(stack_view.local_blocks[b, b], axis1=-2, axis2=-1)
-            )
+            diagonals = []
+            stack_view = self.stack[...]
+            for b in range(self.num_local_blocks):
+                diagonals.append(
+                    xp.diagonal(stack_view.local_blocks[b, b], axis1=-2, axis2=-1)
+                )
 
-        # Restore the original return_dense state.
-        self.return_dense = original_return_dense
-        local_diagonal = xp.concatenate(diagonals, axis=-1)
+            # Restore the original return_dense state.
+            self.return_dense = original_return_dense
+            local_diagonal = xp.concatenate(diagonals, axis=-1)
 
-        return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
+            return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
+        else:
+            # Setter
+            raise NotImplementedError("Setting the diagonal is not implemented.")
 
     @profiler.profile(level="debug")
     def _dtranspose(

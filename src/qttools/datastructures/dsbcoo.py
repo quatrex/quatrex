@@ -443,7 +443,7 @@ class DSBCOO(DSBSparse):
         """
         if val is None:
             # Getter
-            diagonal = xp.zerps(((self.shape[:-2], self.shape[-1])), dtype=self.dtype)
+            diagonal = xp.zeros(((self.shape[:-2], self.shape[-1])), dtype=self.dtype)
             diagonal[..., self._diag_inds] = self.data[..., self._diag_mask]
             return diagonal
         else:

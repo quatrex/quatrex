@@ -213,7 +213,7 @@ class OBCMemoizer:
             )
 
             # NOTE: it would be possible to memoize even if few energies did not converge
-            if local_memoizing:
+            if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
                 return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
 

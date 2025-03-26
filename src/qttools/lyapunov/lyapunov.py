@@ -207,7 +207,7 @@ class LyapunovMemoizer:
                 | (relative_recursion_errors < self.memoize_rel_tol)
             )
 
-            if local_memoizing:
+            if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
                 return self._call_with_cache(a, q, contact, out=out)
 

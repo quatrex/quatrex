@@ -504,16 +504,16 @@ class ElectronSolver(SubsystemSolver):
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
             e_0_left, e_0_right = find_renormalized_eigenvalues(
-                self.hamiltonian,
-                self.overlap_sparray,
-                self.potential,
-                sse_retarded,
-                self.energies,
-                (
+                hamiltonian=self.hamiltonian,
+                overlap=self.overlap_sparray,
+                potential=self.potential,
+                sigma_retarded=sse_retarded,
+                energies=self.energies,
+                conduction_band_guesses=(
                     self.left_fermi_level + self.delta_fermi_level_conduction_band,
                     self.right_fermi_level + self.delta_fermi_level_conduction_band,
                 ),
-                (self.left_mid_gap_energy, self.right_mid_gap_energy),
+                mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
                 band_edge_config=self.compute_config.band_edge,
             )
             self._update_fermi_levels(e_0_left, e_0_right)

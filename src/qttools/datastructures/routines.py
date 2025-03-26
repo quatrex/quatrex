@@ -371,7 +371,7 @@ class BlockMatrix(dict):
 
     def __init__(
         self,
-        dsdbsparse: DSDBSparse,
+        dsdbsparse: DSBSparse | DSDBSparse,
         local_keys: set[tuple[int, int]],
         origin: tuple[int, int],
         mapping=None,
@@ -381,14 +381,19 @@ class BlockMatrix(dict):
         self.origin = origin
         mapping = mapping or {}
         super(BlockMatrix, self).__init__(mapping)
+        if isinstance(dsdbsparse, DSBSparse):
+            self.blocks = self.dsdbsparse.blocks
+        else:
+            self.blocks = self.dsdbsparse.local_blocks
 
     def __getitem__(self, key):
         if super(BlockMatrix, self).__contains__(key):
             return super(BlockMatrix, self).__getitem__(key)
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
-            return self.dsdbsparse.local_blocks[key]
-        print(f"Something bad happened: {block_comm.rank=}, {key=}, {self.origin=}")
+            return self.blocks[key]
+        rank = block_comm.rank if block_comm is not None else 0
+        print(f"Something bad happened: {rank=}, {key=}, {self.origin=}")
         # return None
         raise KeyError(key)
         # return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
@@ -398,7 +403,7 @@ class BlockMatrix(dict):
     def __setitem__(self, key, val):
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
-            self.dsdbsparse.local_blocks[key] = val
+            self.blocks[key] = val
         else:
             return super(BlockMatrix, self).__setitem__(key, val)
 
@@ -438,7 +443,7 @@ def arrow_partition_halo_comm(
     a_off = a_num_diag // 2
     b_off = b_num_diag // 2
     c_off = a_off + b_off
-    rank = comm.rank
+    rank = comm.rank if comm is not None else 0
 
     reqs = []
     # Send halo blocks to previous rank
@@ -610,9 +615,11 @@ def bd_matmul_distr(
                                 )
                             else:
                                 partsum += a_[i_a, k_a] @ b_[k_b, j_b]
-                        except Exception:
+                        except Exception as e:
+                            rank = block_comm.rank if block_comm is not None else 0
+                            print(e)
                             print(
-                                f"Something bad happened: {block_comm.rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
+                                f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
                             )
 
                 out_[i, j] = partsum

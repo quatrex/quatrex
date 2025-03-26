@@ -131,8 +131,9 @@ def _compute_eigenvalues(
             xp.real(sigma_retarded.local_blocks[*block][ind]) for block in sigma_blocks
         )
         e_0 = eigvalsh(
-            h_0,
-            s_0,
+            # NOTE: Prevent eigvalsh from calling a batched routine (slow).
+            xp.squeeze(h_0),
+            xp.squeeze(s_0),
             compute_module=band_edge_config.eigvalsh_compute_location,
             use_pinned_memory=band_edge_config.use_pinned_memory,
         )
@@ -153,8 +154,6 @@ def find_renormalized_eigenvalues(
     conduction_band_guesses: tuple[float, float],
     mid_gap_energies: tuple[float, float],
     num_ref_iterations: int = 2,
-    use_eigvalsh: bool = False,
-    eigvalsh_compute_location: str = "cupy",
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ) -> tuple[NDArray, NDArray]:
     """Computes renormalized eigenvalues for left and right contacts.

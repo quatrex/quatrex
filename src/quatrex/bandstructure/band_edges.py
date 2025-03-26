@@ -125,8 +125,9 @@ def _compute_eigenvalues(
         # self-energy.
         h_0 += sum(xp.real(sigma_retarded.blocks[*block][ind]) for block in blocks)
         e_0 = eigvalsh(
-            h_0,
-            s_0,
+            # NOTE: Prevent eigvalsh from calling a batched routine (slow).
+            xp.squeeze(h_0),
+            xp.squeeze(s_0),
             compute_module=band_edge_config.eigvalsh_compute_location,
             use_pinned_memory=band_edge_config.use_pinned_memory,
         )

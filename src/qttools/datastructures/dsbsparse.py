@@ -589,8 +589,11 @@ class DSBSparse(ABC):
             The diagonal elements of the matrix.
 
         """
-        if self._diag_inds is None and self._diag_value_inds is None:
+        if self._diag_inds is None or self._diag_value_inds is None:
             raise NotImplementedError("Diagonal not implemented.")
+
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
 
         if val is None:
             # Getter

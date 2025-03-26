@@ -495,6 +495,10 @@ class DSBCOO(DSBSparse):
         num_blocks = len(block_sizes)
         # Check if configuration already exists.
         if num_blocks in self._block_config:
+
+            if num_blocks == self.num_blocks:
+                return
+
             # Compute canonical ordering of the matrix.
             inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
 

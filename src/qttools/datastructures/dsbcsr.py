@@ -449,6 +449,9 @@ class DSBCSR(DSBSparse):
         if num_blocks in self._block_config:
             # Compute canonical ordering of the matrix.
 
+            if num_blocks == self.num_blocks:
+                return
+
             if self._block_config[num_blocks].inds_canonical2block is None:
                 rows, cols = self.spy()
                 inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))

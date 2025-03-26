@@ -129,17 +129,20 @@ class SCBAData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
+            symmetry=True,
+            symmetry_op=lambda a: a,
         )
         self.g_retarded._data[:] = 0.0  # Initialize to zero.
         self.g_lesser = dsbsparse_type.zeros_like(self.g_retarded)
-        self.g_greater = dsbsparse_type.zeros_like(self.g_retarded)
+        self.g_lesser.symmetry_op = lambda a: -xp.conj(a)
+        self.g_greater = dsbsparse_type.zeros_like(self.g_lesser)
 
         self.sigma_retarded_prev = dsbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_lesser_prev = dsbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_greater_prev = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_lesser_prev = dsbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_greater_prev = dsbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_lesser = dsbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_greater = dsbsparse_type.zeros_like(self.g_retarded)
+        self.sigma_lesser = dsbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_greater = dsbsparse_type.zeros_like(self.g_lesser)
 
         if quatrex_config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
@@ -147,8 +150,8 @@ class SCBAData:
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
             self.p_retarded = dsbsparse_type.zeros_like(self.g_retarded)
-            self.p_lesser = dsbsparse_type.zeros_like(self.g_retarded)
-            self.p_greater = dsbsparse_type.zeros_like(self.g_retarded)
+            self.p_lesser = dsbsparse_type.zeros_like(self.g_lesser)
+            self.p_greater = dsbsparse_type.zeros_like(self.g_greater)
 
             num_connected_blocks = quatrex_config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -169,6 +172,8 @@ class SCBAData:
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
+                symmetry=True,
+                symmetry_op=lambda a: -xp.conj(a),
             )
             self.w_greater = dsbsparse_type.zeros_like(self.w_lesser)
 

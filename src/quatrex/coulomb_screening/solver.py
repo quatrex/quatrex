@@ -11,7 +11,7 @@ from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
-from qttools.utils.sparse_utils import product_sparsity_pattern_dsbsparse
+from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -93,7 +93,7 @@ def _compute_sparsity_pattern(
     *matrices: DSBSparse, dtype: _DType = None
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern of the product of several DSBSparse matrices."""
-    rows, cols = product_sparsity_pattern_dsbsparse(*matrices, spillover=True)
+    rows, cols = product_sparsity_pattern_dsdbsparse(*matrices, spillover=True)
     shape = matrices[0].shape[-2:]
     dtype = dtype or matrices[0].dtype
     return sparse.coo_matrix(
@@ -202,17 +202,18 @@ class CoulombScreeningSolver(SubsystemSolver):
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
         )
+        v_times_p_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix, self.coulomb_matrix
+        )
+        l_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
+        )
+
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += (
             coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
         )
 
-        # v_times_p_sparsity_pattern = _spillover_matmul(
-        #     sparsity_pattern, sparsity_pattern, self.small_block_sizes
-        # )
-        v_times_p_sparsity_pattern = _compute_sparsity_pattern(
-            self.coulomb_matrix, self.coulomb_matrix
-        )
         # Allocate memory for the System matrix (1 - V @ P).
         self.system_matrix = compute_config.dsbsparse_type.from_sparray(
             v_times_p_sparsity_pattern.astype(xp.complex128),
@@ -221,12 +222,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.system_matrix.data = 0.0
 
-        # l_sparsity_pattern = _spillover_matmul(
-        #     v_times_p_sparsity_pattern, sparsity_pattern, self.block_sizes
-        # )
-        l_sparsity_pattern = _compute_sparsity_pattern(
-            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
-        )
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dsbsparse_type.from_sparray(
             l_sparsity_pattern.astype(xp.complex128),
@@ -306,8 +301,10 @@ class CoulombScreeningSolver(SubsystemSolver):
         # ... bop it.
         x_nn = xp.flip(x_nn, axis=(-2, -1))
 
-        self.obc_blocks.retarded[0] = m_10 @ x_00 @ m_01
-        self.obc_blocks.retarded[-1] = m_mn @ x_nn @ m_nm
+        m_10_x_00 = m_10 @ x_00
+        m_mn_x_nn = m_mn @ x_nn
+        self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
+        self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
 
         synchronize_device()
         t_obc_r_end = time.perf_counter()
@@ -321,55 +318,74 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
 
         t_lyapunov_start = time.perf_counter()
-        # Compute and apply the lesser boundary self-energy.
-        a_00 = m_10 @ x_00 @ self.l_lesser.blocks[0, 1]
-        a_nn = m_mn @ x_nn @ self.l_lesser.blocks[-1, -2]
-        w_00 = self.lyapunov(
-            x_00 @ m_10,
+        # Compute and apply the left lesser/greater boundary self-energy.
+        a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
+        a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+
+        q_00_lesser = (
             x_00
-            @ (self.l_lesser.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
-            @ x_00.conj().swapaxes(-1, -2),
-            "left-lesser",
+            @ (
+                self.l_lesser.blocks[0, 0]
+                - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+            )
+            @ x_00.conj().swapaxes(-1, -2)
         )
-        w_nn = self.lyapunov(
-            x_nn @ m_mn,
-            x_nn
-            @ (self.l_lesser.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
-            @ x_nn.conj().swapaxes(-1, -2),
-            "right-lesser",
-        )
-
-        self.obc_blocks.lesser[0] = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2) - (
-            a_00 - a_00.conj().swapaxes(-1, -2)
-        )
-        self.obc_blocks.lesser[-1] = m_mn @ w_nn @ m_mn.conj().swapaxes(-1, -2) - (
-            a_nn - a_nn.conj().swapaxes(-1, -2)
-        )
-
-        # Compute and apply the greater boundary self-energy.
-        a_00 = m_10 @ x_00 @ self.l_greater.blocks[0, 1]
-        a_nn = m_mn @ x_nn @ self.l_greater.blocks[-1, -2]
-        w_00 = self.lyapunov(
-            x_00 @ m_10,
+        q_00_greater = (
             x_00
-            @ (self.l_greater.blocks[0, 0] - (a_00 - a_00.conj().swapaxes(-1, -2)))
-            @ x_00.conj().swapaxes(-1, -2),
-            "left-greater",
-        )
-        w_nn = self.lyapunov(
-            x_nn @ m_mn,
-            x_nn
-            @ (self.l_greater.blocks[-1, -1] - (a_nn - a_nn.conj().swapaxes(-1, -2)))
-            @ x_nn.conj().swapaxes(-1, -2),
-            "right-greater",
+            @ (
+                self.l_greater.blocks[0, 0]
+                - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+            )
+            @ x_00.conj().swapaxes(-1, -2)
         )
 
-        self.obc_blocks.greater[0] = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2) - (
-            a_00 - a_00.conj().swapaxes(-1, -2)
+        b_00 = x_00 @ m_10
+        q_00 = xp.stack((q_00_lesser, q_00_greater))
+
+        w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+
+        self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
+            -1, -2
+        ) - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+
+        self.obc_blocks.greater[0] = m_10 @ w_00_greater @ m_10.conj().swapaxes(
+            -1, -2
+        ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+
+        # Compute and apply the right lesser/greater boundary self-energy.
+        a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[-1, -2]
+        a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[-1, -2]
+
+        q_nn_lesser = (
+            x_nn
+            @ (
+                self.l_lesser.blocks[-1, -1]
+                - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+            )
+            @ x_nn.conj().swapaxes(-1, -2)
         )
-        self.obc_blocks.greater[-1] = m_mn @ w_nn @ m_mn.conj().swapaxes(-1, -2) - (
-            a_nn - a_nn.conj().swapaxes(-1, -2)
+        q_nn_greater = (
+            x_nn
+            @ (
+                self.l_greater.blocks[-1, -1]
+                - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+            )
+            @ x_nn.conj().swapaxes(-1, -2)
         )
+
+        b_nn = x_nn @ m_mn
+
+        q_nn = xp.stack((q_nn_lesser, q_nn_greater))
+
+        w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+
+        self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
+            -1, -2
+        ) - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+
+        self.obc_blocks.greater[-1] = m_mn @ w_nn_greater @ m_mn.conj().swapaxes(
+            -1, -2
+        ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
 
         synchronize_device()
         t_lyapunov_end = time.perf_counter()
@@ -582,6 +598,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
+        print(f"Finished solving on {comm.rank=}", flush=True)
         comm.Barrier()
         t_solve_end_all = time.perf_counter()
         if comm.rank == 0:

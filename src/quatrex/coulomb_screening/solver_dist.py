@@ -191,10 +191,6 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 block_sizes=self.small_block_sizes,
                 global_stack_shape=(stack_comm.size,),
             )
-            self.coulomb_matrix.data = 0.0
-            self.coulomb_matrix += (
-                coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
-            )
 
         else:
             coulomb_matrix_sparray = distributed_load(
@@ -212,10 +208,6 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 sparsity_pattern.astype(xp.complex128),
                 block_sizes=self.small_block_sizes,
                 global_stack_shape=(stack_comm.size,),
-            )
-            self.coulomb_matrix.data = 0.0
-            self.coulomb_matrix += (
-                coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
             )
 
         # Make sure that the Coulomb matrix is Hermitian.
@@ -248,24 +240,18 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 f"{self.small_block_sizes.sum()} != {self.coulomb_matrix.shape[-2]}"
             )
 
-        # Create DBSparse matrix from the Coulomb matrix.
-        # TODO: Waste of memory. Not an energy-dependent matrix.
-        # Workaround: We set the global_stack_shape to the number of MPI
-        # ranks.
-        # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-        #     sparsity_pattern.astype(xp.complex128),
-        #     block_sizes=self.small_block_sizes,
-        #     global_stack_shape=(stack_comm.size,),
-        # )
-        # self.coulomb_matrix.data = 0.0
-        # self.coulomb_matrix += coulomb_matrix_sparray
-
-        # v_times_p_sparsity_pattern = _spillover_matmul(
-        #     sparsity_pattern, sparsity_pattern, self.small_block_sizes
-        # )
         v_times_p_sparsity_pattern = _compute_sparsity_pattern(
             self.coulomb_matrix, self.coulomb_matrix
         )
+        l_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
+        )
+
+        self.coulomb_matrix.data = 0.0
+        self.coulomb_matrix += (
+            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
+        )
+
         # Allocate memory for the System matrix (1 - V @ P).
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             v_times_p_sparsity_pattern.astype(xp.complex128),
@@ -274,12 +260,6 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         )
         self.system_matrix.data = 0.0
 
-        # l_sparsity_pattern = _spillover_matmul(
-        #     v_times_p_sparsity_pattern, sparsity_pattern, self.block_sizes
-        # )
-        l_sparsity_pattern = _compute_sparsity_pattern(
-            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
-        )
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dsdbsparse_type.from_sparray(
             l_sparsity_pattern.astype(xp.complex128),
@@ -329,6 +309,8 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         """Computes open boundary conditions."""
         if block_comm.rank == 0:
 
+            t_obc_r_start = time.perf_counter()
+
             m_10, m_00, m_01 = get_periodic_superblocks(
                 a_ii=self.system_matrix.local_blocks[0, 0],
                 a_ji=self.system_matrix.local_blocks[1, 0],
@@ -338,41 +320,70 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
             x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
 
-            self.obc_blocks.retarded[0] = m_10 @ x_00 @ m_01
+            m_10_x_00 = m_10 @ x_00
+            self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
 
-            # Compute and apply the lesser boundary self-energy.
-            a_00 = m_10 @ x_00 @ self.l_lesser.local_blocks[0, 1]
-            w_00 = self.lyapunov(
-                x_00 @ m_10,
+            synchronize_device()
+            t_obc_r_end = time.perf_counter()
+            stack_comm.Barrier()
+            t_obc_r_end_all = time.perf_counter()
+            if stack_comm.rank == 0:
+                print(
+                    f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True
+                )
+                print(
+                    f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
+                    flush=True,
+                )
+
+            t_lyapunov_start = time.perf_counter()
+            # Compute and apply the left lesser/greater boundary self-energy.
+            a_00_lesser = m_10_x_00 @ self.l_lesser.local_blocks[0, 1]
+            a_00_greater = m_10_x_00 @ self.l_greater.local_blocks[0, 1]
+
+            q_00_lesser = (
                 x_00
                 @ (
                     self.l_lesser.local_blocks[0, 0]
-                    - (a_00 - a_00.conj().swapaxes(-1, -2))
+                    - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
                 )
-                @ x_00.conj().swapaxes(-1, -2),
-                "left-lesser",
+                @ x_00.conj().swapaxes(-1, -2)
             )
-
-            self.obc_blocks.lesser[0] = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2) - (
-                a_00 - a_00.conj().swapaxes(-1, -2)
-            )
-
-            # Compute and apply the greater boundary self-energy.
-            a_00 = m_10 @ x_00 @ self.l_greater.local_blocks[0, 1]
-            w_00 = self.lyapunov(
-                x_00 @ m_10,
+            q_00_greater = (
                 x_00
                 @ (
                     self.l_greater.local_blocks[0, 0]
-                    - (a_00 - a_00.conj().swapaxes(-1, -2))
+                    - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
                 )
-                @ x_00.conj().swapaxes(-1, -2),
-                "left-greater",
+                @ x_00.conj().swapaxes(-1, -2)
             )
 
-            self.obc_blocks.greater[0] = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2) - (
-                a_00 - a_00.conj().swapaxes(-1, -2)
-            )
+            b_00 = x_00 @ m_10
+            q_00 = xp.stack((q_00_lesser, q_00_greater))
+
+            w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+
+            self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
+                -1, -2
+            ) - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+
+            self.obc_blocks.greater[0] = m_10 @ w_00_greater @ m_10.conj().swapaxes(
+                -1, -2
+            ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+
+            synchronize_device()
+            t_lyapunov_end = time.perf_counter()
+            stack_comm.Barrier()
+            t_lyapunov_end_all = time.perf_counter()
+            if stack_comm.rank == 0:
+                print(
+                    f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
+                    flush=True,
+                )
+                print(
+                    f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
+                    flush=True,
+                )
 
         if block_comm.rank == block_comm.size - 1:
             n = self.system_matrix.num_local_blocks - 1
@@ -398,35 +409,45 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             )
             # ... bop it.
             x_nn = xp.flip(x_nn, axis=(-2, -1))
-            self.obc_blocks.retarded[-1] = m_mn @ x_nn @ m_nm
-            a_nn = m_mn @ x_nn @ self.l_lesser.local_blocks[n, m]
-            w_nn = self.lyapunov(
-                x_nn @ m_mn,
+
+            m_mn_x_nn = m_mn @ x_nn
+
+            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
+
+            # Compute and apply the right lesser/greater boundary self-energy.
+            a_nn_lesser = m_mn_x_nn @ self.l_lesser.local_blocks[n, m]
+            a_nn_greater = m_mn_x_nn @ self.l_greater.local_blocks[n, m]
+
+            q_nn_lesser = (
                 x_nn
                 @ (
                     self.l_lesser.local_blocks[n, n]
-                    - (a_nn - a_nn.conj().swapaxes(-1, -2))
+                    - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
                 )
-                @ x_nn.conj().swapaxes(-1, -2),
-                "right-lesser",
+                @ x_nn.conj().swapaxes(-1, -2)
             )
-            self.obc_blocks.lesser[-1] = m_mn @ w_nn @ m_mn.conj().swapaxes(-1, -2) - (
-                a_nn - a_nn.conj().swapaxes(-1, -2)
-            )
-            a_nn = m_mn @ x_nn @ self.l_greater.local_blocks[n, m]
-            w_nn = self.lyapunov(
-                x_nn @ m_mn,
+            q_nn_greater = (
                 x_nn
                 @ (
                     self.l_greater.local_blocks[n, n]
-                    - (a_nn - a_nn.conj().swapaxes(-1, -2))
+                    - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
                 )
-                @ x_nn.conj().swapaxes(-1, -2),
-                "right-greater",
+                @ x_nn.conj().swapaxes(-1, -2)
             )
-            self.obc_blocks.greater[-1] = m_mn @ w_nn @ m_mn.conj().swapaxes(-1, -2) - (
-                a_nn - a_nn.conj().swapaxes(-1, -2)
-            )
+
+            b_nn = x_nn @ m_mn
+
+            q_nn = xp.stack((q_nn_lesser, q_nn_greater))
+
+            w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+
+            self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
+                -1, -2
+            ) - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+
+            self.obc_blocks.greater[-1] = m_mn @ w_nn_greater @ m_mn.conj().swapaxes(
+                -1, -2
+            ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
 
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""

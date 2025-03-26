@@ -36,15 +36,12 @@ class TestCreation:
         densify_blocks: list[tuple] | None,
     ):
         """Tests the creation of DSBSparse matrices from hermitian sparse arrays."""
-        from qttools.datastructures import DSBCOO
-
-        if dsbsparse_type == DSBCOO:
-            coo = _create_coo(block_sizes)
-            coo = (coo + coo.conj().T) / 2
-            dsbsparse = dsbsparse_type.from_sparray(
-                coo, block_sizes, global_stack_shape, densify_blocks, symmetry=True
-            )
-            assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
+        coo = _create_coo(block_sizes)
+        coo = (coo + coo.conj().T) / 2
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo, block_sizes, global_stack_shape, densify_blocks, symmetry=True
+        )
+        assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
     def test_from_sparray(
         self,

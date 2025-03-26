@@ -3,13 +3,16 @@
 import pytest
 
 from qttools import NDArray, host_xp, xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
+DSDBSPARSE_TYPES = [DSDBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(host_xp.array([2] * 10), id="constant-block-size-2"),
+    pytest.param(host_xp.array([5] * 10), id="constant-block-size-5"),
+    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
+    pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
 DENSIFY_BLOCKS = [
@@ -44,8 +47,8 @@ NUM_INDS = [
 ]
 
 STACK_INDICES = [
-    pytest.param((5,), id="single"),
-    pytest.param((slice(1, 4),), id="slice"),
+    pytest.param((1,), id="single"),
+    pytest.param((slice(0, 2),), id="slice"),
     pytest.param((Ellipsis,), id="ellipsis"),
 ]
 
@@ -61,13 +64,18 @@ OPS = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+@pytest.fixture(params=DSBSPARSE_TYPES)
 def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
+    return request.param
+
+
+@pytest.fixture(params=DSDBSPARSE_TYPES)
+def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
@@ -91,7 +99,7 @@ def num_inds(request):
     return request.param
 
 
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+@pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param
 

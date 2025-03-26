@@ -4,9 +4,16 @@ import warnings
 from abc import ABC, abstractmethod
 
 from mpi4py import MPI
-from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    NDArray,
+    global_comm,
+    nccl_comm,
+    nccl_stack_comm,
+    stack_comm,
+    xp,
+)
 from qttools.lyapunov.utils import system_reduction
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream
@@ -15,6 +22,8 @@ from qttools.utils.mpi_utils import check_gpu_aware_mpi
 profiler = Profiler()
 
 GPU_AWARE_MPI = check_gpu_aware_mpi()
+comm = global_comm if stack_comm is None else stack_comm
+nccl_comm = nccl_comm if nccl_stack_comm is None else nccl_stack_comm
 
 
 class LyapunovSolver(ABC):

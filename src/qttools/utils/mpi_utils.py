@@ -5,11 +5,13 @@ from pathlib import Path
 import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.util import pkl5
 
 from qttools import NDArray, sparse, xp
 from qttools.profiling import Profiler
 
 profiler = Profiler()
+comm = pkl5.Intracomm(comm)
 
 
 @profiler.profile(level="debug")
@@ -103,7 +105,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
 
 @profiler.profile(level="debug")
-def get_local_slice(global_array: NDArray) -> NDArray:
+def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     """Returns the local slice of a distributed array.
 
     Parameters
@@ -117,7 +119,7 @@ def get_local_slice(global_array: NDArray) -> NDArray:
         The local slice of the global array.
 
     """
-    section_sizes, __ = get_section_sizes(global_array.shape[-1])
+    section_sizes, __ = get_section_sizes(global_array.shape[-1], comm.size)
     section_offsets = xp.hstack(([0], xp.cumsum(xp.array(section_sizes))))
 
     return global_array[
@@ -151,3 +153,41 @@ def check_gpu_aware_mpi() -> bool:
         or "CRAY MPICH" in MPI.Get_library_version()
     )
     return comm.allreduce(gpu_aware, op=MPI.LAND)
+
+
+def split_comm(
+    global_comm: MPI.Comm, block_comm_size: int
+) -> tuple[MPI.Comm, MPI.Comm]:
+    """Splits a communicator into "block" and "stack" subcommunicators.
+
+    The "block" communicator contains the ranks that will collectively
+    contain all nnz elements of a distributed sparse matrix. The "stack"
+    communicator contains the ranks that will collectively contain all
+    stack elements of a distributed sparse matrix.
+
+    Parameters
+    ----------
+    global_comm : MPI.Comm
+        The communicator to split.
+    block_comm_size : int
+        The number of ranks in the "block" communicator.
+
+    Returns
+    -------
+    block_comm : MPI.Comm
+        The "block" communicator.
+    stack_comm : MPI.Comm
+        The "stack" communicator.
+
+    """
+    if global_comm.size % block_comm_size != 0:
+        raise ValueError(f"Number of ranks must be a multiple of {block_comm_size}")
+
+    # Compute the color and key for each rank.
+    color = global_comm.rank % (global_comm.size // block_comm_size)
+    key = global_comm.rank // (global_comm.size // block_comm_size)
+
+    # Split the communicator twice.
+    block_comm = global_comm.Split(color=color, key=key)
+    stack_comm = global_comm.Split(color=key, key=color)
+    return block_comm, stack_comm

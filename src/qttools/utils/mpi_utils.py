@@ -5,11 +5,13 @@ from pathlib import Path
 import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.util import pkl5
 
 from qttools import NDArray, sparse, xp
 from qttools.profiling import Profiler
 
 profiler = Profiler()
+comm = pkl5.Intracomm(comm)
 
 
 @profiler.profile(level="debug")

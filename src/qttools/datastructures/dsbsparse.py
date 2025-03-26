@@ -572,8 +572,8 @@ class DSBSparse(ABC):
         return blocks
 
     @profiler.profile(level="api")
-    def diagonal(self) -> NDArray:
-        """Returns the diagonal elements of the matrix.
+    def diagonal(self, val: NDArray = None) -> NDArray:
+        """Returns or sets the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True.
 
@@ -583,17 +583,22 @@ class DSBSparse(ABC):
             The diagonal elements of the matrix.
 
         """
-        # Store the current return_dense state and set it to True.
-        original_return_dense = self.return_dense
-        self.return_dense = True
+        if val is None:
+            # Getter
+            # Store the current return_dense state and set it to True.
+            original_return_dense = self.return_dense
+            self.return_dense = True
 
-        diagonals = []
-        for b in range(self.num_blocks):
-            diagonals.append(xp.diagonal(self.blocks[b, b], axis1=-2, axis2=-1))
+            diagonals = []
+            for b in range(self.num_blocks):
+                diagonals.append(xp.diagonal(self.blocks[b, b], axis1=-2, axis2=-1))
 
-        # Restore the original return_dense state.
-        self.return_dense = original_return_dense
-        return xp.concatenate(diagonals, axis=-1)
+            # Restore the original return_dense state.
+            self.return_dense = original_return_dense
+            return xp.concatenate(diagonals, axis=-1)
+        else:
+            # Setter
+            raise NotImplementedError("Setting the diagonal is not yet implemented.")
 
     @profiler.profile(level="debug")
     def _dtranspose(

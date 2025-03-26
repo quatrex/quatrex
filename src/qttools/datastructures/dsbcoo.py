@@ -57,6 +57,9 @@ class DSBCOO(DSBSparse):
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
 
+        self._diag_mask = self.rows == self.cols
+        self._diag_inds = self.rows[self._diag_mask]
+
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -425,6 +428,27 @@ class DSBCOO(DSBSparse):
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
         )
+
+    @profiler.profile(level="api")
+    def diagonal(self, val: NDArray = None) -> NDArray:
+        """Returns or sets the diagonal elements of the matrix.
+
+        This temporarily sets the return_dense state to True.
+
+        Returns
+        -------
+        diagonal : NDArray
+            The diagonal elements of the matrix.
+
+        """
+        if val is None:
+            # Getter
+            diagonal = xp.zerps(((self.shape[:-2], self.shape[-1])), dtype=self.dtype)
+            diagonal[..., self._diag_inds] = self.data[..., self._diag_mask]
+            return diagonal
+        else:
+            # Setter
+            self.data[..., self._diag_mask] = val[self._diag_inds]
 
     @DSBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:

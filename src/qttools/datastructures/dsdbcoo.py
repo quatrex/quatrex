@@ -497,7 +497,7 @@ class DSDBCOO(DSDBSparse):
         if val is None:
             # Getter
             local_diagonal = xp.zeros(
-                (self.shape[-2], self.shape[-1]), dtype=self.dtype
+                (*self.shape[:-2], self.shape[-1]), dtype=self.dtype
             )
             local_diagonal[..., self._diag_inds] = self.data[..., self._diag_mask]
             return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)

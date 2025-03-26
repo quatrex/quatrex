@@ -454,6 +454,7 @@ class SigmaFock(ScatteringSelfEnergy):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=(comm.size,),
+            symmetry=True,
         )
         coulomb_matrix.data = 0.0
         coulomb_matrix += coulomb_matrix_sparray

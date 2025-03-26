@@ -81,7 +81,9 @@ class DSBCOO(DSBSparse):
             - self._diag_value_inds[ranks == comm.rank][0]
         )
 
-    def _upper_triangle(rows, cols) -> bool:
+    def _upper_triangle(
+        rows: NDArray, cols: NDArray
+    ) -> tuple[NDArray, NDArray, NDArray]:
         """Returns upper triangular rows and cols."""
         mask = cols < rows
         temp = rows[mask]
@@ -126,7 +128,7 @@ class DSBCOO(DSBSparse):
         if self.symmetry:
             rows, cols, mask_transposed = self._upper_triangle(
                 rows, cols
-            )  # find and send items in lower traingle to upper triangle
+            )  # find items in lower triangle and send them to upper triangle
 
             inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
                 self.rows, self.cols, rows[~mask_transposed], cols[~mask_transposed]
@@ -226,15 +228,17 @@ class DSBCOO(DSBSparse):
         if self.distribution_state == "stack":
             if value.ndim == 0:
                 self.data[*stack_index][..., inds] = value
-                self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
-                    value
-                )
+                if self.symmetry:
+                    self.data[*stack_index][..., inds[mask_transposed]] = (
+                        self.symmetry_op(value)
+                    )
                 return
 
             self.data[*stack_index][..., inds] = value[..., value_inds]
-            self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
-                value[..., value_inds[mask_transposed]]
-            )
+            if self.symmetry:
+                self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
+                    value[..., value_inds[mask_transposed]]
+                )
             return
 
         # If nnz are distributed accross the stack, we need to find the
@@ -829,7 +833,6 @@ class DSBCOO(DSBSparse):
         coo.sum_duplicates()
 
         if symmetry:
-            coo = (coo + symmetry_op(coo.T)) / 2
             coo = sparse.triu(coo, format="coo")
 
         # Compute the block-sorting index.

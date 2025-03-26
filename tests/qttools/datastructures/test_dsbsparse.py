@@ -372,6 +372,47 @@ class TestAccess:
             dense[..., *inds][dense[..., *inds].nonzero()] = 1
             assert xp.allclose(dense, dsbsparse.to_dense())
 
+    @pytest.mark.usefixtures("accessed_block", "densify_blocks")
+    def test_set_block_hermitian(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        densify_blocks: list[tuple] | None,
+        accessed_block: tuple,
+    ):
+        """Tests that we can set a block and not modify sparsity structure."""
+        from qttools.datastructures import DSBCOO
+
+        if dsbsparse_type == DSBCOO:
+            coo = _create_coo(block_sizes)
+            coo = (coo + coo.conj().T) / 2
+
+            dsbsparse = dsbsparse_type.from_sparray(
+                coo,
+                block_sizes=block_sizes,
+                global_stack_shape=global_stack_shape,
+                densify_blocks=densify_blocks,
+                symmetry=True,
+            )
+            dense = dsbsparse.to_dense()
+
+            inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+            inds_t, in_bounds_t = _get_block_inds(reversed(accessed_block), block_sizes)
+
+            with pytest.raises(IndexError) if not in_bounds else nullcontext():
+                dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
+
+            if densify_blocks is not None and accessed_block in densify_blocks:
+                # Sparsity structure should be modified.
+                assert (dsbsparse.to_dense()[..., *inds] == 1).all()
+                assert (dsbsparse.to_dense()[..., *inds_t] == 1).all()
+            else:
+                # Sparsity structure should not be modified.
+                dense[..., *inds][dense[..., *inds].nonzero()] = 1
+                dense[..., *inds_t][dense[..., *inds_t].nonzero()] = 1
+                assert xp.allclose(dense, dsbsparse.to_dense())
+
     @pytest.mark.usefixtures("accessed_block", "stack_index")
     def test_get_block_substack(
         self,

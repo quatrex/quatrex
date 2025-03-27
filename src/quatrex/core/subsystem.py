@@ -200,7 +200,7 @@ class SubsystemSolver(ABC):
             )
         return lyapunov_solver
 
-    def _configure_solver(self, solver_config: SolverConfig) -> GFSolver:
+    def _configure_solver(self, solver_config: SolverConfig, symmetric:bool = True) -> GFSolver:
         """Configures the solver algorithm from the config.
 
         Parameters
@@ -215,7 +215,7 @@ class SubsystemSolver(ABC):
 
         """
         if solver_config.algorithm == "rgf":
-            return RGF(max_batch_size=solver_config.max_batch_size)
+            return RGF(max_batch_size=solver_config.max_batch_size, symmetric=symmetric)
 
         if solver_config.algorithm == "inv":
             return Inv(max_batch_size=solver_config.max_batch_size)

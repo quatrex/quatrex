@@ -520,72 +520,86 @@ def arrow_partition_halo_comm_nccl(
     c_off = a_off + b_off
     rank = comm.rank if comm is not None else 0
 
-    from cupy.cuda import nccl
-
     synchronize_device()
     block_comm.Barrier()
     halo_comm_start = time.perf_counter()
-    nccl.group_start()
 
     # Send halo blocks to previous rank
-    if start_block > 0:
-        for i in range(start_block, min(num_blocks, start_block + c_off)):
-            for j in range(
-                max(start_block, i - a_off), min(a.dsdbsparse.num_blocks, i + a_off + 1)
-            ):
-                nccl_comm.send(a[i, j], rank - 1)
-        for j in range(start_block, min(num_blocks, start_block + c_off)):
-            for i in range(
-                max(start_block, j - b_off), min(b.dsdbsparse.num_blocks, j + b_off + 1)
-            ):
-                nccl_comm.isend(b[i, j], rank - 1)
-    # Send halo blocks to next rank
-    if end_block < a.dsdbsparse.num_blocks:
-        for i in range(end_block, min(num_blocks, end_block + a_off)):
-            for j in range(max(0, i - a_off), min(end_block, i + a_off + 1)):
-                nccl_comm.send(a[i, j], rank + 1)
-    if end_block < b.dsdbsparse.num_blocks:
-        for j in range(end_block, min(num_blocks, end_block + b_off)):
-            for i in range(max(0, j - b_off), min(end_block, j + b_off + 1)):
-                nccl_comm.send(b[i, j], rank + 1)
-    # Receive halo blocks from next rank
-    if end_block < a.dsdbsparse.num_blocks:
-        for i in range(end_block, min(num_blocks, end_block + c_off)):
-            for j in range(
-                max(end_block, i - a_off), min(a.dsdbsparse.num_blocks, i + a_off + 1)
-            ):
-                buf = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                nccl_comm.recv(buf, rank + 1)
-                a[i, j] = buf
-    if end_block < b.dsdbsparse.num_blocks:
-        for j in range(end_block, min(num_blocks, end_block + c_off)):
-            for i in range(
-                max(end_block, j - b_off), min(b.dsdbsparse.num_blocks, j + b_off + 1)
-            ):
-                buf = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                nccl_comm.recv(buf, rank + 1)
-                b[i, j] = buf
-    # Receive halo blocks from previous rank
-    if start_block > 0:
-        for i in range(start_block, min(num_blocks, start_block + a_off)):
-            for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
-                buf = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                nccl_comm.recv(buf, rank - 1)
-                a[i, j] = buf
-        for j in range(start_block, min(num_blocks, start_block + b_off)):
-            for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
-                buf = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                nccl_comm.recv(buf, rank - 1)
-                b[i, j] = buf
+    def _send_to_previous():
+        if start_block > 0:
+            for i in range(start_block, min(num_blocks, start_block + c_off)):
+                for j in range(
+                    max(start_block, i - a_off),
+                    min(a.dsdbsparse.num_blocks, i + a_off + 1),
+                ):
+                    nccl_comm.send(a[i, j], rank - 1)
+            for j in range(start_block, min(num_blocks, start_block + c_off)):
+                for i in range(
+                    max(start_block, j - b_off),
+                    min(b.dsdbsparse.num_blocks, j + b_off + 1),
+                ):
+                    nccl_comm.send(b[i, j], rank - 1)
 
-    nccl.group_end()
+    # Receive halo blocks from next rank
+    def _recv_from_next():
+        if end_block < a.dsdbsparse.num_blocks:
+            for i in range(end_block, min(num_blocks, end_block + c_off)):
+                for j in range(
+                    max(end_block, i - a_off),
+                    min(a.dsdbsparse.num_blocks, i + a_off + 1),
+                ):
+                    a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    nccl_comm.recv(a[i, j], rank + 1)
+        if end_block < b.dsdbsparse.num_blocks:
+            for j in range(end_block, min(num_blocks, end_block + c_off)):
+                for i in range(
+                    max(end_block, j - b_off),
+                    min(b.dsdbsparse.num_blocks, j + b_off + 1),
+                ):
+                    b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    nccl_comm.recv(b[i, j], rank + 1)
+
+    # Send halo blocks to next rank
+    def _send_to_next():
+        if end_block < a.dsdbsparse.num_blocks:
+            for i in range(end_block, min(num_blocks, end_block + a_off)):
+                for j in range(max(0, i - a_off), min(end_block, i + a_off + 1)):
+                    nccl_comm.send(a[i, j], rank + 1)
+        if end_block < b.dsdbsparse.num_blocks:
+            for j in range(end_block, min(num_blocks, end_block + b_off)):
+                for i in range(max(0, j - b_off), min(end_block, j + b_off + 1)):
+                    nccl_comm.send(b[i, j], rank + 1)
+
+    # Receive halo blocks from previous rank
+    def _recv_from_previous():
+        if start_block > 0:
+            for i in range(start_block, min(num_blocks, start_block + a_off)):
+                for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
+                    a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    nccl_comm.recv(a[i, j], rank - 1)
+            for j in range(start_block, min(num_blocks, start_block + b_off)):
+                for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
+                    b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    nccl_comm.recv(b[i, j], rank - 1)
+
+    if rank % 2 == 0:
+        _send_to_previous()
+        _recv_from_next()
+        _send_to_next()
+        _recv_from_previous()
+    else:
+        _recv_from_next()
+        _send_to_previous()
+        _recv_from_previous()
+        _send_to_next()
+
     synchronize_device()
     halo_comm_end = time.perf_counter()
     block_comm.Barrier()
     halo_comm_end_all = time.perf_counter()
     if global_comm.rank == 0:
-        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}")
-        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}")
+        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def bd_matmul_distr(

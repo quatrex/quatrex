@@ -69,7 +69,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(level="api")
     def compute(
-        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
+        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...], symmetric: bool = False
     ) -> None:
         """Computes the polarization.
 
@@ -203,8 +203,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
         # Enforce anti-Hermitian symmetry and calculate Pr.
         t_symmetrization_start = time.perf_counter()
-        p_lesser.symmetrize(xp.subtract)
-        p_greater.symmetrize(xp.subtract)
+        if not symmetric:
+            p_lesser.symmetrize(xp.subtract)
+            p_greater.symmetrize(xp.subtract)
 
         # Discard the real part.
         p_lesser._data.real = 0

@@ -22,9 +22,10 @@ class RGF(GFSolver):
 
     """
 
-    def __init__(self, max_batch_size: int = 100) -> None:
+    def __init__(self, max_batch_size: int = 100, symmetric: bool = False) -> None:
         """Initializes the selected inversion solver."""
         self.max_batch_size = max_batch_size
+        self.symmetric = symmetric
 
     def selected_inv(
         self,
@@ -357,7 +358,8 @@ class RGF(GFSolver):
                 )
 
                 xl_.blocks[i, j] = xl_ij
-                xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+                if not self.symmetric:
+                    xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
                 xg_ij = (
                     -xr_ii_a_ij_xg_jj
@@ -366,7 +368,8 @@ class RGF(GFSolver):
                 )
 
                 xg_.blocks[i, j] = xg_ij
-                xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+                if not self.symmetric:
+                    xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
                 if return_current:
                     a_ji_xr_ii = a_ji @ xr_ii

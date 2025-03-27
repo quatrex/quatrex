@@ -763,7 +763,7 @@ class DSBCOO(DSBSparse):
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = 0.5 * op(
                 data[stack_idx],
-                self.symmetry_op(data[stack_idx, self._inds_bcoo2bcoo_t]),
+                xp.conj(data[stack_idx, self._inds_bcoo2bcoo_t]),
             )
 
     @profiler.profile(level="api")

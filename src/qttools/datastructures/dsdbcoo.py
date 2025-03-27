@@ -535,6 +535,11 @@ class DSDBCOO(DSDBSparse):
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
             )
+
+        num_blocks = len(block_sizes)
+        if num_blocks in self._block_config and num_blocks == self.num_blocks:
+            return
+
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
 
@@ -550,7 +555,7 @@ class DSDBCOO(DSDBSparse):
             raise ValueError(
                 f"Block sizes {block_sizes} are inconsistent with the current distribution."
             )
-        num_blocks = len(block_sizes)
+
         # Check if configuration already exists.
         if num_blocks in self._block_config:
             # Compute canonical ordering of the matrix.

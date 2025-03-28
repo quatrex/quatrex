@@ -252,6 +252,7 @@ def test_rgf_dist_no_retarded(block_sizes: NDArray, global_stack_shape: tuple):
     assert xp.allclose(Xg_rgf, Xg_ref)
 
 
+@pytest.mark.mpi(min_size=2)
 @pytest.mark.parametrize("block_sizes", BLOCK_SIZES)
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
 def test_rgf_dist_batched(block_sizes: NDArray, global_stack_shape: tuple):

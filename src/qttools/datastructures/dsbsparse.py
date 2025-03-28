@@ -996,6 +996,7 @@ class _DStackView:
     def __init__(self, dsbsparse: DSBSparse, stack_index: tuple) -> None:
         """Initializes the stack indexer."""
         self._dsbsparse = dsbsparse
+        self.symmetry = dsbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)

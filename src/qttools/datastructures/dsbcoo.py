@@ -726,6 +726,10 @@ class DSBCOO(DSBSparse):
             is addition.
 
         """
+        if self.symmetry:
+            # Already symmetric, nothing to do.
+            return
+
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
 

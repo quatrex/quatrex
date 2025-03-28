@@ -9,6 +9,7 @@ For more information see https://github.com/vincent-maillou/serinv
 
 import functools
 import itertools
+from typing import Optional
 
 from qttools import NDArray, block_comm, nccl_block_comm, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
@@ -812,7 +813,7 @@ class ReducedSystem:
         write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
-        lower_block_reduced_system: list[NDArray] = None,
+        lower_block_reduced_system: Optional[list[NDArray]] = None,
         is_retarded: bool = True,
     ):
         """Maps the reduced system back to the local partition.

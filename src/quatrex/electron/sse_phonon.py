@@ -116,23 +116,44 @@ class SigmaPhonon(ScatteringSelfEnergy):
             # These should ideally already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
 
-        # ==== Diagonal only ===========================================
-        inds = xp.diag_indices(sigma_lesser.shape[-1])
+        # ==== Using diagonal() ========================================
+        sl_diag = sigma_lesser.diagonal(stack_index=self.valid_slice)
 
-        sigma_lesser.stack[self.valid_slice][*inds] += self.deformation_potential**2 * (
+        sl_diag += self.deformation_potential**2 * (
             self.occupancy
-            * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.downslice]
+            * xp.roll(g_lesser.diagonal(), self.downshift, axis=0)[self.downslice]
             + (self.occupancy + 1)
-            * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[self.upslice]
+            * xp.roll(g_lesser.diagonal(), -self.upshift, axis=0)[self.upslice]
         )
-        sigma_greater.stack[self.valid_slice][
-            *inds
-        ] += self.deformation_potential**2 * (
+        sigma_lesser.fill_diagonal(sl_diag, stack_index=self.valid_slice)
+
+        sg_diag = sigma_greater.diagonal(stack_index=self.valid_slice)
+
+        sg_diag += self.deformation_potential**2 * (
             self.occupancy
-            * xp.roll(g_greater[*inds], -self.upshift, axis=0)[self.upslice]
+            * xp.roll(g_greater.diagonal(), -self.upshift, axis=0)[self.upslice]
             + (self.occupancy + 1)
-            * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.downslice]
+            * xp.roll(g_greater.diagonal(), self.downshift, axis=0)[self.downslice]
         )
+        sigma_greater.fill_diagonal(sg_diag, stack_index=self.valid_slice)
+
+        # ==== Diagonal only ===========================================
+        # inds = xp.diag_indices(sigma_lesser.shape[-1])
+
+        # sigma_lesser.stack[self.valid_slice][*inds] += self.deformation_potential**2 * (
+        #     self.occupancy
+        #     * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.downslice]
+        #     + (self.occupancy + 1)
+        #     * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[self.upslice]
+        # )
+        # sigma_greater.stack[self.valid_slice][
+        #     *inds
+        # ] += self.deformation_potential**2 * (
+        #     self.occupancy
+        #     * xp.roll(g_greater[*inds], -self.upshift, axis=0)[self.upslice]
+        #     + (self.occupancy + 1)
+        #     * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.downslice]
+        # )
 
         # ==== Full matrices ===========================================
         # nnz_stop = sigma_lesser.nnz_section_sizes[comm.rank]

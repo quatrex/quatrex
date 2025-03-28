@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, xp
+from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
+from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.bandstructure.contact import contact_band_structure
@@ -68,19 +68,15 @@ class SCBAData:
 
             grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
 
-            # NOTE: this is a temporary solution to get the block sizes.
-            # Should be create from wannier centers
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            block_sizes = host_xp.array(
+                [
+                    quatrex_config.device.unit_cell_per_supercell[
+                        "xyz".index(quatrex_config.device.transport_direction)
+                    ]
+                    * wannier_centers.shape[0]
+                ]
+                * quatrex_config.device.number_of_supercells
             )
-            _, block_sizes = create_hamiltonian(
-                hamiltonian_unit_cells,
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                return_sparse=True,
-            )
-            block_sizes = get_host(block_sizes)
 
         else:
             grid = distributed_load(quatrex_config.input_dir / "grid.npy")
@@ -120,6 +116,10 @@ class SCBAData:
         if comm.rank == 0:
             print(
                 f"Time for sparsity pattern: {time_sparsity_end - time_sparsity_start}",
+                flush=True,
+            )
+            print(
+                f"Sparsity pattern: {self.sparsity_pattern.shape=}, {self.sparsity_pattern.nnz=}",
                 flush=True,
             )
 

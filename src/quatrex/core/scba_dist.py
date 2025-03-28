@@ -7,10 +7,18 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, block_comm, host_xp, nccl_comm, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    NDArray,
+    block_comm,
+    host_xp,
+    nccl_comm,
+    stack_comm,
+    xp,
+)
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_coordinate_grid, create_hamiltonian
+from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.bandstructure.contact import contact_band_structure
@@ -68,19 +76,15 @@ class SCBADataDist:
 
             grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
 
-            # NOTE: this is a temporary solution to get the block sizes.
-            # Should be create from wannier centers
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            block_sizes = host_xp.array(
+                [
+                    quatrex_config.device.unit_cell_per_supercell[
+                        "xyz".index(quatrex_config.device.transport_direction)
+                    ]
+                    * wannier_centers.shape[0]
+                ]
+                * quatrex_config.device.number_of_supercells
             )
-            _, block_sizes = create_hamiltonian(
-                hamiltonian_unit_cells,
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                return_sparse=True,
-            )
-            block_sizes = get_host(block_sizes)
 
         else:
             grid = distributed_load(quatrex_config.input_dir / "grid.npy")
@@ -113,6 +117,8 @@ class SCBADataDist:
         # Determine the local slice of the data.
         # NOTE: This is arrow-wise partitioning.
         # TODO: Allow more options, e.g., block row-wise partitioning.
+        synchronize_device()
+        time_sparsity_start = time.perf_counter()
         section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
         section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
         block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
@@ -125,7 +131,13 @@ class SCBADataDist:
             start_idx=start_idx,
             end_idx=end_idx,
         )
+        synchronize_device()
+        time_sparsity_end = time.perf_counter()
         if comm.rank == 0:
+            print(
+                f"Time for sparsity pattern: {time_sparsity_end - time_sparsity_start}",
+                flush=True,
+            )
             print(
                 f"Sparsity pattern: {self.sparsity_pattern.shape=}, {self.sparsity_pattern.nnz=}",
                 flush=True,
@@ -292,7 +304,8 @@ class SCBADist:
                 )
             elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
                 energy_window_num = (
-                    self.quatrex_config.electron.energy_window_num_per_rank * comm.size
+                    self.quatrex_config.electron.energy_window_num_per_rank
+                    * stack_comm.size
                 )
                 self.electron_energies = xp.linspace(
                     self.quatrex_config.electron.energy_window_min,
@@ -326,14 +339,16 @@ class SCBADist:
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
         energy_resolution = self.electron_energies[1] - self.electron_energies[0]
-        num_energies_per_rank = num_energies // comm.size
+        num_energies_per_rank = num_energies // stack_comm.size
         if comm.rank == 0:
             print(
                 f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.",
                 flush=True,
             )
             print(f"Resolution is {energy_resolution} eV.", flush=True)
-            print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
+            print(
+                f"Each block_comm has {num_energies_per_rank} grid points.", flush=True
+            )
 
         self.electron_solver = ElectronSolverDist(
             self.quatrex_config,

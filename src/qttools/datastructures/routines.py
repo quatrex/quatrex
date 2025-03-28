@@ -452,7 +452,7 @@ def arrow_partition_halo_comm(
     rank = comm.rank if comm is not None else 0
 
     synchronize_device()
-    block_comm.Barrier()
+    comm.Barrier() if comm is not None else None
     halo_comm_start = time.perf_counter()
 
     reqs = []
@@ -506,7 +506,7 @@ def arrow_partition_halo_comm(
 
     synchronize_device()
     halo_comm_end = time.perf_counter()
-    block_comm.Barrier()
+    comm.Barrier() if comm is not None else None
     halo_comm_end_all = time.perf_counter()
     if global_comm.rank == 0:
         print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
@@ -693,8 +693,8 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
-    # if nccl_block_comm is not None:
-    if False:
+    if nccl_block_comm is not None:
+        # if False:
         arrow_partition_halo_comm_nccl(
             a_,
             b_,

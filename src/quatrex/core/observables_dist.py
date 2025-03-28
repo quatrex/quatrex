@@ -241,7 +241,12 @@ def device_current(
     #     local_current.append(layer_current)
     local_current = []
     start_block = x_lesser.block_section_offsets[block_comm.rank]
-    for i in range(x_lesser.num_local_blocks - 1):
+    num_offdiags = x_lesser.num_local_blocks
+
+    if block_comm.rank == block_comm.size - 1:
+        num_offdiags -= 1
+
+    for i in range(num_offdiags):
         j = i + 1
         layer_current = (
             _operator_block((i + start_block, j + start_block))

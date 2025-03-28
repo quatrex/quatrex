@@ -448,6 +448,10 @@ def arrow_partition_halo_comm(
     c_off = a_off + b_off
     rank = comm.rank if comm is not None else 0
 
+    synchronize_device()
+    block_comm.Barrier()
+    halo_comm_start = time.perf_counter()
+
     reqs = []
     # Send halo blocks to previous rank
     if start_block > 0:
@@ -492,6 +496,14 @@ def arrow_partition_halo_comm(
             for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
                 b[i, j] = comm.recv(source=rank - 1, tag=1)
     Request.Waitall(reqs)
+
+    synchronize_device()
+    halo_comm_end = time.perf_counter()
+    block_comm.Barrier()
+    halo_comm_end_all = time.perf_counter()
+    if global_comm.rank == 0:
+        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def arrow_partition_halo_comm_nccl(

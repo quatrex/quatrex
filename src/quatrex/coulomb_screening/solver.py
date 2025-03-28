@@ -221,7 +221,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_greater = compute_config.dsbsparse_type.zeros_like(self.l_lesser)
 
         # Load the Coulomb matrix.
-        if quatrex_config.coulomb_screening.construct_from_unit_cell:
+        if quatrex_config.device.construct_from_unit_cell:
             coulomb_matrix_sparray, __ = create_hamiltonian(
                 cutoff_hr(
                     coulomb_matrix_unit_cells,

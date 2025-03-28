@@ -582,7 +582,7 @@ class TestAccess:
         n = dsbsparse.shape[-1]
         inds = xp.arange(n)
 
-        dsbsparse.diagonal(val=xp.ones_like(dense[..., inds, inds]))
+        dsbsparse.fill_diagonal(val=xp.ones_like(dense[..., inds, inds]))
         stack_index = (0,) * len(global_stack_shape)
         inds = dense[*stack_index, inds, inds].nonzero()
         dense[..., inds, inds] = 1
@@ -608,7 +608,7 @@ class TestAccess:
         inds = xp.arange(n)
 
         data_stack = dsbsparse.data[*stack_index]
-        dsbsparse.diagonal(
+        dsbsparse.fill_diagonal(
             stack_index=stack_index, val=xp.ones((*data_stack.shape[:-1], n))
         )
         tmp_stack_index = (0,) * len(global_stack_shape)
@@ -635,7 +635,7 @@ class TestAccess:
         n = dsbsparse.shape[-1]
         inds = xp.arange(n)
 
-        dsbsparse.diagonal(stack_index=stack_index, val=2)
+        dsbsparse.fill_diagonal(stack_index=stack_index, val=2)
         tmp_stack_index = (0,) * len(global_stack_shape)
         inds = dense[*tmp_stack_index, inds, inds].nonzero()
         dense[*stack_index][..., inds, inds] = 2
@@ -999,7 +999,7 @@ class TestDistribution:
 
         dsbsparse.dtranspose()
 
-        dsbsparse.diagonal(val=42)
+        dsbsparse.fill_diagonal(val=42)
         stack_index = (0,) * len(global_stack_shape)
         inds = dense[*stack_index, inds, inds].nonzero()
         dense[..., inds, inds] = 42

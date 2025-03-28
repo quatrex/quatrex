@@ -331,6 +331,7 @@ class SCBA:
             self.quatrex_config,
             self.compute_config,
             self.electron_energies,
+            sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------

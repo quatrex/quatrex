@@ -69,6 +69,7 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
+        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -99,20 +100,28 @@ class ElectronSolver(SubsystemSolver):
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
 
+        # Make sure that the the system matrix sparsity is a superset of
+        # self-energy and Hamiltonian sparsity.
+        sparsity_pattern += hamiltonian_sparray
+
         self.hamiltonian = compute_config.dsbsparse_type.from_sparray(
-            hamiltonian_sparray,
+            sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=(comm.size,),
         )
+        self.hamiltonian.data = 0.0
+        self.hamiltonian += hamiltonian_sparray
+        del hamiltonian_sparray
 
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsbsparse_type.from_sparray(
-            hamiltonian_sparray,
+            sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
 
-        del hamiltonian_sparray
+        self.system_matrix.data = 0.0
+        del sparsity_pattern
 
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.

@@ -59,6 +59,23 @@ class DSBCSR(DSBSparse):
         self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
 
+        inds = xp.arange(self.shape[-1])
+        self._diag_inds, self._diag_value_inds = dsbcsr_kernels.find_inds(
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, inds, inds
+        )
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        if not any(ranks == comm.rank):
+            self._diag_inds_nnz = None
+            self._diag_value_inds_nnz = None
+            return
+        self._diag_inds_nnz = (
+            self._diag_inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
+        )
+        self._diag_value_inds_nnz = (
+            self._diag_value_inds[ranks == comm.rank]
+            - self._diag_value_inds[ranks == comm.rank][0]
+        )
+
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -395,6 +412,9 @@ class DSBCSR(DSBSparse):
         # Check if configuration already exists.
         if num_blocks in self._block_config:
             # Compute canonical ordering of the matrix.
+
+            if num_blocks == self.num_blocks:
+                return
 
             if self._block_config[num_blocks].inds_canonical2block is None:
                 rows, cols = self.spy()

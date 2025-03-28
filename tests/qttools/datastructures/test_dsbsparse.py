@@ -545,6 +545,102 @@ class TestAccess:
         reference = xp.diagonal(dense, axis1=-2, axis2=-1)
         assert xp.allclose(reference, dsbsparse.diagonal())
 
+    def test_diagonal_substack(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can get the correct diagonal elements."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        reference = xp.diagonal(dense[stack_index], axis1=-2, axis2=-1)
+        assert xp.allclose(reference, dsbsparse.diagonal(stack_index=stack_index))
+
+    def test_set_diagonal(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+    ):
+        """Tests that we can set the correct diagonal elements."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        n = dsbsparse.shape[-1]
+        inds = xp.arange(n)
+
+        dsbsparse.fill_diagonal(val=xp.ones_like(dense[..., inds, inds]))
+        stack_index = (0,) * len(global_stack_shape)
+        inds = dense[*stack_index, inds, inds].nonzero()
+        dense[..., inds, inds] = 1
+        assert xp.allclose(dense, dsbsparse.to_dense())
+
+    def test_set_diagonal_substack(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can set the correct diagonal elements."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        n = dsbsparse.shape[-1]
+        inds = xp.arange(n)
+
+        data_stack = dsbsparse.data[*stack_index]
+        dsbsparse.fill_diagonal(
+            stack_index=stack_index, val=xp.ones((*data_stack.shape[:-1], n))
+        )
+        tmp_stack_index = (0,) * len(global_stack_shape)
+        inds = dense[*tmp_stack_index, inds, inds].nonzero()
+        dense[*stack_index][..., inds, inds] = 1
+        assert xp.allclose(dense, dsbsparse.to_dense())
+
+    def test_set_diagonal_substack_val(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        stack_index: tuple,
+    ):
+        """Tests that we can set the correct diagonal elements."""
+        coo = _create_coo(block_sizes)
+        dsbsparse = dsbsparse_type.from_sparray(
+            coo,
+            block_sizes=block_sizes,
+            global_stack_shape=global_stack_shape,
+        )
+        dense = dsbsparse.to_dense()
+
+        n = dsbsparse.shape[-1]
+        inds = xp.arange(n)
+
+        dsbsparse.fill_diagonal(stack_index=stack_index, val=2)
+        tmp_stack_index = (0,) * len(global_stack_shape)
+        inds = dense[*tmp_stack_index, inds, inds].nonzero()
+        dense[*stack_index][..., inds, inds] = 2
+        assert xp.allclose(dense, dsbsparse.to_dense())
+
 
 @pytest.mark.usefixtures("densify_blocks")
 class TestArithmetic:
@@ -863,6 +959,55 @@ class TestDistribution:
 
         assert xp.allclose(dense, dsbsparse.to_dense())
 
+    def test_diagonal_nnz(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+    ):
+        """Tests distributed access of individual matrix elements."""
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+
+        dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+        dense = coo.toarray()
+
+        reference = xp.diagonal(dense, axis1=-2, axis2=-1)
+        reference = reference[reference.nonzero()]
+
+        dsbsparse.dtranspose()
+
+        local_diagonal = dsbsparse.diagonal()
+        diagonal = xp.concatenate(comm.allgather(local_diagonal), axis=-1)
+        assert xp.allclose(reference, diagonal)
+
+    def test_set_diagonal_nnz(
+        self,
+        dsbsparse_type: DSBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+    ):
+        """Tests distributed setting of individual matrix elements."""
+        coo = _create_coo(block_sizes) if comm.rank == 0 else None
+        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+
+        dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+        dense = dsbsparse.to_dense()
+
+        n = dsbsparse.shape[-1]
+        inds = xp.arange(n)
+
+        dsbsparse.dtranspose()
+
+        dsbsparse.fill_diagonal(val=42)
+        stack_index = (0,) * len(global_stack_shape)
+        inds = dense[*stack_index, inds, inds].nonzero()
+        dense[..., inds, inds] = 42
+
+        dsbsparse.dtranspose()
+
+        assert xp.allclose(dense, dsbsparse.to_dense())
+
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main(["--only-mpi", __file__])

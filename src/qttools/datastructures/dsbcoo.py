@@ -57,6 +57,21 @@ class DSBCOO(DSBSparse):
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
 
+        self._diag_inds = xp.where(self.rows == self.cols)[0]
+        self._diag_value_inds = self.rows[self._diag_inds]
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        if not any(ranks == comm.rank):
+            self._diag_inds_nnz = None
+            self._diag_value_inds_nnz = None
+            return
+        self._diag_inds_nnz = (
+            self._diag_inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
+        )
+        self._diag_value_inds_nnz = (
+            self._diag_value_inds[ranks == comm.rank]
+            - self._diag_value_inds[ranks == comm.rank][0]
+        )
+
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -444,6 +459,10 @@ class DSBCOO(DSBSparse):
         num_blocks = len(block_sizes)
         # Check if configuration already exists.
         if num_blocks in self._block_config:
+
+            if num_blocks == self.num_blocks:
+                return
+
             # Compute canonical ordering of the matrix.
             inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
 

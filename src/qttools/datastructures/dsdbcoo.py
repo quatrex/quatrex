@@ -59,6 +59,22 @@ class DSDBCOO(DSDBSparse):
         self.rows = xp.asarray(local_rows, dtype=xp.int32)
         self.cols = xp.asarray(local_cols, dtype=xp.int32)
 
+        self._diag_inds = xp.where(self.rows == self.cols)[0]
+        self._diag_value_inds = self.rows[self._diag_inds]
+        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        if not any(ranks == stack_comm.rank):
+            self._diag_inds_nnz = None
+            self._diag_value_inds_nnz = None
+            return
+        self._diag_inds_nnz = (
+            self._diag_inds[ranks == stack_comm.rank]
+            - self.nnz_section_offsets[stack_comm.rank]
+        )
+        self._diag_value_inds_nnz = (
+            self._diag_value_inds[ranks == stack_comm.rank]
+            - self._diag_value_inds[ranks == stack_comm.rank][0]
+        )
+
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -494,6 +510,11 @@ class DSDBCOO(DSDBSparse):
             raise NotImplementedError(
                 "Cannot reassign block-sizes when distributed through nnz."
             )
+
+        num_blocks = len(block_sizes)
+        if num_blocks in self._block_config and num_blocks == self.num_blocks:
+            return
+
         if sum(block_sizes) != self.shape[-1]:
             raise ValueError("Block sizes must sum to matrix shape.")
 
@@ -509,7 +530,7 @@ class DSDBCOO(DSDBSparse):
             raise ValueError(
                 f"Block sizes {block_sizes} are inconsistent with the current distribution."
             )
-        num_blocks = len(block_sizes)
+
         # Check if configuration already exists.
         if num_blocks in self._block_config:
             # Compute canonical ordering of the matrix.

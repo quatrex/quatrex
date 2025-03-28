@@ -232,6 +232,10 @@ class DSBSparse(ABC):
         self._sparse_block_indexer = _DSBlockIndexer(self, return_dense=False)
         self._stack_indexer = _DStackIndexer(self)
 
+        # Diagonal indices.
+        self._diag_inds = None
+        self._diag_value_inds = None
+
     def _add_block_config(
         self,
         num_blocks: int,
@@ -572,8 +576,8 @@ class DSBSparse(ABC):
         return blocks
 
     @profiler.profile(level="api")
-    def diagonal(self) -> NDArray:
-        """Returns the diagonal elements of the matrix.
+    def diagonal(self, stack_index: tuple = (Ellipsis,)) -> NDArray:
+        """Returns or sets the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True.
 
@@ -583,17 +587,66 @@ class DSBSparse(ABC):
             The diagonal elements of the matrix.
 
         """
-        # Store the current return_dense state and set it to True.
-        original_return_dense = self.return_dense
-        self.return_dense = True
+        if self._diag_inds is None or self._diag_value_inds is None:
+            raise NotImplementedError("Diagonal not implemented.")
 
-        diagonals = []
-        for b in range(self.num_blocks):
-            diagonals.append(xp.diagonal(self.blocks[b, b], axis1=-2, axis2=-1))
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
 
-        # Restore the original return_dense state.
-        self.return_dense = original_return_dense
-        return xp.concatenate(diagonals, axis=-1)
+        data_stack = self.data[*stack_index]
+        if self.distribution_state == "stack":
+            diagonal = xp.zeros(
+                (data_stack.shape[:-1] + (self.shape[-1],)), dtype=self.dtype
+            )
+            diagonal[..., self._diag_value_inds] = data_stack[..., self._diag_inds]
+            return diagonal
+        else:
+            if self._diag_inds_nnz is not None:
+                return data_stack[..., self._diag_inds_nnz]
+            return xp.empty((data_stack.shape[:-1] + (0,)))
+
+    @profiler.profile(level="api")
+    def fill_diagonal(self, val: NDArray, stack_index: tuple = (Ellipsis,)) -> NDArray:
+        """Returns or sets the diagonal elements of the matrix.
+
+        This temporarily sets the return_dense state to True.
+
+        Returns
+        -------
+        diagonal : NDArray
+            The diagonal elements of the matrix.
+
+        """
+        if self._diag_inds is None or self._diag_value_inds is None:
+            raise NotImplementedError("Diagonal not implemented.")
+
+        if not isinstance(stack_index, tuple):
+            stack_index = (stack_index,)
+
+        # Setter
+        val = xp.asarray(val)
+        if self.distribution_state == "stack":
+            if val.ndim == 0:
+                self.data[*stack_index][..., self._diag_inds] = val
+            else:
+                self.data[*stack_index][..., self._diag_inds] = val[
+                    ..., self._diag_value_inds
+                ]
+        else:
+            if self._diag_inds_nnz is not None:
+                stack_padding_inds = self._stack_padding_mask.nonzero()[0][
+                    stack_index[0]
+                ]
+                stack_inds, nnz_inds = xp.ix_(stack_padding_inds, self._diag_inds_nnz)
+                # We need to access the full data buffer directly to set the
+                # value since we are using advanced indexing.
+                if val.ndim == 0:
+                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val
+                else:
+                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val[
+                        ..., self._diag_value_inds_nnz
+                    ]
+            return
 
     @profiler.profile(level="debug")
     def _dtranspose(

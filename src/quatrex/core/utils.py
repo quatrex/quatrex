@@ -76,16 +76,23 @@ def compute_sparsity_pattern(
 
     end_idx = end_idx or len(positions)
 
+    num_diags = end_idx - start_idx
+
     rows, cols = [], []
 
-    for i in range(start_idx, end_idx, batch_size):
+    for i in range(
+        start_idx, max(start_idx + 2 * num_diags, len(positions)), batch_size
+    ):
         positions_batch = positions[i : i + batch_size]
         distances = distance(positions, positions_batch)
 
-        interacting = xp.where(distances < cutoff_distance)
+        batch_cols, batch_rows = xp.where(distances < cutoff_distance)
+        local_mask = (((batch_rows + i) >= start_idx) & (batch_cols >= start_idx)) & (
+            ((batch_rows + i) < end_idx) | (batch_cols < end_idx)
+        )
 
-        cols.append(interacting[0])
-        rows.append(i + interacting[1])
+        cols.append(batch_cols[local_mask])
+        rows.append(i + batch_rows[local_mask])
 
     rows, cols = xp.hstack(rows), xp.hstack(cols)
     return sparse.coo_matrix(

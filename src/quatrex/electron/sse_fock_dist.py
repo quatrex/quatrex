@@ -89,6 +89,8 @@ class SigmaFockDist(ScatteringSelfEnergy):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=(stack_comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
         )
         coulomb_matrix.data = 0.0
         coulomb_matrix += coulomb_matrix_sparray

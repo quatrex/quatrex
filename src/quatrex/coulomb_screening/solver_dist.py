@@ -20,7 +20,7 @@ from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
@@ -150,53 +150,21 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             max_batch_size=quatrex_config.coulomb_screening.solver.max_batch_size,
         )
 
-        # Load the Coulomb matrix.
         if quatrex_config.device.construct_from_unit_cell:
             coulomb_matrix_unit_cells = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
             ).astype(xp.complex128)
-
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, block_comm.size
-            )
-            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-            start_block = section_offsets[block_comm.rank]
-            end_block = section_offsets[block_comm.rank + 1]
-
-            coulomb_matrix_sparray, small_block_sizes = create_hamiltonian(
-                coulomb_matrix_unit_cells,
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
-            coulomb_matrix_sparray.sum_duplicates()
-            small_block_sizes = get_host(small_block_sizes)
             self.small_block_sizes = host_xp.asarray(
-                [small_block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-            # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-            #     coulomb_matrix_sparray,
-            #     block_sizes=self.small_block_sizes,
-            #     global_stack_shape=(stack_comm.size,),
-            # )
-            self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-                sparsity_pattern.astype(xp.complex128),
-                block_sizes=self.small_block_sizes,
-                global_stack_shape=(stack_comm.size,),
+                [
+                    coulomb_matrix_unit_cells.shape[-1]
+                    * quatrex_config.device.unit_cell_per_supercell[
+                        "xyz".index(quatrex_config.device.transport_direction)
+                    ]
+                ]
+                * quatrex_config.device.number_of_supercells
             )
 
         else:
-            coulomb_matrix_sparray = distributed_load(
-                quatrex_config.input_dir / "coulomb_matrix.npz"
-            ).astype(xp.complex128)
-
             # Load block sizes.
             self.small_block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy").astype(
@@ -204,14 +172,14 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                 )
             )
 
-            self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-                sparsity_pattern.astype(xp.complex128),
-                block_sizes=self.small_block_sizes,
-                global_stack_shape=(stack_comm.size,),
-            )
-
-        # Make sure that the Coulomb matrix is Hermitian.
-        self.coulomb_matrix.symmetrize()
+        # The coulomb matrix is only used to compute the sparsity
+        # pattern of the system matrix and the l_lesser and l_greater
+        # matrices. Will convert to complex128 later.
+        self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+            sparsity_pattern.astype(xp.float32),
+            block_sizes=self.small_block_sizes,
+            global_stack_shape=(stack_comm.size,),
+        )
 
         self.num_connected_blocks = (
             quatrex_config.coulomb_screening.num_connected_blocks
@@ -241,15 +209,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             )
 
         v_times_p_sparsity_pattern = _compute_sparsity_pattern(
-            self.coulomb_matrix, self.coulomb_matrix
-        )
-        l_sparsity_pattern = _compute_sparsity_pattern(
-            self.coulomb_matrix, self.coulomb_matrix, self.coulomb_matrix
-        )
-
-        self.coulomb_matrix.data = 0.0
-        self.coulomb_matrix += (
-            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
+            self.coulomb_matrix, self.coulomb_matrix, dtype=xp.float32
         )
 
         # Allocate memory for the System matrix (1 - V @ P).
@@ -259,6 +219,15 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             global_stack_shape=self.energies.shape,
         )
         self.system_matrix.data = 0.0
+        # Explicitely try to free the memory for the sparsity pattern.
+        del v_times_p_sparsity_pattern
+
+        l_sparsity_pattern = _compute_sparsity_pattern(
+            self.coulomb_matrix,
+            self.coulomb_matrix,
+            self.coulomb_matrix,
+            dtype=xp.float32,
+        )
 
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dsdbsparse_type.from_sparray(
@@ -267,8 +236,55 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             global_stack_shape=self.energies.shape,
         )
         self.l_lesser.data = 0.0
+        # Explicitely try to free the memory for the sparsity pattern.
+        del l_sparsity_pattern
 
         self.l_greater = compute_config.dsdbsparse_type.zeros_like(self.l_lesser)
+        # Load the Coulomb matrix.
+        if quatrex_config.device.construct_from_unit_cell:
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, block_comm.size
+            )
+            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+            start_block = section_offsets[block_comm.rank]
+            end_block = section_offsets[block_comm.rank + 1]
+
+            coulomb_matrix_sparray, __ = create_hamiltonian(
+                cutoff_hr(
+                    coulomb_matrix_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                return_sparse=True,
+            )
+            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+            coulomb_matrix_sparray.sum_duplicates()
+
+        else:
+            coulomb_matrix_sparray = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix.npz"
+            ).astype(xp.complex128)
+
+        self.coulomb_matrix._data = xp.zeros_like(
+            self.coulomb_matrix._data, dtype=xp.complex128
+        )
+        self.coulomb_matrix.dtype = self.coulomb_matrix._data.dtype
+
+        self.coulomb_matrix += coulomb_matrix_sparray
+        # Explicitely try to free the memory for the sparsity pattern.
+        del coulomb_matrix_sparray
+
+        # Make sure that the Coulomb matrix is Hermitian.
+        self.coulomb_matrix.symmetrize()
+        self.coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(

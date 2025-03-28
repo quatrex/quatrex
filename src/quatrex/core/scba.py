@@ -367,7 +367,6 @@ class SCBA:
                 self.compute_config,
                 self.electron_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
-                symmetry=self.quatrex_config.scba.symmetric,
             )
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
@@ -573,7 +572,6 @@ class SCBA:
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
-            symmetric=self.quatrex_config.scba.symmetric
         )
         synchronize_device()
         t_polarization_end = time.perf_counter()

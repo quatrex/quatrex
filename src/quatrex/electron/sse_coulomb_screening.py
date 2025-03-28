@@ -426,7 +426,6 @@ class SigmaFock(ScatteringSelfEnergy):
         compute_config: ComputeConfig,
         electron_energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
-        symmetry: bool = False,
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
@@ -465,7 +464,7 @@ class SigmaFock(ScatteringSelfEnergy):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=(comm.size,),
-            symmetry=symmetry,
+            symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
         coulomb_matrix.data = 0.0
@@ -473,7 +472,8 @@ class SigmaFock(ScatteringSelfEnergy):
         del coulomb_matrix_sparray
 
         # Make sure that the Coulomb matrix is Hermitian.
-        coulomb_matrix.symmetrize()
+        if not coulomb_matrix.symmetry:
+            coulomb_matrix.symmetrize()
         coulomb_matrix.dtranspose()
         self.coulomb_matrix_data = (
             coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r

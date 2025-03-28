@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import time
-
+import copy
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
@@ -368,10 +368,10 @@ class ElectronSolver(SubsystemSolver):
             retarded).
 
         """
-        g_lesser, g_greater, g_retarded = out
+        g_lesser, g_greater = out
         local_dos = [
-            (-xp.diagonal(g_retarded.blocks[b, b], axis1=-2, axis2=-1).imag).mean(-1)
-            for b in range(g_retarded.num_blocks)
+            (-xp.diagonal((g_greater.blocks[b, b] - g_lesser.blocks[b, b]), axis1=-2, axis2=-1).imag).mean(-1)
+            for b in range(g_greater.num_blocks)
         ]
 
         if not NCCL_AVAILABLE:
@@ -398,7 +398,6 @@ class ElectronSolver(SubsystemSolver):
 
         g_lesser.data[local_mask] = 0.0
         g_greater.data[local_mask] = 0.0
-        g_retarded.data[local_mask] = 0.0
 
     @profiler.profile(level="basic")
     def solve(
@@ -502,8 +501,8 @@ class ElectronSolver(SubsystemSolver):
             sigma_greater=sse_greater,
             obc_blocks=self.obc_blocks,
             out=out,
-            return_retarded=True,
             return_current=self.compute_meir_wingreen_current,
+            return_retarded=False,
         )
 
         synchronize_device()
@@ -535,11 +534,14 @@ class ElectronSolver(SubsystemSolver):
 
             t_dos_peaks_start = time.perf_counter()
 
-            _, _, g_retarded = out
+            g_greater, g_lesser = out
+            g_retarded = copy.deepcopy(g_greater)
+            g_retarded.data -= g_lesser.data 
+            g_retarded.data *= 0.5
             s_00 = self._get_block(self.overlap_sparray, (0, 0))
             s_nn = self._get_block(self.overlap_sparray, (-1, -1))
             g_00 = g_retarded.blocks[0, 0]
-            g_nn = g_retarded.blocks[-1, -1]
+            g_nn = g_retarded.blocks[-1, -1] 
 
             local_left_dos = -xp.mean(
                 xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
@@ -553,16 +555,16 @@ class ElectronSolver(SubsystemSolver):
                 right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
             else:
                 # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
+                pad_width = g_greater.total_stack_size // comm.size - left_dos.shape[0]
 
                 left_dos = xp.pad(left_dos, (0, pad_width))
                 right_dos = xp.pad(right_dos, (0, pad_width))
 
                 full_left_dos = xp.empty(
-                    (g_retarded.total_stack_size,), dtype=left_dos.dtype
+                    (g_greater.total_stack_size,), dtype=left_dos.dtype
                 )
                 full_right_dos = xp.empty(
-                    (g_retarded.total_stack_size,), dtype=right_dos.dtype
+                    (g_greater.total_stack_size,), dtype=right_dos.dtype
                 )
                 synchronize_device()
                 nccl_comm.all_gather(left_dos, full_left_dos, left_dos.size)

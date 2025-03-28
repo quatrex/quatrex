@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import time
-
+import copy
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
@@ -170,6 +170,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=lambda a: a.conj(),
         )
         self.coulomb_matrix.data = 0.0
         self.coulomb_matrix += coulomb_matrix_sparray
@@ -187,12 +189,15 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         l_sparsity_pattern = _spillover_matmul(
             v_times_p_sparsity_pattern, sparsity_pattern, self.block_sizes
-        )
+        )        
         # Allocate memory for the L_lesser and L_greater matrices.
         self.l_lesser = compute_config.dsbsparse_type.from_sparray(
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=lambda a: - a.conj(),
+            densify_blocks=[(0,0),(-1,-1)],
         )
         self.l_lesser.data = 0.0
 
@@ -345,18 +350,19 @@ class CoulombScreeningSolver(SubsystemSolver):
                 flush=True,
             )
 
-    def _assemble_system_matrix(self, p_retarded: DSBSparse) -> None:
+    def _assemble_system_matrix(self, p_lesser: DSBSparse, p_greater: DSBSparse) -> None:
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
 
         bd_matmul(
-            self.coulomb_matrix,
-            p_retarded,
+            self.coulomb_matrix,            
+            [p_greater,p_lesser],
+            b_op=xp.subtract,
             out=self.system_matrix,
             spillover_correction=True,
         )
 
-        self.system_matrix._data = -self.system_matrix._data
+        self.system_matrix._data = -self.system_matrix._data/2 # 2 because retarded is (greater-lesser)/2
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
@@ -411,7 +417,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         self,
         p_lesser: DSBSparse,
         p_greater: DSBSparse,
-        p_retarded: DSBSparse,
         out: tuple[DSBSparse, ...],
     ) -> None:
         """Solves for the screened Coulomb interaction.
@@ -449,8 +454,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Compute the product of the Coulomb matrix with the polarization.
 
         # Assemble the system matrix (Includes matrix multiplication).
-        t_assembly_start = time.perf_counter()
-        self._assemble_system_matrix(p_retarded)
+        t_assembly_start = time.perf_counter()        
+        self._assemble_system_matrix(p_lesser,p_greater)
         synchronize_device()
         t_assembly_end = time.perf_counter()
         comm.Barrier()

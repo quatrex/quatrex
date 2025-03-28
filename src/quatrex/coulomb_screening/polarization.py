@@ -84,7 +84,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             p_lesser, p_greater, p_retarded.
 
         """
-        p_lesser, p_greater, p_retarded = out
+        p_lesser, p_greater = out
 
         # Barrier to synchronize ranks.
         t_all2all_start = time.perf_counter()
@@ -211,7 +211,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         p_lesser._data.real = 0
         p_greater._data.real = 0
 
-        p_retarded.data = (p_greater.data - p_lesser.data) / 2
+        # p_retarded.data = (p_greater.data - p_lesser.data) / 2
 
         synchronize_device()
         t_symmetrization_end = time.perf_counter()

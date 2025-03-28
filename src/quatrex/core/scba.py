@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
+import copy
 import os
 import time
 from dataclasses import dataclass, field
@@ -82,12 +83,7 @@ class SCBAData:
 
         dsbsparse_type = compute_config.dsbsparse_type
         symmetric = quatrex_config.scba.symmetric
-        self.g_retarded = dsbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
-            block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape,
-        )
-        self.g_retarded._data[:] = 0.0  # Initialize to zero.
+        
         self.g_lesser = dsbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
@@ -115,7 +111,7 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsbsparse_type.zeros_like(self.g_lesser)
+            # self.p_retarded = dsbsparse_type.zeros_like(self.g_lesser)
             self.p_lesser = dsbsparse_type.zeros_like(self.g_lesser)
             self.p_greater = dsbsparse_type.zeros_like(self.g_greater)
 
@@ -527,7 +523,7 @@ class SCBA:
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
-            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+            out=(self.data.p_lesser, self.data.p_greater),
             symmetric=self.quatrex_config.scba.symmetric
         )
         synchronize_device()
@@ -548,7 +544,6 @@ class SCBA:
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
-            self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater),
         )
         synchronize_device()
@@ -628,12 +623,7 @@ class SCBA:
 
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
-        """Computes electron observables."""
-        if self.quatrex_config.outputs.electron_ldos:
-            self.observables.electron_ldos = -density(
-                self.data.g_retarded,
-                self.electron_solver.overlap_sparray,
-            ) / (2 * xp.pi)
+        """Computes electron observables."""        
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
@@ -644,6 +634,18 @@ class SCBA:
                 self.data.g_greater,
                 self.electron_solver.overlap_sparray,
             ) / (2 * xp.pi)
+        if self.quatrex_config.outputs.electron_ldos:
+            if self.quatrex_config.outputs.electron_density and self.quatrex_config.outputs.hole_density:
+                self.observables.electron_ldos = self.observables.electron_density + self.observables.hole_density
+            else:
+                g_retarded = copy.deepcopy(self.data.g_greater)
+                g_retarded.data -= self.data.g_lesser.data
+                g_retarded.data *= 0.5
+                self.observables.electron_ldos = -density(
+                    g_retarded,
+                    self.electron_solver.overlap_sparray,
+                ) / (2 * xp.pi)
+
 
         if self.quatrex_config.outputs.contact_currents:
             self.observables.electron_current = dict(
@@ -707,10 +709,10 @@ class SCBA:
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
 
-        if self.quatrex_config.outputs.polarization_density:
-            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-                2 * xp.pi
-            )
+        if self.quatrex_config.outputs.polarization_density:            
+            # self.observables.p_retarded_density = -density(self.data.p_retarded) / (
+            #     2 * xp.pi
+            # )
             self.observables.p_lesser_density = density(self.data.p_lesser) / (
                 2 * xp.pi
             )
@@ -814,7 +816,7 @@ class SCBA:
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
-                out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
+                out=(self.data.g_lesser, self.data.g_greater),
             )
             synchronize_device()
             t_solve_end = time.perf_counter()

@@ -28,7 +28,8 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
 @profiler.profile(level="api")
 def bd_matmul(
     a: DSBSparse,
-    b: DSBSparse,
+    b: DSBSparse | list[DSBSparse],
+    b_op: Callable,
     out: DSBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 5,
@@ -60,7 +61,8 @@ def bd_matmul(
     TODO: replace @ by appropriate gemm
 
     """
-    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+    if (a.distribution_state == "nnz" or (not isinstance(b,list) and b.distribution_state == "nnz") or 
+        (isinstance(b,list) and any([bi.distribution_state == "nnz" for bi in b]))):
         raise ValueError(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
@@ -80,7 +82,10 @@ def bd_matmul(
         out = {}
 
     a_ = a.stack[...]
-    b_ = b.stack[...]
+    if isinstance(b,list):
+        b_ = [bi.stack[...] for bi in b]
+    else:
+        b_ = b.stack[...]
 
     for i in range(num_blocks):
         for j in range(
@@ -103,9 +108,21 @@ def bd_matmul(
                     if out_range:
                         i_a, k_a = correct_out_range_index(i, k, num_blocks)
                         k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        partsum += a_.blocks[i_a, k_a] @ b_.blocks[k_b, j_b]
+                        if isinstance(b,list):
+                            sum_b = xp.zeros_like(b_[0].blocks[k_b, j_b])
+                            for bi_ in b_:
+                                sum_b = b_op(sum_b, bi_.blocks[k_b, j_b])
+                            partsum += a_.blocks[i_a, k_a] @ sum_b    
+                        else:
+                            partsum += a_.blocks[i_a, k_a] @ b_.blocks[k_b, j_b]
                     else:
-                        partsum += a_.blocks[i, k] @ b_.blocks[k, j]
+                        if isinstance(b,list):
+                            sum_b = xp.zeros_like(b_[0].blocks[k, j])
+                            for bi_ in b_:
+                                sum_b = b_op(sum_b, bi_.blocks[k, j])
+                            partsum += a_.blocks[i, k] @ sum_b
+                        else:
+                            partsum += a_.blocks[i, k] @ b_.blocks[k, j]
 
             if out_block:
                 out[i, j] = partsum
@@ -119,12 +136,13 @@ def bd_matmul(
 @profiler.profile(level="api")
 def bd_sandwich(
     a: DSBSparse,
-    b: DSBSparse,
+    b: DSBSparse, 
     out: DSBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
     accumulator_dtype=None,
+    accumulate: bool =False,
 ):
     """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
 
@@ -162,7 +180,8 @@ def bd_sandwich(
 
     # Make sure the output matrix is initialized to zero.
     if out is not None:
-        out.data = 0
+        if not accumulate:
+            out.data = 0
         out_block = False
         # NOTE: Using the stack attribute to force caching of the data view.
         out_ = out.stack[...]
@@ -208,8 +227,13 @@ def bd_sandwich(
                         accumulator_dtype
                     )  # cast data type
 
+        if out.symmetry:
+            range_j_min = i
+        else:
+            range_j_min = max(i - out_num_diag // 2, 0)            
+
         for j in range(
-            max(i - out_num_diag // 2, 0), min(i + out_num_diag // 2 + 1, num_blocks)
+            range_j_min, min(i + out_num_diag // 2 + 1, num_blocks)
         ):
 
             if out_block:
@@ -236,10 +260,13 @@ def bd_sandwich(
                     accumulator_dtype
                 )  # cast data type
 
-            if out_block:
+            if out_block:                    
                 out[i, j] = partsum
             else:
-                out_.blocks[i, j] = partsum
+                if accumulate:
+                    out_.blocks[i, j] += partsum
+                else:
+                    out_.blocks[i, j] = partsum
 
     if out_block:
         return out

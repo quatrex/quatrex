@@ -443,7 +443,9 @@ def arrow_partition_halo_comm(
     """
 
     num_blocks = a.dsdbsparse.num_blocks
-    ssz = a.dsdbsparse.shape[:-2]
+    a_ssz = a.dsdbsparse.shape[:-2]
+    b_ssz = b.dsdbsparse.shape[:-2]
+
     bsz = a.dsdbsparse.block_sizes
     dtype = a.dsdbsparse.dtype
     a_off = a_num_diag // 2
@@ -483,24 +485,24 @@ def arrow_partition_halo_comm(
             for j in range(
                 max(end_block, i - a_off), min(a.dsdbsparse.num_blocks, i + a_off + 1)
             ):
-                a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                 reqs.append(comm.Irecv(a[i, j], source=rank + 1, tag=0))
     if end_block < b.dsdbsparse.num_blocks:
         for j in range(end_block, min(num_blocks, end_block + c_off)):
             for i in range(
                 max(end_block, j - b_off), min(b.dsdbsparse.num_blocks, j + b_off + 1)
             ):
-                b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                 reqs.append(comm.Irecv(b[i, j], source=rank + 1, tag=1))
     # Receive halo blocks from previous rank
     if start_block > 0:
         for i in range(start_block, min(num_blocks, start_block + a_off)):
             for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
-                a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                 reqs.append(comm.Irecv(a[i, j], source=rank - 1, tag=0))
         for j in range(start_block, min(num_blocks, start_block + b_off)):
             for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
-                b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                 reqs.append(comm.Irecv(b[i, j], source=rank - 1, tag=1))
     Request.Waitall(reqs)
 
@@ -531,7 +533,8 @@ def arrow_partition_halo_comm_nccl(
     """
 
     num_blocks = a.dsdbsparse.num_blocks
-    ssz = a.dsdbsparse.shape[:-2]
+    a_ssz = a.dsdbsparse.shape[:-2]
+    b_ssz = b.dsdbsparse.shape[:-2]
     bsz = a.dsdbsparse.block_sizes
     dtype = a.dsdbsparse.dtype
     a_off = a_num_diag // 2
@@ -567,7 +570,7 @@ def arrow_partition_halo_comm_nccl(
                     max(end_block, i - a_off),
                     min(a.dsdbsparse.num_blocks, i + a_off + 1),
                 ):
-                    a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                     nccl_comm.recv(a[i, j], rank + 1)
         if end_block < b.dsdbsparse.num_blocks:
             for j in range(end_block, min(num_blocks, end_block + c_off)):
@@ -575,7 +578,7 @@ def arrow_partition_halo_comm_nccl(
                     max(end_block, j - b_off),
                     min(b.dsdbsparse.num_blocks, j + b_off + 1),
                 ):
-                    b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                     nccl_comm.recv(b[i, j], rank + 1)
 
     # Send halo blocks to next rank
@@ -594,11 +597,11 @@ def arrow_partition_halo_comm_nccl(
         if start_block > 0:
             for i in range(start_block, min(num_blocks, start_block + a_off)):
                 for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
-                    a[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                     nccl_comm.recv(a[i, j], rank - 1)
             for j in range(start_block, min(num_blocks, start_block + b_off)):
                 for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
-                    b[i, j] = xp.empty((ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                    b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
                     nccl_comm.recv(b[i, j], rank - 1)
 
     if rank % 2 == 0:
@@ -722,7 +725,7 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         out_ = BlockMatrix(out, local_keys, (start_block, start_block))
     else:
-        out_ = BlockMatrix(a_.dsdbsparse, set(), (start_block, start_block))
+        out_ = BlockMatrix(b_.dsdbsparse, set(), (start_block, start_block))
 
     for sector in (
         (start_block, end_block, start_block, num_blocks),

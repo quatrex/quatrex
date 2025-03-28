@@ -102,11 +102,11 @@ class ReducedSystem:
         if self.selected_solve:
             self.xl_diag_blocks: list[NDArray | None] = [None] * self.num_diags
             self.xl_upper_blocks: list[NDArray | None] = [None] * self.num_diags
-            self.xl_lower_blocks: list[NDArray | None] = [None] * self.num_diags
+            # self.xl_lower_blocks: list[NDArray | None] = [None] * self.num_diags
 
             self.xg_diag_blocks: list[NDArray | None] = [None] * self.num_diags
             self.xg_upper_blocks: list[NDArray | None] = [None] * self.num_diags
-            self.xg_lower_blocks: list[NDArray | None] = [None] * self.num_diags
+            # self.xg_lower_blocks: list[NDArray | None] = [None] * self.num_diags
 
     def gather(
         self,
@@ -171,7 +171,7 @@ class ReducedSystem:
             )
             self.xl_diag_blocks = _flatten_list(block_comm.allgather(xl_diag_blocks))
             self.xl_upper_blocks = _flatten_list(block_comm.allgather(xl_upper_blocks))
-            self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
+            # self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
 
             xg_diag_blocks, xg_upper_blocks, xg_lower_blocks = self._map_reduced_system(
                 sigma_greater,
@@ -182,7 +182,7 @@ class ReducedSystem:
             )
             self.xg_diag_blocks = _flatten_list(block_comm.allgather(xg_diag_blocks))
             self.xg_upper_blocks = _flatten_list(block_comm.allgather(xg_upper_blocks))
-            self.xg_lower_blocks = _flatten_list(block_comm.allgather(xg_lower_blocks))
+            # self.xg_lower_blocks = _flatten_list(block_comm.allgather(xg_lower_blocks))
 
     def gather_nccl(
         self,
@@ -288,14 +288,14 @@ class ReducedSystem:
                 xl_upper_blocks.reshape(-1),
                 count,
             )
-            nccl_block_comm.all_gather(
-                xl_lower_blocks[2 * block_comm.rank].reshape(-1),
-                xl_lower_blocks.reshape(-1),
-                count,
-            )
+            # nccl_block_comm.all_gather(
+            #     xl_lower_blocks[2 * block_comm.rank].reshape(-1),
+            #     xl_lower_blocks.reshape(-1),
+            #     count,
+            # )
             self.xl_diag_blocks = xl_diag_blocks[1:-1]
             self.xl_upper_blocks = xl_upper_blocks[1:-2]
-            self.xl_lower_blocks = xl_lower_blocks[1:-2]
+            # self.xl_lower_blocks = xl_lower_blocks[1:-2]
 
             xg_diag_blocks, xg_upper_blocks, xg_lower_blocks = (
                 self._map_reduced_system_nccl(
@@ -319,14 +319,14 @@ class ReducedSystem:
                 xg_upper_blocks.reshape(-1),
                 count,
             )
-            nccl_block_comm.all_gather(
-                xg_lower_blocks[2 * block_comm.rank].reshape(-1),
-                xg_lower_blocks.reshape(-1),
-                count,
-            )
+            # nccl_block_comm.all_gather(
+            #     xg_lower_blocks[2 * block_comm.rank].reshape(-1),
+            #     xg_lower_blocks.reshape(-1),
+            #     count,
+            # )
             self.xg_diag_blocks = xg_diag_blocks[1:-1]
             self.xg_upper_blocks = xg_upper_blocks[1:-2]
-            self.xg_lower_blocks = xg_lower_blocks[1:-2]
+            # self.xg_lower_blocks = xg_lower_blocks[1:-2]
 
     def _map_reduced_system(
         self,
@@ -366,11 +366,10 @@ class ReducedSystem:
             diag_blocks.append(x_diag_blocks[0])
             diag_blocks.append(x_diag_blocks[-1])
 
-            lower_blocks.append(buffer_upper[-2])
-            lower_blocks.append(a.local_blocks[j, i])
-
             if is_retarded:
                 upper_blocks.append(buffer_lower[-2])
+                lower_blocks.append(buffer_upper[-2])
+                lower_blocks.append(a.local_blocks[j, i])
             else:
                 upper_blocks.append(-buffer_upper[-2].conj().swapaxes(-2, -1))
             upper_blocks.append(a.local_blocks[i, j])
@@ -413,13 +412,17 @@ class ReducedSystem:
 
         diag_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
         upper_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
-        lower_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
+        if is_retarded:
+            lower_blocks = xp.empty((2 * block_comm.size, *ssz, bsz, bsz), dtype=dtype)
+        else:
+            lower_blocks = None
 
         if block_comm.rank == 0:
             # diag_blocks.append(x_diag_blocks[-1])
             diag_blocks[1] = x_diag_blocks[-1]
             # lower_blocks.append(a.local_blocks[j, i])
-            lower_blocks[1] = a.local_blocks[j, i]
+            if is_retarded:
+                lower_blocks[1] = a.local_blocks[j, i]
             # upper_blocks.append(a.local_blocks[i, j])
             upper_blocks[1] = a.local_blocks[i, j]
         elif block_comm.rank == block_comm.size - 1:
@@ -433,8 +436,9 @@ class ReducedSystem:
 
             # lower_blocks.append(buffer_upper[-2])
             # lower_blocks.append(a.local_blocks[j, i])
-            lower_blocks[2 * block_comm.rank] = buffer_upper[-2]
-            lower_blocks[2 * block_comm.rank + 1] = a.local_blocks[j, i]
+            if is_retarded:
+                lower_blocks[2 * block_comm.rank] = buffer_upper[-2]
+                lower_blocks[2 * block_comm.rank + 1] = a.local_blocks[j, i]
 
             if is_retarded:
                 # upper_blocks.append(buffer_lower[-2])
@@ -601,9 +605,9 @@ class ReducedSystem:
                 # temp_2 = self.xr_upper_blocks[i].conj().swapaxes(
                 #     -2, -1
                 # ) @ self.xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                self.xl_lower_blocks[i] = (
-                    -self.xl_upper_blocks[i].conj().swapaxes(-2, -1)
-                )
+                # self.xl_lower_blocks[i] = (
+                #     -self.xl_upper_blocks[i].conj().swapaxes(-2, -1)
+                # )
                 # self.xl_lower_blocks[i] = (
                 #     -self.xl_diag_blocks[i + 1] @ temp_2
                 #     - temp_3 @ self.xl_diag_blocks[i]
@@ -662,9 +666,9 @@ class ReducedSystem:
                 # temp_2 = self.xr_upper_blocks[i].conj().swapaxes(
                 #     -2, -1
                 # ) @ self.xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                self.xg_lower_blocks[i] = (
-                    -self.xg_upper_blocks[i].conj().swapaxes(-2, -1)
-                )
+                # self.xg_lower_blocks[i] = (
+                #     -self.xg_upper_blocks[i].conj().swapaxes(-2, -1)
+                # )
                 # self.xg_lower_blocks[i] = (
                 #     -self.xg_diag_blocks[i + 1] @ temp_2
                 #     - temp_3 @ self.xg_diag_blocks[i]
@@ -784,7 +788,7 @@ class ReducedSystem:
                 write_x_out=True,
                 diag_block_reduced_system=self.xl_diag_blocks,
                 upper_block_reduced_system=self.xl_upper_blocks,
-                lower_block_reduced_system=self.xl_lower_blocks,
+                # lower_block_reduced_system=self.xl_lower_blocks,
                 is_retarded=False,
             )
             self._mapback_reduced_system(
@@ -795,7 +799,7 @@ class ReducedSystem:
                 write_x_out=True,
                 diag_block_reduced_system=self.xg_diag_blocks,
                 upper_block_reduced_system=self.xg_upper_blocks,
-                lower_block_reduced_system=self.xg_lower_blocks,
+                # lower_block_reduced_system=self.xg_lower_blocks,
                 is_retarded=False,
             )
 
@@ -808,7 +812,7 @@ class ReducedSystem:
         write_x_out: bool,
         diag_block_reduced_system: list[NDArray],
         upper_block_reduced_system: list[NDArray],
-        lower_block_reduced_system: list[NDArray],
+        lower_block_reduced_system: list[NDArray] = None,
         is_retarded: bool = True,
     ):
         """Maps the reduced system back to the local partition.
@@ -839,7 +843,12 @@ class ReducedSystem:
             x_out.local_blocks[i, i] = diag_block_reduced_system[0]
 
             if not x_out.symmetry:
-                x_out.local_blocks[j, i] = lower_block_reduced_system[0]
+                if is_retarded:
+                    x_out.local_blocks[j, i] = lower_block_reduced_system[0]
+                else:
+                    x_out.local_blocks[j, i] = (
+                        -upper_block_reduced_system[0].conj().swapaxes(-2, -1)
+                    )
             x_out.local_blocks[i, j] = upper_block_reduced_system[0]
         elif block_comm.rank == block_comm.size - 1:
             x_diag_blocks[0] = diag_block_reduced_system[-1]
@@ -851,9 +860,16 @@ class ReducedSystem:
             x_diag_blocks[0] = diag_block_reduced_system[2 * block_comm.rank - 1]
             x_diag_blocks[-1] = diag_block_reduced_system[2 * block_comm.rank]
 
-            buffer_upper[-2] = lower_block_reduced_system[2 * block_comm.rank - 1]
+            # buffer_upper[-2] = lower_block_reduced_system[2 * block_comm.rank - 1]
             if is_retarded:
+                buffer_upper[-2] = lower_block_reduced_system[2 * block_comm.rank - 1]
                 buffer_lower[-2] = upper_block_reduced_system[2 * block_comm.rank - 1]
+            else:
+                buffer_upper[-2] = (
+                    -upper_block_reduced_system[2 * block_comm.rank - 1]
+                    .conj()
+                    .swapaxes(-2, -1)
+                )
 
             if not write_x_out:
                 return
@@ -864,9 +880,16 @@ class ReducedSystem:
             x_out.local_blocks[i, i] = x_diag_blocks[-1]
 
             if not x_out.symmetry:
-                x_out.local_blocks[j, i] = lower_block_reduced_system[
-                    2 * block_comm.rank
-                ]
+                if is_retarded:
+                    x_out.local_blocks[j, i] = lower_block_reduced_system[
+                        2 * block_comm.rank
+                    ]
+                else:
+                    x_out.local_blocks[j, i] = (
+                        -upper_block_reduced_system[2 * block_comm.rank]
+                        .conj()
+                        .swapaxes(-2, -1)
+                    )
             x_out.local_blocks[i, j] = upper_block_reduced_system[2 * block_comm.rank]
 
 

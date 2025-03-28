@@ -8,7 +8,7 @@ from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
@@ -79,7 +79,10 @@ class ElectronSolver(SubsystemSolver):
                 quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
             ).astype(xp.complex128)
             hamiltonian_sparray, block_sizes = create_hamiltonian(
-                hamiltonian_unit_cells,
+                cutoff_hr(
+                    hamiltonian_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
@@ -101,7 +104,15 @@ class ElectronSolver(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=(comm.size,),
         )
-        self.hamiltonian.symmetrize()
+
+        # Allocate memory for the system matrix.
+        self.system_matrix = compute_config.dsbsparse_type.from_sparray(
+            hamiltonian_sparray,
+            block_sizes=self.block_sizes,
+            global_stack_shape=self.energies.shape,
+        )
+
+        del hamiltonian_sparray
 
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
@@ -117,7 +128,10 @@ class ElectronSolver(SubsystemSolver):
                     quatrex_config.input_dir / "overlap_unit_cells.npy"
                 ).astype(xp.complex128)
                 overlap_sparray, __ = create_hamiltonian(
-                    overlap_unit_cells,
+                    cutoff_hr(
+                        overlap_unit_cells,
+                        R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                    ),
                     quatrex_config.device.number_of_supercells,
                     quatrex_config.device.transport_direction,
                     quatrex_config.device.unit_cell_per_supercell,
@@ -154,19 +168,10 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the Hamiltonian and overlap matrices are
         # Hermitian.
-        # self.hamiltonian_sparray = (
-        #     0.5 * (self.hamiltonian_sparray + self.hamiltonian_sparray.conj().T)
-        # ).tocoo()
+        self.hamiltonian.symmetrize()
         self.overlap_sparray = (
             0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
         ).tocoo()
-
-        # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dsbsparse_type.from_sparray(
-            hamiltonian_sparray,
-            block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape,
-        )
 
         # Load the potential.
         try:

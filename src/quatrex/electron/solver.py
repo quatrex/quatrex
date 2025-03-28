@@ -1,7 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import time
-import copy
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
@@ -534,14 +533,11 @@ class ElectronSolver(SubsystemSolver):
 
             t_dos_peaks_start = time.perf_counter()
 
-            g_greater, g_lesser = out
-            g_retarded = copy.deepcopy(g_greater)
-            g_retarded.data -= g_lesser.data 
-            g_retarded.data *= 0.5
+            g_greater, g_lesser = out            
             s_00 = self._get_block(self.overlap_sparray, (0, 0))
             s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-            g_00 = g_retarded.blocks[0, 0]
-            g_nn = g_retarded.blocks[-1, -1] 
+            g_00 = (g_greater.blocks[0, 0] - g_lesser.blocks[0, 0])/2
+            g_nn = (g_greater.blocks[-1, -1] - g_lesser.blocks[-1, -1])/2
 
             local_left_dos = -xp.mean(
                 xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1

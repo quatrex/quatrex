@@ -494,31 +494,6 @@ class DSDBCOO(DSDBSparse):
             return_dense=self.return_dense,
         )
 
-    # @profiler.profile(level="api")
-    # def diagonal(self, val: NDArray = None) -> NDArray:
-    #     """Returns or sets the diagonal elements of the matrix.
-
-    #     This temporarily sets the return_dense state to True. Note that
-    #     this will cause communication in the block-communicator.
-
-    #     Returns
-    #     -------
-    #     diagonal : NDArray
-    #         The diagonal elements of the whole matrix.
-
-    #     """
-    #     if val is None:
-    #         # Getter
-    #         local_diagonal = xp.zeros(
-    #             (*self.shape[:-2], self.shape[-1]), dtype=self.dtype
-    #         )
-    #         local_diagonal[..., self._diag_inds] = self.data[..., self._diag_mask]
-    #         return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
-    #     else:
-    #         # Setter
-    #         # NOTE: val must contain the local partition's diagonal.
-    #         self.data[..., self._diag_mask] = val[self._diag_inds]
-
     @DSDBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:
         """Sets new block sizes for the matrix.

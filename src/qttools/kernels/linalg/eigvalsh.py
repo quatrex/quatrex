@@ -1,6 +1,7 @@
 import numpy as np
 
 from qttools import NDArray, xp
+from qttools.kernels import linalg
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 
@@ -35,7 +36,10 @@ def _eigvalsh(
 
     # NOTE: would be more efficient to use cholesky_solve
     # if it would be supported by cupy
-    R_inv = xp_eigvalsh.linalg.inv(R)
+    if xp_eigvalsh.__name__ == "cupy":
+        R_inv = linalg.inv(R)
+    else:
+        R_inv = xp_eigvalsh.linalg.inv(R)
     A_hat = R_inv @ A @ R_inv.swapaxes(-2, -1).conj()
     w = xp_eigvalsh.linalg.eigvalsh(A_hat)
 

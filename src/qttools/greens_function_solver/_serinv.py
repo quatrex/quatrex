@@ -247,17 +247,17 @@ class ReducedSystem:
         # self.xr_upper_blocks = _flatten_list(block_comm.allgather(xr_upper_blocks))
         # self.xr_lower_blocks = _flatten_list(block_comm.allgather(xr_lower_blocks))
         nccl_block_comm.all_gather(
-            xr_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_diag_blocks[2 * block_comm.rank].reshape(-1),
             xr_diag_blocks.reshape(-1),
             count,
         )
         nccl_block_comm.all_gather(
-            xr_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_upper_blocks[2 * block_comm.rank].reshape(-1),
             xr_upper_blocks.reshape(-1),
             count,
         )
         nccl_block_comm.all_gather(
-            xr_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+            xr_lower_blocks[2 * block_comm.rank].reshape(-1),
             xr_lower_blocks.reshape(-1),
             count,
         )
@@ -279,17 +279,17 @@ class ReducedSystem:
             # self.xl_upper_blocks = _flatten_list(block_comm.allgather(xl_upper_blocks))
             # self.xl_lower_blocks = _flatten_list(block_comm.allgather(xl_lower_blocks))
             nccl_block_comm.all_gather(
-                xl_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_diag_blocks[2 * block_comm.rank].reshape(-1),
                 xl_diag_blocks.reshape(-1),
                 count,
             )
             nccl_block_comm.all_gather(
-                xl_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_upper_blocks[2 * block_comm.rank].reshape(-1),
                 xl_upper_blocks.reshape(-1),
                 count,
             )
             nccl_block_comm.all_gather(
-                xl_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xl_lower_blocks[2 * block_comm.rank].reshape(-1),
                 xl_lower_blocks.reshape(-1),
                 count,
             )
@@ -310,17 +310,17 @@ class ReducedSystem:
             # self.xg_upper_blocks = _flatten_list(block_comm.allgather(xg_upper_blocks))
             # self.xg_lower_blocks = _flatten_list(block_comm.allgather(xg_lower_blocks))
             nccl_block_comm.all_gather(
-                xg_diag_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_diag_blocks[2 * block_comm.rank].reshape(-1),
                 xg_diag_blocks.reshape(-1),
                 count,
             )
             nccl_block_comm.all_gather(
-                xg_upper_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_upper_blocks[2 * block_comm.rank].reshape(-1),
                 xg_upper_blocks.reshape(-1),
                 count,
             )
             nccl_block_comm.all_gather(
-                xg_lower_blocks[2 * nccl_block_comm.rank].reshape(-1),
+                xg_lower_blocks[2 * block_comm.rank].reshape(-1),
                 xg_lower_blocks.reshape(-1),
                 count,
             )
@@ -428,24 +428,24 @@ class ReducedSystem:
         else:
             # diag_blocks.append(x_diag_blocks[0])
             # diag_blocks.append(x_diag_blocks[-1])
-            diag_blocks[2 * nccl_block_comm.rank] = x_diag_blocks[0]
-            diag_blocks[2 * nccl_block_comm.rank + 1] = x_diag_blocks[-1]
+            diag_blocks[2 * block_comm.rank] = x_diag_blocks[0]
+            diag_blocks[2 * block_comm.rank + 1] = x_diag_blocks[-1]
 
             # lower_blocks.append(buffer_upper[-2])
             # lower_blocks.append(a.local_blocks[j, i])
-            lower_blocks[2 * nccl_block_comm.rank] = buffer_upper[-2]
-            lower_blocks[2 * nccl_block_comm.rank + 1] = a.local_blocks[j, i]
+            lower_blocks[2 * block_comm.rank] = buffer_upper[-2]
+            lower_blocks[2 * block_comm.rank + 1] = a.local_blocks[j, i]
 
             if is_retarded:
                 # upper_blocks.append(buffer_lower[-2])
-                upper_blocks[2 * nccl_block_comm.rank] = buffer_lower[-2]
+                upper_blocks[2 * block_comm.rank] = buffer_lower[-2]
             else:
                 # upper_blocks.append(-buffer_upper[-2].conj().swapaxes(-2, -1))
-                upper_blocks[2 * nccl_block_comm.rank] = (
+                upper_blocks[2 * block_comm.rank] = (
                     -buffer_upper[-2].conj().swapaxes(-2, -1)
                 )
             # upper_blocks.append(a.local_blocks[i, j])
-            upper_blocks[2 * nccl_block_comm.rank + 1] = a.local_blocks[i, j]
+            upper_blocks[2 * block_comm.rank + 1] = a.local_blocks[i, j]
 
         return diag_blocks, upper_blocks, lower_blocks
 

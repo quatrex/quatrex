@@ -562,7 +562,11 @@ class DSDBSparse(ABC):
         data_stack = self.data[*stack_index]
         if self.distribution_state == "stack":
             local_diagonal = xp.zeros(
-                (data_stack.shape[:-1] + (self.shape[-1],)), dtype=self.dtype
+                (
+                    data_stack.shape[:-1]
+                    + (sum(self.local_block_sizes[: self.num_local_blocks]),)
+                ),
+                dtype=self.dtype,
             )
             local_diagonal[..., self._diag_value_inds] = data_stack[
                 ..., self._diag_inds

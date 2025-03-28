@@ -8,7 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -435,7 +435,10 @@ class SigmaFock(ScatteringSelfEnergy):
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
             ).astype(xp.complex128)
             coulomb_matrix_sparray, block_sizes = create_hamiltonian(
-                coulomb_matrix_unit_cells,
+                cutoff_hr(
+                    coulomb_matrix_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
@@ -448,10 +451,6 @@ class SigmaFock(ScatteringSelfEnergy):
             coulomb_matrix_sparray = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix.npz"
             ).astype(xp.complex128)
-            # Make sure that the Coulomb matrix is Hermitian.
-            coulomb_matrix_sparray = (
-                0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
-            ).tocoo()
 
             # Load block sizes for the coulomb matrix.
             block_sizes = get_host(
@@ -467,11 +466,15 @@ class SigmaFock(ScatteringSelfEnergy):
             global_stack_shape=(comm.size,),
         )
         coulomb_matrix.data = 0.0
-        coulomb_matrix += (
-            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
-        )
+        coulomb_matrix += coulomb_matrix_sparray
+        del coulomb_matrix_sparray
+
+        # Make sure that the Coulomb matrix is Hermitian.
+        coulomb_matrix.symmetrize()
         coulomb_matrix.dtranspose()
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = (
+            coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r
+        )
 
     @profiler.profile(level="api")
     def compute(self, g_lesser: DSBSparse, out: tuple[DSBSparse, ...]) -> None:

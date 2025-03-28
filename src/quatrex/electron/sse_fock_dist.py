@@ -2,12 +2,12 @@
 
 import time
 
-from qttools import NDArray, global_comm, sparse, stack_comm, xp
+from qttools import NDArray, block_comm, global_comm, host_xp, sparse, stack_comm, xp
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian
-from qttools.utils.mpi_utils import distributed_load
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -44,24 +44,38 @@ class SigmaFockDist(ScatteringSelfEnergy):
             coulomb_matrix_unit_cells = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
             ).astype(xp.complex128)
+
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, block_comm.size
+            )
+            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+            start_block = section_offsets[block_comm.rank]
+            end_block = section_offsets[block_comm.rank + 1]
+
             coulomb_matrix_sparray, block_sizes = create_hamiltonian(
-                coulomb_matrix_unit_cells,
+                cutoff_hr(
+                    coulomb_matrix_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
                 return_sparse=True,
             )
             coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+            coulomb_matrix_sparray.sum_duplicates()
+
             block_sizes = get_host(block_sizes)
+            block_sizes = host_xp.asarray(
+                [block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
 
         else:
             coulomb_matrix_sparray = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix.npz"
             ).astype(xp.complex128)
-            # Make sure that the Coulomb matrix is Hermitian.
-            coulomb_matrix_sparray = (
-                0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
-            ).tocoo()
 
             # Load block sizes for the coulomb matrix.
             block_sizes = get_host(
@@ -77,11 +91,15 @@ class SigmaFockDist(ScatteringSelfEnergy):
             global_stack_shape=(stack_comm.size,),
         )
         coulomb_matrix.data = 0.0
-        coulomb_matrix += (
-            coulomb_matrix_sparray / quatrex_config.coulomb_screening.epsilon_r
-        )
+        coulomb_matrix += coulomb_matrix_sparray
+        del coulomb_matrix_sparray
+
+        # Make sure that the Coulomb matrix is Hermitian.
+        coulomb_matrix.symmetrize()
         coulomb_matrix.dtranspose()
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = (
+            coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r
+        )
 
     @profiler.profile(level="api")
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:

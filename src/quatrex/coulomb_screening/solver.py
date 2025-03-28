@@ -154,7 +154,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         # The coulomb matrix is only used to compute the sparsity
         # pattern of the system matrix and the l_lesser and l_greater
         # matrices. Will convert to complex128 later.
-        self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+        self.coulomb_matrix = compute_config.dsbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),

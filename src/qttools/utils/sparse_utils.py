@@ -2,7 +2,7 @@
 
 import functools
 
-from qttools import NDArray, block_comm, sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
@@ -320,10 +320,10 @@ def product_sparsity_pattern_dsdbsparse(
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
 
-    if block_comm is not None:
-        c_rows = block_comm.allgather(c_rows)
-        c_cols = block_comm.allgather(c_cols)
-        c_rows = xp.concatenate(c_rows)
-        c_cols = xp.concatenate(c_cols)
+    # if block_comm is not None:
+    #     c_rows = block_comm.allgather(c_rows)
+    #     c_cols = block_comm.allgather(c_cols)
+    #     c_rows = xp.concatenate(c_rows)
+    #     c_cols = xp.concatenate(c_cols)
 
     return c_rows, c_cols

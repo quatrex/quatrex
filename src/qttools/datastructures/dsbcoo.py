@@ -507,9 +507,9 @@ class DSBCOO(DSBSparse):
             return
         if self.symmetry and (col < row):
             dsbcoo_kernels.sparsify_block(
-                self.symmetry_op(block),
-                self.cols[block_slice] - self.block_offsets[col],
-                self.rows[block_slice] - self.block_offsets[row],
+                self.symmetry_op(block.swapaxes(-1, -2)),
+                self.rows[block_slice] - self.block_offsets[col],
+                self.cols[block_slice] - self.block_offsets[row],
                 data_stack[..., block_slice],
             )
         else:

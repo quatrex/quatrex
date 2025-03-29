@@ -654,8 +654,10 @@ class DSBCOO(DSBSparse):
                     self.cols.copy(),
                     self.block_sizes,
                     self.global_stack_shape,
+                    symmetry=self.symmetry,
+                    symmetry_op=self.symmetry_op,
                 )
-            self.data = self.symmetry_op(self.data)
+            self.data[:] = self.symmetry_op(self.data)
             return self if copy else None
 
         if copy:
@@ -665,6 +667,8 @@ class DSBCOO(DSBSparse):
                 self.cols.copy(),
                 self.block_sizes,
                 self.global_stack_shape,
+                symmetry=self.symmetry,
+                symmetry_op=self.symmetry_op,
             )
 
         if not (

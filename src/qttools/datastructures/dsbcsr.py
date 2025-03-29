@@ -585,12 +585,14 @@ class DSBCSR(DSBSparse):
             if copy:
                 self = DSBCSR(
                     self.data.copy(),
-                    self.rows.copy(),
                     self.cols.copy(),
+                    self.rowptr_map.copy(),
                     self.block_sizes,
                     self.global_stack_shape,
+                    symmetry=self.symmetry,
+                    symmetry_op=self.symmetry_op,
                 )
-            self.data = self.symmetry_op(self.data)
+            self.data[:] = self.symmetry_op(self.data)
             return self if copy else None
 
         if copy:
@@ -600,6 +602,8 @@ class DSBCSR(DSBSparse):
                 self.rowptr_map.copy(),
                 self.block_sizes,
                 self.global_stack_shape,
+                symmetry=self.symmetry,
+                symmetry_op=self.symmetry_op,
             )
 
         if not (

@@ -63,10 +63,10 @@ class TestCreation:
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
-        symmetry: bool = False,
-        symmetry_op: Callable = lambda x: x,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests the creation of DSBSparse matrices from sparse arrays."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -84,10 +84,10 @@ class TestCreation:
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
-        symmetry: bool = False,
-        symmetry_op: Callable = lambda x: x,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests the creation of a zero DSBSparse matrix with the same shape as another."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -157,10 +157,10 @@ class TestConversion:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        symmetry: bool = False,
-        symmetry_op: Callable = lambda x: x,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can convert a DSBSparse matrix to dense."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
 
         reference = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
@@ -179,10 +179,10 @@ class TestConversion:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        symmetry: bool = False,
-        symmetry_op: Callable = lambda x: x,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can transpose a DSBSparse matrix."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
 
         dense = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
@@ -242,11 +242,11 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        symmetry: bool,
-        symmetry_op: Callable,
+        symmetry_type: tuple[bool, Callable],
         accessed_element: tuple,
     ):
         """Tests that we can get individual matrix elements."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -266,11 +266,11 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        symmetry: bool,
-        symmetry_op: Callable,
+        symmetry_type: tuple[bool, Callable],
         num_inds: int,
     ):
         """Tests that we can get multiple matrix elements at once."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
@@ -298,11 +298,11 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        symmetry: bool,
-        symmetry_op: Callable,
+        symmetry_type: tuple[bool, Callable],
         accessed_element: tuple,
     ):
         """Tests that we can set individual matrix elements."""
+        symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,

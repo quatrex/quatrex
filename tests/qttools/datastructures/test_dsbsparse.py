@@ -20,7 +20,8 @@ def _create_coo(
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
-    density = rng.uniform(low=0.1, high=0.3)
+    # density = rng.uniform(low=0.1, high=0.3)
+    density = 1.0
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
     if symmetric:
         coo.data += 1j * rng.uniform(size=coo.nnz)
@@ -312,9 +313,29 @@ class TestAccess:
         )
         dense = dsbsparse.to_dense()
 
-        dsbsparse[accessed_element] = 42
+        val = 42 + 42j
 
-        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        if symmetry:
+            sym_val = symmetry_op(val)
+            r, c = accessed_element
+            if r == c:
+                val = (val + sym_val) / 2
+                dsbsparse[accessed_element] = val
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = val
+            else:
+                dsbsparse[accessed_element] = val
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = val
+                dense[..., *accessed_element[::-1]][
+                    dense[..., *accessed_element[::-1]].nonzero()
+                ] = sym_val
+        else:
+            dsbsparse[accessed_element] = val
+            dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = val
+
         assert xp.allclose(dense, dsbsparse.to_dense())
 
     @pytest.mark.usefixtures("accessed_block")

@@ -548,6 +548,8 @@ class DSBCOO(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
+            symmetry=self.symmetry,
+            symmetry_op=self.symmetry_op,
         )
 
     @DSBSparse.block_sizes.setter

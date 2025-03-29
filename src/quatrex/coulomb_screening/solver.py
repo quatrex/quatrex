@@ -622,7 +622,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
-        print(f"Finished solving on {comm.rank=}", flush=True)
         comm.Barrier()
         t_solve_end_all = time.perf_counter()
         if comm.rank == 0:

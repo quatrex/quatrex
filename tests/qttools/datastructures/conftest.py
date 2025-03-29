@@ -63,6 +63,18 @@ OPS = [
     pytest.param(xp.subtract, id="subtract"),
 ]
 
+SYMMETRY = [
+    pytest.param(True, id="symmetric"),
+    pytest.param(False, id="non-symmetric"),
+]
+
+SYMMETRY_OPS = [
+    pytest.param(lambda x: x, id="identity"),
+    pytest.param(lambda x: -x, id="negate"),
+    pytest.param(xp.conj, id="conjugate"),
+    pytest.param(lambda x: -xp.conj(x), id="negate-conjugate"),
+]
+
 
 @pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
@@ -116,4 +128,14 @@ def block_change_factor(request):
 
 @pytest.fixture(params=OPS)
 def op(request):
+    return request.param
+
+
+@pytest.fixture(params=SYMMETRY)
+def symmetry(request: pytest.FixtureRequest) -> bool:
+    return request.param
+
+
+@pytest.fixture(params=SYMMETRY_OPS)
+def symmetry_op(request: pytest.FixtureRequest) -> callable:
     return request.param

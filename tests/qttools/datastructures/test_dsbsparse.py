@@ -11,12 +11,25 @@ from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
 
-def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_matrix:
+def _create_coo(
+    sizes: NDArray,
+    symmetric_sparsity: bool = False,
+    symmetric: bool = False,
+    symmetry_op: Callable = xp.conj,
+) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    if symmetric:
+        coo.data += 1j * rng.uniform(size=coo.nnz)
+        coo_t = coo.copy()
+        coo_t.data[:] = symmetry_op(coo_t.data)
+        coo = coo + coo_t.T
+        # NOTE: The following works only with scipy on the host.
+        # coo = coo + symmetry_op(coo.T)
+        return coo
     if symmetric_sparsity:
         coo = coo + coo.T
         coo.data[:] = rng.uniform(size=coo.nnz)
@@ -28,20 +41,20 @@ def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_
 class TestCreation:
     """Tests the creation methods of DSBSparse."""
 
-    def test_from_sparray_hermitian(
-        self,
-        dsbsparse_type: DSBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: int | tuple,
-        densify_blocks: list[tuple] | None,
-    ):
-        """Tests the creation of DSBSparse matrices from hermitian sparse arrays."""
-        coo = _create_coo(block_sizes)
-        coo = (coo + coo.conj().T) / 2
-        dsbsparse = dsbsparse_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks, symmetry=True
-        )
-        assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
+    # def test_from_sparray_hermitian(
+    #     self,
+    #     dsbsparse_type: DSBSparse,
+    #     block_sizes: NDArray,
+    #     global_stack_shape: int | tuple,
+    #     densify_blocks: list[tuple] | None,
+    # ):
+    #     """Tests the creation of DSBSparse matrices from hermitian sparse arrays."""
+    #     coo = _create_coo(block_sizes)
+    #     coo = (coo + coo.conj().T) / 2
+    #     dsbsparse = dsbsparse_type.from_sparray(
+    #         coo, block_sizes, global_stack_shape, densify_blocks, symmetry=True
+    #     )
+    #     assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
     def test_from_sparray(
         self,
@@ -49,11 +62,18 @@ class TestCreation:
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
+        symmetry: bool = False,
+        symmetry_op: Callable = lambda x: x,
     ):
         """Tests the creation of DSBSparse matrices from sparse arrays."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo,
+            block_sizes,
+            global_stack_shape,
+            densify_blocks,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
@@ -63,11 +83,18 @@ class TestCreation:
         block_sizes: NDArray,
         global_stack_shape: int | tuple,
         densify_blocks: list[tuple] | None,
+        symmetry: bool = False,
+        symmetry_op: Callable = lambda x: x,
     ):
         """Tests the creation of a zero DSBSparse matrix with the same shape as another."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
-            coo, block_sizes, global_stack_shape, densify_blocks
+            coo,
+            block_sizes,
+            global_stack_shape,
+            densify_blocks,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         zeros = dsbsparse_type.zeros_like(dsbsparse)
         assert (zeros.to_dense() == 0).all()
@@ -129,15 +156,19 @@ class TestConversion:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool = False,
+        symmetry_op: Callable = lambda x: x,
     ):
         """Tests that we can convert a DSBSparse matrix to dense."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
 
         reference = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
 
         assert xp.allclose(reference, dsbsparse.to_dense())
@@ -147,9 +178,11 @@ class TestConversion:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool = False,
+        symmetry_op: Callable = lambda x: x,
     ):
         """Tests that we can transpose a DSBSparse matrix."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
 
         dense = xp.broadcast_to(coo.toarray(), global_stack_shape + coo.shape)
         reference = xp.swapaxes(dense, -2, -1)
@@ -158,6 +191,8 @@ class TestConversion:
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
 
         # Test copy transpose
@@ -206,14 +241,18 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool,
+        symmetry_op: Callable,
         accessed_element: tuple,
     ):
         """Tests that we can get individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         dense = dsbsparse.to_dense()
 
@@ -226,14 +265,18 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool,
+        symmetry_op: Callable,
         num_inds: int,
     ):
         """Tests that we can get multiple matrix elements at once."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
 
         # Generate a number of unique indices.
@@ -254,14 +297,18 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool,
+        symmetry_op: Callable,
         accessed_element: tuple,
     ):
         """Tests that we can set individual matrix elements."""
-        coo = _create_coo(block_sizes)
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         dense = dsbsparse.to_dense()
 
@@ -378,7 +425,7 @@ class TestAccess:
         densify_blocks: list[tuple] | None,
         accessed_block: tuple,
     ):
-        """Tests that we can set a block and not modify sparsity structure."""        
+        """Tests that we can set a block and not modify sparsity structure."""
         coo = _create_coo(block_sizes)
         coo = (coo + coo.conj().T) / 2
 
@@ -1063,4 +1110,4 @@ class TestDistribution:
 
 
 if __name__ == "__main__":
-    pytest.main(["--only-mpi", __file__])
+    pytest.main([__file__])

@@ -14,6 +14,15 @@ from qttools.utils.sparse_utils import densify_selected_blocks
 profiler = Profiler()
 
 
+def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns upper triangular rows and cols."""
+    mask = cols < rows
+    temp = rows[mask]
+    rows[mask] = cols[mask]
+    cols[mask] = temp
+    return rows, cols, mask
+
+
 class DSBCSR(DSBSparse):
     """Distributed stack of block-compressed sparse row matrices.
 
@@ -56,9 +65,14 @@ class DSBCSR(DSBSparse):
         symmetry_op: Callable = xp.conj,
     ) -> None:
         """Initializes the DBCSR matrix."""
-        super().__init__(data, block_sizes, global_stack_shape, return_dense,
+        super().__init__(
+            data,
+            block_sizes,
+            global_stack_shape,
+            return_dense,
             symmetry=symmetry,
-            symmetry_op=symmetry_op,)
+            symmetry_op=symmetry_op,
+        )
 
         self.cols = cols.astype(int)
         self.rowptr_map = rowptr_map
@@ -114,14 +128,39 @@ class DSBCSR(DSBSparse):
             The requested items.
 
         """
-        inds, value_inds = dsbcsr_kernels.find_inds(
-            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
-        )
+        if self.symmetry:
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
+
+            inds, value_inds = dsbcsr_kernels.find_inds(
+                self.rowptr_map,
+                xp.asarray(self.block_offsets),
+                self.cols,
+                rows[~mask_transposed],
+                cols[~mask_transposed],
+            )
+            value_inds = (~mask_transposed).nonzero()[0][value_inds]
+            inds_t, value_inds_t = dsbcsr_kernels.find_inds(
+                self.rowptr_map,
+                xp.asarray(self.block_offsets),
+                self.cols,
+                rows[mask_transposed],
+                cols[mask_transposed],
+            )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
+            value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
+        else:
+            inds, value_inds = dsbcsr_kernels.find_inds(
+                self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
+            )
 
         data_stack = self.data[stack_index]
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
-            arr[..., value_inds] = data_stack[..., inds]
+
+            if self.symmetry:
+                arr[..., value_inds] = data_stack[..., inds]
+                arr[..., value_inds_t] = self.symmetry_op(data_stack[..., inds_t])
+            else:
+                arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
 
         if len(inds) != rows.size:
@@ -159,6 +198,10 @@ class DSBCSR(DSBSparse):
             The value to set.
 
         """
+        if self.symmetry:
+            # items of upper triangle of the matrix
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
+
         inds, value_inds = dsbcsr_kernels.find_inds(
             self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
@@ -171,6 +214,10 @@ class DSBCSR(DSBSparse):
         if self.distribution_state == "stack":
             if value.ndim == 0:
                 self.data[*stack_index][..., inds] = value
+                if self.symmetry:
+                    self.data[*stack_index][..., inds[mask_transposed]] = (
+                        self.symmetry_op(value)
+                    )
                 return
 
             self.data[*stack_index][..., inds] = value[..., value_inds]
@@ -295,7 +342,7 @@ class DSBCSR(DSBSparse):
                 rowptr=rowptr,
                 data=data_stack,
             )
-            
+
         return block
 
     def _get_sparse_block(
@@ -393,7 +440,7 @@ class DSBCSR(DSBSparse):
 
         if self.symmetry and (col < row):
             dsbcsr_kernels.sparsify_block(
-                block=self.symmetry_op(block.swapaxes(-1,-2)),
+                block=self.symmetry_op(block.swapaxes(-1, -2)),
                 block_offset=self.block_offsets[row],
                 self_cols=self.cols,
                 rowptr=rowptr,
@@ -533,10 +580,10 @@ class DSBCSR(DSBSparse):
         """
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
-        
+
         if self.symmetry:
             if copy:
-                self = DSBCOO(
+                self = DSBCSR(
                     self.data.copy(),
                     self.rows.copy(),
                     self.cols.copy(),

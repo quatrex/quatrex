@@ -13,6 +13,15 @@ from qttools.utils.sparse_utils import densify_selected_blocks
 profiler = Profiler()
 
 
+def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns upper triangular rows and cols."""
+    mask = cols < rows
+    temp = rows[mask]
+    rows[mask] = cols[mask]
+    cols[mask] = temp
+    return rows, cols, mask
+
+
 class DSBCOO(DSBSparse):
     """Distributed stack of sparse matrices in coordinate format.
 
@@ -81,16 +90,6 @@ class DSBCOO(DSBSparse):
             - self._diag_value_inds[ranks == comm.rank][0]
         )
 
-    def _upper_triangle(
-        rows: NDArray, cols: NDArray
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Returns upper triangular rows and cols."""
-        mask = cols < rows
-        temp = rows[mask]
-        rows[mask] = cols[mask]
-        cols[mask] = temp
-        return rows, cols, mask
-
     @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
@@ -126,16 +125,17 @@ class DSBCOO(DSBSparse):
 
         """
         if self.symmetry:
-            rows, cols, mask_transposed = self._upper_triangle(
-                rows, cols
-            )  # find items in lower triangle and send them to upper triangle
+            # find items in lower triangle and send them to upper triangle
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
             inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
                 self.rows, self.cols, rows[~mask_transposed], cols[~mask_transposed]
             )
+            value_inds = (~mask_transposed).nonzero()[0][value_inds]
             inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
                 self.rows, self.cols, rows[mask_transposed], cols[mask_transposed]
             )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
+            value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
             if max_counts not in (0, 1) or max_counts_t not in (0, 1):
                 raise IndexError(
                     "Request contains repeated indices. Only unique indices are supported."
@@ -208,9 +208,8 @@ class DSBCOO(DSBSparse):
 
         """
         if self.symmetry:
-            rows, cols, mask_transposed = self._upper_triangle(
-                rows, cols
-            )  # items of upper triangle of the matrix
+            # items of upper triangle of the matrix
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
         inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
             self.rows, self.cols, rows, cols

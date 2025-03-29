@@ -838,7 +838,8 @@ class ReducedSystem:
             j = i + 1
             x_out.local_blocks[i, i] = diag_block_reduced_system[0]
 
-            x_out.local_blocks[j, i] = lower_block_reduced_system[0]
+            if not x_out.symmetry:
+                x_out.local_blocks[j, i] = lower_block_reduced_system[0]
             x_out.local_blocks[i, j] = upper_block_reduced_system[0]
         elif block_comm.rank == block_comm.size - 1:
             x_diag_blocks[0] = diag_block_reduced_system[-1]
@@ -862,7 +863,10 @@ class ReducedSystem:
             x_out.local_blocks[0, 0] = x_diag_blocks[0]
             x_out.local_blocks[i, i] = x_diag_blocks[-1]
 
-            x_out.local_blocks[j, i] = lower_block_reduced_system[2 * block_comm.rank]
+            if not x_out.symmetry:
+                x_out.local_blocks[j, i] = lower_block_reduced_system[
+                    2 * block_comm.rank
+                ]
             x_out.local_blocks[i, j] = upper_block_reduced_system[2 * block_comm.rank]
 
 
@@ -1404,7 +1408,8 @@ def downward_selinv(
             )
 
             xl_out.local_blocks[i, j] = xl_ij
-            xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+            if not xl_out.symmetry:
+                xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
             xg_ij = (
                 -xr_ii_a_ij_xg_jj
@@ -1413,7 +1418,8 @@ def downward_selinv(
             )
 
             xg_out.local_blocks[i, j] = xg_ij
-            xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+            if not xg_out.symmetry:
+                xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
             # temp_4 = a.local_blocks[j, i].conj().swapaxes(-2, -1) @ xr_diag_blocks[
             #     j
@@ -1596,8 +1602,8 @@ def upward_selinv(
                 - xl_ii @ a_ji_dagger_xr_jj_dagger
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
-
-            xl_out.local_blocks[i, j] = xl_ij
+            if not xl_out.symmetry:
+                xl_out.local_blocks[i, j] = xl_ij
             xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
             xg_ij = (
@@ -1605,8 +1611,8 @@ def upward_selinv(
                 - xg_ii @ a_ji_dagger_xr_jj_dagger
                 + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
-
-            xg_out.local_blocks[i, j] = xg_ij
+            if not xg_out.symmetry:
+                xg_out.local_blocks[i, j] = xg_ij
             xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
             # temp_4 = a.local_blocks[i, j].conj().swapaxes(-2, -1) @ xr_diag_blocks[
@@ -1944,7 +1950,8 @@ def permuted_selinv(
             # Streaming/Sparsifying back to DSDBSparse
             # xl_out.local_blocks[i + 1, i] = bl_lower_block
             xl_out.local_blocks[i, i + 1] = bl_upper_block
-            xl_out.local_blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
+            if not xl_out.symmetry:
+                xl_out.local_blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
             xl_out.local_blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
@@ -2089,7 +2096,8 @@ def permuted_selinv(
             # Streaming/Sparsifying back to DSDBSparse
             # xg_out.local_blocks[i + 1, i] = bg_lower_block
             xg_out.local_blocks[i, i + 1] = bg_upper_block
-            xg_out.local_blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
+            if not xg_out.symmetry:
+                xg_out.local_blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
             xg_out.local_blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
@@ -2119,10 +2127,12 @@ def permuted_selinv(
         xr_out.local_blocks[1, 0] = xr_buffer_upper[0]
         xr_out.local_blocks[0, 1] = xr_buffer_lower[0]
     if selected_solve:
-        xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
+        if not xl_out.symmetry:
+            xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
         # xl_out.local_blocks[0, 1] = xl_buffer_lower[0]
         xl_out.local_blocks[0, 1] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
 
-        xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
+        if not xg_out.symmetry:
+            xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
         # xg_out.local_blocks[0, 1] = xg_buffer_lower[0]
         xg_out.local_blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)

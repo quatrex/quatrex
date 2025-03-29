@@ -1028,11 +1028,11 @@ class SCBADist:
                 )
 
             t_convergence_start = time.perf_counter()
-            # if self._has_converged():
-            #     if comm.rank == 0:
-            #         print(f"SCBA converged after {i} iterations.", flush=True)
+            if self._has_converged():
+                if comm.rank == 0:
+                    print(f"SCBA converged after {i} iterations.", flush=True)
 
-            #     break
+                break
             synchronize_device()
             t_convergence_end = time.perf_counter()
             comm.Barrier()

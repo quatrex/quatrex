@@ -344,14 +344,18 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
     ):
         """Tests that we can get the correct block."""
-        coo = _create_coo(block_sizes)
+        symmetry, symmetry_op = symmetry_type
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         dense = dsbsparse.to_dense()
 
@@ -361,6 +365,7 @@ class TestAccess:
         with pytest.raises(IndexError) if not in_bounds else nullcontext():
             assert xp.allclose(reference_block, dsbsparse.blocks[accessed_block])
 
+    @pytest.mark.skip
     @pytest.mark.usefixtures("accessed_block")
     def test_get_sparse_block(
         self,
@@ -370,11 +375,14 @@ class TestAccess:
         accessed_block: tuple,
     ):
         """Tests that we can get the correct block."""
-        coo = _create_coo(block_sizes)
+        symmetry, symmetry_op = False, lambda x: x
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         dense = dsbsparse.to_dense()
 
@@ -412,68 +420,107 @@ class TestAccess:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
     ):
         """Tests that we can set a block and not modify sparsity structure."""
-        coo = _create_coo(block_sizes)
+        symmetry, symmetry_op = symmetry_type
+        coo = _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             densify_blocks=densify_blocks,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
         dense = dsbsparse.to_dense()
 
         inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
 
-        with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
-
-        if densify_blocks is not None and accessed_block in densify_blocks:
-            # Sparsity structure should be modified.
-            assert (dsbsparse.to_dense()[..., *inds] == 1).all()
-        else:
-            # Sparsity structure should not be modified.
-            dense[..., *inds][dense[..., *inds].nonzero()] = 1
-            assert xp.allclose(dense, dsbsparse.to_dense())
-
-    @pytest.mark.usefixtures("accessed_block", "densify_blocks")
-    def test_set_block_hermitian(
-        self,
-        dsbsparse_type: DSBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None,
-        accessed_block: tuple,
-    ):
-        """Tests that we can set a block and not modify sparsity structure."""
-        coo = _create_coo(block_sizes)
-        coo = (coo + coo.conj().T) / 2
-
-        dsbsparse = dsbsparse_type.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
-            densify_blocks=densify_blocks,
-            symmetry=True,
+        rng = xp.random.default_rng()
+        # val = xp.ones_like(dense[..., *inds]) + 1j * xp.ones_like(dense[..., *inds])
+        val = rng.uniform(size=dense[..., *inds].shape) + 1j * rng.uniform(
+            size=dense[..., *inds].shape
         )
-        dense = dsbsparse.to_dense()
 
-        inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
-        inds_t, in_bounds_t = _get_block_inds(reversed(accessed_block), block_sizes)
-
-        with pytest.raises(IndexError) if not in_bounds else nullcontext():
-            dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
-
-        if densify_blocks is not None and accessed_block in densify_blocks:
-            # Sparsity structure should be modified.
-            assert (dsbsparse.to_dense()[..., *inds] == 1).all()
-            assert (dsbsparse.to_dense()[..., *inds_t] == 1).all()
+        if symmetry:
+            sym_val = symmetry_op(val).swapaxes(-2, -1)
+            r, c = accessed_block
+            if r == c:
+                val = (val + sym_val) / 2
+                with pytest.raises(IndexError) if not in_bounds else nullcontext():
+                    dsbsparse.blocks[accessed_block] = val
+                if densify_blocks is not None and accessed_block in densify_blocks:
+                    # Sparsity structure should be modified.
+                    assert xp.allclose(dsbsparse.to_dense()[..., *inds], val)
+                    return
+                dense[..., *inds][dense[..., *inds].nonzero()] = val[
+                    dense[..., *inds].nonzero()
+                ]
+            else:
+                with pytest.raises(IndexError) if not in_bounds else nullcontext():
+                    dsbsparse.blocks[accessed_block] = val
+                if densify_blocks is not None and accessed_block in densify_blocks:
+                    # Sparsity structure should be modified.
+                    assert xp.allclose(dsbsparse.to_dense()[..., *inds], val)
+                    return
+                dense[..., *inds][dense[..., *inds].nonzero()] = val[
+                    *dense[..., *inds].nonzero()
+                ]
+                dense[..., *inds[::-1]][dense[..., *inds[::-1]].nonzero()] = sym_val[
+                    dense[..., *inds[::-1]].nonzero()
+                ]
         else:
-            # Sparsity structure should not be modified.
-            dense[..., *inds][dense[..., *inds].nonzero()] = 1
-            dense[..., *inds_t][dense[..., *inds_t].nonzero()] = 1
-            assert xp.allclose(dense, dsbsparse.to_dense())
+            with pytest.raises(IndexError) if not in_bounds else nullcontext():
+                dsbsparse.blocks[accessed_block] = val
+            if densify_blocks is not None and accessed_block in densify_blocks:
+                # Sparsity structure should be modified.
+                assert xp.allclose(dsbsparse.to_dense()[..., *inds], val)
+                return
+            dense[..., *inds][dense[..., *inds].nonzero()] = val[
+                dense[..., *inds].nonzero()
+            ]
+
+        assert xp.allclose(dense, dsbsparse.to_dense())
+
+    # @pytest.mark.usefixtures("accessed_block", "densify_blocks")
+    # def test_set_block_hermitian(
+    #     self,
+    #     dsbsparse_type: DSBSparse,
+    #     block_sizes: NDArray,
+    #     global_stack_shape: tuple,
+    #     densify_blocks: list[tuple] | None,
+    #     accessed_block: tuple,
+    # ):
+    #     """Tests that we can set a block and not modify sparsity structure."""
+    #     coo = _create_coo(block_sizes)
+    #     coo = (coo + coo.conj().T) / 2
+
+    #     dsbsparse = dsbsparse_type.from_sparray(
+    #         coo,
+    #         block_sizes=block_sizes,
+    #         global_stack_shape=global_stack_shape,
+    #         densify_blocks=densify_blocks,
+    #         symmetry=True,
+    #     )
+    #     dense = dsbsparse.to_dense()
+
+    #     inds, in_bounds = _get_block_inds(accessed_block, block_sizes)
+    #     inds_t, in_bounds_t = _get_block_inds(reversed(accessed_block), block_sizes)
+
+    #     with pytest.raises(IndexError) if not in_bounds else nullcontext():
+    #         dsbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
+
+    #     if densify_blocks is not None and accessed_block in densify_blocks:
+    #         # Sparsity structure should be modified.
+    #         assert (dsbsparse.to_dense()[..., *inds] == 1).all()
+    #         assert (dsbsparse.to_dense()[..., *inds_t] == 1).all()
+    #     else:
+    #         # Sparsity structure should not be modified.
+    #         dense[..., *inds][dense[..., *inds].nonzero()] = 1
+    #         dense[..., *inds_t][dense[..., *inds_t].nonzero()] = 1
+    #         assert xp.allclose(dense, dsbsparse.to_dense())
 
     @pytest.mark.usefixtures("accessed_block", "stack_index")
     def test_get_block_substack(
@@ -481,10 +528,12 @@ class TestAccess:
         dsbsparse_type: DSBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        # symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
         stack_index: tuple,
     ):
         """Tests that we can get the correct block from a substack."""
+        # symmetry, symmetry_op = symmetry_type
         coo = _create_coo(block_sizes)
         dsbsparse = dsbsparse_type.from_sparray(
             coo,

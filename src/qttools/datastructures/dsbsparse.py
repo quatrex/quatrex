@@ -18,6 +18,47 @@ profiler = Profiler()
 GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
+if NCCL_AVAILABLE:
+    import cupy as cp
+    from cupy.cuda import nccl
+
+    _nccl_dtypes = {
+        "b": nccl.NCCL_INT8,
+        "B": nccl.NCCL_UINT8,
+        "i": nccl.NCCL_INT32,
+        "I": nccl.NCCL_UINT32,
+        "l": nccl.NCCL_INT64,
+        "L": nccl.NCCL_UINT64,
+        "q": nccl.NCCL_INT64,
+        "Q": nccl.NCCL_UINT64,
+        "e": nccl.NCCL_FLOAT16,
+        "f": nccl.NCCL_FLOAT32,
+        "d": nccl.NCCL_FLOAT64,
+        # Size of array will be doubled
+        "F": nccl.NCCL_FLOAT32,
+        "D": nccl.NCCL_FLOAT64,
+    }
+
+    _nccl_ops = {
+        "sum": nccl.NCCL_SUM,
+        "prod": nccl.NCCL_PROD,
+        "max": nccl.NCCL_MAX,
+        "min": nccl.NCCL_MIN,
+    }
+
+
+def _get_nccl_dtype_and_count(array, count=None):
+    dtype = array.dtype.char
+    if dtype not in _nccl_dtypes:
+        raise TypeError(f"Unknown dtype {array.dtype} for NCCL")
+    nccl_dtype = _nccl_dtypes[dtype]
+    if count is None:
+        count = array.size
+    if dtype in "FD":
+        return nccl_dtype, 2 * count
+    return nccl_dtype, count
+
+
 @profiler.profile(level="debug")
 def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
     """Gets a block view of an array along a given axis.
@@ -648,6 +689,48 @@ class DSBSparse(ABC):
                     ]
             return
 
+    def all_to_all(self, comm, in_array, out_array, stream=None):
+        # # TODO(ecastill) out_array needs to have comm size in shape[0]
+        # if out_array.shape[0] != comm._n_devices:
+        #     raise RuntimeError(
+        #         f'all_to_all requires in_array to have {comm._n_devices}'
+        #         f'elements in its first dimension, found {in_array.shape}')
+        # if out_array.shape[0] != comm._n_devices:
+        #     raise RuntimeError(
+        #         f'all_to_all requires out_array to have {comm._n_devices}'
+        #         f'elements in its first dimension, found {out_array.shape}')
+        # comm._check_contiguous(in_array)
+        # comm._check_contiguous(out_array)
+        stream = cp.cuda.Stream.null if stream is None else stream
+        idtype, icount = _get_nccl_dtype_and_count(in_array[0])
+        odtype, ocount = _get_nccl_dtype_and_count(out_array[0])
+        # TODO check out dtypes are the same as in dtypes
+
+        synchronize_device()
+        comm.Barrier()
+        t_nccl_start = time.perf_counter()
+
+        nccl.groupStart()
+        for i in range(comm._n_devices):
+            comm._comm.send(in_array[i].data.ptr, icount, idtype, i, stream)
+            comm._comm.recv(out_array[i].data.ptr, ocount, odtype, i, stream)
+            # cls._send(comm, in_array[i], i, idtype, icount, stream)
+            # cls._recv(comm, out_array[i], i, odtype, ocount, stream)
+        nccl.groupEnd()
+
+        t_nccl_end = time.perf_counter()
+        comm.Barrier()
+        t_nccl_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"        Pure NCCL Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
+                flush=True,
+            )
+            print(
+                f"        Pure NCCL Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
+                flush=True,
+            )
+
     @profiler.profile(level="debug")
     def _dtranspose(
         self, block_axis: int, concatenate_axis: int, discard: bool = False
@@ -719,7 +802,10 @@ class DSBSparse(ABC):
             synchronize_device()
             comm.Barrier()
             t_nccl_start = time.perf_counter()
-            nccl_comm.all_to_all(self._data, receive_buffer)
+
+            self.all_to_all(nccl_comm, self._data, receive_buffer)
+            # nccl_comm.all_to_all(self._data, receive_buffer)
+
             synchronize_device()
             t_nccl_end = time.perf_counter()
             comm.Barrier()

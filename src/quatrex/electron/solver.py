@@ -257,7 +257,9 @@ class ElectronSolver(SubsystemSolver):
         """
         self.potential = new_potential
 
-    def _update_fermi_levels(self, e_0_left: NDArray, e_0_right: NDArray) -> None:
+    def _update_fermi_levels(
+        self, left_band_edges: NDArray, right_band_edges: NDArray
+    ) -> None:
         """Updates the Fermi levels.
 
         Parameters
@@ -267,8 +269,6 @@ class ElectronSolver(SubsystemSolver):
             retarded).
 
         """
-        left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
-        right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
 
         self.left_mid_gap_energy = xp.mean(left_band_edges)
         self.right_mid_gap_energy = xp.mean(right_band_edges)
@@ -517,7 +517,7 @@ class ElectronSolver(SubsystemSolver):
 
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
-            e_0_left, e_0_right = find_renormalized_eigenvalues(
+            left_band_edges, right_band_edges = find_renormalized_eigenvalues(
                 hamiltonian=self.hamiltonian,
                 overlap=self.overlap_sparray,
                 potential=self.potential,
@@ -530,7 +530,7 @@ class ElectronSolver(SubsystemSolver):
                 mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
                 band_edge_config=self.compute_config.band_edge,
             )
-            self._update_fermi_levels(e_0_left, e_0_right)
+            self._update_fermi_levels(left_band_edges, right_band_edges)
 
             synchronize_device()
             t_band_edges_end = time.perf_counter()
@@ -635,7 +635,10 @@ class ElectronSolver(SubsystemSolver):
             e_0_left = find_dos_peaks(left_dos, self.energies)
             e_0_right = find_dos_peaks(right_dos, self.energies)
 
-            self._update_fermi_levels(e_0_left, e_0_right)
+            left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
+            right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
+
+            self._update_fermi_levels(left_band_edges, right_band_edges)
             synchronize_device()
             t_dos_peaks_end = time.perf_counter()
             comm.Barrier()

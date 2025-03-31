@@ -231,10 +231,10 @@ def find_renormalized_eigenvalues(
 
     Returns
     -------
-    e_0_left : NDArray
-        The renormalized eigenvalues for the left contact.
-    e_0_right : NDArray
-        The renormalized eigenvalues for the right contact.
+    left_band_edges : NDArray
+        The left band edges.
+    right_band_edges : NDArray
+        The right band edges.
 
     """
 
@@ -247,8 +247,8 @@ def find_renormalized_eigenvalues(
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
-    e_0_left = None
-    e_0_right = None
+    left_band_edges = None
+    right_band_edges = None
 
     if block_comm.rank == 0:
         for __ in range(num_ref_iterations):
@@ -266,12 +266,9 @@ def find_renormalized_eigenvalues(
                     side="left",
                     band_edge_config=band_edge_config,
                 )
-                left_valence_band, left_conduction_band_guess = find_band_edges(
-                    e_0_left, left_mid_gap_energy
-                )
-                left_mid_gap_energy = (
-                    left_valence_band + left_conduction_band_guess
-                ) / 2
+                left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
+                left_mid_gap_energy = xp.mean(left_band_edges)
+                __, left_conduction_band_guess = left_band_edges
 
             # left_conduction_band_guess = stack_comm.bcast(
             #     left_conduction_band_guess, rank_left
@@ -279,29 +276,27 @@ def find_renormalized_eigenvalues(
             # left_mid_gap_energy = stack_comm.bcast(left_mid_gap_energy, rank_left)
             left_conduction_band_guess, left_mid_gap_energy = _bcast(
                 [left_conduction_band_guess, left_mid_gap_energy],
-                2,
-                rank_left,
+                num_values=2,
+                root=rank_left,
                 block=False,
             )
 
         # e_0_left = stack_comm.bcast(e_0_left, rank_left)
         synchronize_device()
         stack_comm.Barrier()
-        t_eigvals_start = time.perf_counter()
-        e_0_left = _bcast(
-            e_0_left, sigma_retarded.block_sizes[0], rank_left, block=False
-        )
+        t_band_edge_start = time.perf_counter()
+        left_band_edges = _bcast(left_band_edges, 2, rank_left, block=False)
         synchronize_device()
-        t_eigvals_end = time.perf_counter()
+        t_band_edge_end = time.perf_counter()
         stack_comm.Barrier()
-        t_eigvals_end_all = time.perf_counter()
+        t_band_edge_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(
-                f"        Eigvals comm time: {t_eigvals_end - t_eigvals_start:.3f} s",
+                f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
                 flush=True,
             )
             print(
-                f"        Eigvals comm all time: {t_eigvals_end_all - t_eigvals_start:.3f} s",
+                f"        Band edge comm all time: {t_band_edge_end_all - t_band_edge_start:.3f} s",
                 flush=True,
             )
 
@@ -321,12 +316,9 @@ def find_renormalized_eigenvalues(
                     side="right",
                     band_edge_config=band_edge_config,
                 )
-                right_valence_band, right_conduction_band_guess = find_band_edges(
-                    e_0_right, right_mid_gap_energy
-                )
-                right_mid_gap_energy = (
-                    right_valence_band + right_conduction_band_guess
-                ) / 2
+                right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
+                right_mid_gap_energy = xp.mean(right_band_edges)
+                __, right_conduction_band_guess = right_band_edges
 
             # right_conduction_band_guess = stack_comm.bcast(
             #     right_conduction_band_guess, rank_right
@@ -334,24 +326,20 @@ def find_renormalized_eigenvalues(
             # right_mid_gap_energy = stack_comm.bcast(right_mid_gap_energy, rank_right)
             right_conduction_band_guess, right_mid_gap_energy = _bcast(
                 [right_conduction_band_guess, right_mid_gap_energy],
-                2,
-                rank_right,
+                num_values=2,
+                root=rank_right,
                 block=False,
             )
 
         # e_0_right = stack_comm.bcast(e_0_right, rank_right)
-        e_0_right = _bcast(
-            e_0_right, sigma_retarded.block_sizes[-1], rank_right, block=False
-        )
+        right_band_edges = _bcast(right_band_edges, 2, rank_right, block=False)
 
     # e_0_left = block_comm.bcast(e_0_left, 0)
     # e_0_right = block_comm.bcast(e_0_right, block_comm.size - 1)
-    e_0_left = _bcast(e_0_left, sigma_retarded.block_sizes[0], 0, block=True)
-    e_0_right = _bcast(
-        e_0_right, sigma_retarded.block_sizes[-1], block_comm.size - 1, block=True
-    )
+    left_band_edges = _bcast(left_band_edges, 2, 0, block=True)
+    right_band_edges = _bcast(right_band_edges, 2, block_comm.size - 1, block=True)
 
-    return e_0_left, e_0_right
+    return left_band_edges, right_band_edges
 
 
 @profiler.profile(level="api")

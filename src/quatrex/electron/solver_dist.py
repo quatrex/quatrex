@@ -23,6 +23,7 @@ from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_secti
 from qttools.utils.stack_utils import scale_stack
 
 from quatrex.bandstructure.band_edges_dist import (
+    _bcast,
     find_band_edges,
     find_dos_peaks,
     find_renormalized_eigenvalues,
@@ -300,7 +301,9 @@ class ElectronSolverDist(SubsystemSolver):
         """
         self.potential = new_potential
 
-    def _update_fermi_levels(self, e_0_left: NDArray, e_0_right: NDArray) -> None:
+    def _update_fermi_levels(
+        self, left_band_edges: NDArray, right_band_edges: NDArray
+    ) -> None:
         """Updates the Fermi levels.
 
         Parameters
@@ -310,9 +313,6 @@ class ElectronSolverDist(SubsystemSolver):
             retarded).
 
         """
-        left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
-        right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
-
         self.left_mid_gap_energy = xp.mean(left_band_edges)
         self.right_mid_gap_energy = xp.mean(right_band_edges)
 
@@ -578,7 +578,7 @@ class ElectronSolverDist(SubsystemSolver):
 
         if self.band_edge_tracking == "eigenvalues":
             t_band_edges_start = time.perf_counter()
-            e_0_left, e_0_right = find_renormalized_eigenvalues(
+            left_band_edges, right_band_edges = find_renormalized_eigenvalues(
                 hamiltonian=self.hamiltonian,
                 overlap=self.overlap_sparray,
                 potential=self.potential,
@@ -591,7 +591,7 @@ class ElectronSolverDist(SubsystemSolver):
                 mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
                 band_edge_config=self.compute_config.band_edge,
             )
-            self._update_fermi_levels(e_0_left, e_0_right)
+            self._update_fermi_levels(left_band_edges, right_band_edges)
 
             synchronize_device()
             t_band_edges_end = time.perf_counter()
@@ -655,7 +655,7 @@ class ElectronSolverDist(SubsystemSolver):
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
-            e_0_left, e_0_right = None, None
+            left_band_edges, right_band_edges = None, None
 
             if block_comm.rank == 0:
                 s_00 = self._get_block(self.overlap_sparray, (0, 0))
@@ -688,6 +688,7 @@ class ElectronSolverDist(SubsystemSolver):
                     left_dos = full_left_dos[g_retarded._stack_padding_mask]
 
                 e_0_left = find_dos_peaks(left_dos, self.energies)
+                left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
 
             if block_comm.rank == block_comm.size - 1:
                 s_nn = self._get_block(self.overlap_sparray, (-1, -1))
@@ -721,11 +722,14 @@ class ElectronSolverDist(SubsystemSolver):
                     right_dos = full_right_dos[g_retarded._stack_padding_mask]
 
                 e_0_right = find_dos_peaks(right_dos, self.energies)
+                right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
 
-            e_0_left = block_comm.bcast(e_0_left, root=0)
-            e_0_right = block_comm.bcast(e_0_right, root=block_comm.size - 1)
+            left_band_edges = _bcast(left_band_edges, num_values=2, root=0, block=True)
+            right_band_edges = _bcast(
+                right_band_edges, num_values=2, root=block_comm.size - 1, block=True
+            )
 
-            self._update_fermi_levels(e_0_left, e_0_right)
+            self._update_fermi_levels(left_band_edges, right_band_edges)
             synchronize_device()
             t_dos_peaks_end = time.perf_counter()
             global_comm.Barrier()

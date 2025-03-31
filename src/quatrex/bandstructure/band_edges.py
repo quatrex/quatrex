@@ -209,10 +209,10 @@ def find_renormalized_eigenvalues(
 
     Returns
     -------
-    e_0_left : NDArray
-        The renormalized eigenvalues for the left contact.
-    e_0_right : NDArray
-        The renormalized eigenvalues for the right contact.
+    left_band_edges : NDArray
+        The left band edges.
+    right_band_edges : NDArray
+        The right band edges.
 
     """
 
@@ -225,8 +225,8 @@ def find_renormalized_eigenvalues(
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
-    e_0_left = None
-    e_0_right = None
+    left_band_edges = None
+    right_band_edges = None
 
     for __ in range(num_ref_iterations):
         ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
@@ -246,10 +246,9 @@ def find_renormalized_eigenvalues(
                 side="left",
                 band_edge_config=band_edge_config,
             )
-            left_valence_band, left_conduction_band_guess = find_band_edges(
-                e_0_left, left_mid_gap_energy
-            )
-            left_mid_gap_energy = (left_valence_band + left_conduction_band_guess) / 2
+            left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
+            left_mid_gap_energy = xp.mean(left_band_edges)
+            __, left_conduction_band_guess = left_band_edges
 
         if rank_right == global_comm.rank:
             local_ind = ind_right - section_offsets[rank_right]
@@ -262,12 +261,9 @@ def find_renormalized_eigenvalues(
                 side="right",
                 band_edge_config=band_edge_config,
             )
-            right_valence_band, right_conduction_band_guess = find_band_edges(
-                e_0_right, right_mid_gap_energy
-            )
-            right_mid_gap_energy = (
-                right_valence_band + right_conduction_band_guess
-            ) / 2
+            right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
+            right_mid_gap_energy = xp.mean(right_band_edges)
+            __, right_conduction_band_guess = right_band_edges
 
         # left_conduction_band_guess = comm.bcast(left_conduction_band_guess, rank_left)
         # left_mid_gap_energy = comm.bcast(left_mid_gap_energy, rank_left)
@@ -286,24 +282,24 @@ def find_renormalized_eigenvalues(
     # e_0_right = comm.bcast(e_0_right, rank_right)
     synchronize_device()
     global_comm.Barrier()
-    t_eigvals_start = time.perf_counter()
-    e_0_left = _bcast(e_0_left, sigma_retarded.block_sizes[0], rank_left)
-    e_0_right = _bcast(e_0_right, sigma_retarded.block_sizes[-1], rank_right)
+    t_band_edge_start = time.perf_counter()
+    left_band_edges = _bcast(left_band_edges, 2, rank_left)
+    right_band_edges = _bcast(right_band_edges, 2, rank_right)
     synchronize_device()
-    t_eigvals_end = time.perf_counter()
+    t_band_edge_end = time.perf_counter()
     global_comm.Barrier()
-    t_eigvals_end_all = time.perf_counter()
+    t_band_edge_end_all = time.perf_counter()
     if global_comm.rank == 0:
         print(
-            f"        Eigvals comm time: {t_eigvals_end - t_eigvals_start:.3f} s",
+            f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
             flush=True,
         )
         print(
-            f"        Eigvals comm all time: {t_eigvals_end_all - t_eigvals_start:.3f} s",
+            f"        Band edge comm all time: {t_band_edge_end_all - t_band_edge_start:.3f} s",
             flush=True,
         )
 
-    return e_0_left, e_0_right
+    return left_band_edges, right_band_edges
 
 
 @profiler.profile(level="api")

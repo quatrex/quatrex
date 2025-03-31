@@ -460,17 +460,17 @@ class SCBA:
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
-        self.data.sigma_lesser.data = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
+        self.data.sigma_lesser._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_lesser_prev._data
+            + self.mixing_factor * self.data.sigma_lesser._data
         )
-        self.data.sigma_greater.data = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
+        self.data.sigma_greater._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_greater_prev._data
+            + self.mixing_factor * self.data.sigma_greater._data
         )
-        self.data.sigma_retarded.data = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
+        self.data.sigma_retarded._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_retarded_prev._data
+            + self.mixing_factor * self.data.sigma_retarded._data
         )
 
         # Symmetrization.
@@ -489,8 +489,8 @@ class SCBA:
         self.data.sigma_retarded.symmetrize(xp.add)
 
         # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
+        self.data.sigma_retarded._data += 0.5 * (
+            self.data.sigma_greater._data - self.data.sigma_lesser._data
         )
         synchronize_device()
         time_end = time.perf_counter()

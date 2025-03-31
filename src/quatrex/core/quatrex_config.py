@@ -245,6 +245,8 @@ class CoulombScreeningConfig(BaseModel):
 
     temperature: PositiveFloat = 300.0  # K
 
+    epsilon_r: PositiveFloat = 1.0
+
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
 
@@ -318,12 +320,29 @@ class OutputConfig(BaseModel):
     profiling_stats: bool = False
 
 
+class DeviceConfig(BaseModel):
+
+    construct_from_unit_cell: bool = False
+
+    # --- Device geometry ---------------------------------------------
+    unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    number_of_supercells: PositiveInt = 1
+    transport_direction: Literal["x", "y", "z"]
+
+    @model_validator(mode="after")
+    def to_tuple(self) -> Self:
+        """Transforms list to tuple."""
+        self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
+        return self
+
+
 class QuatrexConfig(BaseModel):
     """Top-level simulation configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
+    device: DeviceConfig
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     poisson: PoissonConfig = PoissonConfig()

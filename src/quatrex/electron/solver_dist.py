@@ -2,17 +2,28 @@
 
 import time
 
-from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
-from qttools.datastructures import DSBSparse
+from qttools import (
+    NCCL_AVAILABLE,
+    NDArray,
+    block_comm,
+    global_comm,
+    host_xp,
+    nccl_stack_comm,
+    sparse,
+    stack_comm,
+    xp,
+)
+from qttools.datastructures import DSDBSparse
+from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
-from quatrex.bandstructure.band_edges import (
+from quatrex.bandstructure.band_edges_dist import (
+    _bcast,
     find_band_edges,
     find_dos_peaks,
     find_renormalized_eigenvalues,
@@ -27,28 +38,35 @@ profiler = Profiler()
 
 
 @profiler.profile(level="debug")
-def _btd_subtract(a: DSBSparse, b: DSBSparse) -> None:
+def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
     """Subtracts b from a on the block-tridiagonal.
 
     This is an in-place operation, i.e. a is modified.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The matrix to subtract from.
-    b : DSBSparse
+    b : DSDBSparse
         The matrix to subtract.
 
     """
     a_ = a.stack[...]
     b_ = b.stack[...]
-    for i in range(a.num_blocks):
-        for j in range(max(0, i - 2), min(a.num_blocks, i + 3)):
-            a_.blocks[i, j] -= b_.blocks[i, j]
+    for i in range(a.num_local_blocks):
+        j = i + 1
+        a_.local_blocks[i, i] -= b_.local_blocks[i, i]
+
+        if j >= a.num_local_blocks and block_comm.rank == block_comm.size - 1:
+            # The last rank does not have these blocks.
+            continue
+
+        a_.local_blocks[i, j] -= b_.local_blocks[i, j]
+        a_.local_blocks[j, i] -= b_.local_blocks[j, i]
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
-class ElectronSolver(SubsystemSolver):
+class ElectronSolverDist(SubsystemSolver):
     """Solves the electron dynamics.
 
     Parameters
@@ -69,16 +87,32 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
+        sparsity_pattern: sparse.coo_matrix = None,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
+
+        self.local_energies = get_local_slice(energies, stack_comm)
+        self.solver_dist = RGFDist(
+            max_batch_size=quatrex_config.electron.solver.max_batch_size,
+        )
 
         # Load the device Hamiltonian.
         if quatrex_config.device.construct_from_unit_cell:
             hamiltonian_unit_cells = distributed_load(
                 quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
             ).astype(xp.complex128)
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, block_comm.size
+            )
+            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+            start_block = section_offsets[block_comm.rank]
+            end_block = section_offsets[block_comm.rank + 1]
+
             hamiltonian_sparray, block_sizes = create_hamiltonian(
                 cutoff_hr(
                     hamiltonian_unit_cells,
@@ -87,10 +121,16 @@ class ElectronSolver(SubsystemSolver):
                 quatrex_config.device.number_of_supercells,
                 quatrex_config.device.transport_direction,
                 quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
                 return_sparse=True,
             )
             hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
-            self.block_sizes = get_host(block_sizes)
+            hamiltonian_sparray.sum_duplicates()
+            block_sizes = get_host(block_sizes)
+            self.block_sizes = host_xp.asarray(
+                [block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
 
         else:
             hamiltonian_sparray = distributed_load(
@@ -104,22 +144,21 @@ class ElectronSolver(SubsystemSolver):
         # self-energy and Hamiltonian sparsity.
         sparsity_pattern += hamiltonian_sparray
 
-        self.hamiltonian = compute_config.dsbsparse_type.from_sparray(
+        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=(comm.size,),
+            global_stack_shape=(stack_comm.size,),
         )
         self.hamiltonian.data = 0.0
         self.hamiltonian += hamiltonian_sparray
         del hamiltonian_sparray
 
         # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dsbsparse_type.from_sparray(
+        self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
-
         self.system_matrix.data = 0.0
         del sparsity_pattern
 
@@ -200,14 +239,19 @@ class ElectronSolver(SubsystemSolver):
 
         # Contacts.
         self.flatband = quatrex_config.electron.flatband
-        if self.flatband and comm.rank == 0:
+        if self.flatband and global_comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
         self.eta_obc = quatrex_config.electron.eta_obc
 
-        self.compute_meir_wingreen_current = (
-            quatrex_config.electron.solver.compute_current
-        )
+        if quatrex_config.electron.solver.compute_current:
+            raise NotImplementedError(
+                "Current computation not implemented in distributed mode."
+            )
+
+        # self.compute_meir_wingreen_current = (
+        #     quatrex_config.electron.solver.compute_current
+        # )
 
         self.dos_peak_limit = quatrex_config.electron.dos_peak_limit
 
@@ -238,7 +282,7 @@ class ElectronSolver(SubsystemSolver):
         )
 
         # Prepare Buffers for OBC.
-        self.obc_blocks = OBCBlocks(num_blocks=self.block_sizes.size)
+        self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
         self.block_sections = quatrex_config.electron.obc.block_sections
 
         self.call_count = 0
@@ -264,12 +308,11 @@ class ElectronSolver(SubsystemSolver):
 
         Parameters
         ----------
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The Green's function tuple. In the order (lesser, greater,
             retarded).
 
         """
-
         self.left_mid_gap_energy = xp.mean(left_band_edges)
         self.right_mid_gap_energy = xp.mean(right_band_edges)
 
@@ -282,7 +325,7 @@ class ElectronSolver(SubsystemSolver):
                 f"{left_conduction_band_edge}, {right_conduction_band_edge}",
                 flush=True,
             )
-            if comm.rank == 0
+            if global_comm.rank == 0
             else None
         )
 
@@ -325,136 +368,154 @@ class ElectronSolver(SubsystemSolver):
 
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
-        # Extract the overlap matrix blocks.
-        s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
-        s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
-        s_10 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (1, 0))
-        s_nn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -1))
-        s_nm = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -2))
-        s_mn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-2, -1))
+        if block_comm.rank == 0:
+            # Extract the overlap matrix blocks.
+            s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
+            s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
+            s_10 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (1, 0))
 
-        m_10, m_00, m_01 = get_periodic_superblocks(
-            a_ii=self.system_matrix.blocks[0, 0],
-            a_ji=self.system_matrix.blocks[1, 0],
-            a_ij=self.system_matrix.blocks[0, 1],
-            block_sections=self.block_sections,
-        )
-        m_mn, m_nn, m_nm = get_periodic_superblocks(
-            # Twist it, flip it, ...
-            a_ii=xp.flip(self.system_matrix.blocks[-1, -1], axis=(-2, -1)),
-            a_ji=xp.flip(self.system_matrix.blocks[-2, -1], axis=(-2, -1)),
-            a_ij=xp.flip(self.system_matrix.blocks[-1, -2], axis=(-2, -1)),
-            block_sections=self.block_sections,
-        )
-        # ... bop it.
-        m_nn = xp.flip(m_nn, axis=(-2, -1))
-        m_nm = xp.flip(m_nm, axis=(-2, -1))
-        m_mn = xp.flip(m_mn, axis=(-2, -1))
+            m_10, m_00, m_01 = get_periodic_superblocks(
+                a_ii=self.system_matrix.local_blocks[0, 0],
+                a_ji=self.system_matrix.local_blocks[1, 0],
+                a_ij=self.system_matrix.local_blocks[0, 1],
+                block_sections=self.block_sections,
+            )
 
-        g_00 = self.obc(
-            a_ii=m_00 + s_00,
-            a_ij=m_01 + s_01,
-            a_ji=m_10 + s_10,
-            contact="left",
-        )
-        g_nn = self.obc(
-            # Twist it, flip it, ...
-            a_ii=xp.flip(m_nn + s_nn, axis=(-2, -1)),
-            a_ij=xp.flip(m_nm + s_nm, axis=(-2, -1)),
-            a_ji=xp.flip(m_mn + s_mn, axis=(-2, -1)),
-            contact="right",
-        )
-        # ... bop it.
-        g_nn = xp.flip(g_nn, axis=(-2, -1))
+            g_00 = self.obc(
+                a_ii=m_00 + s_00,
+                a_ij=m_01 + s_01,
+                a_ji=m_10 + s_10,
+                contact="left",
+            )
+            # Apply the retarded boundary self-energy.
+            sigma_00 = m_10 @ g_00 @ m_01
+            self.obc_blocks.retarded[0] = sigma_00
+            gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
 
-        # NOTE: Here we could possibly do peak/discontinuity detection
-        # on the surface Green's function DOS (not same as actual DOS).
+            # Compute and apply the lesser boundary self-energy.
+            self.obc_blocks.lesser[0] = 1j * scale_stack(
+                gamma_00.copy(), self.left_occupancies
+            )
+            # Compute and apply the greater boundary self-energy.
+            self.obc_blocks.greater[0] = 1j * scale_stack(
+                gamma_00.copy(), self.left_occupancies - 1
+            )
+        if block_comm.rank == block_comm.size - 1:
+            # Extract the overlap matrix blocks.
+            s_nn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -1))
+            s_nm = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -2))
+            s_mn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-2, -1))
 
-        # Apply the retarded boundary self-energy.
-        sigma_00 = m_10 @ g_00 @ m_01
-        sigma_nn = m_mn @ g_nn @ m_nm
+            n = self.system_matrix.num_local_blocks - 1
+            m = n - 1
 
-        self.obc_blocks.retarded[0] = sigma_00
-        self.obc_blocks.retarded[-1] = sigma_nn
+            m_mn, m_nn, m_nm = get_periodic_superblocks(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(self.system_matrix.local_blocks[n, n], axis=(-2, -1)),
+                a_ji=xp.flip(self.system_matrix.local_blocks[m, n], axis=(-2, -1)),
+                a_ij=xp.flip(self.system_matrix.local_blocks[n, m], axis=(-2, -1)),
+                block_sections=self.block_sections,
+            )
+            # ... bop it.
+            m_nn = xp.flip(m_nn, axis=(-2, -1))
+            m_nm = xp.flip(m_nm, axis=(-2, -1))
+            m_mn = xp.flip(m_mn, axis=(-2, -1))
+            g_nn = self.obc(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(m_nn + s_nn, axis=(-2, -1)),
+                a_ij=xp.flip(m_nm + s_nm, axis=(-2, -1)),
+                a_ji=xp.flip(m_mn + s_mn, axis=(-2, -1)),
+                contact="right",
+            )
+            # ... bop it.
+            g_nn = xp.flip(g_nn, axis=(-2, -1))
 
-        gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
-        gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
+            # NOTE: Here we could possibly do peak/discontinuity detection
+            # on the surface Green's function DOS (not same as actual DOS).
 
-        # Compute and apply the lesser boundary self-energy.
-        self.obc_blocks.lesser[0] = 1j * scale_stack(
-            gamma_00.copy(), self.left_occupancies
-        )
-        self.obc_blocks.lesser[-1] = 1j * scale_stack(
-            gamma_nn.copy(), self.right_occupancies
-        )
+            # Apply the retarded boundary self-energy.
+            sigma_nn = m_mn @ g_nn @ m_nm
 
-        # Compute and apply the greater boundary self-energy.
-        self.obc_blocks.greater[0] = 1j * scale_stack(
-            gamma_00.copy(), self.left_occupancies - 1
-        )
-        self.obc_blocks.greater[-1] = 1j * scale_stack(
-            gamma_nn.copy(), self.right_occupancies - 1
-        )
+            self.obc_blocks.retarded[-1] = sigma_nn
 
-    def _assemble_system_matrix(self, sse_retarded: DSBSparse) -> None:
+            gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
+
+            self.obc_blocks.lesser[-1] = 1j * scale_stack(
+                gamma_nn.copy(), self.right_occupancies
+            )
+
+            self.obc_blocks.greater[-1] = 1j * scale_stack(
+                gamma_nn.copy(), self.right_occupancies - 1
+            )
+
+    def _assemble_system_matrix(self, sse_retarded: DSDBSparse) -> None:
         """Assembles the system matrix.
 
         Parameters
         ----------
-        sse_retarded : DSBSparse
+        sse_retarded : DSDBSparse
             The retarded scattering self-energy.
 
         """
-
         self.system_matrix.data = 0.0
         self.system_matrix += self.overlap_sparray
-
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
-
         self.system_matrix._data -= self.hamiltonian._data
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
 
-    def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
+    def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
 
         Parameters
         ----------
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The Green's function tuple. In the order (lesser, greater,
             retarded).
 
         """
         g_lesser, g_greater, g_retarded = out
-        local_dos = [
-            (-xp.diagonal(g_retarded.blocks[b, b], axis1=-2, axis2=-1).imag).mean(-1)
-            for b in range(g_retarded.num_blocks)
-        ]
+        # local_dos = [
+        #     (-xp.diagonal(block, axis1=-2, axis2=-1).imag).mean(-1)
+        #     for block in g_retarded.block_diagonal()
+        # ]
+
+        g_retarded_diag = g_retarded.diagonal()
+        block_sizes = g_retarded.block_sizes
+        block_offsets = g_retarded.block_offsets
+        local_dos = []
+        for i, (bsz, boff) in enumerate(zip(block_sizes, block_offsets)):
+            g_retarded_density = -g_retarded_diag[..., boff : boff + bsz].imag.mean(-1)
+            local_dos.append(g_retarded_density)
 
         if not NCCL_AVAILABLE:
-            dos = xp.hstack(comm.allgather(local_dos))
+            dos = xp.hstack(stack_comm.allgather(local_dos))
         else:
             # NOTE: NCCL does not expose all_gather_v. This is a hack.
             local_dos = xp.array(local_dos)
-            pad_width = g_lesser.total_stack_size // comm.size - local_dos.shape[1]
+            pad_width = (
+                g_lesser.total_stack_size // stack_comm.size - local_dos.shape[1]
+            )
             local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
             dos = xp.empty(
                 (local_dos.shape[0], g_lesser.total_stack_size), dtype=local_dos.dtype
             )
             synchronize_device()
-            nccl_comm.all_gather(local_dos, dos, local_dos.size)
+            nccl_stack_comm.all_gather(local_dos, dos, local_dos.size)
             synchronize_device()
             dos = dos[..., g_lesser._stack_padding_mask]
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
-        section_sizes, __ = get_section_sizes(self.energies.size, comm.size)
+        section_sizes, __ = get_section_sizes(self.energies.size, stack_comm.size)
         section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-        local_mask = mask[section_offsets[comm.rank] : section_offsets[comm.rank + 1]]
+        local_mask = mask[
+            section_offsets[stack_comm.rank] : section_offsets[stack_comm.rank + 1]
+        ]
 
         g_lesser.data[local_mask] = 0.0
         g_greater.data[local_mask] = 0.0
@@ -463,22 +524,22 @@ class ElectronSolver(SubsystemSolver):
     @profiler.profile(level="basic")
     def solve(
         self,
-        sse_lesser: DSBSparse,
-        sse_greater: DSBSparse,
-        sse_retarded: DSBSparse,
-        out: tuple[DSBSparse, ...],
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        sse_retarded: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
     ):
         """Solves for the electron Green's function.
 
         Parameters
         ----------
-        sse_lesser : DSBSparse
+        sse_lesser : DSDBSparse
             The lesser self-energy.
-        sse_greater : DSBSparse
+        sse_greater : DSDBSparse
             The greater self-energy.
-        sse_retarded : DSBSparse
+        sse_retarded : DSDBSparse
             The retarded self-energy.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
             retarded).
 
@@ -491,9 +552,9 @@ class ElectronSolver(SubsystemSolver):
             homogenize(sse_retarded)
             synchronize_device()
             time_homogenize_end = time.perf_counter()
-            comm.Barrier()
+            global_comm.Barrier()
             time_homogenize_end_all = time.perf_counter()
-            if comm.rank == 0:
+            if global_comm.rank == 0:
                 print(
                     f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
                     flush=True,
@@ -507,9 +568,9 @@ class ElectronSolver(SubsystemSolver):
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
-        comm.Barrier()
+        global_comm.Barrier()
         t_assemble_end_all = time.perf_counter()
-        if comm.rank == 0:
+        if global_comm.rank == 0:
             print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
             print(
                 f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
@@ -534,9 +595,9 @@ class ElectronSolver(SubsystemSolver):
 
             synchronize_device()
             t_band_edges_end = time.perf_counter()
-            comm.Barrier()
+            global_comm.Barrier()
             t_band_edges_end_all = time.perf_counter()
-            if comm.rank == 0:
+            if global_comm.rank == 0:
                 print(
                     f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
                 )
@@ -549,27 +610,26 @@ class ElectronSolver(SubsystemSolver):
         self._compute_obc()
         synchronize_device()
         t_obc_end = time.perf_counter()
-        comm.Barrier()
+        global_comm.Barrier()
         t_obc_end_all = time.perf_counter()
-        if comm.rank == 0:
+        if global_comm.rank == 0:
             print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
             print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
 
         t_solve_start = time.perf_counter()
-        self.meir_wingreen_current = self.solver.selected_solve(
+        self.solver_dist.selected_solve(
             a=self.system_matrix,
             sigma_lesser=sse_lesser,
             sigma_greater=sse_greater,
             obc_blocks=self.obc_blocks,
             out=out,
             return_retarded=True,
-            return_current=self.compute_meir_wingreen_current,
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
-        comm.Barrier()
+        global_comm.Barrier()
         t_solve_end_all = time.perf_counter()
-        if comm.rank == 0:
+        if global_comm.rank == 0:
             print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
             print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
@@ -578,9 +638,9 @@ class ElectronSolver(SubsystemSolver):
             self._filter_peaks(out)
         synchronize_device()
         t_filter_peaks_end = time.perf_counter()
-        comm.Barrier()
+        global_comm.Barrier()
         t_filter_peaks_end_all = time.perf_counter()
-        if comm.rank == 0:
+        if global_comm.rank == 0:
             print(
                 f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
                 flush=True,
@@ -595,55 +655,86 @@ class ElectronSolver(SubsystemSolver):
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
-            s_00 = self._get_block(self.overlap_sparray, (0, 0))
-            s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-            g_00 = g_retarded.blocks[0, 0]
-            g_nn = g_retarded.blocks[-1, -1]
+            left_band_edges, right_band_edges = None, None
 
-            local_left_dos = -xp.mean(
-                xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
-            )
-            local_right_dos = -xp.mean(
-                xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
-            )
+            if block_comm.rank == 0:
+                s_00 = self._get_block(self.overlap_sparray, (0, 0))
+                g_00 = g_retarded.blocks[0, 0]
 
-            if not NCCL_AVAILABLE:
-                left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
-                right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
-            else:
-                # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
-
-                left_dos = xp.pad(left_dos, (0, pad_width))
-                right_dos = xp.pad(right_dos, (0, pad_width))
-
-                full_left_dos = xp.empty(
-                    (g_retarded.total_stack_size,), dtype=left_dos.dtype
+                local_left_dos = -xp.mean(
+                    xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
                 )
-                full_right_dos = xp.empty(
-                    (g_retarded.total_stack_size,), dtype=right_dos.dtype
+
+                if not NCCL_AVAILABLE:
+                    left_dos = xp.hstack(stack_comm.allgather(local_left_dos)) / (
+                        2 * xp.pi
+                    )
+                else:
+                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+                    pad_width = (
+                        g_retarded.total_stack_size // stack_comm.size
+                        - left_dos.shape[0]
+                    )
+
+                    left_dos = xp.pad(left_dos, (0, pad_width))
+
+                    full_left_dos = xp.empty(
+                        (g_retarded.total_stack_size,), dtype=left_dos.dtype
+                    )
+                    synchronize_device()
+                    nccl_stack_comm.all_gather(left_dos, full_left_dos, left_dos.size)
+                    synchronize_device()
+
+                    left_dos = full_left_dos[g_retarded._stack_padding_mask]
+
+                e_0_left = find_dos_peaks(left_dos, self.energies)
+                left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
+
+            if block_comm.rank == block_comm.size - 1:
+                s_nn = self._get_block(self.overlap_sparray, (-1, -1))
+                g_nn = g_retarded.blocks[-1, -1]
+                local_right_dos = -xp.mean(
+                    xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
                 )
-                synchronize_device()
-                nccl_comm.all_gather(left_dos, full_left_dos, left_dos.size)
-                synchronize_device()
-                nccl_comm.all_gather(right_dos, full_right_dos, right_dos.size)
-                synchronize_device()
 
-                left_dos = full_left_dos[g_retarded._stack_padding_mask]
-                right_dos = full_right_dos[g_retarded._stack_padding_mask]
+                if not NCCL_AVAILABLE:
+                    right_dos = xp.hstack(stack_comm.allgather(local_right_dos)) / (
+                        2 * xp.pi
+                    )
+                else:
+                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
+                    pad_width = (
+                        g_retarded.total_stack_size // stack_comm.size
+                        - right_dos.shape[0]
+                    )
 
-            e_0_left = find_dos_peaks(left_dos, self.energies)
-            e_0_right = find_dos_peaks(right_dos, self.energies)
+                    right_dos = xp.pad(right_dos, (0, pad_width))
 
-            left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
-            right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
+                    full_right_dos = xp.empty(
+                        (g_retarded.total_stack_size,), dtype=right_dos.dtype
+                    )
+                    synchronize_device()
+                    nccl_stack_comm.all_gather(
+                        right_dos, full_right_dos, right_dos.size
+                    )
+                    synchronize_device()
+
+                    right_dos = full_right_dos[g_retarded._stack_padding_mask]
+
+                e_0_right = find_dos_peaks(right_dos, self.energies)
+                right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
+
+            left_band_edges = _bcast(left_band_edges, num_values=2, root=0, block=True)
+            right_band_edges = _bcast(
+                right_band_edges, num_values=2, root=block_comm.size - 1, block=True
+            )
 
             self._update_fermi_levels(left_band_edges, right_band_edges)
             synchronize_device()
             t_dos_peaks_end = time.perf_counter()
-            comm.Barrier()
+            global_comm.Barrier()
             t_dos_peaks_end_all = time.perf_counter()
-            if comm.rank == 0:
+            if global_comm.rank == 0:
                 print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
                 print(
                     f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",

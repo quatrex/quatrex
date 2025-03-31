@@ -29,7 +29,11 @@ def homogenize(matrix: DSBSparse) -> None:
 def compute_sparsity_pattern(
     positions: NDArray,
     cutoff_distance: float,
+    transport_direction: str = "x",
     strategy: str = "box",
+    start_idx: int = 0,
+    end_idx: int = None,
+    batch_size: int = 1000,
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern for the interaction matrix.
 
@@ -39,6 +43,8 @@ def compute_sparsity_pattern(
         The grid points.
     interaction_cutoff : float
         The interaction cutoff.
+    transport_direction : str, optional
+        The transport direction, by default 'x'.
     strategy : str, optional
         The strategy to use, by default "box", where only the distance
         along the transport direction is considered. The other option is
@@ -55,26 +61,44 @@ def compute_sparsity_pattern(
 
         def distance(x, y):
             """Euclidean distance."""
-            return xp.linalg.norm(x - y, axis=-1)
+            return xp.linalg.norm(x[..., xp.newaxis, :] - y[xp.newaxis, ...], axis=-1)
 
     elif strategy == "box":
 
+        idx = {"x": 0, "y": 1, "z": 2}[transport_direction]
+
         def distance(x, y):
             """Distance along transport direction."""
-            return xp.abs(x[..., 0] - y[..., 0])
+            return xp.abs(x[..., idx][..., xp.newaxis] - y[..., idx][xp.newaxis, ...])
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
-    rows, cols = [], []
-    for i, position in enumerate(positions):
-        distances = distance(positions, position)
-        interacting = xp.where(distances < cutoff_distance)[0]
-        cols.extend(interacting)
-        rows.extend([i] * len(interacting))
+    end_idx = end_idx or len(positions)
 
-    rows, cols = xp.array(rows), xp.array(cols)
-    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
+    num_diags = end_idx - start_idx
+
+    rows, cols = [], []
+
+    for i in range(
+        start_idx, max(start_idx + 2 * num_diags, len(positions)), batch_size
+    ):
+        positions_batch = positions[i : i + batch_size]
+        distances = distance(positions, positions_batch)
+
+        batch_cols, batch_rows = xp.where(distances < cutoff_distance)
+        local_mask = (((batch_rows + i) >= start_idx) & (batch_cols >= start_idx)) & (
+            ((batch_rows + i) < end_idx) | (batch_cols < end_idx)
+        )
+
+        cols.append(batch_cols[local_mask])
+        rows.append(i + batch_rows[local_mask])
+
+    rows, cols = xp.hstack(rows), xp.hstack(cols)
+    return sparse.coo_matrix(
+        (xp.ones_like(rows, dtype=xp.float32), (rows, cols)),
+        shape=(len(positions), len(positions)),
+    )
 
 
 def compute_num_connected_blocks(

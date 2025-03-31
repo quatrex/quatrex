@@ -10,7 +10,7 @@ from qttools.utils.gpu_utils import synchronize_device
 
 
 def get_block(
-    coo: sparse.coo_matrix,
+    coo: sparse.coo_matrix | DSBSparse,
     block_sizes: NDArray,
     block_offsets: NDArray,
     index: tuple,
@@ -35,6 +35,9 @@ def get_block(
 
     """
     row, col = index
+
+    if isinstance(coo, DSBSparse):
+        return coo.blocks[row, col]
 
     mask = (
         (block_offsets[row] <= coo.row)
@@ -182,7 +185,9 @@ def contact_currents(
     )
 
 
-def device_current(x_lesser: DSBSparse, operator: sparse.spmatrix) -> NDArray:
+def device_current(
+    x_lesser: DSBSparse, operator: sparse.spmatrix | DSBSparse
+) -> NDArray:
     """Computes the current from the lesser Green's function.
 
     Parameters
@@ -198,7 +203,8 @@ def device_current(x_lesser: DSBSparse, operator: sparse.spmatrix) -> NDArray:
         The current, gathered across all participating ranks.
 
     """
-    operator = operator.tocoo()
+    if isinstance(operator, sparse.spmatrix):
+        operator = operator.tocoo()
     _operator_block = partial(
         get_block, operator, x_lesser.block_sizes, x_lesser.block_offsets
     )

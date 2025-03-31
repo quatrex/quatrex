@@ -8,6 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -156,11 +157,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         """
 
         t_block_reorder_start = time.perf_counter()
-        if w_lesser.nnz != g_lesser.nnz:
-            raise ValueError(
-                "The sparsity pattern of w_lesser and g_lesser must match."
-                "Something went horribly wrong."
-            )
 
         # Save the block sizes for later.
         if self.big_block_sizes is None:
@@ -434,18 +430,32 @@ class SigmaFock(ScatteringSelfEnergy):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
-        coulomb_matrix_sparray = distributed_load(
-            quatrex_config.input_dir / "coulomb_matrix.npz"
-        ).astype(xp.complex128)
-        # Make sure that the Coulomb matrix is Hermitian.
-        coulomb_matrix_sparray = (
-            0.5 * (coulomb_matrix_sparray + coulomb_matrix_sparray.conj().T)
-        ).tocoo()
+        if quatrex_config.device.construct_from_unit_cell:
+            coulomb_matrix_unit_cells = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+            ).astype(xp.complex128)
+            coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                cutoff_hr(
+                    coulomb_matrix_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                return_sparse=True,
+            )
+            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+            block_sizes = get_host(block_sizes)
 
-        # Load block sizes for the coulomb matrix.
-        block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        else:
+            coulomb_matrix_sparray = distributed_load(
+                quatrex_config.input_dir / "coulomb_matrix.npz"
+            ).astype(xp.complex128)
+
+            # Load block sizes for the coulomb matrix.
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
 
         # Create the DSBSparse object.
         # TODO: This is pretty wasteful memory-wise.
@@ -457,8 +467,14 @@ class SigmaFock(ScatteringSelfEnergy):
         )
         coulomb_matrix.data = 0.0
         coulomb_matrix += coulomb_matrix_sparray
+        del coulomb_matrix_sparray
+
+        # Make sure that the Coulomb matrix is Hermitian.
+        coulomb_matrix.symmetrize()
         coulomb_matrix.dtranspose()
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = (
+            coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r
+        )
 
     @profiler.profile(level="api")
     def compute(self, g_lesser: DSBSparse, out: tuple[DSBSparse, ...]) -> None:
@@ -494,8 +510,8 @@ class SigmaFock(ScatteringSelfEnergy):
                 flush=True,
             )
 
-        t_sse_start = time.perf_counter()
         # Compute the electron density by summing over energies.
+        t_sse_start = time.perf_counter()
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
         synchronize_device()

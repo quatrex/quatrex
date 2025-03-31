@@ -12,6 +12,15 @@ from qttools.utils.mpi_utils import get_section_sizes
 profiler = Profiler()
 
 
+def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns upper triangular rows and cols."""
+    mask = cols < rows
+    temp = rows[mask]
+    rows[mask] = cols[mask]
+    cols[mask] = temp
+    return rows, cols, mask
+
+
 class DSDBCOO(DSDBSparse):
     """A Distributed Stack of Distributed Block-accessible COO matrices.
 
@@ -129,22 +138,22 @@ class DSDBCOO(DSDBSparse):
         # coordinates.
 
         if self.symmetry:
-            rows, cols, mask_transposed = self._upper_triangle(
-                rows, cols
-            )  # find items in lower triangle and send them to upper triangle
-
+            # find items in lower triangle and send them to upper triangle
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
             inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
                 rows[~mask_transposed],
                 cols[~mask_transposed],
             )
+            value_inds = (~mask_transposed).nonzero()[0][value_inds]
             inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
                 rows[mask_transposed],
                 cols[mask_transposed],
             )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
+            value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
             if max_counts not in (0, 1) or max_counts_t not in (0, 1):
                 raise IndexError(
                     "Request contains repeated indices. Only unique indices are supported."
@@ -175,7 +184,9 @@ class DSDBCOO(DSDBSparse):
 
         if self.symmetry:
             # This does not yet work
-            assert False
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
 
         # NOTE: This causes problems with the block-distribution, so
         # this is commented out for now. If you request elements outside
@@ -229,9 +240,8 @@ class DSDBCOO(DSDBSparse):
         """
 
         if self.symmetry:
-            rows, cols, mask_transposed = self._upper_triangle(
-                rows, cols
-            )  # items of upper triangle of the matrix
+            # items of upper triangle of the matrix
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
         # We need to shift the local rows and cols to the global
         # coordinates.
@@ -270,8 +280,9 @@ class DSDBCOO(DSDBSparse):
             return
 
         if self.symmetry:
-            # This does not yet work
-            assert False
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
@@ -369,26 +380,29 @@ class DSDBCOO(DSDBSparse):
             `(rows, cols, data)`.
 
         """
+        if self.symmetry and (col < row):
+            block = self._get_block(arg, row=col, col=row, is_index=is_index)
+            return xp.ascontiguousarray(self.symmetry_op(block.swapaxes(-1, -2)))
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
 
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+        block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
+            if self.symmetry:
+                # TODO: If really needed, this will need some more thinking.
+                raise NotImplementedError(
+                    "Sparse blocks with symmetry not implemented."
+                )
             if block_slice.start is None and block_slice.stop is None:
                 # No data in this block, return an empty block.
                 return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
 
             rows = self.rows[block_slice] - self.local_block_offsets[row]
             cols = self.cols[block_slice] - self.local_block_offsets[col]
-
-            if self.symmetry and (col < row):
-                return cols, rows, self.symmetry_op(data_stack[..., block_slice])
 
             return rows, cols, data_stack[..., block_slice]
 
@@ -401,45 +415,18 @@ class DSDBCOO(DSDBSparse):
             # No data in this block, return an empty block.
             return block
 
-        if self.symmetry and (col < row):
-            block_upper = xp.zeros_like(block.swapaxes(-1, -2))
-            dsbcoo_kernels.densify_block(
-                block_upper,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.local_block_offsets[col],
-                self.local_block_offsets[row],
-            )
-            block = self.symmetry_op(block_upper.swapaxes(-1, -2))
-        elif self.symmetry and (col == row):
-            block_upper = xp.zeros_like(block)
-            dsbcoo_kernels.densify_block(
-                block_upper,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.local_block_offsets[row],
-                self.local_block_offsets[col],
-            )
-            block = block_upper + self.symmetry_op(block_upper.swapaxes(-1, -2))
-            block[..., range(block.shape[-1]), range(block.shape[-1])] = (
-                block[..., range(block.shape[-1]), range(block.shape[-1])] / 2
-            )
-        else:  # no symmetry or upper off-diagonal block
-            dsbcoo_kernels.densify_block(
-                block,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.local_block_offsets[row],
-                self.local_block_offsets[col],
-            )
-
-        block = xp.ascontiguousarray(block)
+        dsbcoo_kernels.densify_block(
+            block,
+            self.rows,
+            self.cols,
+            data_stack,
+            block_slice,
+            self.local_block_offsets[row],
+            self.local_block_offsets[col],
+        )
+        if self.symmetry and (col == row):
+            block += self.symmetry_op(block.swapaxes(-1, -2))
+            block[..., *xp.diag_indices(block.shape[-1])] /= 2
 
         return block
 
@@ -476,28 +463,24 @@ class DSDBCOO(DSDBSparse):
             representation of the block.
 
         """
+        if self.symmetry:
+            # TODO: If needed, this will need some more thinking.
+            raise NotImplementedError("Sparse blocks with symmetry not implemented.")
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
 
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+        block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return xp.empty(data_stack.shape[:-1] + (0,)), (xp.empty(0), xp.empty(0))
 
-        if self.symmetry and (col < row):
-            rows = self.cols[block_slice] - self.local_block_offsets[col]
-            cols = self.rows[block_slice] - self.local_block_offsets[row]
-            return self.symmetry_op(data_stack[..., block_slice]), (rows, cols)
-        else:
-            rows = self.rows[block_slice] - self.local_block_offsets[row]
-            cols = self.cols[block_slice] - self.local_block_offsets[col]
-            return data_stack[..., block_slice], (rows, cols)
+        rows = self.rows[block_slice] - self.local_block_offsets[row]
+        cols = self.cols[block_slice] - self.local_block_offsets[col]
+        return data_stack[..., block_slice], (rows, cols)
 
     @profiler.profile(level="debug")
     def _set_block(
@@ -529,32 +512,33 @@ class DSDBCOO(DSDBSparse):
             Whether the argument is an index or a view. Default is True.
 
         """
+        if self.symmetry and (col < row):
+            # TODO: Probably worth testing if the block is symmetric.
+            self._set_block(
+                arg,
+                row=col,
+                col=row,
+                block=self.symmetry_op(block.swapaxes(-1, -2)),
+                is_index=is_index,
+            )
+            return
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+
+        block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
 
-        if self.symmetry and (col < row):
-            dsbcoo_kernels.sparsify_block(
-                self.symmetry_op(block.swapaxes(-1, -2)),
-                self.rows[block_slice] - self.local_block_offsets[col],
-                self.cols[block_slice] - self.local_block_offsets[row],
-                data_stack[..., block_slice],
-            )
-        else:
-            dsbcoo_kernels.sparsify_block(
-                block,
-                self.rows[block_slice] - self.local_block_offsets[row],
-                self.cols[block_slice] - self.local_block_offsets[col],
-                data_stack[..., block_slice],
-            )
+        dsbcoo_kernels.sparsify_block(
+            block,
+            self.rows[block_slice] - self.local_block_offsets[row],
+            self.cols[block_slice] - self.local_block_offsets[col],
+            data_stack[..., block_slice],
+        )
 
     @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSDBCOO") -> None:

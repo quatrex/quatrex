@@ -161,6 +161,12 @@ class DSBCOO(DSBSparse):
                 arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
 
+        if self.symmetry:
+            # This does not yet work
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
+
         if len(inds) != rows.size:
             # We cannot know which rank is supposed to hold an element
             # that is not in the matrix, so we raise an error.
@@ -239,6 +245,11 @@ class DSBCOO(DSBSparse):
                     value[..., value_inds[mask_transposed]]
                 )
             return
+
+        if self.symmetry:
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
@@ -334,28 +345,29 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
-        # print(self.symmetry)
-        # print(self.symmetry_op)
+        if self.symmetry and (col < row):
+            block = self._get_block(arg, row=col, col=row, is_index=is_index)
+            return xp.ascontiguousarray(self.symmetry_op(block.swapaxes(-1, -2)))
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
 
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+        block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
+            if self.symmetry:
+                # TODO: If really needed, this will need some more thinking.
+                raise NotImplementedError(
+                    "Sparse blocks with symmetry not implemented."
+                )
             if block_slice.start is None and block_slice.stop is None:
                 # No data in this block, return an empty block.
                 return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
 
             rows = self.rows[block_slice] - self.block_offsets[row]
             cols = self.cols[block_slice] - self.block_offsets[col]
-
-            if self.symmetry and (col < row):
-                return cols, rows, self.symmetry_op(data_stack[..., block_slice])
 
             return rows, cols, data_stack[..., block_slice]
 
@@ -364,48 +376,23 @@ class DSBCOO(DSBSparse):
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
-
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block
 
-        if self.symmetry and (col < row):
-            block_upper = xp.zeros_like(block.swapaxes(-1, -2))
-            dsbcoo_kernels.densify_block(
-                block_upper,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.block_offsets[col],
-                self.block_offsets[row],
-            )
-            block = self.symmetry_op(block_upper.swapaxes(-1, -2))
-        elif self.symmetry and (col == row):
-            block_upper = xp.zeros_like(block)
-            dsbcoo_kernels.densify_block(
-                block_upper,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.block_offsets[row],
-                self.block_offsets[col],
-            )
-            block = block_upper + self.symmetry_op(block_upper.swapaxes(-1, -2))
-            block[..., range(block.shape[-1]), range(block.shape[-1])] = (
-                block[..., range(block.shape[-1]), range(block.shape[-1])] / 2
-            )
-        else:  # no symmetry or upper off-diagonal block
-            dsbcoo_kernels.densify_block(
-                block,
-                self.rows,
-                self.cols,
-                data_stack,
-                block_slice,
-                self.block_offsets[row],
-                self.block_offsets[col],
-            )
+        dsbcoo_kernels.densify_block(
+            block,
+            self.rows,
+            self.cols,
+            data_stack,
+            block_slice,
+            self.block_offsets[row],
+            self.block_offsets[col],
+        )
+
+        if self.symmetry and (col == row):
+            block += self.symmetry_op(block.swapaxes(-1, -2))
+            block[..., *xp.diag_indices(block.shape[-1])] /= 2
 
         return block
 
@@ -442,27 +429,24 @@ class DSBCOO(DSBSparse):
             representation of the block.
 
         """
+        if self.symmetry:
+            # TODO: If needed, this will need some more thinking.
+            raise NotImplementedError("Sparse blocks with symmetry not implemented.")
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+
+        block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return xp.empty(data_stack.shape[:-1] + (0,)), (xp.empty(0), xp.empty(0))
 
-        if self.symmetry and (col < row):
-            rows = self.cols[block_slice] - self.block_offsets[col]
-            cols = self.rows[block_slice] - self.block_offsets[row]
-            return self.symmetry_op(data_stack[..., block_slice]), (rows, cols)
-        else:
-            rows = self.rows[block_slice] - self.block_offsets[row]
-            cols = self.cols[block_slice] - self.block_offsets[col]
-            return data_stack[..., block_slice], (rows, cols)
+        rows = self.rows[block_slice] - self.block_offsets[row]
+        cols = self.cols[block_slice] - self.block_offsets[col]
+        return data_stack[..., block_slice], (rows, cols)
 
     @profiler.profile(level="debug")
     def _set_block(
@@ -494,31 +478,33 @@ class DSBCOO(DSBSparse):
             Whether the argument is an index or a view. Default is True.
 
         """
+        if self.symmetry and (col < row):
+            # TODO: Probably worth testing if the block is symmetric.
+            self._set_block(
+                arg,
+                row=col,
+                col=row,
+                block=self.symmetry_op(block.swapaxes(-1, -2)),
+                is_index=is_index,
+            )
+            return
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        if self.symmetry and (col < row):
-            block_slice = self._get_block_slice(col, row)
-        else:
-            block_slice = self._get_block_slice(row, col)
+
+        block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
             return
-        if self.symmetry and (col < row):
-            dsbcoo_kernels.sparsify_block(
-                self.symmetry_op(block.swapaxes(-1, -2)),
-                self.rows[block_slice] - self.block_offsets[col],
-                self.cols[block_slice] - self.block_offsets[row],
-                data_stack[..., block_slice],
-            )
-        else:
-            dsbcoo_kernels.sparsify_block(
-                block,
-                self.rows[block_slice] - self.block_offsets[row],
-                self.cols[block_slice] - self.block_offsets[col],
-                data_stack[..., block_slice],
-            )
+
+        dsbcoo_kernels.sparsify_block(
+            block,
+            self.rows[block_slice] - self.block_offsets[row],
+            self.cols[block_slice] - self.block_offsets[col],
+            data_stack[..., block_slice],
+        )
 
     @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSBSparse") -> None:

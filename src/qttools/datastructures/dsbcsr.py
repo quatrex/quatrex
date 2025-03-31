@@ -280,16 +280,21 @@ class DSBCSR(DSBSparse):
             arrays `(rowptr, cols, data)`.
 
         """
+        if self.symmetry and (col < row):
+            block = self._get_block(arg, row=col, col=row, is_index=is_index)
+            return xp.ascontiguousarray(self.symmetry_op(block.swapaxes(-1, -2)))
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        if self.symmetry and (col < row):
-            rowptr = self.rowptr_map.get((col, row), None)
-        else:
-            rowptr = self.rowptr_map.get((row, col), None)
+
+        rowptr = self.rowptr_map.get((row, col), None)
 
         if not self.return_dense:
+            if self.symmetry:
+                # TODO: If really needed, this will need some more thinking.
+                raise IndexError("Not implemented")
             if rowptr is None:
                 # No data in this block, return zeros.
                 return (
@@ -297,11 +302,9 @@ class DSBCSR(DSBSparse):
                     xp.empty(0),
                     xp.empty(data_stack.shape[:-1] + (0,)),
                 )
-            if self.symmetry and (col < row):
-                raise IndexError("Not implemented")
-            else:
-                cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
-                return rowptr - rowptr[0], cols, data_stack[..., rowptr[0] : rowptr[-1]]
+
+            cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
+            return rowptr - rowptr[0], cols, data_stack[..., rowptr[0] : rowptr[-1]]
 
         block = xp.zeros(
             data_stack.shape[:-1]
@@ -311,37 +314,17 @@ class DSBCSR(DSBSparse):
         if rowptr is None:
             # No data in this block, return zeros.
             return block
-        if self.symmetry and (col < row):
-            block_upper = xp.zeros_like(block.swapaxes(-1, -2))
-            dsbcsr_kernels.densify_block(
-                block=block_upper,
-                block_offset=self.block_offsets[row],
-                self_cols=self.cols,
-                rowptr=rowptr,
-                data=data_stack,
-            )
-            block = self.symmetry_op(block_upper.swapaxes(-1, -2))
-        elif self.symmetry and (col == row):
-            block_upper = xp.zeros_like(block.swapaxes(-1, -2))
-            dsbcsr_kernels.densify_block(
-                block=block_upper,
-                block_offset=self.block_offsets[row],
-                self_cols=self.cols,
-                rowptr=rowptr,
-                data=data_stack,
-            )
-            block = block_upper + self.symmetry_op(block_upper.swapaxes(-1, -2))
-            block[..., range(block.shape[-1]), range(block.shape[-1])] = (
-                block[..., range(block.shape[-1]), range(block.shape[-1])] / 2
-            )
-        else:  # no symmetry or upper off-diagonal block
-            dsbcsr_kernels.densify_block(
-                block=block,
-                block_offset=self.block_offsets[col],
-                self_cols=self.cols,
-                rowptr=rowptr,
-                data=data_stack,
-            )
+
+        dsbcsr_kernels.densify_block(
+            block=block,
+            block_offset=self.block_offsets[col],
+            self_cols=self.cols,
+            rowptr=rowptr,
+            data=data_stack,
+        )
+        if self.symmetry and (col == row):
+            block += self.symmetry_op(block.swapaxes(-1, -2))
+            block[..., *xp.diag_indices(block.shape[-1])] /= 2
 
         return block
 
@@ -378,6 +361,9 @@ class DSBCSR(DSBSparse):
             representation of the block.
 
         """
+        if self.symmetry:
+            # TODO: If really needed, this will need some more thinking.
+            raise NotImplementedError("Not implemented")
         if is_index:
             data_stack = self.data[*arg]
         else:
@@ -392,9 +378,8 @@ class DSBCSR(DSBSparse):
                 xp.zeros(int(self.block_sizes[row]) + 1),
             )
 
-        else:
-            cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
-            return data_stack[..., rowptr[0] : rowptr[-1]], cols, rowptr - rowptr[0]
+        cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
+        return data_stack[..., rowptr[0] : rowptr[-1]], cols, rowptr - rowptr[0]
 
     @profiler.profile(level="debug")
     def _set_block(
@@ -426,34 +411,33 @@ class DSBCSR(DSBSparse):
             Whether the argument is an index or a view. Default is True.
 
         """
+        if self.symmetry and (col < row):
+            # TODO: Probably worth testing if the block is symmetric.
+            self._set_block(
+                arg,
+                row=col,
+                col=row,
+                block=self.symmetry_op(block.swapaxes(-1, -2)),
+                is_index=is_index,
+            )
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
-        if self.symmetry and (col < row):
-            rowptr = self.rowptr_map.get((col, row), None)
-        else:
-            rowptr = self.rowptr_map.get((row, col), None)
+
+        rowptr = self.rowptr_map.get((row, col), None)
         if rowptr is None:
             # No data in this block, nothing to do.
             return
 
-        if self.symmetry and (col < row):
-            dsbcsr_kernels.sparsify_block(
-                block=self.symmetry_op(block.swapaxes(-1, -2)),
-                block_offset=self.block_offsets[row],
-                self_cols=self.cols,
-                rowptr=rowptr,
-                data=data_stack,
-            )
-        else:
-            dsbcsr_kernels.sparsify_block(
-                block=block,
-                block_offset=self.block_offsets[col],
-                self_cols=self.cols,
-                rowptr=rowptr,
-                data=data_stack,
-            )
+        dsbcsr_kernels.sparsify_block(
+            block=block,
+            block_offset=self.block_offsets[col],
+            self_cols=self.cols,
+            rowptr=rowptr,
+            data=data_stack,
+        )
 
     @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSBSparse") -> None:
@@ -482,6 +466,8 @@ class DSBCSR(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
+            symmetry=self.symmetry,
+            symmetry_op=self.symmetry_op,
         )
 
     @DSBSparse.block_sizes.setter

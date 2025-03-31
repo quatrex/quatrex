@@ -20,8 +20,7 @@ def _create_coo(
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
-    # density = rng.uniform(low=0.1, high=0.3)
-    density = 1.0
+    density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
     if symmetric:
         coo.data += 1j * rng.uniform(size=coo.nnz)
@@ -461,7 +460,10 @@ class TestAccess:
             else:
                 with pytest.raises(IndexError) if not in_bounds else nullcontext():
                     dsbsparse.blocks[accessed_block] = val
-                if densify_blocks is not None and accessed_block in densify_blocks:
+                if densify_blocks is not None and (
+                    accessed_block in densify_blocks
+                    or accessed_block[::-1] in densify_blocks
+                ):
                     # Sparsity structure should be modified.
                     assert xp.allclose(dsbsparse.to_dense()[..., *inds], val)
                     return

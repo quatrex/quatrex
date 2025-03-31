@@ -24,7 +24,8 @@ DENSIFY_BLOCKS = [
 ACCESSED_BLOCKS = [
     pytest.param((0, 0), id="first-block"),
     pytest.param((-1, -1), id="last-block"),
-    pytest.param((2, 4), id="random-block"),
+    pytest.param((4, 2), id="random-lower-block"),
+    pytest.param((2, 4), id="random-upper-block"),
     pytest.param((-9, 3), id="out-of-bounds"),
 ]
 

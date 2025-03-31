@@ -1,18 +1,31 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
+import time
 from functools import partial
 
-from qttools import NDArray, block_comm, sparse, stack_comm, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    NDArray,
+    block_comm,
+    global_comm,
+    nccl_block_comm,
+    nccl_stack_comm,
+    sparse,
+    stack_comm,
+    xp,
+)
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_device, get_host
-from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
+from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 from scipy import linalg as spla
 
 from quatrex.core.compute_config import BandEdgeConfig
 
 profiler = Profiler()
+
+GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -20,6 +33,38 @@ elif xp.__name__ == "cupy":
     from cupyx.scipy.signal import find_peaks
 else:
     raise ImportError("Unknown backend.")
+
+
+def _bcast(values: list | NDArray, num_values: int, root: int, block: bool) -> float:
+    """Broadcasts a list values to all ranks.
+
+    Parameters
+    ----------
+    value : float
+        The value to broadcast.
+    root : int
+        The rank to broadcast from.
+    """
+
+    if values is None:
+        buf = xp.empty(num_values, dtype=xp.float64)
+    else:
+        buf = xp.asarray(values)
+
+    if block:
+        mpi_comm, nccl_comm = block_comm, nccl_block_comm
+    else:
+        mpi_comm, nccl_comm = stack_comm, nccl_stack_comm
+
+    if NCCL_AVAILABLE:
+        nccl_comm.broadcast(buf, root)
+        synchronize_device()
+    elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
+        mpi_comm.Bcast(buf, root)
+    else:
+        mpi_comm.bcast(buf, root)
+
+    return buf
 
 
 def get_block(
@@ -228,12 +273,37 @@ def find_renormalized_eigenvalues(
                     left_valence_band + left_conduction_band_guess
                 ) / 2
 
-            left_conduction_band_guess = stack_comm.bcast(
-                left_conduction_band_guess, rank_left
+            # left_conduction_band_guess = stack_comm.bcast(
+            #     left_conduction_band_guess, rank_left
+            # )
+            # left_mid_gap_energy = stack_comm.bcast(left_mid_gap_energy, rank_left)
+            left_conduction_band_guess, left_mid_gap_energy = _bcast(
+                [left_conduction_band_guess, left_mid_gap_energy],
+                2,
+                rank_left,
+                block=False,
             )
-            left_mid_gap_energy = stack_comm.bcast(left_mid_gap_energy, rank_left)
 
-        e_0_left = stack_comm.bcast(e_0_left, rank_left)
+        # e_0_left = stack_comm.bcast(e_0_left, rank_left)
+        synchronize_device()
+        stack_comm.Barrier()
+        t_eigvals_start = time.perf_counter()
+        e_0_left = _bcast(
+            e_0_left, sigma_retarded.block_sizes[0], rank_left, block=False
+        )
+        synchronize_device()
+        t_eigvals_end = time.perf_counter()
+        stack_comm.Barrier()
+        t_eigvals_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"        Eigvals comm time: {t_eigvals_end - t_eigvals_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"        Eigvals comm all time: {t_eigvals_end_all - t_eigvals_start:.3f} s",
+                flush=True,
+            )
 
     if block_comm.rank == block_comm.size - 1:
         for __ in range(num_ref_iterations):
@@ -258,15 +328,28 @@ def find_renormalized_eigenvalues(
                     right_valence_band + right_conduction_band_guess
                 ) / 2
 
-            right_conduction_band_guess = stack_comm.bcast(
-                right_conduction_band_guess, rank_right
+            # right_conduction_band_guess = stack_comm.bcast(
+            #     right_conduction_band_guess, rank_right
+            # )
+            # right_mid_gap_energy = stack_comm.bcast(right_mid_gap_energy, rank_right)
+            right_conduction_band_guess, right_mid_gap_energy = _bcast(
+                [right_conduction_band_guess, right_mid_gap_energy],
+                2,
+                rank_right,
+                block=False,
             )
-            right_mid_gap_energy = stack_comm.bcast(right_mid_gap_energy, rank_right)
 
-        e_0_right = stack_comm.bcast(e_0_right, rank_right)
+        # e_0_right = stack_comm.bcast(e_0_right, rank_right)
+        e_0_right = _bcast(
+            e_0_right, sigma_retarded.block_sizes[-1], rank_right, block=False
+        )
 
-    e_0_left = block_comm.bcast(e_0_left, 0)
-    e_0_right = block_comm.bcast(e_0_right, block_comm.size - 1)
+    # e_0_left = block_comm.bcast(e_0_left, 0)
+    # e_0_right = block_comm.bcast(e_0_right, block_comm.size - 1)
+    e_0_left = _bcast(e_0_left, sigma_retarded.block_sizes[0], 0, block=True)
+    e_0_right = _bcast(
+        e_0_right, sigma_retarded.block_sizes[-1], block_comm.size - 1, block=True
+    )
 
     return e_0_left, e_0_right
 

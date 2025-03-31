@@ -136,7 +136,7 @@ class SCBAData:
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
             symmetry=symmetric,
-            symmetry_op=lambda a: - a.conj(),
+            symmetry_op=lambda a: -a.conj(),
         )
         self.g_lesser._data[:] = 0.0  # Initialize to zero.
         self.g_greater = dsbsparse_type.zeros_like(self.g_lesser)
@@ -149,7 +149,7 @@ class SCBAData:
         if quatrex_config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
-            
+
         self.sigma_lesser = dsbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsbsparse_type.zeros_like(self.g_lesser)
 
@@ -182,7 +182,7 @@ class SCBAData:
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
                 symmetry=symmetric,
-                symmetry_op=lambda a: - a.conj(),
+                symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsbsparse_type.zeros_like(self.w_lesser)
 
@@ -497,7 +497,7 @@ class SCBA:
         self.data.sigma_lesser._data.real = 0
         self.data.sigma_greater._data.real = 0
 
-        self.data.sigma_retarded._data.imag = 0.0        
+        self.data.sigma_retarded._data.imag = 0.0
 
         # Make the remaining real part Hermitian.
         if not self.quatrex_config.scba.symmetric:

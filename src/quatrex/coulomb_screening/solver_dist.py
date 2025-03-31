@@ -237,7 +237,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
             symmetry=quatrex_config.scba.symmetric,
-            symmetry_op=lambda a: - a.conj(),
+            symmetry_op=lambda a: -a.conj(),
         )
         self.l_lesser.data = 0.0
         # Explicitely try to free the memory for the sparsity pattern.

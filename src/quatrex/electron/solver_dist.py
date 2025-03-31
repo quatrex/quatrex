@@ -148,6 +148,8 @@ class ElectronSolverDist(SubsystemSolver):
             hamiltonian_sparray.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=(stack_comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
         )
         del hamiltonian_sparray
 
@@ -466,7 +468,6 @@ class ElectronSolverDist(SubsystemSolver):
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
-
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

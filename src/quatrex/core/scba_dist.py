@@ -40,11 +40,6 @@ from quatrex.photon import PhotonSolver, PiPhoton
 profiler = Profiler()
 
 
-
-global symmetry_op
-def symmetry_op(a):
-    return -a.conj()
-
 class SCBADataDist:
     """Data container class for the SCBA.
 
@@ -161,18 +156,18 @@ class SCBADataDist:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
-            symmetry = quatrex_config.scba.symmetric,
-            symmetry_op=symmetry_op,
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=lambda a: -a.conj(),
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
         self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)        
+        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)        
+        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
         if quatrex_config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
@@ -206,7 +201,7 @@ class SCBADataDist:
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
                 symmetry=quatrex_config.scba.symmetric,
-                symmetry_op=lambda a: - a.conj(),
+                symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 

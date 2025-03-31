@@ -312,7 +312,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_retarded._data[
                         sigma_retarded._stack_padding_mask, ..., batch
                     ] += (
-                        xp.real(self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne])
+                        xp.real(
+                            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                        )
                         + antihermitian / 2
                     ).T
 

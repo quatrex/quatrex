@@ -13,6 +13,15 @@ from qttools.utils.sparse_utils import densify_selected_blocks
 profiler = Profiler()
 
 
+def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns upper triangular rows and cols."""
+    mask = cols < rows
+    temp = rows[mask]
+    rows[mask] = cols[mask]
+    cols[mask] = temp
+    return rows, cols, mask
+
+
 class DSBCOO(DSBSparse):
     """Distributed stack of sparse matrices in coordinate format.
 
@@ -50,9 +59,18 @@ class DSBCOO(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> None:
-        """Initializes the DSBCOO matrix."""
-        super().__init__(data, block_sizes, global_stack_shape, return_dense)
+        """Initializes the DBCOO matrix."""
+        super().__init__(
+            data,
+            block_sizes,
+            global_stack_shape,
+            return_dense,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
 
         self.rows = rows.astype(xp.int32)
         self.cols = cols.astype(xp.int32)
@@ -106,20 +124,48 @@ class DSBCOO(DSBSparse):
             The requested items.
 
         """
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-            self.rows, self.cols, rows, cols
-        )
-        if max_counts not in (0, 1):
-            raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
+        if self.symmetry:
+            # find items in lower triangle and send them to upper triangle
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
+
+            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows[~mask_transposed], cols[~mask_transposed]
             )
+            value_inds = (~mask_transposed).nonzero()[0][value_inds]
+            inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows[mask_transposed], cols[mask_transposed]
+            )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
+            value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
+            if max_counts not in (0, 1) or max_counts_t not in (0, 1):
+                raise IndexError(
+                    "Request contains repeated indices. Only unique indices are supported."
+                )
+        else:
+            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+                self.rows, self.cols, rows, cols
+            )
+            if max_counts not in (0, 1):
+                raise IndexError(
+                    "Request contains repeated indices. Only unique indices are supported."
+                )
 
         data_stack = self.data[*stack_index]
 
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
-            arr[..., value_inds] = data_stack[..., inds]
+
+            if self.symmetry:
+                arr[..., value_inds] = data_stack[..., inds]
+                arr[..., value_inds_t] = self.symmetry_op(data_stack[..., inds_t])
+            else:
+                arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
+
+        if self.symmetry:
+            # This does not yet work
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
 
         if len(inds) != rows.size:
             # We cannot know which rank is supposed to hold an element
@@ -167,12 +213,16 @@ class DSBCOO(DSBSparse):
             The value to set.
 
         """
+        if self.symmetry:
+            # items of upper triangle of the matrix
+            rows, cols, mask_transposed = _upper_triangle(rows, cols)
+
         inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
             self.rows, self.cols, rows, cols
         )
         if max_counts not in (0, 1):
             raise IndexError(
-                "Request contains repeated indices. Only unique indices are supported."
+                "Request contains repeated (equivalent) indices. Only unique indices are supported."
             )
 
         if len(inds) == 0:
@@ -183,10 +233,23 @@ class DSBCOO(DSBSparse):
         if self.distribution_state == "stack":
             if value.ndim == 0:
                 self.data[*stack_index][..., inds] = value
+                if self.symmetry:
+                    self.data[*stack_index][..., inds[mask_transposed]] = (
+                        self.symmetry_op(value)
+                    )
                 return
 
             self.data[*stack_index][..., inds] = value[..., value_inds]
+            if self.symmetry:
+                self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
+                    value[..., value_inds[mask_transposed]]
+                )
             return
+
+        if self.symmetry:
+            raise NotImplementedError(
+                "Symmetry not yet implemented for nnz distribution."
+            )
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
@@ -282,20 +345,30 @@ class DSBCOO(DSBSparse):
             `(rows, cols, data)`.
 
         """
+        if self.symmetry and (col < row):
+            block = self._get_block(arg, row=col, col=row, is_index=is_index)
+            return xp.ascontiguousarray(self.symmetry_op(block.swapaxes(-1, -2)))
 
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
+
         block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
+            if self.symmetry:
+                # TODO: If really needed, this will need some more thinking.
+                raise NotImplementedError(
+                    "Sparse blocks with symmetry not implemented."
+                )
             if block_slice.start is None and block_slice.stop is None:
                 # No data in this block, return an empty block.
                 return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
 
             rows = self.rows[block_slice] - self.block_offsets[row]
             cols = self.cols[block_slice] - self.block_offsets[col]
+
             return rows, cols, data_stack[..., block_slice]
 
         block = xp.zeros(
@@ -316,6 +389,10 @@ class DSBCOO(DSBSparse):
             self.block_offsets[row],
             self.block_offsets[col],
         )
+
+        if self.symmetry and (col == row):
+            block += self.symmetry_op(block.swapaxes(-1, -2))
+            block[..., *xp.diag_indices(block.shape[-1])] /= 2
 
         return block
 
@@ -352,10 +429,15 @@ class DSBCOO(DSBSparse):
             representation of the block.
 
         """
+        if self.symmetry:
+            # TODO: If needed, this will need some more thinking.
+            raise NotImplementedError("Sparse blocks with symmetry not implemented.")
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
+
         block_slice = self._get_block_slice(row, col)
 
         if block_slice.start is None and block_slice.stop is None:
@@ -396,10 +478,22 @@ class DSBCOO(DSBSparse):
             Whether the argument is an index or a view. Default is True.
 
         """
+        if self.symmetry and (col < row):
+            # TODO: Probably worth testing if the block is symmetric.
+            self._set_block(
+                arg,
+                row=col,
+                col=row,
+                block=self.symmetry_op(block.swapaxes(-1, -2)),
+                is_index=is_index,
+            )
+            return
+
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
+
         block_slice = self._get_block_slice(row, col)
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, nothing to do.
@@ -439,6 +533,8 @@ class DSBCOO(DSBSparse):
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
+            symmetry=self.symmetry,
+            symmetry_op=self.symmetry_op,
         )
 
     @DSBSparse.block_sizes.setter
@@ -536,6 +632,20 @@ class DSBCOO(DSBSparse):
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
+        if self.symmetry:
+            if copy:
+                self = DSBCOO(
+                    self.data.copy(),
+                    self.rows.copy(),
+                    self.cols.copy(),
+                    self.block_sizes,
+                    self.global_stack_shape,
+                    symmetry=self.symmetry,
+                    symmetry_op=self.symmetry_op,
+                )
+            self.data[:] = self.symmetry_op(self.data)
+            return self if copy else None
+
         if copy:
             self = DSBCOO(
                 self.data.copy(),
@@ -543,6 +653,8 @@ class DSBCOO(DSBSparse):
                 self.cols.copy(),
                 self.block_sizes,
                 self.global_stack_shape,
+                symmetry=self.symmetry,
+                symmetry_op=self.symmetry_op,
             )
 
         if not (
@@ -605,6 +717,10 @@ class DSBCOO(DSBSparse):
             is addition.
 
         """
+        if self.symmetry:
+            # Already symmetric, nothing to do.
+            return
+
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
 
@@ -641,7 +757,8 @@ class DSBCOO(DSBSparse):
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = 0.5 * op(
-                data[stack_idx], data[stack_idx, self._inds_bcoo2bcoo_t].conj()
+                data[stack_idx],
+                xp.conj(data[stack_idx, self._inds_bcoo2bcoo_t]),
             )
 
     @profiler.profile(level="api")
@@ -671,6 +788,8 @@ class DSBCOO(DSBSparse):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> "DSBCOO":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
@@ -708,6 +827,9 @@ class DSBCOO(DSBSparse):
         # Canonicalizes the COO format.
         coo.sum_duplicates()
 
+        if symmetry:
+            coo = sparse.triu(coo, format="coo")
+
         # Compute the block-sorting index.
         block_sort_index = dsbcoo_kernels.compute_block_sort_index(
             coo.row, coo.col, block_sizes
@@ -724,4 +846,6 @@ class DSBCOO(DSBSparse):
             cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )

@@ -80,6 +80,8 @@ class DSDBSparse(ABC):
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ):
         """Initializes a DSBDSparse matrix."""
 
@@ -95,6 +97,8 @@ class DSDBSparse(ABC):
             )
 
         self.global_stack_shape = global_stack_shape
+        self.symmetry = symmetry
+        self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
         if block_comm is None or stack_comm is None:
@@ -852,6 +856,8 @@ class DSDBSparse(ABC):
         arr: sparse.spmatrix,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> "DSDBSparse":
         """Creates a new DSDBSparse matrix from a scipy.sparse array.
 
@@ -929,6 +935,7 @@ class _DStackView:
     def __init__(self, dsdbsparse: DSDBSparse, stack_index: tuple) -> None:
         """Initializes the stack indexer."""
         self._dsdbsparse = dsdbsparse
+        self.symmetry = dsdbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)

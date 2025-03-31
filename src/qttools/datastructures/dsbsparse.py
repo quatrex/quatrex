@@ -167,6 +167,8 @@ class DSBSparse(ABC):
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> None:
         """Initializes the DSBSparse matrix."""
         if isinstance(global_stack_shape, int):
@@ -178,6 +180,8 @@ class DSBSparse(ABC):
             )
 
         self.global_stack_shape = global_stack_shape
+        self.symmetry = symmetry
+        self.symmetry_op = symmetry_op
 
         # Determine how the data is distributed across the ranks.
         stack_section_sizes, total_stack_size = get_section_sizes(
@@ -906,6 +910,8 @@ class DSBSparse(ABC):
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
         pinned: bool = False,
+        symmetry: bool | None = False,
+        symmetry_op: Callable = xp.conj,
     ) -> "DSBSparse":
         """Creates a new DSBSparse matrix from a scipy.sparse array.
 
@@ -990,6 +996,7 @@ class _DStackView:
     def __init__(self, dsbsparse: DSBSparse, stack_index: tuple) -> None:
         """Initializes the stack indexer."""
         self._dsbsparse = dsbsparse
+        self.symmetry = dsbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
         stack_index = self._replace_ellipsis(stack_index)

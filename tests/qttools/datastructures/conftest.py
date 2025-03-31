@@ -24,7 +24,8 @@ DENSIFY_BLOCKS = [
 ACCESSED_BLOCKS = [
     pytest.param((0, 0), id="first-block"),
     pytest.param((-1, -1), id="last-block"),
-    pytest.param((2, 4), id="random-block"),
+    pytest.param((4, 2), id="random-lower-block"),
+    pytest.param((2, 4), id="random-upper-block"),
     pytest.param((-9, 3), id="out-of-bounds"),
 ]
 
@@ -61,6 +62,14 @@ BLOCK_CHANGE_FACTORS = [
 OPS = [
     pytest.param(xp.add, id="add"),
     pytest.param(xp.subtract, id="subtract"),
+]
+
+SYMMETRY_TYPE = [
+    pytest.param((False, lambda x: x), id="non-symmetric"),
+    pytest.param((True, lambda x: x), id="symmetric"),
+    pytest.param((True, lambda x: -x), id="skew-symmetric"),
+    pytest.param((True, xp.conj), id="hermitian"),
+    pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
 ]
 
 
@@ -116,4 +125,9 @@ def block_change_factor(request):
 
 @pytest.fixture(params=OPS)
 def op(request):
+    return request.param
+
+
+@pytest.fixture(params=SYMMETRY_TYPE)
+def symmetry_type(request: pytest.FixtureRequest) -> bool:
     return request.param

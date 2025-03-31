@@ -357,7 +357,8 @@ class RGF(GFSolver):
                 )
 
                 xl_.blocks[i, j] = xl_ij
-                xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+                if not xl_.symmetry:
+                    xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
                 xg_ij = (
                     -xr_ii_a_ij_xg_jj
@@ -366,7 +367,8 @@ class RGF(GFSolver):
                 )
 
                 xg_.blocks[i, j] = xg_ij
-                xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+                if not xg_.symmetry:
+                    xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
                 if return_current:
                     a_ji_xr_ii = a_ji @ xr_ii

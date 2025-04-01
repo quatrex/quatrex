@@ -158,6 +158,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
         )
 
         self.num_connected_blocks = (
@@ -213,6 +215,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=lambda a: -a.conj(),
         )
         self.l_lesser.data = 0.0
         # Explicitely try to free the memory for the sparsity pattern.
@@ -618,7 +622,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
-        print(f"Finished solving on {comm.rank=}", flush=True)
         comm.Barrier()
         t_solve_end_all = time.perf_counter()
         if comm.rank == 0:

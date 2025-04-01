@@ -47,6 +47,8 @@ class SCBAConfig(BaseModel):
     photon: bool = False
     phonon: bool = False
 
+    symmetric: bool = False
+
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""

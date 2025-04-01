@@ -108,6 +108,8 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=(comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
         )
         self.hamiltonian.data = 0.0
         self.hamiltonian += hamiltonian_sparray
@@ -177,7 +179,8 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the Hamiltonian and overlap matrices are
         # Hermitian.
-        self.hamiltonian.symmetrize()
+        if not self.hamiltonian.symmetry:
+            self.hamiltonian.symmetrize()
         self.overlap_sparray = (
             0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
         ).tocoo()
@@ -414,9 +417,9 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies + 1j * self.eta,
         )
 
-        self.system_matrix._data -= self.hamiltonian._data
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
+        _btd_subtract(self.system_matrix, self.hamiltonian)
 
     def _filter_peaks(self, out: tuple[DSBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

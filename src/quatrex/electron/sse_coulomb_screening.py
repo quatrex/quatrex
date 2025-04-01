@@ -312,7 +312,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_retarded._data[
                         sigma_retarded._stack_padding_mask, ..., batch
                     ] += (
-                        self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                        xp.real(
+                            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                        )
                         + antihermitian / 2
                     ).T
 
@@ -464,13 +466,16 @@ class SigmaFock(ScatteringSelfEnergy):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=(comm.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
         )
         coulomb_matrix.data = 0.0
         coulomb_matrix += coulomb_matrix_sparray
         del coulomb_matrix_sparray
 
         # Make sure that the Coulomb matrix is Hermitian.
-        coulomb_matrix.symmetrize()
+        if not coulomb_matrix.symmetry:
+            coulomb_matrix.symmetrize()
         coulomb_matrix.dtranspose()
         self.coulomb_matrix_data = (
             coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r

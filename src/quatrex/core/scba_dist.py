@@ -151,24 +151,35 @@ class SCBADataDist:
             global_stack_shape=electron_energies.shape,
         )
         self.g_retarded._data[:] = 0.0  # Initialize to zero.
-        self.g_lesser = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.g_greater = dsdbsparse_type.zeros_like(self.g_retarded)
 
-        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_retarded)
-        self.sigma_greater = dsdbsparse_type.zeros_like(self.g_retarded)
+        self.g_lesser = dsdbsparse_type.from_sparray(
+            self.sparsity_pattern.astype(xp.complex128),
+            block_sizes=block_sizes,
+            global_stack_shape=electron_energies.shape,
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=lambda a: -a.conj(),
+        )
+        self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+        if quatrex_config.scba.symmetric:
+            self.sigma_retarded.symmetry_op = lambda a: a
+            self.sigma_retarded_prev.symmetry_op = lambda a: a
 
         if quatrex_config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_retarded)
-            self.p_lesser = dsdbsparse_type.zeros_like(self.g_retarded)
-            self.p_greater = dsdbsparse_type.zeros_like(self.g_retarded)
+            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
             num_connected_blocks = quatrex_config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -189,6 +200,8 @@ class SCBADataDist:
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape,
+                symmetry=quatrex_config.scba.symmetric,
+                symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
@@ -499,9 +512,9 @@ class SCBADist:
         # Symmetrization.
         synchronize_device()
         time_start = time.perf_counter()
-
-        self.data.sigma_lesser.symmetrize(xp.subtract)
-        self.data.sigma_greater.symmetrize(xp.subtract)
+        if not self.quatrex_config.scba.symmetric:
+            self.data.sigma_lesser.symmetrize(xp.subtract)
+            self.data.sigma_greater.symmetrize(xp.subtract)
 
         self.data.sigma_lesser._data.real = 0
         self.data.sigma_greater._data.real = 0
@@ -509,7 +522,8 @@ class SCBADist:
         self.data.sigma_retarded._data.imag = 0.0
 
         # Make the remaining real part Hermitian.
-        self.data.sigma_retarded.symmetrize(xp.add)
+        if not self.quatrex_config.scba.symmetric:
+            self.data.sigma_retarded.symmetrize(xp.add)
 
         # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded._data += 0.5 * (

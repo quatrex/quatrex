@@ -9,6 +9,7 @@ from mpi4py import MPI
 
 from qttools import (
     NCCL_AVAILABLE,
+    USE_NCCL,
     ArrayLike,
     NDArray,
     block_comm,
@@ -694,7 +695,7 @@ class DSDBSparse(ABC):
                 flush=True,
             )
 
-        if NCCL_AVAILABLE:
+        if NCCL_AVAILABLE and USE_NCCL:
             # Always use NCCL if available.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()

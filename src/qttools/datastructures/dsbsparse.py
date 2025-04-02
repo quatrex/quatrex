@@ -8,7 +8,16 @@ from typing import Callable
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NCCL_AVAILABLE, ArrayLike, NDArray, host_xp, nccl_comm, sparse, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    USE_NCCL,
+    ArrayLike,
+    NDArray,
+    host_xp,
+    nccl_comm,
+    sparse,
+    xp,
+)
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
@@ -717,7 +726,7 @@ class DSBSparse(ABC):
                 flush=True,
             )
 
-        if NCCL_AVAILABLE:
+        if NCCL_AVAILABLE and USE_NCCL:
             # Always use NCCL if available.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()

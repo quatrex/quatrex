@@ -87,6 +87,15 @@ NDArray: TypeAlias = xp.ndarray[Any, _DType]
 NCCL_AVAILABLE = False
 nccl_comm = None
 
+USE_NCCL = os.environ.get("USE_NCCL", "true").lower()
+if USE_NCCL in ("y", "yes", "t", "true", "on", "1"):
+    USE_NCCL = True
+elif USE_NCCL in ("n", "no", "f", "false", "off", "0"):
+    USE_NCCL = False
+else:
+    warn(f"Invalid truth value {USE_NCCL=}. Defaulting to 'true'.")
+    USE_NCCL = True
+
 if xp.__name__ == "cupy":
 
     from cupy.cuda import nccl

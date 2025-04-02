@@ -5,6 +5,7 @@ from functools import partial
 
 from qttools import (
     NCCL_AVAILABLE,
+    USE_NCCL,
     NDArray,
     block_comm,
     global_comm,
@@ -56,7 +57,7 @@ def _bcast(values: list | NDArray, num_values: int, root: int, block: bool) -> f
     else:
         mpi_comm, nccl_comm = stack_comm, nccl_stack_comm
 
-    if NCCL_AVAILABLE:
+    if NCCL_AVAILABLE and (block or USE_NCCL):
         nccl_comm.broadcast(buf, root)
         synchronize_device()
     elif xp.__name__ == "numpy" or GPU_AWARE_MPI:

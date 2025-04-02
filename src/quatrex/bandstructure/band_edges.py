@@ -3,7 +3,7 @@
 import time
 from functools import partial
 
-from qttools import NCCL_AVAILABLE, NDArray, global_comm, nccl_comm, sparse, xp
+from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, global_comm, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
@@ -41,7 +41,7 @@ def _bcast(values: list | NDArray, num_values: int, root: int) -> float:
     else:
         buf = xp.asarray(values)
 
-    if NCCL_AVAILABLE:
+    if NCCL_AVAILABLE and USE_NCCL:
         nccl_comm.broadcast(buf, root)
         synchronize_device()
     elif xp.__name__ == "numpy" or GPU_AWARE_MPI:

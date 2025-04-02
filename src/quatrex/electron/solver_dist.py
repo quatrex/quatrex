@@ -4,6 +4,7 @@ import time
 
 from qttools import (
     NCCL_AVAILABLE,
+    USE_NCCL,
     NDArray,
     block_comm,
     global_comm,
@@ -493,7 +494,7 @@ class ElectronSolverDist(SubsystemSolver):
             g_retarded_density = -g_retarded_diag[..., boff : boff + bsz].imag.mean(-1)
             local_dos.append(g_retarded_density)
 
-        if not NCCL_AVAILABLE:
+        if not NCCL_AVAILABLE or not USE_NCCL:
             dos = xp.hstack(stack_comm.allgather(local_dos))
         else:
             # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -667,7 +668,7 @@ class ElectronSolverDist(SubsystemSolver):
                     xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
                 )
 
-                if not NCCL_AVAILABLE:
+                if not NCCL_AVAILABLE or not USE_NCCL:
                     left_dos = xp.hstack(stack_comm.allgather(local_left_dos)) / (
                         2 * xp.pi
                     )
@@ -699,7 +700,7 @@ class ElectronSolverDist(SubsystemSolver):
                     xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
                 )
 
-                if not NCCL_AVAILABLE:
+                if not NCCL_AVAILABLE or not USE_NCCL:
                     right_dos = xp.hstack(stack_comm.allgather(local_right_dos)) / (
                         2 * xp.pi
                     )

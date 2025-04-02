@@ -4,6 +4,7 @@ from functools import partial
 
 from qttools import (
     NCCL_AVAILABLE,
+    USE_NCCL,
     NDArray,
     block_comm,
     nccl_stack_comm,
@@ -81,7 +82,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     """
     if overlap is None:
         local_density = x.diagonal().imag
-        if not NCCL_AVAILABLE:
+        if not NCCL_AVAILABLE or not USE_NCCL:
             return xp.vstack(stack_comm.allgather(local_density))
 
         # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -183,7 +184,7 @@ def contact_currents(
     i_left = block_comm.bcast(i_left, root=0)
     i_right = block_comm.bcast(i_right, root=block_comm.size - 1)
 
-    if not NCCL_AVAILABLE:
+    if not NCCL_AVAILABLE or not USE_NCCL:
         i_left = xp.hstack(stack_comm.allgather(i_left))
         i_right = xp.hstack(stack_comm.allgather(i_right))
         return i_left, i_right
@@ -259,7 +260,7 @@ def device_current(
 
     local_current = xp.ascontiguousarray(xp.vstack(local_current).T)
 
-    if not NCCL_AVAILABLE:
+    if not NCCL_AVAILABLE or not USE_NCCL:
         return xp.vstack(stack_comm.allgather(local_current))
 
     # NOTE: NCCL does not expose all_gather_v. This is a hack.

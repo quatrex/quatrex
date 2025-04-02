@@ -3,7 +3,7 @@
 from functools import partial
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, nccl_comm, sparse, xp
+from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, nccl_comm, sparse, xp
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.utils.gpu_utils import synchronize_device
@@ -73,7 +73,7 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     """
     if overlap is None:
         local_density = x.diagonal().imag
-        if not NCCL_AVAILABLE:
+        if not NCCL_AVAILABLE or not USE_NCCL:
             return xp.vstack(comm.allgather(local_density))
 
         # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -113,7 +113,7 @@ def density(x: DSBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
 
     local_density = xp.hstack(local_density)
 
-    if not NCCL_AVAILABLE:
+    if not NCCL_AVAILABLE or not USE_NCCL:
         return xp.vstack(comm.allgather(local_density))
 
     # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -163,7 +163,7 @@ def contact_currents(
         axis2=-1,
     )
 
-    if not NCCL_AVAILABLE:
+    if not NCCL_AVAILABLE or not USE_NCCL:
         i_left = xp.hstack(comm.allgather(i_left))
         i_right = xp.hstack(comm.allgather(i_right))
         return i_left, i_right
@@ -219,7 +219,7 @@ def device_current(
 
     local_current = xp.ascontiguousarray(xp.vstack(local_current).T)
 
-    if not NCCL_AVAILABLE:
+    if not NCCL_AVAILABLE or not USE_NCCL:
         return xp.vstack(comm.allgather(local_current))
 
     # NOTE: NCCL does not expose all_gather_v. This is a hack.

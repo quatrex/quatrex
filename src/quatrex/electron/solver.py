@@ -3,7 +3,7 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, sparse, xp
+from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, host_xp, nccl_comm, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
@@ -437,7 +437,7 @@ class ElectronSolver(SubsystemSolver):
             for b in range(g_retarded.num_blocks)
         ]
 
-        if not NCCL_AVAILABLE:
+        if not NCCL_AVAILABLE or not USE_NCCL:
             dos = xp.hstack(comm.allgather(local_dos))
         else:
             # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -610,7 +610,7 @@ class ElectronSolver(SubsystemSolver):
                 xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
             )
 
-            if not NCCL_AVAILABLE:
+            if not NCCL_AVAILABLE or not USE_NCCL:
                 left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
                 right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
             else:

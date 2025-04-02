@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, NDArray, host_xp, nccl_comm, xp
+from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, host_xp, nccl_comm, xp
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_coordinate_grid
@@ -518,7 +518,7 @@ class SCBA:
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
         local_max_diff = xp.max(xp.abs(diff))
-        if not NCCL_AVAILABLE:
+        if not NCCL_AVAILABLE or not USE_NCCL:
             max_diff = comm.allreduce(local_max_diff, op=MPI.MAX)
         else:
             max_diff = xp.empty_like(local_max_diff)
@@ -704,7 +704,7 @@ class SCBA:
                 self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.quatrex_config.electron.solver.compute_current:
-                if not NCCL_AVAILABLE:
+                if not NCCL_AVAILABLE or not USE_NCCL:
                     meir_wingreen_current = xp.vstack(
                         comm.allgather(self.electron_solver.meir_wingreen_current)
                     )
@@ -1044,7 +1044,7 @@ class SCBA:
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info
                 usage = (total_memory - free_memory) / total_memory
-                if not NCCL_AVAILABLE:
+                if not NCCL_AVAILABLE or not USE_NCCL:
                     average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
                 else:
                     average_usage = xp.empty(1)

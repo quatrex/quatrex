@@ -917,9 +917,9 @@ class DSBSparse(ABC):
     def allocate_data(self) -> None:
         """Allocates the data buffer."""
         if self._data is None:
-            self._data = xp.zeros(
+            self._data = xp.empty(
                 (
-                    max(self.stack_section_sizes),
+                    int(max(self.stack_section_sizes)),
                     *self.global_stack_shape[1:],
                     self.total_nnz_size,
                 ),

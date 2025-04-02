@@ -578,6 +578,10 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
         """
         t_set_blocksize_start = time.perf_counter()
+
+        self.system_matrix.allocate_data()
+        self.l_lesser.allocate_data()
+        self.l_greater.allocate_data()
         # Change the block sizes to match the Coulomb matrix.
         self._set_block_sizes(self.small_block_sizes)
         synchronize_device()
@@ -710,6 +714,10 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         # Only filter the peaks for the first few iterations.
         if self.solve_call_count < self.filtering_iteration_limit:
             self._filter_peaks(out)
+
+        self.system_matrix.free_data()
+        self.l_lesser.free_data()
+        self.l_greater.free_data()
 
         w_lesser, w_greater, *__ = out
         if stack_comm.rank == 0:

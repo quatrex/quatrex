@@ -507,6 +507,7 @@ class ElectronSolver(SubsystemSolver):
                 )
 
         t_assemble_start = time.perf_counter()
+        self.system_matrix.allocate_data()
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
@@ -577,6 +578,7 @@ class ElectronSolver(SubsystemSolver):
             print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
+        self.system_matrix.free_data()
         if self.call_count < self.filtering_iteration_limit:
             self._filter_peaks(out)
         synchronize_device()

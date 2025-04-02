@@ -567,6 +567,10 @@ class SCBA:
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
 
+        self.data.p_greater.allocate_data()
+        self.data.p_lesser.allocate_data()
+        self.data.p_retarded.allocate_data()
+
         t_polarization_start = time.perf_counter()
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
@@ -586,6 +590,9 @@ class SCBA:
                 f"  Time for polarization all: {t_polarization_end_all - t_polarization_start:.3f} s",
                 flush=True,
             )
+
+        self.data.w_greater.allocate_data()
+        self.data.w_lesser.allocate_data()
 
         t_coulomb_start = time.perf_counter()
         self.coulomb_screening_solver.solve(
@@ -623,6 +630,10 @@ class SCBA:
                 f"  Time for Coulomb screening observables all: {t_coulomb_observables_end_all - t_coulomb_observables:.3f} s",
                 flush=True,
             )
+
+        self.data.p_lesser.free_data()
+        self.data.p_greater.free_data()
+        self.data.p_retarded.free_data()
 
         t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
@@ -668,6 +679,9 @@ class SCBA:
                 f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s",
                 flush=True,
             )
+
+        self.data.w_greater.free_data()
+        self.data.w_lesser.free_data()
 
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:

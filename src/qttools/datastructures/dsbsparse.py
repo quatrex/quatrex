@@ -910,6 +910,22 @@ class DSBSparse(ABC):
 
         return arr
 
+    def free_data(self) -> None:
+        """Frees the data buffer."""
+        self._data = None
+
+    def allocate_data(self) -> None:
+        """Allocates the data buffer."""
+        if self._data is None:
+            self._data = xp.zeros(
+                (
+                    max(self.stack_section_sizes),
+                    *self.global_stack_shape[1:],
+                    self.total_nnz_size,
+                ),
+                dtype=self.dtype,
+            )
+
     @classmethod
     @abstractmethod
     def from_sparray(

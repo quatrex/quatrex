@@ -133,7 +133,7 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
         Suspected band edges sorted by energy in ascending order.
 
     """
-    peaks = find_peaks(dos, height=1e-8)[0]
+    peaks = find_peaks(dos, height=1e-3)[0]
     return energies[peaks]
 
 

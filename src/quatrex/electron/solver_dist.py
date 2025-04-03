@@ -671,7 +671,7 @@ class ElectronSolverDist(SubsystemSolver):
 
             if block_comm.rank == 0:
                 s_00 = self._get_block(self.overlap_sparray, (0, 0))
-                g_00 = g_retarded.blocks[0, 0]
+                g_00 = g_retarded.local_blocks[0, 0]
 
                 local_left_dos = -xp.mean(
                     xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
@@ -724,7 +724,8 @@ class ElectronSolverDist(SubsystemSolver):
 
             if block_comm.rank == block_comm.size - 1:
                 s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-                g_nn = g_retarded.blocks[-1, -1]
+                n = g_retarded.num_local_blocks - 1
+                g_nn = g_retarded.local_blocks[n, n]
                 local_right_dos = -xp.mean(
                     xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
                 )

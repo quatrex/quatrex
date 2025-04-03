@@ -913,9 +913,14 @@ class DSBSparse(ABC):
     def free_data(self) -> None:
         """Frees the data buffer."""
         self._data = None
+        mempool = xp.get_default_memory_pool()
+        mempool.free_all_blocks()
 
     def allocate_data(self) -> None:
         """Allocates the data buffer."""
+        mempool = xp.get_default_memory_pool()
+        mempool.free_all_blocks()
+
         if self._data is None:
             self._data = xp.empty(
                 (

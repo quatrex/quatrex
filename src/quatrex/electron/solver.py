@@ -127,12 +127,12 @@ class ElectronSolver(SubsystemSolver):
                 self.hamiltonian_sparray = distributed_load(
                     quatrex_config.input_dir / "hamiltonian.npz"
                 ).astype(xp.complex128)
-                self.hamiltonian_dict = None
+                hamiltonian_dict = None
             except FileNotFoundError:
-                self.hamiltonian_dict = distributed_load(
+                hamiltonian_dict = distributed_load(
                     quatrex_config.input_dir / "hamiltonian.pkl"
                 )
-                self.hamiltonian_sparray = sum(self.hamiltonian_dict.values())
+                hamiltonian_sparray = sum(hamiltonian_dict.values())
             self.block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
@@ -159,11 +159,43 @@ class ElectronSolver(SubsystemSolver):
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             hamiltonian_sparray.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=(comm.stack.size,),
+            global_stack_shape=(comm.stack.size,)
+            + tuple([k for k in number_of_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
+        self.hamiltonian.data = 0.0
+        if hamiltonian_dict is None:
+            self.hamiltonian += hamiltonian_sparray
+        else:
+            number_of_kpoints = xp.array(
+                [
+                    1 if k <= 1 else k
+                    for k in self.quatrex_config.electron.number_of_kpoints
+                ]
+            )
+            assemble_kpoint_dsb(
+                self.hamiltonian,
+                hamiltonian_dict,
+                number_of_kpoints,
+                0,
+            )
         del hamiltonian_sparray
+        del hamiltonian_dict
+
+        synchronize_device()
+        t_ham_create_end = time.perf_counter()
+        comm.barrier()
+        t_ham_create_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
+                flush=True,
+            )
+            print(
+                f"    Create Hamiltonian all: {t_ham_create_end_all-t_ham_load_end_all}",
+                flush=True,
+            )
 
         synchronize_device()
         t_ham_create_end = time.perf_counter()
@@ -496,25 +528,9 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
-        if self.hamiltonian_dict is None:
-            self.system_matrix -= sparse.diags(
-                self.potential, format="csr"
-            )
-        else:
-            number_of_kpoints = xp.array(
-                [
-                    1 if k <= 1 else k
-                    for k in self.quatrex_config.electron.number_of_kpoints
-                ]
-            )
-            assemble_kpoint_dsb(
-                self.system_matrix,
-                self.hamiltonian_dict,
-                number_of_kpoints,
-                0,
-            )
-        _btd_subtract(self.system_matrix, sse_retarded)
+        self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, self.hamiltonian)
+        _btd_subtract(self.system_matrix, sse_retarded)
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

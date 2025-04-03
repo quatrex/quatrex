@@ -7,6 +7,7 @@ from qttools.utils.mpi_utils import distributed_load
 
 input_dir = Path(__file__).parent / "inputs"
 config_path = Path(__file__).parent / "config.toml"
+compute_path = Path(__file__).parent / "compute.toml"
 
 
 @pytest.fixture
@@ -30,9 +31,9 @@ def quatrex_config():
 
 @pytest.fixture
 def compute_config():
-    from quatrex.core.compute_config import ComputeConfig
+    from quatrex.core.compute_config import parse_config
 
-    return ComputeConfig()
+    return parse_config(compute_path)
 
 
 @pytest.fixture

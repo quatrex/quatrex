@@ -104,7 +104,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
-            global_stack_shape=(comm.stack.size,),
+            global_stack_shape=(comm.stack.size,)
+            + tuple([k for k in quatrex_config.electron.number_of_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
@@ -202,20 +203,44 @@ class CoulombScreeningSolver(SubsystemSolver):
             coulomb_matrix_sparray.sum_duplicates()
 
         else:
-            coulomb_matrix_sparray = distributed_load(
-                quatrex_config.input_dir / "coulomb_matrix.npz"
-            ).astype(xp.complex128)
+            try:
+                coulomb_matrix_sparray = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix.npz"
+                ).astype(xp.complex128)
+            except FileNotFoundError:
+                coulomb_matrix_dict = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix.pkl"
+                )
+                coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
 
         self.coulomb_matrix._data = xp.zeros_like(
             self.coulomb_matrix._data, dtype=xp.complex128
         )
         self.coulomb_matrix.dtype = xp.complex128
 
-        self.coulomb_matrix += coulomb_matrix_sparray
+        if coulomb_matrix_dict is None:
+            self.coulomb_matrix += coulomb_matrix_sparray
+        else:
+            number_of_kpoints = xp.array(
+                [
+                    1 if k <= 1 else k
+                    for k in self.quatrex_config.electron.number_of_kpoints
+                ]
+            )
+            assemble_kpoint_dsb(
+                self.coulomb_matrix,
+                coulomb_matrix_dict,
+                number_of_kpoints,
+                -(number_of_kpoints // 2),
+            )
+            # Change the sign of the Coulomb matrix.
+            self.coulomb_matrix.data *= -1
         # Explicitely try to free the memory for the sparsity pattern.
         del coulomb_matrix_sparray
+        del coulomb_matrix_dict
 
         # Make sure that the Coulomb matrix is Hermitian.
+        # TODO: Check that this is correct for kpoints.
         self.coulomb_matrix.symmetrize()
         self.coulomb_matrix.data /= quatrex_config.coulomb_screening.epsilon_r
 

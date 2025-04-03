@@ -36,9 +36,11 @@ def assemble_kpoint_dsb(
     """Assembles a DSBSparse with the k-point distribution."""
     if isinstance(roll_index, int):
         roll_index = xp.array([roll_index, roll_index, roll_index])
-    for i, ii in enumerate(xp.roll(range(number_of_kpoints[0]), roll_index[0])):
-        for j, jj in enumerate(xp.roll(range(number_of_kpoints[1]), roll_index[1])):
-            for k, kk in enumerate(xp.roll(range(number_of_kpoints[2]), roll_index[2])):
+    for i, ii in enumerate(xp.roll(xp.arange(number_of_kpoints[0]), roll_index[0])):
+        for j, jj in enumerate(xp.roll(xp.arange(number_of_kpoints[1]), roll_index[1])):
+            for k, kk in enumerate(
+                xp.roll(xp.arange(number_of_kpoints[2]), roll_index[2])
+            ):
                 stack_index = tuple(
                     [i]
                     if number_of_kpoints[0] > 1

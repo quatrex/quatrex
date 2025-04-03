@@ -19,7 +19,7 @@ from qttools import (
     xp,
 )
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
@@ -913,14 +913,11 @@ class DSBSparse(ABC):
     def free_data(self) -> None:
         """Frees the data buffer."""
         self._data = None
-        mempool = xp.get_default_memory_pool()
-        mempool.free_all_blocks()
+        free_mempool()
 
     def allocate_data(self) -> None:
         """Allocates the data buffer."""
-        mempool = xp.get_default_memory_pool()
-        mempool.free_all_blocks()
-
+        free_mempool()
         if self._data is None:
             self._data = xp.empty(
                 (

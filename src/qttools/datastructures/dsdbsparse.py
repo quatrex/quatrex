@@ -22,7 +22,7 @@ from qttools import (
 )
 from qttools.datastructures.dsbsparse import BlockConfig, _block_view
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
@@ -853,9 +853,11 @@ class DSDBSparse(ABC):
     def free_data(self) -> None:
         """Frees the local data."""
         self._data = None
+        free_mempool()
 
     def allocate_data(self) -> None:
         """Allocates the local data."""
+        free_mempool()
         if self._data is None:
             self._data = xp.empty(
                 (

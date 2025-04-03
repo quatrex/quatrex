@@ -367,3 +367,14 @@ def get_nccl_communicator(mpi_comm: MPI.Comm = MPI.COMM_WORLD):
     # MPI.COMM_WORLD. We need to fix this if we want to use other
     # communicators.
     return distributed.NCCLBackend(mpi_comm.size, mpi_comm.rank, use_mpi=True)
+
+
+def free_mempool():
+    """Frees the memory pool if using cupy.
+
+    Does nothing if using numpy.
+
+    """
+    if xp.__name__ == "cupy":
+        mempool = xp.get_default_memory_pool()
+        mempool.free_all_blocks()

@@ -104,6 +104,8 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
         elif path.suffix == ".pkl":
             with open(path, "rb") as f:
                 arr = pickle.load(f)
+            for k in arr.keys():
+                arr[k] = sparse.coo_matrix(arr[k])
 
     else:
         arr = None

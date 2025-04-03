@@ -24,6 +24,7 @@ def _block_canonicalize(rows, cols, block_sizes):
 
 def test_compute(
     datadir,
+    quatrex_config,
     compute_config,
     block_sizes,
     coulomb_screening_energies,
@@ -47,32 +48,32 @@ def test_compute(
     rows = rows[reordering]
     cols = cols[reordering]
     # Create the DSBSparse objects
-    g_lesser = compute_config.dbsparse_type(
+    g_lesser = compute_config.dsbsparse_type(
         gl_data,
         rows,
         cols,
         block_sizes,
         (gl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    g_greater = compute_config.dbsparse_type(
+    g_greater = compute_config.dsbsparse_type(
         gg_data,
         rows,
         cols,
         block_sizes,
         (gg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    p_lesser = compute_config.dbsparse_type.zeros_like(g_lesser)
-    p_greater = compute_config.dbsparse_type.zeros_like(g_greater)
-    p_retarded = compute_config.dbsparse_type.zeros_like(g_greater)
+    p_lesser = compute_config.dsbsparse_type.zeros_like(g_lesser)
+    p_greater = compute_config.dsbsparse_type.zeros_like(g_greater)
+    p_retarded = compute_config.dsbsparse_type.zeros_like(g_greater)
     # Create the expected results
-    p_lesser_expected = compute_config.dbsparse_type(
+    p_lesser_expected = compute_config.dsbsparse_type(
         pl_data,
         rows,
         cols,
         block_sizes,
         (pl_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    p_greater_expected = compute_config.dbsparse_type(
+    p_greater_expected = compute_config.dsbsparse_type(
         pg_data,
         rows,
         cols,
@@ -81,7 +82,7 @@ def test_compute(
     )
     # Initialize the polarization object
     p_coulomb_screening = PCoulombScreening(
-        coulomb_screening_energies, number_of_kpoints
+        quatrex_config, compute_config, coulomb_screening_energies
     )
     # Compute the polarization
     p_coulomb_screening.compute(

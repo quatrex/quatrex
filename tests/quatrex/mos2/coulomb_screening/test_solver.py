@@ -39,6 +39,8 @@ def test_solve(
     wg_data = distributed_load(datadir.joinpath(f"wg_data_iter{iteration}.npy"))
     rows = distributed_load(datadir.joinpath("rows.npy"))
     cols = distributed_load(datadir.joinpath("columns.npy"))
+    rows_cm = distributed_load(datadir.joinpath("rows_cm.npy"))
+    cols_cm = distributed_load(datadir.joinpath("columns_cm.npy"))
     reordering = _block_canonicalize(rows, cols, block_sizes)
     # Reorder the data
     pl_data = pl_data[..., reordering]
@@ -63,14 +65,15 @@ def test_solve(
         block_sizes,
         (pg_data.shape[0],) + tuple([k for k in number_of_kpoints if k > 1]),
     )
-    num_connected_blocks = 3
-    coulomb_screening_block_sizes = (
-        block_sizes[: len(block_sizes) // num_connected_blocks] * num_connected_blocks
-    )
-    sparsity_pattern = sparse.coo_matrix((xp.ones_like(rows), (rows, cols)))
+    # num_connected_blocks = 3
+    # coulomb_screening_block_sizes = (
+    #    block_sizes[: len(block_sizes) // num_connected_blocks] * num_connected_blocks
+    # )
+    # sparsity_pattern = sparse.coo_matrix((xp.ones_like(rows), (rows, cols)))
+    sparsity_pattern = sparse.coo_matrix((xp.ones_like(rows_cm), (rows_cm, cols_cm)))
     w_lesser = compute_config.dsbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
-        block_sizes=coulomb_screening_block_sizes,
+        block_sizes=block_sizes,
         global_stack_shape=coulomb_screening_energies.shape
         + tuple([k for k in number_of_kpoints if k > 1]),
     )
@@ -99,5 +102,6 @@ def test_solve(
     w_greater.block_sizes = block_sizes
     # Compare the results
     # First energy is different, don't know why
+    # Seems to be a factor 3 smaller
     assert xp.allclose(w_lesser.data, wl_data)
     assert xp.allclose(w_greater.data, wg_data)

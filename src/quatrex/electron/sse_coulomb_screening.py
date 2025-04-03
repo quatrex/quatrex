@@ -7,7 +7,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSBSparse
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
@@ -221,8 +221,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             with profiler.profile_range("SSE computation", level="debug"):
 
                 if xp.__name__ == "cupy":
-                    mempool = xp.get_default_memory_pool()
-                    mempool.free_all_blocks()
+                    free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
                     num_buffers = 10  # closer to 8 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
@@ -231,7 +230,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     batch_size = avail_buffer_size // (
                         2 * ne * 16
                     )  # 16 bytes for complex128
-                    batch_size = max(min(batch_size, no),1)
+                    batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
                     if self.batch_size is not None and batch_size < self.batch_size:

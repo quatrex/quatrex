@@ -9,7 +9,11 @@ from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.mpi_utils import (
+    check_gpu_aware_mpi,
+    distributed_load,
+    get_section_sizes,
+)
 from qttools.utils.stack_utils import scale_stack
 
 from quatrex.bandstructure.band_edges import (
@@ -24,6 +28,8 @@ from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
 
 profiler = Profiler()
+
+GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 @profiler.profile(level="debug")
@@ -612,15 +618,18 @@ class ElectronSolver(SubsystemSolver):
                 xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
             )
 
-            if not NCCL_AVAILABLE or not USE_NCCL:
-                left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
-                right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
-            else:
+            # if not NCCL_AVAILABLE or not USE_NCCL:
+            #     left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
+            #     right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
+            # else:
+            if NCCL_AVAILABLE and USE_NCCL:
                 # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
+                pad_width = (
+                    g_retarded.total_stack_size // comm.size - local_left_dos.shape[0]
+                )
 
-                left_dos = xp.pad(left_dos, (0, pad_width))
-                right_dos = xp.pad(right_dos, (0, pad_width))
+                left_dos = xp.pad(local_left_dos, (0, pad_width))
+                right_dos = xp.pad(local_right_dos, (0, pad_width))
 
                 full_left_dos = xp.empty(
                     (g_retarded.total_stack_size,), dtype=left_dos.dtype
@@ -636,6 +645,27 @@ class ElectronSolver(SubsystemSolver):
 
                 left_dos = full_left_dos[g_retarded._stack_padding_mask]
                 right_dos = full_right_dos[g_retarded._stack_padding_mask]
+            elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
+                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
+
+                left_dos = xp.pad(left_dos, (0, pad_width))
+                right_dos = xp.pad(right_dos, (0, pad_width))
+
+                full_left_dos = xp.empty(
+                    (g_retarded.total_stack_size,), dtype=left_dos.dtype
+                )
+                full_right_dos = xp.empty(
+                    (g_retarded.total_stack_size,), dtype=right_dos.dtype
+                )
+
+                comm.Allgather(left_dos, full_left_dos)
+                comm.Allgather(right_dos, full_right_dos)
+
+                left_dos = full_left_dos[g_retarded._stack_padding_mask]
+                right_dos = full_right_dos[g_retarded._stack_padding_mask]
+            else:
+                left_dos = xp.hstack(comm.allgather(local_left_dos)) / (2 * xp.pi)
+                right_dos = xp.hstack(comm.allgather(local_right_dos)) / (2 * xp.pi)
 
             e_0_left = find_dos_peaks(left_dos, self.energies)
             e_0_right = find_dos_peaks(right_dos, self.energies)

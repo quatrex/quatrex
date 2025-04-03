@@ -340,7 +340,7 @@ class SCBA:
             )
             print(f"Resolution is {energy_resolution} eV.", flush=True)
             print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
-        
+
         synchronize_device()
         t_electron_init_start = time.perf_counter()
 

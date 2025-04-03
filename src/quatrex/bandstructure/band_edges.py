@@ -3,7 +3,15 @@
 import time
 from functools import partial
 
-from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, global_comm, nccl_comm, sparse, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    USE_NCCL,
+    NDArray,
+    global_comm,
+    nccl_comm,
+    sparse,
+    xp,
+)
 from qttools.datastructures import DSBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
@@ -135,7 +143,7 @@ def _compute_eigenvalues(
     big_blocksize = sigma_retarded.block_sizes[0]
     small_blocksize = big_blocksize // band_edge_config.block_sections
     block_sections = band_edge_config.block_sections
-    
+
     if side == "left":
         blocks = [(0, 0), (0, 1)]  # , (1, 0)]
         potential = xp.diag(potential[: sigma_retarded.block_sizes[0]])
@@ -160,19 +168,36 @@ def _compute_eigenvalues(
     sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
     sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
 
-    h_0 = sum(h_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
-    h_0 += sum(h_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
-    h_0 += sum(sigma_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
-    h_0 += sum(sigma_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
+    h_0 = sum(
+        h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    h_0 += sum(
+        h_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
+    h_0 += sum(
+        sigma_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    h_0 += sum(
+        sigma_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
     h_0 += h_0.conj().swapaxes(-2, -1)
-    h_0 += h_00[:, : small_blocksize]
-    h_0 + sigma_00[:, : small_blocksize]
+    h_0 += h_00[:, :small_blocksize]
+    h_0 + sigma_00[:, :small_blocksize]
 
-    s_0 = sum(s_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
-    s_0 += sum(s_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
+    s_0 = sum(
+        s_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    s_0 += sum(
+        s_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
     s_0 += s_0.conj().swapaxes(-2, -1)
-    s_0 += s_00[:, : small_blocksize]
-
+    s_0 += s_00[:, :small_blocksize]
 
     # s_0 = sum(_get_block(overlap, index=block) for block in blocks)
 

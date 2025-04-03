@@ -706,7 +706,6 @@ class SCBADist:
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
-
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""

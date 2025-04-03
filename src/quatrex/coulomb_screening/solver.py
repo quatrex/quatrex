@@ -3,7 +3,16 @@
 import time
 
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NCCL_AVAILABLE, USE_NCCL, NDArray, _DType, host_xp, nccl_comm, sparse, xp
+from qttools import (
+    NCCL_AVAILABLE,
+    USE_NCCL,
+    NDArray,
+    _DType,
+    host_xp,
+    nccl_comm,
+    sparse,
+    xp,
+)
 from qttools.datastructures import DSBSparse
 from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks

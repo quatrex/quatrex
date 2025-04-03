@@ -80,6 +80,11 @@ class DSDBCOO(DSDBSparse):
         self.rows = xp.asarray(rows, dtype=xp.int32)
         self.cols = xp.asarray(cols, dtype=xp.int32)
 
+        self._set_diagonal_indices()
+
+
+    def _set_diagonal_indices(self) -> None:
+        """Sets the diagonal indices of the matrix."""
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
         ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
@@ -656,6 +661,7 @@ class DSDBCOO(DSDBSparse):
                 ]
                 + self.global_block_offset
             )
+            self._set_diagonal_indices()
 
             self.block_section_offsets = block_section_offsets
             # We need to know our local block sizes and those of all
@@ -703,6 +709,7 @@ class DSDBCOO(DSDBSparse):
             ]
             + self.global_block_offset
         )
+        self._set_diagonal_indices()
 
         # Update the block sizes and offsets as in the initializer.
         self.num_blocks = num_blocks

@@ -146,11 +146,11 @@ def _compute_eigenvalues(
 
     if side == "left":
         blocks = [(0, 0), (0, 1)]  # , (1, 0)]
-        potential = xp.diag(potential[: sigma_retarded.block_sizes[0]])
+        potential = xp.diag(potential[:small_blocksize])
         row_slice = slice(0, small_blocksize)
     elif side == "right":
         blocks = [(-1, -1), (-1, -2)]  # , (-2, -1)]
-        potential = xp.diag(potential[-sigma_retarded.block_sizes[-1] :])
+        potential = xp.diag(potential[-small_blocksize:])
         row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:
         raise ValueError(f"Unknown side '{side}'.")
@@ -186,7 +186,8 @@ def _compute_eigenvalues(
     )
     h_0 += h_0.conj().swapaxes(-2, -1)
     h_0 += h_00[:, :small_blocksize]
-    h_0 + sigma_00[:, :small_blocksize]
+    h_0 += sigma_00[:, :small_blocksize]
+    h_0 += potential
 
     s_0 = sum(
         s_00[:, i * small_blocksize : (i + 1) * small_blocksize]

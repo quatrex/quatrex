@@ -39,6 +39,7 @@ class BandEdgeConfig(BaseModel):
     use_eigvalsh: bool = False
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "cupy"
     use_pinned_memory: bool = True
+    block_sections: PositiveInt = 1
 
 
 class ConvolveConfig(BaseModel):

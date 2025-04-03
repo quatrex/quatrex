@@ -340,6 +340,9 @@ class SCBA:
             )
             print(f"Resolution is {energy_resolution} eV.", flush=True)
             print(f"Each rank has {num_energies_per_rank} grid points.", flush=True)
+        
+        synchronize_device()
+        t_electron_init_start = time.perf_counter()
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
@@ -347,6 +350,14 @@ class SCBA:
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
         )
+
+        synchronize_device()
+        t_electron_init_end = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"Time for electron solver initialization: {t_electron_init_end - t_electron_init_start:.3f} s",
+                flush=True,
+            )
 
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
@@ -362,12 +373,21 @@ class SCBA:
                 # Remove the zero energy to avoid division by zero.
                 self.coulomb_screening_energies += 1e-6
 
+            t_fock_init_start = time.perf_counter()
+
             self.sigma_fock = SigmaFock(
                 self.quatrex_config,
                 self.compute_config,
                 self.electron_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
+            synchronize_device()
+            t_fock_init_end = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for Fock self-energy initialization: {t_fock_init_end - t_fock_init_start:.3f} s",
+                    flush=True,
+                )
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,

@@ -221,6 +221,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             with profiler.profile_range("SSE computation", level="debug"):
 
                 if xp.__name__ == "cupy":
+                    mempool = xp.get_default_memory_pool()
+                    mempool.free_all_blocks()
                     free_memory, _ = xp.cuda.Device().mem_info
                     num_buffers = 10  # closer to 8 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
@@ -229,7 +231,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     batch_size = avail_buffer_size // (
                         2 * ne * 16
                     )  # 16 bytes for complex128
-                    batch_size = min(batch_size, no)
+                    batch_size = max(min(batch_size, no),1)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
                     if self.batch_size is not None and batch_size < self.batch_size:

@@ -487,7 +487,8 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             end_block=end_block,
             spillover_correction=True,
         )
-        self.system_matrix._data = -self.system_matrix._data
+        # self.system_matrix._data = -self.system_matrix._data
+        xp.negative(self.system_matrix._data, out=self.system_matrix._data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:

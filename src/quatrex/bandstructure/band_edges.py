@@ -131,12 +131,19 @@ def _compute_eigenvalues(
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
     """Computes the eigenvalues for the left or right contact."""
+
+    big_blocksize = sigma_retarded.block_sizes[0]
+    small_blocksize = big_blocksize // band_edge_config.block_sections
+    block_sections = band_edge_config.block_sections
+    
     if side == "left":
-        blocks = [(0, 0), (0, 1), (1, 0)]
+        blocks = [(0, 0), (0, 1)]  # , (1, 0)]
         potential = xp.diag(potential[: sigma_retarded.block_sizes[0]])
+        row_slice = slice(0, small_blocksize)
     elif side == "right":
-        blocks = [(-1, -1), (-1, -2), (-2, -1)]
+        blocks = [(-1, -1), (-1, -2)]  # , (-2, -1)]
         potential = xp.diag(potential[-sigma_retarded.block_sizes[-1] :])
+        row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:
         raise ValueError(f"Unknown side '{side}'.")
 
@@ -146,13 +153,38 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    s_0 = sum(_get_block(overlap, index=block) for block in blocks)
+    h_00 = _get_block(hamiltonian, index=blocks[0])[0, row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[0, row_slice]
+    s_00 = _get_block(overlap, index=blocks[0])[row_slice]
+    s_01 = _get_block(overlap, index=blocks[1])[row_slice]
+    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
+    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
 
-    h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
+    h_0 = sum(h_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
+    h_0 += sum(h_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
+    h_0 += sum(sigma_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
+    h_0 += sum(sigma_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
+    h_0 += h_0.conj().swapaxes(-2, -1)
+    h_0 += h_00[:, : small_blocksize]
+    h_0 + sigma_00[:, : small_blocksize]
+
+    s_0 = sum(s_00[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(1, block_sections))
+    s_0 += sum(s_01[:, i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections))
+    s_0 += s_0.conj().swapaxes(-2, -1)
+    s_0 += s_00[:, : small_blocksize]
+
+
+    # s_0 = sum(_get_block(overlap, index=block) for block in blocks)
+
+    # h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
     if band_edge_config.use_eigvalsh:
         # NOTE: In this case we use only the real part of the retarded
         # self-energy.
-        h_0 += sum(xp.real(sigma_retarded.blocks[*block][ind]) for block in blocks)
+        # h_0 += sum(xp.real(sigma_retarded.blocks[*block][ind]) for block in blocks)
+
+        # h_0 = sum([h_0[row_slice,i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections)])
+        # s_0 = sum([s_0[row_slice,i*small_blocksize: (i+1) * small_blocksize] for i in range(block_sections)])
+
         e_0 = eigvalsh(
             # NOTE: Prevent eigvalsh from calling a batched routine (slow).
             xp.squeeze(h_0),
@@ -322,8 +354,16 @@ def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
 
     """
     mask = (e_0 - mid_gap_energy) < 0
-    valence_band_edge = e_0[mask].max()
-    conduction_band_edge = e_0[~mask].min()
+
+    if xp.all(mask):
+        valence_band_edge = e_0[mask].max()
+        conduction_band_edge = mid_gap_energy
+    elif xp.all(~mask):
+        valence_band_edge = mid_gap_energy
+        conduction_band_edge = e_0[~mask].min()
+    else:
+        valence_band_edge = e_0[mask].max()
+        conduction_band_edge = e_0[~mask].min()
     return xp.array([valence_band_edge, conduction_band_edge])
 
 

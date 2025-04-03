@@ -702,10 +702,10 @@ class ElectronSolverDist(SubsystemSolver):
                 elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
                     pad_width = (
                         g_retarded.total_stack_size // stack_comm.size
-                        - left_dos.shape[0]
+                        - local_left_dos.shape[0]
                     )
 
-                    left_dos = xp.pad(left_dos, (0, pad_width))
+                    left_dos = xp.pad(local_left_dos, (0, pad_width))
 
                     full_left_dos = xp.empty(
                         (g_retarded.total_stack_size,), dtype=left_dos.dtype
@@ -756,10 +756,10 @@ class ElectronSolverDist(SubsystemSolver):
                 elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
                     pad_width = (
                         g_retarded.total_stack_size // stack_comm.size
-                        - right_dos.shape[0]
+                        - local_right_dos.shape[0]
                     )
 
-                    right_dos = xp.pad(right_dos, (0, pad_width))
+                    right_dos = xp.pad(local_right_dos, (0, pad_width))
 
                     full_right_dos = xp.empty(
                         (g_retarded.total_stack_size,), dtype=right_dos.dtype

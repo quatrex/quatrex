@@ -646,10 +646,10 @@ class ElectronSolver(SubsystemSolver):
                 left_dos = full_left_dos[g_retarded._stack_padding_mask]
                 right_dos = full_right_dos[g_retarded._stack_padding_mask]
             elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
-                pad_width = g_retarded.total_stack_size // comm.size - left_dos.shape[0]
+                pad_width = g_retarded.total_stack_size // comm.size - local_left_dos.shape[0]
 
-                left_dos = xp.pad(left_dos, (0, pad_width))
-                right_dos = xp.pad(right_dos, (0, pad_width))
+                left_dos = xp.pad(local_left_dos, (0, pad_width))
+                right_dos = xp.pad(local_right_dos, (0, pad_width))
 
                 full_left_dos = xp.empty(
                     (g_retarded.total_stack_size,), dtype=left_dos.dtype

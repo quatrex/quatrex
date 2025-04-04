@@ -80,7 +80,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             -1j
             / xp.pi
             * xp.abs(self.energies[1] - self.energies[0])
-            / xp.prod(number_of_kpoints)
+            / xp.prod(xp.array(number_of_kpoints))
         )
         self.batch_size = compute_config.convolve.batch_size
 

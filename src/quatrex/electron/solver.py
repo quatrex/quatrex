@@ -103,19 +103,34 @@ class ElectronSolver(SubsystemSolver):
             start_block = section_offsets[comm.block.rank]
             end_block = section_offsets[comm.block.rank + 1]
 
-            hamiltonian_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
+            # Apply the cutoff.
+            if quatrex_config.device.R_cutoff is not None:
+                hamiltonian_unit_cells = cutoff_hr(
                     hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+                    R_cutoff=quatrex_config.device.R_cutoff,
+                )
+            hamiltonian_dict = {}
+            for periodic_shift in xp.ndindex(
+                quatrex_config.device.cells_in_periodic_directions
+            ):
+                for i in range(1, -2, -2):
+                    if i == -1 and not any(periodic_shift):
+                        break
+                    periodic_shift = tuple([i * ps for ps in periodic_shift])
+                    hamiltonian_sparray, block_sizes = create_hamiltonian(
+                        hamiltonian_unit_cells,
+                        quatrex_config.device.number_of_supercells,
+                        quatrex_config.device.transport_direction,
+                        quatrex_config.device.unit_cell_per_supercell,
+                        block_start=start_block,
+                        block_end=end_block,
+                        periodic_shift=periodic_shift,
+                        return_sparse=True,
+                    )
+                    hamiltonian_dict[periodic_shift] = hamiltonian_sparray.astype(
+                        xp.complex128
+                    )
+            hamiltonian_sparray = sum(hamiltonian_dict.values())
             hamiltonian_sparray.sum_duplicates()
             block_sizes = get_host(block_sizes)
             self.block_sizes = np.asarray(
@@ -124,7 +139,7 @@ class ElectronSolver(SubsystemSolver):
 
         else:
             try:
-                self.hamiltonian_sparray = distributed_load(
+                hamiltonian_sparray = distributed_load(
                     quatrex_config.input_dir / "hamiltonian.npz"
                 ).astype(xp.complex128)
                 hamiltonian_dict = None
@@ -219,7 +234,7 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([int(k) for k in number_of_kpoints if k > 1]),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern

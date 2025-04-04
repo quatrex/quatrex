@@ -106,6 +106,9 @@ class ElectronSolverDist(SubsystemSolver):
         )
 
         # Load the device Hamiltonian.
+        synchronize_device()
+        global_comm.Barrier()
+        t_ham_load_start = time.perf_counter()
         if quatrex_config.device.construct_from_unit_cell:
             hamiltonian_unit_cells = distributed_load(
                 quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
@@ -152,6 +155,20 @@ class ElectronSolverDist(SubsystemSolver):
         # self-energy and Hamiltonian sparsity.
         sparsity_pattern += hamiltonian_sparray
 
+        synchronize_device()
+        t_ham_load_end = time.perf_counter()
+        global_comm.Barrier()
+        t_ham_load_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
+                flush=True,
+            )
+            print(
+                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
+                flush=True,
+            )
+
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             hamiltonian_sparray.astype(xp.complex128),
             block_sizes=self.block_sizes,
@@ -161,13 +178,27 @@ class ElectronSolverDist(SubsystemSolver):
         )
         del hamiltonian_sparray
 
+        synchronize_device()
+        t_ham_create_end = time.perf_counter()
+        global_comm.Barrier()
+        t_ham_create_end_all = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
+                flush=True,
+            )
+            print(
+                f"    Create Hamiltonian all: {t_ham_create_end_all-t_ham_load_end_all}",
+                flush=True,
+            )
+
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
-        self.system_matrix.data = 0.0
+        self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
 
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
@@ -576,6 +607,9 @@ class ElectronSolverDist(SubsystemSolver):
 
         t_assemble_start = time.perf_counter()
         self.system_matrix.allocate_data()
+        sse_lesser._data[:] = 0.0
+        sse_greater._data[:] = 0.0
+        sse_retarded._data[:] = 0.0
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()

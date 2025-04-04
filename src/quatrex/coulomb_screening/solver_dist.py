@@ -221,7 +221,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
         )
-        self.system_matrix.data = 0.0
+        self.system_matrix.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
         del v_times_p_sparsity_pattern
 
@@ -240,11 +240,12 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
-        self.l_lesser.data = 0.0
+        self.l_lesser.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
 
         self.l_greater = compute_config.dsdbsparse_type.zeros_like(self.l_lesser)
+        self.l_greater.free_data()
         # Load the Coulomb matrix.
         if quatrex_config.device.construct_from_unit_cell:
 

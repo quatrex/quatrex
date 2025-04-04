@@ -117,7 +117,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
-                    num_buffers = 5  # closer to 4 but overapproximating
+                    num_buffers = 6  # closer to 4 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
                     ne = g_lesser.data.shape[0]
                     no = g_greater.data.shape[-1]

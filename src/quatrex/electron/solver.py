@@ -128,8 +128,8 @@ class ElectronSolver(SubsystemSolver):
             global_stack_shape=self.energies.shape,
         )
 
-        self.system_matrix.data = 0.0
         del sparsity_pattern
+        self.system_matrix.free_data()
 
         self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
@@ -514,6 +514,9 @@ class ElectronSolver(SubsystemSolver):
 
         t_assemble_start = time.perf_counter()
         self.system_matrix.allocate_data()
+        sse_lesser._data[:] = 0.0
+        sse_greater._data[:] = 0.0
+        sse_retarded._data[:] = 0.0
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()

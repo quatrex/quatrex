@@ -129,13 +129,29 @@ if BLOCK_COMM_SIZE is not None:
             f"Total number of ranks must be a multiple of {BLOCK_COMM_SIZE=}"
         )
 
-    # Compute the color and key for each rank.
-    color = global_comm.rank % (global_comm.size // BLOCK_COMM_SIZE)
-    key = global_comm.rank // (global_comm.size // BLOCK_COMM_SIZE)
+    # # Compute the color and key for each rank.
+    # color = global_comm.rank % (global_comm.size // BLOCK_COMM_SIZE)
+    # key = global_comm.rank // (global_comm.size // BLOCK_COMM_SIZE)
 
-    # Split the communicator twice.
-    block_comm = global_comm.Split(color=color, key=key)
-    stack_comm = global_comm.Split(color=key, key=color)
+    # # Split the communicator twice.
+    # block_comm = global_comm.Split(color=color, key=key)
+    # stack_comm = global_comm.Split(color=key, key=color)
+
+    # Block communicator
+    # BLOCK_COMM_SIZE in every block
+    # GLOBAL_COMM_SIZE // BLOCK_COMM_SIZE blocks
+    block_color = global_comm.rank // BLOCK_COMM_SIZE
+    block_key = global_comm.rank % BLOCK_COMM_SIZE
+    block_comm = global_comm.Split(color=block_color, key=block_key)
+    # Stack communicator
+    # BLOCK_COMM_SIZE stacks
+    # GLOBAL_COMM_SIZE // BLOCK_COMM_SIZE ranks in every stack
+    stack_color = global_comm.rank % BLOCK_COMM_SIZE
+    stack_key = global_comm.rank // BLOCK_COMM_SIZE
+    stack_comm = global_comm.Split(color=stack_color, key=stack_key)
+
+    # block_comm = global_comm.Split(color=key, key=color)
+    # stack_comm = global_comm.Split(color=color, key=key)
 
     # Absolute hack to try to get two split NCCL communicators. This is
     # the way the communicators get initialized with use_mpi=True but we

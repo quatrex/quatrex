@@ -819,16 +819,19 @@ class DSBCOO(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        coo: sparse.coo_matrix = arr.tocoo().copy()
+        # coo: sparse.coo_matrix = arr.tocoo().copy()
+        coo: sparse.coo_matrix = arr.tocoo()
 
         if densify_blocks is not None:
+            coo = coo.copy()
             coo = densify_selected_blocks(coo, block_sizes, densify_blocks)
-
-        # Canonicalizes the COO format.
-        coo.sum_duplicates()
 
         if symmetry:
             coo = sparse.triu(coo, format="coo")
+        
+        # Canonicalizes the COO format.
+        if not coo.has_canonical_format:
+            coo.sum_duplicates()
 
         # Compute the block-sorting index.
         block_sort_index = dsbcoo_kernels.compute_block_sort_index(

@@ -1,12 +1,14 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import copy
+import time
 from typing import Callable
 
-from qttools import NDArray, block_comm, host_xp, sparse, stack_comm, xp
+from qttools import NDArray, block_comm, host_xp, sparse, stack_comm, xp, global_comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling.profiler import Profiler
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -812,7 +814,10 @@ class DSDBCOO(DSDBSparse):
 
         """
         out = copy.deepcopy(dsdbsparse)
-        out.data[:] = 0
+        if out._data is None:
+            out.allocate_data()
+        else:
+            out._data[:] = 0
         return out
 
     @classmethod
@@ -845,6 +850,9 @@ class DSDBCOO(DSDBSparse):
             The new DSDBCOO matrix.
 
         """
+
+        t_start = time.perf_counter()
+
         if stack_comm is None or block_comm is None:
             raise ValueError("Communicators must be initialized.")
 
@@ -855,18 +863,61 @@ class DSDBCOO(DSDBSparse):
         section_size = stack_section_sizes[stack_comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        coo: sparse.coo_matrix = sparray.tocoo().copy()
+        synchronize_device()
+        block_comm.Barrier()
+        t_section = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"[DSDBCOO.from_sparray] Section distribution time: {t_section - t_start:.3f} seconds"
+            )
+
+        # coo: sparse.coo_matrix = sparray.tocoo().copy()
+        coo: sparse.coo_matrix = sparray.tocoo()
+
+        synchronize_device()
+        block_comm.Barrier()
+        t_tocoo = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"[DSDBCOO.from_sparray] COO conversion time: {t_tocoo - t_section:.3f} seconds"
+            )
 
         # Canonicalizes the COO format.
-        coo.sum_duplicates()
 
         if symmetry:
             coo = sparse.triu(coo, format="coo")
+        
+        synchronize_device()
+        block_comm.Barrier()
+        t_triu = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"[DSDBCOO.from_sparray] COO symmetry handling time: {t_triu - t_tocoo:.3f} seconds"
+            )
+
+        if not coo.has_canonical_format:
+            coo.sum_duplicates()
+        
+        synchronize_device()
+        block_comm.Barrier()
+        t_sum_duplicates = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"[DSDBCOO.from_sparray] COO sum_duplicates time: {t_sum_duplicates - t_triu:.3f} seconds"
+            )
 
         # Compute the block-sorting index.
         block_sort_index = dsbcoo_kernels.compute_block_sort_index(
             coo.row, coo.col, block_sizes
         )
+
+        synchronize_device()
+        block_comm.Barrier()
+        t_block_sort = time.perf_counter()
+        if global_comm.rank == 0:
+            print(
+                f"[DSDBCOO.from_sparray] Block sorting time: {t_block_sort - t_sum_duplicates:.3f} seconds"
+            )
 
         data = coo.data[block_sort_index]
         rows = coo.row[block_sort_index]

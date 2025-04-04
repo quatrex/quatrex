@@ -985,7 +985,10 @@ class DSBSparse(ABC):
 
         """
         out = copy.deepcopy(dsbsparse)
-        out.data[:] = 0.0
+        if out._data is None:
+            out.allocate_data()
+        else:
+            out._data[:] = 0.0
         return out
 
 

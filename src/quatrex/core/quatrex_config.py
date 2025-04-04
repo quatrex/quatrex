@@ -333,6 +333,15 @@ class DeviceConfig(BaseModel):
     number_of_supercells: PositiveInt = 1
     transport_direction: Literal["x", "y", "z"]
 
+    R_cutoff: tuple[int, int, int] | None = None
+    # Periodicity of the unit cell in non-transport directions.
+    # Only in one direction (so actuall number of periodic cells is 2 times minus 1 this value).
+    cells_in_periodic_directions: tuple[PositiveInt, PositiveInt, PositiveInt] = (
+        1,
+        1,
+        1,
+    )
+
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""

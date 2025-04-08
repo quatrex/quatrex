@@ -10,16 +10,16 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import (
     NCCL_AVAILABLE,
-    USE_NCCL,
     ArrayLike,
     NDArray,
     host_xp,
     nccl_comm,
     sparse,
     xp,
+    ALLTOALL_COMM_TYPE,
 )
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device, get_any_location, empty_like_pinned, empty_pinned
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
@@ -726,7 +726,7 @@ class DSBSparse(ABC):
                 flush=True,
             )
 
-        if NCCL_AVAILABLE and USE_NCCL:
+        if NCCL_AVAILABLE and ALLTOALL_COMM_TYPE == "nccl":
             # Always use NCCL if available.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
@@ -748,7 +748,7 @@ class DSBSparse(ABC):
                 )
 
             self._data = receive_buffer
-        elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
+        elif xp.__name__ == "numpy" or (GPU_AWARE_MPI and ALLTOALL_COMM_TYPE == "device_mpi"):
             # Use MPI if we are not on GPU or if we have GPU-aware MPI.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
@@ -770,12 +770,41 @@ class DSBSparse(ABC):
                 )
 
             self._data = receive_buffer
+        elif ALLTOALL_COMM_TYPE == "host_mpi":
+
+
+            synchronize_device()
+            comm.Barrier()
+            t_nccl_start = time.perf_counter()
+
+            _data_host = get_any_location(self._data, "numpy", use_pinned_memory=True)
+            
+            synchronize_device()
+            _data_host_out = empty_like_pinned(_data_host)
+            comm.Alltoall(_data_host, _data_host_out)
+            self._data = get_any_location(_data_host_out, "cupy", use_pinned_memory=True)
+
+
+            synchronize_device()
+            t_nccl_end = time.perf_counter()
+            comm.Barrier()
+            t_nccl_end_all = time.perf_counter()
+
+            if comm.rank == 0:
+                print(
+                    f"        MPI host Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+                print(
+                    f"        MPI host Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
+                    flush=True,
+                )
+
         else:
-            # Use the host memory if we are on GPU and do not have
-            # GPU-aware MPI.
-            _data_host = get_host(self._data)
-            comm.Alltoall(MPI.IN_PLACE, _data_host)
-            self._data = xp.array(_data_host)
+            raise RuntimeError(
+                "No suitable Alltoall communication method available."
+            )
+
 
         t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)

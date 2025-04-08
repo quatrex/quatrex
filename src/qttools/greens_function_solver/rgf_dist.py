@@ -204,7 +204,7 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_init_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_init_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(f"        Init: {t_init_end-t_init_start}", flush=True)
@@ -271,7 +271,7 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_schur_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_schur_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(f"        Schur: {t_schur_end-t_schur_start}", flush=True)
@@ -285,6 +285,9 @@ class RGFDist(GFSolver):
             a.block_sizes == a.block_sizes[0]
         ):
             func = reduced_system.gather_nccl
+
+        synchronize_device()
+        global_comm.Barrier()
         func(
             a=a_,
             xr_diag_blocks=xr_diag_blocks,
@@ -303,7 +306,7 @@ class RGFDist(GFSolver):
         )
         synchronize_device()
         t_reduce_gather_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_reduce_gather_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(
@@ -322,7 +325,7 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_reduce_solve_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_reduce_solve_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(
@@ -357,7 +360,7 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_reduce_scatter_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_reduce_scatter_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(
@@ -431,7 +434,7 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_selinv_end = time.perf_counter()
-        block_comm.Barrier()
+        global_comm.Barrier()
         t_selinv_end_all = time.perf_counter()
         if global_comm.rank == 0:
             print(f"        Selinv: {t_selinv_end-t_selinv_start}", flush=True)

@@ -87,14 +87,18 @@ NDArray: TypeAlias = xp.ndarray[Any, _DType]
 NCCL_AVAILABLE = False
 nccl_comm = None
 
-USE_NCCL = os.environ.get("USE_NCCL", "true").lower()
-if USE_NCCL in ("y", "yes", "t", "true", "on", "1"):
-    USE_NCCL = True
-elif USE_NCCL in ("n", "no", "f", "false", "off", "0"):
-    USE_NCCL = False
-else:
-    warn(f"Invalid truth value {USE_NCCL=}. Defaulting to 'true'.")
-    USE_NCCL = True
+ALLTOALL_COMM_TYPE = os.environ.get("ALLTOALL_COMM_TYPE", "nccl").lower()
+if ALLTOALL_COMM_TYPE not in ("nccl", "host_mpi", "device_mpi"):
+    raise ValueError(
+        f"Unrecognized ALLTOALL_COMM_TYPE '{ALLTOALL_COMM_TYPE}'"
+    )
+
+OTHER_COMM_TYPE = os.environ.get("OTHER_COMM_TYPE", "nccl").lower()
+if OTHER_COMM_TYPE not in ("nccl", "host_mpi", "device_mpi"):
+    raise ValueError(
+        f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
+    )
+
 
 if xp.__name__ == "cupy":
 

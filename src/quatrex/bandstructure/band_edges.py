@@ -60,7 +60,7 @@ def _bcast(values: list | NDArray, num_values: int, root: int) -> float:
 
         global_comm.Bcast(buf_host, root)
 
-        buf_host = get_any_location(buf_host, "cupy", use_pinned_memory=True)
+        buf = get_any_location(buf_host, "cupy", use_pinned_memory=True)
     else:
         raise ValueError(
             f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"

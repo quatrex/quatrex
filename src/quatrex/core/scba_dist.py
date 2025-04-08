@@ -9,18 +9,18 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import (
     NCCL_AVAILABLE,
-    USE_NCCL,
     NDArray,
     block_comm,
     host_xp,
     nccl_comm,
     stack_comm,
     xp,
+    OTHER_COMM_TYPE
 )
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import get_host, synchronize_device, empty_like_pinned, get_any_location
 from qttools.utils.input_utils import create_coordinate_grid
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes, check_gpu_aware_mpi
 
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
@@ -40,6 +40,8 @@ from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
 
+
+GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 class SCBADataDist:
     """Data container class for the SCBA.
@@ -541,13 +543,34 @@ class SCBADist:
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
         local_max_diff = xp.max(xp.abs(diff))
-        if not NCCL_AVAILABLE or not USE_NCCL:
-            max_diff = comm.allreduce(local_max_diff, op=MPI.MAX)
-        else:
+
+        if NCCL_AVAILABLE and (OTHER_COMM_TYPE == "nccl"):
             max_diff = xp.empty_like(local_max_diff)
             synchronize_device()
             nccl_comm.all_reduce(local_max_diff, max_diff, op="max")
             synchronize_device()
+
+        elif xp.__name__ == "numpy" or (GPU_AWARE_MPI and OTHER_COMM_TYPE == "device_mpi"):
+
+            max_diff = xp.empty_like(local_max_diff)
+
+            comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
+
+        elif OTHER_COMM_TYPE == "host_mpi":
+
+            local_max_diff_host = get_any_location(local_max_diff, "numpy", use_pinned_memory=True)
+            synchronize_device()
+
+            max_diff_host = empty_like_pinned(local_max_diff_host)
+
+            comm.Allreduce(local_max_diff_host, max_diff_host, op=MPI.MAX)
+
+            max_diff = get_any_location(max_diff_host, "cupy", use_pinned_memory=True)
+
+        else:
+            raise ValueError(
+                f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
+            )
 
         i_left = xp.real(self.observables.electron_current.get("left", 0.0))
         i_right = xp.real(self.observables.electron_current.get("right", 0.0))
@@ -741,7 +764,7 @@ class SCBADist:
                 self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.quatrex_config.electron.solver.compute_current:
-                if not NCCL_AVAILABLE or not USE_NCCL:
+                if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
                     meir_wingreen_current = xp.vstack(
                         comm.allgather(self.electron_solver.meir_wingreen_current)
                     )
@@ -1081,7 +1104,7 @@ class SCBADist:
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info
                 usage = (total_memory - free_memory) / total_memory
-                if not NCCL_AVAILABLE or not USE_NCCL:
+                if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
                     average_usage = comm.allreduce(usage, op=MPI.SUM) / comm.size
                 else:
                     average_usage = xp.empty(1)

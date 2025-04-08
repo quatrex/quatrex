@@ -4,7 +4,6 @@ import time
 
 from qttools import (
     NCCL_AVAILABLE,
-    USE_NCCL,
     NDArray,
     block_comm,
     global_comm,
@@ -13,6 +12,7 @@ from qttools import (
     sparse,
     stack_comm,
     xp,
+    OTHER_COMM_TYPE,
 )
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.rgf_dist import RGFDist
@@ -532,7 +532,7 @@ class ElectronSolverDist(SubsystemSolver):
             g_retarded_density = -g_retarded_diag[..., boff : boff + bsz].imag.mean(-1)
             local_dos.append(g_retarded_density)
 
-        if not NCCL_AVAILABLE or not USE_NCCL:
+        if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
             dos = xp.hstack(stack_comm.allgather(local_dos))
         else:
             # NOTE: NCCL does not expose all_gather_v. This is a hack.
@@ -716,7 +716,7 @@ class ElectronSolverDist(SubsystemSolver):
                 #         2 * xp.pi
                 #     )
                 # else:
-                if NCCL_AVAILABLE and USE_NCCL:
+                if NCCL_AVAILABLE and OTHER_COMM_TYPE == "nccl":
                     # NOTE: NCCL does not expose all_gather_v. This is a hack.
                     pad_width = (
                         g_retarded.total_stack_size // stack_comm.size
@@ -769,7 +769,7 @@ class ElectronSolverDist(SubsystemSolver):
                 #         2 * xp.pi
                 #     )
                 # else:
-                if NCCL_AVAILABLE and USE_NCCL:
+                if NCCL_AVAILABLE and OTHER_COMM_TYPE == "nccl":
                     # NOTE: NCCL does not expose all_gather_v. This is a hack.
                     pad_width = (
                         g_retarded.total_stack_size // stack_comm.size

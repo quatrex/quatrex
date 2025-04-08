@@ -5,7 +5,6 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import (
     NCCL_AVAILABLE,
-    USE_NCCL,
     NDArray,
     _DType,
     block_comm,
@@ -14,6 +13,7 @@ from qttools import (
     sparse,
     stack_comm,
     xp,
+    OTHER_COMM_TYPE,
 )
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
@@ -527,7 +527,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             w_greater_density = -w_greater_diag[..., boff : boff + bzs].imag.mean(-1)
             local_dos.append(0.5 * (w_greater_density - w_lesser_density))
 
-        if not NCCL_AVAILABLE or not USE_NCCL:
+        if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
             dos = xp.hstack(stack_comm.allgather(local_dos))
         else:
             # NOTE: NCCL does not expose all_gather_v. This is a hack.

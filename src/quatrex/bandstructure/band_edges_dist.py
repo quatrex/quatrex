@@ -5,7 +5,6 @@ from functools import partial
 
 from qttools import (
     NCCL_AVAILABLE,
-    USE_NCCL,
     NDArray,
     block_comm,
     global_comm,
@@ -14,11 +13,12 @@ from qttools import (
     sparse,
     stack_comm,
     xp,
+    OTHER_COMM_TYPE,
 )
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
+from qttools.utils.gpu_utils import get_device, get_host, synchronize_device, empty_like_pinned, get_any_location
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 from scipy import linalg as spla
 
@@ -57,13 +57,22 @@ def _bcast(values: list | NDArray, num_values: int, root: int, block: bool) -> f
     else:
         mpi_comm, nccl_comm = stack_comm, nccl_stack_comm
 
-    if NCCL_AVAILABLE and (block or USE_NCCL):
+    if NCCL_AVAILABLE and (OTHER_COMM_TYPE == "nccl"):
         nccl_comm.broadcast(buf, root)
         synchronize_device()
-    elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
+    elif xp.__name__ == "numpy" or (GPU_AWARE_MPI and OTHER_COMM_TYPE == "device_mpi"):
         mpi_comm.Bcast(buf, root)
+    elif OTHER_COMM_TYPE == "host_mpi":
+        buf_host = get_any_location(buf, "numpy", use_pinned_memory=True)
+        synchronize_device()
+
+        mpi_comm.Bcast(buf_host, root)
+
+        buf = get_any_location(buf_host, "cupy", use_pinned_memory=True)
     else:
-        mpi_comm.bcast(buf, root)
+        raise ValueError(
+            f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
+        )
 
     return buf
 

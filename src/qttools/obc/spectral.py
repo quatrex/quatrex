@@ -693,6 +693,9 @@ class Spectral(OBCSolver):
             injection = (
                 -a_ji[0, :, :] @ vrs_inj @ inv(wrs_inj) - sigma_retarded @ vrs_inj
             )
+            
+            inj_phase = xp.angle(injection[0,:])
+            injection = xp.divide(injection, xp.exp(1j * inj_phase))
 
             return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]
 

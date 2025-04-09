@@ -2,7 +2,15 @@
 
 import time
 
-from qttools import NDArray, block_comm, global_comm, host_xp, nccl_block_comm
+from qttools import (
+    NCCL_AVAILABLE,
+    OTHER_COMM_TYPE,
+    NDArray,
+    block_comm,
+    global_comm,
+    host_xp,
+    xp,
+)
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
@@ -280,11 +288,18 @@ class RGFDist(GFSolver):
         t_reduce_gather_start = time.perf_counter()
 
         # Construct the reduced system.
-        func = reduced_system.gather
-        if nccl_block_comm is not None and host_xp.all(
-            a.block_sizes == a.block_sizes[0]
-        ):
-            func = reduced_system.gather_nccl
+        if host_xp.all(a.block_sizes == a.block_sizes[0]):
+            if OTHER_COMM_TYPE == "nccl" and NCCL_AVAILABLE:
+                func = reduced_system.gather_nccl
+            elif xp.__name__ == "numpy" or OTHER_COMM_TYPE == "device_mpi":
+                func = reduced_system.gather_device_mpi
+            elif OTHER_COMM_TYPE == "host_mpi":
+                func = reduced_system.gather_host_mpi
+            else:
+                raise RuntimeError(f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'")
+        else:
+            # If the block sizes are not the same, we need to use pickle.
+            func = reduced_system.gather
 
         synchronize_device()
         global_comm.Barrier()

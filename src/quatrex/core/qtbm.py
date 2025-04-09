@@ -12,6 +12,16 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp, obc
 from qttools.utils.mpi_utils import distributed_load
 
+from scipy import sparse as sp_sparse
+
+try:
+    from qttools.cuDSS_binding.cudss_wrapp import spsolve_with_CUDSS
+    CUDSS_AVAILABLE = True
+    print("CUDSS available") if comm.rank == 0 else None
+except ImportError:
+    CUDSS_AVAILABLE = False
+
+
 from qttools.datastructures.dsbsparse import _block_view
 
 if xp.__name__ == "numpy":
@@ -358,7 +368,65 @@ class Contact:
 
         self.N_coup = 0
 
-    def compute_vector(self,coords: NDArray, orbitals: NDArray, delta_corner: NDArray = xp.array([0,0,0])) -> tuple[NDArray, NDArray]:
+    def sort_cont_at(self,vec_atoms: NDArray, delta_corner: NDArray, coords: NDArray, coordsType: NDArray) -> NDArray:
+        """
+        Sorts the atoms in the contact.
+
+        Parameters
+        ----------
+        vec_atoms : NDArray
+            The atoms in the contact.
+        delta_corner : NDArray
+            The shift of the corner.
+        coords : NDArray
+            The atomic coordinates.
+        coordsType : NDArray
+            The type of each atom.
+        
+        Returns
+        -------
+        vec_atoms : NDArray
+            The sorted atoms in the contact.
+        sorted : int
+            1 if the atoms needed to be sorted, 0 otherwise.
+        """
+
+        sorted = 0 
+
+        dx = 0.1 #A small margin used to ensure that the atoms can be sorted correctly
+
+        vec_sorted = []
+
+        #Position and type of atoms in the first contact block (shifted)
+        shifted_coords_first_block = coords[self.vec_atoms_first_block.squeeze(),:] + delta_corner
+        coordsType_first_block = coordsType[self.vec_atoms_first_block.squeeze()]
+
+        if vec_atoms.squeeze().shape[0] != self.vec_atoms_first_block.squeeze().shape[0]:
+            print("Number of atoms in the shifted contact block does not match the number of atoms in the first block")
+            raise Exception("Error: number of atoms in the contact does not match the number of atoms in the first block")
+
+        #For every atom in the shifted first contact block, find the index of the corresponding atom in the current contact block
+        for i in range(len(vec_atoms)):
+            flag = coords[vec_atoms,0] < shifted_coords_first_block[i,0] + dx
+            flag &= coords[vec_atoms,0] > shifted_coords_first_block[i,0] - dx
+            flag &= coords[vec_atoms,1] < shifted_coords_first_block[i,1] + dx
+            flag &= coords[vec_atoms,1] > shifted_coords_first_block[i,1] - dx
+            flag &= coords[vec_atoms,2] < shifted_coords_first_block[i,2] + dx
+            flag &= coords[vec_atoms,2] > shifted_coords_first_block[i,2] - dx
+            flag &= coordsType[vec_atoms] == coordsType_first_block[i]
+            
+            index = xp.nonzero(flag)[0] 
+            numind = index.shape[0]
+            if numind != 1:
+                print("Number of compatible atoms found in the translated cell: ",numind)
+                raise Exception("Error: more than one atom (or no one) found in the translated cell")
+            if vec_atoms[index[0]] != vec_atoms[i]:
+                sorted = 1
+            vec_sorted.append(vec_atoms[index[0]])
+        
+        return xp.asarray(vec_sorted), sorted
+    
+    def compute_vector(self,coords: NDArray, orbitals: NDArray, coordsType, delta_corner: NDArray = xp.array([0,0,0])) -> tuple[NDArray, NDArray]:
         """
         Computes the vectors for the contact element.
 
@@ -379,6 +447,8 @@ class Contact:
             Every orbital in the contact.
         """
 
+        sorted = 0
+
         shifted_corner_1 = self.corner_1 + delta_corner #Shift the first corner (only needed for the out-coupling elements)
         shifted_corner_2 = self.corner_2 + delta_corner #Shift the second corner (only needed for the out-coupling elements)
 
@@ -391,6 +461,9 @@ class Contact:
         vec_atoms &= coords[:,2] < shifted_corner_2[2]
         vec_atoms = xp.nonzero(vec_atoms)[0]
 
+        if self.vec_atoms_first_block is not None:
+            vec_atoms, sorted = self.sort_cont_at(vec_atoms,delta_corner,coords,coordsType)
+
         #Compute the orbitals inside the contact slab
         vec_orb = xp.array([],dtype=xp.int32)
         for i in range(vec_atoms.shape[0]):
@@ -401,10 +474,10 @@ class Contact:
             k2 = int(orbitals[index+1].get() if hasattr(orbitals[index + 1], 'get') else orbitals[index + 1])
             vec_orb = xp.concatenate((vec_orb,xp.arange(k1, k2)))
         
-        return vec_atoms, vec_orb
+        return vec_atoms, vec_orb, sorted
 
 
-    def set_vector(self,coords: NDArray, orbitals: NDArray, ham: sparse.csr_matrix):
+    def set_vector(self,coords: NDArray, orbitals: NDArray, ham: sparse.csr_matrix, coordsType: NDArray):
         """
         Sets the the contact elements.
 
@@ -417,7 +490,7 @@ class Contact:
         """
 
         #Compute the vector for the first block of the contact element
-        self.vec_atoms_first_block, self.vec_orb_first_block = self.compute_vector(coords,orbitals) 
+        self.vec_atoms_first_block, self.vec_orb_first_block, sorted = self.compute_vector(coords,orbitals,coordsType) 
 
         #First initiate the contact superblock elements with the first block (will append stuff later)
         self.vec_atoms_cont = self.vec_atoms_first_block.copy()
@@ -426,7 +499,10 @@ class Contact:
         self.vec_atoms_first_block = self.vec_atoms_first_block[None,:]
         self.vec_orb_first_block = self.vec_orb_first_block[None,:]
         
-        print(f"Contact {self.name}, slab {self.N_coup} has {self.vec_atoms_first_block.shape[1]} atoms and {self.vec_orb_first_block.shape[1]} orbitals", flush=True) if comm.rank == 0 else None
+        if sorted == 1:
+            print(f"Contact {self.name}, slab {self.N_coup} has {self.vec_atoms_first_block.shape[1]} atoms and {self.vec_orb_first_block.shape[1]} orbitals. Sorted!", flush=True) if comm.rank == 0 else None
+        else:
+            print(f"Contact {self.name}, slab {self.N_coup} has {self.vec_atoms_first_block.shape[1]} atoms and {self.vec_orb_first_block.shape[1]} orbitals", flush=True) if comm.rank == 0 else None
 
         self.N_coup += 1
 
@@ -437,7 +513,7 @@ class Contact:
             delta_corner = xp.multiply(-self.direction*(self.N_coup),(self.corner_2-self.corner_1))
 
             #Compute the vector for the new contact block
-            vec_atoms_to_append, vec_orb_to_append = self.compute_vector(coords,orbitals,delta_corner) 
+            vec_atoms_to_append, vec_orb_to_append, sorted= self.compute_vector(coords,orbitals,coordsType,delta_corner) 
 
             #Check if the new contact block is empty
             if ham[self.vec_orb_first_block.T,vec_orb_to_append[None,:]].nnz == 0:
@@ -453,7 +529,10 @@ class Contact:
             #By doing this, we are forcing the right order (always entering inside the device)
             self.vec_atoms_cont = xp.concatenate((self.vec_atoms_cont,vec_atoms_to_append))
             self.vec_orb_cont = xp.concatenate((self.vec_orb_cont,vec_orb_to_append))
-            print(f"Contact {self.name}, slab {self.N_coup} has {vec_atoms_to_append.shape[0]} atoms and {vec_orb_to_append.shape[0]} orbitals", flush=True) if comm.rank == 0 else None
+            if sorted == 1:
+                print(f"Contact {self.name}, slab {self.N_coup} has {vec_atoms_to_append.shape[0]} atoms and {vec_orb_to_append.shape[0]} orbitals. Sorted!", flush=True) if comm.rank == 0 else None
+            else:
+                print(f"Contact {self.name}, slab {self.N_coup} has {vec_atoms_to_append.shape[0]} atoms and {vec_orb_to_append.shape[0]} orbitals", flush=True) if comm.rank == 0 else None
 
             self.N_coup += 1
 
@@ -553,14 +632,13 @@ class QTBM:
             self.quatrex_config.input_dir / "electron_energies.npy"
         )
         self.local_energies = get_local_slice(self.electron_energies) #Get the local slice of the electron energies
-
+        
         self.obc = self._configure_obc(getattr(quatrex_config, "electron").obc) 
 
         # Load the device Hamiltonian.
         self.hamiltonian_sparray = distributed_load(
             quatrex_config.input_dir / "hamiltonian.npz"
         ).astype(xp.complex128)
-
         # Load the overlap matrix.
         try:
             self.overlap_sparray = distributed_load(
@@ -583,7 +661,7 @@ class QTBM:
 
         # Load the number of orbitals for each atom type
         self.orbitals_per_at = distributed_read_orbitals(quatrex_config.input_dir / "orb.dat")
-
+ 
         # Create a vector with the starting orbital for each atom
         self.orbitals_vec = xp.concatenate((xp.array([0]),xp.cumsum(self.orbitals_per_at[self.coordstType])),dtype=xp.int32)
 
@@ -608,7 +686,7 @@ class QTBM:
             self.hamiltonian_sparray.eliminate_zeros()
 
         except FileNotFoundError:
-            print("No pot provided.") if comm.rank == 0 else None
+            print("No pot provided.", flush=True) if comm.rank == 0 else None
             
         
         self.flatband = quatrex_config.electron.flatband
@@ -622,7 +700,7 @@ class QTBM:
         self.contacts = []
         for n in range(self.n_cont):
             self.contacts.append(Contact(self.corner1[n],self.corner2[n],self.corner_direction[n],self.cont_names[n]))
-            self.contacts[n].set_vector(self.coords, self.orbitals_vec, self.hamiltonian_sparray)
+            self.contacts[n].set_vector(self.coords, self.orbitals_vec, self.hamiltonian_sparray, self.coordstType)
 
         # CREATE VECTORS FOR EVERY SLAB
         self.n_slabs_x, self.n_slab_y = distributed_read_slabs(quatrex_config.input_dir / "slabs.dat")
@@ -776,7 +854,7 @@ class QTBM:
             #Compute the transmission
             if(phi_n.size != 0):
                 self.observables.electron_transmission_contacts[n,i] = xp.trace(xp.real(1j*phi_n.T.conj() @ (S[cont_2]-S[cont_2].T.conj()) @phi_n))
-
+            
             cont_2 += 1
             if cont_2 == self.n_cont:
                 cont_1 += 1
@@ -821,7 +899,7 @@ class QTBM:
             #RHS of the system
             B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
             #Solve the system of equations
-            phi_cont, _, _,_  = lstsq(H_off_coup_cont - E*S_off_coup_cont, -B)
+            phi_cont, _, _,_  = lstsq(H_off_coup_cont - E*S_off_coup_cont, -B,rcond=None)
             #Add the spill over contribution
             phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += S_off_coup_cont @ phi_cont 
 
@@ -837,6 +915,7 @@ class QTBM:
         """Runs the QTBM"""
         print("Entering QTBM calculation", flush=True) if comm.rank == 0 else None
         times = []
+        comm.Barrier()
         for i,E in enumerate(self.local_energies):
 
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
@@ -899,12 +978,36 @@ class QTBM:
             times.append(time.perf_counter())
 
             # Set up sytem matrix and rhs for electron solver.
-            inj_V = xp.zeros((self.system_matrix.shape[0],ind_0), dtype=xp.complex128) #Set the injection vector as a zero matrix
+            inj_V = xp.zeros((self.system_matrix.shape[0],ind_0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
 
+            ind1 = []
+            ind2 = []
+            sig_flat = []
             #Iterate over contacts
             for n in range(self.n_cont):
-                self.system_matrix[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_cont] -= sigma_b[n] #Subtract the self-energy in the contact elements
+                ind1.append(xp.repeat(self.contacts[n].vec_orb_cont.squeeze(), self.contacts[n].vec_orb_cont.shape[1]))
+                ind2.append(xp.tile(self.contacts[n].vec_orb_cont.squeeze(), self.contacts[n].vec_orb_cont.shape[1]))
+                sig_flat.append(sigma_b[n].flatten())
                 inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n]] = inj[n] #Add the injection vector in the contact elements of the rhs
+            
+            #Concatenate the indices and the self-energies
+            ind1 = xp.concatenate(ind1)
+            ind2 = xp.concatenate(ind2)
+            sig_flat = xp.concatenate(sig_flat)
+
+            upd_0 = sparse.coo_matrix((sig_flat, (ind1, ind2)),shape=self.system_matrix.shape).tocsr()
+
+            #Update the system matrix with the self-energies
+            self.system_matrix -= upd_0
+
+            #Iterate over contacts
+            #for n in range(self.n_cont):
+            #    sigma_cpu = sigma_b[n].get() #Move the self-energy to the CPU
+            #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get() #Move the contact elements to the CPU
+            #    self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] -= sigma_cpu #Subtract the self-energy in the contact elements
+            #    inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n]] = inj[n] #Add the injection vector in the contact elements of the rhs
+
+            #self.system_matrix = sparse.csr_matrix(self.system_matrix)
 
             #Eliminate the zeros that were added in the system matrix
             self.system_matrix.eliminate_zeros()
@@ -921,8 +1024,14 @@ class QTBM:
             # Solve for the wavefunction
             #phi = spsolve(self.system_matrix, inj_V)
 
-            lu = splu(self.system_matrix)
-            phi = lu.solve(inj_V)
+            if inj_V.size != 0:
+                if CUDSS_AVAILABLE and xp.__name__ == "cupy":
+                    #USE CUDSS
+                    phi = spsolve_with_CUDSS(self.system_matrix, inj_V)
+                else:
+                    lu = splu(self.system_matrix)
+                    phi = lu.solve(inj_V)
+
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -931,12 +1040,20 @@ class QTBM:
                 else None
             )
 
-            # Get the bare system matrix back, needed for transmission calculation 
-            for n in range(self.n_cont):
-                self.system_matrix[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_cont] += sigma_b[n] #Add the self-energy back
+            #self.system_matrix = self.system_matrix.get()
             
-            # Compute observables (DOS and Transmission)
-            self.compute_observables(phi,inj_ind,i,E,sigma_b)
+            # Get the bare system matrix back, needed for transmission calculation 
+            #for n in range(self.n_cont):
+            #    sigma_cpu = sigma_b[n].get()
+            #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get()
+            #   self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] += sigma_cpu #Add the self-energy back
+
+            #self.system_matrix = sparse.csr_matrix(self.system_matrix)
+            self.system_matrix += upd_0
+            
+            if inj_V.size != 0:
+                # Compute observables (DOS and Transmission)
+                self.compute_observables(phi,inj_ind,i,E,sigma_b)
 
             t_iteration = time.perf_counter() - times.pop()
             (

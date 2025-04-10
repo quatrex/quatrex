@@ -54,7 +54,7 @@ def assemble_kpoint_dsb(
                 jk = (jj - number_of_kpoints[1] // 2) / number_of_kpoints[1]
                 kk = (kk - number_of_kpoints[2] // 2) / number_of_kpoints[2]
                 for cell_index in lattice_matrix.keys():
-                    buffer.stack[(...,) + stack_index] -= (
+                    buffer.stack[(...,) + stack_index] += (
                         xp.exp(
                             2
                             * xp.pi

@@ -149,7 +149,8 @@ class SCBAData:
         self.g_lesser = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape,
+            global_stack_shape=electron_energies.shape
+            + tuple([k for k in number_of_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )

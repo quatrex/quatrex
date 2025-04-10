@@ -187,19 +187,34 @@ class CoulombScreeningSolver(SubsystemSolver):
             start_block = section_offsets[comm.block.rank]
             end_block = section_offsets[comm.block.rank + 1]
 
-            coulomb_matrix_sparray, __ = create_hamiltonian(
-                cutoff_hr(
+            # Apply the cutoff to the Coulomb matrix.
+            if quatrex_config.device.R_cutoff is not None:
+                coulomb_matrix_unit_cells = cutoff_hr(
                     coulomb_matrix_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+                    R_cutoff=quatrex_config.device.R_cutoff,
+                )
+            coulomb_matrix_dict = {}
+            for periodic_shift in xp.ndindex(
+                quatrex_config.device.cells_in_periodic_directions
+            ):
+                for i in range(1, -2, -2):
+                    if i == -1 and not any(periodic_shift):
+                        break
+                    periodic_shift = tuple([i * ps for ps in periodic_shift])
+                    coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                        coulomb_matrix_unit_cells,
+                        quatrex_config.device.number_of_supercells,
+                        quatrex_config.device.transport_direction,
+                        quatrex_config.device.unit_cell_per_supercell,
+                        block_start=start_block,
+                        block_end=end_block,
+                        periodic_shift=periodic_shift,
+                        return_sparse=True,
+                    )
+                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_sparray.astype(
+                        xp.complex128
+                    )
+            coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
             coulomb_matrix_sparray.sum_duplicates()
 
         else:
@@ -207,6 +222,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 coulomb_matrix_sparray = distributed_load(
                     quatrex_config.input_dir / "coulomb_matrix.npz"
                 ).astype(xp.complex128)
+                coulomb_matrix_dict = None
             except FileNotFoundError:
                 coulomb_matrix_dict = distributed_load(
                     quatrex_config.input_dir / "coulomb_matrix.pkl"
@@ -233,8 +249,6 @@ class CoulombScreeningSolver(SubsystemSolver):
                 number_of_kpoints,
                 -(number_of_kpoints // 2),
             )
-            # Change the sign of the Coulomb matrix.
-            self.coulomb_matrix.data *= -1
         # Explicitely try to free the memory for the sparsity pattern.
         del coulomb_matrix_sparray
         del coulomb_matrix_dict

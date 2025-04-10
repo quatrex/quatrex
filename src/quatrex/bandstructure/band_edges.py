@@ -98,7 +98,7 @@ def _compute_eigenvalues(
     overlap: sparse.spmatrix,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
-    ind: int,
+    ind: tuple[int, ...],
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
@@ -124,12 +124,12 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[0, row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[0, row_slice]
+    h_00 = _get_block(hamiltonian, index=blocks[0])[*ind, row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[*ind, row_slice]
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
+    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
+    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]

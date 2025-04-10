@@ -110,6 +110,7 @@ class ElectronSolver(SubsystemSolver):
                     R_cutoff=quatrex_config.device.R_cutoff,
                 )
             hamiltonian_dict = {}
+            # Create the Hamiltonian for each periodic shift.
             for periodic_shift in xp.ndindex(
                 quatrex_config.device.cells_in_periodic_directions
             ):

@@ -160,7 +160,7 @@ def cutoff_hr(
     hr: NDArray,
     value_cutoff: float | None = None,
     R_cutoff: int | tuple[int, int, int] | None = None,
-    remove_zeros: bool = False,
+    remove_zeros: bool = True,
 ) -> NDArray:
     """Cutoffs the Hamiltonian matrix elements based on their values and/or the wigner-seitz cell indices.
 
@@ -175,7 +175,7 @@ def cutoff_hr(
     R_cutoff : int or tuple, optional
         Cutoff distance for the Hamiltonian. Defaults to `None`.
     remove_zeros : bool, optional
-        Whether to remove cell planes with only zeros. Defaults to `False`.
+        Whether to remove cell planes with only zeros. Defaults to `True`.
 
     Returns
     -------
@@ -203,18 +203,20 @@ def cutoff_hr(
         zero_mask = hr_cut.any(axis=(-2, -1))
         for ax in range(3):  # Loop through axes (0, 1, 2)
             # Loop backwards through the axis (from the edge to the center).
+            axes_to_remove = []
             for idx in range(hr_cut.shape[ax] // 2, 0, -1):
-                axes_to_remove = []
                 # Check if all elements are False in the cell plane.
-                if not zero_mask.take(idx, axis=ax).any():
+                if (
+                    not zero_mask.take(idx, axis=ax).any()
+                    and not zero_mask.take(-idx, axis=ax).any()
+                ):
                     # If so, remove it.
                     axes_to_remove.append(idx)
-                elif not zero_mask.take(-idx, axis=ax).any():
                     axes_to_remove.append(-idx)
                 else:
                     # If not, break the loop (to not mess with ordering incase zero planes are not at the edge).
                     break
-                hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
+            hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
 
     return hr_cut
 
@@ -289,6 +291,7 @@ def create_hamiltonian(
     transport_cell: list = None,
     block_start: int = None,
     block_end: int = None,
+    periodic_shift: list = [0, 0, 0],
     return_sparse: bool = True,
     cutoff: float = xp.inf,
     coords: NDArray = None,
@@ -330,6 +333,10 @@ def create_hamiltonian(
         Starting block index for arrow shape partition. Defaults to `None`.
     block_end : int, optional
         Ending block index for arrow shape partition. Defaults to `None`.
+    periodic_shift : list, optional
+        Incase the system is periodic in non-transport directions, the periodic shift
+        can be used to get interactions between the transport cell and the periodic cells.
+        E.g. [0, 0, 1] for one of the periodic shifts in the z-direction.
     return_sparse : bool, optional
         Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
     cutoff : float, optional
@@ -371,10 +378,24 @@ def create_hamiltonian(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    upper_ind = tuple([1 if i == transport_dir else 0 for i in range(3)])
-    lower_ind = tuple([-1 if i == transport_dir else 0 for i in range(3)])
+    if (host_xp.abs(periodic_shift) > host_xp.array(hR.shape[:3]) // 2).any():
+        raise Warning(
+            "Periodic shift is outside the available range. Interaction will be zero."
+        )
+    if periodic_shift[transport_dir] != 0:
+        raise Warning(
+            "Periodic shift in the transport direction. This does not make sense and will be ignored."
+        )
 
-    diag_block = get_hamiltonian_block(hR, transport_cell, (0, 0, 0))
+    upper_ind = tuple(
+        [1 if i == transport_dir else periodic_shift[i] for i in range(3)]
+    )
+    lower_ind = tuple(
+        [-1 if i == transport_dir else periodic_shift[i] for i in range(3)]
+    )
+    diag_ind = tuple([0 if i == transport_dir else periodic_shift[i] for i in range(3)])
+
+    diag_block = get_hamiltonian_block(hR, transport_cell, diag_ind)
     upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
     lower_block = get_hamiltonian_block(hR, transport_cell, lower_ind)
 
@@ -440,7 +461,7 @@ def create_hamiltonian(
         full_cols = full_cols[valid_mask]
         full_data = full_data[valid_mask]
         # Also return the block sizes.
-        block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+        block_sizes = host_xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
         return (
             sparse.coo_matrix(
                 (full_data, (full_rows, full_cols)),

@@ -82,7 +82,6 @@ class DSDBCOO(DSDBSparse):
 
         self._set_diagonal_indices()
 
-
     def _set_diagonal_indices(self) -> None:
         """Sets the diagonal indices of the matrix."""
         self._diag_inds = xp.where(self.rows == self.cols)[0]

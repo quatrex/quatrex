@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from pathlib import Path
 
+import mumps
+
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
@@ -1029,8 +1031,11 @@ class QTBM:
                     #USE CUDSS
                     phi = spsolve_with_CUDSS(self.system_matrix, inj_V)
                 else:
-                    lu = splu(self.system_matrix)
-                    phi = lu.solve(inj_V)
+                    #USE MUMPS
+                    inst = mumps.Context()
+                    inst.analyze(self.system_matrix)
+                    inst.factor(self.system_matrix)
+                    phi = inst.solve(inj_V)
 
 
             t_solve = time.perf_counter() - times.pop()

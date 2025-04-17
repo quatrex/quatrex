@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from pathlib import Path
 
-import mumps
+
 
 from cupyx.profiler import time_range
 from mpi4py import MPI
@@ -23,6 +23,12 @@ try:
 except ImportError:
     CUDSS_AVAILABLE = False
 
+try:
+    import mumps
+    MUMPS_AVAILABLE = True
+    print("MUMPS available") if comm.rank == 0 else None
+except ImportError:
+    MUMPS_AVAILABLE = False
 
 from qttools.datastructures.dsbsparse import _block_view
 
@@ -35,8 +41,10 @@ if xp.__name__ == "cupy":
 
 if xp.__name__ == "numpy":
     from numpy.linalg import lstsq
+    from numpy.linalg import solve
 if xp.__name__ == "cupy":
     from cupy.linalg import lstsq
+    from cupy.linalg import solve
 
 from qttools.utils.mpi_utils import get_local_slice
 
@@ -404,8 +412,8 @@ class Contact:
         coordsType_first_block = coordsType[self.vec_atoms_first_block.squeeze()]
 
         if vec_atoms.squeeze().shape[0] != self.vec_atoms_first_block.squeeze().shape[0]:
-            print("Number of atoms in the shifted contact block does not match the number of atoms in the first block")
-            raise Exception("Error: number of atoms in the contact does not match the number of atoms in the first block")
+            print(f"Number of atoms in the shifted contact block ({vec_atoms.squeeze().shape[0]}) does not match the number of atoms in the first block ({self.vec_atoms_first_block.squeeze().shape[0]})")
+            raise Exception(f"Error: number of atoms in the contact ({vec_atoms.squeeze().shape[0]}) does not match the number of atoms in the first block ({self.vec_atoms_first_block.squeeze().shape[0]})")
 
         #For every atom in the shifted first contact block, find the index of the corresponding atom in the current contact block
         for i in range(len(vec_atoms)):
@@ -882,14 +890,14 @@ class QTBM:
         phi_ortho = self.overlap_sparray @ phi #"Orthogonalize" the wavefunction
         for n in range(self.n_cont):
             #Get the off-couping superblocks for Ham and Overlap (Could also save them in the contact class)
-            H_off_coup_cont,_,_ = get_periodic_superblocks_no_flip(
+            _,H00,H01 = get_periodic_superblocks_no_flip(
                     self.hamiltonian_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
                     self.hamiltonian_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
                     self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
                     self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
                     block_sections=self.contacts[n].N_coup,
                 )
-            S_off_coup_cont,_,_ = get_periodic_superblocks_no_flip(
+            S10,S00,S01 = get_periodic_superblocks_no_flip(
                     self.overlap_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
                     self.overlap_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
                     self.overlap_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
@@ -899,11 +907,12 @@ class QTBM:
             
             #Solve a small system to propagate the WF inside the contact
             #RHS of the system
-            B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
+            #B = self.system_matrix[self.contacts[n].vec_orb_cont,T,:] @ phi
+            B = (H01-E*S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
             #Solve the system of equations
-            phi_cont, _, _,_  = lstsq(H_off_coup_cont - E*S_off_coup_cont, -B,rcond=None)
+            phi_cont = solve(H00 - E*S00 - S[n], -B)
             #Add the spill over contribution
-            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += S_off_coup_cont @ phi_cont 
+            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += S10 @ phi_cont 
 
         #Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -1031,11 +1040,38 @@ class QTBM:
                     #USE CUDSS
                     phi = spsolve_with_CUDSS(self.system_matrix, inj_V)
                 else:
-                    #USE MUMPS
-                    inst = mumps.Context()
-                    inst.analyze(self.system_matrix)
-                    inst.factor(self.system_matrix)
-                    phi = inst.solve(inj_V)
+                    if MUMPS_AVAILABLE:
+                        #USE MUMPS
+                        inst = mumps.Context()
+                        t_mumps = time.perf_counter()
+                        inst.analyze(self.system_matrix)
+                        t_analyze = time.perf_counter() - t_mumps
+                        (
+                            print(f"Time for MUMPS analyze: {t_analyze:.2f} s", flush=True)
+                            if comm.rank == 0
+                            else None
+                        )
+
+                        t_mumps = time.perf_counter()
+                        inst.factor(self.system_matrix)
+                        t_factor = time.perf_counter() - t_mumps
+                        (
+                            print(f"Time for MUMPS factor: {t_factor:.2f} s", flush=True)
+                            if comm.rank == 0
+                            else None
+                        )
+
+                        t_mumps = time.perf_counter()
+                        phi = inst.solve(inj_V)
+                        t_solve = time.perf_counter() - t_mumps
+                        (
+                            print(f"Time for MUMPS solve: {t_solve:.2f} s", flush=True)
+                            if comm.rank == 0
+                            else None
+                        )
+                    else:
+                        lu = splu(self.system_matrix)
+                        phi = lu.solve(inj_V)
 
 
             t_solve = time.perf_counter() - times.pop()

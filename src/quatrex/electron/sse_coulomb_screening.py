@@ -299,6 +299,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 ne = g_lesser.data.shape[0]
                 nk = g_lesser.data.shape[1:-1]
 
+                # Add empty dimensions for each k-point.
                 energy_differences = (self.energies - self.energies[0]).reshape(
                     -1, *(len(nk) + 1) * (1,)
                 )
@@ -353,7 +354,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # antihermitian_fft += sigma_x_fft
 
                 # Compute retarded self-energy with a Hilbert transform.
-                antihermitian = 1j * xp.imag(greater - lesser)
+                antihermitian = greater - lesser
                 antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
                 # TODO check this: impose the causality in the FFT domain instead of taking the
                 # imaginary part in the real domain, we have one less fft to do
@@ -361,14 +362,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # antihermitian_fft -=  xp.flip(antihermitian_fft.conj(), axis=0) # remove the hermitian part X(-t) = X(t).conj()
 
                 sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-                sigma_x_fft -= xp.multiply(
-                    antihermitian_fft, hilbert_kernel_fft.conj()
-                )  # negative energy part
+                # negative energy part
+                sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+                # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
                 sigma_retarded._data[
                     sigma_retarded._stack_padding_mask, ..., batch
                 ] += (
-                    xp.real(self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne])
-                    + antihermitian / 2
+                    # Here we shouldn't divide with the number of kpoints
+                    self.prefactor
+                    * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    * xp.prod(sigma_retarded.shape[1:-2])
+                    # + antihermitian / 2
                 )
 
                 # Compute the full self-energy using the convolution theorem.

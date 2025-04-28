@@ -8,6 +8,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from numpy.typing import ArrayLike
 
 from qttools.__about__ import __version__
+import math
 
 # Allows user to specify the array module via an environment variable.
 ARRAY_MODULE = os.environ.get("ARRAY_MODULE")
@@ -99,7 +100,7 @@ if OTHER_COMM_TYPE not in ("nccl", "host_mpi", "device_mpi"):
         f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
     )
 
-
+nccl_comm = None
 if xp.__name__ == "cupy":
 
     from cupy.cuda import nccl
@@ -108,13 +109,18 @@ if xp.__name__ == "cupy":
         NCCL_AVAILABLE = True
 
         from cupyx import distributed
+        from cupy.cuda import nccl
+        from cupyx.distributed import _store
+        from cupyx.distributed._comm import _Backend
 
-        # TODO: This will probably not work with communicators other than
-        # MPI.COMM_WORLD. We need to fix this if we want to use other
-        # communicators.
-        nccl_comm = distributed.NCCLBackend(
-            global_comm.size, global_comm.rank, use_mpi=True
-        )
+
+
+#         # TODO: This will probably not work with communicators other than
+#         # MPI.COMM_WORLD. We need to fix this if we want to use other
+#         # communicators.
+#         nccl_comm = distributed.NCCLBackend(
+#             global_comm.size, global_comm.rank, use_mpi=True
+#         )
 
 block_comm = None
 stack_comm = None
@@ -162,38 +168,62 @@ if BLOCK_COMM_SIZE is not None:
     # need to force it not to use MPI.COMM_WORLD.
     if NCCL_AVAILABLE:
         # Initialize the block communicator.
+    
+        nccl_block_comm = distributed.NCCLBackend.__new__(
+            distributed.NCCLBackend
+        )
+        _Backend.__init__(nccl_block_comm, global_comm.size, global_comm.rank, _store._DEFAULT_HOST, port=_store._DEFAULT_PORT)
+
+        nccl_block_comm.use_mpi = True
+
         nccl_block_comm = distributed.NCCLBackend(
             global_comm.size, global_comm.rank, use_mpi=True
         )
+
         nccl_block_comm._n_devices = block_comm.size
         nccl_block_comm._mpi_comm = block_comm
         nccl_block_comm._mpi_rank = nccl_block_comm._mpi_comm.Get_rank()
         nccl_block_comm._mpi_comm.Barrier()
         nccl_block_id = None
-        if nccl_block_comm._mpi_rank == 0:
-            nccl_block_id = nccl.get_unique_id()
-        nccl_block_id = nccl_block_comm._mpi_comm.bcast(nccl_block_id, root=0)
 
-        nccl_block_comm._comm = nccl.NcclCommunicator(
-            block_comm.size, nccl_block_id, block_comm.rank
-        )
+        # round to get a multiple of BLOCK_COMM_SIZE
+        group_size = max(BLOCK_COMM_SIZE, global_comm.size // 8 + BLOCK_COMM_SIZE - (global_comm.size // 8) % BLOCK_COMM_SIZE)
 
-        # Initialize the stack communicator.
-        nccl_stack_comm = distributed.NCCLBackend(
-            global_comm.size, global_comm.rank, use_mpi=True
-        )
-        nccl_stack_comm._n_devices = stack_comm.size
-        nccl_stack_comm._mpi_comm = stack_comm
-        nccl_stack_comm._mpi_rank = nccl_stack_comm._mpi_comm.Get_rank()
-        nccl_stack_comm._mpi_comm.Barrier()
-        nccl_stack_id = None
-        if nccl_stack_comm._mpi_rank == 0:
-            nccl_stack_id = nccl.get_unique_id()
-        nccl_stack_id = nccl_stack_comm._mpi_comm.bcast(nccl_stack_id, root=0)
+        print(
+            f"Initializing nccl_block_comm with group size {group_size} for {global_comm.size=}", flush=True)
 
-        nccl_stack_comm._comm = nccl.NcclCommunicator(
-            stack_comm.size, nccl_stack_id, stack_comm.rank
-        )
+        for i in range( math.ceil(global_comm.size / group_size) ):
+
+            if global_comm.rank // group_size == i:
+                print(
+                    f"Initializing nccl_block_comm {global_comm.rank} in group {i}", flush=True)
+
+                if nccl_block_comm._mpi_rank == 0:
+                    nccl_block_id = nccl.get_unique_id()
+                nccl_block_id = nccl_block_comm._mpi_comm.bcast(nccl_block_id, root=0)
+
+                nccl_block_comm._comm = nccl.NcclCommunicator(
+                    block_comm.size, nccl_block_id, block_comm.rank
+                )
+            
+            global_comm.Barrier()
+
+        # # Initialize the stack communicator.
+        # nccl_stack_comm = distributed.NCCLBackend(
+        #     global_comm.size, global_comm.rank, use_mpi=True
+        # )
+        # nccl_stack_comm._n_devices = stack_comm.size
+        # nccl_stack_comm._mpi_comm = stack_comm
+        # nccl_stack_comm._mpi_rank = nccl_stack_comm._mpi_comm.Get_rank()
+        # nccl_stack_comm._mpi_comm.Barrier()
+        # nccl_stack_id = None
+        # if nccl_stack_comm._mpi_rank == 0:
+        #     nccl_stack_id = nccl.get_unique_id()
+        # nccl_stack_id = nccl_stack_comm._mpi_comm.bcast(nccl_stack_id, root=0)
+
+        # nccl_stack_comm._comm = nccl.NcclCommunicator(
+        #     stack_comm.size, nccl_stack_id, stack_comm.rank
+        # )
 
 __all__ = [
     "__version__",

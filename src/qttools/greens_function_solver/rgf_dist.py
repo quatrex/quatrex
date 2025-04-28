@@ -289,7 +289,7 @@ class RGFDist(GFSolver):
 
         # Construct the reduced system.
         if host_xp.all(a.block_sizes == a.block_sizes[0]):
-            if OTHER_COMM_TYPE == "nccl" and NCCL_AVAILABLE:
+            if True:
                 func = reduced_system.gather_nccl
             elif xp.__name__ == "numpy" or OTHER_COMM_TYPE == "device_mpi":
                 func = reduced_system.gather_device_mpi

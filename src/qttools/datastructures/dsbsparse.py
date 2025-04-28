@@ -196,12 +196,15 @@ class DSBSparse(ABC):
         stack_section_sizes, total_stack_size = get_section_sizes(
             global_stack_shape[0], comm.size, strategy="balanced"
         )
+        self.stack_section_sizes_offset = stack_section_sizes[comm.rank]
         self.stack_section_sizes = xp.array(stack_section_sizes)
         self.total_stack_size = total_stack_size
 
         nnz_section_sizes, total_nnz_size = get_section_sizes(
             data.shape[-1], comm.size, strategy="greedy"
         )
+        self.nnz_section_sizes_host = nnz_section_sizes
+        self.nnz_section_offsets_host = host_xp.hstack(([0], host_xp.cumsum(self.nnz_section_sizes_host)))
         self.nnz_section_sizes = xp.array(nnz_section_sizes)
         self.nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
@@ -351,9 +354,9 @@ class DSBSparse(ABC):
         """Returns the local slice of the data, masking the padding."""
         if self.distribution_state == "stack":
             return self._data[
-                : self.stack_section_sizes[comm.rank],
+                : self.stack_section_sizes_offset,
                 ...,
-                : sum(self.nnz_section_sizes),
+                : self.nnz_section_offsets_host[-1],
             ]
         return self._data[
             self._stack_padding_mask, ..., : self.nnz_section_sizes[comm.rank]
@@ -364,9 +367,9 @@ class DSBSparse(ABC):
         """Sets the local slice of the data."""
         if self.distribution_state == "stack":
             self._data[
-                : self.stack_section_sizes[comm.rank],
+                : self.stack_section_sizes_offset,
                 ...,
-                : sum(self.nnz_section_sizes),
+                : self.nnz_section_offsets_host[-1],
             ] = value
         else:
             self._data[

@@ -2,13 +2,15 @@
 
 import os
 import warnings
+import time
 
 import cupy as cp
 from cupyx import jit
 
-from qttools import USE_CUPY_JIT, NDArray, host_xp
+from qttools import USE_CUPY_JIT, NDArray, host_xp, global_comm
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import synchronize_device
 
 # NOTE: CUDA kernels are not profiled, as the jit-compiled kernels
 # cannot find the correct name of the function to profile.
@@ -99,6 +101,9 @@ else:
         }
     """,
         "find_inds",
+        options=(
+            "--emit-static-lib",
+        )
     )
 
 if USE_CUPY_JIT:
@@ -217,6 +222,9 @@ else:
         }}
     """,
         "find_inds",
+        options=(
+            "--emit-static-lib",
+        )
     )
 
 
@@ -344,7 +352,7 @@ else:
             int row_stop,
             int col_start,
             int col_stop,
-            bool *mask,
+            int *mask,
             int rows_len
         ){
             int tid = blockDim.x * blockIdx.x + threadIdx.x;
@@ -359,6 +367,9 @@ else:
         }
     """,
         "_compute_coo_block_mask_kernel",
+        options=(
+            "--emit-static-lib",
+        )
     )
 
 
@@ -389,7 +400,7 @@ def compute_block_slice(
         The stop index of the block.
 
     """
-    mask = cp.zeros(rows.shape[0], dtype=cp.bool_)
+    mask = cp.zeros(rows.shape[0], dtype=cp.int32)
     row_start, row_stop = host_xp.int32(block_offsets[row]), host_xp.int32(
         block_offsets[row + 1]
     )
@@ -588,6 +599,9 @@ else:
         }
     """,
         "densify_block",
+        options=(
+            "--emit-static-lib",
+        )
     )
 
 
@@ -614,6 +628,58 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """
     # TODO: Test whether a custom kernel could be faster here.
     data[:] = block[..., rows, cols]
+
+
+
+_reduction = cp.RawKernel(
+    r"""
+    extern "C" __global__
+    void _reduction(
+        int *a,
+        int *out,
+        int n
+    ){
+        int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+        int tmp = 0;
+        for(int i = tid; i < n; i += blockDim.x * gridDim.x) {
+            tmp += a[i];
+        }
+        if(tid < blockDim.x * gridDim.x){
+            out[tid] = tmp;
+        }
+
+    }
+""",
+    "_reduction",
+        options=(
+            "--emit-static-lib",
+        )
+)
+
+
+def reduction(
+    a: NDArray,
+):
+
+    n_blocks = 4
+
+    out = cp.zeros((n_blocks * THREADS_PER_BLOCK), dtype=cp.int32)
+
+    n = a.size
+    _reduction(
+        (n_blocks,),
+        (THREADS_PER_BLOCK,),
+        (
+            a,
+            out,
+            host_xp.int32(n),
+        ),
+    )
+
+    out = cp.sum(out)
+
+    return out
 
 
 @profiler.profile(level="api")
@@ -648,13 +714,23 @@ def compute_block_sort_index(
     )
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
-    mask = cp.zeros(len(coo_cols), dtype=cp.bool_)
+    mask = cp.zeros(len(coo_cols), dtype=cp.int32)
     coo_rows = coo_rows.astype(cp.int32)
     coo_cols = coo_cols.astype(cp.int32)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
+
+    t_mask = 0.0
+
+    t_sum = 0.0
+
+    t_sort = 0.0
+
+
     for i, j in cp.ndindex(num_blocks, num_blocks):
+        synchronize_device()
+        t_mask -= time.perf_counter()
         _compute_coo_block_mask_kernel(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
@@ -669,13 +745,34 @@ def compute_block_sort_index(
                 host_xp.int32(len(coo_cols)),
             ),
         )
+        synchronize_device()
+        t_mask += time.perf_counter()
+        t_sum -= time.perf_counter()
 
-        bnnz = cp.sum(mask)
+        bnnz = reduction(mask)
+
+        synchronize_device()
+        t_sum += time.perf_counter()
+        t_sort -= time.perf_counter()
 
         if bnnz != 0:
             # Sort the data by block-row and -column.
             sort_index[offset : offset + bnnz] = cp.nonzero(mask)[0]
 
             offset += bnnz
+
+        t_sort += time.perf_counter()
+
+    if global_comm.rank == 0:
+        print(
+            f"mask computation took {t_mask:.3f} seconds.", flush=True
+        )
+        print(
+            f"sum computation took {t_sum:.3f} seconds.", flush=True
+        )
+        print(
+            f"sorting took {t_sort:.3f} seconds.", flush=True
+        )
+
 
     return sort_index

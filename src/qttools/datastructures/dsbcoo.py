@@ -828,7 +828,7 @@ class DSBCOO(DSBSparse):
 
         if symmetry:
             coo = sparse.triu(coo, format="coo")
-        
+
         # Canonicalizes the COO format.
         if not coo.has_canonical_format:
             coo.sum_duplicates()

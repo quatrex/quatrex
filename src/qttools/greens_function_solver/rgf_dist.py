@@ -2,8 +2,7 @@
 
 import time
 
-from qttools import (
-    NCCL_AVAILABLE,
+from qttools import (  # NCCL_AVAILABLE,
     OTHER_COMM_TYPE,
     NDArray,
     block_comm,

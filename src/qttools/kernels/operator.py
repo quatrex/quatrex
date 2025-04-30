@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import USE_CUPY_JIT, NDArray, xp
+from qttools import NDArray, xp
+from qttools.kernels import USE_CUPY_JIT
 from qttools.profiling import Profiler
 
 profiler = Profiler()

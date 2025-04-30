@@ -4,7 +4,8 @@
 import cupy as cp
 from cupyx import jit
 
-from qttools import USE_CUPY_JIT, NDArray, host_xp
+from qttools import NDArray, host_xp
+from qttools.kernels import USE_CUPY_JIT
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 

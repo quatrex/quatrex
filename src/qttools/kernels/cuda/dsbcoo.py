@@ -1,13 +1,13 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import os
-import warnings
 import time
 
 import cupy as cp
 from cupyx import jit
 
-from qttools import USE_CUPY_JIT, NDArray, host_xp, global_comm
+from qttools import NDArray, global_comm, host_xp, strtobool
+from qttools.kernels import USE_CUPY_JIT
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
@@ -16,23 +16,8 @@ from qttools.utils.gpu_utils import synchronize_device
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-USE_FIND_INDS = os.environ.get("USE_FIND_INDS", "true").lower()
-if USE_FIND_INDS in ("y", "yes", "t", "true", "on", "1"):
-    USE_FIND_INDS = True
-elif USE_FIND_INDS in ("n", "no", "f", "false", "off", "0"):
-    USE_FIND_INDS = False
-else:
-    warnings.warn(f"Invalid truth value {USE_FIND_INDS=}. Defaulting to 'true'.")
-    USE_FIND_INDS = True
-
-USE_DENSIFY_BLOCKS = os.environ.get("USE_DENSIFY_BLOCK", "false").lower()
-if USE_DENSIFY_BLOCKS in ("y", "yes", "t", "true", "on", "1"):
-    USE_DENSIFY_BLOCKS = True
-elif USE_DENSIFY_BLOCKS in ("n", "no", "f", "false", "off", "0"):
-    USE_DENSIFY_BLOCKS = False
-else:
-    warnings.warn(f"Invalid truth value {USE_DENSIFY_BLOCKS=}. Defaulting to 'false'.")
-    USE_DENSIFY_BLOCKS = False
+USE_FIND_INDS = strtobool(os.getenv("USE_FIND_INDS", "True"), True)
+USE_DENSIFY_BLOCKS = strtobool(os.getenv("USE_DENSIFY_BLOCK", "False"), False)
 
 if USE_CUPY_JIT:
 
@@ -101,9 +86,7 @@ else:
         }
     """,
         "find_inds",
-        options=(
-            "--emit-static-lib",
-        )
+        options=("--emit-static-lib",),
     )
 
 if USE_CUPY_JIT:
@@ -222,9 +205,7 @@ else:
         }}
     """,
         "find_inds",
-        options=(
-            "--emit-static-lib",
-        )
+        options=("--emit-static-lib",),
     )
 
 
@@ -367,9 +348,7 @@ else:
         }
     """,
         "_compute_coo_block_mask_kernel",
-        options=(
-            "--emit-static-lib",
-        )
+        options=("--emit-static-lib",),
     )
 
 
@@ -599,9 +578,7 @@ else:
         }
     """,
         "densify_block",
-        options=(
-            "--emit-static-lib",
-        )
+        options=("--emit-static-lib",),
     )
 
 
@@ -630,7 +607,6 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     data[:] = block[..., rows, cols]
 
 
-
 _reduction = cp.RawKernel(
     r"""
     extern "C" __global__
@@ -652,9 +628,7 @@ _reduction = cp.RawKernel(
     }
 """,
     "_reduction",
-        options=(
-            "--emit-static-lib",
-        )
+    options=("--emit-static-lib",),
 )
 
 
@@ -727,7 +701,6 @@ def compute_block_sort_index(
 
     t_sort = 0.0
 
-
     for i, j in cp.ndindex(num_blocks, num_blocks):
         synchronize_device()
         t_mask -= time.perf_counter()
@@ -764,15 +737,8 @@ def compute_block_sort_index(
         t_sort += time.perf_counter()
 
     if global_comm.rank == 0:
-        print(
-            f"mask computation took {t_mask:.3f} seconds.", flush=True
-        )
-        print(
-            f"sum computation took {t_sum:.3f} seconds.", flush=True
-        )
-        print(
-            f"sorting took {t_sort:.3f} seconds.", flush=True
-        )
-
+        print(f"mask computation took {t_mask:.3f} seconds.", flush=True)
+        print(f"sum computation took {t_sum:.3f} seconds.", flush=True)
+        print(f"sorting took {t_sort:.3f} seconds.", flush=True)
 
     return sort_index

@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import math
 import os
 from typing import Any, TypeAlias, TypeVar
 from warnings import warn
@@ -8,7 +9,21 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from numpy.typing import ArrayLike
 
 from qttools.__about__ import __version__
-import math
+
+
+def strtobool(s: str, default: bool | None = None) -> bool:
+    """Convert a string to a boolean."""
+    if s.lower() in ("y", "yes", "t", "true", "on", "1"):
+        return True
+    if s.lower() in ("n", "no", "f", "false", "off", "0"):
+        return False
+
+    if default is None:
+        raise ValueError(f"Invalid truth value {s=}.")
+
+    warn(f"Invalid truth value {s=}. Defaulting to {default=}.")
+    return default
+
 
 # Allows user to specify the array module via an environment variable.
 ARRAY_MODULE = os.environ.get("ARRAY_MODULE")
@@ -68,16 +83,6 @@ else:
 
         ARRAY_MODULE = "numpy"
 
-# TODO: adapt testing suite to test both JIT and non-JIT versions
-# Implemented with a env variable to allow for easy switching
-USE_CUPY_JIT = os.environ.get("USE_CUPY_JIT", "true").lower()
-if USE_CUPY_JIT in ("y", "yes", "t", "true", "on", "1"):
-    USE_CUPY_JIT = True
-elif USE_CUPY_JIT in ("n", "no", "f", "false", "off", "0"):
-    USE_CUPY_JIT = False
-else:
-    warn(f"Invalid truth value {USE_CUPY_JIT=}. Defaulting to 'true'.")
-    USE_CUPY_JIT = True
 
 # Some type aliases for the array module.
 _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
@@ -90,15 +95,11 @@ nccl_comm = None
 
 ALLTOALL_COMM_TYPE = os.environ.get("ALLTOALL_COMM_TYPE", "nccl").lower()
 if ALLTOALL_COMM_TYPE not in ("nccl", "host_mpi", "device_mpi"):
-    raise ValueError(
-        f"Unrecognized ALLTOALL_COMM_TYPE '{ALLTOALL_COMM_TYPE}'"
-    )
+    raise ValueError(f"Unrecognized ALLTOALL_COMM_TYPE '{ALLTOALL_COMM_TYPE}'")
 
 OTHER_COMM_TYPE = os.environ.get("OTHER_COMM_TYPE", "nccl").lower()
 if OTHER_COMM_TYPE not in ("nccl", "host_mpi", "device_mpi"):
-    raise ValueError(
-        f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
-    )
+    raise ValueError(f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'")
 
 nccl_comm = None
 if xp.__name__ == "cupy":
@@ -108,11 +109,10 @@ if xp.__name__ == "cupy":
     if nccl.available:
         NCCL_AVAILABLE = True
 
-        from cupyx import distributed
         from cupy.cuda import nccl
+        from cupyx import distributed
         from cupyx.distributed import _store
         from cupyx.distributed._comm import _Backend
-
 
 
 #         # TODO: This will probably not work with communicators other than
@@ -168,11 +168,15 @@ if BLOCK_COMM_SIZE is not None:
     # need to force it not to use MPI.COMM_WORLD.
     if NCCL_AVAILABLE:
         # Initialize the block communicator.
-    
-        nccl_block_comm = distributed.NCCLBackend.__new__(
-            distributed.NCCLBackend
+
+        nccl_block_comm = distributed.NCCLBackend.__new__(distributed.NCCLBackend)
+        _Backend.__init__(
+            nccl_block_comm,
+            global_comm.size,
+            global_comm.rank,
+            _store._DEFAULT_HOST,
+            port=_store._DEFAULT_PORT,
         )
-        _Backend.__init__(nccl_block_comm, global_comm.size, global_comm.rank, _store._DEFAULT_HOST, port=_store._DEFAULT_PORT)
 
         nccl_block_comm.use_mpi = True
 
@@ -187,16 +191,25 @@ if BLOCK_COMM_SIZE is not None:
         nccl_block_id = None
 
         # round to get a multiple of BLOCK_COMM_SIZE
-        group_size = max(BLOCK_COMM_SIZE, global_comm.size // 8 + BLOCK_COMM_SIZE - (global_comm.size // 8) % BLOCK_COMM_SIZE)
+        group_size = max(
+            BLOCK_COMM_SIZE,
+            global_comm.size // 8
+            + BLOCK_COMM_SIZE
+            - (global_comm.size // 8) % BLOCK_COMM_SIZE,
+        )
 
         print(
-            f"Initializing nccl_block_comm with group size {group_size} for {global_comm.size=}", flush=True)
+            f"Initializing nccl_block_comm with group size {group_size} for {global_comm.size=}",
+            flush=True,
+        )
 
-        for i in range( math.ceil(global_comm.size / group_size) ):
+        for i in range(math.ceil(global_comm.size / group_size)):
 
             if global_comm.rank // group_size == i:
                 print(
-                    f"Initializing nccl_block_comm {global_comm.rank} in group {i}", flush=True)
+                    f"Initializing nccl_block_comm {global_comm.rank} in group {i}",
+                    flush=True,
+                )
 
                 if nccl_block_comm._mpi_rank == 0:
                     nccl_block_id = nccl.get_unique_id()
@@ -205,7 +218,7 @@ if BLOCK_COMM_SIZE is not None:
                 nccl_block_comm._comm = nccl.NcclCommunicator(
                     block_comm.size, nccl_block_id, block_comm.rank
                 )
-            
+
             global_comm.Barrier()
 
         # # Initialize the stack communicator.
@@ -233,7 +246,6 @@ __all__ = [
     "sparse",
     "NDArray",
     "ArrayLike",
-    "USE_CUPY_JIT",
     "block_comm",
     "stack_comm",
     "NCCL_AVAILABLE",

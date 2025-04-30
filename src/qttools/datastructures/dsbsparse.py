@@ -5,10 +5,11 @@ import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
-from mpi4py import MPI
+# from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import (
+    ALLTOALL_COMM_TYPE,
     NCCL_AVAILABLE,
     ArrayLike,
     NDArray,
@@ -16,10 +17,14 @@ from qttools import (
     nccl_comm,
     sparse,
     xp,
-    ALLTOALL_COMM_TYPE,
 )
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device, get_any_location, empty_like_pinned, empty_pinned
+from qttools.utils.gpu_utils import (  # empty_pinned,; get_host,
+    empty_like_pinned,
+    free_mempool,
+    get_any_location,
+    synchronize_device,
+)
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
 
 profiler = Profiler()
@@ -204,7 +209,9 @@ class DSBSparse(ABC):
             data.shape[-1], comm.size, strategy="greedy"
         )
         self.nnz_section_sizes_host = nnz_section_sizes
-        self.nnz_section_offsets_host = host_xp.hstack(([0], host_xp.cumsum(self.nnz_section_sizes_host)))
+        self.nnz_section_offsets_host = host_xp.hstack(
+            ([0], host_xp.cumsum(self.nnz_section_sizes_host))
+        )
         self.nnz_section_sizes = xp.array(nnz_section_sizes)
         self.nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
@@ -751,7 +758,9 @@ class DSBSparse(ABC):
                 )
 
             self._data = receive_buffer
-        elif xp.__name__ == "numpy" or (GPU_AWARE_MPI and ALLTOALL_COMM_TYPE == "device_mpi"):
+        elif xp.__name__ == "numpy" or (
+            GPU_AWARE_MPI and ALLTOALL_COMM_TYPE == "device_mpi"
+        ):
             # Use MPI if we are not on GPU or if we have GPU-aware MPI.
             receive_buffer = xp.empty_like(self._data)
             synchronize_device()
@@ -775,18 +784,18 @@ class DSBSparse(ABC):
             self._data = receive_buffer
         elif ALLTOALL_COMM_TYPE == "host_mpi":
 
-
             synchronize_device()
             comm.Barrier()
             t_nccl_start = time.perf_counter()
 
             _data_host = get_any_location(self._data, "numpy", use_pinned_memory=True)
-            
+
             synchronize_device()
             _data_host_out = empty_like_pinned(_data_host)
             comm.Alltoall(_data_host, _data_host_out)
-            self._data = get_any_location(_data_host_out, "cupy", use_pinned_memory=True)
-
+            self._data = get_any_location(
+                _data_host_out, "cupy", use_pinned_memory=True
+            )
 
             synchronize_device()
             t_nccl_end = time.perf_counter()
@@ -804,10 +813,7 @@ class DSBSparse(ABC):
                 )
 
         else:
-            raise RuntimeError(
-                "No suitable Alltoall communication method available."
-            )
-
+            raise RuntimeError("No suitable Alltoall communication method available.")
 
         t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)

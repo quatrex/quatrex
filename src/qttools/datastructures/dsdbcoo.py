@@ -4,7 +4,7 @@ import copy
 import time
 from typing import Callable
 
-from qttools import NDArray, block_comm, host_xp, sparse, stack_comm, xp, global_comm
+from qttools import NDArray, block_comm, global_comm, host_xp, sparse, stack_comm, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling.profiler import Profiler
@@ -886,7 +886,7 @@ class DSDBCOO(DSDBSparse):
 
         if symmetry:
             coo = sparse.triu(coo, format="coo")
-        
+
         synchronize_device()
         block_comm.Barrier()
         t_triu = time.perf_counter()
@@ -897,7 +897,7 @@ class DSDBCOO(DSDBSparse):
 
         if not coo.has_canonical_format:
             coo.sum_duplicates()
-        
+
         synchronize_device()
         block_comm.Barrier()
         t_sum_duplicates = time.perf_counter()

@@ -1,6 +1,12 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import xp
+import os
+
+import qttools.kernels.operator as operator
+from qttools import strtobool, xp
+
+# TODO: adapt testing suite to test both JIT and non-JIT versions
+USE_CUPY_JIT = strtobool(os.getenv("USE_CUPY_JIT", "True"), default=True)
 
 if xp.__name__ == "numpy":
     from qttools.kernels.numba import dsbcoo as dsbcoo_kernels
@@ -15,7 +21,6 @@ elif xp.__name__ == "cupy":
 else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{xp.__name__}'")
 
-import qttools.kernels.operator as operator
 
 __all__ = [
     "dsbsparse_kernels",

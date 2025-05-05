@@ -194,11 +194,11 @@ class _SubCommunicator:
             )
 
             synchronize_device()
-            _recbuf_host = empty_like_pinned(_sendbuf_host)
-            self._mpi_comm.Alltoall(_sendbuf_host, _recbuf_host)
+            _recvbuf_host = empty_like_pinned(recvbuf)
+            self._mpi_comm.Alltoall(_sendbuf_host, _recvbuf_host)
 
             recvbuf[:] = get_any_location(
-                _recbuf_host,
+                _recvbuf_host,
                 output_module="cupy",
                 use_pinned_memory=True,
             )
@@ -234,11 +234,11 @@ class _SubCommunicator:
             )
 
             synchronize_device()
-            _recbuf_host = empty_like_pinned(_sendbuf_host)
-            self._mpi_comm.Allgather(_sendbuf_host, _recbuf_host)
+            _recvbuf_host = empty_like_pinned(recvbuf)
+            self._mpi_comm.Allgather(_sendbuf_host, _recvbuf_host)
 
             recvbuf[:] = get_any_location(
-                _recbuf_host,
+                _recvbuf_host,
                 output_module="cupy",
                 use_pinned_memory=True,
             )
@@ -273,11 +273,11 @@ class _SubCommunicator:
             )
 
             synchronize_device()
-            _recbuf_host = empty_like_pinned(_sendbuf_host)
-            self._mpi_comm.Allreduce(_sendbuf_host, _recbuf_host, op=_mpi_ops[op])
+            _recvbuf_host = empty_like_pinned(recvbuf)
+            self._mpi_comm.Allreduce(_sendbuf_host, _recvbuf_host, op=_mpi_ops[op])
 
             recvbuf[:] = get_any_location(
-                _recbuf_host,
+                _recvbuf_host,
                 output_module="cupy",
                 use_pinned_memory=True,
             )

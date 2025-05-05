@@ -205,5 +205,4 @@ def test_bcast(
         assert xp.allclose(
             xp.ones((data_size,), dtype=xp.float32) * xp.pi,
             sendbuf,
-            pytest.skip("Config not valid"),
         ), f"sendbuf: {sendbuf}"

@@ -1,11 +1,12 @@
+import numpy as np
 import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
-from qttools.comm import comm
+from qttools.comm import all_gather_v, comm, pad_buffer
 from qttools.comm.comm import GPU_AWARE_MPI, _default_config
 
-data_size = 10
+data_size = 3
 
 
 @pytest.fixture(scope="function")
@@ -109,14 +110,14 @@ def test_all_to_all(
         # random sendbuf
         sendbuf = xp.ones((test_comm.size,), dtype=xp.float32) * test_comm.rank
 
-        recbuf = xp.empty_like(sendbuf)
+        recvbuf = xp.empty_like(sendbuf)
 
-        test_comm.all_to_all(sendbuf, recbuf)
+        test_comm.all_to_all(sendbuf, recvbuf)
 
         assert xp.allclose(
             xp.arange(test_comm.size, dtype=xp.float32),
-            recbuf,
-        ), f"sendbuf: {sendbuf}, recbuf: {recbuf}"
+            recvbuf,
+        ), f"sendbuf: {sendbuf}, recvbuf: {recvbuf}"
 
 
 @pytest.mark.mpi(min_size=3)
@@ -125,7 +126,7 @@ def test_all_gather(
     backend_type: str,
     block_comm_size: int,
 ):
-    """Test the all_to_all function of the comm singleton."""
+    """Test the all_gather function of the comm singleton."""
 
     if not _configure(
         backend_type=backend_type,
@@ -138,15 +139,15 @@ def test_all_gather(
         # random sendbuf
         sendbuf = xp.ones((data_size,), dtype=xp.float32) * test_comm.rank
 
-        recbuf = xp.empty((data_size * test_comm.size,), dtype=xp.float32)
+        recvbuf = xp.empty((data_size * test_comm.size,), dtype=xp.float32)
 
-        test_comm.all_gather(sendbuf, recbuf)
+        test_comm.all_gather(sendbuf, recvbuf)
 
         for i in range(test_comm.size):
             assert xp.allclose(
                 xp.ones((data_size,), dtype=xp.float32) * i,
-                recbuf[i * data_size : (i + 1) * data_size],
-            ), f"sendbuf: {sendbuf}, recbuf: {recbuf[i * data_size : (i + 1) * data_size]}"
+                recvbuf[i * data_size : (i + 1) * data_size],
+            ), f"sendbuf: {sendbuf}, recvbuf: {recvbuf[i * data_size : (i + 1) * data_size]}"
 
 
 @pytest.mark.mpi(min_size=3)
@@ -155,7 +156,7 @@ def test_all_reduce(
     backend_type: str,
     block_comm_size: int,
 ):
-    """Test the all_to_all function of the comm singleton."""
+    """Test the all_reduce function of the comm singleton."""
 
     if not _configure(
         backend_type=backend_type,
@@ -168,17 +169,17 @@ def test_all_reduce(
         # random sendbuf
         sendbuf = xp.ones((data_size,), dtype=xp.float32) * test_comm.rank
 
-        recbuf = xp.empty_like(sendbuf)
+        recvbuf = xp.empty_like(sendbuf)
 
-        test_comm.all_reduce(sendbuf, recbuf)
+        test_comm.all_reduce(sendbuf, recvbuf)
 
         assert xp.allclose(
             xp.ones((data_size,), dtype=xp.float32)
             * test_comm.size
             * (test_comm.size - 1)
             / 2,
-            recbuf,
-        ), f"sendbuf: {sendbuf}, recbuf: {recbuf}"
+            recvbuf,
+        ), f"sendbuf: {sendbuf}, recvbuf: {recvbuf}"
 
 
 @pytest.mark.mpi(min_size=3)
@@ -187,7 +188,7 @@ def test_bcast(
     backend_type: str,
     block_comm_size: int,
 ):
-    """Test the all_to_all function of the comm singleton."""
+    """Test the bcast function of the comm singleton."""
 
     if not _configure(
         backend_type=backend_type,
@@ -206,3 +207,100 @@ def test_bcast(
             xp.ones((data_size,), dtype=xp.float32) * xp.pi,
             sendbuf,
         ), f"sendbuf: {sendbuf}"
+
+
+@pytest.mark.mpi(min_size=3)
+def test_pad_buffer(
+    reset_comm,
+    backend_type: str,
+    block_comm_size: int,
+):
+    """Test the pad_buffer function."""
+
+    if not _configure(
+        backend_type=backend_type,
+        block_comm_size=block_comm_size,
+    ):
+        pytest.skip("Config not valid")
+
+    for test_comm in [comm.block, comm.stack]:
+
+        # random sendbuf
+        sendbuf = (
+            xp.ones((data_size - test_comm.rank,), dtype=xp.float32) * test_comm.rank
+        )
+
+        padded_sendbuf = pad_buffer(
+            sendbuf,
+            global_size=data_size * test_comm.size,
+            comm_size=test_comm.size,
+            axis=0,
+        )
+
+        recvbuf = xp.empty((data_size * test_comm.size,), dtype=xp.float32)
+
+        test_comm.all_gather(padded_sendbuf, recvbuf)
+
+        # mask the recvbuf to only include the padded values
+        recvbuf = recvbuf.reshape((test_comm.size, data_size))
+
+        for i in range(test_comm.size):
+            assert xp.allclose(
+                xp.ones((data_size - i,), dtype=xp.float32) * i,
+                recvbuf[i, : data_size - i],
+            )
+            assert xp.allclose(
+                xp.zeros((i,), dtype=xp.float32),
+                recvbuf[i, data_size - i :],
+            )
+
+
+@pytest.mark.mpi(min_size=3)
+def test_all_gather_v(
+    reset_comm,
+    backend_type: str,
+    block_comm_size: int,
+):
+    """Test the all_gather_v function."""
+
+    if not _configure(
+        backend_type=backend_type,
+        block_comm_size=block_comm_size,
+    ):
+        pytest.skip("Config not valid")
+
+    for test_comm in [comm.block, comm.stack]:
+
+        # random sendbuf
+        sendbuf = (
+            xp.ones(
+                (
+                    data_size,
+                    data_size - test_comm.rank,
+                    data_size,
+                ),
+                dtype=xp.float32,
+            )
+            * test_comm.rank
+        )
+
+        recvbuf = all_gather_v(test_comm, sendbuf, axis=1)
+
+        counts = np.zeros(test_comm.size, dtype=xp.int32)
+        for i in range(test_comm.size):
+            counts[i] = data_size - i
+        displacements = np.cumsum(counts) - counts
+
+        for i in range(test_comm.size):
+            assert xp.allclose(
+                xp.ones(
+                    (
+                        data_size,
+                        data_size - i,
+                        data_size,
+                    ),
+                    dtype=xp.float32,
+                )
+                * i,
+                recvbuf[:, displacements[i] : displacements[i] + counts[i], :],
+            )

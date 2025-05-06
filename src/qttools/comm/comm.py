@@ -1,3 +1,5 @@
+# Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+
 import numpy as np
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
@@ -11,7 +13,7 @@ from qttools.utils.gpu_utils import (
 )
 
 
-def check_gpu_aware_mpi() -> bool:
+def _check_gpu_aware_mpi() -> bool:
     """Checks if the MPI implementation is GPU-aware.
 
     This is done by inspecting the MPI info object for the presence of
@@ -41,7 +43,46 @@ def check_gpu_aware_mpi() -> bool:
     return bool(gpu_aware)
 
 
-GPU_AWARE_MPI = check_gpu_aware_mpi()
+def _check_bufs_aliased(sendbuf: NDArray, recvbuf: NDArray) -> bool:
+    """Checks if the send and receive buffers are aliased.
+
+    This is done by checking if the memory addresses of the two buffers
+    are the same.
+
+    Parameters
+    ----------
+    sendbuf : NDArray
+        The send buffer.
+    recvbuf : NDArray
+        The receive buffer.
+
+    Returns
+    -------
+    bool
+        True if the buffers are aliased, False otherwise.
+
+    """
+    if get_array_module_name(sendbuf) == "cupy":
+        sendbuf_ptr = sendbuf.data.ptr
+        recvbuf_ptr = recvbuf.data.ptr
+
+    elif get_array_module_name(sendbuf) == "numpy":
+        sendbuf_ptr = sendbuf.ctypes.data
+        recvbuf_ptr = recvbuf.ctypes.data
+
+    else:
+        raise ValueError(f"Unsupported array module: {get_array_module_name(sendbuf)}")
+
+    # Check if the two memory regions overlap.
+    if sendbuf_ptr == recvbuf_ptr:
+        return True
+    if sendbuf_ptr < recvbuf_ptr:
+        return sendbuf_ptr + sendbuf.nbytes > recvbuf_ptr
+
+    return recvbuf_ptr + recvbuf.nbytes > sendbuf_ptr
+
+
+GPU_AWARE_MPI = _check_gpu_aware_mpi()
 
 
 _backends = ("nccl", "host_mpi", "device_mpi")
@@ -169,11 +210,19 @@ class _SubCommunicator:
                 f"got {get_array_module_name(sendbuf)} and {get_array_module_name(recvbuf)}."
             )
 
-    def all_to_all(self, sendbuf: NDArray, recvbuf: NDArray):
+    def all_to_all(
+        self, sendbuf: NDArray, recvbuf: NDArray, backend: str | None = None
+    ):
         """Performs all-to-all communication."""
-        backend = self._config["all_to_all"]
+        if backend is None:
+            backend = self._config["all_to_all"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
         self._check_bufs_consistent(sendbuf, recvbuf)
+
+        if _check_bufs_aliased(sendbuf, recvbuf):
+            raise ValueError("sendbuf and recvbuf must not be aliased.")
 
         if sendbuf.size != recvbuf.size:
             raise ValueError(
@@ -207,15 +256,21 @@ class _SubCommunicator:
 
         synchronize_device()
 
-    def all_gather(self, sendbuf: NDArray, recvbuf: NDArray):
+    def all_gather(
+        self, sendbuf: NDArray, recvbuf: NDArray, backend: str | None = None
+    ):
         """Performs all-gather communication."""
-        backend = self._config["all_gather"]
+        if backend is None:
+            backend = self._config["all_gather"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
         self._check_bufs_consistent(sendbuf, recvbuf)
 
         if sendbuf.size * self.size != recvbuf.size:
             raise ValueError(
-                "sendbuf must be the same size as recvbuf divided by the number of ranks."
+                "sendbuf must be the same size as recvbuf divided by the number of ranks. "
+                f"Got {sendbuf.size=} and {recvbuf.size=}."
             )
 
         synchronize_device()
@@ -225,7 +280,8 @@ class _SubCommunicator:
             self._nccl_comm.all_gather(sendbuf, recvbuf, count=None)
 
         elif backend == "device_mpi":
-            self._mpi_comm.Allgather(sendbuf, recvbuf)
+            aliased = _check_bufs_aliased(sendbuf, recvbuf)
+            self._mpi_comm.Allgather(sendbuf.copy() if aliased else sendbuf, recvbuf)
 
         elif backend == "host_mpi":
 
@@ -247,9 +303,18 @@ class _SubCommunicator:
 
         synchronize_device()
 
-    def all_reduce(self, sendbuf: NDArray, recvbuf: NDArray, op: str = "sum"):
+    def all_reduce(
+        self,
+        sendbuf: NDArray,
+        recvbuf: NDArray,
+        op: str = "sum",
+        backend: str | None = None,
+    ):
         """Performs all-reduce communication."""
-        backend = self._config["all_reduce"]
+        if backend is None:
+            backend = self._config["all_reduce"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
         self._check_bufs_consistent(sendbuf, recvbuf)
 
@@ -266,7 +331,10 @@ class _SubCommunicator:
         if backend == "nccl":
             self._nccl_comm.all_reduce(sendbuf, recvbuf, op=op)
         elif backend == "device_mpi":
-            self._mpi_comm.Allreduce(sendbuf, recvbuf, op=_mpi_ops[op])
+            aliased = _check_bufs_aliased(sendbuf, recvbuf)
+            self._mpi_comm.Allreduce(
+                sendbuf.copy() if aliased else sendbuf, recvbuf, op=_mpi_ops[op]
+            )
         elif backend == "host_mpi":
             _sendbuf_host = get_any_location(
                 sendbuf,
@@ -286,9 +354,12 @@ class _SubCommunicator:
 
         synchronize_device()
 
-    def bcast(self, sendrecvbuf: NDArray, root: int = 0):
+    def bcast(self, sendrecvbuf: NDArray, root: int = 0, backend: str | None = None):
         """Perform broadcast communication."""
-        backend = self._config["bcast"]
+        if backend is None:
+            backend = self._config["bcast"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
         synchronize_device()
         if backend == "nccl":
@@ -317,7 +388,7 @@ class _SubCommunicator:
         self._mpi_comm.barrier()
 
 
-class Communicator:
+class QuatrexCommunicator:
     """A communicator that handles all block and stack communications.
 
     This class is a singleton and should be used as such. It is
@@ -341,7 +412,7 @@ class Communicator:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(Communicator, cls).__new__(cls)
+            cls._instance = super(QuatrexCommunicator, cls).__new__(cls)
 
         return cls._instance
 

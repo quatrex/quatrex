@@ -131,30 +131,32 @@ class _SubCommunicator:
         # the cupyx.distributed package here. Unfortunately, the NCCL
         # backend will always use the global communicator, which is not
         # what we want.
-        self.nccl_comm = distributed.NCCLBackend.__new__(distributed.NCCLBackend)
+        nccl_comm = distributed.NCCLBackend.__new__(distributed.NCCLBackend)
         _Backend.__init__(
-            self.nccl_comm,
+            nccl_comm,
             global_comm.size,
             global_comm.rank,
             _store._DEFAULT_HOST,
             port=_store._DEFAULT_PORT,
         )
 
-        self.nccl_comm._use_mpi = True
+        nccl_comm._use_mpi = True
 
-        self.nccl_comm._n_devices = self._mpi_comm.size
-        self.nccl_comm._mpi_comm = self._mpi_comm
-        self.nccl_comm._mpi_rank = self._mpi_comm.rank
-        self.nccl_comm._mpi_comm.barrier()
+        nccl_comm._n_devices = self._mpi_comm.size
+        nccl_comm._mpi_comm = self._mpi_comm
+        nccl_comm._mpi_rank = self._mpi_comm.rank
+        nccl_comm._mpi_comm.barrier()
 
         nccl_block_id = None
-        if self.nccl_comm._mpi_rank == 0:
+        if nccl_comm._mpi_rank == 0:
             nccl_block_id = nccl.get_unique_id()
         nccl_block_id = self._mpi_comm.bcast(nccl_block_id, root=0)
 
-        self.nccl_comm._comm = nccl.NcclCommunicator(
+        nccl_comm._comm = nccl.NcclCommunicator(
             self._mpi_comm.size, nccl_block_id, self._mpi_comm.rank
         )
+
+        self._nccl_comm = nccl_comm
 
     def _check_bufs_consistent(self, sendbuf: NDArray, recvbuf: NDArray):
         """Checks that the send and receive buffers are in the correct place."""
@@ -180,7 +182,7 @@ class _SubCommunicator:
 
         synchronize_device()
         if backend == "nccl":
-            self.nccl_comm.all_to_all(sendbuf, recvbuf)
+            self._nccl_comm.all_to_all(sendbuf, recvbuf)
 
         elif backend == "device_mpi":
             self._mpi_comm.Alltoall(sendbuf, recvbuf)
@@ -220,7 +222,7 @@ class _SubCommunicator:
         if backend == "nccl":
             # NOTE: The count argument is actually unused in the NCCL
             # backend but it is still a required parameter.
-            self.nccl_comm.all_gather(sendbuf, recvbuf, count=None)
+            self._nccl_comm.all_gather(sendbuf, recvbuf, count=None)
 
         elif backend == "device_mpi":
             self._mpi_comm.Allgather(sendbuf, recvbuf)
@@ -262,7 +264,7 @@ class _SubCommunicator:
             )
         synchronize_device()
         if backend == "nccl":
-            self.nccl_comm.all_reduce(sendbuf, recvbuf, op=op)
+            self._nccl_comm.all_reduce(sendbuf, recvbuf, op=op)
         elif backend == "device_mpi":
             self._mpi_comm.Allreduce(sendbuf, recvbuf, op=_mpi_ops[op])
         elif backend == "host_mpi":
@@ -290,7 +292,7 @@ class _SubCommunicator:
 
         synchronize_device()
         if backend == "nccl":
-            self.nccl_comm.broadcast(sendrecvbuf, root=root)
+            self._nccl_comm.broadcast(sendrecvbuf, root=root)
         elif backend == "device_mpi":
             self._mpi_comm.Bcast(sendrecvbuf, root=root)
         elif backend == "host_mpi":
@@ -333,6 +335,9 @@ class Communicator:
 
     _instance = None
     _is_configured = False
+
+    size = None
+    rank = None
 
     def __new__(cls):
         if cls._instance is None:

@@ -3,10 +3,10 @@ import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import xp
-from qttools.comm import all_gather_v, comm, pad_buffer
-from qttools.comm.comm import GPU_AWARE_MPI, _default_config
+from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI, _default_config, pad_buffer
 
-data_size = 3
+data_size = 20
 
 
 @pytest.fixture(scope="function")
@@ -284,7 +284,7 @@ def test_all_gather_v(
             * test_comm.rank
         )
 
-        recvbuf = all_gather_v(test_comm, sendbuf, axis=1)
+        recvbuf = test_comm.all_gather_v(sendbuf, axis=1)
 
         counts = np.zeros(test_comm.size, dtype=xp.int32)
         for i in range(test_comm.size):

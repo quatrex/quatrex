@@ -102,6 +102,32 @@ _mpi_ops = {
 }
 
 
+def pad_buffer(buffer: NDArray, global_size: int, comm_size: int, axis: int) -> NDArray:
+    """Pads the given buffer to the given global size.
+    Parameters
+    ----------
+    buffer : NDArray
+        The buffer to pad.
+    global_size : int
+        The global size including padding of the buffer along the given axis.
+    comm_size : int
+        The size of the communicator.
+    axis : int
+        The axis along which to pad the buffer.
+    Returns
+    -------
+    NDArray
+        The padded buffer.
+    """
+
+    padding_width = global_size // comm_size - buffer.shape[axis]
+
+    padding = [(0, 0) if i != axis else (0, padding_width) for i in range(buffer.ndim)]
+
+    buffer = xp.pad(buffer, padding)
+    return buffer
+
+
 class _SubCommunicator:
     """A class that handles communication for a subset of ranks.
 
@@ -386,6 +412,62 @@ class _SubCommunicator:
     def barrier(self):
         """Perform barrier synchronization."""
         self._mpi_comm.barrier()
+
+    def all_gather_v(
+        self,
+        sendbuf: NDArray,
+        axis: int,
+        mask: NDArray | None = None,
+    ) -> NDArray:
+        """Gathers the sendbuf from all ranks and returns the result.
+
+        Parameters
+        ----------
+        comm : _SubCommunicator
+            The communicator to use.
+        sendbuf : NDArray
+            The buffer to send.
+        axis : int
+            The axis along which to pad the buffer.
+        mask : NDArray, optional
+            The mask to use for gathering the buffer. If None, the buffer will be automatically padded.
+
+        Returns
+        -------
+        NDArray
+            The gathered buffer.
+        """
+
+        if mask is not None:
+            if mask.size // self.size < sendbuf.size:
+                raise ValueError(
+                    f"The mask is too small for the sendbuf: {mask.size // self.size} < {sendbuf.size}."
+                )
+            global_size = mask.size
+        else:
+            counts = np.zeros(self.size, dtype=xp.int32)
+            self.all_gather(np.array(sendbuf.shape[axis]), counts, backend="device_mpi")
+            global_size = np.max(counts) * self.size
+            mask = xp.zeros(global_size, dtype=bool)
+            for i in range(self.size):
+                mask[np.max(counts) * i : np.max(counts) * i + counts[i]] = True
+
+        if mask.ndim > 1:
+            raise ValueError("mask must be 1D or None")
+
+        sendbuf = pad_buffer(sendbuf, global_size, self.size, axis)
+
+        sendbuf = xp.ascontiguousarray(xp.moveaxis(sendbuf, axis, 0))
+        recvbuf = xp.empty((global_size, *sendbuf.shape[1:]), dtype=sendbuf.dtype)
+        self.all_gather(sendbuf, recvbuf)
+        recvbuf = xp.moveaxis(recvbuf, 0, axis)
+
+        indices = xp.where(mask)[0]
+        return xp.take(
+            recvbuf,
+            indices,
+            axis=axis,
+        )
 
 
 class QuatrexCommunicator:

@@ -503,6 +503,7 @@ class QuatrexCommunicator:
         block_comm_size: int,
         block_comm_config: dict,
         stack_comm_config: dict,
+        override: bool = False,
     ):
         """Configures the communicator.
 
@@ -525,7 +526,7 @@ class QuatrexCommunicator:
 
         """
 
-        if self._is_configured:
+        if self._is_configured and not override:
             raise RuntimeError("Communicator is already configured.")
 
         if global_comm.size % block_comm_size != 0:
@@ -543,13 +544,6 @@ class QuatrexCommunicator:
 
         self.rank = global_comm.rank
         self.size = global_comm.size
-
-        # if block_comm_size == 1:
-        #     # No domain decomposition, use the global communicator.
-        #     self.stack = SubCommunicator(global_comm, stack_comm_config)
-        #     self.block = None
-        #     self._is_configured = True
-        #     return
 
         color = global_comm.rank // block_comm_size
         key = global_comm.rank % block_comm_size

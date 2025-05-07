@@ -2,16 +2,16 @@
 
 
 import cupy as cp
+import numpy as np
 from cupyx import jit
 
-from qttools import NDArray, host_xp
-from qttools.kernels import USE_CUPY_JIT
+from qttools import QTX_USE_CUPY_JIT, NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 
 profiler = Profiler()
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_ranks_kernel(
@@ -93,8 +93,8 @@ def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
             nnz_section_offsets,
             inds,
             ranks,
-            host_xp.int32(nnz_section_offsets.shape[0]),
-            host_xp.int32(inds.shape[0]),
+            np.int32(nnz_section_offsets.shape[0]),
+            np.int32(inds.shape[0]),
         ),
     )
     return ranks

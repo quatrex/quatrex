@@ -2,8 +2,6 @@
 
 import inspect
 
-from mpi4py import MPI
-
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
 
@@ -333,40 +331,6 @@ def synchronize_device():
     """
     if xp.__name__ == "cupy":
         xp.cuda.runtime.deviceSynchronize()
-
-
-@profiler.profile(level="debug")
-def get_nccl_communicator(mpi_comm: MPI.Comm = MPI.COMM_WORLD):
-    """Returns the NCCL communicator if using cupy.
-
-    Does nothing if using numpy.
-
-    Parameters
-    ----------
-    mpi_comm : MPI.Comm
-        The MPI communicator to use.
-
-
-    Returns
-    -------
-    cupyx.distributed.nccl.NCCLBackend
-        The NCCL communicator
-
-    """
-    if not xp.__name__ == "cupy":
-        return None
-
-    from cupy.cuda import nccl
-
-    if not nccl.available:
-        return None
-
-    from cupyx import distributed
-
-    # TODO: This will probably not work with communicators other than
-    # MPI.COMM_WORLD. We need to fix this if we want to use other
-    # communicators.
-    return distributed.NCCLBackend(mpi_comm.size, mpi_comm.rank, use_mpi=True)
 
 
 def free_mempool():

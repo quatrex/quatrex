@@ -1,9 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 from typing import Callable
 
-from mpi4py.MPI import COMM_WORLD as comm
+import numpy as np
 
-from qttools import NDArray, host_xp, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -515,7 +516,7 @@ class DSBCOO(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if host_xp.any(self.block_sizes != other.block_sizes):
+        if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if xp.any(self.rows != other.rows):
@@ -606,10 +607,8 @@ class DSBCOO(DSBSparse):
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         # Update the block sizes and offsets.
-        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        block_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-        )
+        block_sizes = np.asarray(block_sizes, dtype=np.int32)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
         self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 

@@ -1,36 +1,19 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import itertools
-import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
-from qttools import (
-    ALLTOALL_COMM_TYPE,
-    NCCL_AVAILABLE,
-    ArrayLike,
-    NDArray,
-    block_comm,
-    global_comm,
-    host_xp,
-    nccl_stack_comm,
-    sparse,
-    stack_comm,
-    xp,
-)
+import numpy as np
+
+from qttools import ArrayLike, NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import BlockConfig, _block_view
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import (  # empty_pinned,; get_host,
-    empty_like_pinned,
-    free_mempool,
-    get_any_location,
-    synchronize_device,
-)
-from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
-
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 def _flatten_list(nested_lists: list[list]) -> list:
@@ -68,9 +51,9 @@ class DSDBSparse(ABC):
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
         interpreted as a one-dimensional stack.
-    block_comm : MPI.Comm
+    comm.block : MPI.Comm
         The communicator for the block distribution.
-    stack_comm : MPI.Comm
+    comm.stack : MPI.Comm
         The communicator for the stack distribution.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
@@ -94,9 +77,9 @@ class DSDBSparse(ABC):
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
 
-        if global_stack_shape[0] < stack_comm.size:
+        if global_stack_shape[0] < comm.stack.size:
             raise ValueError(
-                f"Number of MPI ranks in stack communicator {stack_comm.size} "
+                f"Number of MPI ranks in stack communicator {comm.stack.size} "
                 f"exceeds stack shape {global_stack_shape}."
             )
 
@@ -105,7 +88,7 @@ class DSDBSparse(ABC):
         self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
-        if block_comm is None or stack_comm is None:
+        if comm.block is None or comm.stack is None:
             raise ValueError(
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."
@@ -113,21 +96,21 @@ class DSDBSparse(ABC):
 
         # Determine how the data is distributed across the stack.
         stack_section_sizes, total_stack_size = get_section_sizes(
-            global_stack_shape[0], stack_comm.size, strategy="balanced"
+            global_stack_shape[0], comm.stack.size, strategy="balanced"
         )
-        self.stack_section_sizes_offset = stack_section_sizes[stack_comm.rank]
+        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
         self.stack_section_sizes = stack_section_sizes
         self.total_stack_size = total_stack_size
 
         nnz_section_sizes, total_nnz_size = get_section_sizes(
-            local_data.shape[-1], stack_comm.size, strategy="greedy"
+            local_data.shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes_host = nnz_section_sizes
-        self.nnz_section_offsets_host = host_xp.hstack(
-            ([0], host_xp.cumsum(self.nnz_section_sizes_host))
+        self.nnz_section_offsets_host = np.hstack(
+            ([0], np.cumsum(self.nnz_section_sizes_host))
         )
         self.nnz_section_sizes = nnz_section_sizes
-        self.nnz_section_offsets = xp.hstack(([0], host_xp.cumsum(nnz_section_sizes)))
+        self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
 
         # Per default, we have the data is distributed in stack format.
@@ -152,32 +135,28 @@ class DSDBSparse(ABC):
 
         self.stack_shape = local_data.shape[:-1]
         self.local_nnz = local_data.shape[-1]
-        # This is the shape of this matrix in the stack_comm.
+        # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
         # --- Things concerning block distribution ---------------------
         # Block-sizes is an settable property.
         self.num_blocks = len(block_sizes)
 
-        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
-        block_section_sizes, __ = get_section_sizes(self.num_blocks, block_comm.size)
-        self.block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(self.num_blocks, comm.block.size)
+        self.block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         # We need to know our local block sizes and those of all
         # subsequent ranks.
-        self.num_local_blocks = block_section_sizes[block_comm.rank]
+        self.num_local_blocks = block_section_sizes[comm.block.rank]
         self.local_block_sizes = block_sizes[
-            self.block_section_offsets[block_comm.rank] :
+            self.block_section_offsets[comm.block.rank] :
         ]
-        self.local_block_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(self.local_block_sizes))
-        )
+        self.local_block_offsets = np.hstack(([0], np.cumsum(self.local_block_sizes)))
 
         self.global_block_offset = sum(
-            block_sizes[: self.block_section_offsets[block_comm.rank]]
+            block_sizes[: self.block_section_offsets[comm.block.rank]]
         )
 
         self._block_config: dict[int, BlockConfig] = {}
@@ -303,7 +282,7 @@ class DSDBSparse(ABC):
         return self._data[
             self._stack_padding_mask,
             ...,
-            : self.nnz_section_sizes[stack_comm.rank],
+            : self.nnz_section_sizes[comm.stack.rank],
         ]
 
     @data.setter
@@ -319,7 +298,7 @@ class DSDBSparse(ABC):
             self._data[
                 self._stack_padding_mask,
                 ...,
-                : self.nnz_section_sizes[stack_comm.rank],
+                : self.nnz_section_sizes[comm.stack.rank],
             ] = value
 
     def __repr__(self) -> str:
@@ -330,8 +309,8 @@ class DSDBSparse(ABC):
             f"block_sizes={self.block_sizes}, "
             f"global_stack_shape={self.global_stack_shape}, "
             f'distribution_state="{self.distribution_state}", '
-            f"stack_comm_rank={stack_comm.rank}, "
-            f"block_comm_rank={block_comm.rank})"
+            f"stack_comm_rank={comm.stack.rank}, "
+            f"block_comm_rank={comm.block.rank})"
         )
 
     @abstractmethod
@@ -536,7 +515,7 @@ class DSDBSparse(ABC):
         """
         local_blocks = []
         stack_view = self.stack[...]
-        if block_comm.rank != block_comm.size - 1:
+        if comm.block.rank != comm.block.size - 1:
             # Only the last rank in the block-communicator needs to make
             # sure that the offset does not exceed the number of local
             # blocks.
@@ -550,7 +529,7 @@ class DSDBSparse(ABC):
         for b in range(num_blocks):
             local_blocks.append(stack_view.local_blocks[b + row_offset, b + col_offset])
 
-        return _flatten_list(block_comm.allgather(local_blocks))
+        return _flatten_list(comm.block._mpi_comm.allgather(local_blocks))
 
     @profiler.profile(level="api")
     def diagonal(self, stack_index: tuple = (Ellipsis,)) -> NDArray:
@@ -584,7 +563,9 @@ class DSDBSparse(ABC):
             local_diagonal[..., self._diag_value_inds] = data_stack[
                 ..., self._diag_inds
             ]
-            return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
+            return xp.concatenate(
+                comm.block._mpi_comm.allgather(local_diagonal), axis=-1
+            )
         else:
             if self._diag_inds_nnz is not None:
                 return data_stack[..., self._diag_inds_nnz]
@@ -661,141 +642,27 @@ class DSDBSparse(ABC):
         # )
 
         if discard:
-            t_discard_start = time.perf_counter()
             self._data = _block_view(
-                self._data, axis=block_axis, num_blocks=stack_comm.size
+                self._data, axis=block_axis, num_blocks=comm.stack.size
             )
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0
-            synchronize_device()
-            t_discard_end = time.perf_counter()
-            global_comm.Barrier()
-            t_discard_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        Discard time: {t_discard_end - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        Discard time all: {t_discard_end_all - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
             return
 
         # We need to make sure that the block-view is memory-contiguous.
         # This does nothing if the data is already contiguous.
-        t_block_view_start = time.perf_counter()
         self._data = _block_view(
-            self._data, axis=block_axis, num_blocks=stack_comm.size
+            self._data, axis=block_axis, num_blocks=comm.stack.size
         )
         self._data = xp.ascontiguousarray(self._data)
         synchronize_device()
-        t_block_view_end = time.perf_counter()
-        global_comm.Barrier()
-        t_block_view_end_all = time.perf_counter()
-        if global_comm.rank == 0:
-            print(
-                f"        Block view time: {t_block_view_end - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Block view time all: {t_block_view_end_all - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
 
-        if NCCL_AVAILABLE and ALLTOALL_COMM_TYPE == "nccl":
-            # Always use NCCL if available.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            global_comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            nccl_stack_comm.all_to_all(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            global_comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        NCCL Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        NCCL Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-            self._data = receive_buffer
-        elif xp.__name__ == "numpy" or (
-            GPU_AWARE_MPI and ALLTOALL_COMM_TYPE == "device_mpi"
-        ):
-            # Use MPI if we are not on GPU or if we have GPU-aware MPI.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            global_comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            stack_comm.Alltoall(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            global_comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        MPI Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        MPI Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-            self._data = receive_buffer
-        elif ALLTOALL_COMM_TYPE == "host_mpi":
-            # Use the host memory if we are on GPU and do not have
-            # GPU-aware MPI.
-            synchronize_device()
-            global_comm.Barrier()
-            t_nccl_start = time.perf_counter()
+        receive_buffer = xp.empty_like(self._data)
+        comm.stack.all_to_all(self._data, receive_buffer)
+        self._data = receive_buffer
 
-            _data_host = get_any_location(self._data, "numpy", use_pinned_memory=True)
-
-            synchronize_device()
-            _data_host_out = empty_like_pinned(_data_host)
-            stack_comm.Alltoall(_data_host, _data_host_out)
-            self._data = get_any_location(
-                _data_host_out, "cupy", use_pinned_memory=True
-            )
-
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            global_comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-
-            if global_comm.rank == 0:
-                print(
-                    f"        MPI host Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        MPI host Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-
-        else:
-            raise RuntimeError("No suitable Alltoall communication method available.")
-
-        t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
         synchronize_device()
-        t_concatenate_end = time.perf_counter()
-        global_comm.Barrier()
-        t_concatenate_end_all = time.perf_counter()
-        if global_comm.rank == 0:
-            print(
-                f"        Concatenate time: {t_concatenate_end - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Concatenate time all: {t_concatenate_end_all - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
 
         # NOTE: There are a few things commented out here, since there
         # may be an alternative way to do the correct reshaping after

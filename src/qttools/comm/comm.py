@@ -463,11 +463,7 @@ class _SubCommunicator:
         recvbuf = xp.moveaxis(recvbuf, 0, axis)
 
         indices = xp.where(mask)[0]
-        return xp.take(
-            recvbuf,
-            indices,
-            axis=axis,
-        )
+        return xp.take(recvbuf, indices, axis=axis)
 
 
 class QuatrexCommunicator:
@@ -489,8 +485,8 @@ class QuatrexCommunicator:
     _instance = None
     _is_configured = False
 
-    size = None
-    rank = None
+    size = global_comm.size
+    rank = global_comm.rank
 
     def __new__(cls):
         if cls._instance is None:
@@ -541,9 +537,6 @@ class QuatrexCommunicator:
             raise ValueError(
                 f"Block communicator size {block_comm_size} cannot be greater than the total number of ranks {global_comm.size}."
             )
-
-        self.rank = global_comm.rank
-        self.size = global_comm.size
 
         color = global_comm.rank // block_comm_size
         key = global_comm.rank % block_comm_size

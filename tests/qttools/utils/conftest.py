@@ -1,18 +1,19 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp
+from qttools import NDArray
 from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
 
 DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
 DSDBSPARSE_TYPES = [DSDBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([2] * 10), id="constant-block-size-2"),
-    pytest.param(host_xp.array([5] * 10), id="constant-block-size-5"),
-    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
-    pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
+    pytest.param(np.array([2] * 10), id="constant-block-size-2"),
+    pytest.param(np.array([5] * 10), id="constant-block-size-5"),
+    pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
+    pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
 NUM_MATRICES = [2, 3, 4, 5]

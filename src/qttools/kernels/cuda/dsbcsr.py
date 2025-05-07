@@ -1,17 +1,17 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import cupy as cp
+import numpy as np
 from cupyx import jit
 
-from qttools import NDArray, host_xp
-from qttools.kernels import USE_CUPY_JIT
+from qttools import QTX_USE_CUPY_JIT, NDArray
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.kernels.cuda.dsbcoo import _compute_coo_block_mask_kernel
 from qttools.profiling import Profiler
 
 profiler = Profiler()
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_bcoords_kernel(
@@ -74,7 +74,7 @@ else:
         "_find_bcoords_kernel",
     )
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _compute_block_mask_kernel(
@@ -126,7 +126,7 @@ else:
         "_compute_block_mask_kernel",
     )
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _compute_block_inds_kernel(
@@ -242,8 +242,8 @@ def find_inds(
             cols,
             brows,
             bcols,
-            host_xp.int32(rows.shape[0]),
-            host_xp.int32(block_offsets.shape[0]),
+            np.int32(rows.shape[0]),
+            np.int32(block_offsets.shape[0]),
         ),
     )
     # Get an ordered list of unique blocks.
@@ -268,7 +268,7 @@ def find_inds(
                 brow,
                 bcol,
                 mask,
-                host_xp.int32(brows.shape[0]),
+                np.int32(brows.shape[0]),
             ),
         )
         mask_inds = cp.nonzero(mask)[0]
@@ -290,7 +290,7 @@ def find_inds(
                 self_cols,
                 rowptr,
                 block_inds,
-                host_xp.int32(rr.shape[0]),
+                np.int32(rr.shape[0]),
             ),
         )
 
@@ -302,7 +302,7 @@ def find_inds(
     return cp.array(inds, dtype=int), cp.array(value_inds, dtype=int)
 
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _expand_rows_kernel(rows: NDArray, rowptr: NDArray, rowptr_len: int):
@@ -378,7 +378,7 @@ def densify_block(
         (
             rows,
             rowptr - rowptr[0],
-            host_xp.int32(rowptr.shape[0]),
+            np.int32(rowptr.shape[0]),
         ),
     )
     block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
@@ -420,7 +420,7 @@ def sparsify_block(
         (
             rows,
             rowptr - rowptr[0],
-            host_xp.int32(rowptr.shape[0]),
+            np.int32(rowptr.shape[0]),
         ),
     )
     data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
@@ -456,9 +456,7 @@ def compute_rowptr_map(
 
     """
     num_blocks = block_sizes.shape[0]
-    block_offsets = host_xp.hstack(
-        (host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=np.int32)
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     rowptr_map = {}
@@ -476,12 +474,12 @@ def compute_rowptr_map(
             (
                 coo_rows,
                 coo_cols,
-                host_xp.int32(block_offsets[i]),
-                host_xp.int32(block_offsets[i + 1]),
-                host_xp.int32(block_offsets[j]),
-                host_xp.int32(block_offsets[j + 1]),
+                np.int32(block_offsets[i]),
+                np.int32(block_offsets[i + 1]),
+                np.int32(block_offsets[j]),
+                np.int32(block_offsets[j + 1]),
                 mask,
-                host_xp.int32(len(coo_rows)),
+                np.int32(len(coo_rows)),
             ),
         )
 

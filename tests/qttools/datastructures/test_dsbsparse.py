@@ -3,10 +3,12 @@
 from contextlib import nullcontext
 from typing import Callable
 
+import numpy as np
 import pytest
-from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, host_xp, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse, _block_view
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -120,7 +122,7 @@ def _create_new_block_sizes(
     if sum(updated_block_sizes) != sum(block_sizes):
         # Add the rest to the last block.
         updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
-    return host_xp.asarray(updated_block_sizes)
+    return np.asarray(updated_block_sizes)
 
 
 def _unsign_index(row: int, col: int, num_blocks) -> tuple:
@@ -133,9 +135,7 @@ def _unsign_index(row: int, col: int, num_blocks) -> tuple:
 
 def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     """Returns the equivalent dense indices for a block."""
-    block_offsets = host_xp.hstack(
-        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
     num_blocks = len(block_sizes)
 
     # Normalize negative indices.
@@ -977,6 +977,23 @@ def test_block_view(array: NDArray, axis: int, num_blocks: int):
 class TestDistribution:
     """Tests for the distribution methods of DSBSparse."""
 
+    @classmethod
+    def setup_class(cls):
+        """Sets up the test class."""
+        _default_config = {
+            "all_to_all": "device_mpi",
+            "all_gather": "device_mpi",
+            "all_reduce": "device_mpi",
+            "bcast": "device_mpi",
+        }
+        # Configure the comm singleton.
+        comm.configure(
+            block_comm_size=1,
+            block_comm_config=_default_config,
+            stack_comm_config=_default_config,
+            override=True,
+        )
+
     @pytest.mark.usefixtures("densify_blocks")
     def test_from_sparray(
         self,
@@ -986,16 +1003,18 @@ class TestDistribution:
         densify_blocks: list[tuple] | None,
     ):
         """Tests distributed creation of DSBSparse matrices from sparrays."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(
             coo, block_sizes, global_stack_shape, densify_blocks
         )
         assert xp.array_equiv(coo.toarray(), dsbsparse.to_dense())
 
-        stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
-        section_size = stack_section_sizes[comm.rank]
+        stack_section_sizes, __ = get_section_sizes(
+            global_stack_shape[0], global_comm.size
+        )
+        section_size = stack_section_sizes[global_comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
         assert dsbsparse.to_dense().shape == (*local_stack_shape,) + coo.shape
 
@@ -1006,8 +1025,8 @@ class TestDistribution:
         global_stack_shape: tuple,
     ):
         """Tests the distributed transpose method."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         assert dsbsparse.distribution_state == "stack"
@@ -1022,7 +1041,7 @@ class TestDistribution:
         dsbsparse.dtranspose()
         assert dsbsparse.distribution_state == "stack"
 
-        comm.barrier()
+        global_comm.barrier()
 
         assert xp.allclose(original_data, dsbsparse._data)
 
@@ -1035,15 +1054,19 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
 
         reference = dense[..., *accessed_element]
-        print(dsbsparse[accessed_element].shape, flush=True) if comm.rank == 0 else None
-        print(reference.shape, flush=True) if comm.rank == 0 else None
+        (
+            print(dsbsparse[accessed_element].shape, flush=True)
+            if global_comm.rank == 0
+            else None
+        )
+        print(reference.shape, flush=True) if global_comm.rank == 0 else None
 
         assert xp.allclose(reference, dsbsparse[accessed_element])
 
@@ -1056,8 +1079,8 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
@@ -1076,8 +1099,8 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
@@ -1095,7 +1118,7 @@ class TestDistribution:
             return
 
         rank = xp.where(dsbsparse.nnz_section_offsets <= ind[0])[0][-1]
-        if rank == comm.rank:
+        if rank == global_comm.rank:
             assert xp.allclose(reference, dsbsparse[accessed_element])
         else:
             assert dsbsparse[accessed_element].shape[-1] == 0
@@ -1109,8 +1132,8 @@ class TestDistribution:
         accessed_element: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()
@@ -1138,8 +1161,8 @@ class TestDistribution:
         global_stack_shape: tuple,
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = coo.toarray()
@@ -1150,7 +1173,7 @@ class TestDistribution:
         dsbsparse.dtranspose()
 
         local_diagonal = dsbsparse.diagonal()
-        diagonal = xp.concatenate(comm.allgather(local_diagonal), axis=-1)
+        diagonal = xp.concatenate(global_comm.allgather(local_diagonal), axis=-1)
         assert xp.allclose(reference, diagonal)
 
     def test_set_diagonal_nnz(
@@ -1160,8 +1183,8 @@ class TestDistribution:
         global_stack_shape: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if comm.rank == 0 else None
-        coo: sparse.coo_matrix = comm.bcast(coo, root=0)
+        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
 
         dsbsparse = dsbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
         dense = dsbsparse.to_dense()

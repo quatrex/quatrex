@@ -1,12 +1,32 @@
 from contextlib import nullcontext
 from typing import Callable
 
+import numpy as np
 import pytest
 from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, block_comm, global_comm, host_xp, sparse, stack_comm, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
+
+
+def setup_module():
+    """setup any state specific to the execution of the given module."""
+    _default_config = {
+        "all_to_all": "device_mpi",
+        "all_gather": "device_mpi",
+        "all_reduce": "device_mpi",
+        "bcast": "device_mpi",
+    }
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=3,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        override=True,
+    )
 
 
 def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_matrix:
@@ -110,10 +130,10 @@ def _create_new_block_sizes(
     block_sizes: NDArray, block_change_factor: float
 ) -> NDArray:
     """Creates new block sizes based on the block change factor."""
-    block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-    block_section_offsets = host_xp.hstack(([0], host_xp.cumsum(block_section_sizes)))
-    num_local_blocks = block_section_sizes[block_comm.rank]
-    local_block_sizes = block_sizes[block_section_offsets[block_comm.rank] :]
+    block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+    block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
+    num_local_blocks = block_section_sizes[comm.block.rank]
+    local_block_sizes = block_sizes[block_section_offsets[comm.block.rank] :]
 
     rest = 0
     updated_block_sizes = []
@@ -132,18 +152,18 @@ def _create_new_block_sizes(
         # Add the rest to the last block.
         updated_block_sizes[-1] += sum(block_sizes) - sum(updated_block_sizes)
 
-    updated_block_sizes = host_xp.asarray(updated_block_sizes)
+    updated_block_sizes = np.asarray(updated_block_sizes)
 
     block_section_sizes, __ = get_section_sizes(
-        len(updated_block_sizes), block_comm.size
+        len(updated_block_sizes), comm.block.size
     )
-    block_section_offsets = host_xp.hstack(([0], host_xp.cumsum(block_section_sizes)))
+    block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
     local_updated_block_sizes = updated_block_sizes[
-        block_section_offsets[block_comm.rank] :
+        block_section_offsets[comm.block.rank] :
     ]
     inconsistent = sum(
-        local_updated_block_sizes[: block_section_sizes[block_comm.rank]]
+        local_updated_block_sizes[: block_section_sizes[comm.block.rank]]
     ) != sum(local_block_sizes[:num_local_blocks])
 
     return updated_block_sizes, inconsistent
@@ -159,9 +179,7 @@ def _unsign_index(row: int, col: int, num_blocks) -> tuple:
 
 def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     """Returns the equivalent dense indices for a block."""
-    block_offsets = host_xp.hstack(
-        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
     num_blocks = len(block_sizes)
 
     # Normalize negative indices.
@@ -202,14 +220,12 @@ class TestAccess:
         # No support for negative indices.
         accessed_block = _unsign_index(*accessed_block, len(block_sizes))[:-1]
 
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if (start_block <= accessed_block[0] and start_block <= accessed_block[1]) and (
@@ -252,14 +268,12 @@ class TestAccess:
         # We want to get sparse blocks.
         dsdbsparse.return_dense = False
 
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if (start_block <= accessed_block[0] and start_block <= accessed_block[1]) and (
@@ -308,14 +322,12 @@ class TestAccess:
             # with the current test setup.
             return
 
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if ((start_block <= accessed_block[0]) & (start_block <= accessed_block[1])) & (
@@ -365,14 +377,12 @@ class TestAccess:
         accessed_block = _unsign_index(*accessed_block, len(block_sizes))[:-1]
 
         reference_block = dense[inds]
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if (start_block <= accessed_block[0] and start_block <= accessed_block[1]) and (
@@ -421,14 +431,12 @@ class TestAccess:
         # We want to get sparse blocks.
         dsdbsparse.return_dense = False
 
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if (start_block <= accessed_block[0] and start_block <= accessed_block[1]) and (
@@ -486,14 +494,12 @@ class TestAccess:
             # with the current test setup.
             return
 
-        block_section_sizes, __ = get_section_sizes(len(block_sizes), block_comm.size)
-        block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+        block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         start_block, stop_block = (
-            block_section_offsets[block_comm.rank],
-            block_section_offsets[block_comm.rank + 1],
+            block_section_offsets[comm.block.rank],
+            block_section_offsets[comm.block.rank + 1],
         )
 
         if ((start_block <= accessed_block[0]) & (start_block <= accessed_block[1])) & (
@@ -545,7 +551,7 @@ class TestAccess:
         with pytest.raises(ValueError) if inconsistent else nullcontext():
             dsdbsparse.block_sizes = updated_block_sizes
 
-        inconsistent = block_comm.allreduce(inconsistent, op=MPI.LOR)
+        inconsistent = comm.block._mpi_comm.allreduce(inconsistent, op=MPI.LOR)
         if inconsistent:
             # If the block sizes are inconsistent, we cannot compare the
             # two DSDBSparse matrices.
@@ -624,7 +630,7 @@ class TestDistribution:
         dsdbsparse.dtranspose()
         assert dsdbsparse.distribution_state == "stack"
 
-        stack_comm.barrier()
+        comm.stack.barrier()
 
         assert xp.allclose(original_data, dsdbsparse._data)
 
@@ -646,7 +652,7 @@ class TestDistribution:
         reference = dense[..., *accessed_element]
 
         # This returns either the correct value or zeros if the element
-        # is on a different rank in the block_comm.
+        # is on a different rank in the comm.block.
         assert (
             xp.allclose(reference, dsdbsparse[accessed_element])
             or (dsdbsparse[accessed_element] == 0).all()

@@ -1,12 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import os
-
 import qttools.kernels.operator as operator
-from qttools import strtobool, xp
-
-# TODO: adapt testing suite to test both JIT and non-JIT versions
-USE_CUPY_JIT = strtobool(os.getenv("USE_CUPY_JIT", "True"), default=True)
+from qttools import xp
 
 if xp.__name__ == "numpy":
     from qttools.kernels.numba import dsbcoo as dsbcoo_kernels

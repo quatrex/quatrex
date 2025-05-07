@@ -3,8 +3,10 @@
 import functools
 
 import pytest
+from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, block_comm, global_comm, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
@@ -18,6 +20,23 @@ GLOBAL_STACK_SHAPES = [
     pytest.param((4,), id="1D-stack"),
     pytest.param((5, 2), id="2D-stack"),
 ]
+
+
+def setup_module():
+    """setup any state specific to the execution of the given module."""
+    _default_config = {
+        "all_to_all": "device_mpi",
+        "all_gather": "device_mpi",
+        "all_reduce": "device_mpi",
+        "bcast": "device_mpi",
+    }
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=1,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        override=True,
+    )
 
 
 def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
@@ -223,7 +242,7 @@ def test_product_sparsity_dsbsparse_2(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
@@ -265,7 +284,7 @@ def test_product_sparsity_dsbsparse_spillover_2(
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
@@ -299,9 +318,9 @@ def test_product_sparsity_dsdbsparse(
     product.data[:] = 1
     ref = product.toarray()
 
-    local_blocks, _ = get_section_sizes(len(block_sizes), block_comm.size)
-    start_block = sum(local_blocks[: block_comm.rank])
-    end_block = start_block + local_blocks[block_comm.rank]
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.block.size)
+    start_block = sum(local_blocks[: comm.block.rank])
+    end_block = start_block + local_blocks[comm.block.rank]
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsbsparse_matrices,
@@ -313,7 +332,7 @@ def test_product_sparsity_dsdbsparse(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
@@ -355,9 +374,9 @@ def test_product_sparsity_dsdbsparse_spillover(
     # product.data[:] = 1
     # ref = product.toarray()
 
-    local_blocks, _ = get_section_sizes(len(block_sizes), block_comm.size)
-    start_block = sum(local_blocks[: block_comm.rank])
-    end_block = start_block + local_blocks[block_comm.rank]
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.block.size)
+    start_block = sum(local_blocks[: comm.block.rank])
+    end_block = start_block + local_blocks[comm.block.rank]
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsbsparse_matrices,
@@ -368,8 +387,8 @@ def test_product_sparsity_dsdbsparse_spillover(
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
-    print(f"{block_comm.rank=}, {start_block=}, {end_block=}", flush=True)
-    if global_comm.rank == 0:
+    print(f"{comm.block.rank=}, {start_block=}, {end_block=}", flush=True)
+    if comm.rank == 0:
         print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)

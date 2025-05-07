@@ -2,14 +2,10 @@
 
 import time
 
-from qttools import (  # NCCL_AVAILABLE,
-    OTHER_COMM_TYPE,
-    NDArray,
-    block_comm,
-    global_comm,
-    host_xp,
-    xp,
-)
+import numpy as np
+
+from qttools import NDArray
+from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
@@ -85,7 +81,7 @@ class RGFDist(GFSolver):
             a_ = a.stack[stack_slice]
             out_ = out.stack[stack_slice]
 
-            if block_comm.rank == 0:
+            if comm.block.rank == 0:
                 # Direction: downward Schur-complement
                 _serinv.downward_schur(
                     a_,
@@ -94,7 +90,7 @@ class RGFDist(GFSolver):
                     stack_slice=stack_slice,
                     invert_last_block=False,
                 )
-            elif block_comm.rank == block_comm.size - 1:
+            elif comm.block.rank == comm.block.size - 1:
                 # Direction: upward Schur-complement
                 _serinv.upward_schur(
                     a_,
@@ -115,16 +111,22 @@ class RGFDist(GFSolver):
                 )
 
             # Construct the reduced system.
-            reduced_system.gather(a_, x_diag_blocks, buffer_upper, buffer_lower)
+            if np.all(a.block_sizes == a.block_sizes[0]):
+                gather_reduced_system = reduced_system.gather_constant_block_size
+            else:
+                # If the block sizes are not the same, we need to use pickle.
+                gather_reduced_system = reduced_system.gather
+
+            gather_reduced_system(a_, x_diag_blocks, buffer_upper, buffer_lower)
             # Perform selected-inversion on the reduced system.
             reduced_system.solve()
             # Scatter the result to the output matrix.
             reduced_system.scatter(x_diag_blocks, buffer_upper, buffer_lower, out_)
 
-            if block_comm.rank == 0:
+            if comm.block.rank == 0:
                 # Direction: upward sell-inv
                 _serinv.downward_selinv(a_, x_diag_blocks, out_)
-            elif block_comm.rank == block_comm.size - 1:
+            elif comm.block.rank == comm.block.size - 1:
                 # Direction: downward sell-inv
                 _serinv.upward_selinv(a_, x_diag_blocks, out_)
             else:
@@ -138,7 +140,7 @@ class RGFDist(GFSolver):
         a: DSDBSparse,
         sigma_lesser: DSDBSparse,
         sigma_greater: DSDBSparse,
-        out: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
     ):
@@ -178,12 +180,10 @@ class RGFDist(GFSolver):
         xr_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
         xl_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-        # xl_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
         xl_buffer_lower = None
         xl_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
         xg_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-        # xg_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
         xg_buffer_lower = None
         xg_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
 
@@ -211,15 +211,15 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_init_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_init_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"        Init: {t_init_end-t_init_start}", flush=True)
             print(f"        Init all: {t_init_end_all-t_init_start}", flush=True)
 
         t_schur_start = time.perf_counter()
 
-        if block_comm.rank == 0:
+        if comm.block.rank == 0:
             # Direction: downward Schur-complement
             _serinv.downward_schur(
                 a=a_,
@@ -236,7 +236,7 @@ class RGFDist(GFSolver):
                 invert_last_block=False,
                 selected_solve=True,
             )
-        elif block_comm.rank == block_comm.size - 1:
+        elif comm.block.rank == comm.block.size - 1:
             # Direction: upward Schur-complement
             _serinv.upward_schur(
                 a=a_,
@@ -278,31 +278,24 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_schur_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_schur_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"        Schur: {t_schur_end-t_schur_start}", flush=True)
             print(f"        Schur all: {t_schur_end_all-t_schur_start}", flush=True)
 
         t_reduce_gather_start = time.perf_counter()
 
         # Construct the reduced system.
-        if host_xp.all(a.block_sizes == a.block_sizes[0]):
-            if True:
-                func = reduced_system.gather_nccl
-            elif xp.__name__ == "numpy" or OTHER_COMM_TYPE == "device_mpi":
-                func = reduced_system.gather_device_mpi
-            elif OTHER_COMM_TYPE == "host_mpi":
-                func = reduced_system.gather_host_mpi
-            else:
-                raise RuntimeError(f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'")
+        if np.all(a.block_sizes == a.block_sizes[0]):
+            gather_reduced_system = reduced_system.gather_constant_block_size
         else:
             # If the block sizes are not the same, we need to use pickle.
-            func = reduced_system.gather
+            gather_reduced_system = reduced_system.gather
 
         synchronize_device()
-        global_comm.Barrier()
-        func(
+        comm.barrier()
+        gather_reduced_system(
             a=a_,
             xr_diag_blocks=xr_diag_blocks,
             xr_buffer_lower=xr_buffer_lower,
@@ -320,9 +313,9 @@ class RGFDist(GFSolver):
         )
         synchronize_device()
         t_reduce_gather_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_reduce_gather_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"        Reduced gather: {t_reduce_gather_end-t_reduce_gather_start}",
                 flush=True,
@@ -339,9 +332,9 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_reduce_solve_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_reduce_solve_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"        Reduced solve: {t_reduce_solve_end-t_reduce_solve_start}",
                 flush=True,
@@ -374,9 +367,9 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_reduce_scatter_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_reduce_scatter_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"        Reduced scatter: {t_reduce_scatter_end-t_reduce_scatter_start}",
                 flush=True,
@@ -388,7 +381,7 @@ class RGFDist(GFSolver):
 
         t_selinv_start = time.perf_counter()
 
-        if block_comm.rank == 0:
+        if comm.block.rank == 0:
             # Direction: upward sell-inv
             _serinv.downward_selinv(
                 a=a_,
@@ -405,7 +398,7 @@ class RGFDist(GFSolver):
                 selected_solve=True,
                 return_retarded=return_retarded,
             )
-        elif block_comm.rank == block_comm.size - 1:
+        elif comm.block.rank == comm.block.size - 1:
             # Direction: downward sell-inv
             _serinv.upward_selinv(
                 a=a_,
@@ -448,8 +441,8 @@ class RGFDist(GFSolver):
 
         synchronize_device()
         t_selinv_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_selinv_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"        Selinv: {t_selinv_end-t_selinv_start}", flush=True)
             print(f"        Selinv all: {t_selinv_end_all-t_selinv_start}", flush=True)

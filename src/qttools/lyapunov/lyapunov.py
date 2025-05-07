@@ -3,15 +3,12 @@
 import warnings
 from abc import ABC, abstractmethod
 
-from qttools import NDArray, global_comm, stack_comm, xp
+from qttools import NDArray, xp
+from qttools.comm import comm
 from qttools.lyapunov.utils import system_reduction
 from qttools.profiling import Profiler
-from qttools.utils.mpi_utils import check_gpu_aware_mpi
 
 profiler = Profiler()
-
-GPU_AWARE_MPI = check_gpu_aware_mpi()
-comm = global_comm if stack_comm is None else stack_comm
 
 
 class LyapunovSolver(ABC):
@@ -221,7 +218,7 @@ class LyapunovMemoizer:
         ):
             warnings.warn(
                 f"High relative recursion error: {xp.max(relative_recursion_errors):.2e} "
-                + f"at rank {comm.rank} for {contact} Lyapunov",
+                + f"at rank {comm.stack.rank} for {contact} Lyapunov",
                 RuntimeWarning,
             )
 

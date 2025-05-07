@@ -2,9 +2,10 @@
 
 from typing import Callable
 
-from mpi4py.MPI import COMM_WORLD as comm
+import numpy as np
 
-from qttools import NDArray, host_xp, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.kernels import dsbcsr_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
@@ -448,7 +449,7 @@ class DSBCSR(DSBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if host_xp.any(self.block_sizes != other.block_sizes):
+        if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
         if self.rowptr_map.keys() != other.rowptr_map.keys():
@@ -542,10 +543,8 @@ class DSBCSR(DSBSparse):
             data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
-        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        block_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-        )
+        block_sizes = np.asarray(block_sizes, dtype=np.int32)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
         self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
@@ -716,7 +715,6 @@ class DSBCSR(DSBSparse):
         block_sizes: NDArray,
         global_stack_shape: tuple,
         densify_blocks: list[tuple] | None = None,
-        pinned: bool = False,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
     ) -> "DSBCSR":

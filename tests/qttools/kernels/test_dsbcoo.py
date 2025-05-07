@@ -1,8 +1,9 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp, sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.kernels import dsbcoo_kernels
 
 
@@ -27,9 +28,7 @@ def _reference_compute_block_sort_index(
 
     """
     num_blocks = len(block_sizes)
-    block_offsets = host_xp.hstack(
-        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
 
     sort_index = xp.zeros(len(coo_cols), dtype=int)
     offset = 0
@@ -120,10 +119,10 @@ def test_compute_block_slice(
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = host_xp.array(
-        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)]
+    block_sizes = np.array(
+        [a.size for a in np.array_split(np.arange(shape[0]), num_blocks)]
     )
-    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
     sort_index = _reference_compute_block_sort_index(coo.row, coo.col, block_sizes)
     rows, cols = coo.row[sort_index], coo.col[sort_index]
@@ -172,9 +171,9 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = host_xp.array(
-        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)],
-        dtype=host_xp.int32,
+    block_sizes = np.array(
+        [a.size for a in np.array_split(np.arange(shape[0]), num_blocks)],
+        dtype=np.int32,
     )
 
     reference_sort_index = _reference_compute_block_sort_index(

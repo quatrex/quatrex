@@ -1,35 +1,18 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import copy
-import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
-# from mpi4py import MPI
-from mpi4py.MPI import COMM_WORLD as comm
+import numpy as np
 
-from qttools import (
-    ALLTOALL_COMM_TYPE,
-    NCCL_AVAILABLE,
-    ArrayLike,
-    NDArray,
-    host_xp,
-    nccl_comm,
-    sparse,
-    xp,
-)
+from qttools import ArrayLike, NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import (  # empty_pinned,; get_host,
-    empty_like_pinned,
-    free_mempool,
-    get_any_location,
-    synchronize_device,
-)
-from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
-
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 @profiler.profile(level="debug")
@@ -209,8 +192,8 @@ class DSBSparse(ABC):
             data.shape[-1], comm.size, strategy="greedy"
         )
         self.nnz_section_sizes_host = nnz_section_sizes
-        self.nnz_section_offsets_host = host_xp.hstack(
-            ([0], host_xp.cumsum(self.nnz_section_sizes_host))
+        self.nnz_section_offsets_host = np.hstack(
+            ([0], np.cumsum(self.nnz_section_sizes_host))
         )
         self.nnz_section_sizes = xp.array(nnz_section_sizes)
         self.nnz_section_offsets = xp.hstack(([0], xp.cumsum(self.nnz_section_sizes)))
@@ -241,10 +224,8 @@ class DSBSparse(ABC):
         self.nnz = data.shape[-1]
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
-        block_sizes = host_xp.asarray(block_sizes, dtype=host_xp.int32)
-        block_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-        )
+        block_sizes = np.asarray(block_sizes, dtype=np.int32)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
         self.num_blocks = len(block_sizes)
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
@@ -698,138 +679,23 @@ class DSBSparse(ABC):
         # )
 
         if discard:
-            t_discard_start = time.perf_counter()
             self._data = _block_view(self._data, axis=block_axis)
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0
-            synchronize_device()
-            t_discard_end = time.perf_counter()
-            comm.Barrier()
-            t_discard_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"        Discard time: {t_discard_end - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        Discard time all: {t_discard_end_all - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
             return
 
         # We need to make sure that the block-view is memory-contiguous.
         # This does nothing if the data is already contiguous.
-        t_block_view_start = time.perf_counter()
         self._data = _block_view(self._data, axis=block_axis)
         self._data = xp.ascontiguousarray(self._data)
         synchronize_device()
-        t_block_view_end = time.perf_counter()
-        comm.Barrier()
-        t_block_view_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"        Block view time: {t_block_view_end - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Block view time all: {t_block_view_end_all - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
 
-        if NCCL_AVAILABLE and ALLTOALL_COMM_TYPE == "nccl":
-            # Always use NCCL if available.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            nccl_comm.all_to_all(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"        NCCL Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        NCCL Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
+        receive_buffer = xp.empty_like(self._data)
+        comm.stack.all_to_all(self._data, receive_buffer)
+        self._data = receive_buffer
 
-            self._data = receive_buffer
-        elif xp.__name__ == "numpy" or (
-            GPU_AWARE_MPI and ALLTOALL_COMM_TYPE == "device_mpi"
-        ):
-            # Use MPI if we are not on GPU or if we have GPU-aware MPI.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            comm.Alltoall(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"        MPI Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        MPI Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-
-            self._data = receive_buffer
-        elif ALLTOALL_COMM_TYPE == "host_mpi":
-
-            synchronize_device()
-            comm.Barrier()
-            t_nccl_start = time.perf_counter()
-
-            _data_host = get_any_location(self._data, "numpy", use_pinned_memory=True)
-
-            synchronize_device()
-            _data_host_out = empty_like_pinned(_data_host)
-            comm.Alltoall(_data_host, _data_host_out)
-            self._data = get_any_location(
-                _data_host_out, "cupy", use_pinned_memory=True
-            )
-
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-
-            if comm.rank == 0:
-                print(
-                    f"        MPI host Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        MPI host Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-
-        else:
-            raise RuntimeError("No suitable Alltoall communication method available.")
-
-        t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
         synchronize_device()
-        t_concatenate_end = time.perf_counter()
-        comm.Barrier()
-        t_concatenate_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"        Concatenate time: {t_concatenate_end - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Concatenate time all: {t_concatenate_end_all - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
 
         # NOTE: There are a few things commented out here, since there
         # may be an alternative way to do the correct reshaping after

@@ -4,10 +4,11 @@ import os
 import time
 
 import cupy as cp
+import numpy as np
 from cupyx import jit
 
-from qttools import NDArray, global_comm, host_xp, strtobool
-from qttools.kernels import USE_CUPY_JIT
+from qttools import QTX_USE_CUPY_JIT, NDArray, strtobool
+from qttools.comm import comm
 from qttools.kernels.cuda import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
@@ -16,10 +17,10 @@ from qttools.utils.gpu_utils import synchronize_device
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-USE_FIND_INDS = strtobool(os.getenv("USE_FIND_INDS", "True"), True)
-USE_DENSIFY_BLOCKS = strtobool(os.getenv("USE_DENSIFY_BLOCK", "False"), False)
+QTX_USE_FIND_INDS = strtobool(os.getenv("QTX_USE_FIND_INDS", "True"), True)
+QTX_USE_DENSIFY_BLOCKS = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK", "False"), False)
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_inds_kernel(
@@ -89,7 +90,7 @@ else:
         options=("--emit-static-lib",),
     )
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _find_inds_kernel_new(
@@ -242,7 +243,7 @@ def find_inds(
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    if USE_FIND_INDS:
+    if QTX_USE_FIND_INDS:
         _find_inds_kernel_new(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
@@ -280,7 +281,7 @@ def find_inds(
     return inds, value_inds, int(cp.max(counts))
 
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _compute_coo_block_mask_kernel(
@@ -380,12 +381,8 @@ def compute_block_slice(
 
     """
     mask = cp.zeros(rows.shape[0], dtype=cp.int32)
-    row_start, row_stop = host_xp.int32(block_offsets[row]), host_xp.int32(
-        block_offsets[row + 1]
-    )
-    col_start, col_stop = host_xp.int32(block_offsets[col]), host_xp.int32(
-        block_offsets[col + 1]
-    )
+    row_start, row_stop = np.int32(block_offsets[row]), np.int32(block_offsets[row + 1])
+    col_start, col_stop = np.int32(block_offsets[col]), np.int32(block_offsets[col + 1])
 
     rows = rows.astype(cp.int32)
     cols = cols.astype(cp.int32)
@@ -402,7 +399,7 @@ def compute_block_slice(
             col_start,
             col_stop,
             mask,
-            host_xp.int32(rows.shape[0]),
+            np.int32(rows.shape[0]),
         ),
     )
     if cp.sum(mask) == 0:
@@ -457,7 +454,7 @@ def densify_block(
     # will just use the CuPy API directly. Since for very large blocks
     # (10'000x10'000) this starts to break even, this needs to be
     # revisited!
-    if not USE_DENSIFY_BLOCKS:
+    if not QTX_USE_DENSIFY_BLOCKS:
         block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
             data[..., block_slice]
         )
@@ -491,7 +488,7 @@ def densify_block(
         )
 
 
-if USE_CUPY_JIT:
+if QTX_USE_CUPY_JIT:
 
     @jit.rawkernel()
     def _densify_block_kernel(
@@ -647,7 +644,7 @@ def reduction(
         (
             a,
             out,
-            host_xp.int32(n),
+            np.int32(n),
         ),
     )
 
@@ -683,9 +680,7 @@ def compute_block_sort_index(
 
     """
     num_blocks = block_sizes.shape[0]
-    block_offsets = host_xp.hstack(
-        (host_xp.array([0]), host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=np.int32)
 
     sort_index = cp.zeros(len(coo_cols), dtype=cp.int32)
     mask = cp.zeros(len(coo_cols), dtype=cp.int32)
@@ -710,12 +705,12 @@ def compute_block_sort_index(
             (
                 coo_rows,
                 coo_cols,
-                host_xp.int32(block_offsets[i]),
-                host_xp.int32(block_offsets[i + 1]),
-                host_xp.int32(block_offsets[j]),
-                host_xp.int32(block_offsets[j + 1]),
+                np.int32(block_offsets[i]),
+                np.int32(block_offsets[i + 1]),
+                np.int32(block_offsets[j]),
+                np.int32(block_offsets[j + 1]),
                 mask,
-                host_xp.int32(len(coo_cols)),
+                np.int32(len(coo_cols)),
             ),
         )
         synchronize_device()
@@ -736,7 +731,7 @@ def compute_block_sort_index(
 
         t_sort += time.perf_counter()
 
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(f"mask computation took {t_mask:.3f} seconds.", flush=True)
         print(f"sum computation took {t_sum:.3f} seconds.", flush=True)
         print(f"sorting took {t_sort:.3f} seconds.", flush=True)

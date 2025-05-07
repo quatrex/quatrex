@@ -1,19 +1,39 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
+from mpi4py.MPI import COMM_WORLD as global_comm
 
-from qttools import NDArray, block_comm, global_comm, host_xp, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures import DSDBCOO
 from qttools.greens_function_solver.rgf_dist import RGFDist
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([10] * 5), id="constant-block-size"),
-    pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size"),
+    pytest.param(np.array([10] * 5), id="constant-block-size"),
+    pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size"),
 ]
 GLOBAL_STACK_SHAPES = [
     pytest.param((4,), id="1D-stack"),
     pytest.param((5, 2), id="2D-stack"),
 ]
+
+
+def setup_module():
+    """setup any state specific to the execution of the given module."""
+    _default_config = {
+        "all_to_all": "device_mpi",
+        "all_gather": "device_mpi",
+        "all_reduce": "device_mpi",
+        "bcast": "device_mpi",
+    }
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=3,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        override=True,
+    )
 
 
 @pytest.mark.mpi(min_size=2)
@@ -22,7 +42,7 @@ GLOBAL_STACK_SHAPES = [
 def test_rgf_dist(block_sizes: NDArray, global_stack_shape: tuple):
     """Tests the selected solve method of a Green's function solver."""
 
-    global_block_sizes = host_xp.tile(block_sizes, block_comm.size)
+    global_block_sizes = np.tile(block_sizes, comm.block.size)
     shape = (int(global_block_sizes.sum()), int(global_block_sizes.sum()))
 
     a_sparray = None
@@ -144,7 +164,7 @@ def test_rgf_dist(block_sizes: NDArray, global_stack_shape: tuple):
 def test_rgf_dist_no_retarded(block_sizes: NDArray, global_stack_shape: tuple):
     """Tests the selected solve method of a Green's function solver."""
 
-    global_block_sizes = host_xp.tile(block_sizes, block_comm.size)
+    global_block_sizes = np.tile(block_sizes, comm.block.size)
     shape = (int(global_block_sizes.sum()), int(global_block_sizes.sum()))
 
     a_sparray = None
@@ -258,7 +278,7 @@ def test_rgf_dist_no_retarded(block_sizes: NDArray, global_stack_shape: tuple):
 def test_rgf_dist_batched(block_sizes: NDArray, global_stack_shape: tuple):
     """Tests the selected solve method of a Green's function solver."""
 
-    global_block_sizes = host_xp.tile(block_sizes, block_comm.size)
+    global_block_sizes = np.tile(block_sizes, comm.block.size)
     shape = (int(global_block_sizes.sum()), int(global_block_sizes.sum()))
 
     a_sparray = None

@@ -5,7 +5,8 @@ from collections.abc import Callable
 
 from mpi4py.MPI import Intracomm, Request
 
-from qttools import block_comm, global_comm, nccl_block_comm, xp
+from qttools import xp
+from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.profiling import Profiler
@@ -427,7 +428,7 @@ class BlockMatrix(dict):
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             return self.blocks[key]
-        rank = block_comm.rank if block_comm is not None else 0
+        rank = comm.block.rank if comm.block is not None else 0
         print(f"Something bad happened: {rank=}, {key=}, {self.origin=}")
         # return None
         raise KeyError(key)
@@ -542,7 +543,7 @@ def arrow_partition_halo_comm(
     halo_comm_end = time.perf_counter()
     comm.Barrier() if comm is not None else None
     halo_comm_end_all = time.perf_counter()
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
         print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
@@ -575,7 +576,7 @@ def arrow_partition_halo_comm_nccl(
     rank = comm.rank if comm is not None else 0
 
     synchronize_device()
-    block_comm.Barrier()
+    comm.Barrier()
     halo_comm_start = time.perf_counter()
 
     # Send halo blocks to previous rank
@@ -649,9 +650,9 @@ def arrow_partition_halo_comm_nccl(
 
     synchronize_device()
     halo_comm_end = time.perf_counter()
-    block_comm.Barrier()
+    comm.Barrier()
     halo_comm_end_all = time.perf_counter()
-    if global_comm.rank == 0:
+    if comm.rank == 0:
         print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
         print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
@@ -728,7 +729,7 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
-    if nccl_block_comm is not None:
+    if hasattr(comm.block, "_nccl_comm"):
         # if False:
         arrow_partition_halo_comm_nccl(
             a_,
@@ -737,12 +738,12 @@ def bd_matmul_distr(
             b_num_diag,
             start_block,
             end_block,
-            block_comm,
-            nccl_block_comm,
+            comm.block._mpi_comm,
+            comm.block._nccl_comm,
         )
     else:
         arrow_partition_halo_comm(
-            a_, b_, a_num_diag, b_num_diag, start_block, end_block, block_comm
+            a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm.block._mpi_comm
         )
 
     # Make sure the output matrix is initialized to zero.
@@ -794,7 +795,7 @@ def bd_matmul_distr(
                             else:
                                 partsum += a_[i_a, k_a] @ b_[k_b, j_b]
                         except Exception as e:
-                            rank = block_comm.rank if block_comm is not None else 0
+                            rank = comm.block.rank if comm.block is not None else 0
                             print(e)
                             print(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"

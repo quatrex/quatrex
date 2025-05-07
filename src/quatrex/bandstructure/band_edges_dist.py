@@ -4,29 +4,22 @@ import time
 from functools import partial
 
 from qttools import (
-    NCCL_AVAILABLE,
     NDArray,
-    block_comm,
-    global_comm,
-    nccl_block_comm,
-    nccl_stack_comm,
     sparse,
-    stack_comm,
     xp,
-    OTHER_COMM_TYPE,
 )
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_device, get_host, synchronize_device, empty_like_pinned, get_any_location
-from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
+from qttools.utils.mpi_utils import get_section_sizes
 from scipy import linalg as spla
 
 from quatrex.core.compute_config import BandEdgeConfig
 
 profiler = Profiler()
 
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -34,47 +27,6 @@ elif xp.__name__ == "cupy":
     from cupyx.scipy.signal import find_peaks
 else:
     raise ImportError("Unknown backend.")
-
-
-def _bcast(values: list | NDArray, num_values: int, root: int, block: bool) -> float:
-    """Broadcasts a list values to all ranks.
-
-    Parameters
-    ----------
-    value : float
-        The value to broadcast.
-    root : int
-        The rank to broadcast from.
-    """
-
-    if values is None:
-        buf = xp.empty(num_values, dtype=xp.float64)
-    else:
-        buf = xp.asarray(values)
-
-    if block:
-        mpi_comm, nccl_comm = block_comm, nccl_block_comm
-    else:
-        mpi_comm, nccl_comm = stack_comm, nccl_stack_comm
-
-    if NCCL_AVAILABLE and (OTHER_COMM_TYPE == "nccl"):
-        nccl_comm.broadcast(buf, root)
-        synchronize_device()
-    elif xp.__name__ == "numpy" or (GPU_AWARE_MPI and OTHER_COMM_TYPE == "device_mpi"):
-        mpi_comm.Bcast(buf, root)
-    elif OTHER_COMM_TYPE == "host_mpi":
-        buf_host = get_any_location(buf, "numpy", use_pinned_memory=True)
-        synchronize_device()
-
-        mpi_comm.Bcast(buf_host, root)
-
-        buf = get_any_location(buf_host, "cupy", use_pinned_memory=True)
-    else:
-        raise ValueError(
-            f"Unrecognized OTHER_COMM_TYPE '{OTHER_COMM_TYPE}'"
-        )
-
-    return buf
 
 
 def get_block(
@@ -107,7 +59,7 @@ def get_block(
     col = col + len(block_sizes) if col < 0 else col
 
     if isinstance(coo, DSDBSparse):
-        start_block = coo.block_section_offsets[block_comm.rank]
+        start_block = coo.block_section_offsets[comm.block.rank]
         return coo.local_blocks[row - start_block, col - start_block]
 
     mask = (
@@ -217,15 +169,9 @@ def _compute_eigenvalues(
     s_0 += s_0.conj().swapaxes(-2, -1)
     s_0 += s_00[:, :small_blocksize]
 
-    # s_0 = sum(_get_block(overlap, index=block) for block in blocks)
-
-    # h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
     if band_edge_config.use_eigvalsh:
         # NOTE: In this case we use only the real part of the retarded
         # self-energy.
-        # h_0 += sum(
-        #     xp.real(sigma_retarded.local_blocks[*block][ind]) for block in sigma_blocks
-        # )
         e_0 = eigvalsh(
             # NOTE: Prevent eigvalsh from calling a batched routine (slow).
             xp.squeeze(h_0),
@@ -294,19 +240,19 @@ def find_renormalized_eigenvalues(
     left_conduction_band_guess, right_conduction_band_guess = conduction_band_guesses
     left_mid_gap_energy, right_mid_gap_energy = mid_gap_energies
 
-    section_sizes, __ = get_section_sizes(energies.size, stack_comm.size)
+    section_sizes, __ = get_section_sizes(energies.size, comm.stack.size)
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
     left_band_edges = None
     right_band_edges = None
 
-    if block_comm.rank == 0:
+    if comm.block.rank == 0:
         for __ in range(num_ref_iterations):
             ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
             rank_left = xp.digitize(ind_left, section_offsets) - 1
 
-            if rank_left == stack_comm.rank:
+            if rank_left == comm.stack.rank:
                 local_ind = ind_left - section_offsets[rank_left]
                 e_0_left = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
@@ -321,27 +267,24 @@ def find_renormalized_eigenvalues(
                 left_mid_gap_energy = xp.mean(left_band_edges)
                 __, left_conduction_band_guess = left_band_edges
 
-            # left_conduction_band_guess = stack_comm.bcast(
-            #     left_conduction_band_guess, rank_left
-            # )
-            # left_mid_gap_energy = stack_comm.bcast(left_mid_gap_energy, rank_left)
-            left_conduction_band_guess, left_mid_gap_energy = _bcast(
-                [left_conduction_band_guess, left_mid_gap_energy],
-                num_values=2,
+            left_packed = xp.array([left_conduction_band_guess, left_mid_gap_energy])
+            comm.stack.bcast(
+                left_packed,
                 root=rank_left,
-                block=False,
             )
+            left_conduction_band_guess, left_mid_gap_energy = left_packed
 
-        # e_0_left = stack_comm.bcast(e_0_left, rank_left)
+
+
         synchronize_device()
-        stack_comm.Barrier()
+        comm.stack.barrier()
         t_band_edge_start = time.perf_counter()
-        left_band_edges = _bcast(left_band_edges, 2, rank_left, block=False)
+        comm.stack.bcast(left_band_edges, root=rank_left)
         synchronize_device()
         t_band_edge_end = time.perf_counter()
-        stack_comm.Barrier()
+        comm.stack.barrier()
         t_band_edge_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
                 flush=True,
@@ -351,12 +294,12 @@ def find_renormalized_eigenvalues(
                 flush=True,
             )
 
-    if block_comm.rank == block_comm.size - 1:
+    if comm.block.rank == comm.block.size - 1:
         for __ in range(num_ref_iterations):
             ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
             rank_right = xp.digitize(ind_right, section_offsets) - 1
 
-            if rank_right == stack_comm.rank:
+            if rank_right == comm.stack.rank:
                 local_ind = ind_right - section_offsets[rank_right]
                 e_0_right = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
@@ -371,24 +314,17 @@ def find_renormalized_eigenvalues(
                 right_mid_gap_energy = xp.mean(right_band_edges)
                 __, right_conduction_band_guess = right_band_edges
 
-            # right_conduction_band_guess = stack_comm.bcast(
-            #     right_conduction_band_guess, rank_right
-            # )
-            # right_mid_gap_energy = stack_comm.bcast(right_mid_gap_energy, rank_right)
-            right_conduction_band_guess, right_mid_gap_energy = _bcast(
-                [right_conduction_band_guess, right_mid_gap_energy],
-                num_values=2,
+            right_packed = xp.array([right_conduction_band_guess, right_mid_gap_energy])
+            comm.stack.bcast(
+                right_packed,
                 root=rank_right,
-                block=False,
             )
+            right_conduction_band_guess, right_mid_gap_energy = right_packed
 
-        # e_0_right = stack_comm.bcast(e_0_right, rank_right)
-        right_band_edges = _bcast(right_band_edges, 2, rank_right, block=False)
+        comm.stack.bcast(right_band_edges, root=rank_right, block=False)
 
-    # e_0_left = block_comm.bcast(e_0_left, 0)
-    # e_0_right = block_comm.bcast(e_0_right, block_comm.size - 1)
-    left_band_edges = _bcast(left_band_edges, 2, 0, block=True)
-    right_band_edges = _bcast(right_band_edges, 2, block_comm.size - 1, block=True)
+    comm.block.bcast(left_band_edges, root=0)
+    comm.block.bcast(right_band_edges, root=comm.block.size - 1)
 
     return left_band_edges, right_band_edges
 

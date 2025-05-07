@@ -2,18 +2,13 @@
 
 import time
 
+import numpy as np
 from qttools import (
-    NCCL_AVAILABLE,
     NDArray,
-    block_comm,
-    global_comm,
-    host_xp,
-    nccl_stack_comm,
     sparse,
-    stack_comm,
     xp,
-    OTHER_COMM_TYPE,
 )
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
@@ -21,7 +16,6 @@ from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import (
-    check_gpu_aware_mpi,
     distributed_load,
     get_local_slice,
     get_section_sizes,
@@ -29,7 +23,6 @@ from qttools.utils.mpi_utils import (
 from qttools.utils.stack_utils import scale_stack
 
 from quatrex.bandstructure.band_edges_dist import (
-    _bcast,
     find_band_edges,
     find_dos_peaks,
     find_renormalized_eigenvalues,
@@ -41,8 +34,6 @@ from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
 
 profiler = Profiler()
-
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 @profiler.profile(level="debug")
@@ -65,7 +56,7 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
         j = i + 1
         a_.local_blocks[i, i] -= b_.local_blocks[i, i]
 
-        if j >= a.num_local_blocks and block_comm.rank == block_comm.size - 1:
+        if j >= a.num_local_blocks and comm.block.rank == comm.block.size - 1:
             # The last rank does not have these blocks.
             continue
 
@@ -83,7 +74,7 @@ class ElectronSolverDist(SubsystemSolver):
         The quatrex simulation configuration.
     compute_config : ComputeConfig
         The compute configuration.
-    energies : host_xp.ndarray
+    energies : np.ndarray
         The energies at which to solve.
 
     """
@@ -100,14 +91,14 @@ class ElectronSolverDist(SubsystemSolver):
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
 
-        self.local_energies = get_local_slice(energies, stack_comm)
+        self.local_energies = get_local_slice(energies, comm.stack)
         self.solver_dist = RGFDist(
             max_batch_size=quatrex_config.electron.solver.max_batch_size,
         )
 
         # Load the device Hamiltonian.
         synchronize_device()
-        global_comm.Barrier()
+        comm.barrier()
         t_ham_load_start = time.perf_counter()
         if quatrex_config.device.construct_from_unit_cell:
             hamiltonian_unit_cells = distributed_load(
@@ -118,11 +109,11 @@ class ElectronSolverDist(SubsystemSolver):
             # NOTE: This is arrow-wise partitioning.
             # TODO: Allow more options, e.g., block row-wise partitioning.
             section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, block_comm.size
+                quatrex_config.device.number_of_supercells, comm.block.size
             )
-            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-            start_block = section_offsets[block_comm.rank]
-            end_block = section_offsets[block_comm.rank + 1]
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
 
             hamiltonian_sparray, block_sizes = create_hamiltonian(
                 cutoff_hr(
@@ -139,7 +130,7 @@ class ElectronSolverDist(SubsystemSolver):
             hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
             hamiltonian_sparray.sum_duplicates()
             block_sizes = get_host(block_sizes)
-            self.block_sizes = host_xp.asarray(
+            self.block_sizes = np.asarray(
                 [block_sizes[0]] * quatrex_config.device.number_of_supercells
             )
 
@@ -157,9 +148,9 @@ class ElectronSolverDist(SubsystemSolver):
 
         synchronize_device()
         t_ham_load_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_ham_load_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
                 flush=True,
@@ -172,7 +163,7 @@ class ElectronSolverDist(SubsystemSolver):
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             hamiltonian_sparray.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=(stack_comm.size,),
+            global_stack_shape=(comm.stack.size,),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
@@ -180,9 +171,9 @@ class ElectronSolverDist(SubsystemSolver):
 
         synchronize_device()
         t_ham_create_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_ham_create_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
                 flush=True,
@@ -201,7 +192,7 @@ class ElectronSolverDist(SubsystemSolver):
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
 
-        self.block_offsets = host_xp.hstack(([0], host_xp.cumsum(self.block_sizes)))
+        self.block_offsets = np.hstack(([0], np.cumsum(self.block_sizes)))
         # Check that the provided block sizes match the Hamiltonian.
         if self.block_sizes.sum() != self.hamiltonian.shape[-2]:
             raise ValueError(
@@ -279,7 +270,7 @@ class ElectronSolverDist(SubsystemSolver):
 
         # Contacts.
         self.flatband = quatrex_config.electron.flatband
-        if self.flatband and global_comm.rank == 0:
+        if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
         self.eta_obc = quatrex_config.electron.eta_obc
@@ -365,7 +356,7 @@ class ElectronSolverDist(SubsystemSolver):
                 f"{left_conduction_band_edge}, {right_conduction_band_edge}",
                 flush=True,
             )
-            if global_comm.rank == 0
+            if comm.rank == 0
             else None
         )
 
@@ -408,7 +399,7 @@ class ElectronSolverDist(SubsystemSolver):
 
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
-        if block_comm.rank == 0:
+        if comm.block.rank == 0:
             # Extract the overlap matrix blocks.
             s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
             s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
@@ -440,7 +431,7 @@ class ElectronSolverDist(SubsystemSolver):
             self.obc_blocks.greater[0] = 1j * scale_stack(
                 gamma_00.copy(), self.left_occupancies - 1
             )
-        if block_comm.rank == block_comm.size - 1:
+        if comm.block.rank == comm.block.size - 1:
             # Extract the overlap matrix blocks.
             s_nn = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -1))
             s_nm = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (-1, -2))
@@ -532,30 +523,21 @@ class ElectronSolverDist(SubsystemSolver):
             g_retarded_density = -g_retarded_diag[..., boff : boff + bsz].imag.mean(-1)
             local_dos.append(g_retarded_density)
 
-        if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
-            dos = xp.hstack(stack_comm.allgather(local_dos))
-        else:
-            # NOTE: NCCL does not expose all_gather_v. This is a hack.
-            local_dos = xp.array(local_dos)
-            pad_width = (
-                g_lesser.total_stack_size // stack_comm.size - local_dos.shape[1]
-            )
-            local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
-            dos = xp.empty(
-                (local_dos.shape[0], g_lesser.total_stack_size), dtype=local_dos.dtype
-            )
-            synchronize_device()
-            nccl_stack_comm.all_gather(local_dos, dos, local_dos.size)
-            synchronize_device()
-            dos = dos[..., g_lesser._stack_padding_mask]
+        local_dos = xp.array(local_dos)
+        dos =  comm.stack.all_gather_v(
+                    local_dos,
+                    axis=1,
+                    mask=g_lesser._stack_padding_mask,
+                    )
+
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
-        section_sizes, __ = get_section_sizes(self.energies.size, stack_comm.size)
-        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+        section_sizes, __ = get_section_sizes(self.energies.size, comm.stack.size)
+        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
         local_mask = mask[
-            section_offsets[stack_comm.rank] : section_offsets[stack_comm.rank + 1]
+            section_offsets[comm.stack.rank] : section_offsets[comm.stack.rank + 1]
         ]
 
         g_lesser.data[local_mask] = 0.0
@@ -593,9 +575,9 @@ class ElectronSolverDist(SubsystemSolver):
             homogenize(sse_retarded)
             synchronize_device()
             time_homogenize_end = time.perf_counter()
-            global_comm.Barrier()
+            comm.barrier()
             time_homogenize_end_all = time.perf_counter()
-            if global_comm.rank == 0:
+            if comm.rank == 0:
                 print(
                     f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
                     flush=True,
@@ -613,9 +595,9 @@ class ElectronSolverDist(SubsystemSolver):
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_assemble_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
             print(
                 f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
@@ -640,9 +622,9 @@ class ElectronSolverDist(SubsystemSolver):
 
             synchronize_device()
             t_band_edges_end = time.perf_counter()
-            global_comm.Barrier()
+            comm.barrier()
             t_band_edges_end_all = time.perf_counter()
-            if global_comm.rank == 0:
+            if comm.rank == 0:
                 print(
                     f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
                 )
@@ -655,9 +637,9 @@ class ElectronSolverDist(SubsystemSolver):
         self._compute_obc()
         synchronize_device()
         t_obc_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_obc_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
             print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
 
@@ -672,9 +654,9 @@ class ElectronSolverDist(SubsystemSolver):
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_solve_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
             print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
@@ -684,9 +666,9 @@ class ElectronSolverDist(SubsystemSolver):
             self._filter_peaks(out)
         synchronize_device()
         t_filter_peaks_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_filter_peaks_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
                 flush=True,
@@ -703,7 +685,7 @@ class ElectronSolverDist(SubsystemSolver):
             _, _, g_retarded = out
             left_band_edges, right_band_edges = None, None
 
-            if block_comm.rank == 0:
+            if comm.block.rank == 0:
                 s_00 = self._get_block(self.overlap_sparray, (0, 0))
                 g_00 = g_retarded.local_blocks[0, 0]
 
@@ -711,52 +693,16 @@ class ElectronSolverDist(SubsystemSolver):
                     xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
                 )
 
-                # if not NCCL_AVAILABLE or not USE_NCCL:
-                #     left_dos = xp.hstack(stack_comm.allgather(local_left_dos)) / (
-                #         2 * xp.pi
-                #     )
-                # else:
-                if NCCL_AVAILABLE and OTHER_COMM_TYPE == "nccl":
-                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                    pad_width = (
-                        g_retarded.total_stack_size // stack_comm.size
-                        - local_left_dos.shape[0]
-                    )
-
-                    left_dos = xp.pad(local_left_dos, (0, pad_width))
-
-                    full_left_dos = xp.empty(
-                        (g_retarded.total_stack_size,), dtype=left_dos.dtype
-                    )
-                    synchronize_device()
-                    nccl_stack_comm.all_gather(left_dos, full_left_dos, left_dos.size)
-                    synchronize_device()
-
-                    left_dos = full_left_dos[g_retarded._stack_padding_mask]
-                elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
-                    pad_width = (
-                        g_retarded.total_stack_size // stack_comm.size
-                        - local_left_dos.shape[0]
-                    )
-
-                    left_dos = xp.pad(local_left_dos, (0, pad_width))
-
-                    full_left_dos = xp.empty(
-                        (g_retarded.total_stack_size,), dtype=left_dos.dtype
-                    )
-
-                    stack_comm.Allgather(left_dos, full_left_dos)
-
-                    left_dos = full_left_dos[g_retarded._stack_padding_mask]
-                else:
-                    left_dos = xp.hstack(stack_comm.allgather(local_left_dos)) / (
-                        2 * xp.pi
-                    )
+                left_dos =  comm.stack.all_gather_v(
+                            local_left_dos,
+                            axis=0,
+                            mask=g_retarded._stack_padding_mask,
+                            )
 
                 e_0_left = find_dos_peaks(left_dos, self.energies)
                 left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
 
-            if block_comm.rank == block_comm.size - 1:
+            if comm.block.rank == comm.block.size - 1:
                 s_nn = self._get_block(self.overlap_sparray, (-1, -1))
                 n = g_retarded.num_local_blocks - 1
                 g_nn = g_retarded.local_blocks[n, n]
@@ -764,64 +710,26 @@ class ElectronSolverDist(SubsystemSolver):
                     xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
                 )
 
-                # if not NCCL_AVAILABLE or not USE_NCCL:
-                #     right_dos = xp.hstack(stack_comm.allgather(local_right_dos)) / (
-                #         2 * xp.pi
-                #     )
-                # else:
-                if NCCL_AVAILABLE and OTHER_COMM_TYPE == "nccl":
-                    # NOTE: NCCL does not expose all_gather_v. This is a hack.
-                    pad_width = (
-                        g_retarded.total_stack_size // stack_comm.size
-                        - local_right_dos.shape[0]
-                    )
-
-                    right_dos = xp.pad(local_right_dos, (0, pad_width))
-
-                    full_right_dos = xp.empty(
-                        (g_retarded.total_stack_size,), dtype=right_dos.dtype
-                    )
-                    synchronize_device()
-                    nccl_stack_comm.all_gather(
-                        right_dos, full_right_dos, right_dos.size
-                    )
-                    synchronize_device()
-
-                    right_dos = full_right_dos[g_retarded._stack_padding_mask]
-                elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
-                    pad_width = (
-                        g_retarded.total_stack_size // stack_comm.size
-                        - local_right_dos.shape[0]
-                    )
-
-                    right_dos = xp.pad(local_right_dos, (0, pad_width))
-
-                    full_right_dos = xp.empty(
-                        (g_retarded.total_stack_size,), dtype=right_dos.dtype
-                    )
-
-                    stack_comm.Allgather(right_dos, full_right_dos)
-
-                    right_dos = full_right_dos[g_retarded._stack_padding_mask]
-                else:
-                    right_dos = xp.hstack(stack_comm.allgather(local_right_dos)) / (
-                        2 * xp.pi
-                    )
+                right_dos = comm.stack.all_gather_v(
+                            local_right_dos,
+                            axis=0,
+                            mask=g_retarded._stack_padding_mask,
+                            )
 
                 e_0_right = find_dos_peaks(right_dos, self.energies)
                 right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
 
-            left_band_edges = _bcast(left_band_edges, num_values=2, root=0, block=True)
-            right_band_edges = _bcast(
-                right_band_edges, num_values=2, root=block_comm.size - 1, block=True
+            left_band_edges = comm.block.bcast(left_band_edges, root=0)
+            right_band_edges = comm.block.bcast(
+                right_band_edges, root=comm.block.size - 1
             )
 
             self._update_fermi_levels(left_band_edges, right_band_edges)
             synchronize_device()
             t_dos_peaks_end = time.perf_counter()
-            global_comm.Barrier()
+            comm.barrier()
             t_dos_peaks_end_all = time.perf_counter()
-            if global_comm.rank == 0:
+            if comm.rank == 0:
                 print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
                 print(
                     f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",

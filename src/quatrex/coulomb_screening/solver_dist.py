@@ -2,19 +2,14 @@
 
 import time
 
-from mpi4py.MPI import COMM_WORLD as comm
+import numpy as np
 from qttools import (
-    NCCL_AVAILABLE,
     NDArray,
     _DType,
-    block_comm,
-    host_xp,
-    nccl_stack_comm,
     sparse,
-    stack_comm,
     xp,
-    OTHER_COMM_TYPE,
 )
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.rgf_dist import RGFDist
@@ -37,78 +32,15 @@ from quatrex.core.utils import (
 
 profiler = Profiler()
 
-
-@profiler.profile(level="debug")
-def _check_block_sizes(rows: NDArray, columns: NDArray, block_sizes: NDArray) -> bool:
-    """Checks if matrix elements lie within the block-tridiagonal.
-
-    Parameters
-    ----------
-    rows : NDArray
-        The row indices of the matrix elements.
-    columns : NDArray
-        The column indices of the matrix elements.
-    block_sizes : NDArray
-        The block sizes.
-
-    Returns
-    -------
-    bool
-        True if the matrix elements lie within the block-tridiagonal,
-        False otherwise.
-
-    """
-    nnz_in_blocks = 0
-    for i in range(len(block_sizes)):
-        bmin = sum(block_sizes[:i])
-        bmax = sum(block_sizes[: i + 1])
-        mask = (rows >= bmin) & (rows < bmax) & (columns >= bmin) & (columns < bmax)
-        nnz_in_blocks += mask.sum()
-        if i > 0:
-            bmin2 = sum(block_sizes[: i - 1])
-            bmax2 = sum(block_sizes[:i])
-            mask_lower = (
-                (rows >= bmin) & (rows < bmax) & (columns >= bmin2) & (columns < bmax2)
-            )
-            mask_upper = (
-                (rows >= bmin2) & (rows < bmax2) & (columns >= bmin) & (columns < bmax)
-            )
-            nnz_in_blocks += mask_lower.sum() + mask_upper.sum()
-    return rows.size == nnz_in_blocks
-
-
-@profiler.profile(level="debug")
-def _spillover_matmul(
-    a: sparse.spmatrix, b: sparse.spmatrix, block_sizes
-) -> sparse.coo_matrix:
-    """Multiplies two sparse matrices with spillover correction."""
-    c = (a @ b).tocsr()
-
-    a = a.tocsr()
-    b = b.tocsr()
-
-    # Left spillover
-    i_ = slice(None, int(block_sizes[0]))
-    j_ = slice(int(block_sizes[0]), int(sum(block_sizes[:2])))
-    c[i_, i_] += a[j_, i_] @ b[i_, j_]
-
-    # Right spillover
-    i_ = slice(int(-block_sizes[-1]), None)
-    j_ = slice(int(-sum(block_sizes[-2:])), int(-block_sizes[-1]))
-    c[i_, i_] += a[j_, i_] @ b[i_, j_]
-
-    return c.tocoo()
-
-
 @profiler.profile(level="debug")
 def _compute_sparsity_pattern(
     *matrices: DSDBSparse, dtype: _DType = None
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern of the product of several DSDBSparse matrices."""
     num_blocks = matrices[0].num_blocks
-    local_blocks, _ = get_section_sizes(num_blocks, block_comm.size)
-    start_block = sum(local_blocks[: block_comm.rank])
-    end_block = start_block + local_blocks[block_comm.rank]
+    local_blocks, _ = get_section_sizes(num_blocks, comm.block.size)
+    start_block = sum(local_blocks[: comm.block.rank])
+    end_block = start_block + local_blocks[comm.block.rank]
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *matrices, start_block=start_block, end_block=end_block, spillover=True
     )
@@ -146,7 +78,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         """Initializes the solver."""
         super().__init__(quatrex_config, compute_config, energies)
 
-        self.local_energies = get_local_slice(energies, stack_comm)
+        self.local_energies = get_local_slice(energies, comm.stack)
         self.solver_dist = RGFDist(
             max_batch_size=quatrex_config.coulomb_screening.solver.max_batch_size,
         )
@@ -155,7 +87,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             coulomb_matrix_unit_cells = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
             ).astype(xp.complex128)
-            self.small_block_sizes = host_xp.asarray(
+            self.small_block_sizes = np.asarray(
                 [
                     coulomb_matrix_unit_cells.shape[-1]
                     * quatrex_config.device.unit_cell_per_supercell[
@@ -179,7 +111,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
-            global_stack_shape=(stack_comm.size,),
+            global_stack_shape=(comm.stack.size,),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
@@ -253,11 +185,11 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             # NOTE: This is arrow-wise partitioning.
             # TODO: Allow more options, e.g., block row-wise partitioning.
             section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, block_comm.size
+                quatrex_config.device.number_of_supercells, comm.block.size
             )
-            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-            start_block = section_offsets[block_comm.rank]
-            end_block = section_offsets[block_comm.rank + 1]
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
 
             coulomb_matrix_sparray, __ = create_hamiltonian(
                 cutoff_hr(
@@ -329,7 +261,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
-        if block_comm.rank == 0:
+        if comm.block.rank == 0:
 
             t_obc_r_start = time.perf_counter()
 
@@ -347,9 +279,9 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
             synchronize_device()
             t_obc_r_end = time.perf_counter()
-            stack_comm.Barrier()
+            comm.stack.barrier()
             t_obc_r_end_all = time.perf_counter()
-            if stack_comm.rank == 0:
+            if comm.stack.rank == 0:
                 print(
                     f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True
                 )
@@ -395,9 +327,9 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
             synchronize_device()
             t_lyapunov_end = time.perf_counter()
-            stack_comm.Barrier()
+            comm.stack.barrier()
             t_lyapunov_end_all = time.perf_counter()
-            if stack_comm.rank == 0:
+            if comm.stack.rank == 0:
                 print(
                     f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
                     flush=True,
@@ -407,7 +339,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
                     flush=True,
                 )
 
-        if block_comm.rank == block_comm.size - 1:
+        if comm.block.rank == comm.block.size - 1:
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
 
@@ -475,10 +407,10 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
-            len(self.system_matrix.block_sizes), block_comm.size
+            len(self.system_matrix.block_sizes), comm.block.size
         )
-        start_block = sum(local_blocks[: block_comm.rank])
-        end_block = start_block + local_blocks[block_comm.rank]
+        start_block = sum(local_blocks[: comm.block.rank])
+        end_block = start_block + local_blocks[comm.block.rank]
 
         bd_matmul_distr(
             self.coulomb_matrix,
@@ -527,30 +459,20 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             w_greater_density = -w_greater_diag[..., boff : boff + bzs].imag.mean(-1)
             local_dos.append(0.5 * (w_greater_density - w_lesser_density))
 
-        if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
-            dos = xp.hstack(stack_comm.allgather(local_dos))
-        else:
-            # NOTE: NCCL does not expose all_gather_v. This is a hack.
-            local_dos = xp.array(local_dos)
-            pad_width = (
-                w_lesser.total_stack_size // stack_comm.size - local_dos.shape[1]
-            )
-            local_dos = xp.pad(local_dos, ((0, 0), (0, pad_width)))
-            dos = xp.empty(
-                (local_dos.shape[0], w_lesser.total_stack_size), dtype=local_dos.dtype
-            )
-            synchronize_device()
-            nccl_stack_comm.all_gather(local_dos, dos, local_dos.size)
-            synchronize_device()
-            dos = dos[..., w_lesser._stack_padding_mask]
+        local_dos = xp.array(local_dos)
+        dos =  comm.stack.all_gather_v(
+                    local_dos,
+                    axis=1,
+                    mask=w_lesser._stack_padding_mask,
+                    )
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
 
-        section_sizes, __ = get_section_sizes(self.energies.size, stack_comm.size)
-        section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
+        section_sizes, __ = get_section_sizes(self.energies.size, comm.stack.size)
+        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
         local_mask = mask[
-            section_offsets[stack_comm.rank] : section_offsets[stack_comm.rank + 1]
+            section_offsets[comm.stack.rank] : section_offsets[comm.stack.rank + 1]
         ]
 
         w_lesser.data[local_mask] = 0.0
@@ -588,7 +510,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         self._set_block_sizes(self.small_block_sizes)
         synchronize_device()
         t_set_blocksize_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_set_blocksize_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
@@ -607,7 +529,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         self._assemble_system_matrix(p_retarded)
         synchronize_device()
         t_assembly_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_assembly_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Assembly: {t_assembly_end-t_assembly_start:.3f}", flush=True)
@@ -618,10 +540,10 @@ class CoulombScreeningSolverDist(SubsystemSolver):
 
         t_sandwich_start = time.perf_counter()
         local_blocks, _ = get_section_sizes(
-            len(self.coulomb_matrix.block_sizes), block_comm.size
+            len(self.coulomb_matrix.block_sizes), comm.block.size
         )
-        start_block = sum(local_blocks[: block_comm.rank])
-        end_block = start_block + local_blocks[block_comm.rank]
+        start_block = sum(local_blocks[: comm.block.rank])
+        end_block = start_block + local_blocks[comm.block.rank]
         bd_sandwich_distr(
             self.coulomb_matrix,
             p_lesser,
@@ -640,7 +562,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         )
         synchronize_device()
         t_sandwich_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_sandwich_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Sandwich: {t_sandwich_end-t_sandwich_start:.3f}", flush=True)
@@ -655,7 +577,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             homogenize(self.l_lesser)
             homogenize(self.l_greater)
             t_homogenize_end = time.perf_counter()
-            comm.Barrier()
+            comm.barrier()
             t_homogenize_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
@@ -671,7 +593,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         t_set_blocksize_start = time.perf_counter()
         self._set_block_sizes(self.block_sizes)
         t_set_blocksize_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_set_blocksize_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
@@ -688,7 +610,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         self._compute_obc()
         synchronize_device()
         t_obc_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_obc_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    OBC: {t_obc_end-t_obc_start:.3f}", flush=True)
@@ -706,7 +628,7 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         )
         synchronize_device()
         t_solve_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_solve_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
@@ -722,13 +644,13 @@ class CoulombScreeningSolverDist(SubsystemSolver):
         self.l_greater.free_data()
 
         w_lesser, w_greater, *__ = out
-        if stack_comm.rank == 0:
+        if comm.stack.rank == 0:
             w_greater.data[0, :] = 0.0
             w_lesser.data[0, :] = 0.0
 
         synchronize_device()
         t_filter_end = time.perf_counter()
-        comm.Barrier()
+        comm.barrier()
         t_filter_end_all = time.perf_counter()
         if comm.rank == 0:
             print(f"    Filter: {t_filter_end-t_filter_start:.3f}", flush=True)

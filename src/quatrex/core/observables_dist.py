@@ -3,18 +3,13 @@
 from functools import partial
 
 from qttools import (
-    NCCL_AVAILABLE,
-    OTHER_COMM_TYPE,
     NDArray,
-    block_comm,
-    nccl_stack_comm,
     sparse,
-    stack_comm,
     xp,
 )
+from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
-from qttools.utils.gpu_utils import synchronize_device
 
 
 def get_block(
@@ -45,7 +40,7 @@ def get_block(
     row, col = index
 
     if isinstance(coo, DSDBSparse):
-        start_block = coo.block_section_offsets[block_comm.rank]
+        start_block = coo.block_section_offsets[comm.block.rank]
         return coo.local_blocks[row - start_block, col - start_block]
 
     mask = (
@@ -82,64 +77,49 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     """
     if overlap is None:
         local_density = x.diagonal().imag
-        if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
-            return xp.vstack(stack_comm.allgather(local_density))
+        return comm.stack.all_gather_v(
+                local_density,
+                axis=0,
+                mask=x._stack_padding_mask,
+                )
 
-        # NOTE: NCCL does not expose all_gather_v. This is a hack.
-        pad_width = x.total_stack_size // stack_comm.size - local_density.shape[0]
-        local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
-        density = xp.empty(
-            (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
+
+    if comm.block.size > 1:
+        raise NotImplementedError(
+            "Overlap density calculation is not implemented for distributed systems."
         )
-        synchronize_device()
-        nccl_stack_comm.all_gather(local_density, density, local_density.size)
-        synchronize_device()
-        return density[x._stack_padding_mask, ...]
 
-    raise NotImplementedError(
-        "Overlap density calculation is not implemented for distributed systems."
-    )
+    local_density = []
+    overlap = overlap.tocoo()
+    _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
+    for i in range(x.num_blocks):
+        local_density_slice = xp.diagonal(
+            x.blocks[i, i] @ _overlap_block((i, i)),
+            axis1=-2,
+            axis2=-1,
+        ).copy()
+        if i < x.num_blocks - 1:
+            local_density_slice += xp.diagonal(
+                x.blocks[i, i + 1] @ _overlap_block((i + 1, i)),
+                axis1=-2,
+                axis2=-1,
+            )
+        if i > 0:
+            local_density_slice += xp.diagonal(
+                x.blocks[i, i - 1] @ _overlap_block((i - 1, i)),
+                axis1=-2,
+                axis2=-1,
+            )
 
-    # local_density = []
-    # overlap = overlap.tocoo()
-    # _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
-    # for i in range(x.num_blocks):
-    #     local_density_slice = xp.diagonal(
-    #         x.blocks[i, i] @ _overlap_block((i, i)),
-    #         axis1=-2,
-    #         axis2=-1,
-    #     ).copy()
-    #     if i < x.num_blocks - 1:
-    #         local_density_slice += xp.diagonal(
-    #             x.blocks[i, i + 1] @ _overlap_block((i + 1, i)),
-    #             axis1=-2,
-    #             axis2=-1,
-    #         )
-    #     if i > 0:
-    #         local_density_slice += xp.diagonal(
-    #             x.blocks[i, i - 1] @ _overlap_block((i - 1, i)),
-    #             axis1=-2,
-    #             axis2=-1,
-    #         )
+        local_density.append(local_density_slice.imag)
 
-    #     local_density.append(local_density_slice.imag)
+    local_density = xp.hstack(local_density)
 
-    # local_density = xp.hstack(local_density)
-
-    # if not NCCL_AVAILABLE:
-    #     return xp.vstack(stack_comm.allgather(local_density))
-
-    # # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    # local_density = xp.vstack(local_density)
-    # pad_width = x.total_stack_size // stack_comm.size - local_density.shape[0]
-    # local_density = xp.pad(local_density, ((0, pad_width), (0, 0)))
-    # density = xp.empty(
-    #     (x.total_stack_size, local_density.shape[-1]), dtype=local_density.dtype
-    # )
-    # synchronize_device()
-    # nccl_stack_comm.all_gather(local_density, density, local_density.size)
-    # synchronize_device()
-    # return density[x._stack_padding_mask, ...]
+    return comm.stack.all_gather_v(
+        local_density,
+        axis=0,
+        mask=x._stack_padding_mask,
+        )
 
 
 def contact_currents(
@@ -163,16 +143,17 @@ def contact_currents(
         The contact currents, gathered across all participating ranks.
 
     """
-    i_left = None
-    i_right = None
-    if block_comm.rank == 0:
+    if comm.block.rank == 0:
         i_left = xp.trace(
             sigma_obc_blocks.greater[0] @ x_lesser.local_blocks[0, 0]
             - x_greater.local_blocks[0, 0] @ sigma_obc_blocks.lesser[0],
             axis1=-2,
             axis2=-1,
         )
-    if block_comm.rank == block_comm.size - 1:
+    else:
+        i_left = xp.empty((*x_lesser.stack_shape, x_lesser.block_sizes[0]), dtype=x_lesser.dtype)
+
+    if comm.block.rank == comm.block.size - 1:
         n = x_lesser.num_local_blocks - 1
         i_right = xp.trace(
             sigma_obc_blocks.greater[-1] @ x_lesser.local_blocks[n, n]
@@ -180,29 +161,27 @@ def contact_currents(
             axis1=-2,
             axis2=-1,
         )
+    else:
+        i_right = xp.empty((*x_lesser.stack_shape, x_lesser.block_sizes[-1]), dtype=x_lesser.dtype)
 
-    i_left = block_comm.bcast(i_left, root=0)
-    i_right = block_comm.bcast(i_right, root=block_comm.size - 1)
 
-    if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
-        i_left = xp.hstack(stack_comm.allgather(i_left))
-        i_right = xp.hstack(stack_comm.allgather(i_right))
-        return i_left, i_right
+    comm.block.bcast(i_left, root=0)
+    comm.block.bcast(i_right, root=comm.block.size - 1)
 
-    # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    pad_width = x_lesser.total_stack_size // stack_comm.size - i_left.shape[0]
-    i_left = xp.pad(i_left, (0, pad_width))
-    i_right = xp.pad(i_right, (0, pad_width))
-    full_i_left = xp.empty((x_lesser.total_stack_size,), dtype=i_left.dtype)
-    full_i_right = xp.empty((x_lesser.total_stack_size,), dtype=i_right.dtype)
-    synchronize_device()
-    nccl_stack_comm.all_gather(i_left, full_i_left, i_left.size)
-    synchronize_device()
-    nccl_stack_comm.all_gather(i_right, full_i_right, i_right.size)
-    synchronize_device()
+    full_i_left = comm.stack.all_gather_v(
+                i_left,
+                axis=0,
+                mask=x_lesser._stack_padding_mask,
+                )
+    full_i_right = comm.stack.all_gather_v(
+                i_right,
+                axis=0,
+                mask=x_lesser._stack_padding_mask,
+                )
+
     return (
-        full_i_left[x_lesser._stack_padding_mask],
-        full_i_right[x_lesser._stack_padding_mask],
+        full_i_left,
+        full_i_right,
     )
 
 
@@ -229,22 +208,12 @@ def device_current(
     _operator_block = partial(
         get_block, operator, x_lesser.block_sizes, x_lesser.block_offsets
     )
-    # local_current = []
-    # x_lesser_upper_blocks = x_lesser.block_diagonal(offset=1)
-    # x_lesser_lower_blocks = x_lesser.block_diagonal(offset=-1)
 
-    # for i in range(x_lesser.num_blocks - 1):
-    #     j = i + 1
-    #     layer_current = (
-    #         _operator_block((i, j)) * (x_lesser_lower_blocks[i].swapaxes(-2, -1))
-    #         - x_lesser_upper_blocks[i] * _operator_block((j, i)).swapaxes(-2, -1)
-    #     ).sum(axis=(-1, -2))
-    #     local_current.append(layer_current)
     local_current = []
-    start_block = x_lesser.block_section_offsets[block_comm.rank]
+    start_block = x_lesser.block_section_offsets[comm.block.rank]
     num_offdiags = x_lesser.num_local_blocks
 
-    if block_comm.rank == block_comm.size - 1:
+    if comm.block.rank == comm.block.size - 1:
         num_offdiags -= 1
 
     for i in range(num_offdiags):
@@ -256,21 +225,14 @@ def device_current(
             * _operator_block((j + start_block, i + start_block)).swapaxes(-2, -1)
         ).sum(axis=(-1, -2))
         local_current.append(layer_current)
-    local_current = xp.vstack(block_comm.allgather(local_current))
 
-    local_current = xp.ascontiguousarray(xp.vstack(local_current).T)
+    local_current = xp.array(local_current)
+    block_local_current = comm.block.all_gather_v(local_current, axis=0)
 
-    if not NCCL_AVAILABLE or OTHER_COMM_TYPE != "nccl":
-        return xp.vstack(stack_comm.allgather(local_current))
+    block_local_current = xp.ascontiguousarray(xp.vstack(block_local_current).T)
 
-    # NOTE: NCCL does not expose all_gather_v. This is a hack.
-    pad_width = x_lesser.total_stack_size // stack_comm.size - local_current.shape[0]
-    local_current = xp.pad(local_current, ((0, pad_width), (0, 0)))
-
-    device_current = xp.empty(
-        (x_lesser.total_stack_size, local_current.shape[-1]), dtype=local_current.dtype
-    )
-    synchronize_device()
-    nccl_stack_comm.all_gather(local_current, device_current, local_current.size)
-    synchronize_device()
-    return device_current[x_lesser._stack_padding_mask, ...]
+    return comm.stack.all_gather_v(
+                block_local_current,
+                axis=0,
+                mask=x_lesser._stack_padding_mask,
+                )

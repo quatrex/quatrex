@@ -5,17 +5,19 @@ import cupy as cp
 import numba as nb
 import numpy as np
 from cupyx.profiler import time_range
-from cupyx.scipy import sparse as cusparse
+#from cupyx.scipy import sparse as cusparse
 from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.MPI import Request
-from qttools import NDArray
+from qttools import NDArray, sparse
 from qttools.datastructures import DSBCOO, DSBSparse
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream, xp
 from qttools.utils.mpi_utils import check_gpu_aware_mpi, distributed_load
 # from qttools.utils.sparse_utils import product_sparsity_pattern
 # from qttools.utils.stack_utils import scale_stack
-from scipy import sparse
+#from scipy import sparse
 from serinv.algs import ddbtasinv
+
+from quatrex.exciton.response.polarization import kron_correlate
 
 # from quatrex.core.compute_config import ComputeConfig
 # from quatrex.core.quatrex_config import QuatrexConfig
@@ -26,8 +28,13 @@ from serinv.algs import ddbtasinv
 GPU_AWARE = check_gpu_aware_mpi()
 
 
-def _compute_pair_sparsity_pattern(sparsity: sparse.coo_matrix) -> NDArray:
-    """Computes the sparsity pattern for a pair-interaction matrix A(a,b,c,d) flattened into a COO matrix by combining first two and last two index.
+@nb.njit(parallel=True, fastmath=True)
+def _compute_pair_sparsity_pattern( 
+                                   row:np.ndarray, 
+                                   col:np.ndarray,
+                                   dense:np.ndarray) -> np.ndarray:
+    """Computes the sparsity pattern for a pair-interaction matrix A(a,b,c,d) flattened 
+    into a COO matrix by combining first two and last two index.
 
     Parameters
     ----------
@@ -39,18 +46,25 @@ def _compute_pair_sparsity_pattern(sparsity: sparse.coo_matrix) -> NDArray:
     NDArray
         The pair-interaction operator sparsity pattern.
 
-    """
-    lil = sparsity.tolil()
-    pair_rows, pair_cols = [], []
-    for i, a in enumerate(sparsity.row):
-        b = sparsity.col[i]
-        for j, c in enumerate(sparsity.row):
-            d = sparsity.col[j]
-            if (lil[a, c] != 0) and (lil[b, d] != 0):
-                pair_cols.append(i)
-                pair_rows.append(j)
-    rows, cols = xp.array(pair_rows), xp.array(pair_cols)
-    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
+    """        
+    nnz = row.shape[0]
+    dense_pair = np.zeros((nnz,nnz),dtype=np.bool)
+    for i,(a,b) in enumerate(zip(row,col)):
+        for j,(c,d) in enumerate(zip(row,col)):            
+            dense_pair[i,j] = (dense[a, c] != 0) and (dense[b, d] != 0)
+    return dense_pair
+#    pair_cols = []
+#    pair_rows = []
+#    for i, a in enumerate(row):
+#        b = col[i]
+#        for j, c in enumerate(row):
+#            d = col[j]
+#            if (dense[a, c] != 0) and (dense[b, d] != 0):
+#                #dense_pair[i,j] = True
+#                pair_cols.append(i)
+#                pair_rows.append(j)
+#    rows, cols = xp.array(pair_rows), xp.array(pair_cols)
+#    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
 
 
 @time_range()
@@ -154,65 +168,20 @@ def _get_mapping_raw(
     return L_idx
 
 
-@time_range()
-def kron_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
-    """Convolves two 1D arrays using FFT and performs kronecker."""
-    n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fftn(a, (n,), axes=(0,))
-    b_fft = xp.fft.fftn(b[::-1], (n,), axes=(0,))
+def batched_assign(row: NDArray,col:NDArray,dsbcoo: DSBCOO,dense: NDArray):
+    inds = _get_mapping_raw(
+            row,
+            col,
+            dsbcoo.rows,
+            dsbcoo.cols,
+            comm.rank,
+            dsbcoo.nnz_section_offsets,
+    )
+    valid = xp.where(inds != -1)
 
-    with time_range("einsum", color_id=comm.rank):
-        x_fft = xp.einsum("ei,ej->eij", a_fft, b_fft)
-
-    return xp.fft.ifftn(x_fft, axes=(0,))
-
-
-def fftconvolve(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
-    """Convolves two 1D arrays using FFT.
-
-    Parameters
-    ----------
-    a : np.ndarray
-        First array.
-    b : np.ndarray
-        Second array.
-
-    Returns
-    -------
-    np.ndarray
-        Convolution of `a` and `b` including the "full" convolution.
-
-    """
-    n = len(a) + len(b) - 1
-    a_fft = xp.fft.fft(a, n)
-    b_fft = xp.fft.fft(b, n)
-    return xp.fft.ifft(a_fft * b_fft)
-
-
-def correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
-    """Computes the correlation of two 1D arrays.
-
-    This is slightly different from the usual definition of correlation
-    in signal processing, where the second array is conjugated.
-
-    Here, we use the definition of correlation as the convolution of
-    the first array with the reversed second array.
-
-
-    Parameters
-    ----------
-    a : np.ndarray
-        First array.
-    b : np.ndarray
-        Second array.
-
-    Returns
-    -------
-    np.ndarray
-        Correlation of `a` and `b` including the "full" correlation.
-
-    """
-    return fftconvolve(a, b[::-1])
+    dsbcoo._data[
+        xp.ix_(dsbcoo._stack_padding_mask, inds[valid])
+    ] = dense[:, *valid]    
 
 
 def _impose_bta_sparsity(
@@ -287,58 +256,84 @@ def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
 
 
 class BSESolver:
+    @time_range()
     def __init__(
-        self, num_sites: int, sparsity: sparse, ordering: str = "normal"
-    ) -> None:
+        self, sparsity: sparse, ordering: str = "normal",) -> None:
+        num_sites = sparsity.shape[0]
         self.num_sites = num_sites
-        self.sparsity = sparsity
-        self.cutoff = max(abs(sparsity.col - sparsity.row)) + 1
+        self.sparsity = sparsity.tocoo()        
+        self.cutoff = max(abs(self.sparsity.col - self.sparsity.row)) + 1
+        if comm.rank == 0:
+            print(f"  Single-particle matrix NNZ ={self.sparsity.nnz}", flush=True)
+            print(f"  Single-particle matrix bandwidth ={self.cutoff}", flush=True)
         self.ordering = ordering
         self._pair_sparsity()
 
     # preprocessing the sparsity pattern and decide the block_size and
     # num_blocks in the BTA matrix
-    # @time_range()
+    @time_range()
     def _pair_sparsity(self):
-        """Computes the sparsity pattern of pair interactions and the block-size."""
+        """Computes the sparsity pattern of pair interactions and the block-size."""                
+        if comm.rank == 0:
+            print("  Single-particle real-space size (N) =", self.num_sites, flush=True)
+            print("  Two-particle real-space size (N^2) =", self.num_sites**2, flush=True)
         if self.ordering == "arrowhead":
             # permute the sparsity pattern to allow arrowhead ordering of the pair-interaction matrix
             coo = self.sparsity.copy()
-            perm = xp.lexsort((coo.row, (coo.row != coo.col)))
+            row = coo.row
+            col = coo.col
+            nnz = row.shape[0]
+            keys = xp.zeros((2,nnz),dtype=int) 
+            keys[0]=row
+            keys[1]=row != col
+            perm = xp.lexsort(keys)
             row = coo.row[perm]
             col = coo.col[perm]
             coo.row = row
             coo.col = col
             self.permuted_sparsity = coo
 
-            coo = _compute_pair_sparsity_pattern(self.permuted_sparsity)
+            lut = xp.zeros((self.num_sites, self.num_sites), dtype=np.int32)
+            # construct a lookup table of reordered indices matrix
+            lut[self.permuted_sparsity.row, self.permuted_sparsity.col] = range(
+                len(self.permuted_sparsity.row)
+            )            
+            if comm.rank == 0:
+                print("  Begin compute arrowhead-ordering pair sparsity pattern...", flush=True)
+            coo = _compute_pair_sparsity_pattern(
+                                                 get_host(self.permuted_sparsity.row),
+                                                 get_host(self.permuted_sparsity.col),
+                                                 get_host(lut))
+            coo = sparse.coo_matrix(get_device(coo))
             self.pair_sparsity_bta = coo
-
-        coo = _compute_pair_sparsity_pattern(self.sparsity)
-        self.pair_sparsity = coo
-        self.nnz = len(coo.row)
-        self.pair_bandwidth = max(abs(coo.col - coo.row))
-        self.size = len(self.sparsity.row)  # size of the pair-interaction matrix
+            self.inverse_table_bta = lut
         #
         # to store the indexing of sparsity.data in a coo-matrix as item (i,j) for fast elementwise access
         lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.int32)
-        lut[self.sparsity.row, self.sparsity.col] = range(len(self.sparsity.row))
-        self.inverse_table = lut  
-
+        lut[self.sparsity.row, self.sparsity.col] = range(len(self.sparsity.row))        
         if comm.rank == 0:
-            print("  Single-particle matrix size (N) =", self.num_sites, flush=True)
-            print("  Two-particle matrix size (N^2) =", self.num_sites**2, flush=True)
+            print("  Begin compute normal-ordering pair sparsity pattern...", flush=True)
+        coo = _compute_pair_sparsity_pattern(
+                                             get_host(self.sparsity.row),
+                                             get_host(self.sparsity.col),
+                                             get_host(lut))
+        coo = sparse.coo_matrix(get_device(coo))
+        self.pair_sparsity = coo
+        self.inverse_table = lut
+        self.nnz = len(coo.row)
+        self.size = len(self.sparsity.row)  # size of the pair-interaction matrix
 
-        bandwidth = np.max(self.pair_sparsity.col - self.pair_sparsity.row) + 1
-
+        bandwidth = max(self.pair_sparsity.col - self.pair_sparsity.row) + 1
+        self.pair_bandwidth = bandwidth 
         self.blocksize = bandwidth
         self.num_blocks = int(np.ceil(self.size / self.blocksize))
         self.totalsize = int(self.blocksize) * int(self.num_blocks)
 
         if comm.rank == 0:
-            print(" --- Normal ordering --- ")
+            print("  --- Normal ordering --- ")
             print("  compressed Two-particle matrix size =", self.totalsize, flush=True)
             print("  bandwidth=", bandwidth, flush=True)
+            print("  block size=", self.blocksize, flush=True)
             print("  number of blocks=", self.num_blocks, flush=True)
             print("  nonzero elements=", self.nnz / 1e6, " Million", flush=True)
             print(
@@ -367,20 +362,10 @@ class BSESolver:
             self.tipsize = self.num_sites
             self.bta_totalsize = self.arrowsize + self.tipsize
 
-            lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.int32)
-            # construct a lookup table of reordered indices matrix
-            lut[self.permuted_sparsity.row, self.permuted_sparsity.col] = range(
-                len(self.permuted_sparsity.row)
-            )
-            self.inverse_table_bta = lut  
 
             if comm.rank == 0:
-                print(" --- BTA ordering --- ")
-                print(
-                    "  compressed Two-particle matrix size =",
-                    self.bta_totalsize,
-                    flush=True,
-                )
+                print("  --- BTA ordering --- ")
+                print("  compressed Two-particle matrix size =",self.bta_totalsize,flush=True)
                 print("  total arrow size=", self.arrowsize, flush=True)
                 print("  arrow bandwidth=", self.arrow_bandwidth, flush=True)
                 print("  arrow block size=", self.arrow_blocksize, flush=True)
@@ -397,40 +382,49 @@ class BSESolver:
         return
 
     @time_range()
-    def _alloc_chi0(self, num_energy: int, dtype=xp.complex128):
+    def _alloc_chi0(self, num_energy: int, dtype=np.complex128):
         ARRAY_SHAPE = (self.totalsize, self.totalsize)
-        BLOCK_SIZES = xp.array([self.blocksize] * self.num_blocks)
+        BLOCK_SIZES = np.array([int(self.blocksize)] * int(self.num_blocks))
         GLOBAL_STACK_SHAPE = (num_energy,)
         self.num_E = num_energy
 
-        data = np.zeros(len(self.pair_sparsity.row), dtype=dtype)
+        data = xp.zeros(len(self.pair_sparsity.row), dtype=dtype)
         coords = (self.pair_sparsity.row, self.pair_sparsity.col)
-        coo = sparse.coo_array((data, coords), shape=ARRAY_SHAPE)
+        coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
         self.chi0_lesser = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
         self.chi0_greater = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.chi0_r = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
         return
 
     @time_range()
     def _calc_chi0_distributed(
-        self, GG: DSBCOO, GL: DSBCOO, G_energies: NDArray, step_E: int = 1
+        self, GG: DSBCOO, GL: DSBCOO, G_energies: NDArray, step_E: int = 1, inz_batchsize: int = 4
     ):
         start_time = time.time()
+        self.g_lesser = GL
+        self.g_greater = GG
         if self.chi0_lesser.distribution_state == "stack":
-            self.chi0_lesser.dtranspose()
-        if self.chi0_greater.distribution_state == "stack":
+            self.chi0_lesser.dtranspose()        
             self.chi0_greater.dtranspose()
+            self.chi0_r.dtranspose()
+
         if GG.distribution_state == "stack":
-            GG.dtranspose()
-        if GL.distribution_state == "stack":
+            GG.dtranspose()        
             GL.dtranspose()
+
         finish_time = time.time()
         if comm.rank == 0:
             print(" dtranspose time=", finish_time - start_time, flush=True)
         start_time = finish_time
 
         G_nen = GG.data.shape[0]
+
+        if xp.isnan(GG.data).any():
+            raise ValueError(f"rank {comm.rank}: GG contains NaNs")
+        if xp.isnan(GL.data).any():
+            raise ValueError(f"rank {comm.rank}: GL contains NaNs")
 
         self.G_energies = G_energies
         self.prefactor = -1j / np.pi * (self.G_energies[1] - self.G_energies[0])
@@ -452,6 +446,7 @@ class BSESolver:
         # start sending GF data around
 
         synchronize_current_stream()
+        send_reqs = []
         for j in reversed(range(comm.size)):
             if j == comm.rank:
                 continue
@@ -460,21 +455,41 @@ class BSESolver:
                 continue
 
             if not GPU_AWARE:
-                gg_sendbuf[j] = np.zeros(
-                    (G_nen, int(inds_rank_to_j.size)), dtype=GG.dtype
-                )
-                gl_sendbuf[j] = np.zeros(
-                    (G_nen, int(inds_rank_to_j.size)), dtype=GG.dtype
-                )
-            else:
-                gg_sendbuf[j] = xp.zeros(
-                    (G_nen, int(inds_rank_to_j.size)), dtype=GG.dtype
-                )
-                gl_sendbuf[j] = xp.zeros(
-                    (G_nen, int(inds_rank_to_j.size)), dtype=GG.dtype
-                )
+                gg_sendbuf[j] = GG.data[
+                ..., inds_rank_to_j - GG.nnz_section_offsets[comm.rank]
+                ]                
+                gg_sendbuf[j] = get_host(gg_sendbuf[j])
+                if np.isnan(gg_sendbuf[j]).any():
+                    raise ValueError(f"rank {comm.rank}: gg send buffer contains NaNs")
+                
+                send_reqs.append(comm.Isend(gg_sendbuf[j], dest=j, tag=1))
 
-        reqs_gg = []
+                gl_sendbuf[j] = GL.data[
+                ..., inds_rank_to_j - GL.nnz_section_offsets[comm.rank]
+                ]                
+                gl_sendbuf[j] = get_host(gl_sendbuf[j])
+                if np.isnan(gl_sendbuf[j]).any():
+                    raise ValueError(f"rank {comm.rank}: gl send buffer contains NaNs")
+                
+                send_reqs.append(comm.Isend(gl_sendbuf[j], dest=j, tag=0))
+            else:
+                gg_sendbuf[j] = GG.data[
+                ..., inds_rank_to_j - GG.nnz_section_offsets[comm.rank]
+                ]                
+                if np.isnan(gg_sendbuf[j]).any():
+                    raise ValueError(f"rank {comm.rank}: gg send buffer contains NaNs")
+                
+                send_reqs.append(comm.Isend(gg_sendbuf[j], dest=j, tag=1))
+                gl_sendbuf[j] = GL.data[
+                ..., inds_rank_to_j - GL.nnz_section_offsets[comm.rank]
+                ]                                
+                if np.isnan(gl_sendbuf[j]).any():
+                    raise ValueError(f"rank {comm.rank}: gl send buffer contains NaNs")
+                
+                send_reqs.append(comm.Isend(gl_sendbuf[j], dest=j, tag=0))
+
+        recv_reqs = []
+
         for i in range(comm.size):
             if i == comm.rank:
                 continue
@@ -484,74 +499,52 @@ class BSESolver:
 
             if not GPU_AWARE:
                 gg_recbuf[i] = np.zeros((G_nen, int(mask_buffer.sum())), dtype=GG.dtype)
+                gl_recbuf[i] = np.zeros((G_nen, int(mask_buffer.sum())), dtype=GL.dtype)
             else:
                 gg_recbuf[i] = xp.zeros((G_nen, int(mask_buffer.sum())), dtype=GG.dtype)
+                gl_recbuf[i] = xp.zeros((G_nen, int(mask_buffer.sum())), dtype=GL.dtype)
 
-            print(f"Posting receive {i}-->{comm.rank}", flush=True)
+            print(f" Posting receive {i}-->{comm.rank}", flush=True)
 
-            reqs_gg.append(comm.Irecv(gg_recbuf[i], source=i, tag=0))
+            recv_reqs.append(comm.Irecv(gl_recbuf[i], source=i, tag=0))
+            recv_reqs.append(comm.Irecv(gg_recbuf[i], source=i, tag=1))
 
-        for j in reversed(range(comm.size)):
-            if j == comm.rank:
-                continue
-            inds_rank_to_j = get_nnz_idx[j][get_nnz_rank[j] == comm.rank]
-            if not inds_rank_to_j.any():
-                continue
+        # compute terms that only require local GF data
 
-            print(f"Posting send {comm.rank}-->{j}", flush=True)
+        start_inz_g = int(GG.nnz_section_offsets[comm.rank])
+        end_inz_g = int(GG.nnz_section_offsets[comm.rank + 1])        
+        
+        inz = xp.arange(start_inz_g, end_inz_g)
+        jnz = inz        
 
-            gg_sendbuf[j] = GG.data[
-                ..., inds_rank_to_j - GG.nnz_section_offsets[comm.rank]
+        for iinz in range(0, len(inz), inz_batchsize):
+
+            print(f"      batch={iinz}", flush=True)
+            
+            row = self.inverse_table[
+                GG.rows[inz[iinz : iinz + inz_batchsize, None]], GG.cols[jnz[:]]
             ]
-            if not GPU_AWARE:
-                gg_sendbuf[j] = get_host(gg_sendbuf[j])
-            if np.isnan(gg_sendbuf[j]).any():
-                raise ValueError(f"rank {comm.rank}: gg send buffer contains NaNs")
-            comm.Isend(gg_sendbuf[j], dest=j, tag=0)
-
-        Request.Waitall(reqs_gg)
-
-        reqs_gl = []
-        for i in range(comm.size):
-            if i == comm.rank:
-                continue
-            mask_buffer = get_nnz_rank[comm.rank] == i
-            if not mask_buffer.any():
-                continue
-
-            if not GPU_AWARE:
-                gl_recbuf[i] = np.zeros((G_nen, int(mask_buffer.sum())), dtype=GG.dtype)
-            else:
-                gl_recbuf[i] = xp.zeros((G_nen, int(mask_buffer.sum())), dtype=GG.dtype)
-
-            print(f"Posting receive {i}-->{comm.rank}", flush=True)
-
-            reqs_gl.append(comm.Irecv(gl_recbuf[i], source=i, tag=1))
-
-        for j in reversed(range(comm.size)):
-            if j == comm.rank:
-                continue
-            inds_rank_to_j = get_nnz_idx[j][get_nnz_rank[j] == comm.rank]
-            if not inds_rank_to_j.any():
-                continue
-
-            print(f"Posting send {comm.rank}-->{j}", flush=True)
-
-            gl_sendbuf[j] = GL.data[
-                ..., inds_rank_to_j - GL.nnz_section_offsets[comm.rank]
+            col = self.inverse_table[
+                GG.cols[inz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
             ]
 
-            if not GPU_AWARE:
-                gl_sendbuf[j] = get_host(gl_sendbuf[j])
+            chi_x_full = self.prefactor * kron_correlate(GG.data[:, iinz : iinz + inz_batchsize], GL.data)
 
-            comm.Isend(gl_sendbuf[j], dest=j, tag=1)
+            batched_assign(row,col,self.chi0_greater,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])
 
-        Request.Waitall(reqs_gl)
+            chi_x_full = self.prefactor * kron_correlate(GL.data[:, iinz : iinz + inz_batchsize], GG.data)
+
+            batched_assign(row,col,self.chi0_lesser,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])        
+
+        # compute terms that require GF data from MPI recv buffer
+
+        # wait for all the send-recv requests to finish
+
+        Request.Waitall(recv_reqs)        
+
+        print(f" rank {comm.rank} receive done", flush=True)
 
         # after recv check the integrity of recv data
-
-        if xp.isnan(GG.data).any():
-            raise ValueError(f"rank {comm.rank}: GG contains NaNs")
 
         if comm.size > 1:
             gg_recbuf = xp.concatenate(
@@ -564,146 +557,75 @@ class BSESolver:
             if xp.isnan(gl_recbuf).any():
                 raise ValueError(f"rank {comm.rank}: gl buffer contains NaNs")
             if xp.isnan(gg_recbuf).any():
-                raise ValueError(f"rank {comm.rank}: gg buffer contains NaNs")
+                raise ValueError(f"rank {comm.rank}: gg buffer contains NaNs")        
 
-        finish_time = time.time()
-        print(
-            " rank ",
-            comm.rank,
-            "MPI send recv time=",
-            finish_time - start_time,
-            flush=True,
-        )
-        start_time = finish_time
+        for req in recv_reqs:
+            req.free()
 
-        # compute terms that only require local GF data
+        for req in send_reqs:
+            req.free()
 
-        start_inz_g = int(GG.nnz_section_offsets[comm.rank])
-        end_inz_g = int(GG.nnz_section_offsets[comm.rank + 1])
-        inz = xp.arange(start_inz_g, end_inz_g)
+        if comm.size > 1:            
 
-        row = self.inverse_table[GG.rows[inz[:, None]], GG.cols[inz[:]]]
-        col = self.inverse_table[GG.cols[inz[:, None]], GG.rows[inz[:]]]
+            jnz = get_nnz_idx[comm.rank]            
 
-        inds = _get_mapping_numba(
-            row,
-            col,
-            self.chi0_lesser.rows,
-            self.chi0_lesser.cols,
-            comm.rank,
-            self.chi0_lesser.nnz_section_offsets,
-        )
-        valid = xp.where(inds != -1)
+            for iinz in range(0, len(inz), inz_batchsize):
 
-        chi_g_full = self.prefactor * kron_correlate(GG.data, GL.data)
+                print(f"      batch={iinz}", flush=True)
 
-        self.chi0_greater._data[
-            xp.ix_(self.chi0_greater._stack_padding_mask, inds[valid])
-        ] = chi_g_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+                # local and buf
+                
+                row = self.inverse_table[
+                    GG.rows[inz[iinz : iinz + inz_batchsize, None]], GG.cols[jnz[:]]
+                ]
+                col = self.inverse_table[
+                    GG.cols[inz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
+                ]
 
-        chi_l_full = chi_g_full[::-1, ...].swapaxes(-2, -1)
+                chi_x_full = self.prefactor * kron_correlate(GG.data[:, iinz : iinz + inz_batchsize], gl_recbuf)
 
-        self.chi0_lesser._data[
-            xp.ix_(self.chi0_lesser._stack_padding_mask, inds[valid])
-        ] = chi_l_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+                batched_assign(row,col,self.chi0_greater,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])
 
-        # compute terms that require GF data from MPI recv buffer
+                chi_x_full = self.prefactor * kron_correlate(GL.data[:, iinz : iinz + inz_batchsize], gg_recbuf)
 
-        if comm.size > 1:
+                batched_assign(row,col,self.chi0_lesser,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])   
 
-            # local and buf
+                # buf and local 
 
-            row = self.inverse_table[
-                GG.rows[inz[:, None]], GG.cols[(get_nnz_idx[comm.rank])[:]]
-            ]
-            col = self.inverse_table[
-                GG.cols[inz[:, None]], GG.rows[(get_nnz_idx[comm.rank])[:]]
-            ]
+                row = self.inverse_table[
+                    GG.rows[jnz[:, None]], GG.cols[inz[iinz : iinz + inz_batchsize]]
+                ]
+                col = self.inverse_table[
+                    GG.cols[jnz[:, None]], GG.rows[inz[iinz : iinz + inz_batchsize]]
+                ]
 
-            inds = _get_mapping_numba(
-                row,
-                col,
-                self.chi0_lesser.rows,
-                self.chi0_lesser.cols,
-                comm.rank,
-                self.chi0_lesser.nnz_section_offsets,
-            )
-            valid = xp.where(inds != -1)
+                chi_x_full = self.prefactor * kron_correlate(gg_recbuf, GL.data[:, iinz : iinz + inz_batchsize])
 
-            chi_g_full = self.prefactor * kron_correlate(GG.data, gl_recbuf)
+                batched_assign(row,col,self.chi0_greater,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])
 
-            self.chi0_greater._data[
-                xp.ix_(self.chi0_greater._stack_padding_mask, inds[valid])
-            ] = chi_g_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+                chi_x_full = self.prefactor * kron_correlate(gl_recbuf, GG.data[:, iinz : iinz + inz_batchsize])
 
-            chi_l_full = chi_g_full.swapaxes(-2, -1)[::-1, ...]
+                batched_assign(row,col,self.chi0_lesser,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])      
 
-            self.chi0_lesser._data[
-                xp.ix_(self.chi0_lesser._stack_padding_mask, inds[valid])
-            ] = chi_l_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+            for iinz in range(0, len(jnz), inz_batchsize):
 
-            # buf and local
+                print(f"      batch={iinz}", flush=True)
 
-            row = self.inverse_table[
-                GG.rows[(get_nnz_idx[comm.rank])[:, None]], GG.cols[inz[:]]
-            ]
-            col = self.inverse_table[
-                GG.cols[(get_nnz_idx[comm.rank])[:, None]], GG.rows[inz[:]]
-            ]
+                # buf and buf
 
-            inds = _get_mapping_numba(
-                row,
-                col,
-                self.chi0_lesser.rows,
-                self.chi0_lesser.cols,
-                comm.rank,
-                self.chi0_lesser.nnz_section_offsets,
-            )
-            valid = xp.where(inds != -1)
+                row = self.inverse_table[GG.rows[jnz[iinz : iinz + inz_batchsize, None]], GG.cols[jnz[:]]]
+                
+                col = self.inverse_table[GG.cols[jnz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]]
 
-            chi_g_full = self.prefactor * kron_correlate(gg_recbuf, GL.data)
+                chi_x_full = self.prefactor * kron_correlate(gg_recbuf[:, iinz : iinz + inz_batchsize], gl_recbuf)
 
-            self.chi0_greater._data[
-                xp.ix_(self.chi0_greater._stack_padding_mask, inds[valid])
-            ] = chi_g_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+                batched_assign(row,col,self.chi0_greater,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])
 
-            chi_l_full = chi_g_full.swapaxes(-2, -1)[::-1, ...]
+                chi_x_full = self.prefactor * kron_correlate(gl_recbuf[:, iinz : iinz + inz_batchsize], gg_recbuf)
 
-            self.chi0_lesser._data[
-                xp.ix_(self.chi0_lesser._stack_padding_mask, inds[valid])
-            ] = chi_l_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+                batched_assign(row,col,self.chi0_lesser,chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E])      
 
-            # buf and buf
-            row = self.inverse_table[
-                GG.rows[(get_nnz_idx[comm.rank])[:, None]],
-                GG.cols[(get_nnz_idx[comm.rank])[:]],
-            ]
-            col = self.inverse_table[
-                GG.cols[(get_nnz_idx[comm.rank])[:, None]],
-                GG.rows[(get_nnz_idx[comm.rank])[:]],
-            ]
-
-            inds = _get_mapping_numba(
-                row,
-                col,
-                self.chi0_lesser.rows,
-                self.chi0_lesser.cols,
-                comm.rank,
-                self.chi0_lesser.nnz_section_offsets,
-            )
-            valid = xp.where(inds != -1)
-
-            chi_g_full = self.prefactor * kron_correlate(gg_recbuf, gl_recbuf)
-
-            self.chi0_greater._data[
-                xp.ix_(self.chi0_greater._stack_padding_mask, inds[valid])
-            ] = chi_g_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
-
-            chi_l_full = chi_g_full.swapaxes(-2, -1)[::-1, ...]
-
-            self.chi0_lesser._data[
-                xp.ix_(self.chi0_lesser._stack_padding_mask, inds[valid])
-            ] = chi_l_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, *valid]
+        self.chi0_r.data = (self.chi0_greater.data - self.chi0_lesser.data) / 2
 
         finish_time = time.time()
         print(
@@ -711,35 +633,26 @@ class BSESolver:
         )
         start_time = finish_time
 
-        finish_time = time.time()
-        print(
-            " rank ",
-            comm.rank,
-            "barrier waiting time=",
-            finish_time - start_time,
-            flush=True,
-        )
-        start_time = finish_time
-
         # transpose to stack distribution
         self.chi0_lesser.dtranspose()
         self.chi0_greater.dtranspose()
+        self.chi0_r.dtranspose()
 
-        finish_time = time.time()
-        if comm.rank == 0:
-            print(" dtranspose time=", finish_time - start_time, flush=True)
-        start_time = finish_time
+        finish_time = time.time()        
+        print(f" rank {comm.rank} waiting + dtranspose time=", finish_time - start_time, flush=True)        
 
         return
 
+
+    @time_range()
     def _calc_chi0_v1(
-        self, GG: NDArray, GL: NDArray, G_energies: NDArray, step_E: int = 1
+        self, GG: DSBCOO, GL: DSBCOO, G_energies: NDArray, step_E: int = 1
     ):
 
         if self.chi0_lesser.distribution_state == "stack":
-            self.chi0_lesser.dtranspose()
-        if self.chi0_greater.distribution_state == "stack":
-            self.chi0_greater.dtranspose()
+            self.chi0_lesser.dtranspose()        
+            self.chi0_greater.dtranspose()        
+            self.chi0_r.dtranspose()
 
         nnz_section_offsets = np.hstack(
             ([0], np.cumsum(self.chi0_lesser.nnz_section_sizes))
@@ -765,10 +678,10 @@ class BSESolver:
             l = self.sparsity.col[col]
 
             chi_g[:, inz - start_inz] = self.prefactor * correlate(
-                GG[:, i, k], GL[:, l, j]
+                GG[i, k], GL[l, j]
             )
             chi_l[:, inz - start_inz] = self.prefactor * correlate(
-                GL[:, i, k], GG[:, l, j]
+                GL[i, k], GG[l, j]
             )
 
         self.chi0_greater._data[
@@ -778,30 +691,32 @@ class BSESolver:
         self.chi0_lesser._data[
             xp.ix_(self.chi0_lesser._stack_padding_mask, range(start_inz, end_inz))
         ] = chi_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
-
+      
         # transpose to stack distribution
         self.chi0_lesser.dtranspose()
         self.chi0_greater.dtranspose()
         return
 
-    def _calc_kernel(self, V: NDArray, W: NDArray):
+
+    def _calc_kernel(self, V: DSBCOO, W: DSBCOO):
         self.bare_Coulomb = V
         self.screened_Coulomb = W
         self.kernel = sparse.lil_array(
-            (self.size, self.size), dtype=self.chi0_greater.dtype
+            (self.size, self.size), 
+            dtype=self.chi0_greater.dtype,
         )
 
         for i in range(self.num_sites):
             for j in range(self.num_sites):
                 row = int(self.inverse_table[i, i])
                 col = int(self.inverse_table[j, j])
-                self.kernel[row, col] = -V[i, j]
+                self.kernel[row, col] = - V[i, j][0]
 
         for i in range(self.num_sites):
             for j in range(self.num_sites):
                 row = int(self.inverse_table[i, j])
                 col = int(self.inverse_table[i, j])
-                self.kernel[row, col] += W[i, j]
+                self.kernel[row, col] += W[i, j][0]
 
         self.kernel *= 1j
         # coo = self.kernel.tocoo()
@@ -810,7 +725,7 @@ class BSESolver:
         # self.kernel = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
     @time_range()
-    def _calc_kernel_bta(self, V: NDArray, W: NDArray):
+    def _calc_kernel_bta(self, V: NDArray, W: NDArray):         
         self.bare_Coulomb = V
         self.screened_Coulomb = W
         kernel_tip = xp.zeros(
@@ -824,9 +739,9 @@ class BSESolver:
             for j in range(self.num_sites):
                 row = int(self.inverse_table_bta[i, i])
                 col = int(self.inverse_table_bta[j, j])
-                kernel_tip[row,col] = -V[i,j]
+                kernel_tip[row,col] = - V[i,j]
                 if (row == col):
-                    kernel_tip[row,col] += W[i,j]                
+                    kernel_tip[row,col] += W[i,j]               
 
         for row in range(self.tipsize, self.size):
             i = self.permuted_sparsity.row[row]
@@ -840,17 +755,20 @@ class BSESolver:
     @time_range()
     def _alloc_chi0_bta(self, dtype=xp.complex128):
         ARRAY_SHAPE = (self.bta_totalsize, self.bta_totalsize)
-        BLOCK_SIZES = xp.array(
-            [self.tipsize] + [self.arrow_blocksize] * self.arrow_num_blocks
+        BLOCK_SIZES = np.array(
+            [int(self.tipsize)] + [int(self.arrow_blocksize)] * int(self.arrow_num_blocks)
         )
         GLOBAL_STACK_SHAPE = (self.num_E,)
 
-        data = np.zeros(len(self.pair_sparsity_bta.row), dtype=self.chi0_greater.dtype)
+        data = xp.zeros(len(self.pair_sparsity_bta.row), dtype=self.chi0_greater.dtype)
         coords = (self.pair_sparsity_bta.row, self.pair_sparsity_bta.col)
-        coo = sparse.coo_array((data, coords), shape=ARRAY_SHAPE)
+        coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
         self.chi0_lesser_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
         self.chi0_greater_bta = DSBCOO.from_sparray(
+            coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE
+        )
+        self.chi0_r_bta = DSBCOO.from_sparray(
             coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE
         )
 
@@ -860,11 +778,14 @@ class BSESolver:
     def _permute_chi0_toBTA(self):
         if self.chi0_lesser.distribution_state != "stack":
             self.chi0_lesser.dtranspose()
-        if self.chi0_greater.distribution_state != "stack":
             self.chi0_greater.dtranspose()
+            self.chi0_r.dtranspose()
+        if self.chi0_lesser_bta.distribution_state != "stack":
+            self.chi0_lesser_bta.dtranspose()
+            self.chi0_greater_bta.dtranspose()
+            self.chi0_r_bta.dtranspose()
 
         # reorder Chi0 matrix to BTA shape
-
         start_time = time.time()
 
         # compute the row and col in the BTA ordering
@@ -884,6 +805,9 @@ class BSESolver:
         self.chi0_greater_bta[perm_rows, perm_cols] = self.chi0_greater[
             self.chi0_greater.rows, self.chi0_greater.cols
         ]
+        self.chi0_r_bta[perm_rows, perm_cols] = self.chi0_r[
+            self.chi0_r.rows, self.chi0_r.cols
+        ]
 
         finish_time = time.time()
         print(
@@ -899,10 +823,8 @@ class BSESolver:
     @time_range()
     def _densesolve_chi_interacting_bta(self, return_P3=False, return_chi=False):
         """mostly only for debugging purpose as reference solution"""
-        if self.chi0_lesser_bta.distribution_state != "stack":
-            self.chi0_lesser_bta.dtranspose()
-
-        self.chi0_r_bta = self.chi0_lesser_bta
+        if self.chi0_r_bta.distribution_state != "stack":
+            self.chi0_r_bta.dtranspose()
 
         (kernel_tip, kernel_diag) = self.kernel_bta
 
@@ -1013,7 +935,7 @@ class BSESolver:
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
-                print("rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
+                print(" rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
 
                 data = self.chi0_r.data[ie]
                 coords = (self.chi0_r.rows, self.chi0_r.cols)
@@ -1080,46 +1002,50 @@ class BSESolver:
     def _calc_chi0_retarded_bta(self): ...
 
     @time_range()
-    def _solve_chi_interacting_BTA(self):
-        if self.L0mat.distribution_state != "stack":
-            self.L0mat.dtranspose()
-
+    def _solve_chi_interacting_BTA(self,
+                                   return_P3 : bool = False,
+                                   return_chi : bool = False,
+                                   ):
+        if self.chi0_r_bta.distribution_state != "stack":
+            self.chi0_r_bta.dtranspose()
+        
+        start_time = time.time()
         (kernel_tip, kernel_diag) = self.kernel_bta
 
-        K = xp.zeros((self.totalsize, self.totalsize), dtype=self.chi0_lesser_bta.dtype)
+        K = xp.zeros((self.bta_totalsize, self.bta_totalsize), dtype=self.chi0_r_bta.dtype)
         K[: self.tipsize, : self.tipsize] = kernel_tip
         K[self.tipsize :, self.tipsize :] = np.diag(kernel_diag)
 
         A_arrow_right_blocks = xp.zeros(
-            (self.arrow_num_blocks, self.arrow_blocksize, self.tipsize), dtype=self.chi0_lesser_bta.dtype
+            (int(self.arrow_num_blocks), int(self.arrow_blocksize), int(self.tipsize)), dtype=self.chi0_r_bta.dtype
         )
         A_arrow_bottom_blocks = xp.zeros(
-            (self.arrow_num_blocks, self.tipsize, self.arrow_blocksize), dtype=self.chi0_lesser_bta.dtype
+            (int(self.arrow_num_blocks), int(self.tipsize), int(self.arrow_blocksize)), dtype=self.chi0_r_bta.dtype
         )
         A_diagonal_blocks = xp.zeros(
-            (self.arrow_num_blocks, self.arrow_blocksize, self.arrow_blocksize),
-            dtype=self.chi0_lesser_bta.dtype,
+            (int(self.arrow_num_blocks), int(self.arrow_blocksize), int(self.arrow_blocksize)),
+            dtype=self.chi0_r_bta.dtype,
         )
         A_upper_diagonal_blocks = xp.zeros(
-            (self.arrow_num_blocks - 1, self.arrow_blocksize, self.arrow_blocksize),
-            dtype=self.chi0_lesser_bta.dtype,
+            (int(self.arrow_num_blocks - 1), int(self.arrow_blocksize), int(self.arrow_blocksize)),
+            dtype=self.chi0_r_bta.dtype,
         )
         A_lower_diagonal_blocks = xp.zeros(
-            (self.arrow_num_blocks - 1, self.arrow_blocksize, self.arrow_blocksize),
-            dtype=self.chi0_lesser_bta.dtype,
+            (int(self.arrow_num_blocks - 1), int(self.arrow_blocksize), int(self.arrow_blocksize)),
+            dtype=self.chi0_r_bta.dtype,
         )
 
         local_nen = self.chi0_r_bta.stack_shape[0]
-        P2 = xp.zeros((self.tipsize, self.tipsize, local_nen), dtype=self.chi0_lesser_bta.dtype)
+        P2 = xp.zeros((self.tipsize, self.tipsize, local_nen), dtype=self.chi0_r_bta.dtype)
 
         # P3 = xp.zeros(
         #     (self.tipsize, self.blocksize * self.arrow_num_blocks, local_nen),
-        #     dtype=self.chi0_lesser_bta.dtype,
+        #     dtype=self.chi0_r_bta.dtype,
         # )
 
         for ie in range(local_nen):
             with time_range("construct serinv inputs", color_id=comm.rank):
-                print("rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
+                print(" rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
 
                 # build system matrix: A = I - L0 @ K
                 # Note: SerinV takes BTA pointing down, so the block ordering should be reversed and
@@ -1127,56 +1053,56 @@ class BSESolver:
 
                 A_arrow_tip_block = xp.transpose(
                     xp.flip(
-                        -self.L0mat.stack[ie].blocks[0, 0] @ kernel_tip
+                        -self.chi0_r_bta.stack[ie].blocks[0, 0] @ kernel_tip
                         + xp.eye(self.tipsize)
                     )
                 )
 
-                for k in range(self.num_blocks):
+                for k in range(self.arrow_num_blocks):
                     A_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.L0mat.stack[ie].blocks[k + 1, k + 1]
+                            -self.chi0_r_bta.stack[ie].blocks[k + 1, k + 1]
                             @ xp.diag(
                                 kernel_diag[
-                                    self.blocksize * k : self.blocksize * (k + 1)
+                                    self.arrow_blocksize * k : self.arrow_blocksize * (k + 1)
                                 ]
                             )
                         )
-                        + xp.eye(self.blocksize)
+                        + xp.eye(int(self.arrow_blocksize))
                     )
 
-                for k in range(self.num_blocks - 1):
+                for k in range(self.arrow_num_blocks - 1):
                     A_upper_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.L0mat.stack[ie].blocks[k + 1, k + 2]
+                            -self.chi0_r_bta.stack[ie].blocks[k + 1, k + 2]
                             @ xp.diag(
                                 kernel_diag[
-                                    self.blocksize * (k + 1) : self.blocksize * (k + 2)
+                                    self.arrow_blocksize * (k + 1) : self.arrow_blocksize * (k + 2)
                                 ]
                             )
                         )
                     )
                     A_lower_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.L0mat.stack[ie].blocks[k + 2, k + 1]
+                            -self.chi0_r_bta.stack[ie].blocks[k + 2, k + 1]
                             @ xp.diag(
                                 kernel_diag[
-                                    self.blocksize * (k) : self.blocksize * (k + 1)
+                                    self.arrow_blocksize * (k) : self.arrow_blocksize * (k + 1)
                                 ]
                             )
                         )
                     )
 
-                for k in range(self.num_blocks):
+                for k in range(self.arrow_num_blocks):
                     A_arrow_bottom_blocks[-k - 1, :, :] = xp.transpose(
-                        xp.flip(-self.L0mat.stack[ie].blocks[k + 1, 0] @ kernel_tip)
+                        xp.flip(-self.chi0_r_bta.stack[ie].blocks[k + 1, 0] @ kernel_tip)
                     )
                     A_arrow_right_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.L0mat.stack[ie].blocks[0, k + 1]
+                            -self.chi0_r_bta.stack[ie].blocks[0, k + 1]
                             @ xp.diag(
                                 kernel_diag[
-                                    self.blocksize * k : self.blocksize * (k + 1)
+                                    self.arrow_blocksize * k : self.arrow_blocksize * (k + 1)
                                 ]
                             )
                         )
@@ -1207,15 +1133,15 @@ class BSESolver:
                 tmp = (
                     -1j
                     * xp.transpose(xp.flip(X_arrow_tip_block_serinv))
-                    @ self.L0mat.stack[ie].blocks[0, 0]
+                    @ self.chi0_r_bta.stack[ie].blocks[0, 0]
                 )
-                for k in range(self.num_blocks):
+                for k in range(self.arrow_num_blocks):
                     tmp += (
                         -1j
                         * xp.transpose(
                             xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
                         )
-                        @ self.L0mat.stack[ie].blocks[k + 1, 0]
+                        @ self.chi0_r_bta.stack[ie].blocks[k + 1, 0]
                     )
                 # for row in range(self.tipsize):
                 #     for col in range(self.tipsize):
@@ -1273,4 +1199,12 @@ class BSESolver:
                 #                 k = self.table[1, col]
 
                 #             P3[self.table[0, :], j, k, ie] = tmp2[:, ic, ib]
+        finish_time = time.time()
+        print(
+            " rank ",
+            comm.rank,
+            "solve time=",
+            finish_time - start_time,
+            flush=True,
+        )
         return P2

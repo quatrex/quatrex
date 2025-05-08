@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.kernels import dsbcsr_kernels
+from qttools.kernels.datastructure import dsbcsr_kernels
 
 
 def _reference_compute_rowptr_map(

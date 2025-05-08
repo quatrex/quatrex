@@ -3,7 +3,7 @@
 import pytest
 
 from qttools import xp
-from qttools.kernels import dsbsparse_kernels
+from qttools.kernels.datastructure import dsbsparse_kernels
 from qttools.utils.mpi_utils import get_section_sizes
 
 

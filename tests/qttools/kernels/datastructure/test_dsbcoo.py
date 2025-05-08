@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.kernels import dsbcoo_kernels
+from qttools.kernels.datastructure import dsbcoo_kernels
 
 
 def _reference_compute_block_sort_index(

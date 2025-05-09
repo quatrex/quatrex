@@ -7,9 +7,9 @@ if xp.__name__ == "numpy":
     from qttools.kernels.datastructure.numba import dsbsparse as dsbsparse_kernels
 
 elif xp.__name__ == "cupy":
-    from qttools.kernels.datastructure.cuda import dsbcoo as dsbcoo_kernels
-    from qttools.kernels.datastructure.cuda import dsbcsr as dsbcsr_kernels
-    from qttools.kernels.datastructure.cuda import dsbsparse as dsbsparse_kernels
+    from qttools.kernels.datastructure.cupy import dsbcoo as dsbcoo_kernels
+    from qttools.kernels.datastructure.cupy import dsbcsr as dsbcsr_kernels
+    from qttools.kernels.datastructure.cupy import dsbsparse as dsbsparse_kernels
 
 else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{xp.__name__}'")

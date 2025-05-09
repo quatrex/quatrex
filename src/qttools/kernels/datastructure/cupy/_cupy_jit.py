@@ -3,7 +3,7 @@ import cupy as cp
 from cupyx import jit
 
 from qttools import NDArray
-from qttools.kernels.datastructure.cuda import THREADS_PER_BLOCK
+from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
 
 
 @jit.rawkernel()

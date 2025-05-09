@@ -6,13 +6,13 @@ import cupy as cp
 import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, strtobool
-from qttools.kernels.datastructure.cuda import THREADS_PER_BLOCK
+from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
 from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
-    from qttools.kernels.datastructure.cuda import _cupy_jit as cupy_backend
+    from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
 else:
-    from qttools.kernels.datastructure.cuda import _cupy_rawkernel as cupy_backend
+    from qttools.kernels.datastructure.cupy import _cupy_rawkernel as cupy_backend
 
 
 # NOTE: CUDA kernels are not profiled, as the jit-compiled kernels

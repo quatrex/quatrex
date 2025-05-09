@@ -439,9 +439,9 @@ class _SubCommunicator:
         """
 
         if mask is not None:
-            if mask.size // self.size < sendbuf.size:
+            if mask.size // self.size < sendbuf.shape[axis]:
                 raise ValueError(
-                    f"The mask is too small for the sendbuf: {mask.size // self.size} < {sendbuf.size}."
+                    f"The mask is too small for the sendbuf: {mask.size // self.size} < {sendbuf.shape[axis]}."
                 )
             global_size = mask.size
         else:
@@ -521,7 +521,6 @@ class QuatrexCommunicator:
             total number of ranks.
 
         """
-
         if self._is_configured and not override:
             raise RuntimeError("Communicator is already configured.")
 

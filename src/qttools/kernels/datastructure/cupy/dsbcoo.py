@@ -19,8 +19,7 @@ else:
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-QTX_USE_FIND_INDS = strtobool(os.getenv("QTX_USE_FIND_INDS", "True"), True)
-QTX_USE_DENSIFY_BLOCKS = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK", "False"), False)
+QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK", "False"), False)
 
 
 @profiler.profile(level="api")
@@ -56,36 +55,20 @@ def find_inds(
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
     THREADS_PER_BLOCK
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    if QTX_USE_FIND_INDS:
-        cupy_backend._find_inds_new(
-            (blocks_per_grid,),
-            (THREADS_PER_BLOCK,),
-            (
-                self_rows,
-                self_cols,
-                rows,
-                cols,
-                full_inds,
-                counts,
-                self_rows.shape[0],
-                rows.shape[0],
-            ),
-        )
-    else:
-        cupy_backend._find_inds(
-            (blocks_per_grid,),
-            (THREADS_PER_BLOCK,),
-            (
-                self_rows,
-                self_cols,
-                rows,
-                cols,
-                full_inds,
-                counts,
-                self_rows.shape[0],
-                rows.shape[0],
-            ),
-        )
+    cupy_backend._find_inds(
+        (blocks_per_grid,),
+        (THREADS_PER_BLOCK,),
+        (
+            self_rows,
+            self_cols,
+            rows,
+            cols,
+            full_inds,
+            counts,
+            self_rows.shape[0],
+            rows.shape[0],
+        ),
+    )
 
     # Find the valid indices.
     inds = cp.nonzero(counts)[0]
@@ -164,6 +147,7 @@ def densify_block(
     block_slice: slice,
     row_offset: int,
     col_offset: int,
+    use_kernel: bool = QTX_USE_DENSIFY_BLOCK,
 ):
     """Fills the dense block with the given data.
 
@@ -190,12 +174,9 @@ def densify_block(
         The column offset of the block
 
     """
-    # TODO: The bare API implementation on the GPU is faster than the
-    # very simple, non-general kernel i came up with. Thus, for now i
-    # will just use the CuPy API directly. Since for very large blocks
-    # (10'000x10'000) this starts to break even, this needs to be
-    # revisited!
-    if not QTX_USE_DENSIFY_BLOCKS:
+
+    # TODO: Needs profilig to see if this is faster than the raw kernel.
+    if not use_kernel:
         block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
             data[..., block_slice]
         )

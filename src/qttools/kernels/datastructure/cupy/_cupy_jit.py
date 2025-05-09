@@ -40,47 +40,6 @@ def _find_inds(
 
     """
     i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
-    if i < num_self_rows:
-        for j in range(num_rows):
-            cond = int((self_rows[i] == rows[j]) & (self_cols[i] == cols[j]))
-            full_inds[i] = full_inds[i] * (1 - cond) + j * cond
-            counts[i] += cond
-
-
-@jit.rawkernel()
-def _find_inds_new(
-    self_rows: NDArray,
-    self_cols: NDArray,
-    rows: NDArray,
-    cols: NDArray,
-    full_inds: NDArray,
-    counts: NDArray,
-    num_self_rows: int,
-    num_rows: int,
-):
-    """Finds the corresponding indices of the given rows and columns.
-
-    This also counts the number of matches found, which is used to check
-    if the indices contain duplicates.
-
-    Parameters
-    ----------
-    self_rows : NDArray
-        The rows of this matrix.
-    self_cols : NDArray
-        The columns of this matrix.
-    rows : NDArray
-        The rows to find the indices for.
-    cols : NDArray
-        The columns to find the indices for.
-    full_inds : NDArray
-        The indices of the given rows and columns.
-    counts : NDArray
-        The number of matches found.
-
-
-    """
-    i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
     tid = int(jit.threadIdx.x)
     cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
     cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)

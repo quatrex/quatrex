@@ -55,33 +55,6 @@ def reduction(
 
 
 _find_inds = cp.RawKernel(
-    r"""
-        extern "C" __global__
-        void find_inds(
-            int* self_rows,
-            int* self_cols,
-            int* rows,
-            int* cols,
-            int* full_inds,
-            short* counts,
-            int num_self_rows,
-            int num_rows
-        ) {
-            int i = blockIdx.x * blockDim.x + threadIdx.x;
-            if (i < num_self_rows) {
-                for (int j = 0; j < num_rows; j++) {
-                    int cond = (self_rows[i] == rows[j]) & (self_cols[i] == cols[j]);
-                    full_inds[i] = full_inds[i] * (1 - cond) + j * cond;
-                    counts[i] += cond;
-                }
-            }
-        }
-    """,
-    "find_inds",
-)
-
-
-_find_inds_new = cp.RawKernel(
     f"""
         extern "C" __global__
         void find_inds(

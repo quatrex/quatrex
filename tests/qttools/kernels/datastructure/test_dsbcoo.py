@@ -138,7 +138,8 @@ def test_compute_block_slice(
 
 
 @pytest.mark.usefixtures("shape")
-def test_densify_block(shape: tuple[int, int]):
+@pytest.mark.parametrize("use_kernel", [True, False])
+def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     """Tests that the block gets densified correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
@@ -146,8 +147,13 @@ def test_densify_block(shape: tuple[int, int]):
     reference_block = coo.toarray()
 
     block = xp.zeros_like(reference_block)
+    if xp.__name__ == "cupy":
+        kwargs = {"use_kernel": use_kernel}
+    else:
+        kwargs = {}
+
     dsbcoo_kernels.densify_block(
-        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0
+        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0, **kwargs
     )
 
     assert xp.allclose(block, reference_block)

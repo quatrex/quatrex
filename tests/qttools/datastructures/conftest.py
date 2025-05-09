@@ -69,8 +69,8 @@ SYMMETRY_TYPE = [
     pytest.param((False, lambda x: x), id="non-symmetric"),
     pytest.param((True, lambda x: x), id="symmetric"),
     pytest.param((True, lambda x: -x), id="skew-symmetric"),
-    pytest.param((True, xp.conj), id="hermitian"),
     pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
+    pytest.param((True, lambda x: xp.conj(x)), id="hermitian"),
 ]
 
 

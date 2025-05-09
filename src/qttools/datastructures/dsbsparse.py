@@ -888,11 +888,12 @@ class DSBSparse(ABC):
             The new DSBSparse matrix.
 
         """
+        # TODO: deepcopy should be removed
+        # Problem with symmetry operators
         out = copy.deepcopy(dsbsparse)
         if out._data is None:
             out.allocate_data()
-        else:
-            out._data[:] = 0.0
+        out._data[:] = 0.0
         return out
 
 

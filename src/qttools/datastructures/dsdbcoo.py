@@ -9,7 +9,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
+from qttools.kernels.datastructure import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling.profiler import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes

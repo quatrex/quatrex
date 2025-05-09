@@ -6,7 +6,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.kernels import dsbcoo_kernels, dsbsparse_kernels
+from qttools.kernels.datastructure import dsbcoo_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import densify_selected_blocks

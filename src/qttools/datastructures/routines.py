@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import time
+# import time
 from collections.abc import Callable
 
 from mpi4py.MPI import Intracomm, Request
@@ -488,7 +488,7 @@ def arrow_partition_halo_comm(
 
     synchronize_device()
     comm.Barrier() if comm is not None else None
-    halo_comm_start = time.perf_counter()
+    # halo_comm_start = time.perf_counter()
 
     reqs = []
     # Send halo blocks to previous rank
@@ -540,12 +540,12 @@ def arrow_partition_halo_comm(
     Request.Waitall(reqs)
 
     synchronize_device()
-    halo_comm_end = time.perf_counter()
-    comm.Barrier() if comm is not None else None
-    halo_comm_end_all = time.perf_counter()
-    if comm.rank == 0:
-        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
-        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
+    # halo_comm_end = time.perf_counter()
+    # comm.Barrier() if comm is not None else None
+    # halo_comm_end_all = time.perf_counter()
+    # if comm.rank == 0:
+    #     print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+    #     print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def arrow_partition_halo_comm_nccl(
@@ -577,7 +577,7 @@ def arrow_partition_halo_comm_nccl(
 
     synchronize_device()
     comm.Barrier()
-    halo_comm_start = time.perf_counter()
+    # halo_comm_start = time.perf_counter()
 
     # Send halo blocks to previous rank
     def _send_to_previous():
@@ -649,12 +649,12 @@ def arrow_partition_halo_comm_nccl(
         _send_to_next()
 
     synchronize_device()
-    halo_comm_end = time.perf_counter()
-    comm.Barrier()
-    halo_comm_end_all = time.perf_counter()
-    if comm.rank == 0:
-        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
-        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
+    # halo_comm_end = time.perf_counter()
+    # comm.Barrier()
+    # halo_comm_end_all = time.perf_counter()
+    # if comm.rank == 0:
+    #     print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+    #     print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def bd_matmul_distr(

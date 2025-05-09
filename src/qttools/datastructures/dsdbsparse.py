@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import itertools
+import warnings
 from abc import ABC, abstractmethod
 from typing import Callable
 
@@ -268,11 +269,24 @@ class DSDBSparse(ABC):
     @property
     def blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer."""
+        if comm.block.size > 1:
+            warnings.warn(
+                "Refrain from using 'blocks' with domain-distribution. "
+                "Use 'local_blocks' instead.",
+                UserWarning,
+            )
+
         return self._block_indexer
 
     @property
     def sparse_blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer."""
+        if comm.block.size > 1:
+            warnings.warn(
+                "Refrain from using 'sparse_blocks' with domain-distribution. "
+                "Use 'sparse_local_blocks' instead.",
+                UserWarning,
+            )
         return self._sparse_block_indexer
 
     @property

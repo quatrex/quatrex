@@ -17,7 +17,7 @@ from qttools.utils.mpi_utils import check_gpu_aware_mpi, distributed_load
 #from scipy import sparse
 from serinv.algs import ddbtasinv
 
-from quatrex.exciton.response.polarization import kron_correlate
+from quatrex.exciton.response.polarization import kron_correlate,correlate
 
 # from quatrex.core.compute_config import ComputeConfig
 # from quatrex.core.quatrex_config import QuatrexConfig
@@ -702,7 +702,7 @@ class BSESolver:
         self.bare_Coulomb = V
         self.screened_Coulomb = W
         self.kernel = sparse.lil_array(
-            (self.size, self.size), 
+            (self.totalsize, self.totalsize), 
             dtype=self.chi0_greater.dtype,
         )
 
@@ -710,22 +710,22 @@ class BSESolver:
             for j in range(self.num_sites):
                 row = int(self.inverse_table[i, i])
                 col = int(self.inverse_table[j, j])
-                self.kernel[row, col] = - V[i, j][0]
+                if V[i,j] is not None:                    
+                    self.kernel[row, col] = - V[i, j]
 
         for i in range(self.num_sites):
             for j in range(self.num_sites):
                 row = int(self.inverse_table[i, j])
                 col = int(self.inverse_table[i, j])
-                self.kernel[row, col] += W[i, j][0]
+                if W[i,j] is not None:
+                    # print(W[i,j])
+                    self.kernel[row, col] += W[i, j][1]
 
         self.kernel *= 1j
-        # coo = self.kernel.tocoo()
-        # BLOCK_SIZES = xp.array([self.blocksize] * self.num_blocks)
-        # GLOBAL_STACK_SHAPE = (comm.size,)
-        # self.kernel = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.kernel=self.kernel.tocoo()
 
     @time_range()
-    def _calc_kernel_bta(self, V: NDArray, W: NDArray):         
+    def _calc_kernel_bta(self, V: DSBCOO, W: DSBCOO):         
         self.bare_Coulomb = V
         self.screened_Coulomb = W
         kernel_tip = xp.zeros(
@@ -741,16 +741,26 @@ class BSESolver:
                 col = int(self.inverse_table_bta[j, j])
                 kernel_tip[row,col] = - V[i,j]
                 if (row == col):
-                    kernel_tip[row,col] += W[i,j]               
+                    kernel_tip[row,col] += W[i,j][1]               
 
         for row in range(self.tipsize, self.size):
             i = self.permuted_sparsity.row[row]
             j = self.permuted_sparsity.col[row]
-            kernel_diag[row - self.tipsize] += W[i,j]
+            kernel_diag[row - self.tipsize] += W[i,j][1]
 
         kernel_diag *= 1j
         kernel_tip *= 1j
-        self.kernel_bta = (kernel_tip, kernel_diag)
+
+        self.kernel_bta = sparse.lil_array(
+            (self.bta_totalsize, self.bta_totalsize), 
+            dtype=self.chi0_greater.dtype,
+        ) 
+        for i in range(self.num_sites):
+            for j in range(self.num_sites):
+                self.kernel_bta[i,j] = kernel_tip[i,j]
+        for i in range(self.num_sites,self.bta_totalsize):
+            self.kernel_bta[i,i] = kernel_diag[i-self.num_sites]
+        self.kernel_bta=self.kernel_bta.tocoo()
 
     @time_range()
     def _alloc_chi0_bta(self, dtype=xp.complex128):

@@ -955,7 +955,7 @@ class SCBA:
                         f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
                         flush=True,
                     )
-
+            
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()
 

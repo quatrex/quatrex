@@ -227,13 +227,9 @@ class _SubCommunicator:
 
     def _check_bufs_consistent(self, sendbuf: NDArray, recvbuf: NDArray):
         """Checks that the send and receive buffers are in the correct place."""
-        if (
-            get_array_module_name(sendbuf) != xp.__name__
-            or get_array_module_name(recvbuf) != xp.__name__
-        ):
+        if get_array_module_name(sendbuf) != get_array_module_name(recvbuf):
             raise ValueError(
-                f"sendbuf and recvbuf must be {xp.__name__} arrays, but "
-                f"got {get_array_module_name(sendbuf)} and {get_array_module_name(recvbuf)}."
+                f"sendbuf and recvbuf must be of the same type, but got {sendbuf.dtype} and {recvbuf.dtype}."
             )
 
     def all_to_all(

@@ -8,7 +8,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.kernels.datastructure import dsbcsr_kernels, dsbsparse_kernels
+from qttools.kernels.datastructure import dsdbcsr_kernels, dsdbsparse_kernels
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -95,10 +95,10 @@ class DSDBCSR(DSDBSparse):
         self.rowptr_map = rowptr_map
 
         inds = xp.arange(self.shape[-1])
-        self._diag_inds, self._diag_value_inds = dsbcsr_kernels.find_inds(
+        self._diag_inds, self._diag_value_inds = dsdbcsr_kernels.find_inds(
             self.rowptr_map, xp.asarray(self.block_offsets), self.cols, inds, inds
         )
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
         if not any(ranks == comm.rank):
             self._diag_inds_nnz = None
             self._diag_value_inds_nnz = None
@@ -148,7 +148,7 @@ class DSDBCSR(DSDBSparse):
         if self.symmetry:
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
-            inds, value_inds = dsbcsr_kernels.find_inds(
+            inds, value_inds = dsdbcsr_kernels.find_inds(
                 self.rowptr_map,
                 xp.asarray(self.block_offsets),
                 self.cols,
@@ -156,7 +156,7 @@ class DSDBCSR(DSDBSparse):
                 cols[~mask_transposed],
             )
             value_inds = (~mask_transposed).nonzero()[0][value_inds]
-            inds_t, value_inds_t = dsbcsr_kernels.find_inds(
+            inds_t, value_inds_t = dsdbcsr_kernels.find_inds(
                 self.rowptr_map,
                 xp.asarray(self.block_offsets),
                 self.cols,
@@ -165,7 +165,7 @@ class DSDBCSR(DSDBSparse):
             )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
             value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
         else:
-            inds, value_inds = dsbcsr_kernels.find_inds(
+            inds, value_inds = dsdbcsr_kernels.find_inds(
                 self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
             )
 
@@ -187,7 +187,7 @@ class DSDBCSR(DSDBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         return data_stack[
             ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
@@ -219,7 +219,7 @@ class DSDBCSR(DSDBSparse):
             # items of upper triangle of the matrix
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
-        inds, value_inds = dsbcsr_kernels.find_inds(
+        inds, value_inds = dsdbcsr_kernels.find_inds(
             self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
 
@@ -242,7 +242,7 @@ class DSDBCSR(DSDBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         # If the rank does not hold any of the requested elements, we do
         # nothing.
@@ -332,7 +332,7 @@ class DSDBCSR(DSDBSparse):
             # No data in this block, return zeros.
             return block
 
-        dsbcsr_kernels.densify_block(
+        dsdbcsr_kernels.densify_block(
             block=block,
             block_offset=self.block_offsets[col],
             self_cols=self.cols,
@@ -448,7 +448,7 @@ class DSDBCSR(DSDBSparse):
             # No data in this block, nothing to do.
             return
 
-        dsbcsr_kernels.sparsify_block(
+        dsdbcsr_kernels.sparsify_block(
             block=block,
             block_offset=self.block_offsets[col],
             self_cols=self.cols,
@@ -538,7 +538,7 @@ class DSDBCSR(DSDBSparse):
                 canonical_rows = rows[inds_bcsr2canonical]
                 canonical_cols = cols[inds_bcsr2canonical]
                 # Compute the index for sorting by the new block-sizes.
-                inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+                inds_canonical2bcsr, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
                     canonical_rows, canonical_cols, block_sizes
                 )
                 self._block_config[num_blocks].inds_canonical2block = (
@@ -569,7 +569,7 @@ class DSDBCSR(DSDBSparse):
         canonical_rows = rows[inds_bcsr2canonical]
         canonical_cols = cols[inds_bcsr2canonical]
         # Compute the index for sorting by the new block-sizes.
-        inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+        inds_canonical2bcsr, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
             canonical_rows, canonical_cols, block_sizes
         )
         self.rowptr_map = rowptr_map
@@ -647,7 +647,7 @@ class DSDBCSR(DSDBSparse):
 
             # Compute index for sorting the transpose by block and the
             # transpose rowptr map.
-            inds_canonical2bcsr_t, rowptr_map_t = dsbcsr_kernels.compute_rowptr_map(
+            inds_canonical2bcsr_t, rowptr_map_t = dsdbcsr_kernels.compute_rowptr_map(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
@@ -703,7 +703,7 @@ class DSDBCSR(DSDBSparse):
 
             # Compute index for sorting the transpose by block and the
             # transpose rowptr map.
-            inds_canonical2bcsr_t, rowptr_map_t = dsbcsr_kernels.compute_rowptr_map(
+            inds_canonical2bcsr_t, rowptr_map_t = dsdbcsr_kernels.compute_rowptr_map(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
@@ -819,7 +819,7 @@ class DSDBCSR(DSDBSparse):
             coo = sparse.triu(coo, format="coo")
 
         # Compute block sorting index and the transpose rowptr map.
-        block_sort_index, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+        block_sort_index, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
             coo.row, coo.col, block_sizes
         )
 

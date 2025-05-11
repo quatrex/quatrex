@@ -61,91 +61,8 @@ def tocsr_dict(matrix: DSDBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
     return blocks
 
 
-def product_sparsity_pattern_dsbsparse(
-    *matrices: DSDBSparse, spillover: bool = False
-) -> tuple[NDArray, NDArray]:
-    """Computes the sparsity pattern of the product of a sequence of DSDBSparse matrices.
-
-    Parameters
-    ----------
-    matrices : sparse.spmatrix
-        A sequence of sparse matrices.
-
-    Returns
-    -------
-    rows : NDArray
-        The row indices of the sparsity pattern.
-    cols : NDArray
-        The column indices of the sparsity pattern.
-
-    """
-
-    assert len(matrices) > 1
-
-    a = matrices[0]
-
-    # Assuming that all matrices have the same number of blocks and block sizes.
-    num_blocks = a.num_blocks
-    block_sizes = a.block_sizes
-    block_offsets = a.block_offsets
-
-    a_blocks = tocsr_dict(a)
-
-    for b in matrices[1:]:
-        b_blocks = tocsr_dict(b)
-        c_blocks = {}
-
-        for i in range(num_blocks):
-            for j in range(num_blocks):
-
-                c_block = None
-                for k in range(num_blocks):
-                    if c_block is None:
-                        c_block = a_blocks[i, k] @ b_blocks[k, j]
-                    else:
-                        c_block += a_blocks[i, k] @ b_blocks[k, j]
-
-                if c_block is None:
-                    c_block = sparse.csr_matrix(
-                        (block_sizes[i], block_sizes[j]), dtype=xp.float32
-                    )
-                c_blocks[i, j] = c_block
-
-        if spillover:
-            # Left spillover
-            c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
-            # Right spillover
-            c_blocks[num_blocks - 1, num_blocks - 1] += (
-                a_blocks[num_blocks - 2, num_blocks - 1]
-                @ b_blocks[num_blocks - 1, num_blocks - 2]
-            )
-
-        if spillover:
-            # Left spillover
-            c_blocks[0, 0] += a_blocks[1, 0] @ b_blocks[0, 1]
-            # Right spillover
-            c_blocks[num_blocks - 1, num_blocks - 1] += (
-                a_blocks[num_blocks - 2, num_blocks - 1]
-                @ b_blocks[num_blocks - 1, num_blocks - 2]
-            )
-
-        a_blocks = c_blocks
-
-    c_rows = xp.empty(0, dtype=xp.int32)
-    c_cols = xp.empty(0, dtype=xp.int32)
-
-    for i in range(num_blocks):
-        for j in range(num_blocks):
-            c_block = c_blocks[i, j].tocoo()
-            c_block.sum_duplicates()
-            c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
-            c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
-
-    return c_rows, c_cols
-
-
 def product_sparsity_pattern_dsdbsparse(
-    *matrices: DSDBSparse | DSDBSparse,
+    *matrices: DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = None,
     start_block: int = 0,
@@ -218,11 +135,9 @@ def product_sparsity_pattern_dsdbsparse(
         if spillover:
             if start_block == 0:
                 # Left spillover
-                # print(f"left spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[0, 0] = c_[0, 0] + a_[1, 0] @ b_[0, 1]
             if end_block == num_blocks:
                 # Right spillover
-                # print(f"right spillover, {block_comm.rank=}, {c_.origin=}")
                 c_[num_blocks - 1, num_blocks - 1] = (
                     c_[num_blocks - 1, num_blocks - 1]
                     + a_[num_blocks - 2, num_blocks - 1]
@@ -260,11 +175,5 @@ def product_sparsity_pattern_dsdbsparse(
             c_block.eliminate_zeros()
             c_rows = xp.append(c_rows, c_block.row + block_offsets[i])
             c_cols = xp.append(c_cols, c_block.col + block_offsets[j])
-
-    # if block_comm is not None:
-    #     c_rows = block_comm.allgather(c_rows)
-    #     c_cols = block_comm.allgather(c_cols)
-    #     c_rows = xp.concatenate(c_rows)
-    #     c_cols = xp.concatenate(c_cols)
 
     return c_rows, c_cols

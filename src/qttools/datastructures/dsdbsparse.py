@@ -76,7 +76,7 @@ def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray
 
 
 class BlockConfig(object):
-    """Configuration of block-sizes and block-slices for a DSBSparse matrix.
+    """Configuration of block-sizes and block-slices for a DSDBSparse matrix.
 
     Parameters
     ----------

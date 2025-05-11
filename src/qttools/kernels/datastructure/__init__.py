@@ -2,20 +2,20 @@
 from qttools import xp
 
 if xp.__name__ == "numpy":
-    from qttools.kernels.datastructure.numba import dsbcoo as dsbcoo_kernels
-    from qttools.kernels.datastructure.numba import dsbcsr as dsbcsr_kernels
-    from qttools.kernels.datastructure.numba import dsbsparse as dsbsparse_kernels
+    from qttools.kernels.datastructure.numba import dsdbcoo as dsdbcoo_kernels
+    from qttools.kernels.datastructure.numba import dsdbcsr as dsdbcsr_kernels
+    from qttools.kernels.datastructure.numba import dsdbsparse as dsdbsparse_kernels
 
 elif xp.__name__ == "cupy":
-    from qttools.kernels.datastructure.cupy import dsbcoo as dsbcoo_kernels
-    from qttools.kernels.datastructure.cupy import dsbcsr as dsbcsr_kernels
-    from qttools.kernels.datastructure.cupy import dsbsparse as dsbsparse_kernels
+    from qttools.kernels.datastructure.cupy import dsdbcoo as dsdbcoo_kernels
+    from qttools.kernels.datastructure.cupy import dsdbcsr as dsdbcsr_kernels
+    from qttools.kernels.datastructure.cupy import dsdbsparse as dsdbsparse_kernels
 
 else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{xp.__name__}'")
 
 __all__ = [
-    "dsbsparse_kernels",
-    "dsbcoo_kernels",
-    "dsbcsr_kernels",
+    "dsdbsparse_kernels",
+    "dsdbcoo_kernels",
+    "dsdbcsr_kernels",
 ]

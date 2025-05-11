@@ -3,7 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.datastructures.dsbsparse import _block_view
+from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import inv
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver

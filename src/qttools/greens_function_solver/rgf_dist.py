@@ -151,15 +151,15 @@ class RGFDist(GFSolver):
 
         Parameters
         ----------
-        a : DSBSparse
+        a : DSDBSparse
             Matrix to invert.
-        sigma_lesser : DSBSparse
+        sigma_lesser : DSDBSparse
             Lesser matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
-        sigma_greater : DSBSparse
+        sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             Preallocated output matrices, by default None
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's

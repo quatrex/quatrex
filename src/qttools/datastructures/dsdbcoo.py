@@ -1,7 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import copy
-import time
 from typing import Callable
 
 import numpy as np
@@ -9,9 +8,8 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.kernels.datastructure import dsbcoo_kernels, dsbsparse_kernels
+from qttools.kernels.datastructure import dsdbcoo_kernels, dsdbsparse_kernels
 from qttools.profiling.profiler import Profiler
-from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -89,7 +87,7 @@ class DSDBCOO(DSDBSparse):
 
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
         if not any(ranks == comm.stack.rank):
             self._diag_inds_nnz = None
             self._diag_value_inds_nnz = None
@@ -150,14 +148,14 @@ class DSDBCOO(DSDBSparse):
         if self.symmetry:
             # find items in lower triangle and send them to upper triangle
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
-            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
                 rows[~mask_transposed],
                 cols[~mask_transposed],
             )
             value_inds = (~mask_transposed).nonzero()[0][value_inds]
-            inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
+            inds_t, value_inds_t, max_counts_t = dsdbcoo_kernels.find_inds(
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
                 rows[mask_transposed],
@@ -169,7 +167,7 @@ class DSDBCOO(DSDBSparse):
                     "Request contains repeated indices. Only unique indices are supported."
                 )
         else:
-            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+            inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
                 rows,
@@ -208,7 +206,7 @@ class DSDBCOO(DSDBSparse):
 
         # If nnz are distributed accross the ranks, we need to find the
         # rank that holds the data.
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         return data_stack[
             ...,
@@ -255,7 +253,7 @@ class DSDBCOO(DSDBSparse):
 
         # We need to shift the local rows and cols to the global
         # coordinates.
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
+        inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
             self.rows + self.global_block_offset,
             self.cols + self.global_block_offset,
             rows,
@@ -296,7 +294,7 @@ class DSDBCOO(DSDBSparse):
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
-        ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
+        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
 
         # If the rank does not hold any of the requested elements, we do
         # nothing.
@@ -348,7 +346,7 @@ class DSDBCOO(DSDBSparse):
         if block_slice is None:
             # Cache miss, compute the slice.
             block_slice = slice(
-                *dsbcoo_kernels.compute_block_slice(
+                *dsdbcoo_kernels.compute_block_slice(
                     self.rows, self.cols, self.local_block_offsets, row, col
                 )
             )
@@ -425,7 +423,7 @@ class DSDBCOO(DSDBSparse):
             # No data in this block, return an empty block.
             return block
 
-        dsbcoo_kernels.densify_block(
+        dsdbcoo_kernels.densify_block(
             block,
             self.rows,
             self.cols,
@@ -543,7 +541,7 @@ class DSDBCOO(DSDBSparse):
             # No data in this block, nothing to do.
             return
 
-        dsbcoo_kernels.sparsify_block(
+        dsdbcoo_kernels.sparsify_block(
             block,
             self.rows[block_slice] - self.local_block_offsets[row],
             self.cols[block_slice] - self.local_block_offsets[col],
@@ -559,13 +557,13 @@ class DSDBCOO(DSDBSparse):
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
 
-        if xp.any(self.block_sizes != other.block_sizes):
+        if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if xp.any(self.rows != other.rows):
+        if np.any(self.rows != other.rows):
             raise ValueError("Row indices do not match.")
 
-        if xp.any(self.cols != other.cols):
+        if np.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
@@ -653,7 +651,7 @@ class DSDBCOO(DSDBSparse):
                 canonical_rows = self.rows[inds_bcoo2canonical]
                 canonical_cols = self.cols[inds_bcoo2canonical]
                 # Compute the index for sorting by the new block-sizes.
-                inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
+                inds_canonical2bcoo = dsdbcoo_kernels.compute_block_sort_index(
                     canonical_rows, canonical_cols, local_block_sizes
                 )
                 self._block_config[num_blocks].inds_canonical2block = (
@@ -690,7 +688,7 @@ class DSDBCOO(DSDBSparse):
         canonical_rows = self.rows[inds_bcoo2canonical]
         canonical_cols = self.cols[inds_bcoo2canonical]
         # Compute the index for sorting by the new block-sizes.
-        inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
+        inds_canonical2bcoo = dsdbcoo_kernels.compute_block_sort_index(
             canonical_rows, canonical_cols, local_block_sizes
         )
         # Mapping directly from original block-ordering to the new
@@ -783,7 +781,7 @@ class DSDBCOO(DSDBSparse):
             canonical_cols_t = cols_t[inds_bcoo2canonical_t]
 
             # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
+            inds_canonical2bcoo_t = dsdbcoo_kernels.compute_block_sort_index(
                 canonical_rows_t, canonical_cols_t, self.local_block_sizes
             )
 
@@ -862,8 +860,6 @@ class DSDBCOO(DSDBSparse):
 
         """
 
-        t_start = time.perf_counter()
-
         if comm.stack is None or comm.block is None:
             raise ValueError("Communicators must be initialized.")
 
@@ -874,61 +870,20 @@ class DSDBCOO(DSDBSparse):
         section_size = stack_section_sizes[comm.stack.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        synchronize_device()
-        comm.block.barrier()
-        t_section = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"[DSDBCOO.from_sparray] Section distribution time: {t_section - t_start:.3f} seconds"
-            )
-
         # coo: sparse.coo_matrix = sparray.tocoo().copy()
         coo: sparse.coo_matrix = sparray.tocoo()
 
-        synchronize_device()
-        comm.block.barrier()
-        t_tocoo = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"[DSDBCOO.from_sparray] COO conversion time: {t_tocoo - t_section:.3f} seconds"
-            )
-
         # Canonicalizes the COO format.
-
         if symmetry:
             coo = sparse.triu(coo, format="coo")
-
-        synchronize_device()
-        comm.block.barrier()
-        t_triu = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"[DSDBCOO.from_sparray] COO symmetry handling time: {t_triu - t_tocoo:.3f} seconds"
-            )
 
         if not coo.has_canonical_format:
             coo.sum_duplicates()
 
-        synchronize_device()
-        comm.block.barrier()
-        t_sum_duplicates = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"[DSDBCOO.from_sparray] COO sum_duplicates time: {t_sum_duplicates - t_triu:.3f} seconds"
-            )
-
         # Compute the block-sorting index.
-        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+        block_sort_index = dsdbcoo_kernels.compute_block_sort_index(
             coo.row, coo.col, block_sizes
         )
-
-        synchronize_device()
-        comm.block.barrier()
-        t_block_sort = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"[DSDBCOO.from_sparray] Block sorting time: {t_block_sort - t_sum_duplicates:.3f} seconds"
-            )
 
         _data = coo.data[block_sort_index]
         _rows = coo.row[block_sort_index]

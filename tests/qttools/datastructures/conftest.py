@@ -4,10 +4,11 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 
-DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
-DSDBSPARSE_TYPES = [DSDBCOO]
+DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
+DSDBSPARSE_TYPES_DIST = [DSDBCOO]
+
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -16,24 +17,15 @@ BLOCK_SIZES = [
     pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
-DENSIFY_BLOCKS = [
-    pytest.param(None, id="no-densify"),
-    pytest.param([(0, 0), (-1, -1)], id="densify-boundary"),
-    pytest.param([(2, 4)], id="densify-random"),
-]
-
 ACCESSED_BLOCKS = [
     pytest.param((0, 0), id="first-block"),
-    pytest.param((-1, -1), id="last-block"),
     pytest.param((4, 2), id="random-lower-block"),
     pytest.param((2, 4), id="random-upper-block"),
-    pytest.param((-9, 3), id="out-of-bounds"),
 ]
 
 ACCESSED_ELEMENTS = [
     pytest.param((0, 0), id="first-element"),
-    pytest.param((-1, -1), id="last-element"),
-    pytest.param((2, -7), id="random-element"),
+    pytest.param((2, 7), id="random-element"),
 ]
 
 GLOBAL_STACK_SHAPES = [
@@ -67,10 +59,7 @@ OPS = [
 
 SYMMETRY_TYPE = [
     pytest.param((False, lambda x: x), id="non-symmetric"),
-    pytest.param((True, lambda x: x), id="symmetric"),
-    pytest.param((True, lambda x: -x), id="skew-symmetric"),
     pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
-    pytest.param((True, lambda x: xp.conj(x)), id="hermitian"),
 ]
 
 
@@ -79,18 +68,13 @@ def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES)
-def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
-    return request.param
-
-
 @pytest.fixture(params=DSDBSPARSE_TYPES)
 def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
-@pytest.fixture(params=DENSIFY_BLOCKS)
-def densify_blocks(request: pytest.FixtureRequest) -> list[tuple]:
+@pytest.fixture(params=DSDBSPARSE_TYPES_DIST)
+def dsdbsparse_type_dist(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 

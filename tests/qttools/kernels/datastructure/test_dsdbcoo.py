@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.kernels.datastructure import dsbcoo_kernels
+from qttools.kernels.datastructure import dsdbcoo_kernels
 
 
 def _reference_compute_block_sort_index(
@@ -104,7 +104,9 @@ def test_find_inds(shape: tuple[int, int], num_inds: int):
     reference_inds, reference_value_inds = xp.nonzero(
         (coo.row[:, xp.newaxis] == rows) & (coo.col[:, xp.newaxis] == cols)
     )
-    inds, value_inds, max_count = dsbcoo_kernels.find_inds(coo.row, coo.col, rows, cols)
+    inds, value_inds, max_count = dsdbcoo_kernels.find_inds(
+        coo.row, coo.col, rows, cols
+    )
 
     assert max_count in (0, 1)
     assert xp.all(inds == reference_inds)
@@ -130,7 +132,7 @@ def test_compute_block_slice(
     reference_block_slice = _reference_compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
-    block_slice = dsbcoo_kernels.compute_block_slice(
+    block_slice = dsdbcoo_kernels.compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
 
@@ -152,7 +154,7 @@ def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     else:
         kwargs = {}
 
-    dsbcoo_kernels.densify_block(
+    dsdbcoo_kernels.densify_block(
         block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0, **kwargs
     )
 
@@ -166,7 +168,7 @@ def test_sparsify_block(shape: tuple[int, int]):
     coo.sum_duplicates()
 
     data = xp.zeros_like(coo.data)
-    dsbcoo_kernels.sparsify_block(coo.toarray(), coo.row, coo.col, data)
+    dsdbcoo_kernels.sparsify_block(coo.toarray(), coo.row, coo.col, data)
 
     assert xp.allclose(data, coo.data)
 
@@ -185,7 +187,7 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     reference_sort_index = _reference_compute_block_sort_index(
         coo.row, coo.col, block_sizes
     )
-    sort_index = dsbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
+    sort_index = dsdbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
 
     assert xp.all(sort_index == reference_sort_index)
 

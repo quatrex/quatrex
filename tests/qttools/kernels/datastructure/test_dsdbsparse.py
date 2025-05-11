@@ -3,7 +3,7 @@
 import pytest
 
 from qttools import xp
-from qttools.kernels.datastructure import dsbsparse_kernels
+from qttools.kernels.datastructure import dsdbsparse_kernels
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -17,5 +17,5 @@ def test_find_ranks(nnz: int, comm_size: int, num_inds: int):
 
     reference_ranks = xp.sum(section_offsets <= inds[:, xp.newaxis], axis=-1) - 1
 
-    ranks = dsbsparse_kernels.find_ranks(section_offsets, inds)
+    ranks = dsdbsparse_kernels.find_ranks(section_offsets, inds)
     assert xp.all(ranks == reference_ranks)

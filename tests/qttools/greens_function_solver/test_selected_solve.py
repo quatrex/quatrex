@@ -1,14 +1,43 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import pytest
+
 from qttools import NDArray, sparse, xp
-from qttools.datastructures import DSBSparse
+from qttools.comm import comm
+from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import GFSolver
+
+
+@pytest.fixture(autouse=True, scope="module")
+def configure_comm():
+    """setup any state specific to the execution of the given module."""
+    if xp.__name__ == "cupy":
+        _default_config = {
+            "all_to_all": "host_mpi",
+            "all_gather": "host_mpi",
+            "all_reduce": "host_mpi",
+            "bcast": "host_mpi",
+        }
+    elif xp.__name__ == "numpy":
+        _default_config = {
+            "all_to_all": "device_mpi",
+            "all_gather": "device_mpi",
+            "all_reduce": "device_mpi",
+            "bcast": "device_mpi",
+        }
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=1,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        override=True,
+    )
 
 
 def test_selected_solve(
     bt_dense: NDArray,
     gfsolver_type: GFSolver,
-    dsbsparse_type: DSBSparse,
+    dsdbsparse_type: DSDBSparse,
     out: bool,
     return_retarded: bool,
     max_batch_size: int,
@@ -36,16 +65,16 @@ def test_selected_solve(
 
     block_sizes = block_sizes
 
-    A = dsbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
-    Bl = dsbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
-    Bg = dsbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
+    A = dsdbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
+    Bl = dsdbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
+    Bg = dsdbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)
 
     solver = gfsolver_type(max_batch_size=max_batch_size)
 
     if out:
-        Xr = dsbsparse_type.zeros_like(A)
-        Xl = dsbsparse_type.zeros_like(A)
-        Xg = dsbsparse_type.zeros_like(A)
+        Xr = dsdbsparse_type.zeros_like(A)
+        Xl = dsdbsparse_type.zeros_like(A)
+        Xg = dsdbsparse_type.zeros_like(A)
 
         solver.selected_solve(
             A,

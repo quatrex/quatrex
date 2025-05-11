@@ -4,10 +4,9 @@ import numpy as np
 import pytest
 
 from qttools import NDArray
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 
-DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
-DSDBSPARSE_TYPES = [DSDBCOO]
+DSDBSPARSE_TYPES = [DSDBCSR, DSDBCOO]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size-2"),
@@ -51,11 +50,6 @@ USE_PINNED_MEMORY = [
 
 @pytest.fixture(params=BLOCK_SIZES, autouse=True)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=DSBSPARSE_TYPES)
-def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 

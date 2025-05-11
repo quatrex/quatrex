@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.kernels.datastructure import dsbcsr_kernels
+from qttools.kernels.datastructure import dsdbcsr_kernels
 
 
 def _reference_compute_rowptr_map(
@@ -141,7 +141,7 @@ def test_find_inds(shape: tuple[int, int], num_inds: int, num_blocks: int):
     reference_inds, reference_value_inds = _reference_find_inds(
         rowptr_map, block_offsets, coo.col[sort_index], rows, cols
     )
-    inds, value_inds = dsbcsr_kernels.find_inds(
+    inds, value_inds = dsdbcsr_kernels.find_inds(
         rowptr_map, block_offsets, coo.col[sort_index], rows, cols
     )
 
@@ -157,7 +157,7 @@ def test_densify_block(shape: tuple[int, int]):
     reference_block = csr.toarray()
 
     block = xp.zeros_like(reference_block)
-    dsbcsr_kernels.densify_block(block, 0, csr.indices, csr.indptr, csr.data)
+    dsdbcsr_kernels.densify_block(block, 0, csr.indices, csr.indptr, csr.data)
 
     assert xp.allclose(block, reference_block)
 
@@ -168,7 +168,7 @@ def test_sparsify_block(shape: tuple[int, int]):
     csr = sparse.random(*shape, density=0.25, format="csr")
 
     data = xp.zeros_like(csr.data)
-    dsbcsr_kernels.sparsify_block(csr.toarray(), 0, csr.indices, csr.indptr, data)
+    dsdbcsr_kernels.sparsify_block(csr.toarray(), 0, csr.indices, csr.indptr, data)
 
     assert xp.allclose(data, csr.data)
 
@@ -187,7 +187,7 @@ def test_compute_rowptr_map(shape: tuple[int, int], num_blocks: int):
     reference_sort_index, reference_rowptr_map = _reference_compute_rowptr_map(
         coo.row, coo.col, block_sizes
     )
-    sort_index, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+    sort_index, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
         coo.row, coo.col, block_sizes
     )
 

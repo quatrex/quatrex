@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
 GFSOLVERS_TYPE = [Inv, RGF]
 
-DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
+DSBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
 
 BLOCK_SIZES = [
     pytest.param(np.array([2] * 10), id="constant-block-size"),
@@ -51,7 +51,7 @@ def gfsolver_type(request: pytest.FixtureRequest) -> GFSolver:
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
+def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 

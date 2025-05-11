@@ -7,7 +7,6 @@ from mpi4py.MPI import Intracomm, Request
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
@@ -29,24 +28,24 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
 
 @profiler.profile(level="api")
 def bd_matmul(
-    a: DSBSparse,
-    b: DSBSparse | list[DSBSparse],
-    out: DSBSparse | None,
+    a: DSDBSparse,
+    b: DSDBSparse | list[DSDBSparse],
+    out: DSDBSparse | None,
     b_op: Callable | None = None,
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
     accumulator_dtype=None,
 ):
-    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+    """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block diagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block diagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
@@ -143,24 +142,24 @@ def bd_matmul(
 
 @profiler.profile(level="api")
 def bd_sandwich(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse | None,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
     accumulator_dtype=None,
     accumulate: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
+    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a`, and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
@@ -280,20 +279,20 @@ def bd_sandwich(
 
 @profiler.profile(level="api")
 def btd_matmul(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse,
     spillover_correction: bool = False,
 ):
-    """Matrix multiplication of two `a @ b` BTD DSBSparse matrices.
+    """Matrix multiplication of two `a @ b` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to pentadiagonal.
     spillover_correction : bool, optional
@@ -335,20 +334,20 @@ def btd_matmul(
 
 @profiler.profile(level="api")
 def btd_sandwich(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse,
     spillover_correction: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
+    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a`, and `b`. It will compute up to heptadiagonal.
     spillover_correction : bool, optional
@@ -407,7 +406,7 @@ class BlockMatrix(dict):
 
     def __init__(
         self,
-        dsdbsparse: DSBSparse | DSDBSparse,
+        dsdbsparse: DSDBSparse | DSDBSparse,
         local_keys: set[tuple[int, int]],
         origin: tuple[int, int],
         mapping=None,
@@ -417,10 +416,7 @@ class BlockMatrix(dict):
         self.origin = origin
         mapping = mapping or {}
         super(BlockMatrix, self).__init__(mapping)
-        if isinstance(dsdbsparse, DSBSparse):
-            self.blocks = self.dsdbsparse.blocks
-        else:
-            self.blocks = self.dsdbsparse.local_blocks
+        self.blocks = self.dsdbsparse.blocks
 
     def __getitem__(self, key):
         if super(BlockMatrix, self).__contains__(key):

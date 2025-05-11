@@ -1,9 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools.datastructures.dsbcoo import DSBCOO
-from qttools.datastructures.dsbcsr import DSBCSR
-from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbcoo import DSDBCOO
+from qttools.datastructures.dsdbcsr import DSDBCSR
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.datastructures.routines import (
     bd_matmul,
@@ -15,11 +13,9 @@ from qttools.datastructures.routines import (
 )
 
 __all__ = [
-    "DSBSparse",
-    "DSBCSR",
-    "DSBCOO",
-    "DSDBSparse",
     "DSDBCOO",
+    "DSDBCSR",
+    "DSDBSparse",
     "btd_matmul",
     "btd_sandwich",
     "bd_matmul",

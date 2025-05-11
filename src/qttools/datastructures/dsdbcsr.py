@@ -1,15 +1,16 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+
+import copy
 from typing import Callable
 
 import numpy as np
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.datastructures.dsbsparse import DSBSparse
-from qttools.kernels.datastructure import dsbcoo_kernels, dsbsparse_kernels
+from qttools.datastructures.dsdbsparse import DSDBSparse
+from qttools.kernels.datastructure import dsbcsr_kernels, dsbsparse_kernels
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.utils.sparse_utils import densify_selected_blocks
 
 profiler = Profiler()
 
@@ -23,12 +24,18 @@ def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDA
     return rows, cols, mask
 
 
-class DSBCOO(DSBSparse):
-    """Distributed stack of sparse matrices in coordinate format.
+class DSDBCSR(DSDBSparse):
+    """A Distributed Stack of Distributed Block-accessible CSR matrices.
 
-    This DSBSparse implementation stores the matrix sparsity pattern in
-    probably the most straight-forward way: as a list of coordinates.
-    Both data and coordinates are sorted by block-row and -column.
+    This DSDBSparse implementation uses a block-compressed sparse row
+    format to store the sparsity pattern of the matrix. The data is
+    sorted by block-row and -column. We use a row pointer map together
+    with the column indices to access the blocks efficiently.
+
+    Note
+    ----
+    It is the caller's responsibility to ensure that the data is
+    distributed correctly across the ranks.
 
     Parameters
     ----------
@@ -37,33 +44,44 @@ class DSBCOO(DSBSparse):
         `(*local_stack_shape, nnz)`. It is the caller's responsibility
         to ensure that the data is distributed correctly across the
         ranks.
-    rows : NDArray
-        The row indices. This should be an array of shape `(nnz,)`.
     cols : NDArray
-        The column indices. This should be an array of shape `(nnz,)`.
+        The column indices.
+    rowptr_map : dict
+        The row pointer map.
     block_sizes : NDArray
         The size of each block in the sparse matrix.
     global_stack_shape : tuple or int
-        The global shape of the stack of sparse matrices. If this is an
-        integer, it is interpreted as a one-dimensional stack.
+        The global shape of the stack. If this is an integer, it is
+        interpreted as a one-dimensional stack.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
+    symmetry : bool, optional
+        Whether the matrix is symmetric. Default is False.
+    symmetry_op : callable, optional
+        The operation to use for the symmetry. Default is
+        `xp.conj`.
 
     """
 
     def __init__(
         self,
         data: NDArray,
-        rows: NDArray,
         cols: NDArray,
+        rowptr_map: dict,
         block_sizes: NDArray,
-        global_stack_shape: tuple | int,
+        global_stack_shape: tuple,
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
     ) -> None:
-        """Initializes the DBCOO matrix."""
+        """Initializes the DBCSR matrix."""
+
+        if comm.block.size != 1:
+            raise NotImplementedError(
+                "DSDBCSR is not yet implemented for distributed stacks."
+            )
+
         super().__init__(
             data,
             block_sizes,
@@ -73,11 +91,13 @@ class DSBCOO(DSBSparse):
             symmetry_op=symmetry_op,
         )
 
-        self.rows = rows.astype(xp.int32)
-        self.cols = cols.astype(xp.int32)
+        self.cols = cols.astype(int)
+        self.rowptr_map = rowptr_map
 
-        self._diag_inds = xp.where(self.rows == self.cols)[0]
-        self._diag_value_inds = self.rows[self._diag_inds]
+        inds = xp.arange(self.shape[-1])
+        self._diag_inds, self._diag_value_inds = dsbcsr_kernels.find_inds(
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, inds, inds
+        )
         ranks = dsbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
         if not any(ranks == comm.rank):
             self._diag_inds_nnz = None
@@ -126,32 +146,30 @@ class DSBCOO(DSBSparse):
 
         """
         if self.symmetry:
-            # find items in lower triangle and send them to upper triangle
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
-            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-                self.rows, self.cols, rows[~mask_transposed], cols[~mask_transposed]
+            inds, value_inds = dsbcsr_kernels.find_inds(
+                self.rowptr_map,
+                xp.asarray(self.block_offsets),
+                self.cols,
+                rows[~mask_transposed],
+                cols[~mask_transposed],
             )
             value_inds = (~mask_transposed).nonzero()[0][value_inds]
-            inds_t, value_inds_t, max_counts_t = dsbcoo_kernels.find_inds(
-                self.rows, self.cols, rows[mask_transposed], cols[mask_transposed]
+            inds_t, value_inds_t = dsbcsr_kernels.find_inds(
+                self.rowptr_map,
+                xp.asarray(self.block_offsets),
+                self.cols,
+                rows[mask_transposed],
+                cols[mask_transposed],
             )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
             value_inds_t = mask_transposed.nonzero()[0][value_inds_t]
-            if max_counts not in (0, 1) or max_counts_t not in (0, 1):
-                raise IndexError(
-                    "Request contains repeated indices. Only unique indices are supported."
-                )
         else:
-            inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-                self.rows, self.cols, rows, cols
+            inds, value_inds = dsbcsr_kernels.find_inds(
+                self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
             )
-            if max_counts not in (0, 1):
-                raise IndexError(
-                    "Request contains repeated indices. Only unique indices are supported."
-                )
 
-        data_stack = self.data[*stack_index]
-
+        data_stack = self.data[stack_index]
         if self.distribution_state == "stack":
             arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
 
@@ -161,12 +179,6 @@ class DSBCOO(DSBSparse):
             else:
                 arr[..., value_inds] = data_stack[..., inds]
             return xp.squeeze(arr)
-
-        if self.symmetry:
-            # This does not yet work
-            raise NotImplementedError(
-                "Symmetry not yet implemented for nnz distribution."
-            )
 
         if len(inds) != rows.size:
             # We cannot know which rank is supposed to hold an element
@@ -191,17 +203,6 @@ class DSBCOO(DSBSparse):
         any checks on the input. These are handled by the __setitem__
         method. The index is assumed to already be renormalized.
 
-        If we are in the "stack" distribution state, you need to provide
-        an array of the expected shape. The sparsity pattern is not
-        modified.
-
-        If we are in the "nnz" distribution state, you need to provide
-        the values that are on the current rank. The sparsity pattern is
-        not modified.
-
-        In both cases, if you are trying to set a value that is not in
-        the matrix, nothing happens.
-
         Parameters
         ----------
         stack_index : tuple
@@ -218,13 +219,9 @@ class DSBCOO(DSBSparse):
             # items of upper triangle of the matrix
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
-        inds, value_inds, max_counts = dsbcoo_kernels.find_inds(
-            self.rows, self.cols, rows, cols
+        inds, value_inds = dsbcsr_kernels.find_inds(
+            self.rowptr_map, xp.asarray(self.block_offsets), self.cols, rows, cols
         )
-        if max_counts not in (0, 1):
-            raise IndexError(
-                "Request contains repeated (equivalent) indices. Only unique indices are supported."
-            )
 
         if len(inds) == 0:
             # Nothing to do if the element is not in the matrix.
@@ -241,16 +238,7 @@ class DSBCOO(DSBSparse):
                 return
 
             self.data[*stack_index][..., inds] = value[..., value_inds]
-            if self.symmetry:
-                self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
-                    value[..., value_inds[mask_transposed]]
-                )
             return
-
-        if self.symmetry:
-            raise NotImplementedError(
-                "Symmetry not yet implemented for nnz distribution."
-            )
 
         # If nnz are distributed accross the stack, we need to find the
         # rank that holds the data.
@@ -276,43 +264,6 @@ class DSBCOO(DSBSparse):
             ..., value_inds[ranks == comm.rank] - value_inds[ranks == comm.rank][0]
         ]
         return
-
-    @profiler.profile(level="debug")
-    def _get_block_slice(self, row: int, col: int) -> slice:
-        """Gets the slice of data corresponding to a given block.
-
-        This handles the block slice cache. If there is no data in the
-        block, an `slice(None)` is cached.
-
-        Parameters
-        ----------
-        row : int
-            Row index of the block.
-        col : int
-            Column index of the block.
-
-        Returns
-        -------
-        block_slice : slice
-            The slice of the data corresponding to the block.
-
-        """
-        block_slice = self._block_config[self.num_blocks].block_slice_cache.get(
-            (row, col), None
-        )
-
-        if block_slice is None:
-            # Cache miss, compute the slice.
-            block_slice = slice(
-                *dsbcoo_kernels.compute_block_slice(
-                    self.rows, self.cols, self.block_offsets, row, col
-                )
-            )
-            self._block_config[self.num_blocks].block_slice_cache[
-                (row, col)
-            ] = block_slice
-
-        return block_slice
 
     @profiler.profile(level="debug")
     def _get_block(
@@ -341,9 +292,9 @@ class DSBCOO(DSBSparse):
         -------
         block : NDArray | tuple[NDArray, NDArray, NDArray]
             The block at the requested index. This is an array of shape
-            `(*local_stack_shape, block_sizes[row], block_sizes[col])` if
-            `return_dense` is True, otherwise it is a tuple of arrays
-            `(rows, cols, data)`.
+            `(*local_stack_shape, block_sizes[row], block_sizes[col])`
+            if `return_dense` is True, otherwise it is a tuple of three
+            arrays `(rowptr, cols, data)`.
 
         """
         if self.symmetry and (col < row):
@@ -355,42 +306,39 @@ class DSBCOO(DSBSparse):
         else:
             data_stack = arg
 
-        block_slice = self._get_block_slice(row, col)
+        rowptr = self.rowptr_map.get((row, col), None)
 
         if not self.return_dense:
             if self.symmetry:
                 # TODO: If really needed, this will need some more thinking.
-                raise NotImplementedError(
-                    "Sparse blocks with symmetry not implemented."
+                raise IndexError("Not implemented")
+            if rowptr is None:
+                # No data in this block, return zeros.
+                return (
+                    xp.zeros(int(self.block_sizes[row]) + 1),
+                    xp.empty(0),
+                    xp.empty(data_stack.shape[:-1] + (0,)),
                 )
-            if block_slice.start is None and block_slice.stop is None:
-                # No data in this block, return an empty block.
-                return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
 
-            rows = self.rows[block_slice] - self.block_offsets[row]
-            cols = self.cols[block_slice] - self.block_offsets[col]
-
-            return rows, cols, data_stack[..., block_slice]
+            cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
+            return rowptr - rowptr[0], cols, data_stack[..., rowptr[0] : rowptr[-1]]
 
         block = xp.zeros(
             data_stack.shape[:-1]
             + (int(self.block_sizes[row]), int(self.block_sizes[col])),
             dtype=self.dtype,
         )
-        if block_slice.start is None and block_slice.stop is None:
-            # No data in this block, return an empty block.
+        if rowptr is None:
+            # No data in this block, return zeros.
             return block
 
-        dsbcoo_kernels.densify_block(
-            block,
-            self.rows,
-            self.cols,
-            data_stack,
-            block_slice,
-            self.block_offsets[row],
-            self.block_offsets[col],
+        dsbcsr_kernels.densify_block(
+            block=block,
+            block_offset=self.block_offsets[col],
+            self_cols=self.cols,
+            rowptr=rowptr,
+            data=data_stack,
         )
-
         if self.symmetry and (col == row):
             block += self.symmetry_op(block.swapaxes(-1, -2))
             block[..., *xp.diag_indices(block.shape[-1])] /= 2
@@ -431,23 +379,24 @@ class DSBCOO(DSBSparse):
 
         """
         if self.symmetry:
-            # TODO: If needed, this will need some more thinking.
-            raise NotImplementedError("Sparse blocks with symmetry not implemented.")
-
+            # TODO: If really needed, this will need some more thinking.
+            raise NotImplementedError("Not implemented")
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
+        rowptr = self.rowptr_map.get((row, col), None)
 
-        block_slice = self._get_block_slice(row, col)
+        if rowptr is None:
+            # No data in this block, return zeros.
+            return (
+                xp.empty(data_stack.shape[:-1] + (0,)),
+                xp.empty(0),
+                xp.zeros(int(self.block_sizes[row]) + 1),
+            )
 
-        if block_slice.start is None and block_slice.stop is None:
-            # No data in this block, return an empty block.
-            return xp.empty(data_stack.shape[:-1] + (0,)), (xp.empty(0), xp.empty(0))
-
-        rows = self.rows[block_slice] - self.block_offsets[row]
-        cols = self.cols[block_slice] - self.block_offsets[col]
-        return data_stack[..., block_slice], (rows, cols)
+        cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
+        return data_stack[..., rowptr[0] : rowptr[-1]], cols, rowptr - rowptr[0]
 
     @profiler.profile(level="debug")
     def _set_block(
@@ -488,30 +437,30 @@ class DSBCOO(DSBSparse):
                 block=self.symmetry_op(block.swapaxes(-1, -2)),
                 is_index=is_index,
             )
-            return
 
         if is_index:
             data_stack = self.data[*arg]
         else:
             data_stack = arg
 
-        block_slice = self._get_block_slice(row, col)
-        if block_slice.start is None and block_slice.stop is None:
+        rowptr = self.rowptr_map.get((row, col), None)
+        if rowptr is None:
             # No data in this block, nothing to do.
             return
 
-        dsbcoo_kernels.sparsify_block(
-            block,
-            self.rows[block_slice] - self.block_offsets[row],
-            self.cols[block_slice] - self.block_offsets[col],
-            data_stack[..., block_slice],
+        dsbcsr_kernels.sparsify_block(
+            block=block,
+            block_offset=self.block_offsets[col],
+            self_cols=self.cols,
+            rowptr=rowptr,
+            data=data_stack,
         )
 
     @profiler.profile(level="debug")
-    def _check_commensurable(self, other: "DSBSparse") -> None:
+    def _check_commensurable(self, other: "DSDBSparse") -> None:
         """Checks if the other matrix is commensurate."""
-        if not isinstance(other, DSBCOO):
-            raise TypeError("Can only add DSBCOO matrices.")
+        if not isinstance(other, DSDBCSR):
+            raise TypeError("Can only add DSDBCSR matrices.")
 
         if self.shape != other.shape:
             raise ValueError("Matrix shapes do not match.")
@@ -519,18 +468,40 @@ class DSBCOO(DSBSparse):
         if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if xp.any(self.rows != other.rows):
-            raise ValueError("Row indices do not match.")
+        if self.rowptr_map.keys() != other.rowptr_map.keys():
+            raise ValueError("Block sparsities do not match.")
 
         if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
-    def __neg__(self) -> "DSBCOO":
+    def __iadd__(self, other: "DSDBCSR | sparse.spmatrix") -> "DSDBCSR":
+        """In-place addition of two DSDBCSR matrices."""
+        if sparse.issparse(other):
+            raise NotImplementedError(
+                "In-place addition is not implemented for DSDBCSR matrices."
+            )
+
+        self._check_commensurable(other)
+        self._data += other._data
+        return self
+
+    def __isub__(self, other: "DSDBCSR | sparse.spmatrix") -> "DSDBCSR":
+        """In-place subtraction of two DSDBCSR matrices."""
+        if sparse.issparse(other):
+            raise NotImplementedError(
+                "In-place subtraction is not implemented for DSDBCSR matrices."
+            )
+
+        self._check_commensurable(other)
+        self._data -= other._data
+        return self
+
+    def __neg__(self) -> "DSDBCSR":
         """Negation of the data."""
-        return DSBCOO(
+        return DSDBCSR(
             data=-self.data,
-            rows=self.rows,
             cols=self.cols,
+            rowptr_map=self.rowptr_map,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
@@ -538,7 +509,7 @@ class DSBCOO(DSBSparse):
             symmetry_op=self.symmetry_op,
         )
 
-    @DSBSparse.block_sizes.setter
+    @DSDBSparse.block_sizes.setter
     def block_sizes(self, block_sizes: NDArray) -> None:
         """Sets new block sizes for the matrix.
 
@@ -556,64 +527,67 @@ class DSBCOO(DSBSparse):
         num_blocks = len(block_sizes)
         # Check if configuration already exists.
         if num_blocks in self._block_config:
+            # Compute canonical ordering of the matrix.
 
             if num_blocks == self.num_blocks:
                 return
 
-            # Compute canonical ordering of the matrix.
-            inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
-
             if self._block_config[num_blocks].inds_canonical2block is None:
-                canonical_rows = self.rows[inds_bcoo2canonical]
-                canonical_cols = self.cols[inds_bcoo2canonical]
+                rows, cols = self.spy()
+                inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))
+                canonical_rows = rows[inds_bcsr2canonical]
+                canonical_cols = cols[inds_bcsr2canonical]
                 # Compute the index for sorting by the new block-sizes.
-                inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
+                inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
                     canonical_rows, canonical_cols, block_sizes
                 )
                 self._block_config[num_blocks].inds_canonical2block = (
-                    inds_canonical2bcoo
+                    inds_canonical2bcsr
                 )
+                self._block_config[num_blocks].rowptr_map = rowptr_map
+
+            self.rowptr_map = self._block_config[num_blocks].rowptr_map
 
             # Mapping directly from original block-ordering to the new
             # block-ordering is achieved by chaining the two mappings.
-            inds_bcoo2bcoo = inds_bcoo2canonical[
+            inds_bcsr2bcsr = inds_bcsr2canonical[
                 self._block_config[num_blocks].inds_canonical2block
             ]
             data = self.data.reshape(-1, self.data.shape[-1])
             for stack_idx in range(data.shape[0]):
-                data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
-            self.rows = self.rows[inds_bcoo2bcoo]
-            self.cols = self.cols[inds_bcoo2bcoo]
+                data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
+            self.cols = self.cols[inds_bcsr2bcsr]
 
             self.num_blocks = num_blocks
             return
 
         if sum(block_sizes) != self.shape[-1]:
-            raise ValueError("Block sizes must sum to matrix shape.")
+            raise ValueError("Block sizes do not match matrix shape.")
+        rows, cols = self.spy()
         # Compute canonical ordering of the matrix.
-        inds_bcoo2canonical = xp.lexsort(xp.vstack((self.cols, self.rows)))
-        canonical_rows = self.rows[inds_bcoo2canonical]
-        canonical_cols = self.cols[inds_bcoo2canonical]
+        inds_bcsr2canonical = xp.lexsort(xp.vstack((cols, rows)))
+        canonical_rows = rows[inds_bcsr2canonical]
+        canonical_cols = cols[inds_bcsr2canonical]
         # Compute the index for sorting by the new block-sizes.
-        inds_canonical2bcoo = dsbcoo_kernels.compute_block_sort_index(
+        inds_canonical2bcsr, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
             canonical_rows, canonical_cols, block_sizes
         )
+        self.rowptr_map = rowptr_map
         # Mapping directly from original block-ordering to the new
         # block-ordering is achieved by chaining the two mappings.
-        inds_bcoo2bcoo = inds_bcoo2canonical[inds_canonical2bcoo]
+        inds_bcsr2bcsr = inds_bcsr2canonical[inds_canonical2bcsr]
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
-            data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
-        self.rows = self.rows[inds_bcoo2bcoo]
-        self.cols = self.cols[inds_bcoo2bcoo]
-        # Update the block sizes and offsets.
+            data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
+        self.cols = self.cols[inds_bcsr2bcsr]
+
         block_sizes = np.asarray(block_sizes, dtype=np.int32)
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
         self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
     @profiler.profile(level="api")
-    def ltranspose(self, copy=False) -> "None | DSBCOO":
+    def ltranspose(self, copy=False) -> "None | DSDBCSR":
         """Performs a local transposition of the matrix.
 
         Parameters
@@ -623,20 +597,19 @@ class DSBCOO(DSBSparse):
 
         Returns
         -------
-        None | DSBCOO
+        None | DSDBCSR
             The transposed matrix. If copy is False, this is None.
 
         """
-
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if self.symmetry:
             if copy:
-                self = DSBCOO(
+                self = DSDBCSR(
                     self.data.copy(),
-                    self.rows.copy(),
                     self.cols.copy(),
+                    self.rowptr_map.copy(),
                     self.block_sizes,
                     self.global_stack_shape,
                     symmetry=self.symmetry,
@@ -646,10 +619,10 @@ class DSBCOO(DSBSparse):
             return self if copy else None
 
         if copy:
-            self = DSBCOO(
+            self = DSDBCSR(
                 self.data.copy(),
-                self.rows.copy(),
                 self.cols.copy(),
+                self.rowptr_map.copy(),
                 self.block_sizes,
                 self.global_stack_shape,
                 symmetry=self.symmetry,
@@ -657,49 +630,42 @@ class DSBCOO(DSBSparse):
             )
 
         if not (
-            hasattr(self, "_inds_bcoo2bcoo_t")
-            and hasattr(self, "_rows_t")
+            hasattr(self, "_inds_bcsr2bcsr_t")
+            and hasattr(self, "_rowptr_map_t")
             and hasattr(self, "_cols_t")
-            and hasattr(self, "_block_slice_cache_t")
         ):
+            # These indices are sorted by block-row and -column.
+            rows, cols = self.spy()
+
             # Transpose.
-            rows_t, cols_t = self.cols, self.rows
+            rows_t, cols_t = cols, rows
 
             # Canonical ordering of the transpose.
-            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
-            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
-            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
+            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
+            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
 
-            # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
+            # Compute index for sorting the transpose by block and the
+            # transpose rowptr map.
+            inds_canonical2bcsr_t, rowptr_map_t = dsbcsr_kernels.compute_rowptr_map(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
             # Mapping directly from original ordering to transpose
             # block-ordering is achieved by chaining the two mappings.
-            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
+            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
 
             # Cache the necessary objects.
-            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
-            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
-            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
-
-            self._block_slice_cache_t = {}
+            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
+            self._rowptr_map_t = rowptr_map_t
+            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
-            data[stack_idx] = data[stack_idx, self._inds_bcoo2bcoo_t]
-        self._inds_bcoo2bcoo_t = xp.argsort(self._inds_bcoo2bcoo_t)
+            data[stack_idx] = data[stack_idx, self._inds_bcsr2bcsr_t]
+        self._inds_bcsr2bcsr_t = xp.argsort(self._inds_bcsr2bcsr_t)
         self.cols, self._cols_t = self._cols_t, self.cols
-        self.rows, self._rows_t = self._rows_t, self.rows
-
-        (
-            self._block_config[self.num_blocks].block_slice_cache,
-            self._block_slice_cache_t,
-        ) = (
-            self._block_slice_cache_t,
-            self._block_config[self.num_blocks].block_slice_cache,
-        )
+        self.rowptr_map, self._rowptr_map_t = self._rowptr_map_t, self.rowptr_map
 
         return self if copy else None
 
@@ -716,48 +682,44 @@ class DSBCOO(DSBSparse):
             is addition.
 
         """
-        if self.symmetry:
-            # Already symmetric, nothing to do.
-            return
-
         if self.distribution_state == "nnz":
-            raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
+            raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
         if not (
-            hasattr(self, "_inds_bcoo2bcoo_t")
-            and hasattr(self, "_rows_t")
+            hasattr(self, "_inds_bcsr2bcsr_t")
+            and hasattr(self, "_rowptr_map_t")
             and hasattr(self, "_cols_t")
-            and hasattr(self, "_block_slice_cache_t")
         ):
+            # These indices are sorted by block-row and -column.
+            rows, cols = self.spy()
+
             # Transpose.
-            rows_t, cols_t = self.cols, self.rows
+            rows_t, cols_t = cols, rows
 
             # Canonical ordering of the transpose.
-            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
-            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
-            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
+            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
+            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
 
-            # Compute index for sorting the transpose by block.
-            inds_canonical2bcoo_t = dsbcoo_kernels.compute_block_sort_index(
+            # Compute index for sorting the transpose by block and the
+            # transpose rowptr map.
+            inds_canonical2bcsr_t, rowptr_map_t = dsbcsr_kernels.compute_rowptr_map(
                 canonical_rows_t, canonical_cols_t, self.block_sizes
             )
 
             # Mapping directly from original ordering to transpose
             # block-ordering is achieved by chaining the two mappings.
-            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
+            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
 
             # Cache the necessary objects.
-            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
-            self._rows_t = rows_t[self._inds_bcoo2bcoo_t]
-            self._cols_t = cols_t[self._inds_bcoo2bcoo_t]
-
-            self._block_slice_cache_t = {}
+            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
+            self._rowptr_map_t = rowptr_map_t
+            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
 
         data = self.data.reshape(-1, self.data.shape[-1])
         for stack_idx in range(data.shape[0]):
             data[stack_idx] = 0.5 * op(
-                data[stack_idx],
-                xp.conj(data[stack_idx, self._inds_bcoo2bcoo_t]),
+                data[stack_idx], data[stack_idx, self._inds_bcsr2bcsr_t].conj()
             )
 
     @profiler.profile(level="api")
@@ -776,7 +738,39 @@ class DSBCOO(DSBSparse):
             Column indices of the non-zero elements.
 
         """
-        return self.rows, self.cols
+        rows = xp.zeros(self.cols.size, dtype=int)
+        for (row, __), rowptr in self.rowptr_map.items():
+            for i in range(int(self.block_sizes[row])):
+                rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
+
+        return rows, self.cols
+
+    @classmethod
+    @profiler.profile(level="api")
+    def zeros_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
+        """Creates a new DSDBSparse matrix with the same shape and dtype.
+
+        All non-zero elements are set to zero, but the sparsity pattern
+        is preserved.
+
+        Parameters
+        ----------
+        dsdbsparse : DSDBSparse
+            The matrix to copy the shape and dtype from.
+
+        Returns
+        -------
+        DSDBSparse
+            The new DSDBSparse matrix.
+
+        """
+        # TODO: deepcopy should be removed
+        # Problem with symmetry operators
+        out = copy.deepcopy(dsdbsparse)
+        if out._data is None:
+            out.allocate_data()
+        out._data[:] = 0.0
+        return out
 
     @classmethod
     @profiler.profile(level="api")
@@ -785,12 +779,10 @@ class DSBCOO(DSBSparse):
         arr: sparse.spmatrix,
         block_sizes: NDArray,
         global_stack_shape: tuple,
-        densify_blocks: list[tuple] | None = None,
-        pinned: bool = False,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
-    ) -> "DSBCOO":
-        """Creates a new DSBSparse matrix from a scipy.sparse array.
+    ) -> "DSDBCSR":
+        """Creates a new DSDBSparse matrix from a scipy.sparse array.
 
         Parameters
         ----------
@@ -801,16 +793,16 @@ class DSBCOO(DSBSparse):
         global_stack_shape : tuple
             The global shape of the stack of matrices. The provided
             sparse matrix is replicated across the stack.
-        densify_blocks : list[tuple], optional
-            List of matrix blocks to densify. Default is None. This is
-            useful to densify the boundary blocks of the matrix
-        pinned : bool, optional
-            Whether to pin the memory when using GPU. Default is False.
+        symmetry : bool, optional
+            Whether to enforce symmetry in the matrix. Default is False.
+        symmetry_op : callable, optional
+            The operation to use for the symmetry. Default is
+            `xp.conj`.
 
         Returns
         -------
-        DSBCOO
-            The new DSBCOO matrix.
+        DSDBCSR
+            The new DSDBCSR matrix.
 
         """
         # We only distribute the first dimension of the stack.
@@ -818,36 +810,61 @@ class DSBCOO(DSBSparse):
         section_size = stack_section_sizes[comm.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
-        # coo: sparse.coo_matrix = arr.tocoo().copy()
-        coo: sparse.coo_matrix = arr.tocoo()
+        coo: sparse.coo_matrix = arr.tocoo().copy()
 
-        if densify_blocks is not None:
-            coo = coo.copy()
-            coo = densify_selected_blocks(coo, block_sizes, densify_blocks)
+        # Canonicalizes the COO format.
+        coo.sum_duplicates()
 
         if symmetry:
             coo = sparse.triu(coo, format="coo")
 
-        # Canonicalizes the COO format.
-        if not coo.has_canonical_format:
-            coo.sum_duplicates()
-
-        # Compute the block-sorting index.
-        block_sort_index = dsbcoo_kernels.compute_block_sort_index(
+        # Compute block sorting index and the transpose rowptr map.
+        block_sort_index, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
             coo.row, coo.col, block_sizes
         )
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)
-        data[..., :] = coo.data[block_sort_index]
-        rows = coo.row[block_sort_index]
+        data[:] = coo.data[block_sort_index]
         cols = coo.col[block_sort_index]
 
         return cls(
             data=data,
-            rows=rows,
             cols=cols,
+            rowptr_map=rowptr_map,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
         )
+
+    @profiler.profile(level="api")
+    def to_dense(self) -> NDArray:
+        """Converts the local data to a dense array.
+
+        This is dumb, unless used for testing and debugging.
+
+        Returns
+        -------
+        arr : NDArray
+            The dense array of shape `(*local_stack_shape, *shape)`.
+
+        """
+        if self.distribution_state != "stack":
+            raise ValueError(
+                "Conversion to dense is only supported in 'stack' distribution state."
+            )
+
+        original_return_dense = self.return_dense
+        self.return_dense = True
+
+        arr = xp.zeros(self.shape, dtype=self.dtype)
+        for i, j in xp.ndindex(self.num_blocks, self.num_blocks):
+            arr[
+                ...,
+                self.block_offsets[i] : self.block_offsets[i + 1],
+                self.block_offsets[j] : self.block_offsets[j + 1],
+            ] = self._get_block((Ellipsis,), i, j)
+
+        self.return_dense = original_return_dense
+
+        return arr

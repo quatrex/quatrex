@@ -3,70 +3,11 @@
 import functools
 
 from qttools import NDArray, sparse, xp
-from qttools.datastructures.dsbsparse import DSBSparse
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
 from qttools.profiling import Profiler
 
 profiler = Profiler()
-
-
-@profiler.profile(level="debug")
-def densify_selected_blocks(
-    coo: sparse.coo_matrix,
-    block_sizes: NDArray,
-    blocks: list[tuple[int, int]],
-) -> sparse.coo_matrix:
-    """Densifies the selected blocks of a sparse coo matrix.
-
-    This adds indices to the selected blocks to make them dense.
-
-    Parameters
-    ----------
-    coo : sparse.coo_matrix
-        The sparse matrix in coordinate format.
-    block_sizes : NDArray
-        The block sizes of the block-sparse matrix we want to construct.
-    blocks : list[tuple[int, int]]
-        A list of blocks to densify.
-
-    Returns
-    -------
-    coo : sparse.coo_matrix
-        The selectively densified sparse matrix in coordinate format.
-
-    """
-    num_blocks = len(block_sizes)
-    block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
-
-    added_nnz = int(xp.sum(xp.prod(block_sizes[blocks], axis=1)))
-    added_rows = xp.empty(added_nnz, dtype=xp.int32)
-    added_cols = xp.empty(added_nnz, dtype=xp.int32)
-
-    offset = 0
-    for i, j in blocks:
-        # Unsign the block indices.
-        i = num_blocks + i if i < 0 else i
-        j = num_blocks + j if j < 0 else j
-
-        row_size = int(block_sizes[i])
-        col_size = int(block_sizes[j])
-        nnz = row_size * col_size
-        added_rows[offset : offset + nnz] = (
-            xp.repeat(xp.arange(row_size), col_size) + block_offsets[i]
-        )
-        added_cols[offset : offset + nnz] = (
-            xp.tile(xp.arange(col_size), row_size) + block_offsets[j]
-        )
-        offset += nnz
-
-    coo.row = xp.append(coo.row, added_rows)
-    coo.col = xp.append(coo.col, added_cols)
-    coo.data = xp.append(coo.data, xp.zeros(added_nnz, dtype=coo.data.dtype))
-
-    coo.sum_duplicates()
-
-    return coo
 
 
 @profiler.profile(level="debug")
@@ -103,8 +44,8 @@ def product_sparsity_pattern(
     return product.row, product.col
 
 
-def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
-    """Converts a DSBSparse matrix to a dictionary of CSR blocks."""
+def tocsr_dict(matrix: DSDBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
+    """Converts a DSDBSparse matrix to a dictionary of CSR blocks."""
 
     blocks = {}
 
@@ -121,9 +62,9 @@ def tocsr_dict(matrix: DSBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
 
 
 def product_sparsity_pattern_dsbsparse(
-    *matrices: DSBSparse, spillover: bool = False
+    *matrices: DSDBSparse, spillover: bool = False
 ) -> tuple[NDArray, NDArray]:
-    """Computes the sparsity pattern of the product of a sequence of DSBSparse matrices.
+    """Computes the sparsity pattern of the product of a sequence of DSDBSparse matrices.
 
     Parameters
     ----------
@@ -204,7 +145,7 @@ def product_sparsity_pattern_dsbsparse(
 
 
 def product_sparsity_pattern_dsdbsparse(
-    *matrices: DSBSparse | DSDBSparse,
+    *matrices: DSDBSparse | DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = None,
     start_block: int = 0,

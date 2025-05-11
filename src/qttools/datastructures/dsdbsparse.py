@@ -9,7 +9,6 @@ import numpy as np
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.datastructures.dsbsparse import BlockConfig, _block_view
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
@@ -37,12 +36,87 @@ def _flatten_list(nested_lists: list[list]) -> list:
     return list(itertools.chain.from_iterable(nested_lists))
 
 
+@profiler.profile(level="debug")
+def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
+    """Gets a block view of an array along a given axis.
+
+    This is a helper function to get a block view of an array along a
+    given axis. This is useful for the distributed transposition of
+    arrays, where we need to transpose the data through the network.
+
+    This is stolen from `skimage.util.view_as_blocks`.
+
+    Parameters
+    ----------
+    arr : NDArray
+        The array to get the block view of.
+    axis : int
+        The axis along which to get the block view.
+    num_blocks : int, optional
+        The number of blocks to divide the array into. Default is the
+        number of MPI ranks in the communicator.
+
+    Returns
+    -------
+    block_view : NDArray
+        The specified block view of the array.
+
+    """
+    block_shape = list(arr.shape)
+
+    if block_shape[axis] % num_blocks != 0:
+        raise ValueError("The array shape is not divisible by the number of blocks.")
+
+    block_shape[axis] //= num_blocks
+
+    new_shape = (num_blocks,) + tuple(block_shape)
+    new_strides = (arr.strides[axis] * block_shape[axis],) + arr.strides
+
+    return xp.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
+
+
+class BlockConfig(object):
+    """Configuration of block-sizes and block-slices for a DSBSparse matrix.
+
+    Parameters
+    ----------
+    block_sizes : NDArray
+        The size of each block in the sparse matrix.
+    block_offsets : NDArray
+        The block offsets of the block-sparse matrix.
+    inds_canonical2lock : NDArray, optional
+        A mapping from canonical to block-sorted indices. Default is
+        None.
+    rowptr_map : dict, optional
+        A mapping from block-coordinates to row-pointers. Default is
+        None.
+    block_slice_cache : dict, optional
+        A cache for the block slices. Default is None.
+
+    """
+
+    def __init__(
+        self,
+        block_sizes: NDArray,
+        block_offsets: NDArray,
+        inds_canonical2bcoo: NDArray | None = None,
+        rowptr_map: dict | None = None,
+        block_slice_cache: dict | None = None,
+    ):
+        """Initializes the block config."""
+        self.block_sizes = block_sizes
+        self.block_offsets = block_offsets
+        self.inds_canonical2block = inds_canonical2bcoo
+        self.rowptr_map = rowptr_map or {}
+        self.block_slice_cache = block_slice_cache or {}
+
+
 class DSDBSparse(ABC):
     """Base class for Distributed Stack of Distributed Block-accessible Sparse matrices.
 
     Parameters
     ----------
-    local_data : NDArray
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, local_nnz)`. It is the caller's
         responsibility to ensure that the data is distributed correctly
@@ -64,7 +138,7 @@ class DSDBSparse(ABC):
 
     def __init__(
         self,
-        local_data: NDArray,
+        data: NDArray,
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
@@ -104,7 +178,7 @@ class DSDBSparse(ABC):
         self.total_stack_size = total_stack_size
 
         nnz_section_sizes, total_nnz_size = get_section_sizes(
-            local_data.shape[-1], comm.stack.size, strategy="greedy"
+            data.shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes_host = nnz_section_sizes
         self.nnz_section_offsets_host = np.hstack(
@@ -121,9 +195,9 @@ class DSDBSparse(ABC):
         # same data size for the all-to-all communication.
         self._data = xp.zeros(
             (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=local_data.dtype,
+            dtype=data.dtype,
         )
-        self._data[: local_data.shape[0], ..., : local_data.shape[-1]] = local_data
+        self._data[: data.shape[0], ..., : data.shape[-1]] = data
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -134,8 +208,8 @@ class DSDBSparse(ABC):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
 
-        self.stack_shape = local_data.shape[:-1]
-        self.local_nnz = local_data.shape[-1]
+        self.stack_shape = data.shape[:-1]
+        self.local_nnz = data.shape[-1]
         # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
@@ -163,7 +237,7 @@ class DSDBSparse(ABC):
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = local_data.dtype
+        self.dtype = data.dtype
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)

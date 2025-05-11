@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import xp
-from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler, decorate_methods
@@ -34,10 +34,10 @@ class Inv(GFSolver):
 
     def selected_inv(
         self,
-        a: DSBSparse,
+        a: DSDBSparse,
         obc_blocks: OBCBlocks | None = None,
-        out: DSBSparse | None = None,
-    ) -> None | DSBSparse:
+        out: DSDBSparse | None = None,
+    ) -> None | DSDBSparse:
         """Performs selected inversion of a block-tridiagonal matrix.
 
         This method will densify the matrix, invert it, and then select
@@ -46,19 +46,19 @@ class Inv(GFSolver):
 
         Parameters
         ----------
-        a : DSBSparse
+        a : DSDBSparse
             Matrix to invert.
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : DSBSparse, optional
+        out : DSDBSparse, optional
             Preallocated output matrix, by default None.
 
         Returns
         -------
-        None | DSBSparse
+        None | DSDBSparse
             If `out` is None, returns None. Otherwise, returns the
-            inverted matrix as a DSBSparse object.
+            inverted matrix as a DSDBSparse object.
 
         """
         # Get list of batches to perform
@@ -100,11 +100,11 @@ class Inv(GFSolver):
 
     def selected_solve(
         self,
-        a: DSBSparse,
-        sigma_lesser: DSBSparse,
-        sigma_greater: DSBSparse,
+        a: DSDBSparse,
+        sigma_lesser: DSDBSparse,
+        sigma_greater: DSDBSparse,
         obc_blocks: OBCBlocks | None = None,
-        out: tuple[DSBSparse, ...] | None = None,
+        out: tuple[DSDBSparse, ...] | None = None,
         return_retarded: bool = False,
         return_current: bool = False,
     ) -> None | tuple:
@@ -119,18 +119,18 @@ class Inv(GFSolver):
 
         Parameters
         ----------
-        a : DSBSparse
+        a : DSDBSparse
             Matrix to invert.
-        sigma_lesser : DSBSparse
+        sigma_lesser : DSDBSparse
             Lesser matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
-        sigma_greater : DSBSparse
+        sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : tuple[DSBSparse, ...] | None, optional
+        out : tuple[DSDBSparse, ...] | None, optional
             Preallocated output matrices, by default None
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
@@ -217,7 +217,7 @@ class Inv(GFSolver):
                 @ x_r[: batches_sizes[i]].conj().swapaxes(-2, -1)
             )
 
-            # Store the dense batches in the DSBSparse datastructures
+            # Store the dense batches in the DSDBSparse datastructures
             sel_x_l.data[stack_slice,] = x_l[: batches_sizes[i], ..., rows_l, cols_l]
             sel_x_g.data[stack_slice,] = x_g[: batches_sizes[i], ..., rows_g, cols_g]
             if return_retarded:

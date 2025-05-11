@@ -36,12 +36,12 @@ class DSDBCOO(DSDBSparse):
 
     Parameters
     ----------
-    local_data : NDArray
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, local_nnz)`.
-    local_rows : NDArray
+    rows : NDArray
         The local row indices of the COO matrix.
-    local_cols : NDArray
+    cols : NDArray
         The local column indices of the COO matrix.
     block_sizes : NDArray
         The size of each block in the sparse matrix.
@@ -55,14 +55,19 @@ class DSDBCOO(DSDBSparse):
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
+    symmetry : bool, optional
+        Whether the matrix is symmetric. Default is False.
+    symmetry_op : callable, optional
+        The operation to use for the symmetry. Default is
+        `xp.conj`.
 
     """
 
     def __init__(
         self,
-        local_data: NDArray,
-        local_rows: NDArray,
-        local_cols: NDArray,
+        data: NDArray,
+        rows: NDArray,
+        cols: NDArray,
         block_sizes: NDArray,
         global_stack_shape: tuple,
         return_dense: bool = True,
@@ -71,7 +76,7 @@ class DSDBCOO(DSDBSparse):
     ):
         """Initializes a DSDBCOO matrix."""
         super().__init__(
-            local_data,
+            data,
             block_sizes,
             global_stack_shape,
             return_dense,
@@ -79,8 +84,8 @@ class DSDBCOO(DSDBSparse):
             symmetry_op=symmetry_op,
         )
 
-        self.rows = xp.asarray(local_rows, dtype=xp.int32)
-        self.cols = xp.asarray(local_cols, dtype=xp.int32)
+        self.rows = xp.asarray(rows, dtype=xp.int32)
+        self.cols = xp.asarray(cols, dtype=xp.int32)
 
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
@@ -594,9 +599,9 @@ class DSDBCOO(DSDBSparse):
     def __neg__(self) -> "DSDBCOO":
         """Negation of the data."""
         return DSDBCOO(
-            local_data=-self.data,
-            local_rows=self.rows,
-            local_cols=self.cols,
+            data=-self.data,
+            rows=self.rows,
+            cols=self.cols,
             block_sizes=self.block_sizes,
             global_stack_shape=self.global_stack_shape,
             return_dense=self.return_dense,
@@ -844,6 +849,11 @@ class DSDBCOO(DSDBSparse):
             The block sizes of the block-sparse matrix.
         global_stack_shape : tuple
             The global shape of the stack.
+        symmetry : bool, optional
+            Whether to enforce symmetry in the matrix. Default is False.
+        symmetry_op : callable, optional
+            The operation to use for the symmetry. Default is
+            `xp.conj`.
 
         Returns
         -------
@@ -920,9 +930,9 @@ class DSDBCOO(DSDBSparse):
                 f"[DSDBCOO.from_sparray] Block sorting time: {t_block_sort - t_sum_duplicates:.3f} seconds"
             )
 
-        data = coo.data[block_sort_index]
-        rows = coo.row[block_sort_index]
-        cols = coo.col[block_sort_index]
+        _data = coo.data[block_sort_index]
+        _rows = coo.row[block_sort_index]
+        _cols = coo.col[block_sort_index]
 
         # Determine the local slice of the data.
         # NOTE: This is arrow-wise partitioning.
@@ -933,21 +943,21 @@ class DSDBCOO(DSDBSparse):
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
         start_idx = block_offsets[section_offsets[comm.block.rank]]
         end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
-        local_mask = ((rows >= start_idx) & (cols >= start_idx)) & (
-            (rows < end_idx) | (cols < end_idx)
+        local_mask = ((_rows >= start_idx) & (_cols >= start_idx)) & (
+            (_rows < end_idx) | (_cols < end_idx)
         )
 
-        local_data = xp.zeros(
+        data = xp.zeros(
             local_stack_shape + (int(local_mask.sum()),), dtype=coo.data.dtype
         )
-        local_data[..., :] = data[local_mask]
-        local_rows = rows[local_mask] - start_idx
-        local_cols = cols[local_mask] - start_idx
+        data[..., :] = _data[local_mask]
+        rows = _rows[local_mask] - start_idx
+        cols = _cols[local_mask] - start_idx
 
         return cls(
-            local_data=local_data,
-            local_rows=local_rows,
-            local_cols=local_cols,
+            data=data,
+            rows=rows,
+            cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             symmetry=symmetry,
@@ -991,5 +1001,9 @@ class DSDBCOO(DSDBSparse):
 
         arr = xp.zeros(self.shape, dtype=self.dtype)
         arr[..., rows, cols] = data
+
+        if self.symmetry:
+            arr += self.symmetry_op(arr.swapaxes(-1, -2))
+            arr[..., *xp.diag_indices(arr.shape[-1])] /= 2
 
         return arr

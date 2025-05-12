@@ -15,12 +15,13 @@ from qttools.utils.mpi_utils import distributed_load
 # from scipy import sparse as sp_sparse
 
 try:
-    from qttools.cuDSS_binding.cudss_wrapp import spsolve_with_CUDSS
-
+    from qttools.cuDSS_binding.cudss_wrapp import CuDSS
     CUDSS_AVAILABLE = True
     print("CUDSS available") if comm.rank == 0 else None
+    cuDSS = CuDSS()
 except ImportError:
     CUDSS_AVAILABLE = False
+
 
 try:
     import mumps
@@ -414,10 +415,18 @@ class Contact:
     vec_orb_cont: NDArray = None  # in-coupling" orbitals in the contact superblock
     vec_orb_last_block = None  # "out-coupling" orbitals in the last contact block
 
-    vec_atoms_first_block: NDArray = None  # atoms in the first contact block
-    vec_orb_first_block: NDArray = None  # orbitals in the first contact block
+    vec_atoms_first_block: NDArray = None #atoms in the first contact block
+    vec_orb_first_block: NDArray = None #orbitals in the first contact block
 
-    N_coup: int = None  # Number of sub-blocks in the contact superblock
+    H00 = None #The Hamiltonian matrix for the contact superblock
+    H01 = None #The Hamiltonian matrix for the contact superblock
+    H10 = None #The Hamiltonian matrix for the contact superblock
+
+    S00 = None #The Hamiltonian matrix for the contact superblock
+    S01 = None #The Hamiltonian matrix for the contact superblock
+    S10 = None #The Hamiltonian matrix for the contact superblock
+    
+    N_coup: int = None #Number of sub-blocks in the contact superblock
 
     # Constructor
     def __init__(self, corner_1, corner_2, direction, name):
@@ -428,6 +437,35 @@ class Contact:
 
         self.N_coup = 0
 
+    def set_ham_ov(self, ham: sparse.csr_matrix, ov: sparse.csr_matrix):
+        """
+        Sets the Hamiltonian and overlap matrices for the contact.
+
+        Parameters
+        ----------
+        ham : sparse.csr_matrix
+            The Hamiltonian matrix.
+        ov : sparse.csr_matrix
+            The overlap matrix.
+        """
+
+        self.H10, self.H00, self.H01 = get_periodic_superblocks_no_flip(
+                    ham[self.vec_orb_last_block.T,self.vec_orb_first_block].toarray(),
+                    ham[self.vec_orb_cont.T,self.vec_orb_first_block].toarray(),
+                    ham[self.vec_orb_first_block.T,self.vec_orb_cont].toarray(),
+                    ham[self.vec_orb_first_block.T,self.vec_orb_last_block].toarray(),
+                    block_sections=self.N_coup,
+                )
+        
+        self.S10, self.S00, self.S01 = get_periodic_superblocks_no_flip(
+                    ov[self.vec_orb_last_block.T,self.vec_orb_first_block].toarray(),
+                    ov[self.vec_orb_cont.T,self.vec_orb_first_block].toarray(),
+                    ov[self.vec_orb_first_block.T,self.vec_orb_cont].toarray(),
+                    ov[self.vec_orb_first_block.T,self.vec_orb_last_block].toarray(),
+                    block_sections=self.N_coup,
+                )
+
+    def sort_cont_at(self,vec_atoms: NDArray, delta_corner: NDArray, coords: NDArray, coordsType: NDArray) -> NDArray:
     def sort_cont_at(
         self,
         vec_atoms: NDArray,
@@ -459,7 +497,7 @@ class Contact:
 
         sorted = 0
 
-        dx = 0.1  # A small margin used to ensure that the atoms can be sorted correctly
+        dx = 0.4 #A small margin used to ensure that the atoms can be sorted correctly
 
         vec_sorted = []
 
@@ -815,6 +853,8 @@ class QTBM:
         self.hamiltonian_sparray = self.hamiltonian_sparray.tocsr()
         self.overlap_sparray = self.overlap_sparray.tocsr()
 
+        self.sys_mat_shape = self.hamiltonian_sparray.shape[0]
+
         # Load the lattice and atomic coordinates
         self.lattice, self.atoms, self.coords, self.coordstType = distributed_read_xyz(
             quatrex_config.input_dir / "lattice.xyz"
@@ -872,20 +912,9 @@ class QTBM:
         # CREATE CONTACT LIST
         self.contacts = []
         for n in range(self.n_cont):
-            self.contacts.append(
-                Contact(
-                    self.corner1[n],
-                    self.corner2[n],
-                    self.corner_direction[n],
-                    self.cont_names[n],
-                )
-            )
-            self.contacts[n].set_vector(
-                self.coords,
-                self.orbitals_vec,
-                self.hamiltonian_sparray,
-                self.coordstType,
-            )
+            self.contacts.append(Contact(self.corner1[n],self.corner2[n],self.corner_direction[n],self.cont_names[n]))
+            self.contacts[n].set_vector(self.coords, self.orbitals_vec, self.hamiltonian_sparray, self.coordstType)
+            self.contacts[n].set_ham_ov(self.hamiltonian_sparray, self.overlap_sparray)
 
         # CREATE VECTORS FOR EVERY SLAB
         self.n_slabs_x, self.n_slab_y = distributed_read_slabs(
@@ -947,6 +976,8 @@ class QTBM:
         self.right_occupancies = fermi_dirac(
             self.local_energies - self.right_fermi_level, self.temperature
         )
+
+        self.reuse_sym = 0
 
     def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
         """Configures the NEVP solver from the config.
@@ -1023,10 +1054,8 @@ class QTBM:
             )
 
         return obc_solver
-
-    def compute_observables(
-        self, phi: NDArray, inj_ind: list, i: int, E: float, S: list
-    ):
+    
+    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list,inj):
         """
         Compute observables for the current iteration.
 
@@ -1088,54 +1117,33 @@ class QTBM:
         # Spill over correction
         phi_ortho = self.overlap_sparray @ phi  # "Orthogonalize" the wavefunction
         for n in range(self.n_cont):
-            # Get the off-couping superblocks for Ham and Overlap (Could also save them in the contact class)
-            _, H00, H01 = get_periodic_superblocks_no_flip(
-                self.hamiltonian_sparray[
-                    self.contacts[n].vec_orb_last_block.T,
-                    self.contacts[n].vec_orb_first_block,
-                ].toarray(),
-                self.hamiltonian_sparray[
-                    self.contacts[n].vec_orb_cont.T,
-                    self.contacts[n].vec_orb_first_block,
-                ].toarray(),
-                self.hamiltonian_sparray[
-                    self.contacts[n].vec_orb_first_block.T,
-                    self.contacts[n].vec_orb_cont,
-                ].toarray(),
-                self.hamiltonian_sparray[
-                    self.contacts[n].vec_orb_first_block.T,
-                    self.contacts[n].vec_orb_last_block,
-                ].toarray(),
-                block_sections=self.contacts[n].N_coup,
-            )
-            S10, S00, S01 = get_periodic_superblocks_no_flip(
-                self.overlap_sparray[
-                    self.contacts[n].vec_orb_last_block.T,
-                    self.contacts[n].vec_orb_first_block,
-                ].toarray(),
-                self.overlap_sparray[
-                    self.contacts[n].vec_orb_cont.T,
-                    self.contacts[n].vec_orb_first_block,
-                ].toarray(),
-                self.overlap_sparray[
-                    self.contacts[n].vec_orb_first_block.T,
-                    self.contacts[n].vec_orb_cont,
-                ].toarray(),
-                self.overlap_sparray[
-                    self.contacts[n].vec_orb_first_block.T,
-                    self.contacts[n].vec_orb_last_block,
-                ].toarray(),
-                block_sections=self.contacts[n].N_coup,
-            )
+            ##Get the off-couping superblocks for Ham and Overlap (Could also save them in the contact class)
+            #_,H00,H01 = get_periodic_superblocks_no_flip(
+            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
+            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
+            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
+            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
+            #        block_sections=self.contacts[n].N_coup,
+            #    )
+            #S10,S00,S01 = get_periodic_superblocks_no_flip(
+            #        self.overlap_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
+            #        self.overlap_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
+            #        self.overlap_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
+            #        self.overlap_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
+            #        block_sections=self.contacts[n].N_coup,
+            #    )
+            
+            #Solve a small system to propagate the WF inside the contact
+            #RHS of the system
+            
+            B = (self.contacts[n].H01-E*self.contacts[n].S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
+            #Solve the system of equations
+            phi_cont = solve(self.contacts[n].H00 - E*self.contacts[n].S00 - S[n], -B + inj[self.contacts[n].vec_orb_cont.squeeze(),:])
 
-            # Solve a small system to propagate the WF inside the contact
-            # RHS of the system
-            # B = self.system_matrix[self.contacts[n].vec_orb_cont,T,:] @ phi
-            B = (H01 - E * S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(), :]
-            # Solve the system of equations
-            phi_cont = solve(H00 - E * S00 - S[n], -B)
-            # Add the spill over contribution
-            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(), :] += S10 @ phi_cont
+            #B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
+            #phi_cont, _, _, _ = lstsq(self.contacts[n].H10-E*self.contacts[n].S10,-B)
+            #Add the spill over contribution
+            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += self.contacts[n].S10 @ phi_cont 
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -1156,9 +1164,11 @@ class QTBM:
         print("Entering QTBM calculation", flush=True) if comm.rank == 0 else None
         times = []
         comm.Barrier()
-        for i, E in enumerate(self.local_energies):
+        OBC_batch_size = 1
+        for batch_start in range(0, len(self.local_energies), OBC_batch_size):
+            E_batch_OBC = self.local_energies[batch_start : batch_start + OBC_batch_size]
 
-            print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
+            print(f"Processing energies {batch_start} to {batch_start + len(E_batch_OBC) - 1}", flush=True) if comm.rank == 0 else None
 
             # append for iteration time
             times.append(time.perf_counter())
@@ -1189,35 +1199,30 @@ class QTBM:
             sigma_b = []
             inj = []
             inj_ind = []
-            # w = []
+            inj_shifted = []
+            w = []
             # Compute the boundary self-energy and the injection vector
-            ind_0 = 0
+            ind_0 = xp.zeros(len(E_batch_OBC), dtype=xp.int32)
             for n in range(self.n_cont):
 
-                # Get the contact superblocks
-                m_10, m_00, m_01 = get_periodic_superblocks_no_flip(
-                    self.system_matrix[
-                        self.contacts[n].vec_orb_last_block.T,
-                        self.contacts[n].vec_orb_first_block,
-                    ].toarray(),
-                    self.system_matrix[
-                        self.contacts[n].vec_orb_cont.T,
-                        self.contacts[n].vec_orb_first_block,
-                    ].toarray(),
-                    self.system_matrix[
-                        self.contacts[n].vec_orb_first_block.T,
-                        self.contacts[n].vec_orb_cont,
-                    ].toarray(),
-                    self.system_matrix[
-                        self.contacts[n].vec_orb_first_block.T,
-                        self.contacts[n].vec_orb_last_block,
-                    ].toarray(),
-                    block_sections=self.contacts[n].N_coup,
-                )
+                times.append(time.perf_counter())
+
+                #Get the contact superblocks
+                #m_10, m_00, m_01 = get_periodic_superblocks_no_flip(
+                #    self.system_matrix[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
+                #    self.system_matrix[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
+                #    self.system_matrix[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
+                #    self.system_matrix[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
+                #    block_sections=self.contacts[n].N_coup,
+                #)
+
+                m_10 = self.contacts[n].H10 - E_batch_OBC[:,None,None] * self.contacts[n].S10
+                m_00 = self.contacts[n].H00 - E_batch_OBC[:,None,None] * self.contacts[n].S00
+                m_01 = self.contacts[n].H01 - E_batch_OBC[:,None,None] * self.contacts[n].S01
 
                 # Set the block sections for the OBC
                 self.obc.block_sections = self.contacts[n].N_coup
-                _, sigma_b_n, inj_n, _ = self.obc(
+                _ , sigma_b_cont, inj_cont, num_inj, inj_shifted_cont  = self.obc(
                     m_00,
                     m_01,
                     m_10,
@@ -1225,10 +1230,28 @@ class QTBM:
                     return_injected=True,
                 )
 
-                sigma_b.append(sigma_b_n)
-                inj.append(inj_n)
-                inj_ind.append(xp.arange(ind_0, ind_0 + inj_n.shape[1])[None, :])
-                ind_0 += inj_n.shape[1]
+                #sigma_b_n = sigma_b_n[0,:,:].squeeze()
+                #inj_n = inj_n[0]
+
+                sigma_b.append(sigma_b_cont)
+                inj.append(inj_cont)
+                inj_shifted.append(inj_shifted_cont)
+
+                #For every Energy in batch, compute a list with the indeces of evert injected vector
+                inj_ind_temp = []
+                for i in range(len(E_batch_OBC)):
+                    i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
+                    n_i = num_inj[i].get().item() if hasattr(num_inj[i], 'get') else num_inj[i].item()
+                    inj_ind_temp.append(xp.arange(i0,i0+n_i))
+                inj_ind.append(inj_ind_temp)
+                ind_0 += num_inj
+
+                t_solve = time.perf_counter() - times.pop()
+                (
+                    print(f"Time for OBC in contact {self.contacts[n].name[0]}: {t_solve:.2f} s", flush=True)
+                    if comm.rank == 0
+                    else None
+                )
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -1237,43 +1260,34 @@ class QTBM:
                 else None
             )
 
-            times.append(time.perf_counter())
+            for i,E in enumerate(E_batch_OBC):
 
-            # Set up sytem matrix and rhs for electron solver.
-            inj_V = xp.zeros(
-                (self.system_matrix.shape[0], ind_0), dtype=xp.complex128, order="F"
-            )  # Set the injection vector as a zero matrix
+                times.append(time.perf_counter())
 
-            ind1 = []
-            ind2 = []
-            sig_flat = []
-            # Iterate over contacts
-            for n in range(self.n_cont):
-                ind1.append(
-                    xp.repeat(
-                        self.contacts[n].vec_orb_cont.squeeze(),
-                        self.contacts[n].vec_orb_cont.shape[1],
-                    )
-                )
-                ind2.append(
-                    xp.tile(
-                        self.contacts[n].vec_orb_cont.squeeze(),
-                        self.contacts[n].vec_orb_cont.shape[1],
-                    )
-                )
-                sig_flat.append(sigma_b[n].flatten())
-                inj_V[self.contacts[n].vec_orb_cont.T, inj_ind[n]] = inj[
-                    n
-                ]  # Add the injection vector in the contact elements of the rhs
+                # Set up sytem matrix and rhs for electron solver.
+                i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
+                inj_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
+                inj_V_shifted = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
 
-            # Concatenate the indices and the self-energies
-            ind1 = xp.concatenate(ind1)
-            ind2 = xp.concatenate(ind2)
-            sig_flat = xp.concatenate(sig_flat)
+                ind1 = []
+                ind2 = []
+                sig_flat = []
+                #Iterate over contacts
+                for n in range(self.n_cont):
+                    ind1.append(xp.repeat(self.contacts[n].vec_orb_cont.squeeze(), self.contacts[n].vec_orb_cont.shape[1]))
+                    ind2.append(xp.tile(self.contacts[n].vec_orb_cont.squeeze(), self.contacts[n].vec_orb_cont.shape[1]))
+                    sig_flat.append(sigma_b[n][i,:,:].flatten())
+                    inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj[n][i] #Add the injection vector in the contact elements of the rhs
+                    inj_V_shifted[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj_shifted[n][i] #Add the injection vector in the contact elements of the rhs
+                
+                #Concatenate the indices and the self-energies
+                ind1 = xp.concatenate(ind1)
+                ind2 = xp.concatenate(ind2)
+                sig_flat = xp.concatenate(sig_flat)
 
-            upd_0 = sparse.coo_matrix(
-                (sig_flat, (ind1, ind2)), shape=self.system_matrix.shape
-            ).tocsr()
+                self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
+
+                upd_0 = sparse.coo_matrix((sig_flat, (ind1, ind2)),shape=self.system_matrix.shape).tocsr()
 
             # Update the system matrix with the self-energies
 
@@ -1293,39 +1307,46 @@ class QTBM:
 
             # self.system_matrix = sparse.csr_matrix(self.system_matrix)
 
-            # Eliminate the zeros that were added in the system matrix
-            self.system_matrix.eliminate_zeros()
+                #Eliminate the zeros that were added in the system matrix
+                #self.system_matrix.eliminate_zeros()
 
-            t_solve = time.perf_counter() - times.pop()
-            (
-                print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+                t_solve = time.perf_counter() - times.pop()
+                (
+                    print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
+                    if comm.rank == 0
+                    else None
+                )
 
-            times.append(time.perf_counter())
+                times.append(time.perf_counter())
 
             # Solve for the wavefunction
             # phi = spsolve(self.system_matrix, inj_V)
 
-            if inj_V.size != 0:
-                if CUDSS_AVAILABLE and xp.__name__ == "cupy":
-                    # USE CUDSS
-                    phi = spsolve_with_CUDSS(self.system_matrix, inj_V)
-                else:
-                    if MUMPS_AVAILABLE:
-                        # USE MUMPS
-                        inst = mumps.Context()
-                        t_mumps = time.perf_counter()
-                        inst.analyze(self.system_matrix)
-                        t_analyze = time.perf_counter() - t_mumps
-                        (
-                            print(
-                                f"Time for MUMPS analyze: {t_analyze:.2f} s", flush=True
+                if inj_V.size != 0:
+                    if CUDSS_AVAILABLE and xp.__name__ == "cupy":
+                        #USE CUDSS
+                        if self.reuse_sym == 0:
+                            #Create the system matrix on the GPU
+                            data = xp.empty_like(self.system_matrix.data)
+                            indices = xp.empty_like(self.system_matrix.indices)
+                            indptr = xp.empty_like(self.system_matrix.indptr)
+                        data[:self.system_matrix.data.shape[0]] = self.system_matrix.data[:]
+                        indices[:self.system_matrix.indices.shape[0]] = self.system_matrix.indices[:]
+                        indptr[:self.system_matrix.indptr.shape[0]] = self.system_matrix.indptr[:]                  
+                        phi = cuDSS.spsolve_with_CUDSS(self.system_matrix.shape[0],self.system_matrix.nnz,data,indices,indptr, inj_V)
+                        self.reuse_sym = 1
+                    else:
+                        if MUMPS_AVAILABLE:
+                            #USE MUMPS
+                            inst = mumps.Context()
+                            t_mumps = time.perf_counter()
+                            inst.analyze(self.system_matrix)
+                            t_analyze = time.perf_counter() - t_mumps
+                            (
+                                print(f"Time for MUMPS analyze: {t_analyze:.2f} s", flush=True)
+                                if comm.rank == 0
+                                else None
                             )
-                            if comm.rank == 0
-                            else None
-                        )
 
                         t_mumps = time.perf_counter()
                         inst.factor(self.system_matrix)
@@ -1338,17 +1359,17 @@ class QTBM:
                             else None
                         )
 
-                        t_mumps = time.perf_counter()
-                        phi = inst.solve(inj_V)
-                        t_solve = time.perf_counter() - t_mumps
-                        (
-                            print(f"Time for MUMPS solve: {t_solve:.2f} s", flush=True)
-                            if comm.rank == 0
-                            else None
-                        )
-                    else:
-                        lu = splu(self.system_matrix)
-                        phi = lu.solve(inj_V)
+                            t_mumps = time.perf_counter()
+                            phi = inst.solve(inj_V)
+                            t_solve = time.perf_counter() - t_mumps
+                            (
+                                print(f"Time for MUMPS solve: {t_solve:.2f} s", flush=True)
+                                if comm.rank == 0
+                                else None
+                            )
+                        else:
+                            lu = splu(self.system_matrix)
+                            phi = lu.solve(inj_V)
 
             t_solve = time.perf_counter() - times.pop()
             (

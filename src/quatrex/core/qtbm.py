@@ -465,7 +465,6 @@ class Contact:
                     block_sections=self.N_coup,
                 )
 
-    def sort_cont_at(self,vec_atoms: NDArray, delta_corner: NDArray, coords: NDArray, coordsType: NDArray) -> NDArray:
     def sort_cont_at(
         self,
         vec_atoms: NDArray,
@@ -1055,7 +1054,7 @@ class QTBM:
 
         return obc_solver
     
-    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list,inj):
+    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list, inj:NDArray):
         """
         Compute observables for the current iteration.
 
@@ -1143,7 +1142,7 @@ class QTBM:
             #B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
             #phi_cont, _, _, _ = lstsq(self.contacts[n].H10-E*self.contacts[n].S10,-B)
             #Add the spill over contribution
-            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += self.contacts[n].S10 @ phi_cont 
+            phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += self.contacts[n].S10 @ phi_cont
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -1182,7 +1181,7 @@ class QTBM:
             #     self.system_matrix.data[:] -= E * self.overlap_sparray.tocsr()[rows, cols]
             # else:
             #     self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
-            self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
+            #self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -1289,23 +1288,23 @@ class QTBM:
 
                 upd_0 = sparse.coo_matrix((sig_flat, (ind1, ind2)),shape=self.system_matrix.shape).tocsr()
 
-            # Update the system matrix with the self-energies
+                # Update the system matrix with the self-energies
 
-            # TODO: Test
-            # if i > 0:
-            #     self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols]
-            # else:
-            #     self.system_matrix -= upd_0
-            self.system_matrix -= upd_0
+                # TODO: Test
+                # if i > 0:
+                #     self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols]
+                # else:
+                #     self.system_matrix -= upd_0
+                self.system_matrix -= upd_0
 
-            # Iterate over contacts
-            # for n in range(self.n_cont):
-            #    sigma_cpu = sigma_b[n].get() #Move the self-energy to the CPU
-            #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get() #Move the contact elements to the CPU
-            #    self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] -= sigma_cpu #Subtract the self-energy in the contact elements
-            #    inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n]] = inj[n] #Add the injection vector in the contact elements of the rhs
+                # Iterate over contacts
+                # for n in range(self.n_cont):
+                #    sigma_cpu = sigma_b[n].get() #Move the self-energy to the CPU
+                #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get() #Move the contact elements to the CPU
+                #    self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] -= sigma_cpu #Subtract the self-energy in the contact elements
+                #    inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n]] = inj[n] #Add the injection vector in the contact elements of the rhs
 
-            # self.system_matrix = sparse.csr_matrix(self.system_matrix)
+                # self.system_matrix = sparse.csr_matrix(self.system_matrix)
 
                 #Eliminate the zeros that were added in the system matrix
                 #self.system_matrix.eliminate_zeros()
@@ -1319,8 +1318,8 @@ class QTBM:
 
                 times.append(time.perf_counter())
 
-            # Solve for the wavefunction
-            # phi = spsolve(self.system_matrix, inj_V)
+                # Solve for the wavefunction
+                # phi = spsolve(self.system_matrix, inj_V)
 
                 if inj_V.size != 0:
                     if CUDSS_AVAILABLE and xp.__name__ == "cupy":
@@ -1348,16 +1347,16 @@ class QTBM:
                                 else None
                             )
 
-                        t_mumps = time.perf_counter()
-                        inst.factor(self.system_matrix)
-                        t_factor = time.perf_counter() - t_mumps
-                        (
-                            print(
-                                f"Time for MUMPS factor: {t_factor:.2f} s", flush=True
+                            t_mumps = time.perf_counter()
+                            inst.factor(self.system_matrix)
+                            t_factor = time.perf_counter() - t_mumps
+                            (
+                                print(
+                                    f"Time for MUMPS factor: {t_factor:.2f} s", flush=True
+                                )
+                                if comm.rank == 0
+                                else None
                             )
-                            if comm.rank == 0
-                            else None
-                        )
 
                             t_mumps = time.perf_counter()
                             phi = inst.solve(inj_V)
@@ -1371,45 +1370,50 @@ class QTBM:
                             lu = splu(self.system_matrix)
                             phi = lu.solve(inj_V)
 
-            t_solve = time.perf_counter() - times.pop()
-            (
-                print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+                t_solve = time.perf_counter() - times.pop()
+                (
+                    print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
+                    if comm.rank == 0
+                    else None
+                )
 
-            # self.system_matrix = self.system_matrix.get()
+                # self.system_matrix = self.system_matrix.get()
 
-            # Get the bare system matrix back, needed for transmission calculation
-            # for n in range(self.n_cont):
-            #    sigma_cpu = sigma_b[n].get()
-            #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get()
-            #   self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] += sigma_cpu #Add the self-energy back
+                # Get the bare system matrix back, needed for transmission calculation
+                # for n in range(self.n_cont):
+                #    sigma_cpu = sigma_b[n].get()
+                #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get()
+                #   self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] += sigma_cpu #Add the self-energy back
 
-            # self.system_matrix = sparse.csr_matrix(self.system_matrix)
+                # self.system_matrix = sparse.csr_matrix(self.system_matrix)
 
-            # TODO: Test
-            # if i > 0:
-            #     self.system_matrix.data[:] += upd_0.tocsr()[rows, cols]
-            # else:
-            #     self.system_matrix += upd_0
-            self.system_matrix += upd_0
+                # TODO: Test
+                # if i > 0:
+                #     self.system_matrix.data[:] += upd_0.tocsr()[rows, cols]
+                # else:
+                #     self.system_matrix += upd_0
+                self.system_matrix += upd_0
 
-            # TODO: Test
-            # coo = self.system_matrix.tocoo()
-            # rows = coo.row
-            # cols = coo.col
+                # TODO: Test
+                # coo = self.system_matrix.tocoo()
+                # rows = coo.row
+                # cols = coo.col
 
-            if inj_V.size != 0:
-                # Compute observables (DOS and Transmission)
-                self.compute_observables(phi, inj_ind, i, E, sigma_b)
+                if inj_V.size != 0:
+                    # Compute observables (DOS and Transmission)
+                    sigma_b_t = []
+                    inj_ind_t = []
+                    for nn in range(self.n_cont):
+                        sigma_b_t.append(sigma_b[nn][i,:,:])
+                        inj_ind_t.append(inj_ind[nn][i])
+                    self.compute_observables(phi, inj_ind_t, i, E, sigma_b_t, inj_V_shifted)
 
-            t_iteration = time.perf_counter() - times.pop()
-            (
-                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
+                t_iteration = time.perf_counter() - times.pop()
+                (
+                    print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+                    if comm.rank == 0
+                    else None
+                )
 
         # Gather the observables
         self.observables.electron_transmission_x_slabs = xp.concatenate(

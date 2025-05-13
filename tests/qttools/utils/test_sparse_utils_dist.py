@@ -12,13 +12,20 @@ from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
 GLOBAL_STACK_SHAPES = [
-    pytest.param((3,), id="1D-stack"),
+    pytest.param((7,), id="1D-stack"),
     pytest.param((6, 2), id="2D-stack"),
 ]
 
 
 # TODO test for block distributed
-@pytest.fixture(autouse=True, scope="module", params=[1])
+@pytest.fixture(
+    autouse=True,
+    scope="module",
+    params=[
+        pytest.param(1, id="block-comm-size-1"),
+        pytest.param(3, id="block-comm-size-3"),
+    ],
+)
 def configure_comm(request):
     """Setup any state specific to the execution of the given module."""
     block_comm_size = request.param
@@ -154,10 +161,13 @@ def test_product_sparsity_dsdbsparse(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
-    if comm.rank == 0:
-        print(xp.nonzero(ref - val))
+    # Each rank in the block communicator computes its own local sparsity pattern.
+    full = sum(comm.block._mpi_comm.allgather(val))
 
-    assert xp.allclose(ref, val)
+    if comm.rank == 0:
+        print(xp.nonzero(ref - full))
+
+    assert xp.allclose(ref, full)
 
 
 @pytest.mark.mpi(min_size=2)
@@ -210,11 +220,14 @@ def test_product_sparsity_dsdbsparse_spillover(
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
+    # Each rank in the block communicator computes its own local sparsity pattern.
+    full = sum(comm.block._mpi_comm.allgather(val))
+
     print(f"{comm.block.rank=}, {start_block=}, {end_block=}", flush=True)
     if comm.rank == 0:
-        print(xp.nonzero(ref - val))
+        print(xp.nonzero(ref - full))
 
-    assert xp.allclose(ref, val)
+    assert xp.allclose(ref, full)
 
 
 if __name__ == "__main__":

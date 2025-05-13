@@ -121,15 +121,15 @@ def product_sparsity_pattern_dsdbsparse(
             tmp_num_diag = out_num_diag
 
         c_ = bd_matmul_distr(
-            a_,
-            b,
-            None,
-            a_num_diag,
-            b_num_diag,
-            tmp_num_diag,
-            start_block,
-            end_block,
-            False,
+            a=a_,
+            b=b,
+            out=None,
+            a_num_diag=a_num_diag,
+            b_num_diag=b_num_diag,
+            out_num_diag=tmp_num_diag,
+            start_block=start_block,
+            end_block=end_block,
+            spillover_correction=False,
         )
 
         if spillover:

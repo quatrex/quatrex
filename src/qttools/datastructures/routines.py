@@ -406,7 +406,7 @@ class BlockMatrix(dict):
 
     def __init__(
         self,
-        dsdbsparse: DSDBSparse | DSDBSparse,
+        dsdbsparse: DSDBSparse,
         local_keys: set[tuple[int, int]],
         origin: tuple[int, int],
         mapping=None,

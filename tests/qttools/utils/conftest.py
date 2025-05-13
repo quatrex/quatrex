@@ -48,7 +48,7 @@ USE_PINNED_MEMORY = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
@@ -58,22 +58,22 @@ def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
-@pytest.fixture(params=NUM_MATRICES, autouse=True)
+@pytest.fixture(params=NUM_MATRICES)
 def num_matrices(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=SHAPES, autouse=True)
+@pytest.fixture(params=SHAPES)
 def shape(request: pytest.FixtureRequest) -> int | tuple[int, ...]:
     return request.param
 
 
-@pytest.fixture(params=DTYPES, autouse=True)
+@pytest.fixture(params=DTYPES)
 def dtype(request: pytest.FixtureRequest) -> type | str:
     return request.param
 
 
-@pytest.fixture(params=ORDERS, autouse=True)
+@pytest.fixture(params=ORDERS)
 def order(request: pytest.FixtureRequest) -> str:
     return request.param
 

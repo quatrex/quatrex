@@ -836,6 +836,54 @@ class BSESolver:
                 )
         GG_fft = None
 
+
+    def _calc_chi0_less_fft_v2(
+        self, GG_data:NDArray, GL_data:NDArray, start_inz, end_inz, inz_batchsize: int = 4, step_E: int = 1
+    ):
+
+        num_inz = end_inz - start_inz
+        G_nen = GG_data.shape[0]
+
+        n = GG_data.shape[0] + GL_data.shape[0] - 1
+
+        GL_fft = xp.fft.fftn(GL_data[::-1], (n,), axes=(0,))
+        sparsity_csr = self.sparsity.tocsr()
+
+        for iinz in range(0, num_inz, inz_batchsize):
+            print(f"      batch={iinz}", flush=True)
+            GG_fft = xp.fft.fftn(
+                GG_data[:, start_inz + iinz : start_inz + iinz + inz_batchsize],
+                (n,),
+                axes=(0,),
+            )
+
+            for jjnz in range(start_inz, end_inz):
+
+                i = self.sparsity.row[iinz + start_inz]
+                j = self.sparsity.col[iinz + start_inz]
+                k = self.sparsity.row[jjnz]
+                L = self.sparsity.col[jjnz]
+
+                ind = np.where((self.chi0_greater.rows == iinz) & (self.chi0_greater.cols == jjnz))[0]
+                if ind.size == 0:
+                    continue
+                data_rank = np.where(self.chi0_greater.section_offsets <= ind[0])[0][-1]
+                if comm.rank != data_rank:
+                    continue
+                idx = ind[0] - self.chi0_greater.section_offsets[data_rank]
+
+                if sparsity_csr[i,k] != -1 and sparsity_csr[L,j] != -1:
+
+                    chi_g = self.prefactor * xp.fft.ifftn(
+                        GG_fft[:, self.inverse_table[i, k]] * GL_fft[:, self.inverse_table[L, j]], (n,), axes=(0,)
+                    )
+                    self.chi0_greater._data[xp.ix_(self.chi0_greater._stack_padding_mask, idx)] = (
+                        chi_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
+                    )
+        GL_fft = None
+
+        
+
     def _calc_kernel(self, V: DSBCOO, W: DSBCOO):
         self.bare_Coulomb = V
         self.screened_Coulomb = W

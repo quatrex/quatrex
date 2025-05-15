@@ -53,6 +53,8 @@ def _create_coo(
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    coo.setdiag(rng.uniform(size=size) + 1j * rng.uniform(size=size))
+
     if symmetric:
         coo.data += 1j * rng.uniform(size=coo.nnz)
         coo_t = coo.copy()

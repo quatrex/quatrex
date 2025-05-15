@@ -48,13 +48,12 @@ def _create_coo(
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    coo.setdiag(rng.uniform(size=size) + 1j * rng.uniform(size=size))
     if symmetric:
         coo.data += 1j * rng.uniform(size=coo.nnz)
         coo_t = coo.copy()
         coo_t.data[:] = symmetry_op(coo_t.data)
         coo = coo + coo_t.T
-        # NOTE: The following works only with scipy on the host.
-        # coo = coo + symmetry_op(coo.T)
         return coo
     if symmetric_sparsity:
         coo = coo + coo.T
@@ -65,20 +64,6 @@ def _create_coo(
 
 class TestCreation:
     """Tests the creation methods of DSDBSparse."""
-
-    # def test_from_sparray_hermitian(
-    #     self,
-    #     dsdbsparse_type: DSDBSparse,
-    #     block_sizes: NDArray,
-    #     global_stack_shape: int | tuple,
-    # ):
-    #     """Tests the creation of DSDBSparse matrices from hermitian sparse arrays."""
-    #     coo = _create_coo(block_sizes)
-    #     coo = (coo + coo.conj().T) / 2
-    #     dsdbsparse = dsdbsparse_type.from_sparray(
-    #         coo, block_sizes, global_stack_shape, symmetry=True
-    #     )
-    #     assert xp.array_equiv(coo.toarray(), dsdbsparse.to_dense())
 
     def test_from_sparray(
         self,

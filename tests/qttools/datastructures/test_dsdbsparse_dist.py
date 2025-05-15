@@ -42,12 +42,23 @@ def configure_comm(request):
     )
 
 
-def _create_coo(sizes: NDArray, symmetric_sparsity: bool = False) -> sparse.coo_matrix:
+def _create_coo(
+    sizes: NDArray,
+    symmetric_sparsity: bool = False,
+    symmetric: bool = False,
+    symmetry_op: Callable = xp.conj,
+) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
     rng = xp.random.default_rng()
     density = rng.uniform(low=0.1, high=0.3)
     coo = sparse.random(size, size, density=density, format="coo").astype(xp.complex128)
+    if symmetric:
+        coo.data += 1j * rng.uniform(size=coo.nnz)
+        coo_t = coo.copy()
+        coo_t.data[:] = symmetry_op(coo_t.data)
+        coo = coo + coo_t.T
+        return coo
     if symmetric_sparsity:
         coo = coo + coo.T
         coo.data[:] = rng.uniform(size=coo.nnz)
@@ -667,24 +678,62 @@ class TestDistribution:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         accessed_element: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests distributed access of individual matrix elements."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
+        symmetry, symmetry_op = symmetry_type
+        coo = (
+            _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
+            if global_comm.rank == 0
+            else None
+        )
         coo = global_comm.bcast(coo, root=0)
 
         dsdbsparse = dsdbsparse_type_dist.from_sparray(
             coo, block_sizes, global_stack_shape
         )
-        dense = dsdbsparse.to_dense()
 
-        reference = dense[..., *accessed_element]
+        reference = coo.tocsr()[*accessed_element]
+        test = dsdbsparse[accessed_element]
 
         # This returns either the correct value or zeros if the element
         # is on a different rank in the comm.block.
-        assert (
-            xp.allclose(reference, dsdbsparse[accessed_element])
-            or (dsdbsparse[accessed_element] == 0).all()
+        assert xp.allclose(reference, test) or (test == 0).all()
+
+    @pytest.mark.usefixtures("accessed_element")
+    def test_getitem_nnz(
+        self,
+        dsdbsparse_type_dist: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        accessed_element: tuple,
+        symmetry_type: tuple[bool, Callable],
+    ):
+        """Tests distributed access of individual matrix elements."""
+        symmetry, symmetry_op = symmetry_type
+        coo = (
+            _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
+            if global_comm.rank == 0
+            else None
         )
+        coo = global_comm.bcast(coo, root=0)
+
+        dsdbsparse = dsdbsparse_type_dist.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+
+        reference = coo.tocsr()[*accessed_element]
+
+        dsdbsparse.dtranspose()
+        test = dsdbsparse[accessed_element]
+
+        # This returns either the correct value or zeros if the element
+        # is on a different rank in the comm.block.
+        assert xp.allclose(reference, test) or (test == 0).all()
 
     @pytest.mark.usefixtures("accessed_element")
     def test_setitem_stack(

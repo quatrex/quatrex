@@ -25,7 +25,8 @@ ACCESSED_BLOCKS = [
 
 ACCESSED_ELEMENTS = [
     pytest.param((0, 0), id="first-element"),
-    pytest.param((2, 7), id="random-element"),
+    pytest.param((2, 7), id="random-upper-element"),
+    pytest.param((7, 2), id="random-lower-element"),
 ]
 
 GLOBAL_STACK_SHAPES = [

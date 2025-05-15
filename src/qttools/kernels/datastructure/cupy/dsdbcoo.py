@@ -74,7 +74,7 @@ def find_inds(
     inds = cp.nonzero(counts)[0]
     value_inds = full_inds[inds]
 
-    return inds, value_inds, int(cp.max(counts))
+    return inds, value_inds, int(cp.max(counts, initial=0))
 
 
 @profiler.profile(level="api")

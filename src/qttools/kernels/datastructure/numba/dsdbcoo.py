@@ -13,7 +13,7 @@ profiler = Profiler()
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def find_inds(
     self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
-) -> tuple[NDArray, NDArray]:
+) -> tuple[NDArray, NDArray, int]:
     """Finds the corresponding indices of the given rows and columns.
 
     This also counts the number of matches found, which is used to check
@@ -51,6 +51,10 @@ def find_inds(
     # Find the valid indices.
     inds = np.nonzero(counts)[0]
     value_inds = full_inds[inds]
+
+    if counts.size == 0:
+        # No data in this block, return an empty slice.
+        return inds, value_inds, 0
 
     return inds, value_inds, np.max(counts)
 

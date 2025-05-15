@@ -145,19 +145,40 @@ class DSDBCOO(DSDBSparse):
         # We need to shift the local rows and cols to the global
         # coordinates.
 
+        if self.distribution_state == "stack":
+            self_rows = self.rows + self.global_block_offset
+            self_cols = self.cols + self.global_block_offset
+        else:
+            self_rows = (
+                self.rows[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
+            self_cols = (
+                self.cols[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
+
         if self.symmetry:
             # find items in lower triangle and send them to upper triangle
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
             inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
-                self.rows + self.global_block_offset,
-                self.cols + self.global_block_offset,
+                self_rows,
+                self_cols,
                 rows[~mask_transposed],
                 cols[~mask_transposed],
             )
             value_inds = (~mask_transposed).nonzero()[0][value_inds]
             inds_t, value_inds_t, max_counts_t = dsdbcoo_kernels.find_inds(
-                self.rows + self.global_block_offset,
-                self.cols + self.global_block_offset,
+                self_rows,
+                self_cols,
                 rows[mask_transposed],
                 cols[mask_transposed],
             )  # need to split the function call into two, because we might want to get (i,j) and (j,i) at the same time
@@ -168,8 +189,8 @@ class DSDBCOO(DSDBSparse):
                 )
         else:
             inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
-                self.rows + self.global_block_offset,
-                self.cols + self.global_block_offset,
+                self_rows,
+                self_cols,
                 rows,
                 cols,
             )
@@ -180,38 +201,14 @@ class DSDBCOO(DSDBSparse):
 
         data_stack = self.data[*stack_index]
 
-        if self.distribution_state == "stack":
-            arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
-
-            if self.symmetry:
-                arr[..., value_inds] = data_stack[..., inds]
-                arr[..., value_inds_t] = self.symmetry_op(data_stack[..., inds_t])
-            else:
-                arr[..., value_inds] = data_stack[..., inds]
-            return xp.squeeze(arr)
+        arr = xp.zeros(data_stack.shape[:-1] + (rows.size,), dtype=self.dtype)
 
         if self.symmetry:
-            # This does not yet work
-            raise NotImplementedError(
-                "Symmetry not yet implemented for nnz distribution."
-            )
-
-        # NOTE: This causes problems with the block-distribution, so
-        # this is commented out for now. If you request elements outside
-        # the sparsity pattern, you may get trouble.
-        # if len(inds) != rows.size:
-        #     # We cannot know which rank is supposed to hold an element
-        #     # that is not in the matrix, so we raise an error.
-        #     raise IndexError("Requested element not in matrix.")
-
-        # If nnz are distributed accross the ranks, we need to find the
-        # rank that holds the data.
-        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
-
-        return data_stack[
-            ...,
-            inds[ranks == comm.stack.rank] - self.nnz_section_offsets[comm.stack.rank],
-        ]
+            arr[..., value_inds] = data_stack[..., inds]
+            arr[..., value_inds_t] = self.symmetry_op(data_stack[..., inds_t])
+        else:
+            arr[..., value_inds] = data_stack[..., inds]
+        return xp.squeeze(arr)
 
     @profiler.profile(level="debug")
     def _set_items(

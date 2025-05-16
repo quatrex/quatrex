@@ -2,12 +2,17 @@
 
 import numpy as np
 import pytest
+from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 
 DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
-DSDBSPARSE_TYPES_DIST = [DSDBCOO]
+if global_comm.size == 1:
+    DSDBSPARSE_TYPES_DIST = DSDBSPARSE_TYPES
+else:
+    # DSDBCSR is not fully supported for distributed yet
+    DSDBSPARSE_TYPES_DIST = [DSDBCOO]
 
 
 BLOCK_SIZES = [

@@ -1,6 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import copy
 from typing import Callable
 
 import numpy as np
@@ -673,7 +672,7 @@ class DSDBCSR(DSDBSparse):
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix.
 
-        NOTE: Assumes that the natrix's sparsity pattern is symmetric.
+        NOTE: Assumes that the matrix's sparsity pattern is symmetric.
 
         Parameters
         ----------
@@ -682,6 +681,10 @@ class DSDBCSR(DSDBSparse):
             is addition.
 
         """
+        if self.symmetry:
+            # Already symmetric, nothing to do.
+            return
+
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot transpose when distributed through nnz.")
 
@@ -764,9 +767,19 @@ class DSDBCSR(DSDBSparse):
             The new DSDBSparse matrix.
 
         """
-        # TODO: deepcopy should be removed
-        # Problem with symmetry operators
-        out = copy.deepcopy(dsdbsparse)
+        # TODO: Problem with deepcopy in tests
+        # own copy should be provided
+        out = cls(
+            data=dsdbsparse.data.copy(),
+            cols=dsdbsparse.cols.copy(),
+            rowptr_map=dsdbsparse.rowptr_map.copy(),
+            block_sizes=dsdbsparse.block_sizes,
+            global_stack_shape=dsdbsparse.global_stack_shape,
+            return_dense=dsdbsparse.return_dense,
+            symmetry=dsdbsparse.symmetry,
+            symmetry_op=dsdbsparse.symmetry_op,
+        )
+
         if out._data is None:
             out.allocate_data()
         out._data[:] = 0.0

@@ -7,6 +7,7 @@ from mpi4py.MPI import Intracomm, Request
 
 from qttools import xp
 from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
@@ -737,9 +738,14 @@ def bd_matmul_distr(
             comm.block._mpi_comm,
             comm.block._nccl_comm,
         )
-    else:
+    elif GPU_AWARE_MPI or comm.block.size == 1 or xp.__name__ == "numpy":
         arrow_partition_halo_comm(
             a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm.block._mpi_comm
+        )
+    else:
+        # TODO: host_mpi implementation or unify one is needed
+        raise ValueError(
+            "GPU_AWARE_MPI is not enabled. Please enable it to use this function."
         )
 
     # Make sure the output matrix is initialized to zero.

@@ -5,6 +5,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures import (
     DSDBSparse,
     bd_matmul,
@@ -301,6 +302,17 @@ class TestDistr:
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
+
+        if (
+            xp.__name__ == "cupy"
+            and not GPU_AWARE_MPI
+            and not hasattr(comm.block, "_nccl_comm")
+            and comm.block.size > 1
+        ):
+            pytest.skip(
+                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+            )
+
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
         dsdbsparse = dsdbsparse_type_dist.from_sparray(
@@ -335,6 +347,17 @@ class TestDistr:
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
+
+        if (
+            xp.__name__ == "cupy"
+            and not GPU_AWARE_MPI
+            and not hasattr(comm.block, "_nccl_comm")
+            and comm.block.size > 1
+        ):
+            pytest.skip(
+                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+            )
+
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
         dsdbsparse = dsdbsparse_type_dist.from_sparray(
@@ -366,6 +389,17 @@ class TestDistr:
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
+
+        if (
+            xp.__name__ == "cupy"
+            and not GPU_AWARE_MPI
+            and not hasattr(comm.block, "_nccl_comm")
+            and comm.block.size > 1
+        ):
+            pytest.skip(
+                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+            )
+
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
         dsdbsparse = dsdbsparse_type_dist.from_sparray(
@@ -435,6 +469,17 @@ class TestDistr:
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
+
+        if (
+            xp.__name__ == "cupy"
+            and not GPU_AWARE_MPI
+            and not hasattr(comm.block, "_nccl_comm")
+            and comm.block.size > 1
+        ):
+            pytest.skip(
+                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+            )
+
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
         dsdbsparse = dsdbsparse_type_dist.from_sparray(

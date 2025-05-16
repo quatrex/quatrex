@@ -1,6 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import copy
 from typing import Callable
 
 import numpy as np
@@ -542,13 +541,25 @@ class DSDBCOO(DSDBSparse):
 
     def __iadd__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
         """In-place addition of two DSDBCOO matrices."""
+
         if sparse.issparse(other):
+            if self.symmetry:
+                raise NotImplementedError(
+                    "In-place addition with symmetry not implemented."
+                    "Symmetry could be broken if the other matrix is not symmetric."
+                )
+
             csr = other.tocsr()
             self.data += csr[
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
             ]
             return self
+
+        if self.symmetry != other.symmetry or self.symmetry_op != other.symmetry_op:
+            raise ValueError(
+                "Symmetry and symmetry_op must match for in-place addition."
+            )
 
         self._check_commensurable(other)
         self._data += other._data
@@ -557,12 +568,23 @@ class DSDBCOO(DSDBSparse):
     def __isub__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
         """In-place subtraction of two DSDBCOO matrices."""
         if sparse.issparse(other):
+            if self.symmetry:
+                raise NotImplementedError(
+                    "In-place addition with symmetry not implemented."
+                    "Symmetry could be broken if the other matrix is not symmetric."
+                )
+
             csr = other.tocsr()
             self.data -= csr[
                 self.rows + self.global_block_offset,
                 self.cols + self.global_block_offset,
             ]
             return self
+
+        if self.symmetry != other.symmetry or self.symmetry_op != other.symmetry_op:
+            raise ValueError(
+                "Symmetry and symmetry_op must match for in-place substraction."
+            )
 
         self._check_commensurable(other)
         self._data -= other._data
@@ -791,7 +813,19 @@ class DSDBCOO(DSDBSparse):
             The new DSDBCOO matrix.
 
         """
-        out = copy.deepcopy(dsdbsparse)
+        # deepcopy can lead to issues with cupy
+        # segfaults in the tests observed
+        out = cls(
+            data=dsdbsparse.data,
+            rows=dsdbsparse.rows,
+            cols=dsdbsparse.cols,
+            block_sizes=dsdbsparse.block_sizes,
+            global_stack_shape=dsdbsparse.global_stack_shape,
+            return_dense=dsdbsparse.return_dense,
+            symmetry=dsdbsparse.symmetry,
+            symmetry_op=dsdbsparse.symmetry_op,
+        )
+
         if out._data is None:
             out.allocate_data()
         else:

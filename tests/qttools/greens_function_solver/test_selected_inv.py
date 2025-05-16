@@ -1,8 +1,37 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import pytest
+
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import GFSolver
+
+
+@pytest.fixture(autouse=True, scope="module")
+def configure_comm():
+    """setup any state specific to the execution of the given module."""
+    if xp.__name__ == "cupy":
+        _default_config = {
+            "all_to_all": "host_mpi",
+            "all_gather": "host_mpi",
+            "all_reduce": "host_mpi",
+            "bcast": "host_mpi",
+        }
+    elif xp.__name__ == "numpy":
+        _default_config = {
+            "all_to_all": "device_mpi",
+            "all_gather": "device_mpi",
+            "all_reduce": "device_mpi",
+            "bcast": "device_mpi",
+        }
+    # Configure the comm singleton.
+    comm.configure(
+        block_comm_size=1,
+        block_comm_config=_default_config,
+        stack_comm_config=_default_config,
+        override=True,
+    )
 
 
 def test_selected_inv(

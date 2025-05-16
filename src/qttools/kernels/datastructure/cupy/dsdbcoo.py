@@ -74,7 +74,11 @@ def find_inds(
     inds = cp.nonzero(counts)[0]
     value_inds = full_inds[inds]
 
-    return inds, value_inds, int(cp.max(counts, initial=0))
+    if counts.size == 0:
+        # No data in this block, return an empty slice.
+        return inds, value_inds, 0
+
+    return inds, value_inds, int(cp.max(counts))
 
 
 @profiler.profile(level="api")

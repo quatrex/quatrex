@@ -21,12 +21,21 @@ GLOBAL_STACK_SHAPES = [
 
 def setup_module():
     """setup any state specific to the execution of the given module."""
-    _default_config = {
-        "all_to_all": "device_mpi",
-        "all_gather": "device_mpi",
-        "all_reduce": "device_mpi",
-        "bcast": "device_mpi",
-    }
+    if xp.__name__ == "cupy":
+        _default_config = {
+            "all_to_all": "host_mpi",
+            "all_gather": "host_mpi",
+            "all_reduce": "host_mpi",
+            "bcast": "host_mpi",
+        }
+    elif xp.__name__ == "numpy":
+        _default_config = {
+            "all_to_all": "device_mpi",
+            "all_gather": "device_mpi",
+            "all_reduce": "device_mpi",
+            "bcast": "device_mpi",
+        }
+
     # Configure the comm singleton.
     comm.configure(
         block_comm_size=3,

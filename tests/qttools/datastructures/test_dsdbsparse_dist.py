@@ -33,6 +33,11 @@ def configure_comm(request):
             "bcast": "device_mpi",
         }
 
+    if global_comm.size < block_comm_size:
+        pytest.skip(
+            f"Skipping test for block comm size {block_comm_size} with global comm size {global_comm.size}."
+        )
+
     # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
         block_comm_size=block_comm_size,
@@ -68,7 +73,40 @@ def _create_coo(
     return coo
 
 
-@pytest.mark.mpi(min_size=3)
+def _create_coo_dsdbsparse(
+    dsdbsparse_type_dist: DSDBSparse,
+    block_sizes: NDArray,
+    global_stack_shape: tuple,
+    symmetry_type: tuple[bool, Callable],
+    symmetric_sparsity: bool = False,
+) -> tuple[sparse.coo_matrix, DSDBSparse]:
+    """Returns a random complex sparse array
+    and a DSDBSparse matrix with the same sparsity pattern.
+    """
+    symmetry, symmetry_op = symmetry_type
+    coo = (
+        _create_coo(
+            block_sizes,
+            symmetric=symmetry,
+            symmetry_op=symmetry_op,
+            symmetric_sparsity=symmetric_sparsity,
+        )
+        if global_comm.rank == 0
+        else None
+    )
+    coo = global_comm.bcast(coo, root=0)
+
+    dsdbsparse = dsdbsparse_type_dist.from_sparray(
+        coo,
+        block_sizes,
+        global_stack_shape,
+        symmetry=symmetry,
+        symmetry_op=symmetry_op,
+    )
+    return coo, dsdbsparse
+
+
+@pytest.mark.mpi
 class TestCreation:
     """Tests the creation methods of DSDBSparse."""
 
@@ -77,14 +115,15 @@ class TestCreation:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests the creation of DSDBSparse matrices from sparse arrays."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
-
         assert xp.array_equiv(coo.toarray(), dsdbsparse.to_dense())
 
     def test_zeros_like(
@@ -92,19 +131,21 @@ class TestCreation:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests the creation of a zero DSDBSparse matrix with the same shape as another."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         zeros = dsdbsparse_type_dist.zeros_like(dsdbsparse)
         assert (zeros.to_dense() == 0).all()
         assert zeros.shape == dsdbsparse.shape
 
 
-@pytest.mark.mpi(min_size=3)
+@pytest.mark.mpi
 class TestConversion:
     """Tests for the conversion methods of DSDBSparse."""
 
@@ -113,15 +154,14 @@ class TestConversion:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can convert a DSDBSparse matrix to dense."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         reference = xp.broadcast_to(coo.toarray(), dsdbsparse.shape)
 
@@ -133,23 +173,24 @@ class TestConversion:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         op: Callable[[NDArray, NDArray], NDArray],
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can transpose a DSDBSparse matrix."""
-        coo = (
-            _create_coo(block_sizes, symmetric_sparsity=True)
-            if global_comm.rank == 0
-            else None
+        symmetry, _ = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,
         )
-        coo = global_comm.bcast(coo, root=0)
 
         dense = coo.toarray()
-        symmetrized = 0.5 * op(dense, dense.transpose().conj())
+        if not symmetry:
+            symmetrized = 0.5 * op(dense, dense.transpose().conj())
+        else:
+            symmetrized = dense
 
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
-        )
         reference = xp.broadcast_to(symmetrized, dsdbsparse.shape)
         dsdbsparse.symmetrize(op)
 
@@ -222,7 +263,7 @@ def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     return index, in_bounds
 
 
-@pytest.mark.mpi(min_size=3)
+@pytest.mark.mpi
 class TestAccess:
     """Tests for the access methods of DSDBSparse."""
 
@@ -236,15 +277,11 @@ class TestAccess:
         accessed_block: tuple,
     ):
         """Tests that we can get the correct block."""
-        symmetry, symmetry_op = symmetry_type
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
-            symmetry=symmetry,
-            symmetry_op=symmetry_op,
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -278,15 +315,20 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
     ):
         """Tests that we can get the correct block."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+
+        if symmetry_type[0]:
+            # TODO: not implemented
+            pytest.skip("Skipping test for symmetric DSDBSparse.")
+
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -313,7 +355,16 @@ class TestAccess:
             )
 
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
-                if "COO" in dsdbsparse_type_dist.__name__:
+                if "CSR" in dsdbsparse_type_dist.__name__:
+                    rowptr, cols, data = dsdbsparse.blocks[accessed_block]
+                    for ind in xp.ndindex(reference_block.shape[:-2]):
+                        block = sparse.csr_matrix(
+                            (data[ind], cols, rowptr),
+                            shape=reference_block.shape[-2:],
+                        )
+                        assert xp.allclose(reference_block[ind], block.toarray())
+
+                elif "COO" in dsdbsparse_type_dist.__name__:
                     rows, cols, data = dsdbsparse.local_blocks[accessed_block]
                     for ind in xp.ndindex(reference_block.shape[:-2]):
                         block = sparse.coo_matrix(
@@ -330,15 +381,16 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
     ):
         """Tests that we can set a block and not modify sparsity structure."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        symmetry, symmetry_op = symmetry_type
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -371,7 +423,21 @@ class TestAccess:
                 )
 
         # Sparsity structure should not be modified.
-        dense[..., *inds][dense[..., *inds].nonzero()] = 1
+        if not symmetry:
+            dense[..., *inds][dense[..., *inds].nonzero()] = 1
+        else:
+            # For symmetric matrices, we need to set the upper and lower
+            if accessed_block[0] > accessed_block[1]:
+                inds, _ = _get_block_inds(accessed_block[::-1], block_sizes)
+                dense[..., *inds][dense[..., *inds].nonzero()] = symmetry_op(1)
+            else:
+                dense[..., *inds][dense[..., *inds].nonzero()] = 1
+
+            dense = xp.triu(dense)
+            dense = dense + symmetry_op(dense.swapaxes(-2, -1))
+            idx = xp.arange(dense.shape[-1])
+            dense[..., idx, idx] = 0.5 * dense[..., idx, idx]
+
         assert xp.allclose(dense, dsdbsparse.to_dense())
 
     @pytest.mark.usefixtures("accessed_block", "stack_index")
@@ -380,6 +446,7 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
         stack_index: tuple,
     ):
@@ -390,12 +457,11 @@ class TestAccess:
         if comm.block.size == 1:
             pytest.skip("Skipping test for non-block comm size 1.")
 
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -434,6 +500,7 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
         stack_index: tuple,
     ):
@@ -444,12 +511,15 @@ class TestAccess:
         if comm.block.size == 1:
             pytest.skip("Skipping test for non-block comm size 1.")
 
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        if symmetry_type[0]:
+            # TODO: not implemented
+            pytest.skip("Skipping test for symmetric DSDBSparse.")
+
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -500,6 +570,7 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_block: tuple,
         stack_index: tuple,
     ):
@@ -510,12 +581,12 @@ class TestAccess:
         if comm.block.size == 1:
             pytest.skip("Skipping test for non-block comm size 1.")
 
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        symmetry, symmetry_op = symmetry_type
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -553,7 +624,26 @@ class TestAccess:
                 )
 
         # Sparsity structure should not be modified.
-        dense[inds][dense[inds].nonzero()] = 1
+        if not symmetry:
+            dense[inds][dense[inds].nonzero()] = 1
+        else:
+            # For symmetric matrices, we need to set the upper and lower
+            if accessed_block[0] > accessed_block[1]:
+                inds, _ = _get_block_inds(accessed_block[::-1], block_sizes)
+                inds = (
+                    stack_index
+                    + (slice(None),) * (len(global_stack_shape) - len(stack_index))
+                    + inds
+                )
+                dense[inds][dense[inds].nonzero()] = symmetry_op(1)
+            else:
+                dense[inds][dense[inds].nonzero()] = 1
+
+            dense = xp.triu(dense)
+            dense = dense + symmetry_op(dense.swapaxes(-2, -1))
+            idx = xp.arange(dense.shape[-1])
+            dense[..., idx, idx] = 0.5 * dense[..., idx, idx]
+
         assert xp.allclose(dense, dsdbsparse.to_dense())
 
     @pytest.mark.usefixtures("block_change_factor")
@@ -563,14 +653,15 @@ class TestAccess:
         block_sizes: NDArray,
         global_stack_shape: tuple,
         block_change_factor: float,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can update the block sizes correctly."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         # Create new block sizes.
         updated_block_sizes, inconsistent = _create_new_block_sizes(
@@ -582,6 +673,8 @@ class TestAccess:
             coo,
             block_sizes=updated_block_sizes,
             global_stack_shape=global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
         )
 
         # Update the block sizes.
@@ -602,15 +695,18 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can get the correct sparsity pattern."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
+        if symmetry_type[0]:
+            coo = sparse.triu(coo)
+
         inds = xp.lexsort(xp.vstack((coo.col, coo.row)))
         ref_col, ref_row = coo.col[inds], coo.row[inds]
 
@@ -626,13 +722,14 @@ class TestAccess:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests that we can get the correct diagonal elements."""
-        coo = _create_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
-            block_sizes=block_sizes,
-            global_stack_shape=global_stack_shape,
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
@@ -649,13 +746,14 @@ class TestDistribution:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests the distributed transpose method."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         assert dsdbsparse.distribution_state == "stack"
 
@@ -683,16 +781,11 @@ class TestDistribution:
         symmetry_type: tuple[bool, Callable],
     ):
         """Tests distributed access of individual matrix elements."""
-        symmetry, symmetry_op = symmetry_type
-        coo = (
-            _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
-            if global_comm.rank == 0
-            else None
-        )
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
 
         reference = coo.tocsr()[*accessed_element]
@@ -712,20 +805,11 @@ class TestDistribution:
         symmetry_type: tuple[bool, Callable],
     ):
         """Tests distributed access of individual matrix elements."""
-        symmetry, symmetry_op = symmetry_type
-        coo = (
-            _create_coo(block_sizes, symmetric=symmetry, symmetry_op=symmetry_op)
-            if global_comm.rank == 0
-            else None
-        )
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo,
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
             block_sizes,
             global_stack_shape,
-            symmetry=symmetry,
-            symmetry_op=symmetry_op,
+            symmetry_type,
         )
 
         reference = coo.tocsr()[*accessed_element]
@@ -743,20 +827,37 @@ class TestDistribution:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_element: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        symmetry, symmetry_op = symmetry_type
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = dsdbsparse.to_dense()
 
         dsdbsparse[accessed_element] = 42
 
-        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        if not symmetry:
+            dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+
+        else:
+            if accessed_element[0] == accessed_element[1]:
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = 0.5 * (42 + symmetry_op(42))
+            else:
+                dense[..., *accessed_element[::-1]][
+                    dense[..., *accessed_element[::-1]].nonzero()
+                ] = symmetry_op(42)
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = 42
+
         assert xp.allclose(dense, dsdbsparse.to_dense())
 
     @pytest.mark.usefixtures("accessed_element")
@@ -765,15 +866,18 @@ class TestDistribution:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
         accessed_element: tuple,
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        symmetry, symmetry_op = symmetry_type
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
+
         dense = dsdbsparse.to_dense()
         rows, cols = dsdbsparse.spy()
         row, col, __ = _unsign_index(*accessed_element, dense.shape[-1])
@@ -782,7 +886,21 @@ class TestDistribution:
         if len(ind) == 0:
             return
 
-        dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+        if not symmetry:
+            dense[..., *accessed_element][dense[..., *accessed_element].nonzero()] = 42
+
+        else:
+            if accessed_element[0] == accessed_element[1]:
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = 0.5 * (42 + symmetry_op(42))
+            else:
+                dense[..., *accessed_element[::-1]][
+                    dense[..., *accessed_element[::-1]].nonzero()
+                ] = symmetry_op(42)
+                dense[..., *accessed_element][
+                    dense[..., *accessed_element].nonzero()
+                ] = 42
 
         dsdbsparse.dtranspose()
 
@@ -797,6 +915,7 @@ class TestDistribution:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests distributed access of individual matrix elements."""
 
@@ -805,16 +924,11 @@ class TestDistribution:
         if comm.block.size != 1:
             pytest.skip("Skipping test for non-block comm size 1.")
 
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
-
-        if comm.rank == 0:
-            print(
-                f"Diagonal nonzero elements: {xp.diagonal(coo.toarray(), axis1=-2, axis2=-1).nonzero()}"
-            )
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
         dense = coo.toarray()
 
@@ -837,14 +951,17 @@ class TestDistribution:
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
     ):
         """Tests distributed setting of individual matrix elements."""
-        coo = _create_coo(block_sizes) if global_comm.rank == 0 else None
-        coo: sparse.coo_matrix = global_comm.bcast(coo, root=0)
-
-        dsdbsparse = dsdbsparse_type_dist.from_sparray(
-            coo, block_sizes, global_stack_shape
+        _, symmetry_op = symmetry_type
+        _, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
         )
+
         dense = dsdbsparse.to_dense()
 
         n = dsdbsparse.shape[-1]
@@ -855,7 +972,7 @@ class TestDistribution:
         dsdbsparse.fill_diagonal(val=42)
         stack_index = (0,) * len(global_stack_shape)
         inds = dense[*stack_index, inds, inds].nonzero()
-        dense[..., inds, inds] = 42
+        dense[..., inds, inds] = 0.5 * (symmetry_op(42) + 42)
 
         dsdbsparse.dtranspose()
 

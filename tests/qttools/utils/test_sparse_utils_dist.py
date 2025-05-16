@@ -2,11 +2,13 @@
 
 import functools
 
+import numpy as np
 import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -115,7 +117,7 @@ def _expand_matrix(
     return expanded
 
 
-@pytest.mark.mpi(min_size=2)
+@pytest.mark.mpi(min_size=3)
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
 def test_product_sparsity_dsdbsparse(
     dsdbsparse_type: DSDBSparse,
@@ -125,12 +127,22 @@ def test_product_sparsity_dsdbsparse(
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
 
+    if (
+        xp.__name__ == "cupy"
+        and not GPU_AWARE_MPI
+        and not hasattr(comm.block, "_nccl_comm")
+        and comm.block.size > 1
+    ):
+        pytest.skip(
+            "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+        )
+
     if dsdbsparse_type.__name__ == "DSDBCSR":
         pytest.skip("DSDBCSR does not support this test")
 
     last_block_sizes = block_sizes[-3:]
     if num_matrices > 3:
-        block_sizes = xp.hstack(
+        block_sizes = np.hstack(
             (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
         )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
@@ -170,7 +182,7 @@ def test_product_sparsity_dsdbsparse(
     assert xp.allclose(ref, full)
 
 
-@pytest.mark.mpi(min_size=2)
+@pytest.mark.mpi(min_size=3)
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
 def test_product_sparsity_dsdbsparse_spillover(
     dsdbsparse_type: DSDBSparse,
@@ -180,12 +192,22 @@ def test_product_sparsity_dsdbsparse_spillover(
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
 
+    if (
+        xp.__name__ == "cupy"
+        and not GPU_AWARE_MPI
+        and not hasattr(comm.block, "_nccl_comm")
+        and comm.block.size > 1
+    ):
+        pytest.skip(
+            "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+        )
+
     if dsdbsparse_type.__name__ == "DSDBCSR":
         pytest.skip("DSDBCSR does not support this test")
 
     last_block_sizes = block_sizes[-3:]
     if num_matrices > 3:
-        block_sizes = xp.hstack(
+        block_sizes = np.hstack(
             (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
         )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]

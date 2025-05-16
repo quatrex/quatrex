@@ -569,6 +569,11 @@ class DSDBSparse(ABC):
 
     def __imul__(self, other: "DSDBSparse") -> "DSDBSparse":
         """In-place multiplication of two DSDBSparse matrices."""
+        if self.symmetry or other.symmetry:
+            raise ValueError(
+                "In-place multiplication is not supported for symmetric " "matrices."
+            )
+
         self._check_commensurable(other)
         self._data *= other._data
         return self
@@ -685,10 +690,6 @@ class DSDBSparse(ABC):
         if self._diag_inds is None or self._diag_value_inds is None:
             raise NotImplementedError("Diagonal not implemented.")
 
-        if self.distribution_state == "nnz":
-            if self._diag_inds_nnz is None or self._diag_value_inds_nnz is None:
-                raise NotImplementedError("Diagonal not implemented.")
-
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
 
@@ -703,12 +704,13 @@ class DSDBSparse(ABC):
                 ]
             return
 
-        if val.ndim == 0:
-            self.data[*stack_index][..., self._diag_inds_nnz] = val
-        else:
-            self.data[*stack_index][..., self._diag_inds_nnz] = val[
-                ..., self._diag_value_inds
-            ]
+        if self._diag_inds_nnz is not None:
+            if val.ndim == 0:
+                self.data[*stack_index][..., self._diag_inds_nnz] = val
+            else:
+                self.data[*stack_index][..., self._diag_inds_nnz] = val[
+                    ..., self._diag_value_inds
+                ]
         return
 
     @profiler.profile(level="debug")

@@ -378,7 +378,7 @@ class DSDBSparse(ABC):
                 : self.nnz_section_offsets_host[-1],
             ]
         return self._data[
-            self._stack_padding_mask,
+            : self.global_stack_shape[0],
             ...,
             : self.nnz_section_sizes[comm.stack.rank],
         ]
@@ -394,7 +394,7 @@ class DSDBSparse(ABC):
             ] = value
         else:
             self._data[
-                self._stack_padding_mask,
+                : self.global_stack_shape[0],
                 ...,
                 : self.nnz_section_sizes[comm.stack.rank],
             ] = value
@@ -685,6 +685,10 @@ class DSDBSparse(ABC):
         if self._diag_inds is None or self._diag_value_inds is None:
             raise NotImplementedError("Diagonal not implemented.")
 
+        if self.distribution_state == "nnz":
+            if self._diag_inds_nnz is None or self._diag_value_inds_nnz is None:
+                raise NotImplementedError("Diagonal not implemented.")
+
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
 
@@ -697,21 +701,15 @@ class DSDBSparse(ABC):
                 self.data[*stack_index][..., self._diag_inds] = val[
                     ..., self._diag_value_inds
                 ]
-        else:
-            if self._diag_inds_nnz is not None:
-                stack_padding_inds = self._stack_padding_mask.nonzero()[0][
-                    stack_index[0]
-                ]
-                stack_inds, nnz_inds = xp.ix_(stack_padding_inds, self._diag_inds_nnz)
-                # We need to access the full data buffer directly to set the
-                # value since we are using advanced indexing.
-                if val.ndim == 0:
-                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val
-                else:
-                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val[
-                        ..., self._diag_value_inds_nnz
-                    ]
             return
+
+        if val.ndim == 0:
+            self.data[*stack_index][..., self._diag_inds_nnz] = val
+        else:
+            self.data[*stack_index][..., self._diag_inds_nnz] = val[
+                ..., self._diag_value_inds
+            ]
+        return
 
     @profiler.profile(level="debug")
     def _dtranspose(
@@ -732,12 +730,6 @@ class DSDBSparse(ABC):
             Whether to perform a "fake" transposition. Default is False.
 
         """
-        # old_shape = self._data.shape
-        # new_shape = (
-        #     old_shape[0] // comm.size,
-        #     *old_shape[1:-1],
-        #     old_shape[-1] * comm.size,
-        # )
 
         if discard:
             self._data = _block_view(
@@ -795,7 +787,17 @@ class DSDBSparse(ABC):
         if self.distribution_state == "stack":
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
+            # Shuffle data to make it contiguous in memory
+            _data = xp.zeros_like(self._data)
+            _data[: self.global_stack_shape[0]] = self._data[self._stack_padding_mask]
+            self._data = _data
+
         else:
+            # Undo the shuffle
+            _data = xp.zeros_like(self._data)
+            _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
+            self._data = _data
+
             self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
 

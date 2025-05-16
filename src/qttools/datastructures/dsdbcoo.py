@@ -109,17 +109,8 @@ class DSDBCOO(DSDBSparse):
         any checks on the input. These are handled by the __getitem__
         method. The index is assumed to already be renormalized.
 
-        If we are in the "stack" distribution state, you will get an
-        array of the expected shape, padded with zeros where requested
-        elements are not in the matrix.
-
-
-        If we are in the "nnz" distribution state, and you are
-        requesting an element that is not in the matrix, an IndexError
-        is raised. If we are in the "nnz" distribution state, you will
-        get the requested elements that are on the current rank, and an
-        empty array on the ranks that hold none of the requested
-        elements.
+        You will get an array of the expected shape, padded with zeros
+        where requested elements are not in the matrix.
 
         Note
         ----
@@ -220,15 +211,12 @@ class DSDBCOO(DSDBSparse):
         any checks on the input. These are handled by the __setitem__
         method. The index is assumed to already be renormalized.
 
-        If we are in the "stack" distribution state, you need to provide
-        an array of the expected shape. The sparsity pattern is not
-        modified.
-
-        If we are in the "nnz" distribution state, you need to provide
+        You need to provide an array of the expected shape. The sparsity pattern is not
+        modified. You need to provide
         the values that are on the current rank. The sparsity pattern is
         not modified.
 
-        In both cases, if you are trying to set a value that is not in
+        If you are trying to set a value that is not in
         the matrix, nothing happens.
 
         Parameters
@@ -244,6 +232,27 @@ class DSDBCOO(DSDBSparse):
 
         """
 
+        if self.distribution_state == "stack":
+            self_rows = self.rows + self.global_block_offset
+            self_cols = self.cols + self.global_block_offset
+        else:
+            self_rows = (
+                self.rows[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
+            self_cols = (
+                self.cols[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
+
         if self.symmetry:
             # items of upper triangle of the matrix
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
@@ -251,8 +260,8 @@ class DSDBCOO(DSDBSparse):
         # We need to shift the local rows and cols to the global
         # coordinates.
         inds, value_inds, max_counts = dsdbcoo_kernels.find_inds(
-            self.rows + self.global_block_offset,
-            self.cols + self.global_block_offset,
+            self_rows,
+            self_cols,
             rows,
             cols,
         )
@@ -266,54 +275,22 @@ class DSDBCOO(DSDBSparse):
             return
 
         value = xp.asarray(value)
-        if self.distribution_state == "stack":
-            if value.ndim == 0:
-                self.data[*stack_index][..., inds] = value
-                if self.symmetry:
-                    self.data[*stack_index][..., inds[mask_transposed]] = (
-                        self.symmetry_op(value)
-                    )
+        if value.ndim == 0:
 
-                return
-
-            self.data[*stack_index][..., inds] = value[..., value_inds]
+            self.data[*stack_index][..., inds] = value
             if self.symmetry:
                 self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
-                    value[..., value_inds[mask_transposed]]
+                    value
                 )
 
             return
 
+        self.data[*stack_index][..., inds] = value[..., value_inds]
         if self.symmetry:
-            raise NotImplementedError(
-                "Symmetry not yet implemented for nnz distribution."
+            self.data[*stack_index][..., inds[mask_transposed]] = self.symmetry_op(
+                value[..., value_inds[mask_transposed]]
             )
 
-        # If nnz are distributed accross the stack, we need to find the
-        # rank that holds the data.
-        ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, inds)
-
-        # If the rank does not hold any of the requested elements, we do
-        # nothing.
-        if not any(ranks == comm.stack.rank):
-            return
-
-        stack_padding_inds = self._stack_padding_mask.nonzero()[0][stack_index[0]]
-        stack_inds, nnz_inds = xp.ix_(
-            stack_padding_inds,
-            inds[ranks == comm.stack.rank] - self.nnz_section_offsets[comm.stack.rank],
-        )
-        # We need to access the full data buffer directly to set the
-        # value since we are using advanced indexing.
-        if value.ndim == 0:
-            self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value
-            return
-
-        self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = value[
-            ...,
-            value_inds[ranks == comm.stack.rank]
-            - value_inds[ranks == comm.stack.rank][0],
-        ]
         return
 
     @profiler.profile(level="debug")

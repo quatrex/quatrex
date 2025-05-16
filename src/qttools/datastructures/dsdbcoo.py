@@ -87,6 +87,24 @@ class DSDBCOO(DSDBSparse):
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
         ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
+
+        self.rows_nnz = (
+            self.rows[
+                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + self.global_block_offset
+        )
+        self.cols_nnz = (
+            self.cols[
+                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + self.global_block_offset
+        )
+
         if not any(ranks == comm.stack.rank):
             self._diag_inds_nnz = None
             self._diag_value_inds_nnz = None
@@ -139,22 +157,8 @@ class DSDBCOO(DSDBSparse):
             self_rows = self.rows + self.global_block_offset
             self_cols = self.cols + self.global_block_offset
         else:
-            self_rows = (
-                self.rows[
-                    self.nnz_section_offsets[
-                        comm.stack.rank
-                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
-                ]
-                + self.global_block_offset
-            )
-            self_cols = (
-                self.cols[
-                    self.nnz_section_offsets[
-                        comm.stack.rank
-                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
-                ]
-                + self.global_block_offset
-            )
+            self_rows = self.rows_nnz
+            self_cols = self.cols_nnz
 
         if self.symmetry:
             # find items in lower triangle and send them to upper triangle
@@ -235,22 +239,8 @@ class DSDBCOO(DSDBSparse):
             self_rows = self.rows + self.global_block_offset
             self_cols = self.cols + self.global_block_offset
         else:
-            self_rows = (
-                self.rows[
-                    self.nnz_section_offsets[
-                        comm.stack.rank
-                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
-                ]
-                + self.global_block_offset
-            )
-            self_cols = (
-                self.cols[
-                    self.nnz_section_offsets[
-                        comm.stack.rank
-                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
-                ]
-                + self.global_block_offset
-            )
+            self_rows = self.rows_nnz
+            self_cols = self.cols_nnz
 
         if self.symmetry:
             # items of upper triangle of the matrix
@@ -664,6 +654,22 @@ class DSDBCOO(DSDBSparse):
                 data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
             self.rows = self.rows[inds_bcoo2bcoo]
             self.cols = self.cols[inds_bcoo2bcoo]
+            self.rows_nnz = (
+                self.rows[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
+            self.cols_nnz = (
+                self.cols[
+                    self.nnz_section_offsets[
+                        comm.stack.rank
+                    ] : self.nnz_section_offsets[comm.stack.rank + 1]
+                ]
+                + self.global_block_offset
+            )
 
             self.block_section_offsets = block_section_offsets
             # We need to know our local block sizes and those of all
@@ -695,6 +701,22 @@ class DSDBCOO(DSDBSparse):
             data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
+        self.rows_nnz = (
+            self.rows[
+                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + self.global_block_offset
+        )
+        self.cols_nnz = (
+            self.cols[
+                self.nnz_section_offsets[comm.stack.rank] : self.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + self.global_block_offset
+        )
 
         # Update the block sizes and offsets as in the initializer.
         self.num_blocks = num_blocks

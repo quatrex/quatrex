@@ -71,6 +71,9 @@ def product_sparsity_pattern_dsdbsparse(
 ) -> tuple[NDArray, NDArray]:
     """Computes the sparsity pattern of the product of a sequence of DSDBSparse matrices.
 
+    # NOTE: the enough boundary layers need to be periodic for this to be correct.
+
+
     Parameters
     ----------
     matrices : sparse.spmatrix
@@ -135,14 +138,16 @@ def product_sparsity_pattern_dsdbsparse(
         if spillover:
             if start_block == 0:
                 # Left spillover
-                c_[0, 0] = c_[0, 0] + a_[1, 0] @ b_[0, 1]
+                for i in range(n + 1):
+                    c_[i, 0] += a_[i + 1, 0] @ b_[0, 1]
+
             if end_block == num_blocks:
                 # Right spillover
-                c_[num_blocks - 1, num_blocks - 1] = (
-                    c_[num_blocks - 1, num_blocks - 1]
-                    + a_[num_blocks - 2, num_blocks - 1]
-                    @ b_[num_blocks - 1, num_blocks - 2]
-                )
+                for i in range(n + 1):
+                    c_[num_blocks - i - 1, num_blocks - 1] += (
+                        a_[num_blocks - i - 2, num_blocks - 1]
+                        @ b_[num_blocks - 1, num_blocks - 2]
+                    )
 
         a_ = c_
         a_num_diag = tmp_num_diag

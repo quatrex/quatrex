@@ -86,6 +86,43 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     return coo
 
 
+def _create_btd_coo_periodic(sizes: NDArray) -> sparse.coo_matrix:
+    """Returns a random complex sparse array."""
+    size = int(xp.sum(sizes))
+    offsets = xp.hstack(([0], xp.cumsum(xp.asarray(sizes))))
+
+    arr = xp.zeros((size, size), dtype=xp.float32)
+
+    rng = xp.random.default_rng()
+    block1 = xp.random.rand(*(int(sizes[0]), int(sizes[0])))
+    block2 = xp.random.rand(*(int(sizes[0]), int(sizes[0])))
+    block3 = xp.random.rand(*(int(sizes[0]), int(sizes[0])))
+    cutoff = rng.uniform(low=0.1, high=0.4)
+
+    for i in range(len(sizes)):
+        # Diagonal block.
+        arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = (
+            block1  # + 1j * xp.random.rand(*block_shape)
+        )
+        arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]][
+            xp.abs(block1) < cutoff
+        ] = 0
+        # Superdiagonal block.
+        if i < len(sizes) - 1:
+            arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = block2
+            arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = block3
+            arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]][
+                xp.abs(block2) < cutoff
+            ] = 0
+            arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]][
+                xp.abs(block3) < cutoff
+            ] = 0
+
+    coo = sparse.coo_matrix(arr)
+    coo.data[:] = 1
+    return coo
+
+
 def _expand_matrix(
     matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
 ) -> sparse.spmatrix:
@@ -192,6 +229,13 @@ def test_product_sparsity_dsdbsparse_spillover(
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
 
+    if not np.all(block_sizes == block_sizes.flat[0]):
+        pytest.skip(
+            "Skipping test because the block sizes are not all equal."
+            + "The construction of the test matrix would need to be changed"
+            + "such that the only the boundary layers are periodic"
+        )
+
     if (
         xp.__name__ == "cupy"
         and not GPU_AWARE_MPI
@@ -210,7 +254,7 @@ def test_product_sparsity_dsdbsparse_spillover(
         block_sizes = np.hstack(
             (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
         )
-    matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    matrices = [_create_btd_coo_periodic(block_sizes) for _ in range(num_matrices)]
     matrices = [global_comm.bcast(matrix, root=0) for matrix in matrices]
     dsdbsparse_matrices = [
         dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)

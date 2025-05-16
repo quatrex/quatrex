@@ -4,11 +4,17 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator, model_validator
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
-from qttools.comm import comm
-from typing_extensions import Self
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 from qttools import xp
+from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from typing_extensions import Self
+
 
 class LyapunovConfig(BaseModel):
     """Configuration concerning the Lyapunov solvers."""
@@ -53,6 +59,7 @@ class ConvolveConfig(BaseModel):
     # and nnz.
     batch_size: PositiveInt | None = None
 
+
 class CommConfig(BaseModel):
     """All configurations concerning the communication."""
 
@@ -70,42 +77,39 @@ class CommConfig(BaseModel):
     stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
 
+    block_comm_config: dict[str, str] = {}
+    stack_comm_config: dict[str, str] = {}
+
     @model_validator(mode="after")
-    def configure(self) -> Self:
+    def set_defaults(self) -> Self:
         if xp.__name__ == "cupy":
-            block_comm_config = {
+            self.block_comm_config = {
                 "all_to_all": self.block_all_to_all or "host_mpi",
                 "all_gather": self.block_all_gather or "host_mpi",
                 "all_reduce": self.block_all_reduce or "host_mpi",
                 "bcast": self.block_bcast or "host_mpi",
             }
 
-            stack_comm_config = {
+            self.stack_comm_config = {
                 "all_to_all": self.stack_all_to_all or "host_mpi",
                 "all_gather": self.stack_all_gather or "host_mpi",
                 "all_reduce": self.stack_all_reduce or "host_mpi",
                 "bcast": self.stack_bcast or "host_mpi",
-        }
+            }
         else:
-            block_comm_config = {
+            self.block_comm_config = {
                 "all_to_all": self.block_all_to_all or "device_mpi",
                 "all_gather": self.block_all_gather or "device_mpi",
                 "all_reduce": self.block_all_reduce or "device_mpi",
                 "bcast": self.block_bcast or "device_mpi",
             }
 
-            stack_comm_config = {
+            self.stack_comm_config = {
                 "all_to_all": self.stack_all_to_all or "device_mpi",
                 "all_gather": self.stack_all_gather or "device_mpi",
                 "all_reduce": self.stack_all_reduce or "device_mpi",
-                "bcast": self.stack_bcast or "device_mpi", 
+                "bcast": self.stack_bcast or "device_mpi",
             }
-
-        comm.configure(
-            block_comm_size=self.block_comm_size,
-            block_comm_config=block_comm_config,
-            stack_comm_config=stack_comm_config,
-        )
         return self
 
 

@@ -3,11 +3,7 @@
 import time
 
 import numpy as np
-from qttools import (
-    NDArray,
-    sparse,
-    xp,
-)
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.rgf_dist import RGFDist
@@ -15,11 +11,7 @@ from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
-from qttools.utils.mpi_utils import (
-    distributed_load,
-    get_local_slice,
-    get_section_sizes,
-)
+from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 
 from quatrex.bandstructure.band_edges_dist import (
@@ -280,9 +272,9 @@ class ElectronSolverDist(SubsystemSolver):
                 "Current computation not implemented in distributed mode."
             )
 
-        # self.compute_meir_wingreen_current = (
-        #     quatrex_config.electron.solver.compute_current
-        # )
+        self.compute_meir_wingreen_current = (
+            quatrex_config.electron.solver.compute_current
+        )
 
         self.dos_peak_limit = quatrex_config.electron.dos_peak_limit
 
@@ -297,9 +289,15 @@ class ElectronSolverDist(SubsystemSolver):
             quatrex_config.electron.conduction_band_edge
             - quatrex_config.electron.fermi_level
         )
-        self.left_mid_gap_energy = quatrex_config.electron.left_fermi_level
-        self.right_mid_gap_energy = quatrex_config.electron.right_fermi_level
-
+        self.left_mid_gap_energy = 0.5 * (
+            quatrex_config.electron.conduction_band_edge
+            + quatrex_config.electron.valence_band_edge
+        )
+        potential = (
+            quatrex_config.electron.left_fermi_level
+            - quatrex_config.electron.right_fermi_level
+        )
+        self.right_mid_gap_energy = self.left_mid_gap_energy - potential
         self.temperature = quatrex_config.electron.temperature
 
         self.left_fermi_level = quatrex_config.electron.left_fermi_level
@@ -524,15 +522,14 @@ class ElectronSolverDist(SubsystemSolver):
             local_dos.append(g_retarded_density)
 
         local_dos = xp.array(local_dos)
-        dos =  comm.stack.all_gather_v(
-                    local_dos,
-                    axis=1,
-                    mask=g_lesser._stack_padding_mask,
-                    )
-
+        dos = comm.stack.all_gather_v(
+            local_dos, axis=1, mask=g_lesser._stack_padding_mask
+        )
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
-        mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
+        mask = (xp.max(dos_gradient, axis=0) > self.dos_peak_limit) | (
+            xp.max(dos, axis=0) > 10
+        )
 
         section_sizes, __ = get_section_sizes(self.energies.size, comm.stack.size)
         section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
@@ -589,9 +586,7 @@ class ElectronSolverDist(SubsystemSolver):
 
         t_assemble_start = time.perf_counter()
         self.system_matrix.allocate_data()
-        sse_lesser._data[:] = 0.0
-        sse_greater._data[:] = 0.0
-        sse_retarded._data[:] = 0.0
+
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
@@ -643,22 +638,42 @@ class ElectronSolverDist(SubsystemSolver):
             print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
             print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
 
-        t_solve_start = time.perf_counter()
-        self.solver_dist.selected_solve(
-            a=self.system_matrix,
-            sigma_lesser=sse_lesser,
-            sigma_greater=sse_greater,
-            obc_blocks=self.obc_blocks,
-            out=out,
-            return_retarded=True,
-        )
-        synchronize_device()
-        t_solve_end = time.perf_counter()
-        comm.barrier()
-        t_solve_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-            print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+        if comm.block.size > 1:
+            t_solve_start = time.perf_counter()
+            self.solver_dist.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=sse_lesser,
+                sigma_greater=sse_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=True,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+
+        else:
+            t_solve_start = time.perf_counter()
+            self.meir_wingreen_current = self.solver.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=sse_lesser,
+                sigma_greater=sse_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=True,
+                return_current=self.compute_meir_wingreen_current,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
         self.system_matrix.free_data()
@@ -683,7 +698,8 @@ class ElectronSolverDist(SubsystemSolver):
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
-            left_band_edges, right_band_edges = None, None
+            left_band_edges = np.empty((2,), dtype=float)
+            right_band_edges = np.empty((2,), dtype=float)
 
             if comm.block.rank == 0:
                 s_00 = self._get_block(self.overlap_sparray, (0, 0))
@@ -693,14 +709,16 @@ class ElectronSolverDist(SubsystemSolver):
                     xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
                 )
 
-                left_dos =  comm.stack.all_gather_v(
-                            local_left_dos,
-                            axis=0,
-                            mask=g_retarded._stack_padding_mask,
-                            )
+                left_dos = comm.stack.all_gather_v(
+                    local_left_dos,
+                    axis=0,
+                    mask=g_retarded._stack_padding_mask,
+                )
 
                 e_0_left = find_dos_peaks(left_dos, self.energies)
-                left_band_edges = find_band_edges(e_0_left, self.left_mid_gap_energy)
+                left_band_edges = np.array(
+                    find_band_edges(e_0_left, self.left_mid_gap_energy)
+                )
 
             if comm.block.rank == comm.block.size - 1:
                 s_nn = self._get_block(self.overlap_sparray, (-1, -1))
@@ -711,17 +729,19 @@ class ElectronSolverDist(SubsystemSolver):
                 )
 
                 right_dos = comm.stack.all_gather_v(
-                            local_right_dos,
-                            axis=0,
-                            mask=g_retarded._stack_padding_mask,
-                            )
+                    local_right_dos,
+                    axis=0,
+                    mask=g_retarded._stack_padding_mask,
+                )
 
                 e_0_right = find_dos_peaks(right_dos, self.energies)
-                right_band_edges = find_band_edges(e_0_right, self.right_mid_gap_energy)
+                right_band_edges = np.array(
+                    find_band_edges(e_0_right, self.right_mid_gap_energy)
+                )
 
-            left_band_edges = comm.block.bcast(left_band_edges, root=0)
-            right_band_edges = comm.block.bcast(
-                right_band_edges, root=comm.block.size - 1
+            comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
+            comm.block.bcast(
+                right_band_edges, root=comm.block.size - 1, backend="device_mpi"
             )
 
             self._update_fermi_levels(left_band_edges, right_band_edges)

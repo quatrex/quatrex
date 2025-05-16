@@ -4,14 +4,11 @@ import os
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
-import numpy as np
-from qttools import (
-    NDArray,
-    xp,
-)
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -550,7 +547,6 @@ class SCBADist:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
 
-
         return False  # TODO: :-)
 
     @profiler.profile(level="api")
@@ -736,11 +732,11 @@ class SCBADist:
                     )
 
                 local_current = self.electron_solver.meir_wingreen_current
-                meir_wingreen_current =  comm.stack.all_gather_v(
-                            local_current,
-                            axis=0,
-                            mask=self.data.g_lesser._stack_padding_mask,
-                            )
+                meir_wingreen_current = comm.stack.all_gather_v(
+                    local_current,
+                    axis=0,
+                    mask=self.data.g_lesser._stack_padding_mask,
+                )
 
                 self.observables.electron_current["meir-wingreen"] = (
                     meir_wingreen_current
@@ -1064,7 +1060,7 @@ class SCBADist:
                 usage = np.array((total_memory - free_memory) / total_memory)
                 average_usage = np.empty(1)
                 global_comm.Allreduce(usage, average_usage, op=MPI.SUM) / comm.size
-                
+
                 if comm.rank == 0:
                     print(
                         f"Rank-average device memory usage: {average_usage * 100:.4f}%",

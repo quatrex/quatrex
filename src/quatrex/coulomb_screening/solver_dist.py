@@ -3,12 +3,7 @@
 import time
 
 import numpy as np
-from qttools import (
-    NDArray,
-    _DType,
-    sparse,
-    xp,
-)
+from qttools import NDArray, _DType, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
@@ -31,6 +26,7 @@ from quatrex.core.utils import (
 )
 
 profiler = Profiler()
+
 
 @profiler.profile(level="debug")
 def _compute_sparsity_pattern(
@@ -460,11 +456,11 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             local_dos.append(0.5 * (w_greater_density - w_lesser_density))
 
         local_dos = xp.array(local_dos)
-        dos =  comm.stack.all_gather_v(
-                    local_dos,
-                    axis=1,
-                    mask=w_lesser._stack_padding_mask,
-                    )
+        dos = comm.stack.all_gather_v(
+            local_dos,
+            axis=1,
+            mask=w_lesser._stack_padding_mask,
+        )
 
         dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
         mask = xp.max(dos_gradient, axis=0) > self.dos_peak_limit
@@ -617,22 +613,41 @@ class CoulombScreeningSolverDist(SubsystemSolver):
             print(f"    OBC all: {t_obc_end_all-t_obc_start:.3f}", flush=True)
 
         # Solve the system
-        t_solve_start = time.perf_counter()
-        self.solver_dist.selected_solve(
-            a=self.system_matrix,
-            sigma_lesser=self.l_lesser,
-            sigma_greater=self.l_greater,
-            obc_blocks=self.obc_blocks,
-            out=out,
-            return_retarded=False,
-        )
-        synchronize_device()
-        t_solve_end = time.perf_counter()
-        comm.barrier()
-        t_solve_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-            print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
+        if comm.block.size > 1:
+            t_solve_start = time.perf_counter()
+            self.solver_dist.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=self.l_lesser,
+                sigma_greater=self.l_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=False,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
+                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
+
+        else:
+            t_solve_start = time.perf_counter()
+            self.solver.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=self.l_lesser,
+                sigma_greater=self.l_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=False,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
+                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
 
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.

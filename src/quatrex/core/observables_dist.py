@@ -2,11 +2,7 @@
 
 from functools import partial
 
-from qttools import (
-    NDArray,
-    sparse,
-    xp,
-)
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
@@ -78,11 +74,10 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
     if overlap is None:
         local_density = x.diagonal().imag
         return comm.stack.all_gather_v(
-                local_density,
-                axis=0,
-                mask=x._stack_padding_mask,
-                )
-
+            local_density,
+            axis=0,
+            mask=x._stack_padding_mask,
+        )
 
     if comm.block.size > 1:
         raise NotImplementedError(
@@ -119,7 +114,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
         local_density,
         axis=0,
         mask=x._stack_padding_mask,
-        )
+    )
 
 
 def contact_currents(
@@ -151,7 +146,7 @@ def contact_currents(
             axis2=-1,
         )
     else:
-        i_left = xp.empty((*x_lesser.stack_shape, x_lesser.block_sizes[0]), dtype=x_lesser.dtype)
+        i_left = xp.empty(x_lesser.stack_shape, dtype=x_lesser.dtype)
 
     if comm.block.rank == comm.block.size - 1:
         n = x_lesser.num_local_blocks - 1
@@ -162,22 +157,21 @@ def contact_currents(
             axis2=-1,
         )
     else:
-        i_right = xp.empty((*x_lesser.stack_shape, x_lesser.block_sizes[-1]), dtype=x_lesser.dtype)
-
+        i_right = xp.empty(x_lesser.stack_shape, dtype=x_lesser.dtype)
 
     comm.block.bcast(i_left, root=0)
     comm.block.bcast(i_right, root=comm.block.size - 1)
 
     full_i_left = comm.stack.all_gather_v(
-                i_left,
-                axis=0,
-                mask=x_lesser._stack_padding_mask,
-                )
+        i_left,
+        axis=0,
+        mask=x_lesser._stack_padding_mask,
+    )
     full_i_right = comm.stack.all_gather_v(
-                i_right,
-                axis=0,
-                mask=x_lesser._stack_padding_mask,
-                )
+        i_right,
+        axis=0,
+        mask=x_lesser._stack_padding_mask,
+    )
 
     return (
         full_i_left,
@@ -232,7 +226,7 @@ def device_current(
     block_local_current = xp.ascontiguousarray(xp.vstack(block_local_current).T)
 
     return comm.stack.all_gather_v(
-                block_local_current,
-                axis=0,
-                mask=x_lesser._stack_padding_mask,
-                )
+        block_local_current,
+        axis=0,
+        mask=x_lesser._stack_padding_mask,
+    )

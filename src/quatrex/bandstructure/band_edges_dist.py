@@ -3,11 +3,7 @@
 import time
 from functools import partial
 
-from qttools import (
-    NDArray,
-    sparse,
-    xp,
-)
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
@@ -244,8 +240,8 @@ def find_renormalized_eigenvalues(
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
-    left_band_edges = None
-    right_band_edges = None
+    left_band_edges = xp.empty(2, dtype=float)
+    right_band_edges = xp.empty(2, dtype=float)
 
     if comm.block.rank == 0:
         for __ in range(num_ref_iterations):
@@ -273,8 +269,6 @@ def find_renormalized_eigenvalues(
                 root=rank_left,
             )
             left_conduction_band_guess, left_mid_gap_energy = left_packed
-
-
 
         synchronize_device()
         comm.stack.barrier()
@@ -315,13 +309,10 @@ def find_renormalized_eigenvalues(
                 __, right_conduction_band_guess = right_band_edges
 
             right_packed = xp.array([right_conduction_band_guess, right_mid_gap_energy])
-            comm.stack.bcast(
-                right_packed,
-                root=rank_right,
-            )
+            comm.stack.bcast(right_packed, root=rank_right)
             right_conduction_band_guess, right_mid_gap_energy = right_packed
 
-        comm.stack.bcast(right_band_edges, root=rank_right, block=False)
+        comm.stack.bcast(right_band_edges, root=rank_right)
 
     comm.block.bcast(left_band_edges, root=0)
     comm.block.bcast(right_band_edges, root=comm.block.size - 1)

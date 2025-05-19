@@ -5,7 +5,7 @@ import time
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
-from qttools.datastructures import DSBSparse
+from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
@@ -69,17 +69,17 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(level="api")
     def compute(
-        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the polarization.
 
         Parameters
         ----------
-        g_lesser : DSBSparse
+        g_lesser : DSDBSparse
             The lesser Green's function.
-        g_greater : DSBSparse
+        g_greater : DSDBSparse
             The greater Green's function.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The output matrices for the polarization. The order is
             p_lesser, p_greater, p_retarded.
 
@@ -162,12 +162,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # data. This is a workaround.
                     # Fill the matrices with the data. Take second part of the
                     # energy convolution.
-                    p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
-                        self.ne - 1 :
-                    ]
-                    p_greater._data[p_greater._stack_padding_mask, ..., batch] = (
-                        p_g_full[self.ne - 1 :]
-                    )
+                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
+                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
 
         # Barrier before communication
         synchronize_device()
@@ -209,8 +205,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
             p_greater.symmetrize(xp.subtract)
 
         # Discard the real part.
-        p_lesser._data.real = 0
-        p_greater._data.real = 0
+        p_lesser.data.real = 0
+        p_greater.data.real = 0
 
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
 

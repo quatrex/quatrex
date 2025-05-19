@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from qttools import NDArray, lyapunov, obc
-from qttools.datastructures import DSBSparse
+from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
@@ -227,22 +227,22 @@ class SubsystemSolver(ABC):
     @abstractmethod
     def solve(
         self,
-        sse_lesser: DSBSparse,
-        sse_greater: DSBSparse,
-        sse_retarded: DSBSparse,
-        out: tuple[DSBSparse, ...],
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        sse_retarded: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
     ) -> None:
         """Solves the system.
 
         Parameters
         ----------
-        sse_lesser : DSBSparse
+        sse_lesser : DSDBSparse
             The lesser self-energy.
-        sse_greater : DSBSparse
+        sse_greater : DSDBSparse
             The greater self-energy.
-        sse_retarded : DSBSparse
+        sse_retarded : DSDBSparse
             The retarded self-energy.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
             retarded).
 

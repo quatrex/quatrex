@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 from qttools import xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from qttools.datastructures import DSDBCOO, DSDBSparse
 from typing_extensions import Self
 
 
@@ -118,7 +118,6 @@ class ComputeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    dsbsparse_type: DSBSparse = DSBCOO
     dsdbsparse_type: DSDBSparse = DSDBCOO
 
     convolve: ConvolveConfig = ConvolveConfig()
@@ -126,15 +125,6 @@ class ComputeConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
     band_edge: BandEdgeConfig = BandEdgeConfig()
     comm: CommConfig = CommConfig()
-
-    @field_validator("dsbsparse_type", mode="before")
-    def set_dsbsparse(cls, value) -> DSBSparse:
-        """Converts the string value to the corresponding DSBSparse object."""
-        if value == "DSBCSR":
-            return DSBCSR
-        elif value == "DSBCOO":
-            return DSBCOO
-        raise ValueError(f"Invalid value '{value}' for dbsparse")
 
     @field_validator("dsdbsparse_type", mode="before")
     def set_dsdbsparse(cls, value) -> DSDBSparse:

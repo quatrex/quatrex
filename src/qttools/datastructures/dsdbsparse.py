@@ -709,7 +709,7 @@ class DSDBSparse(ABC):
                 self.data[*stack_index][..., self._diag_inds_nnz] = val
             else:
                 self.data[*stack_index][..., self._diag_inds_nnz] = val[
-                    ..., self._diag_value_inds
+                    ..., self._diag_value_inds_nnz
                 ]
         return
 

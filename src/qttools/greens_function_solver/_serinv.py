@@ -352,8 +352,8 @@ class ReducedSystem:
         lower_blocks = []
         if comm.block.rank == 0:
             diag_blocks.append(x_diag_blocks[-1])
-            lower_blocks.append(a.local_blocks[j, i])
-            upper_blocks.append(a.local_blocks[i, j])
+            lower_blocks.append(a.blocks[j, i])
+            upper_blocks.append(a.blocks[i, j])
         elif comm.block.rank == comm.block.size - 1:
             diag_blocks.append(x_diag_blocks[0])
         else:
@@ -363,10 +363,10 @@ class ReducedSystem:
             if is_retarded:
                 upper_blocks.append(buffer_lower[-2])
                 lower_blocks.append(buffer_upper[-2])
-                lower_blocks.append(a.local_blocks[j, i])
+                lower_blocks.append(a.blocks[j, i])
             else:
                 upper_blocks.append(-buffer_upper[-2].conj().swapaxes(-2, -1))
-            upper_blocks.append(a.local_blocks[i, j])
+            upper_blocks.append(a.blocks[i, j])
 
         return diag_blocks, upper_blocks, lower_blocks
 
@@ -419,8 +419,8 @@ class ReducedSystem:
         if comm.block.rank == 0:
             diag_blocks[1] = x_diag_blocks[-1]
             if is_retarded:
-                lower_blocks[1] = a.local_blocks[j, i]
-            upper_blocks[1] = a.local_blocks[i, j]
+                lower_blocks[1] = a.blocks[j, i]
+            upper_blocks[1] = a.blocks[i, j]
         elif comm.block.rank == comm.block.size - 1:
             diag_blocks[-2] = x_diag_blocks[0]
         else:
@@ -429,7 +429,7 @@ class ReducedSystem:
 
             if is_retarded:
                 lower_blocks[2 * comm.block.rank] = buffer_upper[-2]
-                lower_blocks[2 * comm.block.rank + 1] = a.local_blocks[j, i]
+                lower_blocks[2 * comm.block.rank + 1] = a.blocks[j, i]
 
             if is_retarded:
                 upper_blocks[2 * comm.block.rank] = buffer_lower[-2]
@@ -437,7 +437,7 @@ class ReducedSystem:
                 upper_blocks[2 * comm.block.rank] = (
                     -buffer_upper[-2].conj().swapaxes(-2, -1)
                 )
-            upper_blocks[2 * comm.block.rank + 1] = a.local_blocks[i, j]
+            upper_blocks[2 * comm.block.rank + 1] = a.blocks[i, j]
 
         return diag_blocks, upper_blocks, lower_blocks
 
@@ -717,22 +717,22 @@ class ReducedSystem:
                 return
             i = x_out.num_local_blocks - 1
             j = i + 1
-            x_out.local_blocks[i, i] = diag_block_reduced_system[0]
+            x_out.blocks[i, i] = diag_block_reduced_system[0]
 
             if not x_out.symmetry:
                 if is_retarded:
-                    x_out.local_blocks[j, i] = lower_block_reduced_system[0]
+                    x_out.blocks[j, i] = lower_block_reduced_system[0]
                 else:
-                    x_out.local_blocks[j, i] = (
+                    x_out.blocks[j, i] = (
                         -upper_block_reduced_system[0].conj().swapaxes(-2, -1)
                     )
-            x_out.local_blocks[i, j] = upper_block_reduced_system[0]
+            x_out.blocks[i, j] = upper_block_reduced_system[0]
         elif comm.block.rank == comm.block.size - 1:
             x_diag_blocks[0] = diag_block_reduced_system[-1]
             if not write_x_out:
                 return
 
-            x_out.local_blocks[0, 0] = diag_block_reduced_system[-1]
+            x_out.blocks[0, 0] = diag_block_reduced_system[-1]
         else:
             x_diag_blocks[0] = diag_block_reduced_system[2 * comm.block.rank - 1]
             x_diag_blocks[-1] = diag_block_reduced_system[2 * comm.block.rank]
@@ -752,21 +752,19 @@ class ReducedSystem:
 
             i = x_out.num_local_blocks - 1
             j = i + 1
-            x_out.local_blocks[0, 0] = x_diag_blocks[0]
-            x_out.local_blocks[i, i] = x_diag_blocks[-1]
+            x_out.blocks[0, 0] = x_diag_blocks[0]
+            x_out.blocks[i, i] = x_diag_blocks[-1]
 
             if not x_out.symmetry:
                 if is_retarded:
-                    x_out.local_blocks[j, i] = lower_block_reduced_system[
-                        2 * comm.block.rank
-                    ]
+                    x_out.blocks[j, i] = lower_block_reduced_system[2 * comm.block.rank]
                 else:
-                    x_out.local_blocks[j, i] = (
+                    x_out.blocks[j, i] = (
                         -upper_block_reduced_system[2 * comm.block.rank]
                         .conj()
                         .swapaxes(-2, -1)
                     )
-            x_out.local_blocks[i, j] = upper_block_reduced_system[2 * comm.block.rank]
+            x_out.blocks[i, j] = upper_block_reduced_system[2 * comm.block.rank]
 
 
 def downward_schur(
@@ -783,24 +781,20 @@ def downward_schur(
 ):
     """Performs the downward Schur complement decomposition."""
     obc_r = obc_blocks.retarded[0]
-    a_00 = (
-        a.local_blocks[0, 0]
-        if obc_r is None
-        else a.local_blocks[0, 0] - obc_r[stack_slice]
-    )
+    a_00 = a.blocks[0, 0] if obc_r is None else a.blocks[0, 0] - obc_r[stack_slice]
     xr_diag_blocks[0] = a_00
     if selected_solve:
         obc_l = obc_blocks.lesser[0]
         sl_00 = (
-            sigma_lesser.local_blocks[0, 0]
+            sigma_lesser.blocks[0, 0]
             if obc_l is None
-            else sigma_lesser.local_blocks[0, 0] + obc_l[stack_slice]
+            else sigma_lesser.blocks[0, 0] + obc_l[stack_slice]
         )
         obc_g = obc_blocks.greater[0]
         sg_00 = (
-            sigma_greater.local_blocks[0, 0]
+            sigma_greater.blocks[0, 0]
             if obc_g is None
-            else sigma_greater.local_blocks[0, 0] + obc_g[stack_slice]
+            else sigma_greater.blocks[0, 0] + obc_g[stack_slice]
         )
 
         xl_diag_blocks[0] = sl_00
@@ -815,7 +809,7 @@ def downward_schur(
             xg_diag_blocks[i] = xr_diag_blocks[i] @ xg_diag_blocks[i] @ xr_ii_dagger
 
         # Get the blocks that are used multiple times.
-        a_ji = a.local_blocks[j, i]
+        a_ji = a.blocks[j, i]
         xr_ii = xr_diag_blocks[i]
 
         # Precompute the transposes that are used multiple times.
@@ -824,30 +818,26 @@ def downward_schur(
         # Precompute some terms that are used multiple times.
         a_ji_xr_ii = a_ji @ xr_ii
         if selected_solve:
-            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.local_blocks[i, j]
-            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.local_blocks[i, j]
+            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.blocks[i, j]
+            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.blocks[i, j]
 
         obc_r = obc_blocks.retarded[j]
-        a_jj = (
-            a.local_blocks[j, j]
-            if obc_r is None
-            else a.local_blocks[j, j] - obc_r[stack_slice]
-        )
+        a_jj = a.blocks[j, j] if obc_r is None else a.blocks[j, j] - obc_r[stack_slice]
 
-        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.local_blocks[i, j]
+        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.blocks[i, j]
 
         if selected_solve:
             obc_l = obc_blocks.lesser[j]
             sl_jj = (
-                sigma_lesser.local_blocks[j, j]
+                sigma_lesser.blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
+                else sigma_lesser.blocks[j, j] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[j]
             sg_jj = (
-                sigma_greater.local_blocks[j, j]
+                sigma_greater.blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
+                else sigma_greater.blocks[j, j] + obc_g[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -895,24 +885,20 @@ def upward_schur(
     n = a.num_local_blocks - 1
 
     obc_r = obc_blocks.retarded[n]
-    a_nn = (
-        a.local_blocks[n, n]
-        if obc_r is None
-        else a.local_blocks[n, n] - obc_r[stack_slice]
-    )
+    a_nn = a.blocks[n, n] if obc_r is None else a.blocks[n, n] - obc_r[stack_slice]
     xr_diag_blocks[-1] = a_nn
     if selected_solve:
         obc_l = obc_blocks.lesser[n]
         sl_nn = (
-            sigma_lesser.local_blocks[n, n]
+            sigma_lesser.blocks[n, n]
             if obc_l is None
-            else sigma_lesser.local_blocks[n, n] + obc_l[stack_slice]
+            else sigma_lesser.blocks[n, n] + obc_l[stack_slice]
         )
         obc_g = obc_blocks.greater[n]
         sg_nn = (
-            sigma_greater.local_blocks[n, n]
+            sigma_greater.blocks[n, n]
             if obc_g is None
-            else sigma_greater.local_blocks[n, n] + obc_g[stack_slice]
+            else sigma_greater.blocks[n, n] + obc_g[stack_slice]
         )
 
         xl_diag_blocks[-1] = sl_nn
@@ -927,7 +913,7 @@ def upward_schur(
             xg_diag_blocks[i] = xr_diag_blocks[i] @ xg_diag_blocks[i] @ xr_ii_dagger
 
         # Get the blocks that are used multiple times.
-        a_ji = a.local_blocks[j, i]
+        a_ji = a.blocks[j, i]
         xr_ii = xr_diag_blocks[i]
 
         # Precompute the transposes that are used multiple times.
@@ -937,30 +923,26 @@ def upward_schur(
         a_ji_xr_ii = a_ji @ xr_ii
 
         if selected_solve:
-            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.local_blocks[i, j]
-            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.local_blocks[i, j]
+            a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser.blocks[i, j]
+            a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater.blocks[i, j]
 
         obc_r = obc_blocks.retarded[j]
-        a_jj = (
-            a.local_blocks[j, j]
-            if obc_r is None
-            else a.local_blocks[j, j] - obc_r[stack_slice]
-        )
+        a_jj = a.blocks[j, j] if obc_r is None else a.blocks[j, j] - obc_r[stack_slice]
 
-        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.local_blocks[i, j]
+        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.blocks[i, j]
 
         if selected_solve:
             obc_l = obc_blocks.lesser[j]
             sl_jj = (
-                sigma_lesser.local_blocks[j, j]
+                sigma_lesser.blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
+                else sigma_lesser.blocks[j, j] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[j]
             sg_jj = (
-                sigma_greater.local_blocks[j, j]
+                sigma_greater.blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
+                else sigma_greater.blocks[j, j] + obc_g[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -1009,56 +991,48 @@ def permuted_schur(
     selected_solve: bool = False,
 ):
     """Performs the permuted Schur complement decomposition."""
-    xr_buffer_lower[0] = a.local_blocks[0, 1]
-    xr_buffer_upper[0] = a.local_blocks[1, 0]
+    xr_buffer_lower[0] = a.blocks[0, 1]
+    xr_buffer_upper[0] = a.blocks[1, 0]
 
     obc_r = obc_blocks.retarded[0]
-    a_00 = (
-        a.local_blocks[0, 0]
-        if obc_r is None
-        else a.local_blocks[0, 0] - obc_r[stack_slice]
-    )
+    a_00 = a.blocks[0, 0] if obc_r is None else a.blocks[0, 0] - obc_r[stack_slice]
     xr_diag_blocks[0] = a_00
 
     obc_r = obc_blocks.retarded[1]
-    a_11 = (
-        a.local_blocks[1, 1]
-        if obc_r is None
-        else a.local_blocks[1, 1] - obc_r[stack_slice]
-    )
+    a_11 = a.blocks[1, 1] if obc_r is None else a.blocks[1, 1] - obc_r[stack_slice]
     xr_diag_blocks[1] = a_11
     if selected_solve:
-        xl_buffer_upper[0] = sigma_lesser.local_blocks[1, 0]
+        xl_buffer_upper[0] = sigma_lesser.blocks[1, 0]
 
         obc_l = obc_blocks.lesser[0]
         sl_00 = (
-            sigma_lesser.local_blocks[0, 0]
+            sigma_lesser.blocks[0, 0]
             if obc_l is None
-            else sigma_lesser.local_blocks[0, 0] + obc_l[stack_slice]
+            else sigma_lesser.blocks[0, 0] + obc_l[stack_slice]
         )
         obc_l = obc_blocks.lesser[1]
         sl_11 = (
-            sigma_lesser.local_blocks[1, 1]
+            sigma_lesser.blocks[1, 1]
             if obc_l is None
-            else sigma_lesser.local_blocks[1, 1] + obc_l[stack_slice]
+            else sigma_lesser.blocks[1, 1] + obc_l[stack_slice]
         )
 
         xl_diag_blocks[0] = sl_00
         xl_diag_blocks[1] = sl_11
 
-        xg_buffer_upper[0] = sigma_greater.local_blocks[1, 0]
+        xg_buffer_upper[0] = sigma_greater.blocks[1, 0]
 
         obc_g = obc_blocks.greater[0]
         sg_00 = (
-            sigma_greater.local_blocks[0, 0]
+            sigma_greater.blocks[0, 0]
             if obc_g is None
-            else sigma_greater.local_blocks[0, 0] + obc_g[stack_slice]
+            else sigma_greater.blocks[0, 0] + obc_g[stack_slice]
         )
         obc_g = obc_blocks.greater[1]
         sg_11 = (
-            sigma_greater.local_blocks[1, 1]
+            sigma_greater.blocks[1, 1]
             if obc_g is None
-            else sigma_greater.local_blocks[1, 1] + obc_g[stack_slice]
+            else sigma_greater.blocks[1, 1] + obc_g[stack_slice]
         )
         xg_diag_blocks[0] = sg_00
         xg_diag_blocks[1] = sg_11
@@ -1069,7 +1043,7 @@ def permuted_schur(
         xr_diag_blocks[i] = linalg.inv(xr_diag_blocks[i])
 
         # Get the blocks that are used multiple times.
-        a_ji = a.local_blocks[j, i]
+        a_ji = a.blocks[j, i]
         xr_ii = xr_diag_blocks[i]
         xr_ii_dagger = xr_diag_blocks[i].conj().swapaxes(-2, -1)
         xr_ji_xr_ii = xr_buffer_lower[i - 1] @ xr_ii
@@ -1080,21 +1054,17 @@ def permuted_schur(
         # Precompute some terms that are used multiple times.
         a_ji_xr_ii = a_ji @ xr_ii
         if selected_solve:
-            sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
-            sigma_greater_ij = sigma_greater.local_blocks[i, j]
+            sigma_lesser_ij = sigma_lesser.blocks[i, j]
+            sigma_greater_ij = sigma_greater.blocks[i, j]
             a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_ij
             a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_ij
 
         # Update next diagonal block.
         obc_r = obc_blocks.retarded[j]
-        a_jj = (
-            a.local_blocks[j, j]
-            if obc_r is None
-            else a.local_blocks[j, j] - obc_r[stack_slice]
-        )
-        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.local_blocks[i, j]
+        a_jj = a.blocks[j, j] if obc_r is None else a.blocks[j, j] - obc_r[stack_slice]
+        xr_diag_blocks[j] = a_jj - a_ji_xr_ii @ a.blocks[i, j]
         # Update lower buffer block.
-        xr_buffer_lower[i] = -xr_ji_xr_ii @ a.local_blocks[i, j]
+        xr_buffer_lower[i] = -xr_ji_xr_ii @ a.blocks[i, j]
         # Update upper buffer block.
         xr_buffer_upper[i] = -a_ji_xr_ii @ xr_buffer_upper[i - 1]
         # Update first block.
@@ -1105,9 +1075,9 @@ def permuted_schur(
 
             obc_l = obc_blocks.lesser[j]
             sl_jj = (
-                sigma_lesser.local_blocks[j, j]
+                sigma_lesser.blocks[j, j]
                 if obc_l is None
-                else sigma_lesser.local_blocks[j, j] + obc_l[stack_slice]
+                else sigma_lesser.blocks[j, j] + obc_l[stack_slice]
             )
 
             xl_diag_blocks[j] = (
@@ -1138,9 +1108,9 @@ def permuted_schur(
 
             obc_g = obc_blocks.greater[j]
             sg_jj = (
-                sigma_greater.local_blocks[j, j]
+                sigma_greater.blocks[j, j]
                 if obc_g is None
-                else sigma_greater.local_blocks[j, j] + obc_g[stack_slice]
+                else sigma_greater.blocks[j, j] + obc_g[stack_slice]
             )
             xg_diag_blocks[j] = (
                 sg_jj
@@ -1152,7 +1122,7 @@ def permuted_schur(
                 a_ji
                 @ xg_diag_blocks[i]
                 @ xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                - sigma_greater.local_blocks[j, i] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
+                - sigma_greater.blocks[j, i] @ xr_ji_xr_ii.conj().swapaxes(-2, -1)
                 - a_ji_xr_ii @ xg_buffer_upper[i - 1]
             )
             xg_diag_blocks[0] = (
@@ -1186,14 +1156,14 @@ def downward_selinv(
         # Get the blocks that are used multiple times.
         xr_ii = xr_diag_blocks[i]
         xr_jj = xr_diag_blocks[j]
-        a_ij = a.local_blocks[i, j]
-        a_ji = a.local_blocks[j, i]
+        a_ij = a.blocks[i, j]
+        a_ji = a.blocks[j, i]
         xl_ii = xl_diag_blocks[i]
         xl_jj = xl_diag_blocks[j]
         xg_ii = xg_diag_blocks[i]
         xg_jj = xg_diag_blocks[j]
-        sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
-        sigma_greater_ij = sigma_greater.local_blocks[i, j]
+        sigma_lesser_ij = sigma_lesser.blocks[i, j]
+        sigma_greater_ij = sigma_greater.blocks[i, j]
 
         # Precompute the transposes that are used multiple times.
         xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
@@ -1225,9 +1195,9 @@ def downward_selinv(
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
 
-            xl_out.local_blocks[i, j] = xl_ij
+            xl_out.blocks[i, j] = xl_ij
             if not xl_out.symmetry:
-                xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+                xl_out.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
             xg_ij = (
                 -xr_ii_a_ij_xg_jj
@@ -1235,9 +1205,9 @@ def downward_selinv(
                 + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
 
-            xg_out.local_blocks[i, j] = xg_ij
+            xg_out.blocks[i, j] = xg_ij
             if not xg_out.symmetry:
-                xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+                xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
             temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
 
@@ -1249,7 +1219,7 @@ def downward_selinv(
                 - temp_1_l
                 + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
             )
-            xl_out.local_blocks[i, i] = 0.5 * (
+            xl_out.blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             xg_diag_blocks[i] = (
@@ -1258,7 +1228,7 @@ def downward_selinv(
                 - temp_1_g
                 + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
             )
-            xg_out.local_blocks[i, i] = 0.5 * (
+            xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
@@ -1269,9 +1239,9 @@ def downward_selinv(
             continue
 
         # # Streaming/Sparsifying back to DSDBSparse
-        xr_out.local_blocks[j, i] = x_lower_block
-        xr_out.local_blocks[i, j] = x_upper_block
-        xr_out.local_blocks[i, i] = xr_diag_blocks[i]
+        xr_out.blocks[j, i] = x_lower_block
+        xr_out.blocks[i, j] = x_upper_block
+        xr_out.blocks[i, i] = xr_diag_blocks[i]
 
 
 def upward_selinv(
@@ -1294,14 +1264,14 @@ def upward_selinv(
         # Get the blocks that are used multiple times.
         xr_ii = xr_diag_blocks[i]
         xr_jj = xr_diag_blocks[j]
-        a_ij = a.local_blocks[i, j]
-        a_ji = a.local_blocks[j, i]
+        a_ij = a.blocks[i, j]
+        a_ji = a.blocks[j, i]
         xl_ii = xl_diag_blocks[i]
         xl_jj = xl_diag_blocks[j]
         xg_ii = xg_diag_blocks[i]
         xg_jj = xg_diag_blocks[j]
-        sigma_lesser_ij = sigma_lesser.local_blocks[i, j]
-        sigma_greater_ij = sigma_greater.local_blocks[i, j]
+        sigma_lesser_ij = sigma_lesser.blocks[i, j]
+        sigma_greater_ij = sigma_greater.blocks[i, j]
 
         # Precompute the transposes that are used multiple times.
         xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
@@ -1333,8 +1303,8 @@ def upward_selinv(
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
             if not xl_out.symmetry:
-                xl_out.local_blocks[i, j] = xl_ij
-            xl_out.local_blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
+                xl_out.blocks[i, j] = xl_ij
+            xl_out.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
             xg_ij = (
                 -xr_ii_a_ij_xg_jj
@@ -1342,8 +1312,8 @@ def upward_selinv(
                 + xr_ii @ sigma_greater_ij @ xr_jj_dagger
             )
             if not xg_out.symmetry:
-                xg_out.local_blocks[i, j] = xg_ij
-            xg_out.local_blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+                xg_out.blocks[i, j] = xg_ij
+            xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
             temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
 
@@ -1355,7 +1325,7 @@ def upward_selinv(
                 - temp_1_l
                 + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
             )
-            xl_out.local_blocks[i, i] = 0.5 * (
+            xl_out.blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             xg_diag_blocks[i] = (
@@ -1364,7 +1334,7 @@ def upward_selinv(
                 - temp_1_g
                 + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
             )
-            xg_out.local_blocks[i, i] = 0.5 * (
+            xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
@@ -1375,9 +1345,9 @@ def upward_selinv(
             continue
 
         # Streaming/Sparsifying back to DSDBSparse
-        xr_out.local_blocks[j, i] = x_upper_block
-        xr_out.local_blocks[i, j] = x_lower_block
-        xr_out.local_blocks[i, i] = xr_diag_blocks[i]
+        xr_out.blocks[j, i] = x_upper_block
+        xr_out.blocks[i, j] = x_lower_block
+        xr_out.blocks[i, i] = xr_diag_blocks[i]
 
 
 def permuted_selinv(
@@ -1403,19 +1373,19 @@ def permuted_selinv(
     for i in range(a.num_local_blocks - 2, 0, -1):
 
         B1 = (
-            a.local_blocks[i, i + 1] @ xr_diag_blocks[i + 1]
+            a.blocks[i, i + 1] @ xr_diag_blocks[i + 1]
             + xr_buffer_upper[i - 1] @ xr_buffer_lower[i]
         )
         B2 = (
-            a.local_blocks[i, i + 1] @ xr_buffer_upper[i]
+            a.blocks[i, i + 1] @ xr_buffer_upper[i]
             + xr_buffer_upper[i - 1] @ xr_diag_blocks[0]
         )
         C1 = (
-            xr_diag_blocks[i + 1] @ a.local_blocks[i + 1, i]
+            xr_diag_blocks[i + 1] @ a.blocks[i + 1, i]
             + xr_buffer_upper[i] @ xr_buffer_lower[i - 1]
         )
         C2 = (
-            xr_buffer_lower[i] @ a.local_blocks[i + 1, i]
+            xr_buffer_lower[i] @ a.blocks[i + 1, i]
             + xr_diag_blocks[0] @ xr_buffer_lower[i - 1]
         )
 
@@ -1427,21 +1397,21 @@ def permuted_selinv(
             bl_upper_block = (
                 -xr_diag_blocks[i]
                 @ (
-                    a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
+                    a.blocks[i, i + 1] @ xl_diag_blocks[i + 1]
                     - xr_buffer_upper[i - 1]
                     @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
                     # + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
                 )
                 - xl_diag_blocks[i]
                 @ (
-                    a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                 )
                 + xr_diag_blocks[i]
                 @ (
-                    sigma_lesser.local_blocks[i, i + 1]
+                    sigma_lesser.blocks[i, i + 1]
                     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     + xl_buffer_upper[i - 1]
                     @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
@@ -1450,19 +1420,19 @@ def permuted_selinv(
             xl_buffer_upper[i - 1] = (
                 -xr_diag_blocks[i]
                 @ (
-                    a.local_blocks[i, i + 1] @ xl_buffer_upper[i]
+                    a.blocks[i, i + 1] @ xl_buffer_upper[i]
                     + xr_buffer_upper[i - 1] @ xl_diag_blocks[0]
                 )
                 - xl_diag_blocks[i]
                 @ (
-                    a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                     @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                     + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
                 + xr_diag_blocks[i]
                 @ (
-                    sigma_lesser.local_blocks[i, i + 1]
+                    sigma_lesser.blocks[i, i + 1]
                     @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                     + xl_buffer_upper[i - 1] @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
@@ -1473,32 +1443,32 @@ def permuted_selinv(
                 + xr_diag_blocks[i]
                 @ (
                     (
-                        a.local_blocks[i, i + 1] @ xl_diag_blocks[i + 1]
+                        a.blocks[i, i + 1] @ xl_diag_blocks[i + 1]
                         - xr_buffer_upper[i - 1]
                         @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        a.local_blocks[i, i + 1] @ xl_buffer_upper[i]
+                        a.blocks[i, i + 1] @ xl_buffer_upper[i]
                         + xr_buffer_upper[i - 1] @ xl_diag_blocks[0]
                     )
                     @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
                 )
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 + xr_diag_blocks[i]
-                @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
+                @ ((B1) @ a.blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
                 @ xl_diag_blocks[i]
                 + xl_diag_blocks[i]
                 @ (
                     (
-                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                         @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                         + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                         @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                         @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                         + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                         @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
@@ -1507,18 +1477,18 @@ def permuted_selinv(
                 )
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 - xr_diag_blocks[i]
-                @ ((B1) @ sigma_lesser.local_blocks[i + 1, i] + (B2) @ temp_B_31)
+                @ ((B1) @ sigma_lesser.blocks[i + 1, i] + (B2) @ temp_B_31)
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 - xr_diag_blocks[i]
                 @ (
                     (
-                        sigma_lesser.local_blocks[i, i + 1]
+                        sigma_lesser.blocks[i, i + 1]
                         @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                         + temp_B_13 @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        sigma_lesser.local_blocks[i, i + 1]
+                        sigma_lesser.blocks[i, i + 1]
                         @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                         + temp_B_13 @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
@@ -1527,10 +1497,10 @@ def permuted_selinv(
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             # Streaming/Sparsifying back to DSDBSparse
-            xl_out.local_blocks[i, i + 1] = bl_upper_block
+            xl_out.blocks[i, i + 1] = bl_upper_block
             if not xl_out.symmetry:
-                xl_out.local_blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
-            xl_out.local_blocks[i, i] = 0.5 * (
+                xl_out.blocks[i + 1, i] = -bl_upper_block.conj().swapaxes(-2, -1)
+            xl_out.blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
@@ -1540,20 +1510,20 @@ def permuted_selinv(
             bg_upper_block = (
                 -xr_diag_blocks[i]
                 @ (
-                    a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
+                    a.blocks[i, i + 1] @ xg_diag_blocks[i + 1]
                     - xr_buffer_upper[i - 1]
                     @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
                 )
                 - xg_diag_blocks[i]
                 @ (
-                    a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                 )
                 + xr_diag_blocks[i]
                 @ (
-                    sigma_greater.local_blocks[i, i + 1]
+                    sigma_greater.blocks[i, i + 1]
                     @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                     + xg_buffer_upper[i - 1]
                     @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
@@ -1562,19 +1532,19 @@ def permuted_selinv(
             xg_buffer_upper[i - 1] = (
                 -xr_diag_blocks[i]
                 @ (
-                    a.local_blocks[i, i + 1] @ xg_buffer_upper[i]
+                    a.blocks[i, i + 1] @ xg_buffer_upper[i]
                     + xr_buffer_upper[i - 1] @ xg_diag_blocks[0]
                 )
                 - xg_diag_blocks[i]
                 @ (
-                    a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                     @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                     + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                     @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
                 + xr_diag_blocks[i]
                 @ (
-                    sigma_greater.local_blocks[i, i + 1]
+                    sigma_greater.blocks[i, i + 1]
                     @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                     + xg_buffer_upper[i - 1] @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                 )
@@ -1585,32 +1555,32 @@ def permuted_selinv(
                 + xr_diag_blocks[i]
                 @ (
                     (
-                        a.local_blocks[i, i + 1] @ xg_diag_blocks[i + 1]
+                        a.blocks[i, i + 1] @ xg_diag_blocks[i + 1]
                         - xr_buffer_upper[i - 1]
                         @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        a.local_blocks[i, i + 1] @ xg_buffer_upper[i]
+                        a.blocks[i, i + 1] @ xg_buffer_upper[i]
                         + xr_buffer_upper[i - 1] @ xg_diag_blocks[0]
                     )
                     @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
                 )
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 + xr_diag_blocks[i]
-                @ ((B1) @ a.local_blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
+                @ ((B1) @ a.blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
                 @ xg_diag_blocks[i]
                 + xg_diag_blocks[i]
                 @ (
                     (
-                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                         @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                         + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                         @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        a.local_blocks[i + 1, i].conj().swapaxes(-2, -1)
+                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
                         @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                         + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
                         @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
@@ -1619,18 +1589,18 @@ def permuted_selinv(
                 )
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 - xr_diag_blocks[i]
-                @ ((B1) @ sigma_greater.local_blocks[i + 1, i] + (B2) @ temp_B_31)
+                @ ((B1) @ sigma_greater.blocks[i + 1, i] + (B2) @ temp_B_31)
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
                 - xr_diag_blocks[i]
                 @ (
                     (
-                        sigma_greater.local_blocks[i, i + 1]
+                        sigma_greater.blocks[i, i + 1]
                         @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
                         + temp_B_13 @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
                     )
-                    @ a.local_blocks[i, i + 1].conj().swapaxes(-2, -1)
+                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
                     + (
-                        sigma_greater.local_blocks[i, i + 1]
+                        sigma_greater.blocks[i, i + 1]
                         @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
                         + temp_B_13 @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
                     )
@@ -1639,23 +1609,23 @@ def permuted_selinv(
                 @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
             )
             # Streaming/Sparsifying back to DSDBSparse
-            xg_out.local_blocks[i, i + 1] = bg_upper_block
+            xg_out.blocks[i, i + 1] = bg_upper_block
             if not xg_out.symmetry:
-                xg_out.local_blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
-            xg_out.local_blocks[i, i] = 0.5 * (
+                xg_out.blocks[i + 1, i] = -bg_upper_block.conj().swapaxes(-2, -1)
+            xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
         if return_retarded:
-            xr_out.local_blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
+            xr_out.blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
 
         xr_buffer_upper[i - 1] = -xr_diag_blocks[i] @ B2
 
-        D1 = a.local_blocks[i + 1, i]
+        D1 = a.blocks[i + 1, i]
         D2 = xr_buffer_lower[i - 1]
 
         if return_retarded:
-            xr_out.local_blocks[i + 1, i] = -C1 @ xr_diag_blocks[i]
+            xr_out.blocks[i + 1, i] = -C1 @ xr_diag_blocks[i]
 
         xr_buffer_lower[i - 1] = -C2 @ xr_diag_blocks[i]
 
@@ -1665,16 +1635,16 @@ def permuted_selinv(
         )
         # Streaming/Sparsifying back to DSDBSparse
         if return_retarded:
-            xr_out.local_blocks[i, i] = xr_diag_blocks[i]
+            xr_out.blocks[i, i] = xr_diag_blocks[i]
 
     if return_retarded:
-        xr_out.local_blocks[1, 0] = xr_buffer_upper[0]
-        xr_out.local_blocks[0, 1] = xr_buffer_lower[0]
+        xr_out.blocks[1, 0] = xr_buffer_upper[0]
+        xr_out.blocks[0, 1] = xr_buffer_lower[0]
     if selected_solve:
         if not xl_out.symmetry:
-            xl_out.local_blocks[1, 0] = xl_buffer_upper[0]
-        xl_out.local_blocks[0, 1] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
+            xl_out.blocks[1, 0] = xl_buffer_upper[0]
+        xl_out.blocks[0, 1] = -xl_buffer_upper[0].conj().swapaxes(-2, -1)
 
         if not xg_out.symmetry:
-            xg_out.local_blocks[1, 0] = xg_buffer_upper[0]
-        xg_out.local_blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)
+            xg_out.blocks[1, 0] = xg_buffer_upper[0]
+        xg_out.blocks[0, 1] = -xg_buffer_upper[0].conj().swapaxes(-2, -1)

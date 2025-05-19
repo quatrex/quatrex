@@ -305,9 +305,7 @@ class TestAccess:
             )
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
                 # Find the correct rank in block-comm
-                assert xp.allclose(
-                    reference_block, dsdbsparse.local_blocks[accessed_block]
-                )
+                assert xp.allclose(reference_block, dsdbsparse.blocks[accessed_block])
 
     @pytest.mark.usefixtures("accessed_block")
     def test_get_sparse_block(
@@ -365,7 +363,7 @@ class TestAccess:
                         assert xp.allclose(reference_block[ind], block.toarray())
 
                 elif "COO" in dsdbsparse_type_dist.__name__:
-                    rows, cols, data = dsdbsparse.local_blocks[accessed_block]
+                    rows, cols, data = dsdbsparse.blocks[accessed_block]
                     for ind in xp.ndindex(reference_block.shape[:-2]):
                         block = sparse.coo_matrix(
                             (data[ind], (rows, cols)), shape=reference_block.shape[-2:]
@@ -418,9 +416,7 @@ class TestAccess:
             )
 
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
-                dsdbsparse.local_blocks[accessed_block] = xp.ones_like(
-                    dense[..., *inds]
-                )
+                dsdbsparse.blocks[accessed_block] = xp.ones_like(dense[..., *inds])
 
         # Sparsity structure should not be modified.
         if not symmetry:
@@ -491,7 +487,7 @@ class TestAccess:
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
                 assert xp.allclose(
                     reference_block,
-                    dsdbsparse.stack[stack_index].local_blocks[accessed_block],
+                    dsdbsparse.stack[stack_index].blocks[accessed_block],
                 )
 
     @pytest.mark.usefixtures("accessed_block", "stack_index")
@@ -552,7 +548,7 @@ class TestAccess:
 
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
                 if "COO" in dsdbsparse_type_dist.__name__:
-                    rows, cols, data = dsdbsparse.stack[stack_index].local_blocks[
+                    rows, cols, data = dsdbsparse.stack[stack_index].blocks[
                         accessed_block
                     ]
                     for ind in xp.ndindex(reference_block.shape[:-2]):
@@ -619,8 +615,8 @@ class TestAccess:
             )
 
             with pytest.raises(IndexError) if not in_bounds else nullcontext():
-                dsdbsparse.stack[stack_index].local_blocks[accessed_block] = (
-                    xp.ones_like(dense[inds])
+                dsdbsparse.stack[stack_index].blocks[accessed_block] = xp.ones_like(
+                    dense[inds]
                 )
 
         # Sparsity structure should not be modified.

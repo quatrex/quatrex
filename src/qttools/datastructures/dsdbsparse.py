@@ -330,16 +330,6 @@ class DSDBSparse(ABC):
         self._set_items((Ellipsis,), *index, value)
 
     @property
-    def local_blocks(self) -> "_DSDBlockIndexer":
-        """Returns a block indexer."""
-        return self._block_indexer
-
-    @property
-    def sparse_local_blocks(self) -> "_DSDBlockIndexer":
-        """Returns a block indexer."""
-        return self._sparse_block_indexer
-
-    @property
     def blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer."""
         return self._block_indexer

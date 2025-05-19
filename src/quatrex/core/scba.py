@@ -1059,11 +1059,12 @@ class SCBA:
                 free_memory, total_memory = xp.cuda.Device().mem_info
                 usage = np.array((total_memory - free_memory) / total_memory)
                 average_usage = np.empty(1)
-                global_comm.Allreduce(usage, average_usage, op=MPI.SUM) / comm.size
+                global_comm.Allreduce(usage, average_usage, op=MPI.SUM)
+                average_usage /= comm.size
 
                 if comm.rank == 0:
                     print(
-                        f"Rank-average device memory usage: {average_usage * 100:.4f}%",
+                        f"Rank-average device memory usage: {average_usage[0] * 100:.4f}%",
                         flush=True,
                     )
 

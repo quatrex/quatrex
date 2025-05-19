@@ -533,11 +533,6 @@ class DSDBCOO(DSDBSparse):
         """In-place addition of two DSDBCOO matrices."""
 
         if sparse.issparse(other):
-            if self.symmetry:
-                raise NotImplementedError(
-                    "In-place addition with symmetry not implemented."
-                    "Symmetry could be broken if the other matrix is not symmetric."
-                )
 
             csr = other.tocsr()
             self.data += csr[
@@ -558,11 +553,6 @@ class DSDBCOO(DSDBSparse):
     def __isub__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
         """In-place subtraction of two DSDBCOO matrices."""
         if sparse.issparse(other):
-            if self.symmetry:
-                raise NotImplementedError(
-                    "In-place addition with symmetry not implemented."
-                    "Symmetry could be broken if the other matrix is not symmetric."
-                )
 
             csr = other.tocsr()
             self.data -= csr[
@@ -837,6 +827,9 @@ class DSDBCOO(DSDBSparse):
         """
         # deepcopy can lead to issues with cupy
         # segfaults in the tests observed
+        if dsdbsparse._data is None:
+            raise ValueError("Cannot create zeros_like from deallocated DSDBSparse.")
+
         out = cls(
             data=dsdbsparse.data,
             rows=dsdbsparse.rows,
@@ -847,11 +840,7 @@ class DSDBCOO(DSDBSparse):
             symmetry=dsdbsparse.symmetry,
             symmetry_op=dsdbsparse.symmetry_op,
         )
-
-        if out._data is None:
-            out.allocate_data()
-        else:
-            out._data[:] = 0
+        out._data[:] = 0
         return out
 
     @classmethod

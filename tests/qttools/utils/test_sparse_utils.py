@@ -123,16 +123,48 @@ def _expand_matrix(
         left_obc : left_obc + int(sum(block_sizes)),
         left_obc : left_obc + int(sum(block_sizes)),
     ] = csr
-    expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
-    expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
-    expanded[-right_obc:, right_obc:] = expanded[
-        -2 * right_obc : -right_obc, :-right_obc
+    # expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
+    # expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
+    # expanded[-right_obc:, right_obc:] = expanded[
+    #     -2 * right_obc : -right_obc, :-right_obc
+    # ]
+    # expanded[right_obc:, -right_obc:] = expanded[
+    #     :-right_obc, -2 * right_obc : -right_obc
+    # ]
+    expanded[:left_obc, : 2 * left_obc] = expanded[
+        left_obc : 2 * left_obc, left_obc : 3 * left_obc
     ]
-    expanded[right_obc:, -right_obc:] = expanded[
-        :-right_obc, -2 * right_obc : -right_obc
+    expanded[: 2 * left_obc, :left_obc] = expanded[
+        left_obc : 3 * left_obc, left_obc : 2 * left_obc
+    ]
+    expanded[-right_obc:, -2 * right_obc :] = expanded[
+        -2 * right_obc : -right_obc, -3 * right_obc : -right_obc
+    ]
+    expanded[-2 * right_obc :, -right_obc:] = expanded[
+        -3 * right_obc : -right_obc, -2 * right_obc : -right_obc
     ]
 
     return expanded
+
+
+def _contract_matrix(
+    matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
+) -> sparse.spmatrix:
+    """Contract the matrix by removing the boundaries."""
+    shape = list(matrix.shape)
+    left_obc = int(sum(block_sizes[0:NBC]))
+    right_obc = int(sum(block_sizes[-NBC:]))
+    shape[-2] -= left_obc + right_obc
+    shape[-1] -= left_obc + right_obc
+
+    contracted = sparse.csr_matrix(tuple(shape), dtype=matrix.dtype)
+
+    contracted[:] = matrix[
+        left_obc : left_obc + int(sum(block_sizes)),
+        left_obc : left_obc + int(sum(block_sizes)),
+    ]
+
+    return contracted
 
 
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
@@ -188,13 +220,21 @@ def test_product_sparsity_dsdbsparse_spillover(
         assert xp.allclose(dense_matrices[i], matrices[i].toarray())
 
     shape = matrices[0].shape
-    expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
-    product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
-    product.data[:] = 1
-    ref = product.toarray()[
-        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
-        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
-    ]
+    # expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
+    # product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
+    product = None
+    product = None
+    for i, m in enumerate(matrices):
+        if product is None:
+            product = m
+        else:
+            expanded_m = _expand_matrix(m, block_sizes, 1)
+            product = product @ expanded_m
+            product.data[:] = 1
+            product = _contract_matrix(product, block_sizes, 1)
+        if i < num_matrices - 1:
+            product = _expand_matrix(product, block_sizes, 1)
+    ref = product.toarray()
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsdbsparse_matrices,

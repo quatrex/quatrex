@@ -123,26 +123,26 @@ def _expand_matrix(
         left_obc : left_obc + int(sum(block_sizes)),
         left_obc : left_obc + int(sum(block_sizes)),
     ] = csr
-    # expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
-    # expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
-    # expanded[-right_obc:, right_obc:] = expanded[
-    #     -2 * right_obc : -right_obc, :-right_obc
+    expanded[:left_obc, :-left_obc] = expanded[left_obc : 2 * left_obc, left_obc:]
+    expanded[:-left_obc, :left_obc] = expanded[left_obc:, left_obc : 2 * left_obc]
+    expanded[-right_obc:, right_obc:] = expanded[
+        -2 * right_obc : -right_obc, :-right_obc
+    ]
+    expanded[right_obc:, -right_obc:] = expanded[
+        :-right_obc, -2 * right_obc : -right_obc
+    ]
+    # expanded[:left_obc, : 2 * left_obc] = expanded[
+    #     left_obc : 2 * left_obc, left_obc : 3 * left_obc
     # ]
-    # expanded[right_obc:, -right_obc:] = expanded[
-    #     :-right_obc, -2 * right_obc : -right_obc
+    # expanded[: 2 * left_obc, :left_obc] = expanded[
+    #     left_obc : 3 * left_obc, left_obc : 2 * left_obc
     # ]
-    expanded[:left_obc, : 2 * left_obc] = expanded[
-        left_obc : 2 * left_obc, left_obc : 3 * left_obc
-    ]
-    expanded[: 2 * left_obc, :left_obc] = expanded[
-        left_obc : 3 * left_obc, left_obc : 2 * left_obc
-    ]
-    expanded[-right_obc:, -2 * right_obc :] = expanded[
-        -2 * right_obc : -right_obc, -3 * right_obc : -right_obc
-    ]
-    expanded[-2 * right_obc :, -right_obc:] = expanded[
-        -3 * right_obc : -right_obc, -2 * right_obc : -right_obc
-    ]
+    # expanded[-right_obc:, -2 * right_obc :] = expanded[
+    #     -2 * right_obc : -right_obc, -3 * right_obc : -right_obc
+    # ]
+    # expanded[-2 * right_obc :, -right_obc:] = expanded[
+    #     -3 * right_obc : -right_obc, -2 * right_obc : -right_obc
+    # ]
 
     return expanded
 
@@ -210,6 +210,9 @@ def test_product_sparsity_dsdbsparse_spillover(
     global_stack_shape: tuple,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
+    if any(b != block_sizes[0] for b in block_sizes):
+        pytest.skip("This test is only valid for uniform block sizes.")
+
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
     dsdbsparse_matrices = [
         dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)

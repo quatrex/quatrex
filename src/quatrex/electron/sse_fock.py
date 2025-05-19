@@ -18,7 +18,7 @@ from quatrex.core.sse import ScatteringSelfEnergy
 profiler = Profiler()
 
 
-class SigmaFockDist(ScatteringSelfEnergy):
+class SigmaFock(ScatteringSelfEnergy):
     """Computes the bare Fock self-energy.
 
     Parameters

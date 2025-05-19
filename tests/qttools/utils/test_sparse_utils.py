@@ -223,21 +223,22 @@ def test_product_sparsity_dsdbsparse_spillover(
         assert xp.allclose(dense_matrices[i], matrices[i].toarray())
 
     shape = matrices[0].shape
-    # expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
-    # product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
-    product = None
-    product = None
-    for i, m in enumerate(matrices):
-        if product is None:
-            product = m
-        else:
-            expanded_m = _expand_matrix(m, block_sizes, 1)
-            product = product @ expanded_m
-            product.data[:] = 1
-            product = _contract_matrix(product, block_sizes, 1)
-        if i < num_matrices - 1:
-            product = _expand_matrix(product, block_sizes, 1)
-    ref = product.toarray()
+    expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
+    product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
+    product.data[:] = 1
+    ref = _contract_matrix(product, block_sizes, 1).toarray()
+    # product = None
+    # for i, m in enumerate(matrices):
+    #     if product is None:
+    #         product = m
+    #     else:
+    #         expanded_m = _expand_matrix(m, block_sizes, 1)
+    #         product = product @ expanded_m
+    #         product.data[:] = 1
+    #         product = _contract_matrix(product, block_sizes, 1)
+    #     if i < num_matrices - 1:
+    #         product = _expand_matrix(product, block_sizes, 1)
+    # ref = product.toarray()
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsdbsparse_matrices,

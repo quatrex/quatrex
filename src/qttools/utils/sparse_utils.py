@@ -136,14 +136,15 @@ def product_sparsity_pattern_dsdbsparse(
         )
 
         if spillover:
+            # NOTE: The following only works if b is BTD.
             if start_block == 0:
                 # Left spillover
-                for i in range(n + 1):
+                for i in range(a_num_diag // 2):
                     c_[i, 0] += a_[i + 1, 0] @ b_[0, 1]
 
             if end_block == num_blocks:
                 # Right spillover
-                for i in range(n + 1):
+                for i in range(a_num_diag // 2):
                     c_[num_blocks - i - 1, num_blocks - 1] += (
                         a_[num_blocks - i - 2, num_blocks - 1]
                         @ b_[num_blocks - 1, num_blocks - 2]

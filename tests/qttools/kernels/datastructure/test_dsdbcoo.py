@@ -143,7 +143,7 @@ def test_compute_block_slice(
 @pytest.mark.parametrize("use_kernel", [True, False])
 def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     """Tests that the block gets densified correctly."""
-    coo = sparse.random(*shape, density=0.25, format="coo")
+    coo = sparse.random(*shape, density=0.25, format="coo").astype(xp.complex128)
     coo.sum_duplicates()
 
     reference_block = coo.toarray()
@@ -155,7 +155,14 @@ def test_densify_block(shape: tuple[int, int], use_kernel: bool):
         kwargs = {}
 
     dsdbcoo_kernels.densify_block(
-        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0, **kwargs
+        block,
+        coo.row.astype(xp.int32),
+        coo.col.astype(xp.int32),
+        coo.data,
+        slice(0, len(coo.data), 1),
+        0,
+        0,
+        **kwargs,
     )
 
     assert xp.allclose(block, reference_block)

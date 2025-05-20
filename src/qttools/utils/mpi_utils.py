@@ -84,8 +84,6 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
         The loaded array.
 
     """
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
     if path.suffix not in [".npz", ".npy"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 

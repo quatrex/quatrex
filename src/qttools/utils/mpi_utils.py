@@ -83,7 +83,14 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     sparse.spmatrix | NDArray
         The loaded array.
 
+    Raises
+    ------
+    FileNotFoundError
+        Occurs on every rank where the file does not exist.
+
     """
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
     if path.suffix not in [".npz", ".npy"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 

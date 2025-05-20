@@ -45,10 +45,6 @@ class DSDBCOO(DSDBSparse):
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
         interpreted as a one-dimensional stack.
-    comm.block : MPI.Comm
-        The communicator for the block distribution.
-    comm.stack : MPI.Comm
-        The communicator for the stack distribution.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
@@ -523,10 +519,10 @@ class DSDBCOO(DSDBSparse):
         if np.any(self.block_sizes != other.block_sizes):
             raise ValueError("Block sizes do not match.")
 
-        if np.any(self.rows != other.rows):
+        if xp.any(self.rows != other.rows):
             raise ValueError("Row indices do not match.")
 
-        if np.any(self.cols != other.cols):
+        if xp.any(self.cols != other.cols):
             raise ValueError("Column indices do not match.")
 
     def __iadd__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":

@@ -125,10 +125,6 @@ class DSDBSparse(ABC):
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
         interpreted as a one-dimensional stack.
-    comm.block : MPI.Comm
-        The communicator for the block distribution.
-    comm.stack : MPI.Comm
-        The communicator for the stack distribution.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.

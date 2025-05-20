@@ -1,6 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-# import time
 from collections.abc import Callable
 
 from mpi4py.MPI import Intracomm, Request

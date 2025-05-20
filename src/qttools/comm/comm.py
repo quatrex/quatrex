@@ -47,7 +47,7 @@ def _check_bufs_aliased(sendbuf: NDArray, recvbuf: NDArray) -> bool:
     """Checks if the send and receive buffers are aliased.
 
     This is done by checking if the memory addresses of the two buffers
-    are the same.
+    match or the buffers overlap.
 
     Parameters
     ----------
@@ -424,7 +424,7 @@ class _SubCommunicator:
         sendbuf : NDArray
             The buffer to send.
         axis : int
-            The axis along which to pad the buffer.
+            The axis along which to gather the buffer.
         mask : NDArray, optional
             The mask to use for gathering the buffer. If None, the buffer will be automatically padded.
 
@@ -511,6 +511,10 @@ class QuatrexCommunicator:
             The configuration for the block sub-communicator.
         stack_comm_config : dict
             The configuration for the stack sub-communicator.
+        override : bool, optional
+            Whether to override a previous configuration. Defaul
+            is False.
+
 
         Raises
         -------

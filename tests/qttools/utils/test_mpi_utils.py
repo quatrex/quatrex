@@ -67,6 +67,7 @@ def test_get_section_sizes(
 @pytest.mark.mpi(min_size=2)
 def test_distributed_load_npy(mpi_tmp_path: Path):
     """Test the distributed_load function."""
+    # NOTE: This test only works if all ranks see the same file system.
     arr = None
     if global_comm.rank == 0:
         arr = xp.random.rand(10)
@@ -80,6 +81,7 @@ def test_distributed_load_npy(mpi_tmp_path: Path):
 @pytest.mark.mpi(min_size=2)
 def test_distributed_load_npz(mpi_tmp_path: Path):
     """Test the distributed_load function."""
+    # NOTE: This test only works if all ranks see the same file system.
     coo = None
     if global_comm.rank == 0:
         coo = sps.random(10, 10, density=0.5)

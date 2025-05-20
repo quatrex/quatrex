@@ -9,17 +9,6 @@ from qttools.comm.comm import GPU_AWARE_MPI, _default_config, pad_buffer
 data_size = 20
 
 
-@pytest.fixture(scope="function")
-def reset_comm():
-    # Setup: set all members of the singleton comm to None
-    for attr in comm.__dict__:
-        setattr(comm, attr, None)
-    comm._is_configured = False
-
-    # Yield control to the test function
-    yield
-
-
 def _configure(
     backend_type: str,
     block_comm_size: int,
@@ -35,6 +24,7 @@ def _configure(
                 block_comm_size=block_comm_size,
                 block_comm_config=config,
                 stack_comm_config=config,
+                override=True,
             )
         return False
 
@@ -44,6 +34,7 @@ def _configure(
                 block_comm_size=block_comm_size,
                 block_comm_config=config,
                 stack_comm_config=config,
+                override=True,
             )
         return False
 
@@ -56,6 +47,7 @@ def _configure(
                     block_comm_size=block_comm_size,
                     block_comm_config=config,
                     stack_comm_config=config,
+                    override=True,
                 )
             return False
 
@@ -65,6 +57,7 @@ def _configure(
                     block_comm_size=block_comm_size,
                     block_comm_config=config,
                     stack_comm_config=config,
+                    override=True,
                 )
             return False
 
@@ -72,13 +65,13 @@ def _configure(
         block_comm_size=block_comm_size,
         block_comm_config=config,
         stack_comm_config=config,
+        override=True,
     )
     return True
 
 
 @pytest.mark.mpi(min_size=3)
 def test_configure(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ) -> bool:
@@ -93,7 +86,6 @@ def test_configure(
 
 @pytest.mark.mpi(min_size=3)
 def test_all_to_all(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):
@@ -122,7 +114,6 @@ def test_all_to_all(
 
 @pytest.mark.mpi(min_size=3)
 def test_all_gather(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):
@@ -152,7 +143,6 @@ def test_all_gather(
 
 @pytest.mark.mpi(min_size=3)
 def test_all_reduce(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):
@@ -184,7 +174,6 @@ def test_all_reduce(
 
 @pytest.mark.mpi(min_size=3)
 def test_bcast(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):
@@ -211,7 +200,6 @@ def test_bcast(
 
 @pytest.mark.mpi(min_size=3)
 def test_pad_buffer(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):
@@ -257,7 +245,6 @@ def test_pad_buffer(
 
 @pytest.mark.mpi(min_size=3)
 def test_all_gather_v(
-    reset_comm,
     backend_type: str,
     block_comm_size: int,
 ):

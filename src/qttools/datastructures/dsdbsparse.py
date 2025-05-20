@@ -182,13 +182,13 @@ class DSDBSparse(ABC):
         # Per default, we have the data is distributed in stack format.
         self.distribution_state = "stack"
 
-        self.data_slice_nnz = (
-            slice(None, int(self.stack_section_sizes_offset)),
-            ...,
-            slice(None, int(self.global_stack_shape[0])),
-        )
         self.data_slice_stack = (
             slice(None, int(self.stack_section_sizes_offset)),
+            ...,
+            slice(None, int(self.nnz_section_offsets[-1])),
+        )
+        self.data_slice_nnz = (
+            slice(None, int(self.global_stack_shape[0])),
             ...,
             slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
         )

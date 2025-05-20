@@ -175,16 +175,23 @@ class DSDBSparse(ABC):
         nnz_section_sizes, total_nnz_size = get_section_sizes(
             data.shape[-1], comm.stack.size, strategy="greedy"
         )
-        self.nnz_section_sizes_host = nnz_section_sizes
-        self.nnz_section_offsets_host = np.hstack(
-            ([0], np.cumsum(self.nnz_section_sizes_host))
-        )
         self.nnz_section_sizes = nnz_section_sizes
         self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
 
         # Per default, we have the data is distributed in stack format.
         self.distribution_state = "stack"
+
+        self.data_slice_nnz = (
+            slice(None, int(self.stack_section_sizes_offset)),
+            ...,
+            slice(None, int(self.global_stack_shape[0])),
+        )
+        self.data_slice_stack = (
+            slice(None, int(self.stack_section_sizes_offset)),
+            ...,
+            slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
+        )
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
@@ -344,32 +351,16 @@ class DSDBSparse(ABC):
     def data(self) -> NDArray:
         """Returns the local slice of the data, masking the padding."""
         if self.distribution_state == "stack":
-            return self._data[
-                : self.stack_section_sizes_offset,
-                ...,
-                : self.nnz_section_offsets_host[-1],
-            ]
-        return self._data[
-            : self.global_stack_shape[0],
-            ...,
-            : self.nnz_section_sizes[comm.stack.rank],
-        ]
+            return self._data[self.data_slice_stack]
+        return self._data[self.data_slice_nnz]
 
     @data.setter
     def data(self, value: NDArray) -> None:
         """Sets the local slice of the data."""
         if self.distribution_state == "stack":
-            self._data[
-                : self.stack_section_sizes_offset,
-                ...,
-                : self.nnz_section_offsets_host[-1],
-            ] = value
+            self._data[self.data_slice_stack] = value
         else:
-            self._data[
-                : self.global_stack_shape[0],
-                ...,
-                : self.nnz_section_sizes[comm.stack.rank],
-            ] = value
+            self._data[self.data_slice_nnz] = value
 
     def __repr__(self) -> str:
         """Returns a string representation of the object."""

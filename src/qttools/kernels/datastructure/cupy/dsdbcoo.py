@@ -186,7 +186,6 @@ def densify_block(
         )
 
     else:
-        THREADS_PER_BLOCK
         stack_size = data.size // data.shape[-1]
         stack_stride = data.shape[-1]
         block_start = block_slice.start or 0
@@ -202,14 +201,14 @@ def densify_block(
                 rows,
                 cols,
                 data.reshape(-1),
-                stack_size,
-                stack_stride,
-                nnz_per_block,
-                block.shape[-2],
-                block.shape[-1],
-                block_start,
-                row_offset,
-                col_offset,
+                np.int32(stack_size),
+                np.int32(stack_stride),
+                np.int32(nnz_per_block),
+                np.int32(block.shape[-2]),
+                np.int32(block.shape[-1]),
+                np.int32(block_start),
+                np.int32(row_offset),
+                np.int32(col_offset),
             ),
         )
 

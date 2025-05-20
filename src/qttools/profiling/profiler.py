@@ -21,7 +21,7 @@ NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
 
 
 # Set the whether to profile the GPU.
-QTX_PROFILE_GPU = strtobool(os.getenv("QTX_PROFILE_GPU", "False"), False)
+QTX_PROFILE_GPU = strtobool(os.getenv("QTX_PROFILE_GPU"), False)
 if QTX_PROFILE_GPU:
     if xp.__name__ != "cupy":
         warnings.warn("CUDA is not available. Defaulting to no GPU profiling.")

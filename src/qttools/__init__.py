@@ -12,11 +12,12 @@ from qttools.__about__ import __version__
 
 def strtobool(s: str, default: bool | None = None) -> bool:
     """Convert a string to a boolean."""
-    if s.lower() in ("y", "yes", "t", "true", "on", "1"):
+    if s is None and default is not None:
+        return default
+    elif s.lower() in ("y", "yes", "t", "true", "on", "1"):
         return True
-    if s.lower() in ("n", "no", "f", "false", "off", "0"):
+    elif s.lower() in ("n", "no", "f", "false", "off", "0"):
         return False
-
     if default is None:
         raise ValueError(f"Invalid truth value {s=}.")
 
@@ -62,7 +63,7 @@ else:
     raise ValueError(f"Unrecognized ARRAY_MODULE '{QTX_ARRAY_MODULE}'")
 
 # TODO: adapt testing suite to test both JIT and non-JIT versions
-QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT", "True"), default=True)
+QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Some type aliases for the array module.
 _ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)

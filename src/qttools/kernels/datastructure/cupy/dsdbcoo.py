@@ -19,7 +19,7 @@ else:
 # cannot find the correct name of the function to profile.
 profiler = Profiler()
 
-QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK", "False"), False)
+QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK"), False)
 
 
 @profiler.profile(level="api")

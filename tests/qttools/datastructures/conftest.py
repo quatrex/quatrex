@@ -5,7 +5,7 @@ import pytest
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse, TallNSkinny, ShortNFat
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse, ShortNFat, TallNSkinny
 
 DSDBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
 if global_comm.size == 1:
@@ -35,8 +35,12 @@ MIDDLE_BLOCK_SIZES = [
 LARGE_BLOCK_SIZES = [
     pytest.param(xp.array([200] * 10), id="large-constant-block-size-200"),
     pytest.param(xp.array([500] * 10), id="large-constant-block-size-500"),
-    pytest.param(xp.array([200] * 3 + [400] * 2 + [200] * 3), id="large-mixed-block-size-200"),
-    pytest.param(xp.array([500] * 3 + [1000] * 2 + [500] * 3), id="large-mixed-block-size-500"),
+    pytest.param(
+        xp.array([200] * 3 + [400] * 2 + [200] * 3), id="large-mixed-block-size-200"
+    ),
+    pytest.param(
+        xp.array([500] * 3 + [1000] * 2 + [500] * 3), id="large-mixed-block-size-500"
+    ),
 ]
 
 ACCESSED_BLOCKS = [
@@ -99,16 +103,6 @@ SYMMETRY_TYPE = [
     pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
 ]
 
-OPS = [
-    pytest.param(xp.add, id="add"),
-    pytest.param(xp.subtract, id="subtract"),
-]
-
-SYMMETRY_TYPE = [
-    pytest.param((False, lambda x: x), id="non-symmetric"),
-    pytest.param((True, lambda x: -xp.conj(x)), id="skew-hermitian"),
-]
-
 
 class BlockSizes:
     def __init__(self):
@@ -132,6 +126,7 @@ class DTypes:
             if arch >= 90:
                 try:
                     import torch
+
                     self.dtypes = []
                     self.dtypes.append((torch, torch.float32))
                     self.dtypes.append((torch, torch.bfloat16))
@@ -153,17 +148,19 @@ def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
 
 
 @pytest.fixture(params=DSBANDED_TYPES)
-def dsbanded_type(request: pytest.FixtureRequest) -> DSBSparse:
+def dsbanded_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
 @pytest.fixture(params=DSBANDED_MATMUL_TYPES)
-def dsbanded_matmul_type(request: pytest.FixtureRequest) -> DSBSparse:
+def dsbanded_matmul_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
+
 
 @pytest.fixture(params=DSDBSPARSE_TYPES_DIST)
 def dsdbsparse_type_dist(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
+
 
 @pytest.fixture(params=ACCESSED_BLOCKS)
 def accessed_block(request: pytest.FixtureRequest) -> tuple:

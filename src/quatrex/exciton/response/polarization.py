@@ -20,6 +20,36 @@ def calc_four_point_correlation_distributed(
     L_step_E: int,
     rank: int,
 ):
+    """Calculates the four-point correlation function in a distributed manner.
+
+    Arguments
+    ---------
+    GG_local : NDArray
+        Local two-point Green's function. first dimension is energy, last dimension is space.
+    GL_local : NDArray
+        Local two-point Green's function. first dimension is energy, last dimension is space.
+    G_energies : NDArray
+        Energies of the two-point Green's function.
+    G_nnz_section_offsets : List[int]
+        Offsets of the sections in the global data array.
+    G_rows : List[int]
+        Rows of the two-point Green's function (in the global matrix).
+    G_cols : List[int]
+        Columns of the two-point Green's function (in the global matrix).
+    G_bandwidth : int
+        Bandwidth of the two-point Green's function.
+    L_nen : int
+        Number of energies in the four-point correlation function.
+    L_step_E : int
+        Step size in the energies of the four-point correlation function.
+    rank : int
+        Rank of the current process.
+
+    Returns
+    -------
+    NDArray
+        Four-point correlation function. The first dimension is space, the last dimension is energy.
+    """
     nnz_to_fetch, nnz_rank = find_overlaping_data(
         G_nnz_section_offsets,
         G_bandwidth,
@@ -42,27 +72,21 @@ def calc_four_point_correlation_distributed(
     )
     extended_local_GG = xp.concatenate([GG_local, gg_recv], axis=-1)
     extended_local_GL = xp.concatenate([GL_local, gl_recv], axis=-1)
-    extended_local_G_rows = xp.concatenate(
+    extended_local_G_indices = xp.concatenate(
         [
-            G_rows[G_nnz_section_offsets[rank] : G_nnz_section_offsets[rank + 1]],
-            G_rows[nnz_to_fetch[rank]],
+            xp.arange(G_nnz_section_offsets[rank], G_nnz_section_offsets[rank + 1]),
+            nnz_to_fetch[rank],
         ],
-        axis=-1,
     )
-    extended_local_G_cols = xp.concatenate(
-        [
-            G_cols[G_nnz_section_offsets[rank] : G_nnz_section_offsets[rank + 1]],
-            G_cols[nnz_to_fetch[rank]],
-        ],
-        axis=-1,
-    )
-    L_nnz = estimate_L_nnz(extended_local_G_rows, extended_local_G_cols)
+    L_nnz = estimate_L_nnz(G_rows, G_cols, extended_local_G_indices)
     prefactor = -1j / xp.pi * (G_energies[1] - G_energies[0])  # equispaced energies
+    # swapping axes to have the energy dimension last. Not sure if it's faster in FFT.
     return four_point_correlation(
-        extended_local_GG,
-        extended_local_GL,
-        extended_local_G_rows,
-        extended_local_G_cols,
+        extended_local_GG.swapaxes(0, -1),
+        extended_local_GL.swapaxes(0, -1),
+        G_rows,
+        G_cols,
+        extended_local_G_indices,
         L_nnz,
         L_nen,
         L_step_E,
@@ -73,11 +97,12 @@ def calc_four_point_correlation_distributed(
 def estimate_L_nnz(
     G_rows: List[int],
     G_cols: List[int],
+    extended_local_G_indices: List[int],
 ):
-    """Estimate the number of non-zero elements in the four-point correlation function."""
-    G_nnz = len(G_rows)
+    """Estimate the number of non-zero elements in the four-point correlation function that should be computed on this rank."""
+    local_G_nnz = len(extended_local_G_indices)
     G_bandwidth = xp.max(xp.abs(xp.array(G_rows) - xp.array(G_cols))) + 1
-    L_nnz = G_nnz * G_bandwidth * G_bandwidth * 4
+    L_nnz = local_G_nnz * G_bandwidth * G_bandwidth * 4
     return L_nnz
 
 
@@ -86,6 +111,7 @@ def four_point_correlation(
     GL: NDArray,
     G_rows: List[int],
     G_cols: List[int],
+    G_indices: List[int],
     L_nnz: int,
     L_nen: int,
     L_step_E: int,
@@ -104,6 +130,21 @@ def four_point_correlation(
         Two-point Green's function, last dimension is energy, first dimension is space.
     GL : NDArray
         Two-point Green's function, last dimension is energy, first dimension is space.
+    G_rows : List[int]
+        Rows of the two-point Green's function (in the global matrix).
+    G_cols : List[int]
+        Columns of the two-point Green's function (in the global matrix).
+    G_indices : List[int]
+        Indices of the two-point Green's function available on this rank.
+    L_nnz : int
+        Estimated number of non-zero elements in the four-point correlation function.
+    L_nen : int
+        Number of energies in the four-point correlation function.
+    L_step_E : int
+        Step size in the energies of the four-point correlation function.
+    prefactor : float
+        Prefactor for the four-point correlation function.
+
     Returns
     -------
     NDArray
@@ -123,11 +164,11 @@ def four_point_correlation(
     GG_fft = xp.fft.fftn(GG, (n,), axes=(-1,))
 
     L_inz = 0
-    for inz in range(G_nnz):
+    for inz in G_indices:
         i = G_rows[inz]
         j = G_cols[inz]
 
-        for jnz in range(G_nnz):
+        for jnz in G_indices:
             k = G_rows[jnz]
             L = G_cols[jnz]
 
@@ -151,7 +192,7 @@ def four_point_correlation(
             L_cols[L_inz] = jnz
             L_inz += 1
 
-    return LG[:L_inz], LL[:L_inz], L_rows[:L_inz], L_cols[:L_inz]
+    return (LG[:L_inz], LL[:L_inz], L_rows[:L_inz], L_cols[:L_inz])
 
 
 def find_index(
@@ -161,9 +202,7 @@ def find_index(
     col: int,
 ):
     """Finds the index of a given row and column in the rows and columns arrays."""
-    cond1 = xp.where(rows == row)[0]
-    cond2 = xp.where(cols == col)[0]
-    cond = xp.all(cond1, cond2)
+    cond = xp.where((rows == row) & (cols == col))[0]
     if cond.size == 0:
         return -1
     if cond.size == 1:

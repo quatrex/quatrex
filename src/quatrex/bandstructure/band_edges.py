@@ -106,8 +106,8 @@ def _compute_eigenvalues(
 ):
     """Computes the eigenvalues for the left or right contact."""
     big_blocksize = sigma_retarded.block_sizes[0]
-    small_blocksize = big_blocksize // band_edge_config.block_sections
     block_sections = band_edge_config.block_sections
+    small_blocksize = big_blocksize // block_sections
 
     if side == "left":
         blocks = [(0, 0), (0, 1)]  # , (1, 0)]

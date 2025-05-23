@@ -1,8 +1,22 @@
 from qttools import NDArray, xp
-from qttools.comm.comm import QuatrexCommunicator as comm
+from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py import MPI
+from mpi4py.MPI import Request
 from qttools.kernels.datastructure.cupy.dsdbsparse import find_ranks
 from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 
+
+
+def distributed_transpose_2darray(data:NDArray,local_c:int,local_r:int):
+    assert data.ndim == 2
+    assert data.shape[0] == local_r
+    assert data.shape[1] == local_c*comm.size
+    for i in range(local_r):
+        comm.Alltoall(MPI.IN_PLACE,data[i,:])
+        buffer = xp.transpose(xp.reshape(data[i,:],(comm.size,local_c)))
+        data[i,:] = buffer.flatten()
+    data = xp.reshape(xp.transpose(data) , (local_c,local_r*comm.size))   
+    return data
 
 def fetch_overlaping_data(
     nnz_to_fetch,
@@ -47,6 +61,8 @@ def fetch_overlaping_data(
         if i == comm.rank:
             continue
         recv_reqs.append(comm.Irecv(recbuf[i], source=i, tag=tag))
+
+    Request.Waitall(recv_reqs)
 
     recv_data = xp.concatenate(
         [xp.array(buf) for buf in recbuf if buf is not None], axis=-1

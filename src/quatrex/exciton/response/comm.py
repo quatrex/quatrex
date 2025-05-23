@@ -5,7 +5,42 @@ from mpi4py.MPI import Request
 from qttools.kernels.datastructure.cupy.dsdbsparse import find_ranks
 from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 
+def gather_nnz_distributed_sparse_coomatrix(data:NDArray,local_nnz:int,local_e:int, rows:NDArray, cols:NDArray):
+    assert data.ndim == 2
+    assert data.shape[0] == local_nnz
+    assert data.shape[1] == local_e*comm.size
+    data = distributed_transpose_2darray(data,local_r=local_nnz,local_c=local_e)
+    local_nnz = len(rows)
+    assert len(cols) == local_nnz
+    all_nnz = xp.empty((comm.size,),dtype=int)
+    comm.Allgather(local_nnz, all_nnz)
+    total_nnz = xp.sum(all_nnz)
+    all_rows = xp.empty((total_nnz,),dtype=int)
+    all_cols = xp.empty((total_nnz,),dtype=int)
+    comm.Allgather(rows, all_rows)
+    comm.Allgather(cols, all_cols)
+    return data, rows, cols
 
+def find_unique(rows:NDArray, cols:NDArray):    
+    assert rows.ndim == 1
+    assert cols.ndim == 1
+    assert len(rows) == len(cols)
+    arr = xp.array([rows,cols]).T
+    unique, unique_inds = xp.unique(arr, axis=0, return_index=True)      
+    unique_rows = rows[unique_inds]
+    unique_cols = cols[unique_inds]
+    return unique_rows, unique_cols, unique_inds
+
+def distribute_sparse_coomatrix_over_nnz(data:NDArray,local_nnz:int,local_e:int, rows:NDArray, cols:NDArray):
+    assert data.ndim == 2
+    assert data.shape[0] == local_e
+    assert data.shape[1] == local_nnz*comm.size
+    data = distributed_transpose_2darray(data,local_r=local_e,local_c=local_nnz)
+    local_rows = xp.empty((local_nnz,),dtype=int)
+    local_cols = xp.empty((local_nnz,),dtype=int)
+    comm.Scatter(rows, local_rows)
+    comm.Scatter(cols, local_cols)
+    return data, local_rows, local_cols
 
 def distributed_transpose_2darray(data:NDArray,local_c:int,local_r:int):
     assert data.ndim == 2

@@ -96,7 +96,7 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal block to the output.
-            x_.blocks[j, j] = x_diag_blocks[j]
+            x_.blocks[a.num_blocks - 1, a.num_blocks - 1] = x_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
@@ -297,14 +297,14 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xl_.blocks[j, j] = 0.5 * (
+            xl_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
                 xl_diag_blocks[-1] - xl_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
-            xg_.blocks[j, j] = 0.5 * (
+            xg_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
                 xg_diag_blocks[-1] - xg_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
             if return_retarded:
-                xr_.blocks[j, j] = xr_diag_blocks[-1]
+                xr_.blocks[a.num_blocks - 1, a.num_blocks - 1] = xr_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):

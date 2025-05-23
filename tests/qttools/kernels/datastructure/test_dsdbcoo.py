@@ -1,9 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp, sparse, xp
-from qttools.kernels import dsbcoo_kernels
+from qttools import NDArray, sparse, xp
+from qttools.kernels.datastructure import dsdbcoo_kernels
 
 
 def _reference_compute_block_sort_index(
@@ -27,9 +28,7 @@ def _reference_compute_block_sort_index(
 
     """
     num_blocks = len(block_sizes)
-    block_offsets = host_xp.hstack(
-        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
 
     sort_index = xp.zeros(len(coo_cols), dtype=int)
     offset = 0
@@ -105,7 +104,9 @@ def test_find_inds(shape: tuple[int, int], num_inds: int):
     reference_inds, reference_value_inds = xp.nonzero(
         (coo.row[:, xp.newaxis] == rows) & (coo.col[:, xp.newaxis] == cols)
     )
-    inds, value_inds, max_count = dsbcoo_kernels.find_inds(coo.row, coo.col, rows, cols)
+    inds, value_inds, max_count = dsdbcoo_kernels.find_inds(
+        coo.row, coo.col, rows, cols
+    )
 
     assert max_count in (0, 1)
     assert xp.all(inds == reference_inds)
@@ -120,10 +121,10 @@ def test_compute_block_slice(
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = host_xp.array(
-        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)]
+    block_sizes = np.array(
+        [a.size for a in np.array_split(np.arange(shape[0]), num_blocks)]
     )
-    block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
     sort_index = _reference_compute_block_sort_index(coo.row, coo.col, block_sizes)
     rows, cols = coo.row[sort_index], coo.col[sort_index]
@@ -131,7 +132,7 @@ def test_compute_block_slice(
     reference_block_slice = _reference_compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
-    block_slice = dsbcoo_kernels.compute_block_slice(
+    block_slice = dsdbcoo_kernels.compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
 
@@ -139,16 +140,29 @@ def test_compute_block_slice(
 
 
 @pytest.mark.usefixtures("shape")
-def test_densify_block(shape: tuple[int, int]):
+@pytest.mark.parametrize("use_kernel", [True, False])
+def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     """Tests that the block gets densified correctly."""
-    coo = sparse.random(*shape, density=0.25, format="coo")
+    coo = sparse.random(*shape, density=0.25, format="coo").astype(xp.complex128)
     coo.sum_duplicates()
 
     reference_block = coo.toarray()
 
     block = xp.zeros_like(reference_block)
-    dsbcoo_kernels.densify_block(
-        block, coo.row, coo.col, coo.data, slice(0, len(coo.data), 1), 0, 0
+    if xp.__name__ == "cupy":
+        kwargs = {"use_kernel": use_kernel}
+    else:
+        kwargs = {}
+
+    dsdbcoo_kernels.densify_block(
+        block,
+        coo.row.astype(xp.int32),
+        coo.col.astype(xp.int32),
+        coo.data,
+        slice(0, len(coo.data), 1),
+        0,
+        0,
+        **kwargs,
     )
 
     assert xp.allclose(block, reference_block)
@@ -161,7 +175,7 @@ def test_sparsify_block(shape: tuple[int, int]):
     coo.sum_duplicates()
 
     data = xp.zeros_like(coo.data)
-    dsbcoo_kernels.sparsify_block(coo.toarray(), coo.row, coo.col, data)
+    dsdbcoo_kernels.sparsify_block(coo.toarray(), coo.row, coo.col, data)
 
     assert xp.allclose(data, coo.data)
 
@@ -172,15 +186,15 @@ def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = host_xp.array(
-        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)],
-        dtype=host_xp.int32,
+    block_sizes = np.array(
+        [a.size for a in np.array_split(np.arange(shape[0]), num_blocks)],
+        dtype=np.int32,
     )
 
     reference_sort_index = _reference_compute_block_sort_index(
         coo.row, coo.col, block_sizes
     )
-    sort_index = dsbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
+    sort_index = dsdbcoo_kernels.compute_block_sort_index(coo.row, coo.col, block_sizes)
 
     assert xp.all(sort_index == reference_sort_index)
 

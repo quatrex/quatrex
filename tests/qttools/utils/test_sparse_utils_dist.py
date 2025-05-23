@@ -2,24 +2,37 @@
 
 import functools
 
+import numpy as np
 import pytest
+from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.utils.sparse_utils import (
-    product_sparsity_pattern,
-    product_sparsity_pattern_dsdbsparse,
-)
+from qttools.utils.mpi_utils import get_section_sizes
+from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
 GLOBAL_STACK_SHAPES = [
-    pytest.param((4,), id="1D-stack"),
-    pytest.param((5, 2), id="2D-stack"),
+    pytest.param((7,), id="1D-stack"),
+    pytest.param((6, 2), id="2D-stack"),
 ]
 
 
-def setup_module():
-    """setup any state specific to the execution of the given module."""
+# TODO test for block distributed
+@pytest.fixture(
+    autouse=True,
+    scope="module",
+    params=[
+        pytest.param(1, id="block-comm-size-1"),
+        pytest.param(3, id="block-comm-size-3"),
+    ],
+)
+def configure_comm(request):
+    """Setup any state specific to the execution of the given module."""
+    block_comm_size = request.param
+
+    # Default configuration setup based on the xp module
     if xp.__name__ == "cupy":
         _default_config = {
             "all_to_all": "host_mpi",
@@ -34,26 +47,14 @@ def setup_module():
             "all_reduce": "device_mpi",
             "bcast": "device_mpi",
         }
-    # Configure the comm singleton.
+
+    # Configure the comm singleton with the parameterized block_comm_size
     comm.configure(
-        block_comm_size=1,
+        block_comm_size=block_comm_size,
         block_comm_config=_default_config,
         stack_comm_config=_default_config,
         override=True,
     )
-
-
-def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
-    """Returns a random complex sparse array."""
-    size = int(xp.sum(sizes))
-    rng = xp.random.default_rng()
-    density = rng.uniform(low=0.1, high=0.3)
-
-    def _rvs(size=None, rng=rng):
-        return xp.ones(size)
-
-    coo = sparse.random(size, size, density=density, data_rvs=_rvs, format="coo")
-    return coo
 
 
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
@@ -122,25 +123,6 @@ def _create_btd_coo_periodic(sizes: NDArray) -> sparse.coo_matrix:
     return coo
 
 
-def test_product_sparsity(
-    num_matrices: int,
-    block_sizes: NDArray,
-):
-    """Tests the computation of the matrix product's sparsity pattern."""
-    matrices = [_create_coo(block_sizes) for _ in range(num_matrices)]
-
-    product = functools.reduce(lambda x, y: x @ y, matrices)
-    product.data[:] = 1
-    ref = product.toarray()
-
-    rows, cols = product_sparsity_pattern(*matrices)
-    val = sparse.coo_matrix(
-        (xp.ones(len(rows)), (rows, cols)), shape=product.shape
-    ).toarray()
-
-    assert xp.allclose(ref, val)
-
-
 def _expand_matrix(
     matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
 ) -> sparse.spmatrix:
@@ -168,42 +150,11 @@ def _expand_matrix(
     expanded[right_obc:, -right_obc:] = expanded[
         :-right_obc, -2 * right_obc : -right_obc
     ]
-    # expanded[:left_obc, : 2 * left_obc] = expanded[
-    #     left_obc : 2 * left_obc, left_obc : 3 * left_obc
-    # ]
-    # expanded[: 2 * left_obc, :left_obc] = expanded[
-    #     left_obc : 3 * left_obc, left_obc : 2 * left_obc
-    # ]
-    # expanded[-right_obc:, -2 * right_obc :] = expanded[
-    #     -2 * right_obc : -right_obc, -3 * right_obc : -right_obc
-    # ]
-    # expanded[-2 * right_obc :, -right_obc:] = expanded[
-    #     -3 * right_obc : -right_obc, -2 * right_obc : -right_obc
-    # ]
 
     return expanded
 
 
-def _contract_matrix(
-    matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
-) -> sparse.spmatrix:
-    """Contract the matrix by removing the boundaries."""
-    shape = list(matrix.shape)
-    left_obc = int(sum(block_sizes[0:NBC]))
-    right_obc = int(sum(block_sizes[-NBC:]))
-    shape[-2] -= left_obc + right_obc
-    shape[-1] -= left_obc + right_obc
-
-    contracted = sparse.csr_matrix(tuple(shape), dtype=matrix.dtype)
-
-    contracted[:] = matrix[
-        left_obc : left_obc + int(sum(block_sizes)),
-        left_obc : left_obc + int(sum(block_sizes)),
-    ]
-
-    return contracted
-
-
+@pytest.mark.mpi(min_size=3)
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
 def test_product_sparsity_dsdbsparse(
     dsdbsparse_type: DSDBSparse,
@@ -212,7 +163,27 @@ def test_product_sparsity_dsdbsparse(
     global_stack_shape: tuple,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
+
+    if (
+        xp.__name__ == "cupy"
+        and not GPU_AWARE_MPI
+        and not hasattr(comm.block, "_nccl_comm")
+        and comm.block.size > 1
+    ):
+        pytest.skip(
+            "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+        )
+
+    if dsdbsparse_type.__name__ == "DSDBCSR":
+        pytest.skip("DSDBCSR does not support this test")
+
+    last_block_sizes = block_sizes[-3:]
+    if num_matrices > 3:
+        block_sizes = np.hstack(
+            (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
+        )
     matrices = [_create_btd_coo(block_sizes) for _ in range(num_matrices)]
+    matrices = [global_comm.bcast(matrix, root=0) for matrix in matrices]
     dsdbsparse_matrices = [
         dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
         for matrix in matrices
@@ -225,20 +196,30 @@ def test_product_sparsity_dsdbsparse(
     product.data[:] = 1
     ref = product.toarray()
 
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.block.size)
+    start_block = sum(local_blocks[: comm.block.rank])
+    end_block = start_block + local_blocks[comm.block.rank]
+
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsdbsparse_matrices,
         in_num_diag=3,
+        start_block=start_block,
+        end_block=end_block,
     )
     val = sparse.coo_matrix(
         (xp.ones(len(rows)), (rows, cols)), shape=product.shape
     ).toarray()
 
+    # Each rank in the block communicator computes its own local sparsity pattern.
+    full = sum(comm.block._mpi_comm.allgather(val))
+
     if comm.rank == 0:
-        print(xp.nonzero(ref - val))
+        print(xp.nonzero(ref - full))
 
-    assert xp.allclose(ref, val)
+    assert xp.allclose(ref, full)
 
 
+@pytest.mark.mpi(min_size=3)
 @pytest.mark.parametrize("global_stack_shape", GLOBAL_STACK_SHAPES)
 def test_product_sparsity_dsdbsparse_spillover(
     dsdbsparse_type: DSDBSparse,
@@ -247,14 +228,34 @@ def test_product_sparsity_dsdbsparse_spillover(
     global_stack_shape: tuple,
 ):
     """Tests the computation of the matrix product's sparsity pattern."""
-    if any(b != block_sizes[0] for b in block_sizes):
+
+    if not np.all(block_sizes == block_sizes.flat[0]):
         pytest.skip(
-            "Skipping test because the block sizes are not all equal. "
-            "The construction of the test matrix would need to be changed "
-            "such that the only the boundary layers are periodic."
+            "Skipping test because the block sizes are not all equal."
+            + "The construction of the test matrix would need to be changed"
+            + "such that the only the boundary layers are periodic"
         )
 
+    if (
+        xp.__name__ == "cupy"
+        and not GPU_AWARE_MPI
+        and not hasattr(comm.block, "_nccl_comm")
+        and comm.block.size > 1
+    ):
+        pytest.skip(
+            "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
+        )
+
+    if dsdbsparse_type.__name__ == "DSDBCSR":
+        pytest.skip("DSDBCSR does not support this test")
+
+    last_block_sizes = block_sizes[-3:]
+    if num_matrices > 3:
+        block_sizes = np.hstack(
+            (block_sizes, *[last_block_sizes for _ in range(num_matrices - 3)])
+        )
     matrices = [_create_btd_coo_periodic(block_sizes) for _ in range(num_matrices)]
+    matrices = [global_comm.bcast(matrix, root=0) for matrix in matrices]
     dsdbsparse_matrices = [
         dsdbsparse_type.from_sparray(matrix, block_sizes, global_stack_shape)
         for matrix in matrices
@@ -267,31 +268,32 @@ def test_product_sparsity_dsdbsparse_spillover(
     expanded_matrices = [_expand_matrix(matrix, block_sizes, 1) for matrix in matrices]
     product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
     product.data[:] = 1
-    ref = _contract_matrix(product, block_sizes, 1).toarray()
-    # product = None
-    # for i, m in enumerate(matrices):
-    #     if product is None:
-    #         product = m
-    #     else:
-    #         expanded_m = _expand_matrix(m, block_sizes, 1)
-    #         product = product @ expanded_m
-    #         product.data[:] = 1
-    #         product = _contract_matrix(product, block_sizes, 1)
-    #     if i < num_matrices - 1:
-    #         product = _expand_matrix(product, block_sizes, 1)
-    # ref = product.toarray()
+    ref = product.toarray()[
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+        block_sizes[0] : block_sizes[0] + int(sum(block_sizes)),
+    ]
+
+    local_blocks, _ = get_section_sizes(len(block_sizes), comm.block.size)
+    start_block = sum(local_blocks[: comm.block.rank])
+    end_block = start_block + local_blocks[comm.block.rank]
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsdbsparse_matrices,
         in_num_diag=3,
+        start_block=start_block,
+        end_block=end_block,
         spillover=True,
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
 
-    if comm.rank == 0:
-        print(xp.nonzero(ref - val))
+    # Each rank in the block communicator computes its own local sparsity pattern.
+    full = sum(comm.block._mpi_comm.allgather(val))
 
-    assert xp.allclose(ref, val)
+    print(f"{comm.block.rank=}, {start_block=}, {end_block=}", flush=True)
+    if comm.rank == 0:
+        print(xp.nonzero(ref - full))
+
+    assert xp.allclose(ref, full)
 
 
 if __name__ == "__main__":

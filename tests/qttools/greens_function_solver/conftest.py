@@ -1,18 +1,19 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp, sparse, xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSBSparse
+from qttools import NDArray, sparse, xp
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv
 
 GFSOLVERS_TYPE = [Inv, RGF]
 
-DSBSPARSE_TYPES = [DSBCOO, DSBCSR]
+DSBSPARSE_TYPES = [DSDBCOO, DSDBCSR]
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([2] * 10), id="constant-block-size"),
-    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
+    pytest.param(np.array([2] * 10), id="constant-block-size"),
+    pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size"),
 ]
 
 
@@ -50,7 +51,7 @@ def gfsolver_type(request: pytest.FixtureRequest) -> GFSolver:
 
 
 @pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
-def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
+def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 

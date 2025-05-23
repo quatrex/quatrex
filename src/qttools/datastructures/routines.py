@@ -1,12 +1,12 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-import time
 from collections.abc import Callable
 
 from mpi4py.MPI import Intracomm, Request
 
-from qttools import block_comm, global_comm, nccl_block_comm, xp
-from qttools.datastructures.dsbsparse import DSBSparse
+from qttools import xp
+from qttools.comm import comm
+from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
@@ -28,24 +28,24 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
 
 @profiler.profile(level="api")
 def bd_matmul(
-    a: DSBSparse,
-    b: DSBSparse | list[DSBSparse],
-    out: DSBSparse | None,
+    a: DSDBSparse,
+    b: DSDBSparse | list[DSDBSparse],
+    out: DSDBSparse | None,
     b_op: Callable | None = None,
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
     accumulator_dtype=None,
 ):
-    """Matrix multiplication of two `a @ b` BD DSBSparse matrices.
+    """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block diagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block diagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
@@ -142,24 +142,24 @@ def bd_matmul(
 
 @profiler.profile(level="api")
 def bd_sandwich(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse | None,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse | None,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
     accumulator_dtype=None,
     accumulate: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
+    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a`, and `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
@@ -279,20 +279,20 @@ def bd_sandwich(
 
 @profiler.profile(level="api")
 def btd_matmul(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse,
     spillover_correction: bool = False,
 ):
-    """Matrix multiplication of two `a @ b` BTD DSBSparse matrices.
+    """Matrix multiplication of two `a @ b` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to pentadiagonal.
     spillover_correction : bool, optional
@@ -334,20 +334,20 @@ def btd_matmul(
 
 @profiler.profile(level="api")
 def btd_sandwich(
-    a: DSBSparse,
-    b: DSBSparse,
-    out: DSBSparse,
+    a: DSDBSparse,
+    b: DSDBSparse,
+    out: DSDBSparse,
     spillover_correction: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a` BTD DSBSparse matrices.
+    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
     Parameters
     ----------
-    a : DSBSparse
+    a : DSDBSparse
         The first block tridiagonal matrix.
-    b : DSBSparse
+    b : DSDBSparse
         The second block tridiagonal matrix.
-    out : DSBSparse
+    out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a`, and `b`. It will compute up to heptadiagonal.
     spillover_correction : bool, optional
@@ -406,7 +406,7 @@ class BlockMatrix(dict):
 
     def __init__(
         self,
-        dsdbsparse: DSBSparse | DSDBSparse,
+        dsdbsparse: DSDBSparse,
         local_keys: set[tuple[int, int]],
         origin: tuple[int, int],
         mapping=None,
@@ -416,10 +416,7 @@ class BlockMatrix(dict):
         self.origin = origin
         mapping = mapping or {}
         super(BlockMatrix, self).__init__(mapping)
-        if isinstance(dsdbsparse, DSBSparse):
-            self.blocks = self.dsdbsparse.blocks
-        else:
-            self.blocks = self.dsdbsparse.local_blocks
+        self.blocks = self.dsdbsparse.blocks
 
     def __getitem__(self, key):
         if super(BlockMatrix, self).__contains__(key):
@@ -427,7 +424,7 @@ class BlockMatrix(dict):
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             return self.blocks[key]
-        rank = block_comm.rank if block_comm is not None else 0
+        rank = comm.block.rank if comm.block is not None else 0
         print(f"Something bad happened: {rank=}, {key=}, {self.origin=}")
         # return None
         raise KeyError(key)
@@ -487,7 +484,7 @@ def arrow_partition_halo_comm(
 
     synchronize_device()
     comm.Barrier() if comm is not None else None
-    halo_comm_start = time.perf_counter()
+    # halo_comm_start = time.perf_counter()
 
     reqs = []
     # Send halo blocks to previous rank
@@ -539,12 +536,12 @@ def arrow_partition_halo_comm(
     Request.Waitall(reqs)
 
     synchronize_device()
-    halo_comm_end = time.perf_counter()
-    comm.Barrier() if comm is not None else None
-    halo_comm_end_all = time.perf_counter()
-    if global_comm.rank == 0:
-        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
-        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
+    # halo_comm_end = time.perf_counter()
+    # comm.Barrier() if comm is not None else None
+    # halo_comm_end_all = time.perf_counter()
+    # if comm.rank == 0:
+    #     print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+    #     print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def arrow_partition_halo_comm_nccl(
@@ -575,8 +572,8 @@ def arrow_partition_halo_comm_nccl(
     rank = comm.rank if comm is not None else 0
 
     synchronize_device()
-    block_comm.Barrier()
-    halo_comm_start = time.perf_counter()
+    comm.Barrier()
+    # halo_comm_start = time.perf_counter()
 
     # Send halo blocks to previous rank
     def _send_to_previous():
@@ -648,12 +645,12 @@ def arrow_partition_halo_comm_nccl(
         _send_to_next()
 
     synchronize_device()
-    halo_comm_end = time.perf_counter()
-    block_comm.Barrier()
-    halo_comm_end_all = time.perf_counter()
-    if global_comm.rank == 0:
-        print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
-        print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
+    # halo_comm_end = time.perf_counter()
+    # comm.Barrier()
+    # halo_comm_end_all = time.perf_counter()
+    # if comm.rank == 0:
+    #     print(f"halo_comm_time: {halo_comm_end - halo_comm_start}", flush=True)
+    #     print(f"halo_comm_time_all: {halo_comm_end_all - halo_comm_start}", flush=True)
 
 
 def bd_matmul_distr(
@@ -728,7 +725,7 @@ def bd_matmul_distr(
                 local_keys.add((i, j))
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
-    if nccl_block_comm is not None:
+    if hasattr(comm.block, "_nccl_comm"):
         # if False:
         arrow_partition_halo_comm_nccl(
             a_,
@@ -737,12 +734,17 @@ def bd_matmul_distr(
             b_num_diag,
             start_block,
             end_block,
-            block_comm,
-            nccl_block_comm,
+            comm.block._mpi_comm,
+            comm.block._nccl_comm,
+        )
+    elif GPU_AWARE_MPI or comm.block.size == 1 or xp.__name__ == "numpy":
+        arrow_partition_halo_comm(
+            a_, b_, a_num_diag, b_num_diag, start_block, end_block, comm.block._mpi_comm
         )
     else:
-        arrow_partition_halo_comm(
-            a_, b_, a_num_diag, b_num_diag, start_block, end_block, block_comm
+        # TODO: host_mpi implementation or unify one is needed
+        raise ValueError(
+            "GPU_AWARE_MPI is not enabled. Please enable it to use this function."
         )
 
     # Make sure the output matrix is initialized to zero.
@@ -794,7 +796,7 @@ def bd_matmul_distr(
                             else:
                                 partsum += a_[i_a, k_a] @ b_[k_b, j_b]
                         except Exception as e:
-                            rank = block_comm.rank if block_comm is not None else 0
+                            rank = comm.block.rank if comm.block is not None else 0
                             print(e)
                             print(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"

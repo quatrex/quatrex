@@ -1,9 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp, sparse, xp
-from qttools.kernels import dsbcsr_kernels
+from qttools import NDArray, sparse, xp
+from qttools.kernels.datastructure import dsdbcsr_kernels
 
 
 def _reference_compute_rowptr_map(
@@ -31,9 +32,7 @@ def _reference_compute_rowptr_map(
 
     """
     num_blocks = len(block_sizes)
-    block_offsets = host_xp.hstack(
-        ([0], host_xp.cumsum(block_sizes)), dtype=host_xp.int32
-    )
+    block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
 
     sort_index = xp.zeros(len(coo_cols), dtype=int)
     rowptr_map = {}
@@ -142,7 +141,7 @@ def test_find_inds(shape: tuple[int, int], num_inds: int, num_blocks: int):
     reference_inds, reference_value_inds = _reference_find_inds(
         rowptr_map, block_offsets, coo.col[sort_index], rows, cols
     )
-    inds, value_inds = dsbcsr_kernels.find_inds(
+    inds, value_inds = dsdbcsr_kernels.find_inds(
         rowptr_map, block_offsets, coo.col[sort_index], rows, cols
     )
 
@@ -158,7 +157,7 @@ def test_densify_block(shape: tuple[int, int]):
     reference_block = csr.toarray()
 
     block = xp.zeros_like(reference_block)
-    dsbcsr_kernels.densify_block(block, 0, csr.indices, csr.indptr, csr.data)
+    dsdbcsr_kernels.densify_block(block, 0, csr.indices, csr.indptr, csr.data)
 
     assert xp.allclose(block, reference_block)
 
@@ -169,7 +168,7 @@ def test_sparsify_block(shape: tuple[int, int]):
     csr = sparse.random(*shape, density=0.25, format="csr")
 
     data = xp.zeros_like(csr.data)
-    dsbcsr_kernels.sparsify_block(csr.toarray(), 0, csr.indices, csr.indptr, data)
+    dsdbcsr_kernels.sparsify_block(csr.toarray(), 0, csr.indices, csr.indptr, data)
 
     assert xp.allclose(data, csr.data)
 
@@ -180,15 +179,15 @@ def test_compute_rowptr_map(shape: tuple[int, int], num_blocks: int):
     coo = sparse.random(*shape, density=0.25, format="coo")
     coo.sum_duplicates()
 
-    block_sizes = host_xp.array(
-        [a.size for a in host_xp.array_split(host_xp.arange(shape[0]), num_blocks)],
-        dtype=host_xp.int32,
+    block_sizes = np.array(
+        [a.size for a in np.array_split(np.arange(shape[0]), num_blocks)],
+        dtype=np.int32,
     )
 
     reference_sort_index, reference_rowptr_map = _reference_compute_rowptr_map(
         coo.row, coo.col, block_sizes
     )
-    sort_index, rowptr_map = dsbcsr_kernels.compute_rowptr_map(
+    sort_index, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
         coo.row, coo.col, block_sizes
     )
 

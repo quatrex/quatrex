@@ -87,7 +87,7 @@ def _system_reduction_cols(
     x_hat = solve(a_hat, q_hat, contact)
 
     a = xp.broadcast_to(a, q.shape)
-    x = q.copy() + a[..., :, cols_to_reduce] @ x_hat @ a[
+    x = q + a[..., :, cols_to_reduce] @ x_hat @ a[
         ..., :, cols_to_reduce
     ].conj().swapaxes(-2, -1)
 

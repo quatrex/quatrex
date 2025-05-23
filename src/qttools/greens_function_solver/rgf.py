@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
-from qttools.datastructures.dsbsparse import DSBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels.linalg import inv
 from qttools.profiling import Profiler, decorate_methods
@@ -28,27 +28,27 @@ class RGF(GFSolver):
 
     def selected_inv(
         self,
-        a: DSBSparse,
+        a: DSDBSparse,
         obc_blocks: OBCBlocks | None = None,
-        out: DSBSparse | None = None,
-    ) -> None | DSBSparse:
+        out: DSDBSparse | None = None,
+    ) -> None | DSDBSparse:
         """Performs selected inversion of a block-tridiagonal matrix.
 
         Parameters
         ----------
-        a : DSBSparse
+        a : DSDBSparse
             Matrix to invert.
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : DSBSparse, optional
+        out : DSDBSparse, optional
             Preallocated output matrix, by default None.
 
         Returns
         -------
-        None | DSBSparse
+        None | DSDBSparse
             If `out` is None, returns None. Otherwise, returns the
-            inverted matrix as a DSBSparse object.
+            inverted matrix as a DSDBSparse object.
 
         """
         # Initialize dense temporary buffers for the diagonal blocks.
@@ -96,7 +96,7 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal block to the output.
-            x_.blocks[j, j] = x_diag_blocks[j]
+            x_.blocks[a.num_blocks - 1, a.num_blocks - 1] = x_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):
@@ -118,11 +118,11 @@ class RGF(GFSolver):
 
     def selected_solve(
         self,
-        a: DSBSparse,
-        sigma_lesser: DSBSparse,
-        sigma_greater: DSBSparse,
+        a: DSDBSparse,
+        sigma_lesser: DSDBSparse,
+        sigma_greater: DSDBSparse,
         obc_blocks: OBCBlocks | None = None,
-        out: tuple[DSBSparse, ...] | None = None,
+        out: tuple[DSDBSparse, ...] | None = None,
         return_retarded: bool = False,
         return_current: bool = False,
     ) -> None | tuple | NDArray:
@@ -137,18 +137,18 @@ class RGF(GFSolver):
 
         Parameters
         ----------
-        a : DSBSparse
+        a : DSDBSparse
             Matrix to invert.
-        sigma_lesser : DSBSparse
+        sigma_lesser : DSDBSparse
             Lesser matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
-        sigma_greater : DSBSparse
+        sigma_greater : DSDBSparse
             Greater matrix. This matrix is expected to be
             skew-hermitian, i.e. \(\Sigma_{ij} = -\Sigma_{ji}^*\).
         obc_blocks : OBCBlocks, optional
             OBC blocks for lesser, greater and retarded Green's
             functions. By default None.
-        out : tuple[DSBSparse, ...] | None, optional
+        out : tuple[DSDBSparse, ...] | None, optional
             Preallocated output matrices, by default None
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
@@ -297,14 +297,14 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xl_.blocks[-1, -1] = 0.5 * (
+            xl_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
                 xl_diag_blocks[-1] - xl_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
-            xg_.blocks[-1, -1] = 0.5 * (
+            xg_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
                 xg_diag_blocks[-1] - xg_diag_blocks[-1].conj().swapaxes(-2, -1)
             )
             if return_retarded:
-                xr_.blocks[-1, -1] = xr_diag_blocks[-1]
+                xr_.blocks[a.num_blocks - 1, a.num_blocks - 1] = xr_diag_blocks[-1]
 
             # Backwards sweep.
             for i in range(a.num_blocks - 2, -1, -1):

@@ -1,18 +1,18 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
-from qttools import NDArray, host_xp
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from qttools import NDArray
+from qttools.datastructures import DSDBCOO, DSDBCSR, DSDBSparse
 
-DSBSPARSE_TYPES = [DSBCSR, DSBCOO]
-DSDBSPARSE_TYPES = [DSDBCOO]
+DSDBSPARSE_TYPES = [DSDBCSR, DSDBCOO]
 
 BLOCK_SIZES = [
-    pytest.param(host_xp.array([2] * 10), id="constant-block-size-2"),
-    pytest.param(host_xp.array([5] * 10), id="constant-block-size-5"),
-    pytest.param(host_xp.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
-    pytest.param(host_xp.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
+    pytest.param(np.array([2] * 10), id="constant-block-size-2"),
+    pytest.param(np.array([5] * 10), id="constant-block-size-5"),
+    pytest.param(np.array([2] * 3 + [4] * 2 + [2] * 3), id="mixed-block-size-2"),
+    pytest.param(np.array([5] * 3 + [10] * 2 + [5] * 3), id="mixed-block-size-5"),
 ]
 
 NUM_MATRICES = [2, 3, 4, 5]
@@ -48,13 +48,8 @@ USE_PINNED_MEMORY = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
-    return request.param
-
-
-@pytest.fixture(params=DSBSPARSE_TYPES)
-def dsbsparse_type(request: pytest.FixtureRequest) -> DSBSparse:
     return request.param
 
 
@@ -63,22 +58,22 @@ def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
 
-@pytest.fixture(params=NUM_MATRICES, autouse=True)
+@pytest.fixture(params=NUM_MATRICES)
 def num_matrices(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=SHAPES, autouse=True)
+@pytest.fixture(params=SHAPES)
 def shape(request: pytest.FixtureRequest) -> int | tuple[int, ...]:
     return request.param
 
 
-@pytest.fixture(params=DTYPES, autouse=True)
+@pytest.fixture(params=DTYPES)
 def dtype(request: pytest.FixtureRequest) -> type | str:
     return request.param
 
 
-@pytest.fixture(params=ORDERS, autouse=True)
+@pytest.fixture(params=ORDERS)
 def order(request: pytest.FixtureRequest) -> str:
     return request.param
 

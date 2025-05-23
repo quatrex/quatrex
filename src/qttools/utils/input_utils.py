@@ -3,7 +3,9 @@
 import re
 from pathlib import Path
 
-from qttools import NDArray, _DType, host_xp, sparse, xp
+import numpy as np
+
+from qttools import NDArray, _DType, sparse, xp
 
 
 def read_hr_dat(
@@ -273,7 +275,7 @@ def create_coordinate_grid(
     grid = xp.zeros(
         (int(xp.prod(xp.asarray(super_cell)) * num_wann), 3), dtype=xp.float64
     )
-    for i, cell_ind in enumerate(host_xp.ndindex(super_cell)):
+    for i, cell_ind in enumerate(np.ndindex(super_cell)):
         grid[i * num_wann : (i + 1) * num_wann, :] = (
             wannier_centers + xp.asarray(cell_ind) @ lattice_vectors
         )

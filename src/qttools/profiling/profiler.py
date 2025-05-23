@@ -14,36 +14,31 @@ from typing import Literal
 
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import xp
+from qttools import strtobool, xp
 from qttools.profiling.utils import get_cuda_devices
 
 NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
 
 
 # Set the whether to profile the GPU.
-PROFILE_GPU = os.environ.get("PROFILE_GPU", "false").lower()
-if PROFILE_GPU in ("y", "yes", "t", "true", "on", "1"):
+QTX_PROFILE_GPU = strtobool(os.getenv("QTX_PROFILE_GPU"), False)
+if QTX_PROFILE_GPU:
     if xp.__name__ != "cupy":
         warnings.warn("CUDA is not available. Defaulting to no GPU profiling.")
-        PROFILE_GPU = False
+        QTX_PROFILE_GPU = False
     else:
         warnings.warn(
             "GPU profiling is enabled. This will cause device "
             "synchronization for every profiled event."
         )
-        PROFILE_GPU = True
-elif PROFILE_GPU in ("n", "no", "f", "false", "off", "0"):
-    PROFILE_GPU = False
-else:
-    warnings.warn(f"Invalid truth value {PROFILE_GPU=}. Defaulting to 'false'.")
-    PROFILE_GPU = False
-
 
 # Set the profiling level.
-PROFILE_LEVEL = os.environ.get("PROFILE_LEVEL", "basic").lower()
-if PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
-    warnings.warn(f"Invalid profiling level {PROFILE_LEVEL=}. Defaulting to 'basic'.")
-    PROFILE_LEVEL = "basic"
+QTX_PROFILE_LEVEL = os.getenv("QTX_PROFILE_LEVEL", "basic").lower()
+if QTX_PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
+    warnings.warn(
+        f"Invalid profiling level {QTX_PROFILE_LEVEL=}. Defaulting to 'basic'."
+    )
+    QTX_PROFILE_LEVEL = "basic"
 
 # Define the mapping of profiling levels to numbers.
 _level_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
@@ -321,7 +316,7 @@ class Profiler:
             finally:
                 xp.cuda.runtime.setDevice(current_device)
 
-    def profile(self, level: str = PROFILE_LEVEL):
+    def profile(self, level: str = QTX_PROFILE_LEVEL):
         """Profiles a function and adds profiling data to the event log.
 
         Notes
@@ -372,7 +367,7 @@ class Profiler:
             raise ValueError(f"Invalid profiling level {level}.")
 
         def decorator(func):
-            if _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
+            if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
                 return func
 
             name = func.__str__()
@@ -382,7 +377,7 @@ class Profiler:
 
                 timestamp = time.time()
 
-                if PROFILE_GPU:
+                if QTX_PROFILE_GPU:
                     start_events, end_events = self._setup_events()
 
                     # Record and sync start events for each device.
@@ -407,7 +402,7 @@ class Profiler:
                     xp.cuda.nvtx.RangePop()
 
                 device_times = []
-                if PROFILE_GPU:
+                if QTX_PROFILE_GPU:
                     # Record end events for each device.
                     self._record_events(end_events)
 
@@ -430,7 +425,7 @@ class Profiler:
         return decorator
 
     @contextmanager
-    def profile_range(self, label: str = "range", level: str = PROFILE_LEVEL):
+    def profile_range(self, label: str = "range", level: str = QTX_PROFILE_LEVEL):
         """Profiles a range of code.
 
         This is a context manager that profiles a range of code.
@@ -465,7 +460,7 @@ class Profiler:
         if level not in ("off", "basic", "api", "debug", "full"):
             raise ValueError(f"Invalid profiling level {level}.")
 
-        if _level_to_num[level] > _level_to_num[PROFILE_LEVEL]:
+        if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
             yield
             return
 
@@ -481,7 +476,7 @@ class Profiler:
         try:
             timestamp = time.time()
 
-            if PROFILE_GPU:
+            if QTX_PROFILE_GPU:
                 start_events, end_events = self._setup_events()
 
                 # Record and sync start events for each device.
@@ -507,7 +502,7 @@ class Profiler:
                 xp.cuda.nvtx.RangePop()
 
             device_times = []
-            if PROFILE_GPU:
+            if QTX_PROFILE_GPU:
                 # Record end events for each device.
                 self._record_events(end_events)
 

@@ -1,6 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
-from qttools import USE_CUPY_JIT, NDArray, xp
+from qttools import QTX_USE_CUPY_JIT, NDArray, xp
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -8,7 +8,7 @@ profiler = Profiler()
 if xp.__name__ == "cupy":
     import cupyx as cpx
 
-    if USE_CUPY_JIT:
+    if QTX_USE_CUPY_JIT:
 
         @cpx.jit.rawkernel()
         def _contour_operator(

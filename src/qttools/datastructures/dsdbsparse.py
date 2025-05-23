@@ -1,32 +1,18 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import itertools
-import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
-from mpi4py import MPI
+import numpy as np
 
-from qttools import (
-    NCCL_AVAILABLE,
-    ArrayLike,
-    NDArray,
-    block_comm,
-    global_comm,
-    host_xp,
-    nccl_stack_comm,
-    sparse,
-    stack_comm,
-    xp,
-)
-from qttools.datastructures.dsbsparse import BlockConfig, _block_view
+from qttools import ArrayLike, NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
-
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 
 def _flatten_list(nested_lists: list[list]) -> list:
@@ -49,12 +35,87 @@ def _flatten_list(nested_lists: list[list]) -> list:
     return list(itertools.chain.from_iterable(nested_lists))
 
 
+@profiler.profile(level="debug")
+def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
+    """Gets a block view of an array along a given axis.
+
+    This is a helper function to get a block view of an array along a
+    given axis. This is useful for the distributed transposition of
+    arrays, where we need to transpose the data through the network.
+
+    This is stolen from `skimage.util.view_as_blocks`.
+
+    Parameters
+    ----------
+    arr : NDArray
+        The array to get the block view of.
+    axis : int
+        The axis along which to get the block view.
+    num_blocks : int, optional
+        The number of blocks to divide the array into. Default is the
+        number of MPI ranks in the communicator.
+
+    Returns
+    -------
+    block_view : NDArray
+        The specified block view of the array.
+
+    """
+    block_shape = list(arr.shape)
+
+    if block_shape[axis] % num_blocks != 0:
+        raise ValueError("The array shape is not divisible by the number of blocks.")
+
+    block_shape[axis] //= num_blocks
+
+    new_shape = (num_blocks,) + tuple(block_shape)
+    new_strides = (arr.strides[axis] * block_shape[axis],) + arr.strides
+
+    return xp.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
+
+
+class BlockConfig(object):
+    """Configuration of block-sizes and block-slices for a DSDBSparse matrix.
+
+    Parameters
+    ----------
+    block_sizes : NDArray
+        The size of each block in the sparse matrix.
+    block_offsets : NDArray
+        The block offsets of the block-sparse matrix.
+    inds_canonical2lock : NDArray, optional
+        A mapping from canonical to block-sorted indices. Default is
+        None.
+    rowptr_map : dict, optional
+        A mapping from block-coordinates to row-pointers. Default is
+        None.
+    block_slice_cache : dict, optional
+        A cache for the block slices. Default is None.
+
+    """
+
+    def __init__(
+        self,
+        block_sizes: NDArray,
+        block_offsets: NDArray,
+        inds_canonical2bcoo: NDArray | None = None,
+        rowptr_map: dict | None = None,
+        block_slice_cache: dict | None = None,
+    ):
+        """Initializes the block config."""
+        self.block_sizes = block_sizes
+        self.block_offsets = block_offsets
+        self.inds_canonical2block = inds_canonical2bcoo
+        self.rowptr_map = rowptr_map or {}
+        self.block_slice_cache = block_slice_cache or {}
+
+
 class DSDBSparse(ABC):
     """Base class for Distributed Stack of Distributed Block-accessible Sparse matrices.
 
     Parameters
     ----------
-    local_data : NDArray
+    data : NDArray
         The local slice of the data. This should be an array of shape
         `(*local_stack_shape, local_nnz)`. It is the caller's
         responsibility to ensure that the data is distributed correctly
@@ -64,10 +125,6 @@ class DSDBSparse(ABC):
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
         interpreted as a one-dimensional stack.
-    block_comm : MPI.Comm
-        The communicator for the block distribution.
-    stack_comm : MPI.Comm
-        The communicator for the stack distribution.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
@@ -76,7 +133,7 @@ class DSDBSparse(ABC):
 
     def __init__(
         self,
-        local_data: NDArray,
+        data: NDArray,
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
         return_dense: bool = True,
@@ -90,9 +147,9 @@ class DSDBSparse(ABC):
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
 
-        if global_stack_shape[0] < stack_comm.size:
+        if global_stack_shape[0] < comm.stack.size:
             raise ValueError(
-                f"Number of MPI ranks in stack communicator {stack_comm.size} "
+                f"Number of MPI ranks in stack communicator {comm.stack.size} "
                 f"exceeds stack shape {global_stack_shape}."
             )
 
@@ -101,7 +158,7 @@ class DSDBSparse(ABC):
         self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
-        if block_comm is None or stack_comm is None:
+        if comm.block is None or comm.stack is None:
             raise ValueError(
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."
@@ -109,28 +166,40 @@ class DSDBSparse(ABC):
 
         # Determine how the data is distributed across the stack.
         stack_section_sizes, total_stack_size = get_section_sizes(
-            global_stack_shape[0], stack_comm.size, strategy="balanced"
+            global_stack_shape[0], comm.stack.size, strategy="balanced"
         )
+        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
         self.stack_section_sizes = stack_section_sizes
         self.total_stack_size = total_stack_size
 
         nnz_section_sizes, total_nnz_size = get_section_sizes(
-            local_data.shape[-1], stack_comm.size, strategy="greedy"
+            data.shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes = nnz_section_sizes
-        self.nnz_section_offsets = xp.hstack(([0], host_xp.cumsum(nnz_section_sizes)))
+        self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
 
         # Per default, we have the data is distributed in stack format.
         self.distribution_state = "stack"
 
+        self.data_slice_stack = (
+            slice(None, int(self.stack_section_sizes_offset)),
+            ...,
+            slice(None, int(self.nnz_section_offsets[-1])),
+        )
+        self.data_slice_nnz = (
+            slice(None, int(self.global_stack_shape[0])),
+            ...,
+            slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
+        )
+
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
         self._data = xp.zeros(
             (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=local_data.dtype,
+            dtype=data.dtype,
         )
-        self._data[: local_data.shape[0], ..., : local_data.shape[-1]] = local_data
+        self._data[: data.shape[0], ..., : data.shape[-1]] = data
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -141,40 +210,36 @@ class DSDBSparse(ABC):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
 
-        self.stack_shape = local_data.shape[:-1]
-        self.local_nnz = local_data.shape[-1]
-        # This is the shape of this matrix in the stack_comm.
+        self.stack_shape = data.shape[:-1]
+        self.local_nnz = data.shape[-1]
+        # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
         # --- Things concerning block distribution ---------------------
         # Block-sizes is an settable property.
         self.num_blocks = len(block_sizes)
 
-        block_offsets = host_xp.hstack(([0], host_xp.cumsum(block_sizes)))
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
 
-        block_section_sizes, __ = get_section_sizes(self.num_blocks, block_comm.size)
-        self.block_section_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(block_section_sizes))
-        )
+        block_section_sizes, __ = get_section_sizes(self.num_blocks, comm.block.size)
+        self.block_section_offsets = np.hstack(([0], np.cumsum(block_section_sizes)))
 
         # We need to know our local block sizes and those of all
         # subsequent ranks.
-        self.num_local_blocks = block_section_sizes[block_comm.rank]
+        self.num_local_blocks = block_section_sizes[comm.block.rank]
         self.local_block_sizes = block_sizes[
-            self.block_section_offsets[block_comm.rank] :
+            self.block_section_offsets[comm.block.rank] :
         ]
-        self.local_block_offsets = host_xp.hstack(
-            ([0], host_xp.cumsum(self.local_block_sizes))
-        )
+        self.local_block_offsets = np.hstack(([0], np.cumsum(self.local_block_sizes)))
 
         self.global_block_offset = sum(
-            block_sizes[: self.block_section_offsets[block_comm.rank]]
+            block_sizes[: self.block_section_offsets[comm.block.rank]]
         )
 
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = local_data.dtype
+        self.dtype = data.dtype
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)
@@ -268,12 +333,12 @@ class DSDBSparse(ABC):
         self._set_items((Ellipsis,), *index, value)
 
     @property
-    def local_blocks(self) -> "_DSDBlockIndexer":
+    def blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer."""
         return self._block_indexer
 
     @property
-    def sparse_local_blocks(self) -> "_DSDBlockIndexer":
+    def sparse_blocks(self) -> "_DSDBlockIndexer":
         """Returns a block indexer."""
         return self._sparse_block_indexer
 
@@ -286,32 +351,16 @@ class DSDBSparse(ABC):
     def data(self) -> NDArray:
         """Returns the local slice of the data, masking the padding."""
         if self.distribution_state == "stack":
-            return self._data[
-                : self.stack_section_sizes[stack_comm.rank],
-                ...,
-                : sum(self.nnz_section_sizes),
-            ]
-        return self._data[
-            self._stack_padding_mask,
-            ...,
-            : self.nnz_section_sizes[stack_comm.rank],
-        ]
+            return self._data[self.data_slice_stack]
+        return self._data[self.data_slice_nnz]
 
     @data.setter
     def data(self, value: NDArray) -> None:
         """Sets the local slice of the data."""
         if self.distribution_state == "stack":
-            self._data[
-                : self.stack_section_sizes[stack_comm.rank],
-                ...,
-                : sum(self.nnz_section_sizes),
-            ] = value
+            self._data[self.data_slice_stack] = value
         else:
-            self._data[
-                self._stack_padding_mask,
-                ...,
-                : self.nnz_section_sizes[stack_comm.rank],
-            ] = value
+            self._data[self.data_slice_nnz] = value
 
     def __repr__(self) -> str:
         """Returns a string representation of the object."""
@@ -321,8 +370,8 @@ class DSDBSparse(ABC):
             f"block_sizes={self.block_sizes}, "
             f"global_stack_shape={self.global_stack_shape}, "
             f'distribution_state="{self.distribution_state}", '
-            f"stack_comm_rank={stack_comm.rank}, "
-            f"block_comm_rank={block_comm.rank})"
+            f"stack_comm_rank={comm.stack.rank}, "
+            f"block_comm_rank={comm.block.rank})"
         )
 
     @abstractmethod
@@ -483,6 +532,11 @@ class DSDBSparse(ABC):
 
     def __imul__(self, other: "DSDBSparse") -> "DSDBSparse":
         """In-place multiplication of two DSDBSparse matrices."""
+        if self.symmetry or other.symmetry:
+            raise ValueError(
+                "In-place multiplication is not supported for symmetric " "matrices."
+            )
+
         self._check_commensurable(other)
         self._data *= other._data
         return self
@@ -527,7 +581,7 @@ class DSDBSparse(ABC):
         """
         local_blocks = []
         stack_view = self.stack[...]
-        if block_comm.rank != block_comm.size - 1:
+        if comm.block.rank != comm.block.size - 1:
             # Only the last rank in the block-communicator needs to make
             # sure that the offset does not exceed the number of local
             # blocks.
@@ -541,7 +595,7 @@ class DSDBSparse(ABC):
         for b in range(num_blocks):
             local_blocks.append(stack_view.local_blocks[b + row_offset, b + col_offset])
 
-        return _flatten_list(block_comm.allgather(local_blocks))
+        return _flatten_list(comm.block._mpi_comm.allgather(local_blocks))
 
     @profiler.profile(level="api")
     def diagonal(self, stack_index: tuple = (Ellipsis,)) -> NDArray:
@@ -575,7 +629,9 @@ class DSDBSparse(ABC):
             local_diagonal[..., self._diag_value_inds] = data_stack[
                 ..., self._diag_inds
             ]
-            return xp.concatenate(block_comm.allgather(local_diagonal), axis=-1)
+            return xp.concatenate(
+                comm.block._mpi_comm.allgather(local_diagonal), axis=-1
+            )
         else:
             if self._diag_inds_nnz is not None:
                 return data_stack[..., self._diag_inds_nnz]
@@ -609,21 +665,16 @@ class DSDBSparse(ABC):
                 self.data[*stack_index][..., self._diag_inds] = val[
                     ..., self._diag_value_inds
                 ]
-        else:
-            if self._diag_inds_nnz is not None:
-                stack_padding_inds = self._stack_padding_mask.nonzero()[0][
-                    stack_index[0]
-                ]
-                stack_inds, nnz_inds = xp.ix_(stack_padding_inds, self._diag_inds_nnz)
-                # We need to access the full data buffer directly to set the
-                # value since we are using advanced indexing.
-                if val.ndim == 0:
-                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val
-                else:
-                    self._data[stack_inds, stack_index[1:] or Ellipsis, nnz_inds] = val[
-                        ..., self._diag_value_inds_nnz
-                    ]
             return
+
+        if self._diag_inds_nnz is not None:
+            if val.ndim == 0:
+                self.data[*stack_index][..., self._diag_inds_nnz] = val
+            else:
+                self.data[*stack_index][..., self._diag_inds_nnz] = val[
+                    ..., self._diag_value_inds_nnz
+                ]
+        return
 
     @profiler.profile(level="debug")
     def _dtranspose(
@@ -644,120 +695,29 @@ class DSDBSparse(ABC):
             Whether to perform a "fake" transposition. Default is False.
 
         """
-        # old_shape = self._data.shape
-        # new_shape = (
-        #     old_shape[0] // comm.size,
-        #     *old_shape[1:-1],
-        #     old_shape[-1] * comm.size,
-        # )
 
         if discard:
-            t_discard_start = time.perf_counter()
             self._data = _block_view(
-                self._data, axis=block_axis, num_blocks=stack_comm.size
+                self._data, axis=block_axis, num_blocks=comm.stack.size
             )
             self._data = xp.concatenate(self._data, axis=concatenate_axis)
             self._data[:] = 0.0
-            synchronize_device()
-            t_discard_end = time.perf_counter()
-            global_comm.Barrier()
-            t_discard_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        Discard time: {t_discard_end - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        Discard time all: {t_discard_end_all - t_discard_start:.3f} seconds",
-                    flush=True,
-                )
             return
 
         # We need to make sure that the block-view is memory-contiguous.
         # This does nothing if the data is already contiguous.
-        t_block_view_start = time.perf_counter()
         self._data = _block_view(
-            self._data, axis=block_axis, num_blocks=stack_comm.size
+            self._data, axis=block_axis, num_blocks=comm.stack.size
         )
         self._data = xp.ascontiguousarray(self._data)
         synchronize_device()
-        t_block_view_end = time.perf_counter()
-        global_comm.Barrier()
-        t_block_view_end_all = time.perf_counter()
-        if global_comm.rank == 0:
-            print(
-                f"        Block view time: {t_block_view_end - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Block view time all: {t_block_view_end_all - t_block_view_start:.3f} seconds",
-                flush=True,
-            )
 
-        if NCCL_AVAILABLE:
-            # Always use NCCL if available.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            global_comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            nccl_stack_comm.all_to_all(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            global_comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        NCCL Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        NCCL Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-            self._data = receive_buffer
-        elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
-            # Use MPI if we are not on GPU or if we have GPU-aware MPI.
-            receive_buffer = xp.empty_like(self._data)
-            synchronize_device()
-            global_comm.Barrier()
-            t_nccl_start = time.perf_counter()
-            stack_comm.Alltoall(self._data, receive_buffer)
-            synchronize_device()
-            t_nccl_end = time.perf_counter()
-            global_comm.Barrier()
-            t_nccl_end_all = time.perf_counter()
-            if global_comm.rank == 0:
-                print(
-                    f"        MPI Alltoall time: {t_nccl_end - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-                print(
-                    f"        MPI Alltoall time all: {t_nccl_end_all - t_nccl_start:.3f} seconds",
-                    flush=True,
-                )
-            self._data = receive_buffer
-        else:
-            # Use the host memory if we are on GPU and do not have
-            # GPU-aware MPI.
-            _data_host = get_host(self._data)
-            stack_comm.Alltoall(MPI.IN_PLACE, _data_host)
-            self._data = xp.array(_data_host)
+        receive_buffer = xp.empty_like(self._data)
+        comm.stack.all_to_all(self._data, receive_buffer)
+        self._data = receive_buffer
 
-        t_concatenate_start = time.perf_counter()
         self._data = xp.concatenate(self._data, axis=concatenate_axis)
         synchronize_device()
-        t_concatenate_end = time.perf_counter()
-        global_comm.Barrier()
-        t_concatenate_end_all = time.perf_counter()
-        if global_comm.rank == 0:
-            print(
-                f"        Concatenate time: {t_concatenate_end - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
-            print(
-                f"        Concatenate time all: {t_concatenate_end_all - t_concatenate_start:.3f} seconds",
-                flush=True,
-            )
 
         # NOTE: There are a few things commented out here, since there
         # may be an alternative way to do the correct reshaping after
@@ -792,7 +752,17 @@ class DSDBSparse(ABC):
         if self.distribution_state == "stack":
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
+            # Shuffle data to make it contiguous in memory
+            _data = xp.zeros_like(self._data)
+            _data[: self.global_stack_shape[0]] = self._data[self._stack_padding_mask]
+            self._data = _data
+
         else:
+            # Undo the shuffle
+            _data = xp.zeros_like(self._data)
+            _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
+            self._data = _data
+
             self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
 
@@ -848,6 +818,24 @@ class DSDBSparse(ABC):
 
         """
         ...
+
+    def free_data(self) -> None:
+        """Frees the local data."""
+        self._data = None
+        free_mempool()
+
+    def allocate_data(self) -> None:
+        """Allocates the local data."""
+        free_mempool()
+        if self._data is None:
+            self._data = xp.empty(
+                (
+                    int(max(self.stack_section_sizes)),
+                    *self.global_stack_shape[1:],
+                    self.total_nnz_size,
+                ),
+                dtype=self.dtype,
+            )
 
     @classmethod
     @abstractmethod
@@ -1007,6 +995,16 @@ class _DStackView:
 
     @property
     def sparse_local_blocks(self) -> "_DSDBlockIndexer":
+        """Returns a sparse block indexer on the substack."""
+        return self._sparse_block_indexer
+
+    @property
+    def blocks(self) -> "_DSDBlockIndexer":
+        """Returns a block indexer on the substack."""
+        return self._block_indexer
+
+    @property
+    def sparse_blocks(self) -> "_DSDBlockIndexer":
         """Returns a sparse block indexer on the substack."""
         return self._sparse_block_indexer
 

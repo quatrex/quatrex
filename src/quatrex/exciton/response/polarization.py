@@ -2,10 +2,12 @@
 
 from typing import List
 
+from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray
+from qttools.kernels.datastructure.cupy.dsdbsparse import find_ranks
 from qttools.utils.gpu_utils import xp
 
-from quatrex.exciton.response.comm import fetch_overlaping_data, find_overlaping_data
+from quatrex.exciton.response.comm import fetch_overlaping_data
 
 
 def calc_four_point_correlation_distributed(
@@ -15,7 +17,8 @@ def calc_four_point_correlation_distributed(
     G_nnz_section_offsets: List[int],
     G_rows: List[int],
     G_cols: List[int],
-    G_bandwidth: int,
+    L_rows: List[int],
+    L_cols: List[int],
     L_nen: int,
     L_step_E: int,
     rank: int,
@@ -36,8 +39,10 @@ def calc_four_point_correlation_distributed(
         Rows of the two-point Green's function (in the global matrix).
     G_cols : List[int]
         Columns of the two-point Green's function (in the global matrix).
-    G_bandwidth : int
-        Bandwidth of the two-point Green's function.
+    L_rows : List[int]
+        Rows of the four-point correlation function (in the global matrix).
+    L_cols : List[int]
+        Columns of the four-point correlation function (in the global matrix).
     L_nen : int
         Number of energies in the four-point correlation function.
     L_step_E : int
@@ -50,11 +55,14 @@ def calc_four_point_correlation_distributed(
     NDArray
         Four-point correlation function. The first dimension is space, the last dimension is energy.
     """
-    nnz_to_fetch, nnz_rank = find_overlaping_data(
-        G_nnz_section_offsets,
-        G_bandwidth,
+    G_indices = xp.arange(G_nnz_section_offsets[rank], G_nnz_section_offsets[rank + 1])
+    nnz_to_fetch, nnz_rank = find_overlaping_data_for_L(
         G_rows,
         G_cols,
+        G_indices,
+        G_nnz_section_offsets,
+        L_rows,
+        L_cols,
     )
     gg_recv = fetch_overlaping_data(
         nnz_to_fetch,
@@ -74,7 +82,7 @@ def calc_four_point_correlation_distributed(
     extended_local_GL = xp.concatenate([GL_local, gl_recv], axis=-1)
     extended_local_G_indices = xp.concatenate(
         [
-            xp.arange(G_nnz_section_offsets[rank], G_nnz_section_offsets[rank + 1]),
+            G_indices,
             nnz_to_fetch[rank],
         ],
     )
@@ -137,8 +145,10 @@ def four_point_correlation(
         Columns of the two-point Green's function (in the global matrix).
     G_indices : List[int]
         Indices of the two-point Green's function available on this rank.
-    L_nnz : int
-        Estimated number of non-zero elements in the four-point correlation function.
+    L_rows : List[int]
+        Rows of the four-point correlation function (in the global matrix).
+    L_cols : List[int]
+        Columns of the four-point correlation function (in the global matrix).
     L_nen : int
         Number of energies in the four-point correlation function.
     L_step_E : int
@@ -201,3 +211,58 @@ def find_index(
         return cond[0]
     if cond.size > 1:
         raise ValueError("Multiple indices found for the given row and column.")
+
+
+def find_overlaping_data_for_L(
+    G_rows: List[int],
+    G_cols: List[int],
+    G_indices: List[int],
+    G_nnz_section_offsets,
+    L_rows: List[int],
+    L_cols: List[int],
+):
+    nnz_to_fetch = []
+    nnz_rank = []
+    for ii, jj in zip(L_rows, L_cols):
+        G_ind1 = xp.where(G_indices == ii)[0]
+        G_ind2 = xp.where(G_indices == jj)[0]
+        i = G_rows[G_ind1]
+        j = G_cols[G_ind1]
+        k = G_rows[G_ind2]
+        L = G_cols[G_ind2]
+        ind1 = G_indices[find_index(G_rows, G_cols, L, j)]
+        ind2 = G_indices[find_index(G_rows, G_cols, i, k)]
+
+        ind1_on_rank = find_ranks(G_nnz_section_offsets, ind1)
+        ind2_on_rank = find_ranks(G_nnz_section_offsets, ind2)
+
+        not_on_rank1 = xp.where(ind1_on_rank != comm.rank)[0]
+        not_on_rank2 = xp.where(ind2_on_rank != comm.rank)[0]
+
+        nnz_to_fetch.append(ind1[not_on_rank1])
+        nnz_to_fetch.append(ind2[not_on_rank2])
+        nnz_rank.append(ind1_on_rank[not_on_rank1])
+        nnz_rank.append(ind2_on_rank[not_on_rank2])
+
+    nnz_to_fetch = xp.array(nnz_to_fetch)
+    nnz_rank = xp.array(nnz_rank)
+
+    unique_nnz_to_fetch, unique_indices = xp.unique(nnz_to_fetch, return_index=True)
+    unique_nnz_rank = nnz_rank[unique_indices]
+
+    num_unique_nnz_to_fetch = len(unique_nnz_to_fetch)
+    list_num_nnz_to_fetch = xp.empty((comm.size,), dtype=int)
+    comm.Allgather(num_unique_nnz_to_fetch, list_num_nnz_to_fetch)
+    list_nnz_to_fetch = xp.array(xp.sum(list_num_nnz_to_fetch), dtype=int)
+    list_rank_to_fetch_from = xp.array(xp.sum(list_num_nnz_to_fetch), dtype=int)
+    comm.Allgather(unique_nnz_to_fetch, list_nnz_to_fetch)
+    comm.Allgather(unique_nnz_rank, list_rank_to_fetch_from)
+
+    nnz_to_fetch = []
+    nnz_rank = []
+    offset = xp.hstack(([0], xp.cumsum(list_num_nnz_to_fetch)))
+    for i in range(comm.size):
+        nnz_to_fetch.append(list_nnz_to_fetch[offset[i] : offset[i + 1]])
+        nnz_rank.append(list_rank_to_fetch_from[offset[i] : offset[i + 1]])
+
+    return nnz_to_fetch, nnz_rank

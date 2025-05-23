@@ -139,11 +139,11 @@ def four_point_correlation(
     GL : NDArray
         Two-point Green's function, last dimension is energy, first dimension is space.
     G_rows : List[int]
-        Rows of the two-point Green's function (in the global matrix).
+        Global rows of the two-point Green's function (in the global matrix).
     G_cols : List[int]
-        Columns of the two-point Green's function (in the global matrix).
-    G_indices : List[int]
-        Indices of the two-point Green's function available on this rank.
+        Global columns of the two-point Green's function (in the global matrix).
+    G_indices: List[int]
+        Indices of local G data
     L_rows : List[int]
         Rows of the four-point correlation function (in the global matrix).
     L_cols : List[int]
@@ -175,15 +175,15 @@ def four_point_correlation(
     GL_fft = xp.fft.fftn(GL, (n,), axes=(-1,))
 
     for L_inz, (ii, jj) in enumerate(zip(L_rows, L_cols)):
-        G_ind1 = xp.where(G_indices == ii)[0]
-        G_ind2 = xp.where(G_indices == jj)[0]
-        i = G_rows[G_ind1]
-        j = G_cols[G_ind1]
-        k = G_rows[G_ind2]
-        L = G_cols[G_ind2]
+        i = G_rows[ii]
+        j = G_cols[ii]
+        k = G_rows[jj]
+        L = G_cols[jj]
 
-        ind1 = find_index(G_rows, G_cols, L, j)
-        ind2 = find_index(G_rows, G_cols, i, k)
+        G_inz = find_index(G_rows, G_cols, L, j)
+        ind1 = xp.where(G_indices=G_inz)[0]
+        G_inz = find_index(G_rows, G_cols, i, k)
+        ind2 = xp.where(G_indices=G_inz)[0]
 
         L_fft = prefactor * xp.multiply(GG_fft[ind2], GL_fft[ind1].conj())
         L_t = xp.fft.ifftn(L_fft)
@@ -193,7 +193,7 @@ def four_point_correlation(
         L_t = xp.fft.ifftn(L_fft)
         LL[L_inz] = L_t[G_nen - 1 : G_nen - 1 + L_nen * L_step_E : L_step_E]
 
-    return (LG, LL, L_rows, L_cols)
+    return (LG, LL)
 
 
 def find_index(

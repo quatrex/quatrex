@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from qttools import NDArray, lyapunov, obc
 from qttools.datastructures import DSDBSparse
-from qttools.greens_function_solver import RGF, GFSolver, Inv
+from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
 
@@ -55,6 +55,9 @@ class SubsystemSolver(ABC):
         )
         self.solver = self._configure_solver(
             getattr(quatrex_config, self.system).solver
+        )
+        self.solver_dist = RGFDist(
+            max_batch_size=getattr(quatrex_config, self.system).solver.max_batch_size,
         )
 
         self.quatrex_config = quatrex_config

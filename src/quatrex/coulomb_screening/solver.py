@@ -7,7 +7,6 @@ from qttools import NDArray, _DType, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
-from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -75,9 +74,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         super().__init__(quatrex_config, compute_config, energies)
 
         self.local_energies = get_local_slice(energies, comm.stack)
-        self.solver_dist = RGFDist(
-            max_batch_size=quatrex_config.coulomb_screening.solver.max_batch_size,
-        )
 
         if quatrex_config.device.construct_from_unit_cell:
             coulomb_matrix_unit_cells = distributed_load(

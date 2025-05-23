@@ -6,7 +6,6 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.greens_function_solver.rgf_dist import RGFDist
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -84,9 +83,6 @@ class ElectronSolver(SubsystemSolver):
         super().__init__(quatrex_config, compute_config, energies)
 
         self.local_energies = get_local_slice(energies, comm.stack)
-        self.solver_dist = RGFDist(
-            max_batch_size=quatrex_config.electron.solver.max_batch_size,
-        )
 
         # Load the device Hamiltonian.
         synchronize_device()

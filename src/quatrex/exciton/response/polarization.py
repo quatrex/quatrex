@@ -21,7 +21,6 @@ def calc_four_point_correlation_distributed(
     L_cols: List[int],
     L_nen: int,
     L_step_E: int,
-    rank: int,
 ):
     """Calculates the four-point correlation function in a distributed manner.
 
@@ -36,30 +35,29 @@ def calc_four_point_correlation_distributed(
     G_nnz_section_offsets : List[int]
         Offsets of the sections in the global data array.
     G_rows : List[int]
-        Rows of the two-point Green's function (in the global matrix).
+        Global rows of the two-point Green's function.
     G_cols : List[int]
-        Columns of the two-point Green's function (in the global matrix).
+        Global columns of the two-point Green's function.
     L_rows : List[int]
-        Rows of the four-point correlation function (in the global matrix).
+        Rows of the four-point correlation function to compute on this rank (in the global matrix).
     L_cols : List[int]
-        Columns of the four-point correlation function (in the global matrix).
+        Columns of the four-point correlation function to compute on this rank (in the global matrix).
     L_nen : int
         Number of energies in the four-point correlation function.
     L_step_E : int
         Step size in the energies of the four-point correlation function.
-    rank : int
-        Rank of the current process.
 
     Returns
     -------
     NDArray
         Four-point correlation function. The first dimension is space, the last dimension is energy.
     """
-    G_indices = xp.arange(G_nnz_section_offsets[rank], G_nnz_section_offsets[rank + 1])
+    G_indices = xp.arange(
+        G_nnz_section_offsets[comm.rank], G_nnz_section_offsets[comm.rank + 1]
+    )
     nnz_to_fetch, nnz_rank = find_overlaping_data_for_L(
         G_rows,
         G_cols,
-        G_indices,
         G_nnz_section_offsets,
         L_rows,
         L_cols,
@@ -83,19 +81,20 @@ def calc_four_point_correlation_distributed(
     extended_local_G_indices = xp.concatenate(
         [
             G_indices,
-            nnz_to_fetch[rank],
+            nnz_to_fetch[comm.rank],
         ],
     )
-    L_nnz = estimate_L_nnz(G_rows, G_cols, extended_local_G_indices)
+
     prefactor = -1j / xp.pi * (G_energies[1] - G_energies[0])  # equispaced energies
-    # swapping axes to have the energy dimension last. Not sure if it's faster in FFT.
+    # swapping axes to have the energy dimension last. Not sure if it's needed for faster FFT.
     return four_point_correlation(
         extended_local_GG.swapaxes(0, -1),
         extended_local_GL.swapaxes(0, -1),
         G_rows,
         G_cols,
         extended_local_G_indices,
-        L_nnz,
+        L_rows,
+        L_cols,
         L_nen,
         L_step_E,
         prefactor,
@@ -216,7 +215,6 @@ def find_index(
 def find_overlaping_data_for_L(
     G_rows: List[int],
     G_cols: List[int],
-    G_indices: List[int],
     G_nnz_section_offsets,
     L_rows: List[int],
     L_cols: List[int],
@@ -224,14 +222,12 @@ def find_overlaping_data_for_L(
     nnz_to_fetch = []
     nnz_rank = []
     for ii, jj in zip(L_rows, L_cols):
-        G_ind1 = xp.where(G_indices == ii)[0]
-        G_ind2 = xp.where(G_indices == jj)[0]
-        i = G_rows[G_ind1]
-        j = G_cols[G_ind1]
-        k = G_rows[G_ind2]
-        L = G_cols[G_ind2]
-        ind1 = G_indices[find_index(G_rows, G_cols, L, j)]
-        ind2 = G_indices[find_index(G_rows, G_cols, i, k)]
+        i = G_rows[ii]
+        j = G_cols[ii]
+        k = G_rows[jj]
+        L = G_cols[jj]
+        ind1 = find_index(G_rows, G_cols, L, j)
+        ind2 = find_index(G_rows, G_cols, i, k)
 
         ind1_on_rank = find_ranks(G_nnz_section_offsets, ind1)
         ind2_on_rank = find_ranks(G_nnz_section_offsets, ind2)

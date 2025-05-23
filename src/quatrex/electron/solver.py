@@ -293,15 +293,12 @@ class ElectronSolver(SubsystemSolver):
             quatrex_config.electron.conduction_band_edge
             + quatrex_config.electron.valence_band_edge
         )
-        potential = (
-            quatrex_config.electron.left_fermi_level
-            - quatrex_config.electron.right_fermi_level
-        )
-        self.right_mid_gap_energy = self.left_mid_gap_energy - potential
-        self.temperature = quatrex_config.electron.temperature
-
         self.left_fermi_level = quatrex_config.electron.left_fermi_level
         self.right_fermi_level = quatrex_config.electron.right_fermi_level
+
+        potential = self.left_fermi_level - self.right_fermi_level
+        self.right_mid_gap_energy = self.left_mid_gap_energy - potential
+        self.temperature = quatrex_config.electron.temperature
 
         self.left_occupancies = fermi_dirac(
             self.local_energies - self.left_fermi_level, self.temperature

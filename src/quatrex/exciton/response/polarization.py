@@ -181,9 +181,9 @@ def four_point_correlation(
         L = G_cols[jj]
 
         G_inz = find_index(G_rows, G_cols, L, j)
-        ind1 = xp.where(G_indices=G_inz)[0]
+        ind1 = xp.where(G_indices==G_inz)[0]
         G_inz = find_index(G_rows, G_cols, i, k)
-        ind2 = xp.where(G_indices=G_inz)[0]
+        ind2 = xp.where(G_indices==G_inz)[0]
 
         L_fft = prefactor * xp.multiply(GG_fft[ind2], GL_fft[ind1].conj())
         L_t = xp.fft.ifftn(L_fft)

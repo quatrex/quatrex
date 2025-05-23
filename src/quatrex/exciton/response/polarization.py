@@ -181,9 +181,9 @@ def four_point_correlation(
         L = G_cols[jj]
 
         G_inz = find_index(G_rows, G_cols, L, j)
-        ind1 = xp.where(G_indices==G_inz)[0]
+        ind1 = xp.where(G_indices == G_inz)[0]
         G_inz = find_index(G_rows, G_cols, i, k)
-        ind2 = xp.where(G_indices==G_inz)[0]
+        ind2 = xp.where(G_indices == G_inz)[0]
 
         L_fft = prefactor * xp.multiply(GG_fft[ind2], GL_fft[ind1].conj())
         L_t = xp.fft.ifftn(L_fft)
@@ -228,17 +228,14 @@ def find_overlaping_data_for_L(
         L = G_cols[jj]
         ind1 = find_index(G_rows, G_cols, L, j)
         ind2 = find_index(G_rows, G_cols, i, k)
+        ind = [ind1, ind2]
 
-        ind1_on_rank = find_ranks(G_nnz_section_offsets, ind1)
-        ind2_on_rank = find_ranks(G_nnz_section_offsets, ind2)
+        ind_on_rank = find_ranks(G_nnz_section_offsets, ind)
 
-        not_on_rank1 = xp.where(ind1_on_rank != comm.rank)[0]
-        not_on_rank2 = xp.where(ind2_on_rank != comm.rank)[0]
+        not_on_rank = xp.where(ind_on_rank != comm.rank)[0]
 
-        nnz_to_fetch.append(ind1[not_on_rank1])
-        nnz_to_fetch.append(ind2[not_on_rank2])
-        nnz_rank.append(ind1_on_rank[not_on_rank1])
-        nnz_rank.append(ind2_on_rank[not_on_rank2])
+        nnz_to_fetch.append(ind[not_on_rank])
+        nnz_rank.append(ind_on_rank[not_on_rank])
 
     nnz_to_fetch = xp.array(nnz_to_fetch)
     nnz_rank = xp.array(nnz_rank)

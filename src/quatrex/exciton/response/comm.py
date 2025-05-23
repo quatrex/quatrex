@@ -1,57 +1,66 @@
-from qttools import NDArray, xp
-from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.MPI import Request
+from qttools import NDArray, xp
 from qttools.kernels.datastructure.cupy.dsdbsparse import find_ranks
 from qttools.utils.gpu_utils import get_host, synchronize_current_stream
 
-def gather_nnz_distributed_sparse_coomatrix(data:NDArray,local_nnz:int,local_e:int, rows:NDArray, cols:NDArray):
+
+def gather_nnz_distributed_sparse_coomatrix(
+    data: NDArray, local_nnz: int, local_e: int, rows: NDArray, cols: NDArray
+):
     assert data.ndim == 2
     assert data.shape[0] == local_nnz
-    assert data.shape[1] == local_e*comm.size
-    data = distributed_transpose_2darray(data,local_r=local_nnz,local_c=local_e)
+    assert data.shape[1] == local_e * comm.size
+    data = distributed_transpose_2darray(data, local_r=local_nnz, local_c=local_e)
     local_nnz = len(rows)
     assert len(cols) == local_nnz
-    all_nnz = xp.empty((comm.size,),dtype=int)
+    all_nnz = xp.empty((comm.size,), dtype=int)
     comm.Allgather(local_nnz, all_nnz)
     total_nnz = xp.sum(all_nnz)
-    all_rows = xp.empty((total_nnz,),dtype=int)
-    all_cols = xp.empty((total_nnz,),dtype=int)
+    all_rows = xp.empty((total_nnz,), dtype=int)
+    all_cols = xp.empty((total_nnz,), dtype=int)
     comm.Allgather(rows, all_rows)
     comm.Allgather(cols, all_cols)
-    return data, rows, cols
+    return data, all_rows, all_cols
 
-def find_unique(rows:NDArray, cols:NDArray):    
+
+def find_unique(rows: NDArray, cols: NDArray):
     assert rows.ndim == 1
     assert cols.ndim == 1
     assert len(rows) == len(cols)
-    arr = xp.array([rows,cols]).T
-    unique, unique_inds = xp.unique(arr, axis=0, return_index=True)      
+    arr = xp.array([rows, cols]).T
+    unique, unique_inds = xp.unique(arr, axis=0, return_index=True)
     unique_rows = rows[unique_inds]
     unique_cols = cols[unique_inds]
     return unique_rows, unique_cols, unique_inds
 
-def distribute_sparse_coomatrix_over_nnz(data:NDArray,local_nnz:int,local_e:int, rows:NDArray, cols:NDArray):
+
+def distribute_sparse_coomatrix_over_nnz(
+    data: NDArray, local_nnz: int, local_e: int, rows: NDArray, cols: NDArray
+):
     assert data.ndim == 2
     assert data.shape[0] == local_e
-    assert data.shape[1] == local_nnz*comm.size
-    data = distributed_transpose_2darray(data,local_r=local_e,local_c=local_nnz)
-    local_rows = xp.empty((local_nnz,),dtype=int)
-    local_cols = xp.empty((local_nnz,),dtype=int)
+    assert data.shape[1] == local_nnz * comm.size
+    data = distributed_transpose_2darray(data, local_r=local_e, local_c=local_nnz)
+    local_rows = xp.empty((local_nnz,), dtype=int)
+    local_cols = xp.empty((local_nnz,), dtype=int)
     comm.Scatter(rows, local_rows)
     comm.Scatter(cols, local_cols)
     return data, local_rows, local_cols
 
-def distributed_transpose_2darray(data:NDArray,local_c:int,local_r:int):
+
+def distributed_transpose_2darray(data: NDArray, local_c: int, local_r: int):
     assert data.ndim == 2
     assert data.shape[0] == local_r
-    assert data.shape[1] == local_c*comm.size
+    assert data.shape[1] == local_c * comm.size
     for i in range(local_r):
-        comm.Alltoall(MPI.IN_PLACE,data[i,:])
-        buffer = xp.transpose(xp.reshape(data[i,:],(comm.size,local_c)))
-        data[i,:] = buffer.flatten()
-    data = xp.reshape(xp.transpose(data) , (local_c,local_r*comm.size))   
+        comm.Alltoall(MPI.IN_PLACE, data[i, :])
+        buffer = xp.transpose(xp.reshape(data[i, :], (comm.size, local_c)))
+        data[i, :] = buffer.flatten()
+    data = xp.reshape(xp.transpose(data), (local_c, local_r * comm.size))
     return data
+
 
 def fetch_overlaping_data(
     nnz_to_fetch,

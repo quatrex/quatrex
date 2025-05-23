@@ -5,9 +5,9 @@ import time
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
-from qttools.datastructures import DSBSparse
+from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import synchronize_device
+from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 from quatrex.core.compute_config import ComputeConfig
@@ -69,17 +69,17 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(level="api")
     def compute(
-        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the polarization.
 
         Parameters
         ----------
-        g_lesser : DSBSparse
+        g_lesser : DSDBSparse
             The lesser Green's function.
-        g_greater : DSBSparse
+        g_greater : DSDBSparse
             The greater Green's function.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The output matrices for the polarization. The order is
             p_lesser, p_greater, p_retarded.
 
@@ -115,15 +115,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
             with profiler.profile_range("Polarization computation", level="debug"):
 
                 if xp.__name__ == "cupy":
+                    free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
-                    num_buffers = 5  # closer to 4 but overapproximating
+                    num_buffers = 6  # closer to 4 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
                     ne = g_lesser.data.shape[0]
                     no = g_greater.data.shape[-1]
                     batch_size = avail_buffer_size // (
                         2 * ne * 16
                     )  # 16 bytes for complex128
-                    batch_size = min(batch_size, no)
+                    batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
                     if self.batch_size is not None and batch_size < self.batch_size:
@@ -161,12 +162,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # data. This is a workaround.
                     # Fill the matrices with the data. Take second part of the
                     # energy convolution.
-                    p_lesser._data[p_lesser._stack_padding_mask, ..., batch] = p_l_full[
-                        self.ne - 1 :
-                    ]
-                    p_greater._data[p_greater._stack_padding_mask, ..., batch] = (
-                        p_g_full[self.ne - 1 :]
-                    )
+                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
+                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
 
         # Barrier before communication
         synchronize_device()
@@ -208,8 +205,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
             p_greater.symmetrize(xp.subtract)
 
         # Discard the real part.
-        p_lesser._data.real = 0
-        p_greater._data.real = 0
+        p_lesser.data.real = 0
+        p_greater.data.real = 0
 
         p_retarded.data = (p_greater.data - p_lesser.data) / 2
 

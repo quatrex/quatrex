@@ -3,19 +3,19 @@
 import time
 from functools import partial
 
-from qttools import NCCL_AVAILABLE, NDArray, global_comm, nccl_comm, sparse, xp
-from qttools.datastructures import DSBSparse
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
+from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
-from qttools.utils.mpi_utils import check_gpu_aware_mpi, get_section_sizes
+from qttools.utils.mpi_utils import get_section_sizes
 from scipy import linalg as spla
 
 from quatrex.core.compute_config import BandEdgeConfig
 
 profiler = Profiler()
 
-GPU_AWARE_MPI = check_gpu_aware_mpi()
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -25,35 +25,8 @@ else:
     raise ImportError("Unknown backend.")
 
 
-def _bcast(values: list | NDArray, num_values: int, root: int) -> float:
-    """Broadcasts a list values to all ranks.
-
-    Parameters
-    ----------
-    value : float
-        The value to broadcast.
-    root : int
-        The rank to broadcast from.
-    """
-
-    if values is None:
-        buf = xp.empty(num_values, dtype=xp.float64)
-    else:
-        buf = xp.asarray(values)
-
-    if NCCL_AVAILABLE:
-        nccl_comm.broadcast(buf, root)
-        synchronize_device()
-    elif xp.__name__ == "numpy" or GPU_AWARE_MPI:
-        global_comm.Bcast(buf, root)
-    else:
-        global_comm.bcast(buf, root)
-
-    return buf
-
-
 def get_block(
-    coo: sparse.coo_matrix | DSBSparse,
+    coo: sparse.coo_matrix | DSDBSparse,
     block_sizes: NDArray,
     block_offsets: NDArray,
     index: tuple,
@@ -81,8 +54,9 @@ def get_block(
     row = row + len(block_sizes) if row < 0 else row
     col = col + len(block_sizes) if col < 0 else col
 
-    if isinstance(coo, DSBSparse):
-        return coo.blocks[row, col]
+    if isinstance(coo, DSDBSparse):
+        start_block = coo.block_section_offsets[comm.block.rank]
+        return coo.blocks[row - start_block, col - start_block]
 
     mask = (
         (block_offsets[row] <= coo.row)
@@ -116,27 +90,33 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
         Suspected band edges sorted by energy in ascending order.
 
     """
-    peaks = find_peaks(dos, height=1e-8)[0]
+    peaks = find_peaks(dos, height=1e-3)[0]
     return energies[peaks]
 
 
 @profiler.profile(level="debug")
 def _compute_eigenvalues(
-    hamiltonian: sparse.spmatrix,
+    hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
     potential: NDArray,
-    sigma_retarded: DSBSparse,
+    sigma_retarded: DSDBSparse,
     ind: int,
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
     """Computes the eigenvalues for the left or right contact."""
+    big_blocksize = sigma_retarded.block_sizes[0]
+    block_sections = band_edge_config.block_sections
+    small_blocksize = big_blocksize // block_sections
+
     if side == "left":
-        blocks = [(0, 0), (0, 1), (1, 0)]
-        potential = xp.diag(potential[: sigma_retarded.block_sizes[0]])
+        blocks = [(0, 0), (0, 1)]  # , (1, 0)]
+        potential = xp.diag(potential[:small_blocksize])
+        row_slice = slice(0, small_blocksize)
     elif side == "right":
-        blocks = [(-1, -1), (-1, -2), (-2, -1)]
-        potential = xp.diag(potential[-sigma_retarded.block_sizes[-1] :])
+        blocks = [(-1, -1), (-1, -2)]  # , (-2, -1)]
+        potential = xp.diag(potential[-small_blocksize:])
+        row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:
         raise ValueError(f"Unknown side '{side}'.")
 
@@ -146,13 +126,48 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    s_0 = sum(_get_block(overlap, index=block) for block in blocks)
+    h_00 = _get_block(hamiltonian, index=blocks[0])[0, row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[0, row_slice]
+    s_00 = _get_block(overlap, index=blocks[0])[row_slice]
+    s_01 = _get_block(overlap, index=blocks[1])[row_slice]
+    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
+    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
 
-    h_0 = sum(_get_block(hamiltonian, index=block) for block in blocks) + potential
+    h_0 = sum(
+        h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    h_0 += sum(
+        h_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
+    h_0 += sum(
+        sigma_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    h_0 += sum(
+        sigma_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
+    h_0 += h_0.conj().swapaxes(-2, -1)
+    h_0 += h_00[:, :small_blocksize]
+    h_0 += sigma_00[:, :small_blocksize]
+    h_0 += potential
+
+    s_0 = sum(
+        s_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(1, block_sections)
+    )
+    s_0 += sum(
+        s_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        for i in range(block_sections)
+    )
+    s_0 += s_0.conj().swapaxes(-2, -1)
+    s_0 += s_00[:, :small_blocksize]
+
     if band_edge_config.use_eigvalsh:
         # NOTE: In this case we use only the real part of the retarded
         # self-energy.
-        h_0 += sum(xp.real(sigma_retarded.blocks[*block][ind]) for block in blocks)
         e_0 = eigvalsh(
             # NOTE: Prevent eigvalsh from calling a batched routine (slow).
             xp.squeeze(h_0),
@@ -169,10 +184,10 @@ def _compute_eigenvalues(
 
 @profiler.profile(level="api")
 def find_renormalized_eigenvalues(
-    hamiltonian: sparse.spmatrix | DSBSparse,
+    hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
     potential: NDArray,
-    sigma_retarded: DSBSparse,
+    sigma_retarded: DSDBSparse,
     energies: NDArray,
     conduction_band_guesses: tuple[float, float],
     mid_gap_energies: tuple[float, float],
@@ -187,11 +202,11 @@ def find_renormalized_eigenvalues(
         The Hamiltonian.
     overlap : sparse.spmatrix
         The overlap matrix.
-    sigma_lesser : DSBSparse
+    sigma_lesser : DSDBSparse
         The lesser self-energy.
-    sigma_greater : DSBSparse
+    sigma_greater : DSDBSparse
         The greater self-energy.
-    sigma_retarded : DSBSparse
+    sigma_retarded : DSDBSparse
         The retarded self-energy.
     energies : NDArray
         The energies.
@@ -221,83 +236,86 @@ def find_renormalized_eigenvalues(
     left_conduction_band_guess, right_conduction_band_guess = conduction_band_guesses
     left_mid_gap_energy, right_mid_gap_energy = mid_gap_energies
 
-    section_sizes, __ = get_section_sizes(energies.size, global_comm.size)
+    section_sizes, __ = get_section_sizes(energies.size, comm.stack.size)
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
-    left_band_edges = None
-    right_band_edges = None
+    left_band_edges = xp.empty(2, dtype=float)
+    right_band_edges = xp.empty(2, dtype=float)
 
-    for __ in range(num_ref_iterations):
-        ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
-        rank_left = xp.digitize(ind_left, section_offsets) - 1
+    if comm.block.rank == 0:
+        for __ in range(num_ref_iterations):
+            ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
+            rank_left = xp.digitize(ind_left, section_offsets) - 1
 
-        ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
-        rank_right = xp.digitize(ind_right, section_offsets) - 1
+            if rank_left == comm.stack.rank:
+                local_ind = ind_left - section_offsets[rank_left]
+                e_0_left = _compute_eigenvalues(
+                    hamiltonian=hamiltonian,
+                    overlap=overlap,
+                    potential=potential,
+                    sigma_retarded=sigma_retarded,
+                    ind=local_ind,
+                    side="left",
+                    band_edge_config=band_edge_config,
+                )
+                left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
+                left_mid_gap_energy = xp.mean(left_band_edges)
+                __, left_conduction_band_guess = left_band_edges
 
-        if rank_left == global_comm.rank:
-            local_ind = ind_left - section_offsets[rank_left]
-            e_0_left = _compute_eigenvalues(
-                hamiltonian=hamiltonian,
-                overlap=overlap,
-                potential=potential,
-                sigma_retarded=sigma_retarded,
-                ind=local_ind,
-                side="left",
-                band_edge_config=band_edge_config,
+            left_packed = xp.array([left_conduction_band_guess, left_mid_gap_energy])
+            comm.stack.bcast(
+                left_packed,
+                root=rank_left,
             )
-            left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
-            left_mid_gap_energy = xp.mean(left_band_edges)
-            __, left_conduction_band_guess = left_band_edges
+            left_conduction_band_guess, left_mid_gap_energy = left_packed
 
-        if rank_right == global_comm.rank:
-            local_ind = ind_right - section_offsets[rank_right]
-            e_0_right = _compute_eigenvalues(
-                hamiltonian=hamiltonian,
-                overlap=overlap,
-                potential=potential,
-                sigma_retarded=sigma_retarded,
-                ind=local_ind,
-                side="right",
-                band_edge_config=band_edge_config,
+        synchronize_device()
+        comm.stack.barrier()
+        t_band_edge_start = time.perf_counter()
+        comm.stack.bcast(left_band_edges, root=rank_left)
+        synchronize_device()
+        t_band_edge_end = time.perf_counter()
+        comm.stack.barrier()
+        t_band_edge_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
+                flush=True,
             )
-            right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
-            right_mid_gap_energy = xp.mean(right_band_edges)
-            __, right_conduction_band_guess = right_band_edges
+            print(
+                f"        Band edge comm all time: {t_band_edge_end_all - t_band_edge_start:.3f} s",
+                flush=True,
+            )
 
-        # left_conduction_band_guess = comm.bcast(left_conduction_band_guess, rank_left)
-        # left_mid_gap_energy = comm.bcast(left_mid_gap_energy, rank_left)
-        # right_conduction_band_guess = comm.bcast(
-        #     right_conduction_band_guess, rank_right
-        # )
-        # right_mid_gap_energy = comm.bcast(right_mid_gap_energy, rank_right)
-        left_conduction_band_guess, left_mid_gap_energy = _bcast(
-            [left_conduction_band_guess, left_mid_gap_energy], 2, rank_left
-        )
-        right_conduction_band_guess, right_mid_gap_energy = _bcast(
-            [right_conduction_band_guess, right_mid_gap_energy], 2, rank_right
-        )
+    if comm.block.rank == comm.block.size - 1:
+        for __ in range(num_ref_iterations):
+            ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
+            rank_right = xp.digitize(ind_right, section_offsets) - 1
 
-    # e_0_left = comm.bcast(e_0_left, rank_left)
-    # e_0_right = comm.bcast(e_0_right, rank_right)
-    synchronize_device()
-    global_comm.Barrier()
-    t_band_edge_start = time.perf_counter()
-    left_band_edges = _bcast(left_band_edges, 2, rank_left)
-    right_band_edges = _bcast(right_band_edges, 2, rank_right)
-    synchronize_device()
-    t_band_edge_end = time.perf_counter()
-    global_comm.Barrier()
-    t_band_edge_end_all = time.perf_counter()
-    if global_comm.rank == 0:
-        print(
-            f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
-            flush=True,
-        )
-        print(
-            f"        Band edge comm all time: {t_band_edge_end_all - t_band_edge_start:.3f} s",
-            flush=True,
-        )
+            if rank_right == comm.stack.rank:
+                local_ind = ind_right - section_offsets[rank_right]
+                e_0_right = _compute_eigenvalues(
+                    hamiltonian=hamiltonian,
+                    overlap=overlap,
+                    potential=potential,
+                    sigma_retarded=sigma_retarded,
+                    ind=local_ind,
+                    side="right",
+                    band_edge_config=band_edge_config,
+                )
+                right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
+                right_mid_gap_energy = xp.mean(right_band_edges)
+                __, right_conduction_band_guess = right_band_edges
+
+            right_packed = xp.array([right_conduction_band_guess, right_mid_gap_energy])
+            comm.stack.bcast(right_packed, root=rank_right)
+            right_conduction_band_guess, right_mid_gap_energy = right_packed
+
+        comm.stack.bcast(right_band_edges, root=rank_right)
+
+    comm.block.bcast(left_band_edges, root=0)
+    comm.block.bcast(right_band_edges, root=comm.block.size - 1)
 
     return left_band_edges, right_band_edges
 

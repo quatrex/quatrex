@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from qttools.datastructures import DSBSparse
+from qttools.datastructures import DSDBSparse
 
 
 class ScatteringSelfEnergy(ABC):
@@ -11,6 +11,6 @@ class ScatteringSelfEnergy(ABC):
         self,
         *args,
         **kwargs,
-    ) -> DSBSparse:
+    ) -> DSDBSparse:
         """Computes the scattering self-energy."""
         ...

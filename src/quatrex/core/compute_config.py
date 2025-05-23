@@ -4,8 +4,16 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator
-from qttools.datastructures import DSBCOO, DSBCSR, DSDBCOO, DSBSparse, DSDBSparse
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
+from qttools import xp
+from qttools.datastructures import DSDBCOO, DSDBSparse
+from typing_extensions import Self
 
 
 class LyapunovConfig(BaseModel):
@@ -39,6 +47,7 @@ class BandEdgeConfig(BaseModel):
     use_eigvalsh: bool = False
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "cupy"
     use_pinned_memory: bool = True
+    block_sections: PositiveInt = 1
 
 
 class ConvolveConfig(BaseModel):
@@ -51,27 +60,71 @@ class ConvolveConfig(BaseModel):
     batch_size: PositiveInt | None = None
 
 
+class CommConfig(BaseModel):
+    """All configurations concerning the communication."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_comm_size: PositiveInt = 1
+
+    block_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    block_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    block_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    block_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+
+    stack_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    stack_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+
+    block_comm_config: dict[str, str] = {}
+    stack_comm_config: dict[str, str] = {}
+
+    @model_validator(mode="after")
+    def set_defaults(self) -> Self:
+        if xp.__name__ == "cupy":
+            self.block_comm_config = {
+                "all_to_all": self.block_all_to_all or "host_mpi",
+                "all_gather": self.block_all_gather or "host_mpi",
+                "all_reduce": self.block_all_reduce or "host_mpi",
+                "bcast": self.block_bcast or "host_mpi",
+            }
+
+            self.stack_comm_config = {
+                "all_to_all": self.stack_all_to_all or "host_mpi",
+                "all_gather": self.stack_all_gather or "host_mpi",
+                "all_reduce": self.stack_all_reduce or "host_mpi",
+                "bcast": self.stack_bcast or "host_mpi",
+            }
+        else:
+            self.block_comm_config = {
+                "all_to_all": self.block_all_to_all or "device_mpi",
+                "all_gather": self.block_all_gather or "device_mpi",
+                "all_reduce": self.block_all_reduce or "device_mpi",
+                "bcast": self.block_bcast or "device_mpi",
+            }
+
+            self.stack_comm_config = {
+                "all_to_all": self.stack_all_to_all or "device_mpi",
+                "all_gather": self.stack_all_gather or "device_mpi",
+                "all_reduce": self.stack_all_reduce or "device_mpi",
+                "bcast": self.stack_bcast or "device_mpi",
+            }
+        return self
+
+
 class ComputeConfig(BaseModel):
     """All configurations concerning computational details."""
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    dsbsparse_type: DSBSparse = DSBCOO
     dsdbsparse_type: DSDBSparse = DSDBCOO
 
     convolve: ConvolveConfig = ConvolveConfig()
     nevp: NEVPConfig = NEVPConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
     band_edge: BandEdgeConfig = BandEdgeConfig()
-
-    @field_validator("dsbsparse_type", mode="before")
-    def set_dsbsparse(cls, value) -> DSBSparse:
-        """Converts the string value to the corresponding DSBSparse object."""
-        if value == "DSBCSR":
-            return DSBCSR
-        elif value == "DSBCOO":
-            return DSBCOO
-        raise ValueError(f"Invalid value '{value}' for dbsparse")
+    comm: CommConfig = CommConfig()
 
     @field_validator("dsdbsparse_type", mode="before")
     def set_dsdbsparse(cls, value) -> DSDBSparse:

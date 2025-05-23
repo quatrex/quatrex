@@ -1,29 +1,30 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 from qttools import NDArray, sparse, xp
-from qttools.datastructures import DSBSparse
-from qttools.datastructures.dsbsparse import _block_view
+from qttools.datastructures import DSDBSparse
+from qttools.datastructures.dsdbsparse import _block_view
 
 
-def homogenize(matrix: DSBSparse) -> None:
+def homogenize(matrix: DSDBSparse) -> None:
     """Homogenizes a matrix in stack distribution.
 
     Parameters
     ----------
-    matrix : DSBSparse
+    matrix : DSDBSparse
         The matrix to homogenize.
     """
 
-    assert xp.all(matrix.block_sizes == matrix.block_sizes[0])
-    if matrix.distribution_state != "stack":
-        raise ValueError("Matrix must be in stack distribution")
+    raise NotImplementedError()
+    # assert xp.all(matrix.block_sizes == matrix.block_sizes[0])
+    # if matrix.distribution_state != "stack":
+    #     raise ValueError("Matrix must be in stack distribution")
 
-    for i in range(len(matrix.block_sizes) - 2):
-        matrix.blocks[i + 1, i + 1] = matrix.blocks[0, 0]
-        matrix.blocks[i + 1, i + 2] = matrix.blocks[0, 1]
-        matrix.blocks[i + 2, i + 1] = matrix.blocks[1, 0]
+    # for i in range(len(matrix.block_sizes) - 2):
+    #     matrix.blocks[i + 1, i + 1] = matrix.blocks[0, 0]
+    #     matrix.blocks[i + 1, i + 2] = matrix.blocks[0, 1]
+    #     matrix.blocks[i + 2, i + 1] = matrix.blocks[1, 0]
 
-    matrix.blocks[-1, -1] = matrix.blocks[0, 0]
-    matrix.blocks[-1, -2] = matrix.blocks[1, 0]
+    # matrix.blocks[-1, -1] = matrix.blocks[0, 0]
+    # matrix.blocks[-1, -2] = matrix.blocks[1, 0]
 
 
 def compute_sparsity_pattern(

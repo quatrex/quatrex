@@ -1,7 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 from qttools import NDArray, xp
-from qttools.datastructures import DSBSparse
+from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -78,17 +78,17 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
     @profiler.profile(level="basic")
     def compute(
-        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the electron-phonon self-energy.
 
         Parameters
         ----------
-        g_lesser : DSBSparse
+        g_lesser : DSDBSparse
             The lesser Green's function.
-        g_greater : DSBSparse
+        g_greater : DSDBSparse
             The greater Green's function.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
             sigma_lesser, sigma_greater, sigma_retarded.
 
@@ -96,17 +96,17 @@ class SigmaPhonon(ScatteringSelfEnergy):
         return self._compute_pseudo_scattering(g_lesser, g_greater, out)
 
     def _compute_pseudo_scattering(
-        self, g_lesser: DSBSparse, g_greater: DSBSparse, out: tuple[DSBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the pseudo-phonon self-energy due to a deformation potential.
 
         Parameters
         ----------
-        g_lesser : DSBSparse
+        g_lesser : DSDBSparse
             The lesser Green's function.
-        g_greater : DSBSparse
+        g_greater : DSDBSparse
             The greater Green's function.
-        out : tuple[DSBSparse, ...]
+        out : tuple[DSDBSparse, ...]
             The lesser, greater and retarded self-energies.
 
         """

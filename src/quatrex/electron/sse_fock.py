@@ -2,7 +2,9 @@
 
 import time
 
-from qttools import NDArray, block_comm, global_comm, host_xp, sparse, stack_comm, xp
+import numpy as np
+from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -16,7 +18,7 @@ from quatrex.core.sse import ScatteringSelfEnergy
 profiler = Profiler()
 
 
-class SigmaFockDist(ScatteringSelfEnergy):
+class SigmaFock(ScatteringSelfEnergy):
     """Computes the bare Fock self-energy.
 
     Parameters
@@ -46,11 +48,11 @@ class SigmaFockDist(ScatteringSelfEnergy):
             ).astype(xp.complex128)
 
             section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, block_comm.size
+                quatrex_config.device.number_of_supercells, comm.block.size
             )
-            section_offsets = host_xp.hstack(([0], host_xp.cumsum(section_sizes)))
-            start_block = section_offsets[block_comm.rank]
-            end_block = section_offsets[block_comm.rank + 1]
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
 
             coulomb_matrix_sparray, block_sizes = create_hamiltonian(
                 cutoff_hr(
@@ -68,7 +70,7 @@ class SigmaFockDist(ScatteringSelfEnergy):
             coulomb_matrix_sparray.sum_duplicates()
 
             block_sizes = get_host(block_sizes)
-            block_sizes = host_xp.asarray(
+            block_sizes = np.asarray(
                 [block_sizes[0]] * quatrex_config.device.number_of_supercells
             )
 
@@ -88,7 +90,7 @@ class SigmaFockDist(ScatteringSelfEnergy):
         coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=(stack_comm.size,),
+            global_stack_shape=(comm.stack.size,),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
@@ -125,9 +127,9 @@ class SigmaFockDist(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
         synchronize_device()
         t_all2all_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_all2all_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
                 flush=True,
@@ -143,9 +145,9 @@ class SigmaFockDist(ScatteringSelfEnergy):
         sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
         synchronize_device()
         t_sse_end = time.perf_counter()
-        global_comm.Barrier()
+        comm.barrier()
         t_sse_end_all = time.perf_counter()
-        if global_comm.rank == 0:
+        if comm.rank == 0:
             print(
                 f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s",
                 flush=True,

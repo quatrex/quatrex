@@ -164,13 +164,9 @@ def four_point_correlation(
     GG_fft = xp.fft.fftn(GG, (n,), axes=(-1,))
 
     L_inz = 0
-    for inz in G_indices:
-        i = G_rows[inz]
-        j = G_cols[inz]
+    for inz, i, j in zip(G_indices, G_rows, G_cols):
 
-        for jnz in G_indices:
-            k = G_rows[jnz]
-            L = G_cols[jnz]
+        for jnz, k, L in zip(G_indices, G_rows, G_cols):
 
             ind1 = find_index(G_rows, G_cols, L, j)
             ind2 = find_index(G_rows, G_cols, i, k)

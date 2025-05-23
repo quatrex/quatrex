@@ -43,11 +43,14 @@ def distribute_sparse_coomatrix_over_nnz(
     assert data.shape[0] == local_e
     assert data.shape[1] == local_nnz * comm.size
     data = distributed_transpose_2darray(data, local_r=local_e, local_c=local_nnz)
+    inds = xp.arange(local_nnz * comm.size)
     local_rows = xp.empty((local_nnz,), dtype=int)
     local_cols = xp.empty((local_nnz,), dtype=int)
+    local_inds = xp.empty((local_nnz,), dtype=int)
     comm.Scatter(rows, local_rows)
     comm.Scatter(cols, local_cols)
-    return data, local_rows, local_cols
+    comm.Scatter(inds, local_inds)
+    return data, local_rows, local_cols, local_inds
 
 
 def distributed_transpose_2darray(data: NDArray, local_c: int, local_r: int):

@@ -112,7 +112,8 @@ def four_point_correlation(
     G_rows: List[int],
     G_cols: List[int],
     G_indices: List[int],
-    L_nnz: int,
+    L_rows: List[int],
+    L_cols: List[int],
     L_nen: int,
     L_step_E: int,
     prefactor,
@@ -155,40 +156,35 @@ def four_point_correlation(
     G_nnz = len(G_rows)
     assert G_nnz == len(G_cols)
     assert GG.shape[0] == GL.shape[0]
+    L_nnz = len(L_rows)
+    assert L_nnz == len(L_cols)
 
     LG = xp.zeros((L_nnz, L_nen), dtype=GG.dtype)
     LL = xp.zeros((L_nnz, L_nen), dtype=GG.dtype)
-    L_rows = xp.zeros(L_nnz, dtype=int)
-    L_cols = xp.zeros(L_nnz, dtype=int)
 
     GG_fft = xp.fft.fftn(GG, (n,), axes=(-1,))
+    GL_fft = xp.fft.fftn(GL, (n,), axes=(-1,))
 
-    L_inz = 0
-    for inz, i, j in zip(G_indices, G_rows, G_cols):
+    for L_inz, (ii, jj) in enumerate(zip(L_rows, L_cols)):
+        G_ind1 = xp.where(G_indices == ii)[0]
+        G_ind2 = xp.where(G_indices == jj)[0]
+        i = G_rows[G_ind1]
+        j = G_cols[G_ind1]
+        k = G_rows[G_ind2]
+        L = G_cols[G_ind2]
 
-        for jnz, k, L in zip(G_indices, G_rows, G_cols):
+        ind1 = find_index(G_rows, G_cols, L, j)
+        ind2 = find_index(G_rows, G_cols, i, k)
 
-            ind1 = find_index(G_rows, G_cols, L, j)
-            ind2 = find_index(G_rows, G_cols, i, k)
+        L_fft = prefactor * xp.multiply(GG_fft[ind2], GL_fft[ind1].conj())
+        L_t = xp.fft.ifftn(L_fft)
+        LG[L_inz] = L_t[G_nen - 1 : G_nen - 1 + L_nen * L_step_E : L_step_E]
 
-            if ind1 == -1 or ind2 == -1:
-                continue
+        L_fft = prefactor * xp.multiply(GL_fft[ind2], GG_fft[ind1].conj())
+        L_t = xp.fft.ifftn(L_fft)
+        LL[L_inz] = L_t[G_nen - 1 : G_nen - 1 + L_nen * L_step_E : L_step_E]
 
-            GL_fft = xp.fft.fftn(GL[ind1], (n,), axes=(-1,))
-            L_fft = prefactor * xp.multiply(GG_fft[ind2], GL_fft.conj())
-            L_t = xp.fft.ifftn(L_fft)
-            LG[L_inz] = L_t[G_nen - 1 : G_nen - 1 + L_nen * L_step_E : L_step_E]
-
-            GL_fft = xp.fft.fftn(GL[ind2], (n,), axes=(-1,))
-            L_fft = prefactor * xp.multiply(GL_fft, GG_fft[ind1].conj())
-            L_t = xp.fft.ifftn(L_fft)
-            LL[L_inz] = L_t[G_nen - 1 : G_nen - 1 + L_nen * L_step_E : L_step_E]
-
-            L_rows[L_inz] = inz
-            L_cols[L_inz] = jnz
-            L_inz += 1
-
-    return (LG[:L_inz], LL[:L_inz], L_rows[:L_inz], L_cols[:L_inz])
+    return (LG, LL, L_rows, L_cols)
 
 
 def find_index(

@@ -14,8 +14,20 @@ from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.core.utils import assemble_kpoint_dsb
 
 profiler = Profiler()
+
+
+@profiler.profile(level="api")
+def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
+    """Computes the circular convolution of two arrays using the FFT."""
+    # Extract the shapes of the arrays along the axes as tuples.
+    nka = tuple(a.shape[i] for i in axes)
+    nkb = tuple(b.shape[i] for i in axes)
+    a_fft = xp.fft.fftn(a, nka, axes=axes)
+    b_fft = xp.fft.fftn(b, nkb, axes=axes)
+    return xp.fft.ifftn(a_fft * b_fft, axes=axes)
 
 
 class SigmaFock(ScatteringSelfEnergy):
@@ -41,7 +53,12 @@ class SigmaFock(ScatteringSelfEnergy):
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
-        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        self.prefactor = (
+            1j
+            / (2 * xp.pi * xp.prod(xp.array(number_of_kpoints)))
+            * (self.energies[1] - self.energies[0])
+        )
         if quatrex_config.device.construct_from_unit_cell:
             coulomb_matrix_unit_cells = distributed_load(
                 quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
@@ -54,19 +71,34 @@ class SigmaFock(ScatteringSelfEnergy):
             start_block = section_offsets[comm.block.rank]
             end_block = section_offsets[comm.block.rank + 1]
 
-            coulomb_matrix_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
+            # Apply the cutoff to the Coulomb matrix.
+            if quatrex_config.device.R_cutoff is not None:
+                coulomb_matrix_unit_cells = cutoff_hr(
                     coulomb_matrix_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+                    R_cutoff=quatrex_config.device.R_cutoff,
+                )
+            coulomb_matrix_dict = {}
+            for periodic_shift in xp.ndindex(
+                quatrex_config.device.cells_in_periodic_directions
+            ):
+                for i in range(1, -2, -2):
+                    if i == -1 and not any(periodic_shift):
+                        break
+                    periodic_shift = tuple([i * ps for ps in periodic_shift])
+                    coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                        coulomb_matrix_unit_cells,
+                        quatrex_config.device.number_of_supercells,
+                        quatrex_config.device.transport_direction,
+                        quatrex_config.device.unit_cell_per_supercell,
+                        block_start=start_block,
+                        block_end=end_block,
+                        periodic_shift=periodic_shift,
+                        return_sparse=True,
+                    )
+                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_sparray.astype(
+                        xp.complex128
+                    )
+            coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
             coulomb_matrix_sparray.sum_duplicates()
 
             block_sizes = get_host(block_sizes)
@@ -75,9 +107,16 @@ class SigmaFock(ScatteringSelfEnergy):
             )
 
         else:
-            coulomb_matrix_sparray = distributed_load(
-                quatrex_config.input_dir / "coulomb_matrix.npz"
-            ).astype(xp.complex128)
+            try:
+                coulomb_matrix_sparray = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix.npz"
+                ).astype(xp.complex128)
+                coulomb_matrix_dict = None
+            except FileNotFoundError:
+                coulomb_matrix_dict = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix.pkl"
+                )
+                coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
 
             # Load block sizes for the coulomb matrix.
             block_sizes = get_host(
@@ -90,13 +129,26 @@ class SigmaFock(ScatteringSelfEnergy):
         coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=(comm.stack.size,),
+            global_stack_shape=(comm.stack.size,)
+            + tuple([k for k in number_of_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=xp.conj,
         )
         coulomb_matrix.data = 0.0
-        coulomb_matrix += coulomb_matrix_sparray
+        if coulomb_matrix_dict is not None:
+            number_of_kpoints = xp.array(
+                [1 if k <= 1 else k for k in number_of_kpoints]
+            )
+            assemble_kpoint_dsb(
+                coulomb_matrix,
+                coulomb_matrix_dict,
+                number_of_kpoints,
+                -(number_of_kpoints // 2),
+            )
+        else:
+            coulomb_matrix += coulomb_matrix_sparray
         del coulomb_matrix_sparray
+        del coulomb_matrix_dict
 
         # Make sure that the Coulomb matrix is Hermitian.
         coulomb_matrix.symmetrize()
@@ -142,7 +194,11 @@ class SigmaFock(ScatteringSelfEnergy):
         # Compute the electron density by summing over energies.
         t_sse_start = time.perf_counter()
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-        sigma_retarded.data += xp.real(gl_density * self.coulomb_matrix_data)
+        sigma_retarded.data += fft_circular_convolve(
+            gl_density,
+            self.coulomb_matrix_data,
+            axes=tuple(range(gl_density.ndim - 1)),
+        )
         synchronize_device()
         t_sse_end = time.perf_counter()
         comm.barrier()

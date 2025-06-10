@@ -124,8 +124,8 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[*ind, row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[*ind, row_slice]
+    h_00 = _get_block(hamiltonian, index=blocks[0])[:, *ind[1:], row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[:, *ind[1:], row_slice]
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
     sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])

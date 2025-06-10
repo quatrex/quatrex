@@ -919,7 +919,7 @@ class _DStackIndexer:
                 raise IndexError("an index can only have a single ellipsis ('...')")
 
             loc = is_ellipsis[0]
-            extra_dimensions = (self._dsbsparse.data.ndim - 1) - (
+            extra_dimensions = (self._dsdbsparse.data.ndim - 1) - (
                 len(stack_index) - sum(i is None for i in stack_index) - 1
             )
             stack_index = (
@@ -930,11 +930,11 @@ class _DStackIndexer:
         
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsbsparse.data[stack_index] = csr[self._dsbsparse.spy()]
-            return self._dsbsparse
+            self._dsdbsparse.data[stack_index] = csr[self._dsdbsparse.spy()]
+            return self._dsdbsparse
 
-        #self._dsbsparse.data[stack_index] = other.data[:]
-        self._dsbsparse.data[stack_index] = other.data[stack_index]
+        #self._dsdbsparse.data[stack_index] = other.data[:]
+        self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 
 class _DStackView:
@@ -1012,27 +1012,27 @@ class _DStackView:
         rows, cols = self._dsdbsparse._normalize_index(index)
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
-    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSBSparse":
-        """In-place addition of two DSBSparse matrices."""
+    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place addition of two DSDBSparse matrices."""
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsbsparse.data[self._stack_index] += csr[self._dsbsparse.spy()]
-            return self._dsbsparse
+            self._dsdbsparse.data[self._stack_index] += csr[self._dsdbsparse.spy()]
+            return self._dsdbsparse
 
-        self._dsbsparse._check_commensurable(other)
-        self._dsbsparse.data[self._stack_index] += other.data[:]
-        return self._dsbsparse
+        self._dsdbsparse._check_commensurable(other)
+        self._dsdbsparse.data[self._stack_index] += other.data[:]
+        return self._dsdbsparse
     
-    def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSBSparse":
-        """In-place subtraction of two DSBSparse matrices."""
+    def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place subtraction of two DSDBSparse matrices."""
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsbsparse.data[self._stack_index] -= csr[self._dsbsparse.spy()]
-            return self._dsbsparse
+            self._dsdbsparse.data[self._stack_index] -= csr[self._dsdbsparse.spy()]
+            return self._dsdbsparse
 
-        self._dsbsparse._check_commensurable(other)
-        self._dsbsparse.data[self._stack_index] -= other.data[:]
-        return self._dsbsparse
+        self._dsdbsparse._check_commensurable(other)
+        self._dsdbsparse.data[self._stack_index] -= other.data[:]
+        return self._dsdbsparse
 
     @property
     def num_local_blocks(self) -> int:

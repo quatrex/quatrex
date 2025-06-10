@@ -13,7 +13,6 @@ from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
-from quatrex.core.utils import assemble_kpoint_dsb
 
 profiler = Profiler()
 
@@ -42,17 +41,6 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     a_fft = xp.fft.fftn(a, (ne,), axes=(0,))
     b_fft = xp.fft.fftn(b, (ne,), axes=(0,))
     return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
-
-
-@profiler.profile(level="api")
-def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
-    """Computes the circular convolution of two arrays using the FFT."""
-    # Extract the shapes of the arrays along the axes as tuples.
-    nka = tuple(a.shape[i] for i in axes)
-    nkb = tuple(b.shape[i] for i in axes)
-    a_fft = xp.fft.fftn(a, nka, axes=axes)
-    b_fft = xp.fft.fftn(b, nkb, axes=axes)
-    return xp.fft.ifftn(a_fft * b_fft, axes=axes)
 
 
 @profiler.profile(level="api")
@@ -161,7 +149,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             1j
             / (2 * xp.pi)
             * (self.energies[1] - self.energies[0])
-            / xp.prod(number_of_kpoints)
+            / np.prod(number_of_kpoints)
         )
         self.big_block_sizes = None
         self.batch_size = compute_config.convolve.batch_size
@@ -263,7 +251,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     num_buffers = 12  # closer to 8 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
                     ne = g_lesser.data.shape[0]
-                    nk = xp.prod(g_lesser.data.shape[1:-1])
+                    nk = np.prod(g_lesser.data.shape[1:-1])
                     no = g_lesser.data.shape[-1]
                     batch_size = avail_buffer_size // (
                         2 * ne * nk * 16
@@ -371,7 +359,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     # Here we shouldn't divide with the number of kpoints
                     self.prefactor
                     * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
-                    * xp.prod(sigma_retarded.shape[1:-2])
+                    * np.prod(sigma_retarded.shape[1:-2])
                     # + antihermitian / 2
                 )
 

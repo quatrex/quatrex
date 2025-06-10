@@ -126,8 +126,8 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[*ind, row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[*ind, row_slice]
+    h_00 = _get_block(hamiltonian, index=blocks[0])[:, *ind[1:], row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[:, *ind[1:], row_slice]
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
     sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
@@ -177,7 +177,7 @@ def _compute_eigenvalues(
         )
         return xp.sort(e_0.real)
 
-    #h_0 += sum(sigma_retarded.blocks[*block][*ind] for block in blocks)
+    # h_0 += sum(sigma_retarded.blocks[*block][*ind] for block in blocks)
     e_0 = get_device(spla.eigvals(get_host(xp.squeeze(h_0)), get_host(xp.squeeze(s_0))))
     return xp.sort(e_0.real)
 

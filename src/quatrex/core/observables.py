@@ -222,8 +222,8 @@ def device_current(
 
     local_current = xp.array(local_current)
     block_local_current = comm.block.all_gather_v(local_current, axis=0)
-
-    block_local_current = xp.ascontiguousarray(xp.moveaxis(xp.vstack(block_local_current), 0, -1))
+    block_local_current = xp.ascontiguousarray(block_local_current)
+    block_local_current = xp.moveaxis(block_local_current, 0, -1)
 
     return comm.stack.all_gather_v(
         block_local_current,

@@ -56,7 +56,7 @@ class SigmaFock(ScatteringSelfEnergy):
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
         self.prefactor = (
             1j
-            / (2 * xp.pi * xp.prod(xp.array(number_of_kpoints)))
+            / (2 * xp.pi * np.prod(number_of_kpoints))
             * (self.energies[1] - self.energies[0])
         )
         if quatrex_config.device.construct_from_unit_cell:

@@ -196,7 +196,7 @@ def cutoff_hr(
     if value_cutoff is not None:
         if hr_cut is None:
             hr_cut = hr.copy()
-        hr_cut[xp.abs(hr_cut) > value_cutoff] = 0
+        hr_cut[xp.abs(hr_cut) < value_cutoff] = 0
 
     # Remove eventual cell planes with only zeros, except the center.
     if remove_zeros:
@@ -378,7 +378,7 @@ def create_hamiltonian(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    if (host_xp.abs(periodic_shift) > host_xp.array(hR.shape[:3]) // 2).any():
+    if (np.abs(periodic_shift) > np.array(hR.shape[:3]) // 2).any():
         raise Warning(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
@@ -461,7 +461,7 @@ def create_hamiltonian(
         full_cols = full_cols[valid_mask]
         full_data = full_data[valid_mask]
         # Also return the block sizes.
-        block_sizes = host_xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+        block_sizes = np.ones(num_blocks, dtype=int) * diag_block.shape[0]
         return (
             sparse.coo_matrix(
                 (full_data, (full_rows, full_cols)),

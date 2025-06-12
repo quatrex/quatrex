@@ -435,8 +435,6 @@ class SCBA:
         # Make the remaining real part Hermitian.
         if not self.quatrex_config.scba.symmetric:
             self.data.sigma_retarded.symmetrize(xp.add)
-        # Wrong sign somewhere? Negative sign opens the bandgap, but I don't know why.
-        self.data.sigma_retarded._data *= -1
 
         # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded.data += 0.5 * (

@@ -292,7 +292,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     -1, *(len(nk) + 1) * (1,)
                 )
                 # eta for removing the singularity. See Cauchy principal value.
-                eta = 1e-8
+                de = self.energies[1] - self.energies[0]
+                eta = de / 2
+                # eta = 1e-8
                 hilbert_kernel_fft = xp.fft.fft(
                     1 / (energy_differences + eta), n, axis=0
                 )
@@ -353,12 +355,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # negative energy part
                 sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
                 # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
-                sigma_retarded._data[
-                    sigma_retarded._stack_padding_mask, ..., batch
-                ] += (
-                    # Here we shouldn't divide with the number of kpoints
+                sigma_retarded.data[..., batch] += (
+                    # Wrong sign somewhere? Negative sign opens the bandgap, but I don't know why.
+                    # -self.prefactor
                     self.prefactor
                     * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    # Here we shouldn't divide with the number of kpoints
                     * np.prod(sigma_retarded.shape[1:-2])
                     # + antihermitian / 2
                 )

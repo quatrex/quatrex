@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from qttools import NDArray, _DType, sparse, xp
+from qttools.utils.gpu_utils import debug_gpu_memory_usage, free_mempool
 
 
 def read_hr_dat(
@@ -293,6 +294,7 @@ def create_hamiltonian(
     cutoff: float = xp.inf,
     coords: NDArray = None,
     lattice_vectors: NDArray = None,
+    format: str = "coo",
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
@@ -374,9 +376,13 @@ def create_hamiltonian(
     upper_ind = tuple([1 if i == transport_dir else 0 for i in range(3)])
     lower_ind = tuple([-1 if i == transport_dir else 0 for i in range(3)])
 
+    debug_gpu_memory_usage("Before creating Hamiltonian blocks")
+
     diag_block = get_hamiltonian_block(hR, transport_cell, (0, 0, 0))
     upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
     lower_block = get_hamiltonian_block(hR, transport_cell, lower_ind)
+
+    debug_gpu_memory_usage("After creating Hamiltonian blocks")
 
     # Enforce cutoff.
     if coords is not None and cutoff < xp.inf and lattice_vectors is not None:
@@ -402,11 +408,14 @@ def create_hamiltonian(
         diag_block = sparse.coo_matrix(diag_block)
         upper_block = sparse.coo_matrix(upper_block)
         lower_block = sparse.coo_matrix(lower_block)
+
+        debug_gpu_memory_usage("After creating sparse Hamiltonian blocks")
         # Canoncialize the sparse matrices.
         # NOTE: Not sure if this is necessary.
         for mat in [diag_block, upper_block, lower_block]:
             if mat.has_canonical_format is False:
                 mat.sum_duplicates()
+                mat.eliminate_zeros()
         # Create the block-tridiagonal matrix.
         num_blocks = block_end - block_start
         offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
@@ -430,24 +439,57 @@ def create_hamiltonian(
         upper_cols += diag_block.shape[0]
         lower_rows += diag_block.shape[0]
 
+        matrix_shape = num_transport_cells * diag_block.shape[0]
+        block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+        del diag_block, upper_block, lower_block
+        free_mempool()
+
+        debug_gpu_memory_usage("After tiling sparse Hamiltonian blocks")
+
         full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
         full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
         full_data = xp.hstack([diag_data, upper_data, lower_data])
+
+        del diag_rows, diag_cols, diag_data
+        del upper_rows, upper_cols, upper_data
+        del lower_rows, lower_cols, lower_data
+        free_mempool()
+
+        debug_gpu_memory_usage("After stacking sparse Hamiltonian blocks")
         # Remove the fishtail at the end of the matrix.
-        matrix_shape = num_transport_cells * diag_block.shape[0]
+        # matrix_shape = num_transport_cells * diag_block.shape[0]
         valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
         full_rows = full_rows[valid_mask]
         full_cols = full_cols[valid_mask]
         full_data = full_data[valid_mask]
+
+        del valid_mask
+        free_mempool()
+
+        debug_gpu_memory_usage("After removing fishtail from sparse Hamiltonian blocks")
         # Also return the block sizes.
-        block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
-        return (
-            sparse.coo_matrix(
+        # block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+        if format == "csr":
+            # Convert to CSR format.
+            result = sparse.csr_matrix(
                 (full_data, (full_rows, full_cols)),
                 shape=(matrix_shape, matrix_shape),
-            ),
-            block_sizes,
-        )
+            )
+        elif format == "coo":
+            result = (
+                sparse.coo_matrix(
+                    (full_data, (full_rows, full_cols)),
+                    shape=(matrix_shape, matrix_shape),
+                ),
+                block_sizes,
+            )
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+
+        del full_rows, full_cols, full_data
+        free_mempool()
+        debug_gpu_memory_usage("After creating full sparse Hamiltonian matrix")
+        return result
     else:
         # Returns the block-tridiagonal Hamiltonian matrix as a tuple of arrays.
         diag = xp.tile(diag_block, (block_end - block_start, 1))

@@ -9,6 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcoo_kernels, dsdbsparse_kernels
 from qttools.profiling.profiler import Profiler
+from qttools.utils.gpu_utils import debug_gpu_memory_usage, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -79,6 +80,7 @@ class DSDBCOO(DSDBSparse):
 
         self.rows = xp.asarray(rows, dtype=xp.int32)
         self.cols = xp.asarray(cols, dtype=xp.int32)
+        # print(f"DSDBCOO.__init__ | NNZ: {self.rows.size}, {self.rows.data.ptr == rows.data.ptr}")
 
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
@@ -885,24 +887,38 @@ class DSDBCOO(DSDBSparse):
         section_size = stack_section_sizes[comm.stack.rank]
         local_stack_shape = (section_size,) + global_stack_shape[1:]
 
+        debug_gpu_memory_usage("Before tocoo conversion")
+
         # coo: sparse.coo_matrix = sparray.tocoo().copy()
         coo: sparse.coo_matrix = sparray.tocoo()
+
+        debug_gpu_memory_usage("After tocoo conversion")
 
         # Canonicalizes the COO format.
         if symmetry:
             coo = sparse.triu(coo, format="coo")
 
+        debug_gpu_memory_usage("After symmetry conversion")
+
         if not coo.has_canonical_format:
             coo.sum_duplicates()
+            coo.eliminate_zeros()
+        free_mempool()
+
+        debug_gpu_memory_usage("After sum_duplicates")
 
         # Compute the block-sorting index.
         block_sort_index = dsdbcoo_kernels.compute_block_sort_index(
             coo.row, coo.col, block_sizes
         )
 
+        debug_gpu_memory_usage("After block_sort_index computation")
+
         _data = coo.data[block_sort_index]
         _rows = coo.row[block_sort_index]
         _cols = coo.col[block_sort_index]
+
+        debug_gpu_memory_usage("After block_sort_index application")
 
         # Determine the local slice of the data.
         # NOTE: This is arrow-wise partitioning.
@@ -917,12 +933,29 @@ class DSDBCOO(DSDBSparse):
             (_rows < end_idx) | (_cols < end_idx)
         )
 
+        debug_gpu_memory_usage("After local_mask computation")
+
+        # # Pad local data with zeros to ensure that all ranks have the
+        # # same data size for the all-to-all communication.
+        nnz_size = int(local_mask.sum())
+        # nnz_section_sizes, total_nnz_size = get_section_sizes(
+        #     nnz_size, comm.stack.size, strategy="greedy"
+        # )
+        # padded_shape = (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size)
+        # data = xp.zeros(padded_shape, dtype=coo.data.dtype)
+
         data = xp.zeros(
             local_stack_shape + (int(local_mask.sum()),), dtype=coo.data.dtype
         )
+        debug_gpu_memory_usage("After data allocation")
+        if comm.rank == 0:
+            print(f"data shape: {data.shape}, nnz: {nnz_size}")
         data[..., :] = _data[local_mask]
+        # data[: local_stack_shape[0], ..., : nnz_size] = _data[local_mask]
         rows = _rows[local_mask] - start_idx
         cols = _cols[local_mask] - start_idx
+
+        # print(f"DSDBCOO.from_sparray | NNZ: {rows.size}, {rows.data.ptr == sparray.row.data.ptr}")
 
         return cls(
             data=data,

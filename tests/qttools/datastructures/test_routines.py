@@ -141,6 +141,25 @@ class TestNotDistr:
 
         assert xp.allclose(dense @ dense @ dense, out.to_dense())
 
+    def test_bd_matmul(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+    ):
+        """Tests the in-place addition of a DSDBSparse matrix."""
+        coo = _create_btd_coo(block_sizes)
+        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
+        dense = dsdbsparse.to_dense()
+
+        # Initalize the output matrix with the correct sparsity pattern.
+
+        out = dsdbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
+
+        bd_matmul(dsdbsparse, dsdbsparse, out)
+
+        assert xp.allclose(dense @ dense, out.to_dense())
+
     def test_bd_sandwich(
         self,
         dsdbsparse_type: DSDBSparse,

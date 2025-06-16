@@ -2,6 +2,10 @@
 
 import inspect
 
+import numpy as np
+from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as global_comm
+
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
 
@@ -342,3 +346,25 @@ def free_mempool():
     if xp.__name__ == "cupy":
         mempool = xp.get_default_memory_pool()
         mempool.free_all_blocks()
+
+
+def debug_gpu_memory_usage(msg: str = "") -> None:
+    """Prints the GPU memory usage."""
+    if xp.__name__ == "cupy":
+        free_memory, total_memory = xp.cuda.Device().mem_info
+        usage = np.array((total_memory - free_memory) / total_memory)
+        average_usage = np.empty(1)
+        max_usage = np.empty(1)
+        global_comm.Allreduce(usage, average_usage, op=MPI.SUM)
+        global_comm.Allreduce(usage, max_usage, op=MPI.MAX)
+        average_usage /= global_comm.size
+
+        if global_comm.rank == 0:
+            print(
+                f"{msg} | Rank-average device memory usage: {average_usage[0] * 100:.4f}%",
+                flush=True,
+            )
+            print(
+                f"{msg} | Max device memory usage: {max_usage[0] * 100:.4f}%",
+                flush=True,
+            )

@@ -9,7 +9,7 @@ import numpy as np
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.gpu_utils import empty_like_pinned, free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -195,11 +195,19 @@ class DSDBSparse(ABC):
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
-        self._data = xp.zeros(
-            (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=data.dtype,
+        padded_shape = (
+            max(stack_section_sizes),
+            *global_stack_shape[1:],
+            total_nnz_size,
         )
-        self._data[: data.shape[0], ..., : data.shape[-1]] = data
+        if data.shape != padded_shape:
+            self._data = xp.zeros(
+                (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
+                dtype=data.dtype,
+            )
+            self._data[: data.shape[0], ..., : data.shape[-1]] = data
+        else:
+            self._data = data
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -836,6 +844,22 @@ class DSDBSparse(ABC):
                 ),
                 dtype=self.dtype,
             )
+
+    def to_host(self) -> None:
+        """Transfers the data to the host memory."""
+        if self._data is not None and xp.__name__ == "cupy":
+            host_data = empty_like_pinned(self._data)
+            self._data.get(out=host_data)
+            self._data = host_data
+            synchronize_device()
+            free_mempool()
+
+    def to_device(self) -> None:
+        """Transfers the data to the device memory."""
+        free_mempool()
+        if self._data is not None and xp.__name__ == "cupy":
+            self._data = xp.asarray(self._data)
+            synchronize_device()
 
     @classmethod
     @abstractmethod

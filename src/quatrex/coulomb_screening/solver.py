@@ -9,7 +9,12 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import (
+    debug_gpu_memory_usage,
+    free_mempool,
+    get_host,
+    synchronize_device,
+)
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -207,13 +212,26 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.coulomb_matrix.dtype = xp.complex128
 
+        # self.coulomb_matrix = None
+        debug_gpu_memory_usage("Before loading Coulomb matrix")
+        free_mempool()
+        debug_gpu_memory_usage("After freeing memory pool")
+
         self.coulomb_matrix += coulomb_matrix_sparray
+        # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+        #     coulomb_matrix_sparray,
+        #     block_sizes=self.small_block_sizes,
+        #     global_stack_shape=(comm.stack.size,),
+        #     symmetry=quatrex_config.scba.symmetric,
+        #     symmetry_op=xp.conj,
+        # )
         # Explicitely try to free the memory for the sparsity pattern.
         del coulomb_matrix_sparray
 
         # Make sure that the Coulomb matrix is Hermitian.
         self.coulomb_matrix.symmetrize()
         self.coulomb_matrix.data /= quatrex_config.coulomb_screening.epsilon_r
+        self.coulomb_matrix.to_host()
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
@@ -516,7 +534,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         # Assemble the system matrix (Includes matrix multiplication).
         t_assembly_start = time.perf_counter()
+        self.coulomb_matrix.to_device()
         self._assemble_system_matrix(p_retarded)
+        p_retarded.free_data()
         synchronize_device()
         t_assembly_end = time.perf_counter()
         comm.barrier()
@@ -542,6 +562,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             end_block=end_block,
             spillover_correction=True,
         )
+        p_lesser.free_data()
         bd_sandwich_distr(
             self.coulomb_matrix,
             p_greater,
@@ -550,6 +571,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             end_block=end_block,
             spillover_correction=True,
         )
+        p_greater.free_data()
+        self.coulomb_matrix.to_host()
         synchronize_device()
         t_sandwich_end = time.perf_counter()
         comm.barrier()

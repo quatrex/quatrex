@@ -4,7 +4,7 @@ from time import time
 
 from libc.stdint cimport intptr_t, int64_t
 
-cdef extern from "/usr/local/cuda-12.2/include/library_types.h":
+cdef extern from "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/include/library_types.h":
     ctypedef enum cudaDataType_t:
         CUDA_R_16F
         CUDA_C_16F
@@ -37,7 +37,7 @@ cdef extern from "/usr/local/cuda-12.2/include/library_types.h":
         CUDA_R_8F_E4M3
         CUDA_R_8F_E5M2
 
-cdef extern from "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h":
+cdef extern from "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h":
     ctypedef struct cudssHandle_t:
         pass
 
@@ -100,146 +100,154 @@ cdef extern from "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-p
     cudssStatus_t cudssExecute(cudssHandle_t handle, cudssPhase_t phase, cudssConfig_t solverConfig, cudssData_t solverData, cudssMatrix_t inputMatrix, cudssMatrix_t solution, cudssMatrix_t rhs)
     cudssStatus_t cudssMatrixDestroy(cudssMatrix_t matrix)
     cudssStatus_t cudssConfigDestroy(cudssConfig_t solverConfig)
+    cudssStatus_t cudssMatrixSetCsrPointers(cudssMatrix_t matrix, void* rowStart, void* rowEnd, void*  colIndices, void* values)
+    cudssStatus_t cudssMatrixSetValues(cudssMatrix_t matrix, void *values)
 
-def spsolve_with_CUDSS(A, b):
+cdef class CuDSS:
+
     cdef cudssStatus_t status
     cdef cudssHandle_t handle
-
-    cdef int n = A.shape[0]
-    cdef int nnz = A.nnz
-    cdef int nrhs = b.shape[1]
-
-    if A.dtype != cp.dtype(cp.complex128):
-        print("The sys. matrix values should be complex128 (for now)")
-        return -1
-    
-    if b.dtype != cp.dtype(cp.complex128):
-        print("The rhs values should be complex128 (for now)")
-        return -1
-
-    x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
-
-    cdef size_t  data_ptr_t = A.data.data.ptr
-    cdef size_t  indices_ptr_t = A.indices.data.ptr
-    cdef size_t  indptr_ptr_t = A.indptr.data.ptr
-    cdef size_t  b_ptr_t = b.data.ptr
-    cdef size_t  x_ptr_t = x.data.ptr
-
-    cdef void * data_ptr = <void*>data_ptr_t
-    cdef void * indices_ptr = <void*>indices_ptr_t
-    cdef void * indptr_ptr = <void*>indptr_ptr_t
-    cdef void * b_ptr = <void*>b_ptr_t
-    cdef void * x_ptr = <void*>x_ptr_t
-
-
-    status = cudssCreate(&handle)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Handle creation FAILED!",flush=True)
-        return -1
-    
     cdef cudssConfig_t solverConfig
     cdef cudssData_t solverData
 
-    status = cudssSetThreadingLayer(handle, NULL)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Set threading layer FAILED!", flush=True)
-
-    status = cudssConfigCreate(&solverConfig)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS SolverConfig creation FAILED!", flush=True)
-        return -1
-
-    status = cudssDataCreate(handle, &solverData)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS SolverData creation FAILED!",flush=True)
-        return -1
+    cdef int sym_fact
 
     cdef cudssMatrix_t cu_x, cu_b
-    cdef int64_t nrows = n, ncols = n
-    cdef int ldb = ncols, ldx = nrows;
-
-    status = cudssMatrixCreateDn(&cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
-                         CUDSS_LAYOUT_COL_MAJOR)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Matrix b creation FAILED!",flush=True)
-        return -1
-
-    status = cudssMatrixCreateDn(&cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
-                         CUDSS_LAYOUT_COL_MAJOR)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Matrix x creation FAILED!",flush=True)
-        return -1
-
     cdef cudssMatrix_t cu_A
-    cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
-    cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
-    cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
 
-    status = cudssMatrixCreateCsr(&cu_A, nrows, ncols, nnz, indptr_ptr, NULL,
-                         indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
-                         base)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS CSR Matrix A creation FAILED!",flush=True)
-        return -1
-
-    cdef double t0, t1
-
-    t0 = time()
-    status =  cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solverConfig, solverData,
-                           cu_A, cu_x, cu_b)
-    t1 = time()
-    print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Sym. Factorization FAILED!",flush=True)
-        return -1
-
-    t0 = time()
-    status = cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solverConfig,
-                          solverData, cu_A, cu_x, cu_b)
-    t1 = time()
-    print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Factorization FAILED!",flush=True)
-        return -1
-
-    t0 = time()
-    status = cudssExecute(handle, CUDSS_PHASE_SOLVE, solverConfig, solverData,
-                          cu_A, cu_x, cu_b)
-    t1 = time()
-    print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Solve FAILED!",flush=True)
-        return -1
-
-    status = cudssMatrixDestroy(cu_A)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
-        return -1
-    
-    status = cudssMatrixDestroy(cu_b)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Matrix b destruction FAILED!",flush=True)
-        return -1
-    
-    status = cudssMatrixDestroy(cu_x)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Matrix x destruction FAILED!",flush=True)
-        return -1
-    
-    status = cudssDataDestroy(handle, solverData)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Solver data destruction FAILED!",flush=True)
-        return -1
-
-    status = cudssConfigDestroy(solverConfig)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Solver config destruction FAILED!",flush=True)
-        return -1
-
-    status = cudssDestroy(handle)
-    if status != CUDSS_STATUS_SUCCESS:
-        print("CUDSS Handle destruction FAILED!",flush=True)
+    def __cinit__(self):
+        self.status = cudssCreate(&self.handle)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            raise RuntimeError("cuDSS handle creation failed")
         
+        self.status = cudssDataCreate(self.handle, &self.solverData)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS SolverData creation FAILED!",flush=True)
+            
+        self.status = cudssConfigCreate(&self.solverConfig)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS SolverConfig creation FAILED!", flush=True)
+        
+        self.sym_fact = 0
+
+    def spsolve_with_CUDSS(self,A, b):
+
+        cdef int n = A.shape[0]
+        cdef int nnz = A.nnz
+        cdef int nrhs = b.shape[1]
+
+        if A.dtype != cp.dtype(cp.complex128):
+            print("The sys. matrix values should be complex128 (for now)")
+            return -1
+        
+        if b.dtype != cp.dtype(cp.complex128):
+            print("The rhs values should be complex128 (for now)")
+            return -1
+
+        x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
+
+        cdef size_t  data_ptr_t = A.data.data.ptr
+        cdef size_t  indices_ptr_t = A.indices.data.ptr
+        cdef size_t  indptr_ptr_t = A.indptr.data.ptr
+        cdef size_t  b_ptr_t = b.data.ptr
+        cdef size_t  x_ptr_t = x.data.ptr
+
+        cdef void * data_ptr = <void*>data_ptr_t
+        cdef void * indices_ptr = <void*>indices_ptr_t
+        cdef void * indptr_ptr = <void*>indptr_ptr_t
+        cdef void * b_ptr = <void*>b_ptr_t
+        cdef void * x_ptr = <void*>x_ptr_t
+
+        #self.status = cudssSetThreadingLayer(self.handle, NULL)
+        #if self.status != CUDSS_STATUS_SUCCESS:
+        #    print("CUDSS Set threading layer FAILED!", flush=True)
+        
+        cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
+        cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
+        cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
+
+        cdef double t0, t1
+
+        cdef int64_t nrows = n, ncols = n
+        cdef int ldb = ncols, ldx = nrows;
+
+        self.status = cudssMatrixCreateDn(&self.cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
+                CUDSS_LAYOUT_COL_MAJOR)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Matrix b creation FAILED!",flush=True)
+            return -1
+
+        self.status = cudssMatrixCreateDn(&self.cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
+                            CUDSS_LAYOUT_COL_MAJOR)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Matrix x creation FAILED!",flush=True)
+            return -1
+        
+        if self.sym_fact == 0:
+            self.status = cudssMatrixCreateCsr(&self.cu_A, nrows, ncols, nnz, indptr_ptr, NULL,
+                                indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
+                                base)
+            if self.status != CUDSS_STATUS_SUCCESS:
+                print("CUDSS CSR Matrix A creation FAILED!",flush=True)
+                return -1
+
+            t0 = time()
+            self.status =  cudssExecute(self.handle, CUDSS_PHASE_ANALYSIS, self.solverConfig, self.solverData,
+                                self.cu_A, self.cu_x, self.cu_b)
+            t1 = time()
+            print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+            if self.status != CUDSS_STATUS_SUCCESS:
+                print("CUDSS Sym. Factorization FAILED!",flush=True)
+                return -1
+            
+            self.sym_fact = 1
+        else:
+            print("Reusing Sym. Factorization")
+            cudssMatrixSetCsrPointers(self.cu_A, indptr_ptr, NULL, indices_ptr, data_ptr)
+
+        t0 = time()
+        self.status = cudssExecute(self.handle, CUDSS_PHASE_FACTORIZATION, self.solverConfig,
+                            self.solverData, self.cu_A, self.cu_x, self.cu_b)
+        t1 = time()
+        print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Factorization FAILED!",flush=True)
+            if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+                print("NOT SUPPOERTED")
+            return -1
+        
+
+        t0 = time()
+        self.status = cudssExecute(self.handle, CUDSS_PHASE_SOLVE, self.solverConfig, self.solverData,
+                            self.cu_A, self.cu_x, self.cu_b)
+        t1 = time()
+        print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Solve FAILED!",flush=True)
+            if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+                print("NOT SUPPOERTED")
+            return -1
+
+        self.status = cudssMatrixDestroy(self.cu_b)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Matrix b destruction FAILED!",flush=True)
+        
+        self.status = cudssMatrixDestroy(self.cu_x)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS Matrix x destruction FAILED!",flush=True)
+        
+        
+        return x
     
-    return x
+    def __dealloc__(self):
+        print("DEALLOCATING!")
+        cudssDataDestroy(self.handle, self.solverData)
+        cudssConfigDestroy(self.solverConfig)
+        self.status = cudssMatrixDestroy(self.cu_A)
+        if self.status != CUDSS_STATUS_SUCCESS:
+            print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
+        cudssDestroy(self.handle)
+            
+
+
 

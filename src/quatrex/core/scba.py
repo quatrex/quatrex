@@ -12,7 +12,11 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_coordinate_grid
+from qttools.utils.input_utils import (
+    create_coordinate_grid,
+    create_hamiltonian,
+    cutoff_hr,
+)
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import (
@@ -22,7 +26,11 @@ from quatrex.core.observables import (
     device_current,
 )
 from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
+from quatrex.core.utils import (
+    assemble_kpoint_dsb,
+    compute_num_connected_blocks,
+    compute_sparsity_pattern,
+)
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
     ElectronSolver,
@@ -328,6 +336,91 @@ class SCBA:
 
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
+            # Load the Coulomb matrix.
+            if quatrex_config.device.construct_from_unit_cell:
+                coulomb_matrix_unit_cells = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+                ).astype(xp.complex128)
+                # Apply the cutoff to the Coulomb matrix.
+                if quatrex_config.device.R_cutoff is not None:
+                    coulomb_matrix_unit_cells = cutoff_hr(
+                        coulomb_matrix_unit_cells,
+                        R_cutoff=quatrex_config.device.R_cutoff,
+                    )
+                coulomb_matrix_dict = {}
+                for periodic_shift in xp.ndindex(
+                    quatrex_config.device.cells_in_periodic_directions
+                ):
+                    # i = -1 and 1, back and forth in the periodic directions.
+                    for i in range(1, -2, -2):
+                        if i == -1 and not any(periodic_shift):
+                            break
+                        periodic_shift = tuple([i * ps for ps in periodic_shift])
+                        coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                            coulomb_matrix_unit_cells,
+                            quatrex_config.device.number_of_supercells,
+                            quatrex_config.device.transport_direction,
+                            quatrex_config.device.unit_cell_per_supercell,
+                            periodic_shift=periodic_shift,
+                            return_sparse=True,
+                        )
+                        coulomb_matrix_dict[periodic_shift] = (
+                            coulomb_matrix_sparray.astype(xp.complex128)
+                        )
+                coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
+
+            else:
+                try:
+                    coulomb_matrix_sparray = distributed_load(
+                        quatrex_config.input_dir / "coulomb_matrix.npz"
+                    ).astype(xp.complex128)
+                    coulomb_matrix_dict = None
+                except FileNotFoundError:
+                    coulomb_matrix_dict = distributed_load(
+                        quatrex_config.input_dir / "coulomb_matrix.pkl"
+                    )
+                    coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
+                block_sizes = self.data.g_retarded.block_sizes
+
+            coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
+                self.data.sparsity_pattern.astype(xp.complex128),
+                block_sizes=block_sizes,
+                global_stack_shape=(comm.size,)
+                + tuple(
+                    [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
+                ),
+                symmetry=quatrex_config.scba.symmetric,
+                symmetry_op=xp.conj,
+            )
+            coulomb_matrix._data[:] = 0.0  # Initialize to zero.
+            if coulomb_matrix_dict is None:
+                coulomb_matrix += coulomb_matrix_sparray
+            else:
+                number_of_kpoints = xp.array(
+                    [
+                        1 if k <= 1 else k
+                        for k in self.quatrex_config.electron.number_of_kpoints
+                    ]
+                )
+                assemble_kpoint_dsb(
+                    coulomb_matrix,
+                    coulomb_matrix_dict,
+                    number_of_kpoints,
+                    -(number_of_kpoints // 2),
+                )
+            # Explicitely try to free the memory
+            del coulomb_matrix_sparray
+            del coulomb_matrix_dict
+
+            # Make sure the Coulomb matrix is hermitian.
+            # TODO: Check that this is correct for kpoints.
+            if not coulomb_matrix.symmetry:
+                coulomb_matrix.symmetrize()
+            coulomb_matrix._data /= (
+                quatrex_config.coulomb_screening.epsilon_r
+                * self.quatrex_config.coulomb_screening.num_adiabatic_steps
+            )
+
             energies_path = (
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
             )
@@ -340,12 +433,23 @@ class SCBA:
                 # Remove the zero energy to avoid division by zero.
                 self.coulomb_screening_energies += 1e-6
 
+            (
+                coulomb_matrix.dtranspose()
+                if coulomb_matrix.distribution_state != "nnz"
+                else None
+            )
             self.sigma_fock = SigmaFock(
                 self.quatrex_config,
-                self.compute_config,
+                coulomb_matrix,
                 self.electron_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
             )
+            # Have to transpose the coulomb matrix back to the original distribution.
+            (
+                coulomb_matrix.dtranspose()
+                if coulomb_matrix.distribution_state == "nnz"
+                else None
+            )
+
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
@@ -355,6 +459,7 @@ class SCBA:
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
                 self.compute_config,
+                coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
@@ -880,6 +985,14 @@ class SCBA:
                     f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
                     flush=True,
                 )
+
+            if self.quatrex_config.scba.coulomb_screening:
+                if (
+                    i >= 1
+                    and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
+                ):
+                    self.coulomb_screening_solver.coulomb_matrix.data *= (i + 1) / i
+                    self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
 
             if self.quatrex_config.scba.coulomb_screening:
                 t_start_coulomb = time.perf_counter()

@@ -679,7 +679,6 @@ class Spectral(OBCSolver):
                 )
 
             injection = []
-            shifted_injection = []
             K = []
 
             num_injected = xp.zeros(a_ii.shape[0], dtype=int)
@@ -702,20 +701,15 @@ class Spectral(OBCSolver):
                 injection_i = (
                     -a_ji[i, :, :] @ vrs_inj @ inv(wrs_inj) - sigma_retarded[i,:,:] @ vrs_inj
                 )
-                
-                #inj_phase_i = xp.angle(injection_i[0,:])
-                #injection_i = xp.divide(injection_i, xp.exp(1j * inj_phase_i))
-
-                shifted_injection_i = injection_i @ inv(wrs_inj)
 
                 K_i = vrs_inj @ inv(wrs_inj) - T_i @ vrs_inj
 
                 num_injected[i] = injection_i.shape[1]
                 injection.append(injection_i)
-                shifted_injection.append(shifted_injection_i)
+
                 K.append(K_i)
 
-            return x_ii_ref, sigma_retarded, injection, num_injected, shifted_injection, K, T
+            return x_ii_ref, sigma_retarded, injection, num_injected, K, T
         
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):

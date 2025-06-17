@@ -10,7 +10,11 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
+from qttools.utils.input_utils import (
+    create_coordinate_grid,
+    create_hamiltonian,
+    cutoff_hr,
+)
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
@@ -304,17 +308,50 @@ class ElectronSolver(SubsystemSolver):
         # Load the potential.
         try:
             self.potential = distributed_load(
-                quatrex_config.input_dir / "potential.npy"
+                quatrex_config.input_dir / "potential_wrong.npy"
             )
-            if self.potential.size != self.hamiltonian.shape[-2]:
-                raise ValueError(
-                    "Potential matrix and Hamiltonian have different shapes."
-                )
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
                 self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
             )
+            if quatrex_config.device.construct_from_unit_cell:
+                wannier_centers = distributed_load(
+                    quatrex_config.input_dir / "wannier_centers.npy"
+                )
+                lattice_vectors = distributed_load(
+                    quatrex_config.input_dir / "lattice_vectors.npy"
+                )
+
+                device_cell = list(quatrex_config.device.unit_cell_per_supercell)
+                device_cell[
+                    "xyz".index(quatrex_config.device.transport_direction)
+                ] *= quatrex_config.device.number_of_supercells
+                device_cell = tuple(device_cell)
+
+                grid = create_coordinate_grid(
+                    wannier_centers, device_cell, lattice_vectors
+                )
+                grid_transport = grid[
+                    :, "xyz".index(quatrex_config.device.transport_direction)
+                ]
+            else:
+                grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+                # Grid in transport direction.
+                grid_transport = grid[:, 0]
+            bias = (
+                quatrex_config.electron.right_fermi_level
+                - quatrex_config.electron.left_fermi_level
+            )
+            # Map grid transport to the range [-1, 1]
+            grid_transport = (
+                2
+                * (grid_transport - grid_transport[0])
+                / (grid_transport[-1] - grid_transport[0])
+            ) - 1
+            self.potential = bias / 2 * (xp.tanh(3 * grid_transport) + 1)
+        if self.potential.size != self.hamiltonian.shape[-2]:
+            raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         self.eta = quatrex_config.electron.eta
 
         # Contacts.
@@ -344,7 +381,7 @@ class ElectronSolver(SubsystemSolver):
         self.band_edge_tracking = quatrex_config.electron.band_edge_tracking
         self.delta_fermi_level_conduction_band = (
             quatrex_config.electron.conduction_band_edge
-            - quatrex_config.electron.fermi_level
+            - quatrex_config.electron.left_fermi_level
         )
         self.left_mid_gap_energy = 0.5 * (
             quatrex_config.electron.conduction_band_edge
@@ -353,8 +390,8 @@ class ElectronSolver(SubsystemSolver):
         self.left_fermi_level = quatrex_config.electron.left_fermi_level
         self.right_fermi_level = quatrex_config.electron.right_fermi_level
 
-        potential = self.left_fermi_level - self.right_fermi_level
-        self.right_mid_gap_energy = self.left_mid_gap_energy - potential
+        self.bias = self.left_fermi_level - self.right_fermi_level
+        self.right_mid_gap_energy = self.left_mid_gap_energy - self.bias
         self.temperature = quatrex_config.electron.temperature
 
         self.left_occupancies = fermi_dirac(
@@ -508,7 +545,9 @@ class ElectronSolver(SubsystemSolver):
             left_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
         self.right_fermi_level = (
-            right_conduction_band_edge - self.delta_fermi_level_conduction_band
+            self.left_fermi_level
+            - self.bias
+            # right_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
 
         self.left_occupancies = fermi_dirac(

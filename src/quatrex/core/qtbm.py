@@ -951,10 +951,6 @@ class QTBM:
             (self.n_cont, self.n_slabs_x, self.local_energies.shape[0]),
             dtype=xp.float64,
         )
-        self.observables.spill_over_error = xp.zeros(
-            (self.n_cont, self.local_energies.shape[0]),
-            dtype=xp.float64,
-        )
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -1060,7 +1056,7 @@ class QTBM:
 
         return obc_solver
     
-    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list, inj:NDArray, K, T):
+    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, S:list, K, T):
         """
         Compute observables for the current iteration.
 
@@ -1128,40 +1124,14 @@ class QTBM:
         # Spill over correction
         phi_ortho = self.overlap_sparray @ phi  # "Orthogonalize" the wavefunction
         for n in range(self.n_cont):
-            ##Get the off-couping superblocks for Ham and Overlap (Could also save them in the contact class)
-            #_,H00,H01 = get_periodic_superblocks_no_flip(
-            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
-            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
-            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
-            #        self.hamiltonian_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
-            #        block_sections=self.contacts[n].N_coup,
-            #    )
-            #S10,S00,S01 = get_periodic_superblocks_no_flip(
-            #        self.overlap_sparray[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
-            #        self.overlap_sparray[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
-            #        self.overlap_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
-            #        self.overlap_sparray[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
-            #        block_sections=self.contacts[n].N_coup,
-            #    )
-            
-            #Solve a small system to propagate the WF inside the contact
-            #RHS of the system
-            
-            #B = (self.contacts[n].H01-E*self.contacts[n].S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
-            #Solve the system of equations
-            #phi_cont = solve(self.contacts[n].H00 - E*self.contacts[n].S00 - S[n], -B + inj[self.contacts[n].vec_orb_cont.squeeze(),:])
-            
-            #B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
-            #phi_cont, _, _, _ = lstsq(self.contacts[n].H10-E*self.contacts[n].S10,-B)
 
             phi_cont = K[self.contacts[n].vec_orb_cont.squeeze(),:] + T[n] @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
             #Add the spill over contribution
             phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += self.contacts[n].S10 @ phi_cont
 
-            error = xp.linalg.norm((self.contacts[n].H10 - E*self.contacts[n].S10) @ phi_cont + self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi)
-            self.observables.spill_over_error[n,i] += error
-            print(
-                f"Spill over error for contact {self.contacts[n].name[0]} at energy {E}: {error}")
+            #CHECK SPILL OVER ERROR (DEBUG)
+            #error = xp.linalg.norm((self.contacts[n].H10 - E*self.contacts[n].S10) @ phi_cont + self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi)
+            #print(f"Spill over error for contact {self.contacts[n].name[0]} at energy {E}: {error}")
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -1210,24 +1180,13 @@ class QTBM:
             sigma_b = []
             inj = []
             inj_ind = []
-            inj_shifted = []
             K = []
             T = []
-            w = []
             # Compute the boundary self-energy and the injection vector
             ind_0 = xp.zeros(len(E_batch_OBC), dtype=xp.int32)
             for n in range(self.n_cont):
 
                 times.append(time.perf_counter())
-
-                #Get the contact superblocks
-                #m_10, m_00, m_01 = get_periodic_superblocks_no_flip(
-                #    self.system_matrix[self.contacts[n].vec_orb_last_block.T,self.contacts[n].vec_orb_first_block].toarray(),
-                #    self.system_matrix[self.contacts[n].vec_orb_cont.T,self.contacts[n].vec_orb_first_block].toarray(),
-                #    self.system_matrix[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_cont].toarray(),
-                #    self.system_matrix[self.contacts[n].vec_orb_first_block.T,self.contacts[n].vec_orb_last_block].toarray(),
-                #    block_sections=self.contacts[n].N_coup,
-                #)
 
                 m_10 = self.contacts[n].H10 - E_batch_OBC[:,None,None] * self.contacts[n].S10
                 m_00 = self.contacts[n].H00 - E_batch_OBC[:,None,None] * self.contacts[n].S00
@@ -1235,7 +1194,7 @@ class QTBM:
 
                 # Set the block sections for the OBC
                 self.obc.block_sections = self.contacts[n].N_coup
-                _ , sigma_b_cont, inj_cont, num_inj, inj_shifted_cont, K_cont, T_cont = self.obc(
+                _ , sigma_b_cont, inj_cont, num_inj, K_cont, T_cont = self.obc(
                     m_00,
                     m_01,
                     m_10,
@@ -1243,12 +1202,8 @@ class QTBM:
                     return_injected=True,
                 )
 
-                #sigma_b_n = sigma_b_n[0,:,:].squeeze()
-                #inj_n = inj_n[0]
-
                 sigma_b.append(sigma_b_cont)
                 inj.append(inj_cont)
-                inj_shifted.append(inj_shifted_cont)
                 K.append(K_cont)
                 T.append(T_cont)
 
@@ -1282,7 +1237,6 @@ class QTBM:
                 # Set up sytem matrix and rhs for electron solver.
                 i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
                 inj_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
-                inj_V_shifted = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
                 K_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the K vector as a zero matrix
 
                 ind1 = []
@@ -1294,7 +1248,6 @@ class QTBM:
                     ind2.append(xp.tile(self.contacts[n].vec_orb_cont.squeeze(), self.contacts[n].vec_orb_cont.shape[1]))
                     sig_flat.append(sigma_b[n][i,:,:].flatten())
                     inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj[n][i] #Add the injection vector in the contact elements of the rhs
-                    inj_V_shifted[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj_shifted[n][i] #Add the injection vector in the contact elements of the rhs
                     K_V[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = K[n][i] #Add the K vector in the contact elements of the rhs
                 
                 #Concatenate the indices and the self-energies
@@ -1406,7 +1359,7 @@ class QTBM:
                         sigma_b_t.append(sigma_b[nn][i,:,:])
                         inj_ind_t.append(inj_ind[nn][i])
                         T_t.append(T[nn][i,:,:])
-                    self.compute_observables(phi, inj_ind_t, batch_start+i, E, sigma_b_t, inj_V_shifted, K_V, T_t)
+                    self.compute_observables(phi, inj_ind_t, batch_start+i, sigma_b_t, K_V, T_t)
 
                 t_iteration = time.perf_counter() - times.pop()
                 (

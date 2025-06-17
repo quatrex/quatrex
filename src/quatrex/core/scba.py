@@ -16,7 +16,12 @@ from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.observables import contact_currents, density, device_current
+from quatrex.core.observables import (
+    contact_currents,
+    current_conservation,
+    density,
+    device_current,
+)
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
@@ -535,9 +540,18 @@ class SCBA:
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
+        current_conservation_abs = self.observables.electron_current.get(
+            "current_conservation_abs", 0.0
+        )
+        current_conservation_rel = self.observables.electron_current.get(
+            "current_conservation_rel", 0.0
+        )
+
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
+            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
+            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
 
@@ -978,6 +992,21 @@ class SCBA:
                         f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s",
                         flush=True,
                     )
+
+            # Check the current conservation.
+            self.observables.electron_current.update(
+                dict(
+                    zip(
+                        ("current_conservation_abs", "current_conservation_rel"),
+                        current_conservation(
+                            self.data.g_lesser,
+                            self.data.g_greater,
+                            self.data.sigma_lesser,
+                            self.data.sigma_greater,
+                        ),
+                    )
+                )
+            )
 
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()

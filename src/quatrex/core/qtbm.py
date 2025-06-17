@@ -39,9 +39,9 @@ if xp.__name__ == "cupy":
     from cupyx.scipy.sparse.linalg import splu  # , spsolve
 
 if xp.__name__ == "numpy":
-    from numpy.linalg import solve  # , lstsq
+    from numpy.linalg import solve, lstsq
 if xp.__name__ == "cupy":
-    # from cupy.linalg import lstsq
+    from cupy.linalg import lstsq
     from cupy.linalg import solve
 
 from qttools.nevp import NEVP, Beyn, Full
@@ -779,6 +779,8 @@ class Observables:
     hole_density: NDArray = None
     electron_current: dict = field(default_factory=dict)
 
+    spill_over_error: NDArray = None
+
     electron_transmission_contacts: NDArray = None
     electron_transmission_contacts_labels = []
 
@@ -949,6 +951,10 @@ class QTBM:
             (self.n_cont, self.n_slabs_x, self.local_energies.shape[0]),
             dtype=xp.float64,
         )
+        self.observables.spill_over_error = xp.zeros(
+            (self.n_cont, self.local_energies.shape[0]),
+            dtype=xp.float64,
+        )
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -1054,7 +1060,7 @@ class QTBM:
 
         return obc_solver
     
-    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list, inj:NDArray):
+    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, E: float, S:list, inj:NDArray, K, T):
         """
         Compute observables for the current iteration.
 
@@ -1087,6 +1093,12 @@ class QTBM:
                         1j * phi_n.T.conj() @ (S[cont_2] - S[cont_2].T.conj()) @ phi_n
                     )
                 )
+            
+                print(
+                    f"Transmission {self.observables.electron_transmission_contacts_labels[n]}: {self.observables.electron_transmission_contacts[n, i]}",
+                    flush=True,
+                ) if comm.rank == 0 else None
+            
 
             cont_2 += 1
             if cont_2 == self.n_cont:
@@ -1135,14 +1147,21 @@ class QTBM:
             #Solve a small system to propagate the WF inside the contact
             #RHS of the system
             
-            B = (self.contacts[n].H01-E*self.contacts[n].S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
+            #B = (self.contacts[n].H01-E*self.contacts[n].S01) @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
             #Solve the system of equations
-            phi_cont = solve(self.contacts[n].H00 - E*self.contacts[n].S00 - S[n], -B + inj[self.contacts[n].vec_orb_cont.squeeze(),:])
-
+            #phi_cont = solve(self.contacts[n].H00 - E*self.contacts[n].S00 - S[n], -B + inj[self.contacts[n].vec_orb_cont.squeeze(),:])
+            
             #B = self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi
             #phi_cont, _, _, _ = lstsq(self.contacts[n].H10-E*self.contacts[n].S10,-B)
+
+            phi_cont = K[self.contacts[n].vec_orb_cont.squeeze(),:] + T[n] @ phi[self.contacts[n].vec_orb_cont.squeeze(),:]
             #Add the spill over contribution
             phi_ortho[self.contacts[n].vec_orb_cont.squeeze(),:] += self.contacts[n].S10 @ phi_cont
+
+            error = xp.linalg.norm((self.contacts[n].H10 - E*self.contacts[n].S10) @ phi_cont + self.system_matrix[self.contacts[n].vec_orb_cont.squeeze(),:] @ phi)
+            self.observables.spill_over_error[n,i] += error
+            print(
+                f"Spill over error for contact {self.contacts[n].name[0]} at energy {E}: {error}")
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -1164,6 +1183,8 @@ class QTBM:
         times = []
         comm.Barrier()
         OBC_batch_size = 1
+        self.system_matrix = None  # Initialize the system matrix
+
         for batch_start in range(0, len(self.local_energies), OBC_batch_size):
             E_batch_OBC = self.local_energies[batch_start : batch_start + OBC_batch_size]
 
@@ -1173,15 +1194,6 @@ class QTBM:
             times.append(time.perf_counter())
 
             times.append(time.perf_counter())
-
-            # TODO: Test
-            # if i > 0:
-            #     self.system_matrix.data[:] = 0
-            #     self.system_matrix.data[:] = self.hamiltonian_sparray.tocsr()[rows, cols]
-            #     self.system_matrix.data[:] -= E * self.overlap_sparray.tocsr()[rows, cols]
-            # else:
-            #     self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
-            #self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
 
             t_solve = time.perf_counter() - times.pop()
             (
@@ -1199,6 +1211,8 @@ class QTBM:
             inj = []
             inj_ind = []
             inj_shifted = []
+            K = []
+            T = []
             w = []
             # Compute the boundary self-energy and the injection vector
             ind_0 = xp.zeros(len(E_batch_OBC), dtype=xp.int32)
@@ -1221,7 +1235,7 @@ class QTBM:
 
                 # Set the block sections for the OBC
                 self.obc.block_sections = self.contacts[n].N_coup
-                _ , sigma_b_cont, inj_cont, num_inj, inj_shifted_cont  = self.obc(
+                _ , sigma_b_cont, inj_cont, num_inj, inj_shifted_cont, K_cont, T_cont = self.obc(
                     m_00,
                     m_01,
                     m_10,
@@ -1235,6 +1249,8 @@ class QTBM:
                 sigma_b.append(sigma_b_cont)
                 inj.append(inj_cont)
                 inj_shifted.append(inj_shifted_cont)
+                K.append(K_cont)
+                T.append(T_cont)
 
                 #For every Energy in batch, compute a list with the indeces of evert injected vector
                 inj_ind_temp = []
@@ -1267,6 +1283,7 @@ class QTBM:
                 i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
                 inj_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
                 inj_V_shifted = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
+                K_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the K vector as a zero matrix
 
                 ind1 = []
                 ind2 = []
@@ -1278,36 +1295,41 @@ class QTBM:
                     sig_flat.append(sigma_b[n][i,:,:].flatten())
                     inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj[n][i] #Add the injection vector in the contact elements of the rhs
                     inj_V_shifted[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = inj_shifted[n][i] #Add the injection vector in the contact elements of the rhs
+                    K_V[self.contacts[n].vec_orb_cont.T,inj_ind[n][i]] = K[n][i] #Add the K vector in the contact elements of the rhs
                 
                 #Concatenate the indices and the self-energies
                 ind1 = xp.concatenate(ind1)
                 ind2 = xp.concatenate(ind2)
                 sig_flat = xp.concatenate(sig_flat)
 
-                self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
+                # TODO: Test
+                if i==0 and batch_start == 0:
+                    self.system_matrix = self.hamiltonian_sparray - E * self.overlap_sparray
+                else:
+                    if hasattr(self.hamiltonian_sparray.tocsr()[rows, cols], 'A'):
+                        self.system_matrix.data[:] = self.hamiltonian_sparray.tocsr()[rows, cols].A.ravel()
+                        self.system_matrix.data[:] -= E * self.overlap_sparray.tocsr()[rows, cols].A.ravel()
+                    else:
+                        self.system_matrix.data[:] = self.hamiltonian_sparray.tocsr()[rows, cols].ravel()
+                        self.system_matrix.data[:] -= E * self.overlap_sparray.tocsr()[rows, cols].ravel()
 
                 upd_0 = sparse.coo_matrix((sig_flat, (ind1, ind2)),shape=self.system_matrix.shape).tocsr()
 
                 # Update the system matrix with the self-energies
+                if i==0 and batch_start == 0:
+                    self.system_matrix -= upd_0
 
-                # TODO: Test
-                # if i > 0:
-                #     self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols]
-                # else:
-                #     self.system_matrix -= upd_0
-                self.system_matrix -= upd_0
+                    self.system_matrix = self.system_matrix.tocoo()
+                    rows = self.system_matrix.row
+                    cols = self.system_matrix.col
 
-                # Iterate over contacts
-                # for n in range(self.n_cont):
-                #    sigma_cpu = sigma_b[n].get() #Move the self-energy to the CPU
-                #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get() #Move the contact elements to the CPU
-                #    self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] -= sigma_cpu #Subtract the self-energy in the contact elements
-                #    inj_V[self.contacts[n].vec_orb_cont.T,inj_ind[n]] = inj[n] #Add the injection vector in the contact elements of the rhs
+                    self.system_matrix = self.system_matrix.tocsr()
+                else:
+                    if hasattr(upd_0.tocsr()[rows, cols], 'A'):
+                        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].A.ravel()
+                    else:
+                        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].ravel()
 
-                # self.system_matrix = sparse.csr_matrix(self.system_matrix)
-
-                #Eliminate the zeros that were added in the system matrix
-                #self.system_matrix.eliminate_zeros()
 
                 t_solve = time.perf_counter() - times.pop()
                 (
@@ -1319,20 +1341,11 @@ class QTBM:
                 times.append(time.perf_counter())
 
                 # Solve for the wavefunction
-                # phi = spsolve(self.system_matrix, inj_V)
 
                 if inj_V.size != 0:
                     if CUDSS_AVAILABLE and xp.__name__ == "cupy":
-                        #USE CUDSS
-                        if self.reuse_sym == 0:
-                            #Create the system matrix on the GPU
-                            data = xp.empty_like(self.system_matrix.data)
-                            indices = xp.empty_like(self.system_matrix.indices)
-                            indptr = xp.empty_like(self.system_matrix.indptr)
-                        data[:self.system_matrix.data.shape[0]] = self.system_matrix.data[:]
-                        indices[:self.system_matrix.indices.shape[0]] = self.system_matrix.indices[:]
-                        indptr[:self.system_matrix.indptr.shape[0]] = self.system_matrix.indptr[:]                  
-                        phi = cuDSS.spsolve_with_CUDSS(self.system_matrix.shape[0],self.system_matrix.nnz,data,indices,indptr, inj_V)
+                        # USE CUDSS
+                        phi = cuDSS.spsolve_with_CUDSS(self.system_matrix, inj_V)
                         self.reuse_sym = 1
                     else:
                         if MUMPS_AVAILABLE:
@@ -1377,36 +1390,23 @@ class QTBM:
                     else None
                 )
 
-                # self.system_matrix = self.system_matrix.get()
-
                 # Get the bare system matrix back, needed for transmission calculation
-                # for n in range(self.n_cont):
-                #    sigma_cpu = sigma_b[n].get()
-                #    vec_orb_cont_cpu = self.contacts[n].vec_orb_cont.get()
-                #   self.system_matrix[vec_orb_cont_cpu.T,vec_orb_cont_cpu] += sigma_cpu #Add the self-energy back
 
-                # self.system_matrix = sparse.csr_matrix(self.system_matrix)
-
-                # TODO: Test
-                # if i > 0:
-                #     self.system_matrix.data[:] += upd_0.tocsr()[rows, cols]
-                # else:
-                #     self.system_matrix += upd_0
-                self.system_matrix += upd_0
-
-                # TODO: Test
-                # coo = self.system_matrix.tocoo()
-                # rows = coo.row
-                # cols = coo.col
+                if hasattr(upd_0.tocsr()[rows, cols], 'A'):
+                    self.system_matrix.data[:] += upd_0.tocsr()[rows, cols].A.ravel()
+                else:
+                    self.system_matrix.data[:] += upd_0.tocsr()[rows, cols].ravel()
 
                 if inj_V.size != 0:
                     # Compute observables (DOS and Transmission)
                     sigma_b_t = []
                     inj_ind_t = []
+                    T_t = []
                     for nn in range(self.n_cont):
                         sigma_b_t.append(sigma_b[nn][i,:,:])
                         inj_ind_t.append(inj_ind[nn][i])
-                    self.compute_observables(phi, inj_ind_t, i, E, sigma_b_t, inj_V_shifted)
+                        T_t.append(T[nn][i,:,:])
+                    self.compute_observables(phi, inj_ind_t, batch_start+i, E, sigma_b_t, inj_V_shifted, K_V, T_t)
 
                 t_iteration = time.perf_counter() - times.pop()
                 (
@@ -1416,6 +1416,7 @@ class QTBM:
                 )
 
         # Gather the observables
+        comm.Barrier()
         self.observables.electron_transmission_x_slabs = xp.concatenate(
             comm.allgather(self.observables.electron_transmission_x_slabs), axis=-1
         )

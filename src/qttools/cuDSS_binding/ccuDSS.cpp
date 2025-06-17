@@ -4,8 +4,8 @@
 {
     "distutils": {
         "depends": [
-            "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h",
-            "/usr/local/cuda-12.2/include/library_types.h"
+            "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h",
+            "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/include/library_types.h"
         ],
         "extra_compile_args": [
             "-std=c++11"
@@ -14,21 +14,21 @@
             "-l:libcudss.so.0"
         ],
         "include_dirs": [
-            "/usr/local/cuda-12.2/include",
-            "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/include"
+            "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/include",
+            "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/include"
         ],
         "language": "c++",
         "libraries": [
             "cudart"
         ],
         "library_dirs": [
-            "/usr/local/cuda-12.2/lib64",
-            "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/lib"
+            "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/lib64",
+            "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/lib"
         ],
         "name": "cudss_wrapp",
         "runtime_library_dirs": [
-            "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/lib",
-            "/usr/local/cuda-12.2/lib64",
+            "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/lib",
+            "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/lib64/",
             "."
         ],
         "sources": [
@@ -1271,8 +1271,8 @@ static CYTHON_INLINE float __PYX_NAN() {
 #define __PYX_HAVE_API__cudss_wrapp
 /* Early includes */
 #include <stdint.h>
-#include "/usr/local/cuda-12.2/include/library_types.h"
-#include "/home/mdossena/miniconda3/envs/testCUDSS/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h"
+#include "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/include/library_types.h"
+#include "/home/mdossena/miniconda3_aarch64/envs/quatrex-dev-arm/lib/python3.13/site-packages/nvidia/cu12/include/cudss.h"
 #ifdef _OPENMP
 #include <omp.h>
 #endif /* _OPENMP */
@@ -1522,6 +1522,7 @@ static const char *__pyx_filename;
 
 static const char *__pyx_f[] = {
   "ccuDSS.pyx",
+  "<stringsource>",
 };
 /* #### Code section: utility_code_proto_before_types ### */
 /* ForceInitThreads.proto */
@@ -1534,6 +1535,27 @@ static const char *__pyx_f[] = {
 /* #### Code section: type_declarations ### */
 
 /*--- Type declarations ---*/
+struct __pyx_obj_11cudss_wrapp_CuDSS;
+
+/* "ccuDSS.pyx":106
+ *     cudssStatus_t cudssMatrixSetValues(cudssMatrix_t matrix, void *values)
+ * 
+ * cdef class CuDSS:             # <<<<<<<<<<<<<<
+ * 
+ *     cdef cudssStatus_t status
+ */
+struct __pyx_obj_11cudss_wrapp_CuDSS {
+  PyObject_HEAD
+  cudssStatus_t status;
+  cudssHandle_t handle;
+  cudssConfig_t solverConfig;
+  cudssData_t solverData;
+  int sym_fact;
+  cudssMatrix_t cu_x;
+  cudssMatrix_t cu_b;
+  cudssMatrix_t cu_A;
+};
+
 /* #### Code section: utility_code_proto ### */
 
 /* --- Runtime support code (head) --- */
@@ -1748,6 +1770,19 @@ static CYTHON_INLINE int __Pyx_PyUnicode_Equals(PyObject* s1, PyObject* s2, int 
 static void __Pyx_RaiseArgtupleInvalid(const char* func_name, int exact,
     Py_ssize_t num_min, Py_ssize_t num_max, Py_ssize_t num_found);
 
+/* KeywordStringCheck.proto */
+static int __Pyx_CheckKeywordStrings(PyObject *kw, const char* function_name, int kw_allowed);
+
+/* PyObjectCall.proto */
+#if CYTHON_COMPILING_IN_CPYTHON
+static CYTHON_INLINE PyObject* __Pyx_PyObject_Call(PyObject *func, PyObject *arg, PyObject *kw);
+#else
+#define __Pyx_PyObject_Call(func, arg, kw) PyObject_Call(func, arg, kw)
+#endif
+
+/* RaiseException.proto */
+static void __Pyx_Raise(PyObject *type, PyObject *value, PyObject *tb, PyObject *cause);
+
 /* RaiseDoubleKeywords.proto */
 static void __Pyx_RaiseDoubleKeywordsError(const char* func_name, PyObject* kw_name);
 
@@ -1861,13 +1896,6 @@ static PyObject *__Pyx_PyFunction_FastCallDict(PyObject *func, PyObject **args, 
 #endif
 #endif
 
-/* PyObjectCall.proto */
-#if CYTHON_COMPILING_IN_CPYTHON
-static CYTHON_INLINE PyObject* __Pyx_PyObject_Call(PyObject *func, PyObject *arg, PyObject *kw);
-#else
-#define __Pyx_PyObject_Call(func, arg, kw) PyObject_Call(func, arg, kw)
-#endif
-
 /* PyObjectCallMethO.proto */
 #if CYTHON_COMPILING_IN_CPYTHON
 static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg);
@@ -1891,6 +1919,55 @@ static PyObject* __Pyx_PyUnicode_Join(PyObject* value_tuple, Py_ssize_t value_co
 /* PyObjectCallOneArg.proto */
 static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObject *arg);
 
+/* WriteUnraisableException.proto */
+static void __Pyx_WriteUnraisable(const char *name, int clineno,
+                                  int lineno, const char *filename,
+                                  int full_traceback, int nogil);
+
+/* IncludeStructmemberH.proto */
+#include <structmember.h>
+
+/* FixUpExtensionType.proto */
+#if CYTHON_USE_TYPE_SPECS
+static int __Pyx_fix_up_extension_type_from_spec(PyType_Spec *spec, PyTypeObject *type);
+#endif
+
+/* PyObjectCallNoArg.proto */
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallNoArg(PyObject *func);
+
+/* PyObjectGetMethod.proto */
+static int __Pyx_PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method);
+
+/* PyObjectCallMethod0.proto */
+static PyObject* __Pyx_PyObject_CallMethod0(PyObject* obj, PyObject* method_name);
+
+/* ValidateBasesTuple.proto */
+#if CYTHON_COMPILING_IN_CPYTHON || CYTHON_COMPILING_IN_LIMITED_API || CYTHON_USE_TYPE_SPECS
+static int __Pyx_validate_bases_tuple(const char *type_name, Py_ssize_t dictoffset, PyObject *bases);
+#endif
+
+/* PyType_Ready.proto */
+CYTHON_UNUSED static int __Pyx_PyType_Ready(PyTypeObject *t);
+
+/* PyObject_GenericGetAttrNoDict.proto */
+#if CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP && PY_VERSION_HEX < 0x03070000
+static CYTHON_INLINE PyObject* __Pyx_PyObject_GenericGetAttrNoDict(PyObject* obj, PyObject* attr_name);
+#else
+#define __Pyx_PyObject_GenericGetAttrNoDict PyObject_GenericGetAttr
+#endif
+
+/* PyObject_GenericGetAttr.proto */
+#if CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP && PY_VERSION_HEX < 0x03070000
+static PyObject* __Pyx_PyObject_GenericGetAttr(PyObject* obj, PyObject* attr_name);
+#else
+#define __Pyx_PyObject_GenericGetAttr PyObject_GenericGetAttr
+#endif
+
+/* SetupReduce.proto */
+#if !CYTHON_COMPILING_IN_LIMITED_API
+static int __Pyx_setup_reduce(PyObject* type_obj);
+#endif
+
 /* Import.proto */
 static PyObject *__Pyx_Import(PyObject *name, PyObject *from_list, int level);
 
@@ -1902,14 +1979,6 @@ static PyObject *__Pyx_ImportDottedModule_WalkParts(PyObject *module, PyObject *
 
 /* ImportFrom.proto */
 static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name);
-
-/* IncludeStructmemberH.proto */
-#include <structmember.h>
-
-/* FixUpExtensionType.proto */
-#if CYTHON_USE_TYPE_SPECS
-static int __Pyx_fix_up_extension_type_from_spec(PyType_Spec *spec, PyTypeObject *type);
-#endif
 
 /* FetchSharedCythonModule.proto */
 static PyObject *__Pyx_FetchSharedCythonABIModule(void);
@@ -2079,6 +2148,9 @@ static void __pyx_insert_code_object(int code_line, PyCodeObject* code_object);
 static void __Pyx_AddTraceback(const char *funcname, int c_line,
                                int py_line, const char *filename);
 
+/* None.proto */
+#include <new>
+
 /* GCCDiagnostics.proto */
 #if !defined(__INTEL_COMPILER) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6))
 #define __Pyx_HAS_GCC_DIAGNOSTIC
@@ -2149,7 +2221,9 @@ int __pyx_module_is_main_cudss_wrapp = 0;
 
 /* Implementation of "cudss_wrapp" */
 /* #### Code section: global_var ### */
+static PyObject *__pyx_builtin_RuntimeError;
 static PyObject *__pyx_builtin_print;
+static PyObject *__pyx_builtin_TypeError;
 /* #### Code section: string_decls ### */
 static const char __pyx_k_A[] = "A";
 static const char __pyx_k_F[] = "F";
@@ -2157,28 +2231,28 @@ static const char __pyx_k_b[] = "b";
 static const char __pyx_k_n[] = "n";
 static const char __pyx_k_x[] = "x";
 static const char __pyx_k_cp[] = "cp";
+static const char __pyx_k_gc[] = "gc";
 static const char __pyx_k_t0[] = "t0";
 static const char __pyx_k_t1[] = "t1";
-static const char __pyx_k__19[] = "*";
-static const char __pyx_k__20[] = ".";
-static const char __pyx_k__23[] = "?";
+static const char __pyx_k__18[] = "*";
+static const char __pyx_k__19[] = ".";
+static const char __pyx_k__26[] = "?";
 static const char __pyx_k_ldb[] = "ldb";
 static const char __pyx_k_ldx[] = "ldx";
 static const char __pyx_k_nnz[] = "nnz";
 static const char __pyx_k_ptr[] = "ptr";
 static const char __pyx_k_8_4f[] = "8.4f";
 static const char __pyx_k_base[] = "base";
-static const char __pyx_k_cu_A[] = "cu_A";
-static const char __pyx_k_cu_b[] = "cu_b";
-static const char __pyx_k_cu_x[] = "cu_x";
 static const char __pyx_k_cupy[] = "cupy";
 static const char __pyx_k_data[] = "data";
 static const char __pyx_k_main[] = "__main__";
 static const char __pyx_k_name[] = "__name__";
 static const char __pyx_k_nrhs[] = "nrhs";
+static const char __pyx_k_self[] = "self";
 static const char __pyx_k_spec[] = "__spec__";
 static const char __pyx_k_test[] = "__test__";
 static const char __pyx_k_time[] = "time";
+static const char __pyx_k_CuDSS[] = "CuDSS";
 static const char __pyx_k_b_ptr[] = "b_ptr";
 static const char __pyx_k_dtype[] = "dtype";
 static const char __pyx_k_empty[] = "empty";
@@ -2191,55 +2265,72 @@ static const char __pyx_k_order[] = "order";
 static const char __pyx_k_print[] = "print";
 static const char __pyx_k_shape[] = "shape";
 static const char __pyx_k_x_ptr[] = "x_ptr";
-static const char __pyx_k_handle[] = "handle";
+static const char __pyx_k_enable[] = "enable";
 static const char __pyx_k_import[] = "__import__";
 static const char __pyx_k_indptr[] = "indptr";
-static const char __pyx_k_status[] = "status";
+static const char __pyx_k_reduce[] = "__reduce__";
 static const char __pyx_k_b_ptr_t[] = "b_ptr_t";
+static const char __pyx_k_disable[] = "disable";
 static const char __pyx_k_indices[] = "indices";
 static const char __pyx_k_seconds[] = " seconds";
 static const char __pyx_k_x_ptr_t[] = "x_ptr_t";
 static const char __pyx_k_data_ptr[] = "data_ptr";
+static const char __pyx_k_getstate[] = "__getstate__";
+static const char __pyx_k_setstate[] = "__setstate__";
+static const char __pyx_k_TypeError[] = "TypeError";
+static const char __pyx_k_isenabled[] = "isenabled";
+static const char __pyx_k_pyx_state[] = "__pyx_state";
+static const char __pyx_k_reduce_ex[] = "__reduce_ex__";
 static const char __pyx_k_ccuDSS_pyx[] = "ccuDSS.pyx";
 static const char __pyx_k_complex128[] = "complex128";
 static const char __pyx_k_csr_matrix[] = "csr_matrix";
 static const char __pyx_k_data_ptr_t[] = "data_ptr_t";
 static const char __pyx_k_indptr_ptr[] = "indptr_ptr";
-static const char __pyx_k_solverData[] = "solverData";
 static const char __pyx_k_cudss_wrapp[] = "cudss_wrapp";
 static const char __pyx_k_indices_ptr[] = "indices_ptr";
+static const char __pyx_k_DEALLOCATING[] = "DEALLOCATING!";
+static const char __pyx_k_RuntimeError[] = "RuntimeError";
 static const char __pyx_k_indptr_ptr_t[] = "indptr_ptr_t";
 static const char __pyx_k_initializing[] = "_initializing";
 static const char __pyx_k_is_coroutine[] = "_is_coroutine";
-static const char __pyx_k_solverConfig[] = "solverConfig";
+static const char __pyx_k_stringsource[] = "<stringsource>";
 static const char __pyx_k_indices_ptr_t[] = "indices_ptr_t";
+static const char __pyx_k_reduce_cython[] = "__reduce_cython__";
+static const char __pyx_k_NOT_SUPPOERTED[] = "NOT SUPPOERTED";
+static const char __pyx_k_setstate_cython[] = "__setstate_cython__";
 static const char __pyx_k_CUDSS_Solve_took[] = "CUDSS Solve took                   ";
 static const char __pyx_k_CUDSS_Solve_FAILED[] = "CUDSS Solve FAILED!";
 static const char __pyx_k_asyncio_coroutines[] = "asyncio.coroutines";
 static const char __pyx_k_cline_in_traceback[] = "cline_in_traceback";
 static const char __pyx_k_cupyx_scipy_sparse[] = "cupyx.scipy.sparse";
 static const char __pyx_k_spsolve_with_CUDSS[] = "spsolve_with_CUDSS";
+static const char __pyx_k_CuDSS___reduce_cython[] = "CuDSS.__reduce_cython__";
+static const char __pyx_k_CuDSS___setstate_cython[] = "CuDSS.__setstate_cython__";
 static const char __pyx_k_CUDSS_Factorization_took[] = "CUDSS Factorization took           ";
+static const char __pyx_k_CuDSS_spsolve_with_CUDSS[] = "CuDSS.spsolve_with_CUDSS";
+static const char __pyx_k_Reusing_Sym_Factorization[] = "Reusing Sym. Factorization";
 static const char __pyx_k_CUDSS_Factorization_FAILED[] = "CUDSS Factorization FAILED!";
-static const char __pyx_k_CUDSS_Handle_creation_FAILED[] = "CUDSS Handle creation FAILED!";
 static const char __pyx_k_CUDSS_Sym_Factorization_took[] = "CUDSS Sym. Factorization took      ";
+static const char __pyx_k_cuDSS_handle_creation_failed[] = "cuDSS handle creation failed";
 static const char __pyx_k_CUDSS_Matrix_b_creation_FAILED[] = "CUDSS Matrix b creation FAILED!";
 static const char __pyx_k_CUDSS_Matrix_x_creation_FAILED[] = "CUDSS Matrix x creation FAILED!";
 static const char __pyx_k_CUDSS_Sym_Factorization_FAILED[] = "CUDSS Sym. Factorization FAILED!";
-static const char __pyx_k_CUDSS_Handle_destruction_FAILED[] = "CUDSS Handle destruction FAILED!";
-static const char __pyx_k_CUDSS_Solver_config_destruction[] = "CUDSS Solver config destruction FAILED!";
 static const char __pyx_k_The_sys_matrix_values_should_be[] = "The sys. matrix values should be complex128 (for now)";
 static const char __pyx_k_CUDSS_CSR_Matrix_A_creation_FAIL[] = "CUDSS CSR Matrix A creation FAILED!";
 static const char __pyx_k_CUDSS_CSR_Matrix_A_destruction_F[] = "CUDSS CSR Matrix A destruction FAILED!";
 static const char __pyx_k_CUDSS_Matrix_b_destruction_FAILE[] = "CUDSS Matrix b destruction FAILED!";
 static const char __pyx_k_CUDSS_Matrix_x_destruction_FAILE[] = "CUDSS Matrix x destruction FAILED!";
-static const char __pyx_k_CUDSS_Set_threading_layer_FAILED[] = "CUDSS Set threading layer FAILED!";
 static const char __pyx_k_CUDSS_SolverConfig_creation_FAIL[] = "CUDSS SolverConfig creation FAILED!";
 static const char __pyx_k_CUDSS_SolverData_creation_FAILED[] = "CUDSS SolverData creation FAILED!";
-static const char __pyx_k_CUDSS_Solver_data_destruction_FA[] = "CUDSS Solver data destruction FAILED!";
 static const char __pyx_k_The_rhs_values_should_be_complex[] = "The rhs values should be complex128 (for now)";
+static const char __pyx_k_no_default___reduce___due_to_non[] = "no default __reduce__ due to non-trivial __cinit__";
 /* #### Code section: decls ### */
-static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_A, PyObject *__pyx_v_b); /* proto */
+static int __pyx_pf_11cudss_wrapp_5CuDSS___cinit__(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_2spsolve_with_CUDSS(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self, PyObject *__pyx_v_A, PyObject *__pyx_v_b); /* proto */
+static void __pyx_pf_11cudss_wrapp_5CuDSS_4__dealloc__(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_6__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_8__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state); /* proto */
+static PyObject *__pyx_tp_new_11cudss_wrapp_CuDSS(PyTypeObject *t, PyObject *a, PyObject *k); /*proto*/
 /* #### Code section: late_includes ### */
 /* #### Code section: module_state ### */
 typedef struct {
@@ -2270,34 +2361,40 @@ typedef struct {
   #if CYTHON_USE_MODULE_STATE
   #endif
   #if CYTHON_USE_MODULE_STATE
+  PyObject *__pyx_type_11cudss_wrapp_CuDSS;
   #endif
+  PyTypeObject *__pyx_ptype_11cudss_wrapp_CuDSS;
   PyObject *__pyx_kp_u_8_4f;
   PyObject *__pyx_n_s_A;
   PyObject *__pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL;
   PyObject *__pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F;
   PyObject *__pyx_kp_s_CUDSS_Factorization_FAILED;
   PyObject *__pyx_kp_u_CUDSS_Factorization_took;
-  PyObject *__pyx_kp_s_CUDSS_Handle_creation_FAILED;
-  PyObject *__pyx_kp_s_CUDSS_Handle_destruction_FAILED;
   PyObject *__pyx_kp_s_CUDSS_Matrix_b_creation_FAILED;
   PyObject *__pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE;
   PyObject *__pyx_kp_s_CUDSS_Matrix_x_creation_FAILED;
   PyObject *__pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE;
-  PyObject *__pyx_kp_s_CUDSS_Set_threading_layer_FAILED;
   PyObject *__pyx_kp_s_CUDSS_Solve_FAILED;
   PyObject *__pyx_kp_u_CUDSS_Solve_took;
   PyObject *__pyx_kp_s_CUDSS_SolverConfig_creation_FAIL;
   PyObject *__pyx_kp_s_CUDSS_SolverData_creation_FAILED;
-  PyObject *__pyx_kp_s_CUDSS_Solver_config_destruction;
-  PyObject *__pyx_kp_s_CUDSS_Solver_data_destruction_FA;
   PyObject *__pyx_kp_s_CUDSS_Sym_Factorization_FAILED;
   PyObject *__pyx_kp_u_CUDSS_Sym_Factorization_took;
+  PyObject *__pyx_n_s_CuDSS;
+  PyObject *__pyx_n_s_CuDSS___reduce_cython;
+  PyObject *__pyx_n_s_CuDSS___setstate_cython;
+  PyObject *__pyx_n_s_CuDSS_spsolve_with_CUDSS;
+  PyObject *__pyx_kp_s_DEALLOCATING;
   PyObject *__pyx_n_s_F;
+  PyObject *__pyx_kp_s_NOT_SUPPOERTED;
+  PyObject *__pyx_kp_s_Reusing_Sym_Factorization;
+  PyObject *__pyx_n_s_RuntimeError;
   PyObject *__pyx_kp_s_The_rhs_values_should_be_complex;
   PyObject *__pyx_kp_s_The_sys_matrix_values_should_be;
-  PyObject *__pyx_n_s__19;
-  PyObject *__pyx_kp_u__20;
-  PyObject *__pyx_n_s__23;
+  PyObject *__pyx_n_s_TypeError;
+  PyObject *__pyx_n_s__18;
+  PyObject *__pyx_kp_u__19;
+  PyObject *__pyx_n_s__26;
   PyObject *__pyx_n_s_asyncio_coroutines;
   PyObject *__pyx_n_s_b;
   PyObject *__pyx_n_s_b_ptr;
@@ -2308,19 +2405,20 @@ typedef struct {
   PyObject *__pyx_n_s_complex128;
   PyObject *__pyx_n_s_cp;
   PyObject *__pyx_n_s_csr_matrix;
-  PyObject *__pyx_n_s_cu_A;
-  PyObject *__pyx_n_s_cu_b;
-  PyObject *__pyx_n_s_cu_x;
+  PyObject *__pyx_kp_s_cuDSS_handle_creation_failed;
   PyObject *__pyx_n_s_cudss_wrapp;
   PyObject *__pyx_n_s_cupy;
   PyObject *__pyx_n_s_cupyx_scipy_sparse;
   PyObject *__pyx_n_s_data;
   PyObject *__pyx_n_s_data_ptr;
   PyObject *__pyx_n_s_data_ptr_t;
+  PyObject *__pyx_kp_u_disable;
   PyObject *__pyx_n_s_dtype;
   PyObject *__pyx_n_s_empty;
+  PyObject *__pyx_kp_u_enable;
   PyObject *__pyx_n_s_flush;
-  PyObject *__pyx_n_s_handle;
+  PyObject *__pyx_kp_u_gc;
+  PyObject *__pyx_n_s_getstate;
   PyObject *__pyx_n_s_import;
   PyObject *__pyx_n_s_indices;
   PyObject *__pyx_n_s_indices_ptr;
@@ -2330,6 +2428,7 @@ typedef struct {
   PyObject *__pyx_n_s_indptr_ptr_t;
   PyObject *__pyx_n_s_initializing;
   PyObject *__pyx_n_s_is_coroutine;
+  PyObject *__pyx_kp_u_isenabled;
   PyObject *__pyx_n_s_ldb;
   PyObject *__pyx_n_s_ldx;
   PyObject *__pyx_n_s_main;
@@ -2339,18 +2438,24 @@ typedef struct {
   PyObject *__pyx_n_s_name;
   PyObject *__pyx_n_s_ncols;
   PyObject *__pyx_n_s_nnz;
+  PyObject *__pyx_kp_s_no_default___reduce___due_to_non;
   PyObject *__pyx_n_s_nrhs;
   PyObject *__pyx_n_s_nrows;
   PyObject *__pyx_n_s_order;
   PyObject *__pyx_n_s_print;
   PyObject *__pyx_n_s_ptr;
+  PyObject *__pyx_n_s_pyx_state;
+  PyObject *__pyx_n_s_reduce;
+  PyObject *__pyx_n_s_reduce_cython;
+  PyObject *__pyx_n_s_reduce_ex;
   PyObject *__pyx_kp_u_seconds;
+  PyObject *__pyx_n_s_self;
+  PyObject *__pyx_n_s_setstate;
+  PyObject *__pyx_n_s_setstate_cython;
   PyObject *__pyx_n_s_shape;
-  PyObject *__pyx_n_s_solverConfig;
-  PyObject *__pyx_n_s_solverData;
   PyObject *__pyx_n_s_spec;
   PyObject *__pyx_n_s_spsolve_with_CUDSS;
-  PyObject *__pyx_n_s_status;
+  PyObject *__pyx_kp_s_stringsource;
   PyObject *__pyx_n_s_t0;
   PyObject *__pyx_n_s_t1;
   PyObject *__pyx_n_s_test;
@@ -2376,9 +2481,12 @@ typedef struct {
   PyObject *__pyx_tuple__15;
   PyObject *__pyx_tuple__16;
   PyObject *__pyx_tuple__17;
-  PyObject *__pyx_tuple__18;
-  PyObject *__pyx_tuple__21;
-  PyObject *__pyx_codeobj__22;
+  PyObject *__pyx_tuple__20;
+  PyObject *__pyx_tuple__22;
+  PyObject *__pyx_tuple__24;
+  PyObject *__pyx_codeobj__21;
+  PyObject *__pyx_codeobj__23;
+  PyObject *__pyx_codeobj__25;
 } __pyx_mstate;
 
 #if CYTHON_USE_MODULE_STATE
@@ -2421,33 +2529,39 @@ static int __pyx_m_clear(PyObject *m) {
   #ifdef __Pyx_FusedFunction_USED
   Py_CLEAR(clear_module_state->__pyx_FusedFunctionType);
   #endif
+  Py_CLEAR(clear_module_state->__pyx_ptype_11cudss_wrapp_CuDSS);
+  Py_CLEAR(clear_module_state->__pyx_type_11cudss_wrapp_CuDSS);
   Py_CLEAR(clear_module_state->__pyx_kp_u_8_4f);
   Py_CLEAR(clear_module_state->__pyx_n_s_A);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Factorization_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_u_CUDSS_Factorization_took);
-  Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Handle_creation_FAILED);
-  Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Handle_destruction_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Matrix_b_creation_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Matrix_x_creation_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE);
-  Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Set_threading_layer_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Solve_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_u_CUDSS_Solve_took);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_SolverConfig_creation_FAIL);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_SolverData_creation_FAILED);
-  Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Solver_config_destruction);
-  Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Solver_data_destruction_FA);
   Py_CLEAR(clear_module_state->__pyx_kp_s_CUDSS_Sym_Factorization_FAILED);
   Py_CLEAR(clear_module_state->__pyx_kp_u_CUDSS_Sym_Factorization_took);
+  Py_CLEAR(clear_module_state->__pyx_n_s_CuDSS);
+  Py_CLEAR(clear_module_state->__pyx_n_s_CuDSS___reduce_cython);
+  Py_CLEAR(clear_module_state->__pyx_n_s_CuDSS___setstate_cython);
+  Py_CLEAR(clear_module_state->__pyx_n_s_CuDSS_spsolve_with_CUDSS);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_DEALLOCATING);
   Py_CLEAR(clear_module_state->__pyx_n_s_F);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_NOT_SUPPOERTED);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_Reusing_Sym_Factorization);
+  Py_CLEAR(clear_module_state->__pyx_n_s_RuntimeError);
   Py_CLEAR(clear_module_state->__pyx_kp_s_The_rhs_values_should_be_complex);
   Py_CLEAR(clear_module_state->__pyx_kp_s_The_sys_matrix_values_should_be);
-  Py_CLEAR(clear_module_state->__pyx_n_s__19);
-  Py_CLEAR(clear_module_state->__pyx_kp_u__20);
-  Py_CLEAR(clear_module_state->__pyx_n_s__23);
+  Py_CLEAR(clear_module_state->__pyx_n_s_TypeError);
+  Py_CLEAR(clear_module_state->__pyx_n_s__18);
+  Py_CLEAR(clear_module_state->__pyx_kp_u__19);
+  Py_CLEAR(clear_module_state->__pyx_n_s__26);
   Py_CLEAR(clear_module_state->__pyx_n_s_asyncio_coroutines);
   Py_CLEAR(clear_module_state->__pyx_n_s_b);
   Py_CLEAR(clear_module_state->__pyx_n_s_b_ptr);
@@ -2458,19 +2572,20 @@ static int __pyx_m_clear(PyObject *m) {
   Py_CLEAR(clear_module_state->__pyx_n_s_complex128);
   Py_CLEAR(clear_module_state->__pyx_n_s_cp);
   Py_CLEAR(clear_module_state->__pyx_n_s_csr_matrix);
-  Py_CLEAR(clear_module_state->__pyx_n_s_cu_A);
-  Py_CLEAR(clear_module_state->__pyx_n_s_cu_b);
-  Py_CLEAR(clear_module_state->__pyx_n_s_cu_x);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_cuDSS_handle_creation_failed);
   Py_CLEAR(clear_module_state->__pyx_n_s_cudss_wrapp);
   Py_CLEAR(clear_module_state->__pyx_n_s_cupy);
   Py_CLEAR(clear_module_state->__pyx_n_s_cupyx_scipy_sparse);
   Py_CLEAR(clear_module_state->__pyx_n_s_data);
   Py_CLEAR(clear_module_state->__pyx_n_s_data_ptr);
   Py_CLEAR(clear_module_state->__pyx_n_s_data_ptr_t);
+  Py_CLEAR(clear_module_state->__pyx_kp_u_disable);
   Py_CLEAR(clear_module_state->__pyx_n_s_dtype);
   Py_CLEAR(clear_module_state->__pyx_n_s_empty);
+  Py_CLEAR(clear_module_state->__pyx_kp_u_enable);
   Py_CLEAR(clear_module_state->__pyx_n_s_flush);
-  Py_CLEAR(clear_module_state->__pyx_n_s_handle);
+  Py_CLEAR(clear_module_state->__pyx_kp_u_gc);
+  Py_CLEAR(clear_module_state->__pyx_n_s_getstate);
   Py_CLEAR(clear_module_state->__pyx_n_s_import);
   Py_CLEAR(clear_module_state->__pyx_n_s_indices);
   Py_CLEAR(clear_module_state->__pyx_n_s_indices_ptr);
@@ -2480,6 +2595,7 @@ static int __pyx_m_clear(PyObject *m) {
   Py_CLEAR(clear_module_state->__pyx_n_s_indptr_ptr_t);
   Py_CLEAR(clear_module_state->__pyx_n_s_initializing);
   Py_CLEAR(clear_module_state->__pyx_n_s_is_coroutine);
+  Py_CLEAR(clear_module_state->__pyx_kp_u_isenabled);
   Py_CLEAR(clear_module_state->__pyx_n_s_ldb);
   Py_CLEAR(clear_module_state->__pyx_n_s_ldx);
   Py_CLEAR(clear_module_state->__pyx_n_s_main);
@@ -2489,18 +2605,24 @@ static int __pyx_m_clear(PyObject *m) {
   Py_CLEAR(clear_module_state->__pyx_n_s_name);
   Py_CLEAR(clear_module_state->__pyx_n_s_ncols);
   Py_CLEAR(clear_module_state->__pyx_n_s_nnz);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_no_default___reduce___due_to_non);
   Py_CLEAR(clear_module_state->__pyx_n_s_nrhs);
   Py_CLEAR(clear_module_state->__pyx_n_s_nrows);
   Py_CLEAR(clear_module_state->__pyx_n_s_order);
   Py_CLEAR(clear_module_state->__pyx_n_s_print);
   Py_CLEAR(clear_module_state->__pyx_n_s_ptr);
+  Py_CLEAR(clear_module_state->__pyx_n_s_pyx_state);
+  Py_CLEAR(clear_module_state->__pyx_n_s_reduce);
+  Py_CLEAR(clear_module_state->__pyx_n_s_reduce_cython);
+  Py_CLEAR(clear_module_state->__pyx_n_s_reduce_ex);
   Py_CLEAR(clear_module_state->__pyx_kp_u_seconds);
+  Py_CLEAR(clear_module_state->__pyx_n_s_self);
+  Py_CLEAR(clear_module_state->__pyx_n_s_setstate);
+  Py_CLEAR(clear_module_state->__pyx_n_s_setstate_cython);
   Py_CLEAR(clear_module_state->__pyx_n_s_shape);
-  Py_CLEAR(clear_module_state->__pyx_n_s_solverConfig);
-  Py_CLEAR(clear_module_state->__pyx_n_s_solverData);
   Py_CLEAR(clear_module_state->__pyx_n_s_spec);
   Py_CLEAR(clear_module_state->__pyx_n_s_spsolve_with_CUDSS);
-  Py_CLEAR(clear_module_state->__pyx_n_s_status);
+  Py_CLEAR(clear_module_state->__pyx_kp_s_stringsource);
   Py_CLEAR(clear_module_state->__pyx_n_s_t0);
   Py_CLEAR(clear_module_state->__pyx_n_s_t1);
   Py_CLEAR(clear_module_state->__pyx_n_s_test);
@@ -2526,9 +2648,12 @@ static int __pyx_m_clear(PyObject *m) {
   Py_CLEAR(clear_module_state->__pyx_tuple__15);
   Py_CLEAR(clear_module_state->__pyx_tuple__16);
   Py_CLEAR(clear_module_state->__pyx_tuple__17);
-  Py_CLEAR(clear_module_state->__pyx_tuple__18);
-  Py_CLEAR(clear_module_state->__pyx_tuple__21);
-  Py_CLEAR(clear_module_state->__pyx_codeobj__22);
+  Py_CLEAR(clear_module_state->__pyx_tuple__20);
+  Py_CLEAR(clear_module_state->__pyx_tuple__22);
+  Py_CLEAR(clear_module_state->__pyx_tuple__24);
+  Py_CLEAR(clear_module_state->__pyx_codeobj__21);
+  Py_CLEAR(clear_module_state->__pyx_codeobj__23);
+  Py_CLEAR(clear_module_state->__pyx_codeobj__25);
   return 0;
 }
 #endif
@@ -2549,33 +2674,39 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
   #ifdef __Pyx_FusedFunction_USED
   Py_VISIT(traverse_module_state->__pyx_FusedFunctionType);
   #endif
+  Py_VISIT(traverse_module_state->__pyx_ptype_11cudss_wrapp_CuDSS);
+  Py_VISIT(traverse_module_state->__pyx_type_11cudss_wrapp_CuDSS);
   Py_VISIT(traverse_module_state->__pyx_kp_u_8_4f);
   Py_VISIT(traverse_module_state->__pyx_n_s_A);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Factorization_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_u_CUDSS_Factorization_took);
-  Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Handle_creation_FAILED);
-  Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Handle_destruction_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Matrix_b_creation_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Matrix_x_creation_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE);
-  Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Set_threading_layer_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Solve_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_u_CUDSS_Solve_took);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_SolverConfig_creation_FAIL);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_SolverData_creation_FAILED);
-  Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Solver_config_destruction);
-  Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Solver_data_destruction_FA);
   Py_VISIT(traverse_module_state->__pyx_kp_s_CUDSS_Sym_Factorization_FAILED);
   Py_VISIT(traverse_module_state->__pyx_kp_u_CUDSS_Sym_Factorization_took);
+  Py_VISIT(traverse_module_state->__pyx_n_s_CuDSS);
+  Py_VISIT(traverse_module_state->__pyx_n_s_CuDSS___reduce_cython);
+  Py_VISIT(traverse_module_state->__pyx_n_s_CuDSS___setstate_cython);
+  Py_VISIT(traverse_module_state->__pyx_n_s_CuDSS_spsolve_with_CUDSS);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_DEALLOCATING);
   Py_VISIT(traverse_module_state->__pyx_n_s_F);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_NOT_SUPPOERTED);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_Reusing_Sym_Factorization);
+  Py_VISIT(traverse_module_state->__pyx_n_s_RuntimeError);
   Py_VISIT(traverse_module_state->__pyx_kp_s_The_rhs_values_should_be_complex);
   Py_VISIT(traverse_module_state->__pyx_kp_s_The_sys_matrix_values_should_be);
-  Py_VISIT(traverse_module_state->__pyx_n_s__19);
-  Py_VISIT(traverse_module_state->__pyx_kp_u__20);
-  Py_VISIT(traverse_module_state->__pyx_n_s__23);
+  Py_VISIT(traverse_module_state->__pyx_n_s_TypeError);
+  Py_VISIT(traverse_module_state->__pyx_n_s__18);
+  Py_VISIT(traverse_module_state->__pyx_kp_u__19);
+  Py_VISIT(traverse_module_state->__pyx_n_s__26);
   Py_VISIT(traverse_module_state->__pyx_n_s_asyncio_coroutines);
   Py_VISIT(traverse_module_state->__pyx_n_s_b);
   Py_VISIT(traverse_module_state->__pyx_n_s_b_ptr);
@@ -2586,19 +2717,20 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
   Py_VISIT(traverse_module_state->__pyx_n_s_complex128);
   Py_VISIT(traverse_module_state->__pyx_n_s_cp);
   Py_VISIT(traverse_module_state->__pyx_n_s_csr_matrix);
-  Py_VISIT(traverse_module_state->__pyx_n_s_cu_A);
-  Py_VISIT(traverse_module_state->__pyx_n_s_cu_b);
-  Py_VISIT(traverse_module_state->__pyx_n_s_cu_x);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_cuDSS_handle_creation_failed);
   Py_VISIT(traverse_module_state->__pyx_n_s_cudss_wrapp);
   Py_VISIT(traverse_module_state->__pyx_n_s_cupy);
   Py_VISIT(traverse_module_state->__pyx_n_s_cupyx_scipy_sparse);
   Py_VISIT(traverse_module_state->__pyx_n_s_data);
   Py_VISIT(traverse_module_state->__pyx_n_s_data_ptr);
   Py_VISIT(traverse_module_state->__pyx_n_s_data_ptr_t);
+  Py_VISIT(traverse_module_state->__pyx_kp_u_disable);
   Py_VISIT(traverse_module_state->__pyx_n_s_dtype);
   Py_VISIT(traverse_module_state->__pyx_n_s_empty);
+  Py_VISIT(traverse_module_state->__pyx_kp_u_enable);
   Py_VISIT(traverse_module_state->__pyx_n_s_flush);
-  Py_VISIT(traverse_module_state->__pyx_n_s_handle);
+  Py_VISIT(traverse_module_state->__pyx_kp_u_gc);
+  Py_VISIT(traverse_module_state->__pyx_n_s_getstate);
   Py_VISIT(traverse_module_state->__pyx_n_s_import);
   Py_VISIT(traverse_module_state->__pyx_n_s_indices);
   Py_VISIT(traverse_module_state->__pyx_n_s_indices_ptr);
@@ -2608,6 +2740,7 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
   Py_VISIT(traverse_module_state->__pyx_n_s_indptr_ptr_t);
   Py_VISIT(traverse_module_state->__pyx_n_s_initializing);
   Py_VISIT(traverse_module_state->__pyx_n_s_is_coroutine);
+  Py_VISIT(traverse_module_state->__pyx_kp_u_isenabled);
   Py_VISIT(traverse_module_state->__pyx_n_s_ldb);
   Py_VISIT(traverse_module_state->__pyx_n_s_ldx);
   Py_VISIT(traverse_module_state->__pyx_n_s_main);
@@ -2617,18 +2750,24 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
   Py_VISIT(traverse_module_state->__pyx_n_s_name);
   Py_VISIT(traverse_module_state->__pyx_n_s_ncols);
   Py_VISIT(traverse_module_state->__pyx_n_s_nnz);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_no_default___reduce___due_to_non);
   Py_VISIT(traverse_module_state->__pyx_n_s_nrhs);
   Py_VISIT(traverse_module_state->__pyx_n_s_nrows);
   Py_VISIT(traverse_module_state->__pyx_n_s_order);
   Py_VISIT(traverse_module_state->__pyx_n_s_print);
   Py_VISIT(traverse_module_state->__pyx_n_s_ptr);
+  Py_VISIT(traverse_module_state->__pyx_n_s_pyx_state);
+  Py_VISIT(traverse_module_state->__pyx_n_s_reduce);
+  Py_VISIT(traverse_module_state->__pyx_n_s_reduce_cython);
+  Py_VISIT(traverse_module_state->__pyx_n_s_reduce_ex);
   Py_VISIT(traverse_module_state->__pyx_kp_u_seconds);
+  Py_VISIT(traverse_module_state->__pyx_n_s_self);
+  Py_VISIT(traverse_module_state->__pyx_n_s_setstate);
+  Py_VISIT(traverse_module_state->__pyx_n_s_setstate_cython);
   Py_VISIT(traverse_module_state->__pyx_n_s_shape);
-  Py_VISIT(traverse_module_state->__pyx_n_s_solverConfig);
-  Py_VISIT(traverse_module_state->__pyx_n_s_solverData);
   Py_VISIT(traverse_module_state->__pyx_n_s_spec);
   Py_VISIT(traverse_module_state->__pyx_n_s_spsolve_with_CUDSS);
-  Py_VISIT(traverse_module_state->__pyx_n_s_status);
+  Py_VISIT(traverse_module_state->__pyx_kp_s_stringsource);
   Py_VISIT(traverse_module_state->__pyx_n_s_t0);
   Py_VISIT(traverse_module_state->__pyx_n_s_t1);
   Py_VISIT(traverse_module_state->__pyx_n_s_test);
@@ -2654,9 +2793,12 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
   Py_VISIT(traverse_module_state->__pyx_tuple__15);
   Py_VISIT(traverse_module_state->__pyx_tuple__16);
   Py_VISIT(traverse_module_state->__pyx_tuple__17);
-  Py_VISIT(traverse_module_state->__pyx_tuple__18);
-  Py_VISIT(traverse_module_state->__pyx_tuple__21);
-  Py_VISIT(traverse_module_state->__pyx_codeobj__22);
+  Py_VISIT(traverse_module_state->__pyx_tuple__20);
+  Py_VISIT(traverse_module_state->__pyx_tuple__22);
+  Py_VISIT(traverse_module_state->__pyx_tuple__24);
+  Py_VISIT(traverse_module_state->__pyx_codeobj__21);
+  Py_VISIT(traverse_module_state->__pyx_codeobj__23);
+  Py_VISIT(traverse_module_state->__pyx_codeobj__25);
   return 0;
 }
 #endif
@@ -2688,34 +2830,40 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
 #if CYTHON_USE_MODULE_STATE
 #endif
 #if CYTHON_USE_MODULE_STATE
+#define __pyx_type_11cudss_wrapp_CuDSS __pyx_mstate_global->__pyx_type_11cudss_wrapp_CuDSS
 #endif
+#define __pyx_ptype_11cudss_wrapp_CuDSS __pyx_mstate_global->__pyx_ptype_11cudss_wrapp_CuDSS
 #define __pyx_kp_u_8_4f __pyx_mstate_global->__pyx_kp_u_8_4f
 #define __pyx_n_s_A __pyx_mstate_global->__pyx_n_s_A
 #define __pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL __pyx_mstate_global->__pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL
 #define __pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F __pyx_mstate_global->__pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F
 #define __pyx_kp_s_CUDSS_Factorization_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Factorization_FAILED
 #define __pyx_kp_u_CUDSS_Factorization_took __pyx_mstate_global->__pyx_kp_u_CUDSS_Factorization_took
-#define __pyx_kp_s_CUDSS_Handle_creation_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Handle_creation_FAILED
-#define __pyx_kp_s_CUDSS_Handle_destruction_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Handle_destruction_FAILED
 #define __pyx_kp_s_CUDSS_Matrix_b_creation_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Matrix_b_creation_FAILED
 #define __pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE __pyx_mstate_global->__pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE
 #define __pyx_kp_s_CUDSS_Matrix_x_creation_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Matrix_x_creation_FAILED
 #define __pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE __pyx_mstate_global->__pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE
-#define __pyx_kp_s_CUDSS_Set_threading_layer_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Set_threading_layer_FAILED
 #define __pyx_kp_s_CUDSS_Solve_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Solve_FAILED
 #define __pyx_kp_u_CUDSS_Solve_took __pyx_mstate_global->__pyx_kp_u_CUDSS_Solve_took
 #define __pyx_kp_s_CUDSS_SolverConfig_creation_FAIL __pyx_mstate_global->__pyx_kp_s_CUDSS_SolverConfig_creation_FAIL
 #define __pyx_kp_s_CUDSS_SolverData_creation_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_SolverData_creation_FAILED
-#define __pyx_kp_s_CUDSS_Solver_config_destruction __pyx_mstate_global->__pyx_kp_s_CUDSS_Solver_config_destruction
-#define __pyx_kp_s_CUDSS_Solver_data_destruction_FA __pyx_mstate_global->__pyx_kp_s_CUDSS_Solver_data_destruction_FA
 #define __pyx_kp_s_CUDSS_Sym_Factorization_FAILED __pyx_mstate_global->__pyx_kp_s_CUDSS_Sym_Factorization_FAILED
 #define __pyx_kp_u_CUDSS_Sym_Factorization_took __pyx_mstate_global->__pyx_kp_u_CUDSS_Sym_Factorization_took
+#define __pyx_n_s_CuDSS __pyx_mstate_global->__pyx_n_s_CuDSS
+#define __pyx_n_s_CuDSS___reduce_cython __pyx_mstate_global->__pyx_n_s_CuDSS___reduce_cython
+#define __pyx_n_s_CuDSS___setstate_cython __pyx_mstate_global->__pyx_n_s_CuDSS___setstate_cython
+#define __pyx_n_s_CuDSS_spsolve_with_CUDSS __pyx_mstate_global->__pyx_n_s_CuDSS_spsolve_with_CUDSS
+#define __pyx_kp_s_DEALLOCATING __pyx_mstate_global->__pyx_kp_s_DEALLOCATING
 #define __pyx_n_s_F __pyx_mstate_global->__pyx_n_s_F
+#define __pyx_kp_s_NOT_SUPPOERTED __pyx_mstate_global->__pyx_kp_s_NOT_SUPPOERTED
+#define __pyx_kp_s_Reusing_Sym_Factorization __pyx_mstate_global->__pyx_kp_s_Reusing_Sym_Factorization
+#define __pyx_n_s_RuntimeError __pyx_mstate_global->__pyx_n_s_RuntimeError
 #define __pyx_kp_s_The_rhs_values_should_be_complex __pyx_mstate_global->__pyx_kp_s_The_rhs_values_should_be_complex
 #define __pyx_kp_s_The_sys_matrix_values_should_be __pyx_mstate_global->__pyx_kp_s_The_sys_matrix_values_should_be
-#define __pyx_n_s__19 __pyx_mstate_global->__pyx_n_s__19
-#define __pyx_kp_u__20 __pyx_mstate_global->__pyx_kp_u__20
-#define __pyx_n_s__23 __pyx_mstate_global->__pyx_n_s__23
+#define __pyx_n_s_TypeError __pyx_mstate_global->__pyx_n_s_TypeError
+#define __pyx_n_s__18 __pyx_mstate_global->__pyx_n_s__18
+#define __pyx_kp_u__19 __pyx_mstate_global->__pyx_kp_u__19
+#define __pyx_n_s__26 __pyx_mstate_global->__pyx_n_s__26
 #define __pyx_n_s_asyncio_coroutines __pyx_mstate_global->__pyx_n_s_asyncio_coroutines
 #define __pyx_n_s_b __pyx_mstate_global->__pyx_n_s_b
 #define __pyx_n_s_b_ptr __pyx_mstate_global->__pyx_n_s_b_ptr
@@ -2726,19 +2874,20 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
 #define __pyx_n_s_complex128 __pyx_mstate_global->__pyx_n_s_complex128
 #define __pyx_n_s_cp __pyx_mstate_global->__pyx_n_s_cp
 #define __pyx_n_s_csr_matrix __pyx_mstate_global->__pyx_n_s_csr_matrix
-#define __pyx_n_s_cu_A __pyx_mstate_global->__pyx_n_s_cu_A
-#define __pyx_n_s_cu_b __pyx_mstate_global->__pyx_n_s_cu_b
-#define __pyx_n_s_cu_x __pyx_mstate_global->__pyx_n_s_cu_x
+#define __pyx_kp_s_cuDSS_handle_creation_failed __pyx_mstate_global->__pyx_kp_s_cuDSS_handle_creation_failed
 #define __pyx_n_s_cudss_wrapp __pyx_mstate_global->__pyx_n_s_cudss_wrapp
 #define __pyx_n_s_cupy __pyx_mstate_global->__pyx_n_s_cupy
 #define __pyx_n_s_cupyx_scipy_sparse __pyx_mstate_global->__pyx_n_s_cupyx_scipy_sparse
 #define __pyx_n_s_data __pyx_mstate_global->__pyx_n_s_data
 #define __pyx_n_s_data_ptr __pyx_mstate_global->__pyx_n_s_data_ptr
 #define __pyx_n_s_data_ptr_t __pyx_mstate_global->__pyx_n_s_data_ptr_t
+#define __pyx_kp_u_disable __pyx_mstate_global->__pyx_kp_u_disable
 #define __pyx_n_s_dtype __pyx_mstate_global->__pyx_n_s_dtype
 #define __pyx_n_s_empty __pyx_mstate_global->__pyx_n_s_empty
+#define __pyx_kp_u_enable __pyx_mstate_global->__pyx_kp_u_enable
 #define __pyx_n_s_flush __pyx_mstate_global->__pyx_n_s_flush
-#define __pyx_n_s_handle __pyx_mstate_global->__pyx_n_s_handle
+#define __pyx_kp_u_gc __pyx_mstate_global->__pyx_kp_u_gc
+#define __pyx_n_s_getstate __pyx_mstate_global->__pyx_n_s_getstate
 #define __pyx_n_s_import __pyx_mstate_global->__pyx_n_s_import
 #define __pyx_n_s_indices __pyx_mstate_global->__pyx_n_s_indices
 #define __pyx_n_s_indices_ptr __pyx_mstate_global->__pyx_n_s_indices_ptr
@@ -2748,6 +2897,7 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
 #define __pyx_n_s_indptr_ptr_t __pyx_mstate_global->__pyx_n_s_indptr_ptr_t
 #define __pyx_n_s_initializing __pyx_mstate_global->__pyx_n_s_initializing
 #define __pyx_n_s_is_coroutine __pyx_mstate_global->__pyx_n_s_is_coroutine
+#define __pyx_kp_u_isenabled __pyx_mstate_global->__pyx_kp_u_isenabled
 #define __pyx_n_s_ldb __pyx_mstate_global->__pyx_n_s_ldb
 #define __pyx_n_s_ldx __pyx_mstate_global->__pyx_n_s_ldx
 #define __pyx_n_s_main __pyx_mstate_global->__pyx_n_s_main
@@ -2757,18 +2907,24 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
 #define __pyx_n_s_name __pyx_mstate_global->__pyx_n_s_name
 #define __pyx_n_s_ncols __pyx_mstate_global->__pyx_n_s_ncols
 #define __pyx_n_s_nnz __pyx_mstate_global->__pyx_n_s_nnz
+#define __pyx_kp_s_no_default___reduce___due_to_non __pyx_mstate_global->__pyx_kp_s_no_default___reduce___due_to_non
 #define __pyx_n_s_nrhs __pyx_mstate_global->__pyx_n_s_nrhs
 #define __pyx_n_s_nrows __pyx_mstate_global->__pyx_n_s_nrows
 #define __pyx_n_s_order __pyx_mstate_global->__pyx_n_s_order
 #define __pyx_n_s_print __pyx_mstate_global->__pyx_n_s_print
 #define __pyx_n_s_ptr __pyx_mstate_global->__pyx_n_s_ptr
+#define __pyx_n_s_pyx_state __pyx_mstate_global->__pyx_n_s_pyx_state
+#define __pyx_n_s_reduce __pyx_mstate_global->__pyx_n_s_reduce
+#define __pyx_n_s_reduce_cython __pyx_mstate_global->__pyx_n_s_reduce_cython
+#define __pyx_n_s_reduce_ex __pyx_mstate_global->__pyx_n_s_reduce_ex
 #define __pyx_kp_u_seconds __pyx_mstate_global->__pyx_kp_u_seconds
+#define __pyx_n_s_self __pyx_mstate_global->__pyx_n_s_self
+#define __pyx_n_s_setstate __pyx_mstate_global->__pyx_n_s_setstate
+#define __pyx_n_s_setstate_cython __pyx_mstate_global->__pyx_n_s_setstate_cython
 #define __pyx_n_s_shape __pyx_mstate_global->__pyx_n_s_shape
-#define __pyx_n_s_solverConfig __pyx_mstate_global->__pyx_n_s_solverConfig
-#define __pyx_n_s_solverData __pyx_mstate_global->__pyx_n_s_solverData
 #define __pyx_n_s_spec __pyx_mstate_global->__pyx_n_s_spec
 #define __pyx_n_s_spsolve_with_CUDSS __pyx_mstate_global->__pyx_n_s_spsolve_with_CUDSS
-#define __pyx_n_s_status __pyx_mstate_global->__pyx_n_s_status
+#define __pyx_kp_s_stringsource __pyx_mstate_global->__pyx_kp_s_stringsource
 #define __pyx_n_s_t0 __pyx_mstate_global->__pyx_n_s_t0
 #define __pyx_n_s_t1 __pyx_mstate_global->__pyx_n_s_t1
 #define __pyx_n_s_test __pyx_mstate_global->__pyx_n_s_test
@@ -2794,29 +2950,232 @@ static int __pyx_m_traverse(PyObject *m, visitproc visit, void *arg) {
 #define __pyx_tuple__15 __pyx_mstate_global->__pyx_tuple__15
 #define __pyx_tuple__16 __pyx_mstate_global->__pyx_tuple__16
 #define __pyx_tuple__17 __pyx_mstate_global->__pyx_tuple__17
-#define __pyx_tuple__18 __pyx_mstate_global->__pyx_tuple__18
-#define __pyx_tuple__21 __pyx_mstate_global->__pyx_tuple__21
-#define __pyx_codeobj__22 __pyx_mstate_global->__pyx_codeobj__22
+#define __pyx_tuple__20 __pyx_mstate_global->__pyx_tuple__20
+#define __pyx_tuple__22 __pyx_mstate_global->__pyx_tuple__22
+#define __pyx_tuple__24 __pyx_mstate_global->__pyx_tuple__24
+#define __pyx_codeobj__21 __pyx_mstate_global->__pyx_codeobj__21
+#define __pyx_codeobj__23 __pyx_mstate_global->__pyx_codeobj__23
+#define __pyx_codeobj__25 __pyx_mstate_global->__pyx_codeobj__25
 /* #### Code section: module_code ### */
 
-/* "ccuDSS.pyx":104
- *     cudssStatus_t cudssConfigDestroy(cudssConfig_t solverConfig)
+/* "ccuDSS.pyx":118
+ *     cdef cudssMatrix_t cu_A
  * 
- * def spsolve_with_CUDSS(A, b):             # <<<<<<<<<<<<<<
- *     cdef cudssStatus_t status
- *     cdef cudssHandle_t handle
+ *     def __cinit__(self):             # <<<<<<<<<<<<<<
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
  */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_11cudss_wrapp_1spsolve_with_CUDSS(PyObject *__pyx_self, 
+static int __pyx_pw_11cudss_wrapp_5CuDSS_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static int __pyx_pw_11cudss_wrapp_5CuDSS_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+  CYTHON_UNUSED Py_ssize_t __pyx_nargs;
+  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
+  int __pyx_r;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("__cinit__ (wrapper)", 0);
+  #if CYTHON_ASSUME_SAFE_MACROS
+  __pyx_nargs = PyTuple_GET_SIZE(__pyx_args);
+  #else
+  __pyx_nargs = PyTuple_Size(__pyx_args); if (unlikely(__pyx_nargs < 0)) return -1;
+  #endif
+  __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
+  if (unlikely(__pyx_nargs > 0)) {
+    __Pyx_RaiseArgtupleInvalid("__cinit__", 1, 0, 0, __pyx_nargs); return -1;}
+  if (unlikely(__pyx_kwds) && __Pyx_NumKwargs_VARARGS(__pyx_kwds) && unlikely(!__Pyx_CheckKeywordStrings(__pyx_kwds, "__cinit__", 0))) return -1;
+  __pyx_r = __pyx_pf_11cudss_wrapp_5CuDSS___cinit__(((struct __pyx_obj_11cudss_wrapp_CuDSS *)__pyx_v_self));
+
+  /* function exit code */
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+static int __pyx_pf_11cudss_wrapp_5CuDSS___cinit__(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self) {
+  int __pyx_r;
+  __Pyx_RefNannyDeclarations
+  int __pyx_t_1;
+  PyObject *__pyx_t_2 = NULL;
+  PyObject *__pyx_t_3 = NULL;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("__cinit__", 1);
+
+  /* "ccuDSS.pyx":119
+ * 
+ *     def __cinit__(self):
+ *         self.status = cudssCreate(&self.handle)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             raise RuntimeError("cuDSS handle creation failed")
+ */
+  __pyx_v_self->status = cudssCreate((&__pyx_v_self->handle));
+
+  /* "ccuDSS.pyx":120
+ *     def __cinit__(self):
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             raise RuntimeError("cuDSS handle creation failed")
+ * 
+ */
+  __pyx_t_1 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+  if (unlikely(__pyx_t_1)) {
+
+    /* "ccuDSS.pyx":121
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             raise RuntimeError("cuDSS handle creation failed")             # <<<<<<<<<<<<<<
+ * 
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
+ */
+    __pyx_t_2 = __Pyx_PyObject_Call(__pyx_builtin_RuntimeError, __pyx_tuple_, NULL); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 121, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_2);
+    __Pyx_Raise(__pyx_t_2, 0, 0, 0);
+    __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
+    __PYX_ERR(0, 121, __pyx_L1_error)
+
+    /* "ccuDSS.pyx":120
+ *     def __cinit__(self):
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             raise RuntimeError("cuDSS handle creation failed")
+ * 
+ */
+  }
+
+  /* "ccuDSS.pyx":123
+ *             raise RuntimeError("cuDSS handle creation failed")
+ * 
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverData creation FAILED!",flush=True)
+ */
+  __pyx_v_self->status = cudssDataCreate(__pyx_v_self->handle, (&__pyx_v_self->solverData));
+
+  /* "ccuDSS.pyx":124
+ * 
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS SolverData creation FAILED!",flush=True)
+ * 
+ */
+  __pyx_t_1 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+  if (__pyx_t_1) {
+
+    /* "ccuDSS.pyx":125
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverData creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ * 
+ *         self.status = cudssConfigCreate(&self.solverConfig)
+ */
+    __pyx_t_2 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 125, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_2);
+    if (PyDict_SetItem(__pyx_t_2, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 125, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__2, __pyx_t_2); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 125, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_3);
+    __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
+    __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
+
+    /* "ccuDSS.pyx":124
+ * 
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS SolverData creation FAILED!",flush=True)
+ * 
+ */
+  }
+
+  /* "ccuDSS.pyx":127
+ *             print("CUDSS SolverData creation FAILED!",flush=True)
+ * 
+ *         self.status = cudssConfigCreate(&self.solverConfig)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)
+ */
+  __pyx_v_self->status = cudssConfigCreate((&__pyx_v_self->solverConfig));
+
+  /* "ccuDSS.pyx":128
+ * 
+ *         self.status = cudssConfigCreate(&self.solverConfig)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)
+ * 
+ */
+  __pyx_t_1 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+  if (__pyx_t_1) {
+
+    /* "ccuDSS.pyx":129
+ *         self.status = cudssConfigCreate(&self.solverConfig)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)             # <<<<<<<<<<<<<<
+ * 
+ *         self.sym_fact = 0
+ */
+    __pyx_t_3 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 129, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_3);
+    if (PyDict_SetItem(__pyx_t_3, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 129, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__3, __pyx_t_3); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 129, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_2);
+    __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
+    __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
+
+    /* "ccuDSS.pyx":128
+ * 
+ *         self.status = cudssConfigCreate(&self.solverConfig)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)
+ * 
+ */
+  }
+
+  /* "ccuDSS.pyx":131
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)
+ * 
+ *         self.sym_fact = 0             # <<<<<<<<<<<<<<
+ * 
+ *     def spsolve_with_CUDSS(self,A, b):
+ */
+  __pyx_v_self->sym_fact = 0;
+
+  /* "ccuDSS.pyx":118
+ *     cdef cudssMatrix_t cu_A
+ * 
+ *     def __cinit__(self):             # <<<<<<<<<<<<<<
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ */
+
+  /* function exit code */
+  __pyx_r = 0;
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_XDECREF(__pyx_t_2);
+  __Pyx_XDECREF(__pyx_t_3);
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = -1;
+  __pyx_L0:;
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+/* "ccuDSS.pyx":133
+ *         self.sym_fact = 0
+ * 
+ *     def spsolve_with_CUDSS(self,A, b):             # <<<<<<<<<<<<<<
+ * 
+ *         cdef int n = A.shape[0]
+ */
+
+/* Python wrapper */
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-static PyMethodDef __pyx_mdef_11cudss_wrapp_1spsolve_with_CUDSS = {"spsolve_with_CUDSS", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_1spsolve_with_CUDSS, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
-static PyObject *__pyx_pw_11cudss_wrapp_1spsolve_with_CUDSS(PyObject *__pyx_self, 
+static PyMethodDef __pyx_mdef_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS = {"spsolve_with_CUDSS", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
@@ -2863,7 +3222,7 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
           (void)__Pyx_Arg_NewRef_FASTCALL(values[0]);
           kw_args--;
         }
-        else if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 104, __pyx_L3_error)
+        else if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 133, __pyx_L3_error)
         else goto __pyx_L5_argtuple_error;
         CYTHON_FALLTHROUGH;
         case  1:
@@ -2871,14 +3230,14 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
           (void)__Pyx_Arg_NewRef_FASTCALL(values[1]);
           kw_args--;
         }
-        else if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 104, __pyx_L3_error)
+        else if (unlikely(PyErr_Occurred())) __PYX_ERR(0, 133, __pyx_L3_error)
         else {
-          __Pyx_RaiseArgtupleInvalid("spsolve_with_CUDSS", 1, 2, 2, 1); __PYX_ERR(0, 104, __pyx_L3_error)
+          __Pyx_RaiseArgtupleInvalid("spsolve_with_CUDSS", 1, 2, 2, 1); __PYX_ERR(0, 133, __pyx_L3_error)
         }
       }
       if (unlikely(kw_args > 0)) {
         const Py_ssize_t kwd_pos_args = __pyx_nargs;
-        if (unlikely(__Pyx_ParseOptionalKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values + 0, kwd_pos_args, "spsolve_with_CUDSS") < 0)) __PYX_ERR(0, 104, __pyx_L3_error)
+        if (unlikely(__Pyx_ParseOptionalKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values + 0, kwd_pos_args, "spsolve_with_CUDSS") < 0)) __PYX_ERR(0, 133, __pyx_L3_error)
       }
     } else if (unlikely(__pyx_nargs != 2)) {
       goto __pyx_L5_argtuple_error;
@@ -2891,7 +3250,7 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   }
   goto __pyx_L6_skip;
   __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("spsolve_with_CUDSS", 1, 2, 2, __pyx_nargs); __PYX_ERR(0, 104, __pyx_L3_error)
+  __Pyx_RaiseArgtupleInvalid("spsolve_with_CUDSS", 1, 2, 2, __pyx_nargs); __PYX_ERR(0, 133, __pyx_L3_error)
   __pyx_L6_skip:;
   goto __pyx_L4_argument_unpacking_done;
   __pyx_L3_error:;
@@ -2901,11 +3260,11 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
       __Pyx_Arg_XDECREF_FASTCALL(values[__pyx_temp]);
     }
   }
-  __Pyx_AddTraceback("cudss_wrapp.spsolve_with_CUDSS", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.spsolve_with_CUDSS", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(__pyx_self, __pyx_v_A, __pyx_v_b);
+  __pyx_r = __pyx_pf_11cudss_wrapp_5CuDSS_2spsolve_with_CUDSS(((struct __pyx_obj_11cudss_wrapp_CuDSS *)__pyx_v_self), __pyx_v_A, __pyx_v_b);
 
   /* function exit code */
   {
@@ -2918,9 +3277,7 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObject *__pyx_self, PyObject *__pyx_v_A, PyObject *__pyx_v_b) {
-  cudssStatus_t __pyx_v_status;
-  cudssHandle_t __pyx_v_handle;
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_2spsolve_with_CUDSS(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self, PyObject *__pyx_v_A, PyObject *__pyx_v_b) {
   int __pyx_v_n;
   int __pyx_v_nnz;
   int __pyx_v_nrhs;
@@ -2935,20 +3292,15 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   void *__pyx_v_indptr_ptr;
   void *__pyx_v_b_ptr;
   void *__pyx_v_x_ptr;
-  cudssConfig_t __pyx_v_solverConfig;
-  cudssData_t __pyx_v_solverData;
-  cudssMatrix_t __pyx_v_cu_x;
-  cudssMatrix_t __pyx_v_cu_b;
-  int64_t __pyx_v_nrows;
-  int64_t __pyx_v_ncols;
-  int __pyx_v_ldb;
-  int __pyx_v_ldx;
-  cudssMatrix_t __pyx_v_cu_A;
   cudssMatrixType_t __pyx_v_mtype;
   cudssMatrixViewType_t __pyx_v_mview;
   cudssIndexBase_t __pyx_v_base;
   double __pyx_v_t0;
   double __pyx_v_t1;
+  int64_t __pyx_v_nrows;
+  int64_t __pyx_v_ncols;
+  int __pyx_v_ldb;
+  int __pyx_v_ldx;
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   PyObject *__pyx_t_1 = NULL;
@@ -2968,68 +3320,68 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("spsolve_with_CUDSS", 1);
 
-  /* "ccuDSS.pyx":108
- *     cdef cudssHandle_t handle
+  /* "ccuDSS.pyx":135
+ *     def spsolve_with_CUDSS(self,A, b):
  * 
- *     cdef int n = A.shape[0]             # <<<<<<<<<<<<<<
- *     cdef int nnz = A.nnz
- *     cdef int nrhs = b.shape[1]
+ *         cdef int n = A.shape[0]             # <<<<<<<<<<<<<<
+ *         cdef int nnz = A.nnz
+ *         cdef int nrhs = b.shape[1]
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_shape); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 108, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_shape); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 135, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_2 = __Pyx_GetItemInt(__pyx_t_1, 0, long, 1, __Pyx_PyInt_From_long, 0, 0, 1); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 108, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_GetItemInt(__pyx_t_1, 0, long, 1, __Pyx_PyInt_From_long, 0, 0, 1); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 135, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_2); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 108, __pyx_L1_error)
+  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_2); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 135, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
   __pyx_v_n = __pyx_t_3;
 
-  /* "ccuDSS.pyx":109
+  /* "ccuDSS.pyx":136
  * 
- *     cdef int n = A.shape[0]
- *     cdef int nnz = A.nnz             # <<<<<<<<<<<<<<
- *     cdef int nrhs = b.shape[1]
+ *         cdef int n = A.shape[0]
+ *         cdef int nnz = A.nnz             # <<<<<<<<<<<<<<
+ *         cdef int nrhs = b.shape[1]
  * 
  */
-  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_nnz); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 109, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_nnz); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 136, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
-  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_2); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 109, __pyx_L1_error)
+  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_2); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 136, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
   __pyx_v_nnz = __pyx_t_3;
 
-  /* "ccuDSS.pyx":110
- *     cdef int n = A.shape[0]
- *     cdef int nnz = A.nnz
- *     cdef int nrhs = b.shape[1]             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":137
+ *         cdef int n = A.shape[0]
+ *         cdef int nnz = A.nnz
+ *         cdef int nrhs = b.shape[1]             # <<<<<<<<<<<<<<
  * 
- *     if A.dtype != cp.dtype(cp.complex128):
+ *         if A.dtype != cp.dtype(cp.complex128):
  */
-  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_shape); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 110, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_shape); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 137, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
-  __pyx_t_1 = __Pyx_GetItemInt(__pyx_t_2, 1, long, 1, __Pyx_PyInt_From_long, 0, 0, 1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 110, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_GetItemInt(__pyx_t_2, 1, long, 1, __Pyx_PyInt_From_long, 0, 0, 1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 137, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
-  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_1); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 110, __pyx_L1_error)
+  __pyx_t_3 = __Pyx_PyInt_As_int(__pyx_t_1); if (unlikely((__pyx_t_3 == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 137, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_nrhs = __pyx_t_3;
 
-  /* "ccuDSS.pyx":112
- *     cdef int nrhs = b.shape[1]
+  /* "ccuDSS.pyx":139
+ *         cdef int nrhs = b.shape[1]
  * 
- *     if A.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
- *         print("The sys. matrix values should be complex128 (for now)")
- *         return -1
+ *         if A.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
+ *             print("The sys. matrix values should be complex128 (for now)")
+ *             return -1
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_dtype); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_dtype); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_cp); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_cp); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_dtype); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_dtype); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_cp); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_cp); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_6 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_complex128); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_complex128); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __pyx_t_4 = NULL;
@@ -3051,66 +3403,66 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     __pyx_t_2 = __Pyx_PyObject_FastCall(__pyx_t_5, __pyx_callargs+1-__pyx_t_7, 1+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_4); __pyx_t_4 = 0;
     __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
-    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 112, __pyx_L1_error)
+    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 139, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   }
-  __pyx_t_5 = PyObject_RichCompare(__pyx_t_1, __pyx_t_2, Py_NE); __Pyx_XGOTREF(__pyx_t_5); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 112, __pyx_L1_error)
+  __pyx_t_5 = PyObject_RichCompare(__pyx_t_1, __pyx_t_2, Py_NE); __Pyx_XGOTREF(__pyx_t_5); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
-  __pyx_t_8 = __Pyx_PyObject_IsTrue(__pyx_t_5); if (unlikely((__pyx_t_8 < 0))) __PYX_ERR(0, 112, __pyx_L1_error)
+  __pyx_t_8 = __Pyx_PyObject_IsTrue(__pyx_t_5); if (unlikely((__pyx_t_8 < 0))) __PYX_ERR(0, 139, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":113
+    /* "ccuDSS.pyx":140
  * 
- *     if A.dtype != cp.dtype(cp.complex128):
- *         print("The sys. matrix values should be complex128 (for now)")             # <<<<<<<<<<<<<<
- *         return -1
+ *         if A.dtype != cp.dtype(cp.complex128):
+ *             print("The sys. matrix values should be complex128 (for now)")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-    __pyx_t_5 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple_, NULL); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 113, __pyx_L1_error)
+    __pyx_t_5 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__4, NULL); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 140, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_5);
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
-    /* "ccuDSS.pyx":114
- *     if A.dtype != cp.dtype(cp.complex128):
- *         print("The sys. matrix values should be complex128 (for now)")
- *         return -1             # <<<<<<<<<<<<<<
+    /* "ccuDSS.pyx":141
+ *         if A.dtype != cp.dtype(cp.complex128):
+ *             print("The sys. matrix values should be complex128 (for now)")
+ *             return -1             # <<<<<<<<<<<<<<
  * 
- *     if b.dtype != cp.dtype(cp.complex128):
+ *         if b.dtype != cp.dtype(cp.complex128):
  */
     __Pyx_XDECREF(__pyx_r);
     __Pyx_INCREF(__pyx_int_neg_1);
     __pyx_r = __pyx_int_neg_1;
     goto __pyx_L0;
 
-    /* "ccuDSS.pyx":112
- *     cdef int nrhs = b.shape[1]
+    /* "ccuDSS.pyx":139
+ *         cdef int nrhs = b.shape[1]
  * 
- *     if A.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
- *         print("The sys. matrix values should be complex128 (for now)")
- *         return -1
+ *         if A.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
+ *             print("The sys. matrix values should be complex128 (for now)")
+ *             return -1
  */
   }
 
-  /* "ccuDSS.pyx":116
- *         return -1
+  /* "ccuDSS.pyx":143
+ *             return -1
  * 
- *     if b.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
- *         print("The rhs values should be complex128 (for now)")
- *         return -1
+ *         if b.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
+ *             print("The rhs values should be complex128 (for now)")
+ *             return -1
  */
-  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_dtype); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_dtype); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
-  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_cp); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_cp); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_6 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_dtype); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_dtype); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_cp); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_cp); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_complex128); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_complex128); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_t_1 = NULL;
@@ -3132,89 +3484,89 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     __pyx_t_2 = __Pyx_PyObject_FastCall(__pyx_t_6, __pyx_callargs+1-__pyx_t_7, 1+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_1); __pyx_t_1 = 0;
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 116, __pyx_L1_error)
+    if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 143, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
   }
-  __pyx_t_6 = PyObject_RichCompare(__pyx_t_5, __pyx_t_2, Py_NE); __Pyx_XGOTREF(__pyx_t_6); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 116, __pyx_L1_error)
+  __pyx_t_6 = PyObject_RichCompare(__pyx_t_5, __pyx_t_2, Py_NE); __Pyx_XGOTREF(__pyx_t_6); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
-  __pyx_t_8 = __Pyx_PyObject_IsTrue(__pyx_t_6); if (unlikely((__pyx_t_8 < 0))) __PYX_ERR(0, 116, __pyx_L1_error)
+  __pyx_t_8 = __Pyx_PyObject_IsTrue(__pyx_t_6); if (unlikely((__pyx_t_8 < 0))) __PYX_ERR(0, 143, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":117
+    /* "ccuDSS.pyx":144
  * 
- *     if b.dtype != cp.dtype(cp.complex128):
- *         print("The rhs values should be complex128 (for now)")             # <<<<<<<<<<<<<<
- *         return -1
+ *         if b.dtype != cp.dtype(cp.complex128):
+ *             print("The rhs values should be complex128 (for now)")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-    __pyx_t_6 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__2, NULL); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 117, __pyx_L1_error)
+    __pyx_t_6 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__5, NULL); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 144, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_6);
     __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
 
-    /* "ccuDSS.pyx":118
- *     if b.dtype != cp.dtype(cp.complex128):
- *         print("The rhs values should be complex128 (for now)")
- *         return -1             # <<<<<<<<<<<<<<
+    /* "ccuDSS.pyx":145
+ *         if b.dtype != cp.dtype(cp.complex128):
+ *             print("The rhs values should be complex128 (for now)")
+ *             return -1             # <<<<<<<<<<<<<<
  * 
- *     x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
+ *         x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
  */
     __Pyx_XDECREF(__pyx_r);
     __Pyx_INCREF(__pyx_int_neg_1);
     __pyx_r = __pyx_int_neg_1;
     goto __pyx_L0;
 
-    /* "ccuDSS.pyx":116
- *         return -1
+    /* "ccuDSS.pyx":143
+ *             return -1
  * 
- *     if b.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
- *         print("The rhs values should be complex128 (for now)")
- *         return -1
+ *         if b.dtype != cp.dtype(cp.complex128):             # <<<<<<<<<<<<<<
+ *             print("The rhs values should be complex128 (for now)")
+ *             return -1
  */
   }
 
-  /* "ccuDSS.pyx":120
- *         return -1
+  /* "ccuDSS.pyx":147
+ *             return -1
  * 
- *     x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')             # <<<<<<<<<<<<<<
+ *         x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')             # <<<<<<<<<<<<<<
  * 
- *     cdef size_t  data_ptr_t = A.data.data.ptr
+ *         cdef size_t  data_ptr_t = A.data.data.ptr
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_6, __pyx_n_s_cp); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_6, __pyx_n_s_cp); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_t_6, __pyx_n_s_empty); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_PyObject_GetAttrStr(__pyx_t_6, __pyx_n_s_empty); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
-  __pyx_t_6 = __Pyx_PyInt_From_int(__pyx_v_n); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_6 = __Pyx_PyInt_From_int(__pyx_v_n); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_5 = __Pyx_PyInt_From_int(__pyx_v_nrhs); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyInt_From_int(__pyx_v_nrhs); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
-  __pyx_t_4 = PyTuple_New(2); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_4 = PyTuple_New(2); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_GIVEREF(__pyx_t_6);
-  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_4, 0, __pyx_t_6)) __PYX_ERR(0, 120, __pyx_L1_error);
+  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_4, 0, __pyx_t_6)) __PYX_ERR(0, 147, __pyx_L1_error);
   __Pyx_GIVEREF(__pyx_t_5);
-  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_4, 1, __pyx_t_5)) __PYX_ERR(0, 120, __pyx_L1_error);
+  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_4, 1, __pyx_t_5)) __PYX_ERR(0, 147, __pyx_L1_error);
   __pyx_t_6 = 0;
   __pyx_t_5 = 0;
-  __pyx_t_5 = PyTuple_New(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_5 = PyTuple_New(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __Pyx_GIVEREF(__pyx_t_4);
-  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_5, 0, __pyx_t_4)) __PYX_ERR(0, 120, __pyx_L1_error);
+  if (__Pyx_PyTuple_SET_ITEM(__pyx_t_5, 0, __pyx_t_4)) __PYX_ERR(0, 147, __pyx_L1_error);
   __pyx_t_4 = 0;
-  __pyx_t_4 = __Pyx_PyDict_NewPresized(2); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyDict_NewPresized(2); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __Pyx_GetModuleGlobalName(__pyx_t_6, __pyx_n_s_cp); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_6, __pyx_n_s_cp); if (unlikely(!__pyx_t_6)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_6);
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_6, __pyx_n_s_complex128); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 120, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_6, __pyx_n_s_complex128); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
-  if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_dtype, __pyx_t_1) < 0) __PYX_ERR(0, 120, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_dtype, __pyx_t_1) < 0) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_order, __pyx_n_s_F) < 0) __PYX_ERR(0, 120, __pyx_L1_error)
-  __pyx_t_1 = __Pyx_PyObject_Call(__pyx_t_2, __pyx_t_5, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 120, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_order, __pyx_n_s_F) < 0) __PYX_ERR(0, 147, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_Call(__pyx_t_2, __pyx_t_5, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 147, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
@@ -3222,730 +3574,574 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __pyx_v_x = __pyx_t_1;
   __pyx_t_1 = 0;
 
-  /* "ccuDSS.pyx":122
- *     x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
+  /* "ccuDSS.pyx":149
+ *         x = cp.empty((n, nrhs), dtype=cp.complex128, order='F')
  * 
- *     cdef size_t  data_ptr_t = A.data.data.ptr             # <<<<<<<<<<<<<<
- *     cdef size_t  indices_ptr_t = A.indices.data.ptr
- *     cdef size_t  indptr_ptr_t = A.indptr.data.ptr
+ *         cdef size_t  data_ptr_t = A.data.data.ptr             # <<<<<<<<<<<<<<
+ *         cdef size_t  indices_ptr_t = A.indices.data.ptr
+ *         cdef size_t  indptr_ptr_t = A.indptr.data.ptr
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_data); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 122, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_data); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 149, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 122, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 149, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 122, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 149, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 122, __pyx_L1_error)
+  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 149, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_data_ptr_t = __pyx_t_9;
 
-  /* "ccuDSS.pyx":123
+  /* "ccuDSS.pyx":150
  * 
- *     cdef size_t  data_ptr_t = A.data.data.ptr
- *     cdef size_t  indices_ptr_t = A.indices.data.ptr             # <<<<<<<<<<<<<<
- *     cdef size_t  indptr_ptr_t = A.indptr.data.ptr
- *     cdef size_t  b_ptr_t = b.data.ptr
+ *         cdef size_t  data_ptr_t = A.data.data.ptr
+ *         cdef size_t  indices_ptr_t = A.indices.data.ptr             # <<<<<<<<<<<<<<
+ *         cdef size_t  indptr_ptr_t = A.indptr.data.ptr
+ *         cdef size_t  b_ptr_t = b.data.ptr
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_indices); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 123, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_indices); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 150, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 123, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 150, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 123, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 150, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 123, __pyx_L1_error)
+  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 150, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_indices_ptr_t = __pyx_t_9;
 
-  /* "ccuDSS.pyx":124
- *     cdef size_t  data_ptr_t = A.data.data.ptr
- *     cdef size_t  indices_ptr_t = A.indices.data.ptr
- *     cdef size_t  indptr_ptr_t = A.indptr.data.ptr             # <<<<<<<<<<<<<<
- *     cdef size_t  b_ptr_t = b.data.ptr
- *     cdef size_t  x_ptr_t = x.data.ptr
+  /* "ccuDSS.pyx":151
+ *         cdef size_t  data_ptr_t = A.data.data.ptr
+ *         cdef size_t  indices_ptr_t = A.indices.data.ptr
+ *         cdef size_t  indptr_ptr_t = A.indptr.data.ptr             # <<<<<<<<<<<<<<
+ *         cdef size_t  b_ptr_t = b.data.ptr
+ *         cdef size_t  x_ptr_t = x.data.ptr
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_indptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 124, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_A, __pyx_n_s_indptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 151, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 124, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 151, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 124, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 151, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 124, __pyx_L1_error)
+  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 151, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_indptr_ptr_t = __pyx_t_9;
 
-  /* "ccuDSS.pyx":125
- *     cdef size_t  indices_ptr_t = A.indices.data.ptr
- *     cdef size_t  indptr_ptr_t = A.indptr.data.ptr
- *     cdef size_t  b_ptr_t = b.data.ptr             # <<<<<<<<<<<<<<
- *     cdef size_t  x_ptr_t = x.data.ptr
+  /* "ccuDSS.pyx":152
+ *         cdef size_t  indices_ptr_t = A.indices.data.ptr
+ *         cdef size_t  indptr_ptr_t = A.indptr.data.ptr
+ *         cdef size_t  b_ptr_t = b.data.ptr             # <<<<<<<<<<<<<<
+ *         cdef size_t  x_ptr_t = x.data.ptr
  * 
  */
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_data); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 125, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_v_b, __pyx_n_s_data); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 152, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_ptr); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 125, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_t_1, __pyx_n_s_ptr); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 152, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_4); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 125, __pyx_L1_error)
+  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_4); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 152, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __pyx_v_b_ptr_t = __pyx_t_9;
 
-  /* "ccuDSS.pyx":126
- *     cdef size_t  indptr_ptr_t = A.indptr.data.ptr
- *     cdef size_t  b_ptr_t = b.data.ptr
- *     cdef size_t  x_ptr_t = x.data.ptr             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":153
+ *         cdef size_t  indptr_ptr_t = A.indptr.data.ptr
+ *         cdef size_t  b_ptr_t = b.data.ptr
+ *         cdef size_t  x_ptr_t = x.data.ptr             # <<<<<<<<<<<<<<
  * 
- *     cdef void * data_ptr = <void*>data_ptr_t
+ *         cdef void * data_ptr = <void*>data_ptr_t
  */
-  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_v_x, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 126, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_GetAttrStr(__pyx_v_x, __pyx_n_s_data); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 153, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 126, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_n_s_ptr); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 153, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 126, __pyx_L1_error)
+  __pyx_t_9 = __Pyx_PyInt_As_size_t(__pyx_t_1); if (unlikely((__pyx_t_9 == (size_t)-1) && PyErr_Occurred())) __PYX_ERR(0, 153, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_x_ptr_t = __pyx_t_9;
 
-  /* "ccuDSS.pyx":128
- *     cdef size_t  x_ptr_t = x.data.ptr
+  /* "ccuDSS.pyx":155
+ *         cdef size_t  x_ptr_t = x.data.ptr
  * 
- *     cdef void * data_ptr = <void*>data_ptr_t             # <<<<<<<<<<<<<<
- *     cdef void * indices_ptr = <void*>indices_ptr_t
- *     cdef void * indptr_ptr = <void*>indptr_ptr_t
+ *         cdef void * data_ptr = <void*>data_ptr_t             # <<<<<<<<<<<<<<
+ *         cdef void * indices_ptr = <void*>indices_ptr_t
+ *         cdef void * indptr_ptr = <void*>indptr_ptr_t
  */
   __pyx_v_data_ptr = ((void *)__pyx_v_data_ptr_t);
 
-  /* "ccuDSS.pyx":129
+  /* "ccuDSS.pyx":156
  * 
- *     cdef void * data_ptr = <void*>data_ptr_t
- *     cdef void * indices_ptr = <void*>indices_ptr_t             # <<<<<<<<<<<<<<
- *     cdef void * indptr_ptr = <void*>indptr_ptr_t
- *     cdef void * b_ptr = <void*>b_ptr_t
+ *         cdef void * data_ptr = <void*>data_ptr_t
+ *         cdef void * indices_ptr = <void*>indices_ptr_t             # <<<<<<<<<<<<<<
+ *         cdef void * indptr_ptr = <void*>indptr_ptr_t
+ *         cdef void * b_ptr = <void*>b_ptr_t
  */
   __pyx_v_indices_ptr = ((void *)__pyx_v_indices_ptr_t);
 
-  /* "ccuDSS.pyx":130
- *     cdef void * data_ptr = <void*>data_ptr_t
- *     cdef void * indices_ptr = <void*>indices_ptr_t
- *     cdef void * indptr_ptr = <void*>indptr_ptr_t             # <<<<<<<<<<<<<<
- *     cdef void * b_ptr = <void*>b_ptr_t
- *     cdef void * x_ptr = <void*>x_ptr_t
+  /* "ccuDSS.pyx":157
+ *         cdef void * data_ptr = <void*>data_ptr_t
+ *         cdef void * indices_ptr = <void*>indices_ptr_t
+ *         cdef void * indptr_ptr = <void*>indptr_ptr_t             # <<<<<<<<<<<<<<
+ *         cdef void * b_ptr = <void*>b_ptr_t
+ *         cdef void * x_ptr = <void*>x_ptr_t
  */
   __pyx_v_indptr_ptr = ((void *)__pyx_v_indptr_ptr_t);
 
-  /* "ccuDSS.pyx":131
- *     cdef void * indices_ptr = <void*>indices_ptr_t
- *     cdef void * indptr_ptr = <void*>indptr_ptr_t
- *     cdef void * b_ptr = <void*>b_ptr_t             # <<<<<<<<<<<<<<
- *     cdef void * x_ptr = <void*>x_ptr_t
+  /* "ccuDSS.pyx":158
+ *         cdef void * indices_ptr = <void*>indices_ptr_t
+ *         cdef void * indptr_ptr = <void*>indptr_ptr_t
+ *         cdef void * b_ptr = <void*>b_ptr_t             # <<<<<<<<<<<<<<
+ *         cdef void * x_ptr = <void*>x_ptr_t
  * 
  */
   __pyx_v_b_ptr = ((void *)__pyx_v_b_ptr_t);
 
-  /* "ccuDSS.pyx":132
- *     cdef void * indptr_ptr = <void*>indptr_ptr_t
- *     cdef void * b_ptr = <void*>b_ptr_t
- *     cdef void * x_ptr = <void*>x_ptr_t             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":159
+ *         cdef void * indptr_ptr = <void*>indptr_ptr_t
+ *         cdef void * b_ptr = <void*>b_ptr_t
+ *         cdef void * x_ptr = <void*>x_ptr_t             # <<<<<<<<<<<<<<
  * 
- * 
+ *         #self.status = cudssSetThreadingLayer(self.handle, NULL)
  */
   __pyx_v_x_ptr = ((void *)__pyx_v_x_ptr_t);
 
-  /* "ccuDSS.pyx":135
+  /* "ccuDSS.pyx":165
+ *         #    print("CUDSS Set threading layer FAILED!", flush=True)
  * 
- * 
- *     status = cudssCreate(&handle)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle creation FAILED!",flush=True)
+ *         cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL             # <<<<<<<<<<<<<<
+ *         cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
+ *         cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
  */
-  __pyx_v_status = cudssCreate((&__pyx_v_handle));
+  __pyx_v_mtype = CUDSS_MTYPE_GENERAL;
 
-  /* "ccuDSS.pyx":136
+  /* "ccuDSS.pyx":166
  * 
- *     status = cudssCreate(&handle)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Handle creation FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":137
- *     status = cudssCreate(&handle)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+ *         cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
+ *         cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL             # <<<<<<<<<<<<<<
+ *         cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
  * 
  */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 137, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 137, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__3, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 137, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+  __pyx_v_mview = CUDSS_MVIEW_FULL;
 
-    /* "ccuDSS.pyx":138
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle creation FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":167
+ *         cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
+ *         cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
+ *         cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO             # <<<<<<<<<<<<<<
  * 
- *     cdef cudssConfig_t solverConfig
+ *         cdef double t0, t1
  */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
+  __pyx_v_base = CUDSS_BASE_ZERO;
 
-    /* "ccuDSS.pyx":136
+  /* "ccuDSS.pyx":171
+ *         cdef double t0, t1
  * 
- *     status = cudssCreate(&handle)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Handle creation FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":143
- *     cdef cudssData_t solverData
- * 
- *     status = cudssSetThreadingLayer(handle, NULL)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Set threading layer FAILED!", flush=True)
- */
-  __pyx_v_status = cudssSetThreadingLayer(__pyx_v_handle, NULL);
-
-  /* "ccuDSS.pyx":144
- * 
- *     status = cudssSetThreadingLayer(handle, NULL)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Set threading layer FAILED!", flush=True)
- * 
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":145
- *     status = cudssSetThreadingLayer(handle, NULL)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Set threading layer FAILED!", flush=True)             # <<<<<<<<<<<<<<
- * 
- *     status = cudssConfigCreate(&solverConfig)
- */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 145, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 145, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__4, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 145, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
-    /* "ccuDSS.pyx":144
- * 
- *     status = cudssSetThreadingLayer(handle, NULL)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Set threading layer FAILED!", flush=True)
- * 
- */
-  }
-
-  /* "ccuDSS.pyx":147
- *         print("CUDSS Set threading layer FAILED!", flush=True)
- * 
- *     status = cudssConfigCreate(&solverConfig)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)
- */
-  __pyx_v_status = cudssConfigCreate((&__pyx_v_solverConfig));
-
-  /* "ccuDSS.pyx":148
- * 
- *     status = cudssConfigCreate(&solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":149
- *     status = cudssConfigCreate(&solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 149, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 149, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__5, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 149, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-    /* "ccuDSS.pyx":150
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     status = cudssDataCreate(handle, &solverData)
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":148
- * 
- *     status = cudssConfigCreate(&solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":152
- *         return -1
- * 
- *     status = cudssDataCreate(handle, &solverData)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverData creation FAILED!",flush=True)
- */
-  __pyx_v_status = cudssDataCreate(__pyx_v_handle, (&__pyx_v_solverData));
-
-  /* "ccuDSS.pyx":153
- * 
- *     status = cudssDataCreate(handle, &solverData)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS SolverData creation FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":154
- *     status = cudssDataCreate(handle, &solverData)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverData creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 154, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 154, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__6, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 154, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
-    /* "ccuDSS.pyx":155
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverData creation FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     cdef cudssMatrix_t cu_x, cu_b
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":153
- * 
- *     status = cudssDataCreate(handle, &solverData)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS SolverData creation FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":158
- * 
- *     cdef cudssMatrix_t cu_x, cu_b
- *     cdef int64_t nrows = n, ncols = n             # <<<<<<<<<<<<<<
- *     cdef int ldb = ncols, ldx = nrows;
+ *         cdef int64_t nrows = n, ncols = n             # <<<<<<<<<<<<<<
+ *         cdef int ldb = ncols, ldx = nrows;
  * 
  */
   __pyx_v_nrows = __pyx_v_n;
   __pyx_v_ncols = __pyx_v_n;
 
-  /* "ccuDSS.pyx":159
- *     cdef cudssMatrix_t cu_x, cu_b
- *     cdef int64_t nrows = n, ncols = n
- *     cdef int ldb = ncols, ldx = nrows;             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":172
  * 
- *     status = cudssMatrixCreateDn(&cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
+ *         cdef int64_t nrows = n, ncols = n
+ *         cdef int ldb = ncols, ldx = nrows;             # <<<<<<<<<<<<<<
+ * 
+ *         self.status = cudssMatrixCreateDn(&self.cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
  */
   __pyx_v_ldb = __pyx_v_ncols;
   __pyx_v_ldx = __pyx_v_nrows;
 
-  /* "ccuDSS.pyx":161
- *     cdef int ldb = ncols, ldx = nrows;
- * 
- *     status = cudssMatrixCreateDn(&cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,             # <<<<<<<<<<<<<<
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- */
-  __pyx_v_status = cudssMatrixCreateDn((&__pyx_v_cu_b), __pyx_v_ncols, __pyx_v_nrhs, __pyx_v_ldb, __pyx_v_b_ptr, CUDA_C_64F, CUDSS_LAYOUT_COL_MAJOR);
-
-  /* "ccuDSS.pyx":163
- *     status = cudssMatrixCreateDn(&cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix b creation FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":164
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 164, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 164, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__7, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 164, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-    /* "ccuDSS.pyx":165
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b creation FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     status = cudssMatrixCreateDn(&cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":163
- *     status = cudssMatrixCreateDn(&cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix b creation FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":167
- *         return -1
- * 
- *     status = cudssMatrixCreateDn(&cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,             # <<<<<<<<<<<<<<
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- */
-  __pyx_v_status = cudssMatrixCreateDn((&__pyx_v_cu_x), __pyx_v_nrows, __pyx_v_nrhs, __pyx_v_ldx, __pyx_v_x_ptr, CUDA_C_64F, CUDSS_LAYOUT_COL_MAJOR);
-
-  /* "ccuDSS.pyx":169
- *     status = cudssMatrixCreateDn(&cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix x creation FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":170
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 170, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 170, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__8, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 170, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
-    /* "ccuDSS.pyx":171
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x creation FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     cdef cudssMatrix_t cu_A
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":169
- *     status = cudssMatrixCreateDn(&cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix x creation FAILED!",flush=True)
- *         return -1
- */
-  }
-
   /* "ccuDSS.pyx":174
+ *         cdef int ldb = ncols, ldx = nrows;
  * 
- *     cdef cudssMatrix_t cu_A
- *     cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL             # <<<<<<<<<<<<<<
- *     cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
- *     cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
+ *         self.status = cudssMatrixCreateDn(&self.cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,             # <<<<<<<<<<<<<<
+ *                 CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
  */
-  __pyx_v_mtype = CUDSS_MTYPE_GENERAL;
-
-  /* "ccuDSS.pyx":175
- *     cdef cudssMatrix_t cu_A
- *     cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
- *     cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL             # <<<<<<<<<<<<<<
- *     cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
- * 
- */
-  __pyx_v_mview = CUDSS_MVIEW_FULL;
+  __pyx_v_self->status = cudssMatrixCreateDn((&__pyx_v_self->cu_b), __pyx_v_ncols, __pyx_v_nrhs, __pyx_v_ldb, __pyx_v_b_ptr, CUDA_C_64F, CUDSS_LAYOUT_COL_MAJOR);
 
   /* "ccuDSS.pyx":176
- *     cdef cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL
- *     cdef cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL
- *     cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO             # <<<<<<<<<<<<<<
- * 
- *     status = cudssMatrixCreateCsr(&cu_A, nrows, ncols, nnz, indptr_ptr, NULL,
+ *         self.status = cudssMatrixCreateDn(&self.cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
+ *                 CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix b creation FAILED!",flush=True)
+ *             return -1
  */
-  __pyx_v_base = CUDSS_BASE_ZERO;
-
-  /* "ccuDSS.pyx":178
- *     cdef cudssIndexBase_t base       = CUDSS_BASE_ZERO
- * 
- *     status = cudssMatrixCreateCsr(&cu_A, nrows, ncols, nnz, indptr_ptr, NULL,             # <<<<<<<<<<<<<<
- *                          indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
- *                          base)
- */
-  __pyx_v_status = cudssMatrixCreateCsr((&__pyx_v_cu_A), __pyx_v_nrows, __pyx_v_ncols, __pyx_v_nnz, __pyx_v_indptr_ptr, NULL, __pyx_v_indices_ptr, __pyx_v_data_ptr, CUDA_R_32I, CUDA_C_64F, __pyx_v_mtype, __pyx_v_mview, __pyx_v_base);
-
-  /* "ccuDSS.pyx":181
- *                          indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
- *                          base)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS CSR Matrix A creation FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":182
- *                          base)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+    /* "ccuDSS.pyx":177
+ *                 CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 182, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 177, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 182, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__9, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 182, __pyx_L1_error)
+    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 177, __pyx_L1_error)
+    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__6, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 177, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_4);
     __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+
+    /* "ccuDSS.pyx":178
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b creation FAILED!",flush=True)
+ *             return -1             # <<<<<<<<<<<<<<
+ * 
+ *         self.status = cudssMatrixCreateDn(&self.cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
+ */
+    __Pyx_XDECREF(__pyx_r);
+    __Pyx_INCREF(__pyx_int_neg_1);
+    __pyx_r = __pyx_int_neg_1;
+    goto __pyx_L0;
+
+    /* "ccuDSS.pyx":176
+ *         self.status = cudssMatrixCreateDn(&self.cu_b, ncols, nrhs, ldb, b_ptr, CUDA_C_64F,
+ *                 CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix b creation FAILED!",flush=True)
+ *             return -1
+ */
+  }
+
+  /* "ccuDSS.pyx":180
+ *             return -1
+ * 
+ *         self.status = cudssMatrixCreateDn(&self.cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,             # <<<<<<<<<<<<<<
+ *                             CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ */
+  __pyx_v_self->status = cudssMatrixCreateDn((&__pyx_v_self->cu_x), __pyx_v_nrows, __pyx_v_nrhs, __pyx_v_ldx, __pyx_v_x_ptr, CUDA_C_64F, CUDSS_LAYOUT_COL_MAJOR);
+
+  /* "ccuDSS.pyx":182
+ *         self.status = cudssMatrixCreateDn(&self.cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
+ *                             CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix x creation FAILED!",flush=True)
+ *             return -1
+ */
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+  if (__pyx_t_8) {
 
     /* "ccuDSS.pyx":183
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A creation FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+ *                             CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             return -1
  * 
- *     cdef double t0, t1
+ */
+    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 183, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_4);
+    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 183, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__7, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 183, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+
+    /* "ccuDSS.pyx":184
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x creation FAILED!",flush=True)
+ *             return -1             # <<<<<<<<<<<<<<
+ * 
+ *         if self.sym_fact == 0:
  */
     __Pyx_XDECREF(__pyx_r);
     __Pyx_INCREF(__pyx_int_neg_1);
     __pyx_r = __pyx_int_neg_1;
     goto __pyx_L0;
 
-    /* "ccuDSS.pyx":181
- *                          indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
- *                          base)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS CSR Matrix A creation FAILED!",flush=True)
- *         return -1
+    /* "ccuDSS.pyx":182
+ *         self.status = cudssMatrixCreateDn(&self.cu_x, nrows, nrhs, ldx, x_ptr, CUDA_C_64F,
+ *                             CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix x creation FAILED!",flush=True)
+ *             return -1
  */
   }
 
-  /* "ccuDSS.pyx":187
- *     cdef double t0, t1
+  /* "ccuDSS.pyx":186
+ *             return -1
  * 
- *     t0 = time()             # <<<<<<<<<<<<<<
- *     status =  cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solverConfig, solverData,
- *                            cu_A, cu_x, cu_b)
+ *         if self.sym_fact == 0:             # <<<<<<<<<<<<<<
+ *             self.status = cudssMatrixCreateCsr(&self.cu_A, nrows, ncols, nnz, indptr_ptr, NULL,
+ *                                 indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_time); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 187, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_5 = NULL;
-  __pyx_t_7 = 0;
-  #if CYTHON_UNPACK_METHODS
-  if (unlikely(PyMethod_Check(__pyx_t_1))) {
-    __pyx_t_5 = PyMethod_GET_SELF(__pyx_t_1);
-    if (likely(__pyx_t_5)) {
-      PyObject* function = PyMethod_GET_FUNCTION(__pyx_t_1);
-      __Pyx_INCREF(__pyx_t_5);
-      __Pyx_INCREF(function);
-      __Pyx_DECREF_SET(__pyx_t_1, function);
-      __pyx_t_7 = 1;
-    }
-  }
-  #endif
-  {
-    PyObject *__pyx_callargs[2] = {__pyx_t_5, NULL};
-    __pyx_t_4 = __Pyx_PyObject_FastCall(__pyx_t_1, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
-    __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
-    if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 187, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_4); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 187, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_v_t0 = __pyx_t_10;
-
-  /* "ccuDSS.pyx":188
- * 
- *     t0 = time()
- *     status =  cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solverConfig, solverData,             # <<<<<<<<<<<<<<
- *                            cu_A, cu_x, cu_b)
- *     t1 = time()
- */
-  __pyx_v_status = cudssExecute(__pyx_v_handle, CUDSS_PHASE_ANALYSIS, __pyx_v_solverConfig, __pyx_v_solverData, __pyx_v_cu_A, __pyx_v_cu_x, __pyx_v_cu_b);
-
-  /* "ccuDSS.pyx":190
- *     status =  cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solverConfig, solverData,
- *                            cu_A, cu_x, cu_b)
- *     t1 = time()             # <<<<<<<<<<<<<<
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- */
-  __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_time); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 190, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_5 = NULL;
-  __pyx_t_7 = 0;
-  #if CYTHON_UNPACK_METHODS
-  if (unlikely(PyMethod_Check(__pyx_t_1))) {
-    __pyx_t_5 = PyMethod_GET_SELF(__pyx_t_1);
-    if (likely(__pyx_t_5)) {
-      PyObject* function = PyMethod_GET_FUNCTION(__pyx_t_1);
-      __Pyx_INCREF(__pyx_t_5);
-      __Pyx_INCREF(function);
-      __Pyx_DECREF_SET(__pyx_t_1, function);
-      __pyx_t_7 = 1;
-    }
-  }
-  #endif
-  {
-    PyObject *__pyx_callargs[2] = {__pyx_t_5, NULL};
-    __pyx_t_4 = __Pyx_PyObject_FastCall(__pyx_t_1, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
-    __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
-    if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 190, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_4); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 190, __pyx_L1_error)
-  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_v_t1 = __pyx_t_10;
-
-  /* "ccuDSS.pyx":191
- *                            cu_A, cu_x, cu_b)
- *     t1 = time()
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)
- */
-  __pyx_t_4 = PyTuple_New(3); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 191, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_11 = 0;
-  __pyx_t_12 = 127;
-  __Pyx_INCREF(__pyx_kp_u_CUDSS_Sym_Factorization_took);
-  __pyx_t_11 += 35;
-  __Pyx_GIVEREF(__pyx_kp_u_CUDSS_Sym_Factorization_took);
-  PyTuple_SET_ITEM(__pyx_t_4, 0, __pyx_kp_u_CUDSS_Sym_Factorization_took);
-  __pyx_t_1 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 191, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_1);
-  __pyx_t_5 = __Pyx_PyObject_Format(__pyx_t_1, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 191, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_12 = (__Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_5) > __pyx_t_12) ? __Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_5) : __pyx_t_12;
-  __pyx_t_11 += __Pyx_PyUnicode_GET_LENGTH(__pyx_t_5);
-  __Pyx_GIVEREF(__pyx_t_5);
-  PyTuple_SET_ITEM(__pyx_t_4, 1, __pyx_t_5);
-  __pyx_t_5 = 0;
-  __Pyx_INCREF(__pyx_kp_u_seconds);
-  __pyx_t_11 += 8;
-  __Pyx_GIVEREF(__pyx_kp_u_seconds);
-  PyTuple_SET_ITEM(__pyx_t_4, 2, __pyx_kp_u_seconds);
-  __pyx_t_5 = __Pyx_PyUnicode_Join(__pyx_t_4, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 191, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_5);
-  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  __pyx_t_4 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_5); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 191, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_t_4);
-  __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
-  __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-  /* "ccuDSS.pyx":192
- *     t1 = time()
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_t_8 = (__pyx_v_self->sym_fact == 0);
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":193
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+    /* "ccuDSS.pyx":187
+ * 
+ *         if self.sym_fact == 0:
+ *             self.status = cudssMatrixCreateCsr(&self.cu_A, nrows, ncols, nnz, indptr_ptr, NULL,             # <<<<<<<<<<<<<<
+ *                                 indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
+ *                                 base)
+ */
+    __pyx_v_self->status = cudssMatrixCreateCsr((&__pyx_v_self->cu_A), __pyx_v_nrows, __pyx_v_ncols, __pyx_v_nnz, __pyx_v_indptr_ptr, NULL, __pyx_v_indices_ptr, __pyx_v_data_ptr, CUDA_R_32I, CUDA_C_64F, __pyx_v_mtype, __pyx_v_mview, __pyx_v_base);
+
+    /* "ccuDSS.pyx":190
+ *                                 indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
+ *                                 base)
+ *             if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *                 print("CUDSS CSR Matrix A creation FAILED!",flush=True)
+ *                 return -1
+ */
+    __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+    if (__pyx_t_8) {
+
+      /* "ccuDSS.pyx":191
+ *                                 base)
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS CSR Matrix A creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *                 return -1
  * 
  */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 193, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 193, __pyx_L1_error)
-    __pyx_t_5 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__10, __pyx_t_4); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 193, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_5);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+      __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 191, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_1);
+      if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 191, __pyx_L1_error)
+      __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__8, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 191, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+      __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+      __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+
+      /* "ccuDSS.pyx":192
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS CSR Matrix A creation FAILED!",flush=True)
+ *                 return -1             # <<<<<<<<<<<<<<
+ * 
+ *             t0 = time()
+ */
+      __Pyx_XDECREF(__pyx_r);
+      __Pyx_INCREF(__pyx_int_neg_1);
+      __pyx_r = __pyx_int_neg_1;
+      goto __pyx_L0;
+
+      /* "ccuDSS.pyx":190
+ *                                 indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
+ *                                 base)
+ *             if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *                 print("CUDSS CSR Matrix A creation FAILED!",flush=True)
+ *                 return -1
+ */
+    }
 
     /* "ccuDSS.pyx":194
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+ *                 return -1
  * 
- *     t0 = time()
+ *             t0 = time()             # <<<<<<<<<<<<<<
+ *             self.status =  cudssExecute(self.handle, CUDSS_PHASE_ANALYSIS, self.solverConfig, self.solverData,
+ *                                 self.cu_A, self.cu_x, self.cu_b)
  */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
+    __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_time); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 194, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    __pyx_t_5 = NULL;
+    __pyx_t_7 = 0;
+    #if CYTHON_UNPACK_METHODS
+    if (unlikely(PyMethod_Check(__pyx_t_1))) {
+      __pyx_t_5 = PyMethod_GET_SELF(__pyx_t_1);
+      if (likely(__pyx_t_5)) {
+        PyObject* function = PyMethod_GET_FUNCTION(__pyx_t_1);
+        __Pyx_INCREF(__pyx_t_5);
+        __Pyx_INCREF(function);
+        __Pyx_DECREF_SET(__pyx_t_1, function);
+        __pyx_t_7 = 1;
+      }
+    }
+    #endif
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_5, NULL};
+      __pyx_t_4 = __Pyx_PyObject_FastCall(__pyx_t_1, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
+      __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 194, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+      __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    }
+    __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_4); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 194, __pyx_L1_error)
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __pyx_v_t0 = __pyx_t_10;
 
-    /* "ccuDSS.pyx":192
- *     t1 = time()
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)
- *         return -1
+    /* "ccuDSS.pyx":195
+ * 
+ *             t0 = time()
+ *             self.status =  cudssExecute(self.handle, CUDSS_PHASE_ANALYSIS, self.solverConfig, self.solverData,             # <<<<<<<<<<<<<<
+ *                                 self.cu_A, self.cu_x, self.cu_b)
+ *             t1 = time()
  */
+    __pyx_v_self->status = cudssExecute(__pyx_v_self->handle, CUDSS_PHASE_ANALYSIS, __pyx_v_self->solverConfig, __pyx_v_self->solverData, __pyx_v_self->cu_A, __pyx_v_self->cu_x, __pyx_v_self->cu_b);
+
+    /* "ccuDSS.pyx":197
+ *             self.status =  cudssExecute(self.handle, CUDSS_PHASE_ANALYSIS, self.solverConfig, self.solverData,
+ *                                 self.cu_A, self.cu_x, self.cu_b)
+ *             t1 = time()             # <<<<<<<<<<<<<<
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ */
+    __Pyx_GetModuleGlobalName(__pyx_t_1, __pyx_n_s_time); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 197, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    __pyx_t_5 = NULL;
+    __pyx_t_7 = 0;
+    #if CYTHON_UNPACK_METHODS
+    if (unlikely(PyMethod_Check(__pyx_t_1))) {
+      __pyx_t_5 = PyMethod_GET_SELF(__pyx_t_1);
+      if (likely(__pyx_t_5)) {
+        PyObject* function = PyMethod_GET_FUNCTION(__pyx_t_1);
+        __Pyx_INCREF(__pyx_t_5);
+        __Pyx_INCREF(function);
+        __Pyx_DECREF_SET(__pyx_t_1, function);
+        __pyx_t_7 = 1;
+      }
+    }
+    #endif
+    {
+      PyObject *__pyx_callargs[2] = {__pyx_t_5, NULL};
+      __pyx_t_4 = __Pyx_PyObject_FastCall(__pyx_t_1, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
+      __Pyx_XDECREF(__pyx_t_5); __pyx_t_5 = 0;
+      if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 197, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+      __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    }
+    __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_4); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 197, __pyx_L1_error)
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __pyx_v_t1 = __pyx_t_10;
+
+    /* "ccuDSS.pyx":198
+ *                                 self.cu_A, self.cu_x, self.cu_b)
+ *             t1 = time()
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)
+ */
+    __pyx_t_4 = PyTuple_New(3); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 198, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_4);
+    __pyx_t_11 = 0;
+    __pyx_t_12 = 127;
+    __Pyx_INCREF(__pyx_kp_u_CUDSS_Sym_Factorization_took);
+    __pyx_t_11 += 35;
+    __Pyx_GIVEREF(__pyx_kp_u_CUDSS_Sym_Factorization_took);
+    PyTuple_SET_ITEM(__pyx_t_4, 0, __pyx_kp_u_CUDSS_Sym_Factorization_took);
+    __pyx_t_1 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 198, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    __pyx_t_5 = __Pyx_PyObject_Format(__pyx_t_1, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 198, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_5);
+    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    __pyx_t_12 = (__Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_5) > __pyx_t_12) ? __Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_5) : __pyx_t_12;
+    __pyx_t_11 += __Pyx_PyUnicode_GET_LENGTH(__pyx_t_5);
+    __Pyx_GIVEREF(__pyx_t_5);
+    PyTuple_SET_ITEM(__pyx_t_4, 1, __pyx_t_5);
+    __pyx_t_5 = 0;
+    __Pyx_INCREF(__pyx_kp_u_seconds);
+    __pyx_t_11 += 8;
+    __Pyx_GIVEREF(__pyx_kp_u_seconds);
+    PyTuple_SET_ITEM(__pyx_t_4, 2, __pyx_kp_u_seconds);
+    __pyx_t_5 = __Pyx_PyUnicode_Join(__pyx_t_4, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 198, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_5);
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __pyx_t_4 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_5); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 198, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_4);
+    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+
+    /* "ccuDSS.pyx":199
+ *             t1 = time()
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+ *             if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)
+ *                 return -1
+ */
+    __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+    if (__pyx_t_8) {
+
+      /* "ccuDSS.pyx":200
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *                 return -1
+ * 
+ */
+      __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 200, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+      if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 200, __pyx_L1_error)
+      __pyx_t_5 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__9, __pyx_t_4); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 200, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_5);
+      __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+      __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+
+      /* "ccuDSS.pyx":201
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)
+ *                 return -1             # <<<<<<<<<<<<<<
+ * 
+ *             self.sym_fact = 1
+ */
+      __Pyx_XDECREF(__pyx_r);
+      __Pyx_INCREF(__pyx_int_neg_1);
+      __pyx_r = __pyx_int_neg_1;
+      goto __pyx_L0;
+
+      /* "ccuDSS.pyx":199
+ *             t1 = time()
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+ *             if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)
+ *                 return -1
+ */
+    }
+
+    /* "ccuDSS.pyx":203
+ *                 return -1
+ * 
+ *             self.sym_fact = 1             # <<<<<<<<<<<<<<
+ *         else:
+ *             print("Reusing Sym. Factorization")
+ */
+    __pyx_v_self->sym_fact = 1;
+
+    /* "ccuDSS.pyx":186
+ *             return -1
+ * 
+ *         if self.sym_fact == 0:             # <<<<<<<<<<<<<<
+ *             self.status = cudssMatrixCreateCsr(&self.cu_A, nrows, ncols, nnz, indptr_ptr, NULL,
+ *                                 indices_ptr, data_ptr, CUDA_R_32I, CUDA_C_64F, mtype, mview,
+ */
+    goto __pyx_L7;
   }
 
-  /* "ccuDSS.pyx":196
- *         return -1
+  /* "ccuDSS.pyx":205
+ *             self.sym_fact = 1
+ *         else:
+ *             print("Reusing Sym. Factorization")             # <<<<<<<<<<<<<<
+ *             cudssMatrixSetCsrPointers(self.cu_A, indptr_ptr, NULL, indices_ptr, data_ptr)
  * 
- *     t0 = time()             # <<<<<<<<<<<<<<
- *     status = cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solverConfig,
- *                           solverData, cu_A, cu_x, cu_b)
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_time); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 196, __pyx_L1_error)
+  /*else*/ {
+    __pyx_t_5 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__10, NULL); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 205, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_5);
+    __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
+
+    /* "ccuDSS.pyx":206
+ *         else:
+ *             print("Reusing Sym. Factorization")
+ *             cudssMatrixSetCsrPointers(self.cu_A, indptr_ptr, NULL, indices_ptr, data_ptr)             # <<<<<<<<<<<<<<
+ * 
+ *         t0 = time()
+ */
+    (void)(cudssMatrixSetCsrPointers(__pyx_v_self->cu_A, __pyx_v_indptr_ptr, NULL, __pyx_v_indices_ptr, __pyx_v_data_ptr));
+  }
+  __pyx_L7:;
+
+  /* "ccuDSS.pyx":208
+ *             cudssMatrixSetCsrPointers(self.cu_A, indptr_ptr, NULL, indices_ptr, data_ptr)
+ * 
+ *         t0 = time()             # <<<<<<<<<<<<<<
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_FACTORIZATION, self.solverConfig,
+ *                             self.solverData, self.cu_A, self.cu_x, self.cu_b)
+ */
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_time); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 208, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __pyx_t_1 = NULL;
   __pyx_t_7 = 0;
@@ -3965,31 +4161,31 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     PyObject *__pyx_callargs[2] = {__pyx_t_1, NULL};
     __pyx_t_5 = __Pyx_PyObject_FastCall(__pyx_t_4, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_1); __pyx_t_1 = 0;
-    if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 196, __pyx_L1_error)
+    if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 208, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_5);
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_5); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 196, __pyx_L1_error)
+  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_5); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 208, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   __pyx_v_t0 = __pyx_t_10;
 
-  /* "ccuDSS.pyx":197
+  /* "ccuDSS.pyx":209
  * 
- *     t0 = time()
- *     status = cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solverConfig,             # <<<<<<<<<<<<<<
- *                           solverData, cu_A, cu_x, cu_b)
- *     t1 = time()
+ *         t0 = time()
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_FACTORIZATION, self.solverConfig,             # <<<<<<<<<<<<<<
+ *                             self.solverData, self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()
  */
-  __pyx_v_status = cudssExecute(__pyx_v_handle, CUDSS_PHASE_FACTORIZATION, __pyx_v_solverConfig, __pyx_v_solverData, __pyx_v_cu_A, __pyx_v_cu_x, __pyx_v_cu_b);
+  __pyx_v_self->status = cudssExecute(__pyx_v_self->handle, CUDSS_PHASE_FACTORIZATION, __pyx_v_self->solverConfig, __pyx_v_self->solverData, __pyx_v_self->cu_A, __pyx_v_self->cu_x, __pyx_v_self->cu_b);
 
-  /* "ccuDSS.pyx":199
- *     status = cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solverConfig,
- *                           solverData, cu_A, cu_x, cu_b)
- *     t1 = time()             # <<<<<<<<<<<<<<
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
+  /* "ccuDSS.pyx":211
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_FACTORIZATION, self.solverConfig,
+ *                             self.solverData, self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()             # <<<<<<<<<<<<<<
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_time); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 199, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_n_s_time); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 211, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __pyx_t_1 = NULL;
   __pyx_t_7 = 0;
@@ -4009,22 +4205,22 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     PyObject *__pyx_callargs[2] = {__pyx_t_1, NULL};
     __pyx_t_5 = __Pyx_PyObject_FastCall(__pyx_t_4, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_1); __pyx_t_1 = 0;
-    if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 199, __pyx_L1_error)
+    if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 211, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_5);
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_5); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 199, __pyx_L1_error)
+  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_5); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 211, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   __pyx_v_t1 = __pyx_t_10;
 
-  /* "ccuDSS.pyx":200
- *                           solverData, cu_A, cu_x, cu_b)
- *     t1 = time()
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Factorization FAILED!",flush=True)
+  /* "ccuDSS.pyx":212
+ *                             self.solverData, self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Factorization FAILED!",flush=True)
  */
-  __pyx_t_5 = PyTuple_New(3); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_5 = PyTuple_New(3); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 212, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __pyx_t_11 = 0;
   __pyx_t_12 = 127;
@@ -4032,9 +4228,9 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __pyx_t_11 += 35;
   __Pyx_GIVEREF(__pyx_kp_u_CUDSS_Factorization_took);
   PyTuple_SET_ITEM(__pyx_t_5, 0, __pyx_kp_u_CUDSS_Factorization_took);
-  __pyx_t_4 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_4 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 212, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_1 = __Pyx_PyObject_Format(__pyx_t_4, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_Format(__pyx_t_4, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 212, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __pyx_t_12 = (__Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_1) > __pyx_t_12) ? __Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_1) : __pyx_t_12;
@@ -4046,68 +4242,98 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __pyx_t_11 += 8;
   __Pyx_GIVEREF(__pyx_kp_u_seconds);
   PyTuple_SET_ITEM(__pyx_t_5, 2, __pyx_kp_u_seconds);
-  __pyx_t_1 = __Pyx_PyUnicode_Join(__pyx_t_5, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyUnicode_Join(__pyx_t_5, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 212, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
-  __pyx_t_5 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 200, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 212, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
-  /* "ccuDSS.pyx":201
- *     t1 = time()
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Factorization FAILED!",flush=True)
- *         return -1
+  /* "ccuDSS.pyx":213
+ *         t1 = time()
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
  */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":202
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
+    /* "ccuDSS.pyx":214
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
  */
-    __pyx_t_5 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 202, __pyx_L1_error)
+    __pyx_t_5 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 214, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_5);
-    if (PyDict_SetItem(__pyx_t_5, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 202, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__11, __pyx_t_5); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 202, __pyx_L1_error)
+    if (PyDict_SetItem(__pyx_t_5, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 214, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__11, __pyx_t_5); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 214, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_1);
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
     __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
 
-    /* "ccuDSS.pyx":203
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Factorization FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+    /* "ccuDSS.pyx":215
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:             # <<<<<<<<<<<<<<
+ *                 print("NOT SUPPOERTED")
+ *             return -1
+ */
+    __pyx_t_8 = (__pyx_v_self->status == CUDSS_STATUS_NOT_SUPPORTED);
+    if (__pyx_t_8) {
+
+      /* "ccuDSS.pyx":216
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
- *     t0 = time()
+ */
+      __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__12, NULL); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 216, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_1);
+      __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+
+      /* "ccuDSS.pyx":215
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:             # <<<<<<<<<<<<<<
+ *                 print("NOT SUPPOERTED")
+ *             return -1
+ */
+    }
+
+    /* "ccuDSS.pyx":217
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
+ *             return -1             # <<<<<<<<<<<<<<
+ * 
+ * 
  */
     __Pyx_XDECREF(__pyx_r);
     __Pyx_INCREF(__pyx_int_neg_1);
     __pyx_r = __pyx_int_neg_1;
     goto __pyx_L0;
 
-    /* "ccuDSS.pyx":201
- *     t1 = time()
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Factorization FAILED!",flush=True)
- *         return -1
+    /* "ccuDSS.pyx":213
+ *         t1 = time()
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
  */
   }
 
-  /* "ccuDSS.pyx":205
- *         return -1
+  /* "ccuDSS.pyx":220
  * 
- *     t0 = time()             # <<<<<<<<<<<<<<
- *     status = cudssExecute(handle, CUDSS_PHASE_SOLVE, solverConfig, solverData,
- *                           cu_A, cu_x, cu_b)
+ * 
+ *         t0 = time()             # <<<<<<<<<<<<<<
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_SOLVE, self.solverConfig, self.solverData,
+ *                             self.cu_A, self.cu_x, self.cu_b)
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_n_s_time); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 205, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_n_s_time); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 220, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __pyx_t_4 = NULL;
   __pyx_t_7 = 0;
@@ -4127,31 +4353,31 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     PyObject *__pyx_callargs[2] = {__pyx_t_4, NULL};
     __pyx_t_1 = __Pyx_PyObject_FastCall(__pyx_t_5, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_4); __pyx_t_4 = 0;
-    if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 205, __pyx_L1_error)
+    if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 220, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_1);
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_1); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 205, __pyx_L1_error)
+  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_1); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 220, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_t0 = __pyx_t_10;
 
-  /* "ccuDSS.pyx":206
+  /* "ccuDSS.pyx":221
  * 
- *     t0 = time()
- *     status = cudssExecute(handle, CUDSS_PHASE_SOLVE, solverConfig, solverData,             # <<<<<<<<<<<<<<
- *                           cu_A, cu_x, cu_b)
- *     t1 = time()
+ *         t0 = time()
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_SOLVE, self.solverConfig, self.solverData,             # <<<<<<<<<<<<<<
+ *                             self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()
  */
-  __pyx_v_status = cudssExecute(__pyx_v_handle, CUDSS_PHASE_SOLVE, __pyx_v_solverConfig, __pyx_v_solverData, __pyx_v_cu_A, __pyx_v_cu_x, __pyx_v_cu_b);
+  __pyx_v_self->status = cudssExecute(__pyx_v_self->handle, CUDSS_PHASE_SOLVE, __pyx_v_self->solverConfig, __pyx_v_self->solverData, __pyx_v_self->cu_A, __pyx_v_self->cu_x, __pyx_v_self->cu_b);
 
-  /* "ccuDSS.pyx":208
- *     status = cudssExecute(handle, CUDSS_PHASE_SOLVE, solverConfig, solverData,
- *                           cu_A, cu_x, cu_b)
- *     t1 = time()             # <<<<<<<<<<<<<<
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
+  /* "ccuDSS.pyx":223
+ *         self.status = cudssExecute(self.handle, CUDSS_PHASE_SOLVE, self.solverConfig, self.solverData,
+ *                             self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()             # <<<<<<<<<<<<<<
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
  */
-  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_n_s_time); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 208, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_5, __pyx_n_s_time); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 223, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __pyx_t_4 = NULL;
   __pyx_t_7 = 0;
@@ -4171,22 +4397,22 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     PyObject *__pyx_callargs[2] = {__pyx_t_4, NULL};
     __pyx_t_1 = __Pyx_PyObject_FastCall(__pyx_t_5, __pyx_callargs+1-__pyx_t_7, 0+__pyx_t_7);
     __Pyx_XDECREF(__pyx_t_4); __pyx_t_4 = 0;
-    if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 208, __pyx_L1_error)
+    if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 223, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_1);
     __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   }
-  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_1); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 208, __pyx_L1_error)
+  __pyx_t_10 = __pyx_PyFloat_AsDouble(__pyx_t_1); if (unlikely((__pyx_t_10 == (double)-1) && PyErr_Occurred())) __PYX_ERR(0, 223, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
   __pyx_v_t1 = __pyx_t_10;
 
-  /* "ccuDSS.pyx":209
- *                           cu_A, cu_x, cu_b)
- *     t1 = time()
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solve FAILED!",flush=True)
+  /* "ccuDSS.pyx":224
+ *                             self.cu_A, self.cu_x, self.cu_b)
+ *         t1 = time()
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Solve FAILED!",flush=True)
  */
-  __pyx_t_1 = PyTuple_New(3); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_1 = PyTuple_New(3); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 224, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __pyx_t_11 = 0;
   __pyx_t_12 = 127;
@@ -4194,9 +4420,9 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __pyx_t_11 += 35;
   __Pyx_GIVEREF(__pyx_kp_u_CUDSS_Solve_took);
   PyTuple_SET_ITEM(__pyx_t_1, 0, __pyx_kp_u_CUDSS_Solve_took);
-  __pyx_t_5 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_5 = PyFloat_FromDouble((__pyx_v_t1 - __pyx_v_t0)); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 224, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
-  __pyx_t_4 = __Pyx_PyObject_Format(__pyx_t_5, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyObject_Format(__pyx_t_5, __pyx_kp_u_8_4f); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 224, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
   __pyx_t_12 = (__Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_4) > __pyx_t_12) ? __Pyx_PyUnicode_MAX_CHAR_VALUE(__pyx_t_4) : __pyx_t_12;
@@ -4208,210 +4434,75 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __pyx_t_11 += 8;
   __Pyx_GIVEREF(__pyx_kp_u_seconds);
   PyTuple_SET_ITEM(__pyx_t_1, 2, __pyx_kp_u_seconds);
-  __pyx_t_4 = __Pyx_PyUnicode_Join(__pyx_t_1, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_4 = __Pyx_PyUnicode_Join(__pyx_t_1, 3, __pyx_t_11, __pyx_t_12); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 224, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-  __pyx_t_1 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 209, __pyx_L1_error)
+  __pyx_t_1 = __Pyx_PyObject_CallOneArg(__pyx_builtin_print, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 224, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_1);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
   __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
 
-  /* "ccuDSS.pyx":210
- *     t1 = time()
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solve FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":211
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solve FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 211, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 211, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__12, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 211, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-    /* "ccuDSS.pyx":212
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solve FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     status = cudssMatrixDestroy(cu_A)
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":210
- *     t1 = time()
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solve FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":214
- *         return -1
- * 
- *     status = cudssMatrixDestroy(cu_A)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
- */
-  __pyx_v_status = cudssMatrixDestroy(__pyx_v_cu_A);
-
-  /* "ccuDSS.pyx":215
- * 
- *     status = cudssMatrixDestroy(cu_A)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":216
- *     status = cudssMatrixDestroy(cu_A)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 216, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 216, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__13, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 216, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
-    /* "ccuDSS.pyx":217
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     status = cudssMatrixDestroy(cu_b)
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":215
- * 
- *     status = cudssMatrixDestroy(cu_A)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":219
- *         return -1
- * 
- *     status = cudssMatrixDestroy(cu_b)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)
- */
-  __pyx_v_status = cudssMatrixDestroy(__pyx_v_cu_b);
-
-  /* "ccuDSS.pyx":220
- * 
- *     status = cudssMatrixDestroy(cu_b)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)
- *         return -1
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":221
- *     status = cudssMatrixDestroy(cu_b)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 221, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 221, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__14, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 221, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-    /* "ccuDSS.pyx":222
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
- * 
- *     status = cudssMatrixDestroy(cu_x)
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":220
- * 
- *     status = cudssMatrixDestroy(cu_b)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)
- *         return -1
- */
-  }
-
-  /* "ccuDSS.pyx":224
- *         return -1
- * 
- *     status = cudssMatrixDestroy(cu_x)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)
- */
-  __pyx_v_status = cudssMatrixDestroy(__pyx_v_cu_x);
-
   /* "ccuDSS.pyx":225
- * 
- *     status = cudssMatrixDestroy(cu_x)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)
- *         return -1
+ *         t1 = time()
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Solve FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
  */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
   if (__pyx_t_8) {
 
     /* "ccuDSS.pyx":226
- *     status = cudssMatrixDestroy(cu_x)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Solve FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
  */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 226, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 226, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__15, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 226, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 226, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 226, __pyx_L1_error)
+    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__13, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 226, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_4);
     __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
     /* "ccuDSS.pyx":227
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Solve FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:             # <<<<<<<<<<<<<<
+ *                 print("NOT SUPPOERTED")
+ *             return -1
+ */
+    __pyx_t_8 = (__pyx_v_self->status == CUDSS_STATUS_NOT_SUPPORTED);
+    if (__pyx_t_8) {
+
+      /* "ccuDSS.pyx":228
+ *             print("CUDSS Solve FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
- *     status = cudssDataDestroy(handle, solverData)
+ */
+      __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__12, NULL); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 228, __pyx_L1_error)
+      __Pyx_GOTREF(__pyx_t_4);
+      __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+
+      /* "ccuDSS.pyx":227
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Solve FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:             # <<<<<<<<<<<<<<
+ *                 print("NOT SUPPOERTED")
+ *             return -1
+ */
+    }
+
+    /* "ccuDSS.pyx":229
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
+ *             return -1             # <<<<<<<<<<<<<<
+ * 
+ *         self.status = cudssMatrixDestroy(self.cu_b)
  */
     __Pyx_XDECREF(__pyx_r);
     __Pyx_INCREF(__pyx_int_neg_1);
@@ -4419,184 +4510,118 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
     goto __pyx_L0;
 
     /* "ccuDSS.pyx":225
- * 
- *     status = cudssMatrixDestroy(cu_x)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)
- *         return -1
+ *         t1 = time()
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Solve FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
  */
   }
 
-  /* "ccuDSS.pyx":229
- *         return -1
+  /* "ccuDSS.pyx":231
+ *             return -1
  * 
- *     status = cudssDataDestroy(handle, solverData)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver data destruction FAILED!",flush=True)
+ *         self.status = cudssMatrixDestroy(self.cu_b)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)
  */
-  __pyx_v_status = cudssDataDestroy(__pyx_v_handle, __pyx_v_solverData);
+  __pyx_v_self->status = cudssMatrixDestroy(__pyx_v_self->cu_b);
 
-  /* "ccuDSS.pyx":230
+  /* "ccuDSS.pyx":232
  * 
- *     status = cudssDataDestroy(handle, solverData)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solver data destruction FAILED!",flush=True)
- *         return -1
+ *         self.status = cudssMatrixDestroy(self.cu_b)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)
+ * 
  */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":231
- *     status = cudssDataDestroy(handle, solverData)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver data destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+    /* "ccuDSS.pyx":233
+ *         self.status = cudssMatrixDestroy(self.cu_b)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
  * 
+ *         self.status = cudssMatrixDestroy(self.cu_x)
  */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 231, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 231, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__16, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 231, __pyx_L1_error)
+    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 233, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 233, __pyx_L1_error)
+    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__14, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 233, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
     __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
+    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
 
     /* "ccuDSS.pyx":232
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver data destruction FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
  * 
- *     status = cudssConfigDestroy(solverConfig)
- */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
-
-    /* "ccuDSS.pyx":230
+ *         self.status = cudssMatrixDestroy(self.cu_b)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)
  * 
- *     status = cudssDataDestroy(handle, solverData)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solver data destruction FAILED!",flush=True)
- *         return -1
  */
   }
-
-  /* "ccuDSS.pyx":234
- *         return -1
- * 
- *     status = cudssConfigDestroy(solverConfig)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver config destruction FAILED!",flush=True)
- */
-  __pyx_v_status = cudssConfigDestroy(__pyx_v_solverConfig);
 
   /* "ccuDSS.pyx":235
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)
  * 
- *     status = cudssConfigDestroy(solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solver config destruction FAILED!",flush=True)
- *         return -1
+ *         self.status = cudssMatrixDestroy(self.cu_x)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x destruction FAILED!",flush=True)
  */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
+  __pyx_v_self->status = cudssMatrixDestroy(__pyx_v_self->cu_x);
+
+  /* "ccuDSS.pyx":236
+ * 
+ *         self.status = cudssMatrixDestroy(self.cu_x)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix x destruction FAILED!",flush=True)
+ * 
+ */
+  __pyx_t_8 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
   if (__pyx_t_8) {
 
-    /* "ccuDSS.pyx":236
- *     status = cudssConfigDestroy(solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver config destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
- */
-    __pyx_t_4 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 236, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    if (PyDict_SetItem(__pyx_t_4, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 236, __pyx_L1_error)
-    __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__17, __pyx_t_4); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 236, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-
     /* "ccuDSS.pyx":237
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver config destruction FAILED!",flush=True)
- *         return -1             # <<<<<<<<<<<<<<
+ *         self.status = cudssMatrixDestroy(self.cu_x)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
  * 
- *     status = cudssDestroy(handle)
+ * 
  */
-    __Pyx_XDECREF(__pyx_r);
-    __Pyx_INCREF(__pyx_int_neg_1);
-    __pyx_r = __pyx_int_neg_1;
-    goto __pyx_L0;
+    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 237, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 237, __pyx_L1_error)
+    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__15, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 237, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_4);
+    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-    /* "ccuDSS.pyx":235
+    /* "ccuDSS.pyx":236
  * 
- *     status = cudssConfigDestroy(solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Solver config destruction FAILED!",flush=True)
- *         return -1
+ *         self.status = cudssMatrixDestroy(self.cu_x)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS Matrix x destruction FAILED!",flush=True)
+ * 
  */
   }
-
-  /* "ccuDSS.pyx":239
- *         return -1
- * 
- *     status = cudssDestroy(handle)             # <<<<<<<<<<<<<<
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle destruction FAILED!",flush=True)
- */
-  __pyx_v_status = cudssDestroy(__pyx_v_handle);
 
   /* "ccuDSS.pyx":240
  * 
- *     status = cudssDestroy(handle)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Handle destruction FAILED!",flush=True)
  * 
- */
-  __pyx_t_8 = (__pyx_v_status != CUDSS_STATUS_SUCCESS);
-  if (__pyx_t_8) {
-
-    /* "ccuDSS.pyx":241
- *     status = cudssDestroy(handle)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *         return x             # <<<<<<<<<<<<<<
  * 
- * 
- */
-    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 241, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_1);
-    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 241, __pyx_L1_error)
-    __pyx_t_4 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__18, __pyx_t_1); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 241, __pyx_L1_error)
-    __Pyx_GOTREF(__pyx_t_4);
-    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
-    __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-
-    /* "ccuDSS.pyx":240
- * 
- *     status = cudssDestroy(handle)
- *     if status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
- *         print("CUDSS Handle destruction FAILED!",flush=True)
- * 
- */
-  }
-
-  /* "ccuDSS.pyx":244
- * 
- * 
- *     return x             # <<<<<<<<<<<<<<
- * 
+ *     def __dealloc__(self):
  */
   __Pyx_XDECREF(__pyx_r);
   __Pyx_INCREF(__pyx_v_x);
   __pyx_r = __pyx_v_x;
   goto __pyx_L0;
 
-  /* "ccuDSS.pyx":104
- *     cudssStatus_t cudssConfigDestroy(cudssConfig_t solverConfig)
+  /* "ccuDSS.pyx":133
+ *         self.sym_fact = 0
  * 
- * def spsolve_with_CUDSS(A, b):             # <<<<<<<<<<<<<<
- *     cdef cudssStatus_t status
- *     cdef cudssHandle_t handle
+ *     def spsolve_with_CUDSS(self,A, b):             # <<<<<<<<<<<<<<
+ * 
+ *         cdef int n = A.shape[0]
  */
 
   /* function exit code */
@@ -4606,7 +4631,7 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __Pyx_XDECREF(__pyx_t_4);
   __Pyx_XDECREF(__pyx_t_5);
   __Pyx_XDECREF(__pyx_t_6);
-  __Pyx_AddTraceback("cudss_wrapp.spsolve_with_CUDSS", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.spsolve_with_CUDSS", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XDECREF(__pyx_v_x);
@@ -4614,6 +4639,518 @@ static PyObject *__pyx_pf_11cudss_wrapp_spsolve_with_CUDSS(CYTHON_UNUSED PyObjec
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
+
+/* "ccuDSS.pyx":242
+ *         return x
+ * 
+ *     def __dealloc__(self):             # <<<<<<<<<<<<<<
+ *         print("DEALLOCATING!")
+ *         cudssDataDestroy(self.handle, self.solverData)
+ */
+
+/* Python wrapper */
+static void __pyx_pw_11cudss_wrapp_5CuDSS_5__dealloc__(PyObject *__pyx_v_self); /*proto*/
+static void __pyx_pw_11cudss_wrapp_5CuDSS_5__dealloc__(PyObject *__pyx_v_self) {
+  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("__dealloc__ (wrapper)", 0);
+  __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
+  __pyx_pf_11cudss_wrapp_5CuDSS_4__dealloc__(((struct __pyx_obj_11cudss_wrapp_CuDSS *)__pyx_v_self));
+
+  /* function exit code */
+  __Pyx_RefNannyFinishContext();
+}
+
+static void __pyx_pf_11cudss_wrapp_5CuDSS_4__dealloc__(struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self) {
+  __Pyx_RefNannyDeclarations
+  PyObject *__pyx_t_1 = NULL;
+  int __pyx_t_2;
+  PyObject *__pyx_t_3 = NULL;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("__dealloc__", 1);
+
+  /* "ccuDSS.pyx":243
+ * 
+ *     def __dealloc__(self):
+ *         print("DEALLOCATING!")             # <<<<<<<<<<<<<<
+ *         cudssDataDestroy(self.handle, self.solverData)
+ *         cudssConfigDestroy(self.solverConfig)
+ */
+  __pyx_t_1 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__16, NULL); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 243, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_1);
+  __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+
+  /* "ccuDSS.pyx":244
+ *     def __dealloc__(self):
+ *         print("DEALLOCATING!")
+ *         cudssDataDestroy(self.handle, self.solverData)             # <<<<<<<<<<<<<<
+ *         cudssConfigDestroy(self.solverConfig)
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ */
+  (void)(cudssDataDestroy(__pyx_v_self->handle, __pyx_v_self->solverData));
+
+  /* "ccuDSS.pyx":245
+ *         print("DEALLOCATING!")
+ *         cudssDataDestroy(self.handle, self.solverData)
+ *         cudssConfigDestroy(self.solverConfig)             # <<<<<<<<<<<<<<
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ */
+  (void)(cudssConfigDestroy(__pyx_v_self->solverConfig));
+
+  /* "ccuDSS.pyx":246
+ *         cudssDataDestroy(self.handle, self.solverData)
+ *         cudssConfigDestroy(self.solverConfig)
+ *         self.status = cudssMatrixDestroy(self.cu_A)             # <<<<<<<<<<<<<<
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
+ */
+  __pyx_v_self->status = cudssMatrixDestroy(__pyx_v_self->cu_A);
+
+  /* "ccuDSS.pyx":247
+ *         cudssConfigDestroy(self.solverConfig)
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
+ *         cudssDestroy(self.handle)
+ */
+  __pyx_t_2 = (__pyx_v_self->status != CUDSS_STATUS_SUCCESS);
+  if (__pyx_t_2) {
+
+    /* "ccuDSS.pyx":248
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *         cudssDestroy(self.handle)
+ * 
+ */
+    __pyx_t_1 = __Pyx_PyDict_NewPresized(1); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 248, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_1);
+    if (PyDict_SetItem(__pyx_t_1, __pyx_n_s_flush, Py_True) < 0) __PYX_ERR(0, 248, __pyx_L1_error)
+    __pyx_t_3 = __Pyx_PyObject_Call(__pyx_builtin_print, __pyx_tuple__17, __pyx_t_1); if (unlikely(!__pyx_t_3)) __PYX_ERR(0, 248, __pyx_L1_error)
+    __Pyx_GOTREF(__pyx_t_3);
+    __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+    __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
+
+    /* "ccuDSS.pyx":247
+ *         cudssConfigDestroy(self.solverConfig)
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ *         if self.status != CUDSS_STATUS_SUCCESS:             # <<<<<<<<<<<<<<
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
+ *         cudssDestroy(self.handle)
+ */
+  }
+
+  /* "ccuDSS.pyx":249
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)
+ *         cudssDestroy(self.handle)             # <<<<<<<<<<<<<<
+ * 
+ * 
+ */
+  (void)(cudssDestroy(__pyx_v_self->handle));
+
+  /* "ccuDSS.pyx":242
+ *         return x
+ * 
+ *     def __dealloc__(self):             # <<<<<<<<<<<<<<
+ *         print("DEALLOCATING!")
+ *         cudssDataDestroy(self.handle, self.solverData)
+ */
+
+  /* function exit code */
+  goto __pyx_L0;
+  __pyx_L1_error:;
+  __Pyx_XDECREF(__pyx_t_1);
+  __Pyx_XDECREF(__pyx_t_3);
+  __Pyx_WriteUnraisable("cudss_wrapp.CuDSS.__dealloc__", __pyx_clineno, __pyx_lineno, __pyx_filename, 1, 0);
+  __pyx_L0:;
+  __Pyx_RefNannyFinishContext();
+}
+
+/* "(tree fragment)":1
+ * def __reduce_cython__(self):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):
+ */
+
+/* Python wrapper */
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_7__reduce_cython__(PyObject *__pyx_v_self, 
+#if CYTHON_METH_FASTCALL
+PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
+#else
+PyObject *__pyx_args, PyObject *__pyx_kwds
+#endif
+); /*proto*/
+static PyMethodDef __pyx_mdef_11cudss_wrapp_5CuDSS_7__reduce_cython__ = {"__reduce_cython__", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_7__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_7__reduce_cython__(PyObject *__pyx_v_self, 
+#if CYTHON_METH_FASTCALL
+PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
+#else
+PyObject *__pyx_args, PyObject *__pyx_kwds
+#endif
+) {
+  #if !CYTHON_METH_FASTCALL
+  CYTHON_UNUSED Py_ssize_t __pyx_nargs;
+  #endif
+  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
+  PyObject *__pyx_r = 0;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("__reduce_cython__ (wrapper)", 0);
+  #if !CYTHON_METH_FASTCALL
+  #if CYTHON_ASSUME_SAFE_MACROS
+  __pyx_nargs = PyTuple_GET_SIZE(__pyx_args);
+  #else
+  __pyx_nargs = PyTuple_Size(__pyx_args); if (unlikely(__pyx_nargs < 0)) return NULL;
+  #endif
+  #endif
+  __pyx_kwvalues = __Pyx_KwValues_FASTCALL(__pyx_args, __pyx_nargs);
+  if (unlikely(__pyx_nargs > 0)) {
+    __Pyx_RaiseArgtupleInvalid("__reduce_cython__", 1, 0, 0, __pyx_nargs); return NULL;}
+  if (unlikely(__pyx_kwds) && __Pyx_NumKwargs_FASTCALL(__pyx_kwds) && unlikely(!__Pyx_CheckKeywordStrings(__pyx_kwds, "__reduce_cython__", 0))) return NULL;
+  __pyx_r = __pyx_pf_11cudss_wrapp_5CuDSS_6__reduce_cython__(((struct __pyx_obj_11cudss_wrapp_CuDSS *)__pyx_v_self));
+
+  /* function exit code */
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_6__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self) {
+  PyObject *__pyx_r = NULL;
+  __Pyx_RefNannyDeclarations
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("__reduce_cython__", 1);
+
+  /* "(tree fragment)":2
+ * def __reduce_cython__(self):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"             # <<<<<<<<<<<<<<
+ * def __setstate_cython__(self, __pyx_state):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ */
+  __Pyx_Raise(__pyx_builtin_TypeError, __pyx_kp_s_no_default___reduce___due_to_non, 0, 0);
+  __PYX_ERR(1, 2, __pyx_L1_error)
+
+  /* "(tree fragment)":1
+ * def __reduce_cython__(self):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):
+ */
+
+  /* function exit code */
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.__reduce_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = NULL;
+  __Pyx_XGIVEREF(__pyx_r);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+/* "(tree fragment)":3
+ * def __reduce_cython__(self):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ */
+
+/* Python wrapper */
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_9__setstate_cython__(PyObject *__pyx_v_self, 
+#if CYTHON_METH_FASTCALL
+PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
+#else
+PyObject *__pyx_args, PyObject *__pyx_kwds
+#endif
+); /*proto*/
+static PyMethodDef __pyx_mdef_11cudss_wrapp_5CuDSS_9__setstate_cython__ = {"__setstate_cython__", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_9__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
+static PyObject *__pyx_pw_11cudss_wrapp_5CuDSS_9__setstate_cython__(PyObject *__pyx_v_self, 
+#if CYTHON_METH_FASTCALL
+PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
+#else
+PyObject *__pyx_args, PyObject *__pyx_kwds
+#endif
+) {
+  CYTHON_UNUSED PyObject *__pyx_v___pyx_state = 0;
+  #if !CYTHON_METH_FASTCALL
+  CYTHON_UNUSED Py_ssize_t __pyx_nargs;
+  #endif
+  CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
+  PyObject* values[1] = {0};
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  PyObject *__pyx_r = 0;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("__setstate_cython__ (wrapper)", 0);
+  #if !CYTHON_METH_FASTCALL
+  #if CYTHON_ASSUME_SAFE_MACROS
+  __pyx_nargs = PyTuple_GET_SIZE(__pyx_args);
+  #else
+  __pyx_nargs = PyTuple_Size(__pyx_args); if (unlikely(__pyx_nargs < 0)) return NULL;
+  #endif
+  #endif
+  __pyx_kwvalues = __Pyx_KwValues_FASTCALL(__pyx_args, __pyx_nargs);
+  {
+    PyObject **__pyx_pyargnames[] = {&__pyx_n_s_pyx_state,0};
+    if (__pyx_kwds) {
+      Py_ssize_t kw_args;
+      switch (__pyx_nargs) {
+        case  1: values[0] = __Pyx_Arg_FASTCALL(__pyx_args, 0);
+        CYTHON_FALLTHROUGH;
+        case  0: break;
+        default: goto __pyx_L5_argtuple_error;
+      }
+      kw_args = __Pyx_NumKwargs_FASTCALL(__pyx_kwds);
+      switch (__pyx_nargs) {
+        case  0:
+        if (likely((values[0] = __Pyx_GetKwValue_FASTCALL(__pyx_kwds, __pyx_kwvalues, __pyx_n_s_pyx_state)) != 0)) {
+          (void)__Pyx_Arg_NewRef_FASTCALL(values[0]);
+          kw_args--;
+        }
+        else if (unlikely(PyErr_Occurred())) __PYX_ERR(1, 3, __pyx_L3_error)
+        else goto __pyx_L5_argtuple_error;
+      }
+      if (unlikely(kw_args > 0)) {
+        const Py_ssize_t kwd_pos_args = __pyx_nargs;
+        if (unlikely(__Pyx_ParseOptionalKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values + 0, kwd_pos_args, "__setstate_cython__") < 0)) __PYX_ERR(1, 3, __pyx_L3_error)
+      }
+    } else if (unlikely(__pyx_nargs != 1)) {
+      goto __pyx_L5_argtuple_error;
+    } else {
+      values[0] = __Pyx_Arg_FASTCALL(__pyx_args, 0);
+    }
+    __pyx_v___pyx_state = values[0];
+  }
+  goto __pyx_L6_skip;
+  __pyx_L5_argtuple_error:;
+  __Pyx_RaiseArgtupleInvalid("__setstate_cython__", 1, 1, 1, __pyx_nargs); __PYX_ERR(1, 3, __pyx_L3_error)
+  __pyx_L6_skip:;
+  goto __pyx_L4_argument_unpacking_done;
+  __pyx_L3_error:;
+  {
+    Py_ssize_t __pyx_temp;
+    for (__pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
+      __Pyx_Arg_XDECREF_FASTCALL(values[__pyx_temp]);
+    }
+  }
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_RefNannyFinishContext();
+  return NULL;
+  __pyx_L4_argument_unpacking_done:;
+  __pyx_r = __pyx_pf_11cudss_wrapp_5CuDSS_8__setstate_cython__(((struct __pyx_obj_11cudss_wrapp_CuDSS *)__pyx_v_self), __pyx_v___pyx_state);
+
+  /* function exit code */
+  {
+    Py_ssize_t __pyx_temp;
+    for (__pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
+      __Pyx_Arg_XDECREF_FASTCALL(values[__pyx_temp]);
+    }
+  }
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+static PyObject *__pyx_pf_11cudss_wrapp_5CuDSS_8__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_11cudss_wrapp_CuDSS *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state) {
+  PyObject *__pyx_r = NULL;
+  __Pyx_RefNannyDeclarations
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("__setstate_cython__", 1);
+
+  /* "(tree fragment)":4
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"             # <<<<<<<<<<<<<<
+ */
+  __Pyx_Raise(__pyx_builtin_TypeError, __pyx_kp_s_no_default___reduce___due_to_non, 0, 0);
+  __PYX_ERR(1, 4, __pyx_L1_error)
+
+  /* "(tree fragment)":3
+ * def __reduce_cython__(self):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ */
+
+  /* function exit code */
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("cudss_wrapp.CuDSS.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = NULL;
+  __Pyx_XGIVEREF(__pyx_r);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+static PyObject *__pyx_tp_new_11cudss_wrapp_CuDSS(PyTypeObject *t, CYTHON_UNUSED PyObject *a, CYTHON_UNUSED PyObject *k) {
+  struct __pyx_obj_11cudss_wrapp_CuDSS *p;
+  PyObject *o;
+  #if CYTHON_COMPILING_IN_LIMITED_API
+  allocfunc alloc_func = (allocfunc)PyType_GetSlot(t, Py_tp_alloc);
+  o = alloc_func(t, 0);
+  #else
+  if (likely(!__Pyx_PyType_HasFeature(t, Py_TPFLAGS_IS_ABSTRACT))) {
+    o = (*t->tp_alloc)(t, 0);
+  } else {
+    o = (PyObject *) PyBaseObject_Type.tp_new(t, __pyx_empty_tuple, 0);
+  }
+  if (unlikely(!o)) return 0;
+  #endif
+  p = ((struct __pyx_obj_11cudss_wrapp_CuDSS *)o);
+  new((void*)&(p->handle)) cudssHandle_t();
+  new((void*)&(p->solverConfig)) cudssConfig_t();
+  new((void*)&(p->solverData)) cudssData_t();
+  new((void*)&(p->cu_x)) cudssMatrix_t();
+  new((void*)&(p->cu_b)) cudssMatrix_t();
+  new((void*)&(p->cu_A)) cudssMatrix_t();
+  if (unlikely(__pyx_pw_11cudss_wrapp_5CuDSS_1__cinit__(o, __pyx_empty_tuple, NULL) < 0)) goto bad;
+  return o;
+  bad:
+  Py_DECREF(o); o = 0;
+  return NULL;
+}
+
+static void __pyx_tp_dealloc_11cudss_wrapp_CuDSS(PyObject *o) {
+  struct __pyx_obj_11cudss_wrapp_CuDSS *p = (struct __pyx_obj_11cudss_wrapp_CuDSS *)o;
+  #if CYTHON_USE_TP_FINALIZE
+  if (unlikely((PY_VERSION_HEX >= 0x03080000 || __Pyx_PyType_HasFeature(Py_TYPE(o), Py_TPFLAGS_HAVE_FINALIZE)) && __Pyx_PyObject_GetSlot(o, tp_finalize, destructor)) && (!PyType_IS_GC(Py_TYPE(o)) || !__Pyx_PyObject_GC_IsFinalized(o))) {
+    if (__Pyx_PyObject_GetSlot(o, tp_dealloc, destructor) == __pyx_tp_dealloc_11cudss_wrapp_CuDSS) {
+      if (PyObject_CallFinalizerFromDealloc(o)) return;
+    }
+  }
+  #endif
+  {
+    PyObject *etype, *eval, *etb;
+    PyErr_Fetch(&etype, &eval, &etb);
+    __Pyx_SET_REFCNT(o, Py_REFCNT(o) + 1);
+    __pyx_pw_11cudss_wrapp_5CuDSS_5__dealloc__(o);
+    __Pyx_SET_REFCNT(o, Py_REFCNT(o) - 1);
+    PyErr_Restore(etype, eval, etb);
+  }
+  __Pyx_call_destructor(p->handle);
+  __Pyx_call_destructor(p->solverConfig);
+  __Pyx_call_destructor(p->solverData);
+  __Pyx_call_destructor(p->cu_x);
+  __Pyx_call_destructor(p->cu_b);
+  __Pyx_call_destructor(p->cu_A);
+  #if CYTHON_USE_TYPE_SLOTS || CYTHON_COMPILING_IN_PYPY
+  (*Py_TYPE(o)->tp_free)(o);
+  #else
+  {
+    freefunc tp_free = (freefunc)PyType_GetSlot(Py_TYPE(o), Py_tp_free);
+    if (tp_free) tp_free(o);
+  }
+  #endif
+}
+
+static PyMethodDef __pyx_methods_11cudss_wrapp_CuDSS[] = {
+  {"spsolve_with_CUDSS", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
+  {"__reduce_cython__", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_7__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
+  {"__setstate_cython__", (PyCFunction)(void*)(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_11cudss_wrapp_5CuDSS_9__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
+  {0, 0, 0, 0}
+};
+#if CYTHON_USE_TYPE_SPECS
+static PyType_Slot __pyx_type_11cudss_wrapp_CuDSS_slots[] = {
+  {Py_tp_dealloc, (void *)__pyx_tp_dealloc_11cudss_wrapp_CuDSS},
+  {Py_tp_methods, (void *)__pyx_methods_11cudss_wrapp_CuDSS},
+  {Py_tp_new, (void *)__pyx_tp_new_11cudss_wrapp_CuDSS},
+  {0, 0},
+};
+static PyType_Spec __pyx_type_11cudss_wrapp_CuDSS_spec = {
+  "cudss_wrapp.CuDSS",
+  sizeof(struct __pyx_obj_11cudss_wrapp_CuDSS),
+  0,
+  Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_VERSION_TAG|Py_TPFLAGS_CHECKTYPES|Py_TPFLAGS_HAVE_NEWBUFFER|Py_TPFLAGS_BASETYPE,
+  __pyx_type_11cudss_wrapp_CuDSS_slots,
+};
+#else
+
+static PyTypeObject __pyx_type_11cudss_wrapp_CuDSS = {
+  PyVarObject_HEAD_INIT(0, 0)
+  "cudss_wrapp.""CuDSS", /*tp_name*/
+  sizeof(struct __pyx_obj_11cudss_wrapp_CuDSS), /*tp_basicsize*/
+  0, /*tp_itemsize*/
+  __pyx_tp_dealloc_11cudss_wrapp_CuDSS, /*tp_dealloc*/
+  #if PY_VERSION_HEX < 0x030800b4
+  0, /*tp_print*/
+  #endif
+  #if PY_VERSION_HEX >= 0x030800b4
+  0, /*tp_vectorcall_offset*/
+  #endif
+  0, /*tp_getattr*/
+  0, /*tp_setattr*/
+  #if PY_MAJOR_VERSION < 3
+  0, /*tp_compare*/
+  #endif
+  #if PY_MAJOR_VERSION >= 3
+  0, /*tp_as_async*/
+  #endif
+  0, /*tp_repr*/
+  0, /*tp_as_number*/
+  0, /*tp_as_sequence*/
+  0, /*tp_as_mapping*/
+  0, /*tp_hash*/
+  0, /*tp_call*/
+  0, /*tp_str*/
+  0, /*tp_getattro*/
+  0, /*tp_setattro*/
+  0, /*tp_as_buffer*/
+  Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_VERSION_TAG|Py_TPFLAGS_CHECKTYPES|Py_TPFLAGS_HAVE_NEWBUFFER|Py_TPFLAGS_BASETYPE, /*tp_flags*/
+  0, /*tp_doc*/
+  0, /*tp_traverse*/
+  0, /*tp_clear*/
+  0, /*tp_richcompare*/
+  0, /*tp_weaklistoffset*/
+  0, /*tp_iter*/
+  0, /*tp_iternext*/
+  __pyx_methods_11cudss_wrapp_CuDSS, /*tp_methods*/
+  0, /*tp_members*/
+  0, /*tp_getset*/
+  0, /*tp_base*/
+  0, /*tp_dict*/
+  0, /*tp_descr_get*/
+  0, /*tp_descr_set*/
+  #if !CYTHON_USE_TYPE_SPECS
+  0, /*tp_dictoffset*/
+  #endif
+  0, /*tp_init*/
+  0, /*tp_alloc*/
+  __pyx_tp_new_11cudss_wrapp_CuDSS, /*tp_new*/
+  0, /*tp_free*/
+  0, /*tp_is_gc*/
+  0, /*tp_bases*/
+  0, /*tp_mro*/
+  0, /*tp_cache*/
+  0, /*tp_subclasses*/
+  0, /*tp_weaklist*/
+  0, /*tp_del*/
+  0, /*tp_version_tag*/
+  #if PY_VERSION_HEX >= 0x030400a1
+  #if CYTHON_USE_TP_FINALIZE
+  0, /*tp_finalize*/
+  #else
+  NULL, /*tp_finalize*/
+  #endif
+  #endif
+  #if PY_VERSION_HEX >= 0x030800b1 && (!CYTHON_COMPILING_IN_PYPY || PYPY_VERSION_NUM >= 0x07030800)
+  0, /*tp_vectorcall*/
+  #endif
+  #if __PYX_NEED_TP_PRINT_SLOT == 1
+  0, /*tp_print*/
+  #endif
+  #if PY_VERSION_HEX >= 0x030C0000
+  0, /*tp_watched*/
+  #endif
+  #if PY_VERSION_HEX >= 0x030d00A4
+  0, /*tp_versions_used*/
+  #endif
+  #if CYTHON_COMPILING_IN_PYPY && PY_VERSION_HEX >= 0x03090000 && PY_VERSION_HEX < 0x030a0000
+  0, /*tp_pypy_flags*/
+  #endif
+};
+#endif
 
 static PyMethodDef __pyx_methods[] = {
   {0, 0, 0, 0}
@@ -4637,27 +5174,31 @@ static int __Pyx_CreateStringTabAndInitStrings(void) {
     {&__pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F, __pyx_k_CUDSS_CSR_Matrix_A_destruction_F, sizeof(__pyx_k_CUDSS_CSR_Matrix_A_destruction_F), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Factorization_FAILED, __pyx_k_CUDSS_Factorization_FAILED, sizeof(__pyx_k_CUDSS_Factorization_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_u_CUDSS_Factorization_took, __pyx_k_CUDSS_Factorization_took, sizeof(__pyx_k_CUDSS_Factorization_took), 0, 1, 0, 0},
-    {&__pyx_kp_s_CUDSS_Handle_creation_FAILED, __pyx_k_CUDSS_Handle_creation_FAILED, sizeof(__pyx_k_CUDSS_Handle_creation_FAILED), 0, 0, 1, 0},
-    {&__pyx_kp_s_CUDSS_Handle_destruction_FAILED, __pyx_k_CUDSS_Handle_destruction_FAILED, sizeof(__pyx_k_CUDSS_Handle_destruction_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Matrix_b_creation_FAILED, __pyx_k_CUDSS_Matrix_b_creation_FAILED, sizeof(__pyx_k_CUDSS_Matrix_b_creation_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE, __pyx_k_CUDSS_Matrix_b_destruction_FAILE, sizeof(__pyx_k_CUDSS_Matrix_b_destruction_FAILE), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Matrix_x_creation_FAILED, __pyx_k_CUDSS_Matrix_x_creation_FAILED, sizeof(__pyx_k_CUDSS_Matrix_x_creation_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE, __pyx_k_CUDSS_Matrix_x_destruction_FAILE, sizeof(__pyx_k_CUDSS_Matrix_x_destruction_FAILE), 0, 0, 1, 0},
-    {&__pyx_kp_s_CUDSS_Set_threading_layer_FAILED, __pyx_k_CUDSS_Set_threading_layer_FAILED, sizeof(__pyx_k_CUDSS_Set_threading_layer_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Solve_FAILED, __pyx_k_CUDSS_Solve_FAILED, sizeof(__pyx_k_CUDSS_Solve_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_u_CUDSS_Solve_took, __pyx_k_CUDSS_Solve_took, sizeof(__pyx_k_CUDSS_Solve_took), 0, 1, 0, 0},
     {&__pyx_kp_s_CUDSS_SolverConfig_creation_FAIL, __pyx_k_CUDSS_SolverConfig_creation_FAIL, sizeof(__pyx_k_CUDSS_SolverConfig_creation_FAIL), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_SolverData_creation_FAILED, __pyx_k_CUDSS_SolverData_creation_FAILED, sizeof(__pyx_k_CUDSS_SolverData_creation_FAILED), 0, 0, 1, 0},
-    {&__pyx_kp_s_CUDSS_Solver_config_destruction, __pyx_k_CUDSS_Solver_config_destruction, sizeof(__pyx_k_CUDSS_Solver_config_destruction), 0, 0, 1, 0},
-    {&__pyx_kp_s_CUDSS_Solver_data_destruction_FA, __pyx_k_CUDSS_Solver_data_destruction_FA, sizeof(__pyx_k_CUDSS_Solver_data_destruction_FA), 0, 0, 1, 0},
     {&__pyx_kp_s_CUDSS_Sym_Factorization_FAILED, __pyx_k_CUDSS_Sym_Factorization_FAILED, sizeof(__pyx_k_CUDSS_Sym_Factorization_FAILED), 0, 0, 1, 0},
     {&__pyx_kp_u_CUDSS_Sym_Factorization_took, __pyx_k_CUDSS_Sym_Factorization_took, sizeof(__pyx_k_CUDSS_Sym_Factorization_took), 0, 1, 0, 0},
+    {&__pyx_n_s_CuDSS, __pyx_k_CuDSS, sizeof(__pyx_k_CuDSS), 0, 0, 1, 1},
+    {&__pyx_n_s_CuDSS___reduce_cython, __pyx_k_CuDSS___reduce_cython, sizeof(__pyx_k_CuDSS___reduce_cython), 0, 0, 1, 1},
+    {&__pyx_n_s_CuDSS___setstate_cython, __pyx_k_CuDSS___setstate_cython, sizeof(__pyx_k_CuDSS___setstate_cython), 0, 0, 1, 1},
+    {&__pyx_n_s_CuDSS_spsolve_with_CUDSS, __pyx_k_CuDSS_spsolve_with_CUDSS, sizeof(__pyx_k_CuDSS_spsolve_with_CUDSS), 0, 0, 1, 1},
+    {&__pyx_kp_s_DEALLOCATING, __pyx_k_DEALLOCATING, sizeof(__pyx_k_DEALLOCATING), 0, 0, 1, 0},
     {&__pyx_n_s_F, __pyx_k_F, sizeof(__pyx_k_F), 0, 0, 1, 1},
+    {&__pyx_kp_s_NOT_SUPPOERTED, __pyx_k_NOT_SUPPOERTED, sizeof(__pyx_k_NOT_SUPPOERTED), 0, 0, 1, 0},
+    {&__pyx_kp_s_Reusing_Sym_Factorization, __pyx_k_Reusing_Sym_Factorization, sizeof(__pyx_k_Reusing_Sym_Factorization), 0, 0, 1, 0},
+    {&__pyx_n_s_RuntimeError, __pyx_k_RuntimeError, sizeof(__pyx_k_RuntimeError), 0, 0, 1, 1},
     {&__pyx_kp_s_The_rhs_values_should_be_complex, __pyx_k_The_rhs_values_should_be_complex, sizeof(__pyx_k_The_rhs_values_should_be_complex), 0, 0, 1, 0},
     {&__pyx_kp_s_The_sys_matrix_values_should_be, __pyx_k_The_sys_matrix_values_should_be, sizeof(__pyx_k_The_sys_matrix_values_should_be), 0, 0, 1, 0},
-    {&__pyx_n_s__19, __pyx_k__19, sizeof(__pyx_k__19), 0, 0, 1, 1},
-    {&__pyx_kp_u__20, __pyx_k__20, sizeof(__pyx_k__20), 0, 1, 0, 0},
-    {&__pyx_n_s__23, __pyx_k__23, sizeof(__pyx_k__23), 0, 0, 1, 1},
+    {&__pyx_n_s_TypeError, __pyx_k_TypeError, sizeof(__pyx_k_TypeError), 0, 0, 1, 1},
+    {&__pyx_n_s__18, __pyx_k__18, sizeof(__pyx_k__18), 0, 0, 1, 1},
+    {&__pyx_kp_u__19, __pyx_k__19, sizeof(__pyx_k__19), 0, 1, 0, 0},
+    {&__pyx_n_s__26, __pyx_k__26, sizeof(__pyx_k__26), 0, 0, 1, 1},
     {&__pyx_n_s_asyncio_coroutines, __pyx_k_asyncio_coroutines, sizeof(__pyx_k_asyncio_coroutines), 0, 0, 1, 1},
     {&__pyx_n_s_b, __pyx_k_b, sizeof(__pyx_k_b), 0, 0, 1, 1},
     {&__pyx_n_s_b_ptr, __pyx_k_b_ptr, sizeof(__pyx_k_b_ptr), 0, 0, 1, 1},
@@ -4668,19 +5209,20 @@ static int __Pyx_CreateStringTabAndInitStrings(void) {
     {&__pyx_n_s_complex128, __pyx_k_complex128, sizeof(__pyx_k_complex128), 0, 0, 1, 1},
     {&__pyx_n_s_cp, __pyx_k_cp, sizeof(__pyx_k_cp), 0, 0, 1, 1},
     {&__pyx_n_s_csr_matrix, __pyx_k_csr_matrix, sizeof(__pyx_k_csr_matrix), 0, 0, 1, 1},
-    {&__pyx_n_s_cu_A, __pyx_k_cu_A, sizeof(__pyx_k_cu_A), 0, 0, 1, 1},
-    {&__pyx_n_s_cu_b, __pyx_k_cu_b, sizeof(__pyx_k_cu_b), 0, 0, 1, 1},
-    {&__pyx_n_s_cu_x, __pyx_k_cu_x, sizeof(__pyx_k_cu_x), 0, 0, 1, 1},
+    {&__pyx_kp_s_cuDSS_handle_creation_failed, __pyx_k_cuDSS_handle_creation_failed, sizeof(__pyx_k_cuDSS_handle_creation_failed), 0, 0, 1, 0},
     {&__pyx_n_s_cudss_wrapp, __pyx_k_cudss_wrapp, sizeof(__pyx_k_cudss_wrapp), 0, 0, 1, 1},
     {&__pyx_n_s_cupy, __pyx_k_cupy, sizeof(__pyx_k_cupy), 0, 0, 1, 1},
     {&__pyx_n_s_cupyx_scipy_sparse, __pyx_k_cupyx_scipy_sparse, sizeof(__pyx_k_cupyx_scipy_sparse), 0, 0, 1, 1},
     {&__pyx_n_s_data, __pyx_k_data, sizeof(__pyx_k_data), 0, 0, 1, 1},
     {&__pyx_n_s_data_ptr, __pyx_k_data_ptr, sizeof(__pyx_k_data_ptr), 0, 0, 1, 1},
     {&__pyx_n_s_data_ptr_t, __pyx_k_data_ptr_t, sizeof(__pyx_k_data_ptr_t), 0, 0, 1, 1},
+    {&__pyx_kp_u_disable, __pyx_k_disable, sizeof(__pyx_k_disable), 0, 1, 0, 0},
     {&__pyx_n_s_dtype, __pyx_k_dtype, sizeof(__pyx_k_dtype), 0, 0, 1, 1},
     {&__pyx_n_s_empty, __pyx_k_empty, sizeof(__pyx_k_empty), 0, 0, 1, 1},
+    {&__pyx_kp_u_enable, __pyx_k_enable, sizeof(__pyx_k_enable), 0, 1, 0, 0},
     {&__pyx_n_s_flush, __pyx_k_flush, sizeof(__pyx_k_flush), 0, 0, 1, 1},
-    {&__pyx_n_s_handle, __pyx_k_handle, sizeof(__pyx_k_handle), 0, 0, 1, 1},
+    {&__pyx_kp_u_gc, __pyx_k_gc, sizeof(__pyx_k_gc), 0, 1, 0, 0},
+    {&__pyx_n_s_getstate, __pyx_k_getstate, sizeof(__pyx_k_getstate), 0, 0, 1, 1},
     {&__pyx_n_s_import, __pyx_k_import, sizeof(__pyx_k_import), 0, 0, 1, 1},
     {&__pyx_n_s_indices, __pyx_k_indices, sizeof(__pyx_k_indices), 0, 0, 1, 1},
     {&__pyx_n_s_indices_ptr, __pyx_k_indices_ptr, sizeof(__pyx_k_indices_ptr), 0, 0, 1, 1},
@@ -4690,6 +5232,7 @@ static int __Pyx_CreateStringTabAndInitStrings(void) {
     {&__pyx_n_s_indptr_ptr_t, __pyx_k_indptr_ptr_t, sizeof(__pyx_k_indptr_ptr_t), 0, 0, 1, 1},
     {&__pyx_n_s_initializing, __pyx_k_initializing, sizeof(__pyx_k_initializing), 0, 0, 1, 1},
     {&__pyx_n_s_is_coroutine, __pyx_k_is_coroutine, sizeof(__pyx_k_is_coroutine), 0, 0, 1, 1},
+    {&__pyx_kp_u_isenabled, __pyx_k_isenabled, sizeof(__pyx_k_isenabled), 0, 1, 0, 0},
     {&__pyx_n_s_ldb, __pyx_k_ldb, sizeof(__pyx_k_ldb), 0, 0, 1, 1},
     {&__pyx_n_s_ldx, __pyx_k_ldx, sizeof(__pyx_k_ldx), 0, 0, 1, 1},
     {&__pyx_n_s_main, __pyx_k_main, sizeof(__pyx_k_main), 0, 0, 1, 1},
@@ -4699,18 +5242,24 @@ static int __Pyx_CreateStringTabAndInitStrings(void) {
     {&__pyx_n_s_name, __pyx_k_name, sizeof(__pyx_k_name), 0, 0, 1, 1},
     {&__pyx_n_s_ncols, __pyx_k_ncols, sizeof(__pyx_k_ncols), 0, 0, 1, 1},
     {&__pyx_n_s_nnz, __pyx_k_nnz, sizeof(__pyx_k_nnz), 0, 0, 1, 1},
+    {&__pyx_kp_s_no_default___reduce___due_to_non, __pyx_k_no_default___reduce___due_to_non, sizeof(__pyx_k_no_default___reduce___due_to_non), 0, 0, 1, 0},
     {&__pyx_n_s_nrhs, __pyx_k_nrhs, sizeof(__pyx_k_nrhs), 0, 0, 1, 1},
     {&__pyx_n_s_nrows, __pyx_k_nrows, sizeof(__pyx_k_nrows), 0, 0, 1, 1},
     {&__pyx_n_s_order, __pyx_k_order, sizeof(__pyx_k_order), 0, 0, 1, 1},
     {&__pyx_n_s_print, __pyx_k_print, sizeof(__pyx_k_print), 0, 0, 1, 1},
     {&__pyx_n_s_ptr, __pyx_k_ptr, sizeof(__pyx_k_ptr), 0, 0, 1, 1},
+    {&__pyx_n_s_pyx_state, __pyx_k_pyx_state, sizeof(__pyx_k_pyx_state), 0, 0, 1, 1},
+    {&__pyx_n_s_reduce, __pyx_k_reduce, sizeof(__pyx_k_reduce), 0, 0, 1, 1},
+    {&__pyx_n_s_reduce_cython, __pyx_k_reduce_cython, sizeof(__pyx_k_reduce_cython), 0, 0, 1, 1},
+    {&__pyx_n_s_reduce_ex, __pyx_k_reduce_ex, sizeof(__pyx_k_reduce_ex), 0, 0, 1, 1},
     {&__pyx_kp_u_seconds, __pyx_k_seconds, sizeof(__pyx_k_seconds), 0, 1, 0, 0},
+    {&__pyx_n_s_self, __pyx_k_self, sizeof(__pyx_k_self), 0, 0, 1, 1},
+    {&__pyx_n_s_setstate, __pyx_k_setstate, sizeof(__pyx_k_setstate), 0, 0, 1, 1},
+    {&__pyx_n_s_setstate_cython, __pyx_k_setstate_cython, sizeof(__pyx_k_setstate_cython), 0, 0, 1, 1},
     {&__pyx_n_s_shape, __pyx_k_shape, sizeof(__pyx_k_shape), 0, 0, 1, 1},
-    {&__pyx_n_s_solverConfig, __pyx_k_solverConfig, sizeof(__pyx_k_solverConfig), 0, 0, 1, 1},
-    {&__pyx_n_s_solverData, __pyx_k_solverData, sizeof(__pyx_k_solverData), 0, 0, 1, 1},
     {&__pyx_n_s_spec, __pyx_k_spec, sizeof(__pyx_k_spec), 0, 0, 1, 1},
     {&__pyx_n_s_spsolve_with_CUDSS, __pyx_k_spsolve_with_CUDSS, sizeof(__pyx_k_spsolve_with_CUDSS), 0, 0, 1, 1},
-    {&__pyx_n_s_status, __pyx_k_status, sizeof(__pyx_k_status), 0, 0, 1, 1},
+    {&__pyx_kp_s_stringsource, __pyx_k_stringsource, sizeof(__pyx_k_stringsource), 0, 0, 1, 0},
     {&__pyx_n_s_t0, __pyx_k_t0, sizeof(__pyx_k_t0), 0, 0, 1, 1},
     {&__pyx_n_s_t1, __pyx_k_t1, sizeof(__pyx_k_t1), 0, 0, 1, 1},
     {&__pyx_n_s_test, __pyx_k_test, sizeof(__pyx_k_test), 0, 0, 1, 1},
@@ -4724,7 +5273,9 @@ static int __Pyx_CreateStringTabAndInitStrings(void) {
 }
 /* #### Code section: cached_builtins ### */
 static CYTHON_SMALL_CODE int __Pyx_InitCachedBuiltins(void) {
-  __pyx_builtin_print = __Pyx_GetBuiltinName(__pyx_n_s_print); if (!__pyx_builtin_print) __PYX_ERR(0, 113, __pyx_L1_error)
+  __pyx_builtin_RuntimeError = __Pyx_GetBuiltinName(__pyx_n_s_RuntimeError); if (!__pyx_builtin_RuntimeError) __PYX_ERR(0, 121, __pyx_L1_error)
+  __pyx_builtin_print = __Pyx_GetBuiltinName(__pyx_n_s_print); if (!__pyx_builtin_print) __PYX_ERR(0, 125, __pyx_L1_error)
+  __pyx_builtin_TypeError = __Pyx_GetBuiltinName(__pyx_n_s_TypeError); if (!__pyx_builtin_TypeError) __PYX_ERR(1, 2, __pyx_L1_error)
   return 0;
   __pyx_L1_error:;
   return -1;
@@ -4735,215 +5286,225 @@ static CYTHON_SMALL_CODE int __Pyx_InitCachedConstants(void) {
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__Pyx_InitCachedConstants", 0);
 
-  /* "ccuDSS.pyx":113
+  /* "ccuDSS.pyx":121
+ *         self.status = cudssCreate(&self.handle)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             raise RuntimeError("cuDSS handle creation failed")             # <<<<<<<<<<<<<<
  * 
- *     if A.dtype != cp.dtype(cp.complex128):
- *         print("The sys. matrix values should be complex128 (for now)")             # <<<<<<<<<<<<<<
- *         return -1
- * 
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
  */
-  __pyx_tuple_ = PyTuple_Pack(1, __pyx_kp_s_The_sys_matrix_values_should_be); if (unlikely(!__pyx_tuple_)) __PYX_ERR(0, 113, __pyx_L1_error)
+  __pyx_tuple_ = PyTuple_Pack(1, __pyx_kp_s_cuDSS_handle_creation_failed); if (unlikely(!__pyx_tuple_)) __PYX_ERR(0, 121, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple_);
   __Pyx_GIVEREF(__pyx_tuple_);
 
-  /* "ccuDSS.pyx":117
+  /* "ccuDSS.pyx":125
+ *         self.status = cudssDataCreate(self.handle, &self.solverData)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverData creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
  * 
- *     if b.dtype != cp.dtype(cp.complex128):
- *         print("The rhs values should be complex128 (for now)")             # <<<<<<<<<<<<<<
- *         return -1
- * 
+ *         self.status = cudssConfigCreate(&self.solverConfig)
  */
-  __pyx_tuple__2 = PyTuple_Pack(1, __pyx_kp_s_The_rhs_values_should_be_complex); if (unlikely(!__pyx_tuple__2)) __PYX_ERR(0, 117, __pyx_L1_error)
+  __pyx_tuple__2 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_SolverData_creation_FAILED); if (unlikely(!__pyx_tuple__2)) __PYX_ERR(0, 125, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__2);
   __Pyx_GIVEREF(__pyx_tuple__2);
 
-  /* "ccuDSS.pyx":137
- *     status = cudssCreate(&handle)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":129
+ *         self.status = cudssConfigCreate(&self.solverConfig)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS SolverConfig creation FAILED!", flush=True)             # <<<<<<<<<<<<<<
  * 
+ *         self.sym_fact = 0
  */
-  __pyx_tuple__3 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Handle_creation_FAILED); if (unlikely(!__pyx_tuple__3)) __PYX_ERR(0, 137, __pyx_L1_error)
+  __pyx_tuple__3 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_SolverConfig_creation_FAIL); if (unlikely(!__pyx_tuple__3)) __PYX_ERR(0, 129, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__3);
   __Pyx_GIVEREF(__pyx_tuple__3);
 
-  /* "ccuDSS.pyx":145
- *     status = cudssSetThreadingLayer(handle, NULL)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Set threading layer FAILED!", flush=True)             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":140
  * 
- *     status = cudssConfigCreate(&solverConfig)
+ *         if A.dtype != cp.dtype(cp.complex128):
+ *             print("The sys. matrix values should be complex128 (for now)")             # <<<<<<<<<<<<<<
+ *             return -1
+ * 
  */
-  __pyx_tuple__4 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Set_threading_layer_FAILED); if (unlikely(!__pyx_tuple__4)) __PYX_ERR(0, 145, __pyx_L1_error)
+  __pyx_tuple__4 = PyTuple_Pack(1, __pyx_kp_s_The_sys_matrix_values_should_be); if (unlikely(!__pyx_tuple__4)) __PYX_ERR(0, 140, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__4);
   __Pyx_GIVEREF(__pyx_tuple__4);
 
-  /* "ccuDSS.pyx":149
- *     status = cudssConfigCreate(&solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverConfig creation FAILED!", flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":144
+ * 
+ *         if b.dtype != cp.dtype(cp.complex128):
+ *             print("The rhs values should be complex128 (for now)")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-  __pyx_tuple__5 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_SolverConfig_creation_FAIL); if (unlikely(!__pyx_tuple__5)) __PYX_ERR(0, 149, __pyx_L1_error)
+  __pyx_tuple__5 = PyTuple_Pack(1, __pyx_kp_s_The_rhs_values_should_be_complex); if (unlikely(!__pyx_tuple__5)) __PYX_ERR(0, 144, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__5);
   __Pyx_GIVEREF(__pyx_tuple__5);
 
-  /* "ccuDSS.pyx":154
- *     status = cudssDataCreate(handle, &solverData)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS SolverData creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":177
+ *                 CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-  __pyx_tuple__6 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_SolverData_creation_FAILED); if (unlikely(!__pyx_tuple__6)) __PYX_ERR(0, 154, __pyx_L1_error)
+  __pyx_tuple__6 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_b_creation_FAILED); if (unlikely(!__pyx_tuple__6)) __PYX_ERR(0, 177, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__6);
   __Pyx_GIVEREF(__pyx_tuple__6);
 
-  /* "ccuDSS.pyx":164
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":183
+ *                             CUDSS_LAYOUT_COL_MAJOR)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-  __pyx_tuple__7 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_b_creation_FAILED); if (unlikely(!__pyx_tuple__7)) __PYX_ERR(0, 164, __pyx_L1_error)
+  __pyx_tuple__7 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_x_creation_FAILED); if (unlikely(!__pyx_tuple__7)) __PYX_ERR(0, 183, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__7);
   __Pyx_GIVEREF(__pyx_tuple__7);
 
-  /* "ccuDSS.pyx":170
- *                          CUDSS_LAYOUT_COL_MAJOR)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":191
+ *                                 base)
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS CSR Matrix A creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *                 return -1
  * 
  */
-  __pyx_tuple__8 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_x_creation_FAILED); if (unlikely(!__pyx_tuple__8)) __PYX_ERR(0, 170, __pyx_L1_error)
+  __pyx_tuple__8 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL); if (unlikely(!__pyx_tuple__8)) __PYX_ERR(0, 191, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__8);
   __Pyx_GIVEREF(__pyx_tuple__8);
 
-  /* "ccuDSS.pyx":182
- *                          base)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A creation FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":200
+ *             print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
+ *             if self.status != CUDSS_STATUS_SUCCESS:
+ *                 print("CUDSS Sym. Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *                 return -1
  * 
  */
-  __pyx_tuple__9 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_CSR_Matrix_A_creation_FAIL); if (unlikely(!__pyx_tuple__9)) __PYX_ERR(0, 182, __pyx_L1_error)
+  __pyx_tuple__9 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Sym_Factorization_FAILED); if (unlikely(!__pyx_tuple__9)) __PYX_ERR(0, 200, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__9);
   __Pyx_GIVEREF(__pyx_tuple__9);
 
-  /* "ccuDSS.pyx":193
- *     print(f"CUDSS Sym. Factorization took{' '*6}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Sym. Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":205
+ *             self.sym_fact = 1
+ *         else:
+ *             print("Reusing Sym. Factorization")             # <<<<<<<<<<<<<<
+ *             cudssMatrixSetCsrPointers(self.cu_A, indptr_ptr, NULL, indices_ptr, data_ptr)
  * 
  */
-  __pyx_tuple__10 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Sym_Factorization_FAILED); if (unlikely(!__pyx_tuple__10)) __PYX_ERR(0, 193, __pyx_L1_error)
+  __pyx_tuple__10 = PyTuple_Pack(1, __pyx_kp_s_Reusing_Sym_Factorization); if (unlikely(!__pyx_tuple__10)) __PYX_ERR(0, 205, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__10);
   __Pyx_GIVEREF(__pyx_tuple__10);
 
-  /* "ccuDSS.pyx":202
- *     print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
+  /* "ccuDSS.pyx":214
+ *         print(f"CUDSS Factorization took{' '*11}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Factorization FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
  */
-  __pyx_tuple__11 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Factorization_FAILED); if (unlikely(!__pyx_tuple__11)) __PYX_ERR(0, 202, __pyx_L1_error)
+  __pyx_tuple__11 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Factorization_FAILED); if (unlikely(!__pyx_tuple__11)) __PYX_ERR(0, 214, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__11);
   __Pyx_GIVEREF(__pyx_tuple__11);
 
-  /* "ccuDSS.pyx":211
- *     print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solve FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":216
+ *             print("CUDSS Factorization FAILED!",flush=True)
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")             # <<<<<<<<<<<<<<
+ *             return -1
  * 
  */
-  __pyx_tuple__12 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Solve_FAILED); if (unlikely(!__pyx_tuple__12)) __PYX_ERR(0, 211, __pyx_L1_error)
+  __pyx_tuple__12 = PyTuple_Pack(1, __pyx_kp_s_NOT_SUPPOERTED); if (unlikely(!__pyx_tuple__12)) __PYX_ERR(0, 216, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__12);
   __Pyx_GIVEREF(__pyx_tuple__12);
 
-  /* "ccuDSS.pyx":216
- *     status = cudssMatrixDestroy(cu_A)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS CSR Matrix A destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
- * 
+  /* "ccuDSS.pyx":226
+ *         print(f"CUDSS Solve took{' '*19}{t1 - t0:8.4f} seconds")
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Solve FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *             if self.status == CUDSS_STATUS_NOT_SUPPORTED:
+ *                 print("NOT SUPPOERTED")
  */
-  __pyx_tuple__13 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F); if (unlikely(!__pyx_tuple__13)) __PYX_ERR(0, 216, __pyx_L1_error)
+  __pyx_tuple__13 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Solve_FAILED); if (unlikely(!__pyx_tuple__13)) __PYX_ERR(0, 226, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__13);
   __Pyx_GIVEREF(__pyx_tuple__13);
 
-  /* "ccuDSS.pyx":221
- *     status = cudssMatrixDestroy(cu_b)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix b destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":233
+ *         self.status = cudssMatrixDestroy(self.cu_b)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix b destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
  * 
+ *         self.status = cudssMatrixDestroy(self.cu_x)
  */
-  __pyx_tuple__14 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE); if (unlikely(!__pyx_tuple__14)) __PYX_ERR(0, 221, __pyx_L1_error)
+  __pyx_tuple__14 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_b_destruction_FAILE); if (unlikely(!__pyx_tuple__14)) __PYX_ERR(0, 233, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__14);
   __Pyx_GIVEREF(__pyx_tuple__14);
 
-  /* "ccuDSS.pyx":226
- *     status = cudssMatrixDestroy(cu_x)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Matrix x destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":237
+ *         self.status = cudssMatrixDestroy(self.cu_x)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS Matrix x destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ * 
  * 
  */
-  __pyx_tuple__15 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE); if (unlikely(!__pyx_tuple__15)) __PYX_ERR(0, 226, __pyx_L1_error)
+  __pyx_tuple__15 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Matrix_x_destruction_FAILE); if (unlikely(!__pyx_tuple__15)) __PYX_ERR(0, 237, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__15);
   __Pyx_GIVEREF(__pyx_tuple__15);
 
-  /* "ccuDSS.pyx":231
- *     status = cudssDataDestroy(handle, solverData)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver data destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":243
  * 
+ *     def __dealloc__(self):
+ *         print("DEALLOCATING!")             # <<<<<<<<<<<<<<
+ *         cudssDataDestroy(self.handle, self.solverData)
+ *         cudssConfigDestroy(self.solverConfig)
  */
-  __pyx_tuple__16 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Solver_data_destruction_FA); if (unlikely(!__pyx_tuple__16)) __PYX_ERR(0, 231, __pyx_L1_error)
+  __pyx_tuple__16 = PyTuple_Pack(1, __pyx_kp_s_DEALLOCATING); if (unlikely(!__pyx_tuple__16)) __PYX_ERR(0, 243, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__16);
   __Pyx_GIVEREF(__pyx_tuple__16);
 
-  /* "ccuDSS.pyx":236
- *     status = cudssConfigDestroy(solverConfig)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Solver config destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
- *         return -1
+  /* "ccuDSS.pyx":248
+ *         self.status = cudssMatrixDestroy(self.cu_A)
+ *         if self.status != CUDSS_STATUS_SUCCESS:
+ *             print("CUDSS CSR Matrix A destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
+ *         cudssDestroy(self.handle)
  * 
  */
-  __pyx_tuple__17 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Solver_config_destruction); if (unlikely(!__pyx_tuple__17)) __PYX_ERR(0, 236, __pyx_L1_error)
+  __pyx_tuple__17 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_CSR_Matrix_A_destruction_F); if (unlikely(!__pyx_tuple__17)) __PYX_ERR(0, 248, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_tuple__17);
   __Pyx_GIVEREF(__pyx_tuple__17);
 
-  /* "ccuDSS.pyx":241
- *     status = cudssDestroy(handle)
- *     if status != CUDSS_STATUS_SUCCESS:
- *         print("CUDSS Handle destruction FAILED!",flush=True)             # <<<<<<<<<<<<<<
+  /* "ccuDSS.pyx":133
+ *         self.sym_fact = 0
  * 
+ *     def spsolve_with_CUDSS(self,A, b):             # <<<<<<<<<<<<<<
  * 
+ *         cdef int n = A.shape[0]
  */
-  __pyx_tuple__18 = PyTuple_Pack(1, __pyx_kp_s_CUDSS_Handle_destruction_FAILED); if (unlikely(!__pyx_tuple__18)) __PYX_ERR(0, 241, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_tuple__18);
-  __Pyx_GIVEREF(__pyx_tuple__18);
+  __pyx_tuple__20 = PyTuple_Pack(26, __pyx_n_s_self, __pyx_n_s_A, __pyx_n_s_b, __pyx_n_s_n, __pyx_n_s_nnz, __pyx_n_s_nrhs, __pyx_n_s_x, __pyx_n_s_data_ptr_t, __pyx_n_s_indices_ptr_t, __pyx_n_s_indptr_ptr_t, __pyx_n_s_b_ptr_t, __pyx_n_s_x_ptr_t, __pyx_n_s_data_ptr, __pyx_n_s_indices_ptr, __pyx_n_s_indptr_ptr, __pyx_n_s_b_ptr, __pyx_n_s_x_ptr, __pyx_n_s_mtype, __pyx_n_s_mview, __pyx_n_s_base, __pyx_n_s_t0, __pyx_n_s_t1, __pyx_n_s_nrows, __pyx_n_s_ncols, __pyx_n_s_ldb, __pyx_n_s_ldx); if (unlikely(!__pyx_tuple__20)) __PYX_ERR(0, 133, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_tuple__20);
+  __Pyx_GIVEREF(__pyx_tuple__20);
+  __pyx_codeobj__21 = (PyObject*)__Pyx_PyCode_New(3, 0, 0, 26, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__20, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_ccuDSS_pyx, __pyx_n_s_spsolve_with_CUDSS, 133, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__21)) __PYX_ERR(0, 133, __pyx_L1_error)
 
-  /* "ccuDSS.pyx":104
- *     cudssStatus_t cudssConfigDestroy(cudssConfig_t solverConfig)
- * 
- * def spsolve_with_CUDSS(A, b):             # <<<<<<<<<<<<<<
- *     cdef cudssStatus_t status
- *     cdef cudssHandle_t handle
+  /* "(tree fragment)":1
+ * def __reduce_cython__(self):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):
  */
-  __pyx_tuple__21 = PyTuple_Pack(32, __pyx_n_s_A, __pyx_n_s_b, __pyx_n_s_status, __pyx_n_s_handle, __pyx_n_s_n, __pyx_n_s_nnz, __pyx_n_s_nrhs, __pyx_n_s_x, __pyx_n_s_data_ptr_t, __pyx_n_s_indices_ptr_t, __pyx_n_s_indptr_ptr_t, __pyx_n_s_b_ptr_t, __pyx_n_s_x_ptr_t, __pyx_n_s_data_ptr, __pyx_n_s_indices_ptr, __pyx_n_s_indptr_ptr, __pyx_n_s_b_ptr, __pyx_n_s_x_ptr, __pyx_n_s_solverConfig, __pyx_n_s_solverData, __pyx_n_s_cu_x, __pyx_n_s_cu_b, __pyx_n_s_nrows, __pyx_n_s_ncols, __pyx_n_s_ldb, __pyx_n_s_ldx, __pyx_n_s_cu_A, __pyx_n_s_mtype, __pyx_n_s_mview, __pyx_n_s_base, __pyx_n_s_t0, __pyx_n_s_t1); if (unlikely(!__pyx_tuple__21)) __PYX_ERR(0, 104, __pyx_L1_error)
-  __Pyx_GOTREF(__pyx_tuple__21);
-  __Pyx_GIVEREF(__pyx_tuple__21);
-  __pyx_codeobj__22 = (PyObject*)__Pyx_PyCode_New(2, 0, 0, 32, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__21, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_ccuDSS_pyx, __pyx_n_s_spsolve_with_CUDSS, 104, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__22)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_tuple__22 = PyTuple_Pack(1, __pyx_n_s_self); if (unlikely(!__pyx_tuple__22)) __PYX_ERR(1, 1, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_tuple__22);
+  __Pyx_GIVEREF(__pyx_tuple__22);
+  __pyx_codeobj__23 = (PyObject*)__Pyx_PyCode_New(1, 0, 0, 1, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__22, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_stringsource, __pyx_n_s_reduce_cython, 1, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__23)) __PYX_ERR(1, 1, __pyx_L1_error)
+
+  /* "(tree fragment)":3
+ * def __reduce_cython__(self):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ */
+  __pyx_tuple__24 = PyTuple_Pack(2, __pyx_n_s_self, __pyx_n_s_pyx_state); if (unlikely(!__pyx_tuple__24)) __PYX_ERR(1, 3, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_tuple__24);
+  __Pyx_GIVEREF(__pyx_tuple__24);
+  __pyx_codeobj__25 = (PyObject*)__Pyx_PyCode_New(2, 0, 0, 2, 0, CO_OPTIMIZED|CO_NEWLOCALS, __pyx_empty_bytes, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_tuple__24, __pyx_empty_tuple, __pyx_empty_tuple, __pyx_kp_s_stringsource, __pyx_n_s_setstate_cython, 3, __pyx_empty_bytes); if (unlikely(!__pyx_codeobj__25)) __PYX_ERR(1, 3, __pyx_L1_error)
   __Pyx_RefNannyFinishContext();
   return 0;
   __pyx_L1_error:;
@@ -5000,10 +5561,39 @@ static int __Pyx_modinit_function_export_code(void) {
 
 static int __Pyx_modinit_type_init_code(void) {
   __Pyx_RefNannyDeclarations
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("__Pyx_modinit_type_init_code", 0);
   /*--- Type init code ---*/
+  #if CYTHON_USE_TYPE_SPECS
+  __pyx_ptype_11cudss_wrapp_CuDSS = (PyTypeObject *) __Pyx_PyType_FromModuleAndSpec(__pyx_m, &__pyx_type_11cudss_wrapp_CuDSS_spec, NULL); if (unlikely(!__pyx_ptype_11cudss_wrapp_CuDSS)) __PYX_ERR(0, 106, __pyx_L1_error)
+  if (__Pyx_fix_up_extension_type_from_spec(&__pyx_type_11cudss_wrapp_CuDSS_spec, __pyx_ptype_11cudss_wrapp_CuDSS) < 0) __PYX_ERR(0, 106, __pyx_L1_error)
+  #else
+  __pyx_ptype_11cudss_wrapp_CuDSS = &__pyx_type_11cudss_wrapp_CuDSS;
+  #endif
+  #if !CYTHON_COMPILING_IN_LIMITED_API
+  #endif
+  #if !CYTHON_USE_TYPE_SPECS
+  if (__Pyx_PyType_Ready(__pyx_ptype_11cudss_wrapp_CuDSS) < 0) __PYX_ERR(0, 106, __pyx_L1_error)
+  #endif
+  #if PY_MAJOR_VERSION < 3
+  __pyx_ptype_11cudss_wrapp_CuDSS->tp_print = 0;
+  #endif
+  #if !CYTHON_COMPILING_IN_LIMITED_API
+  if ((CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP) && likely(!__pyx_ptype_11cudss_wrapp_CuDSS->tp_dictoffset && __pyx_ptype_11cudss_wrapp_CuDSS->tp_getattro == PyObject_GenericGetAttr)) {
+    __pyx_ptype_11cudss_wrapp_CuDSS->tp_getattro = __Pyx_PyObject_GenericGetAttr;
+  }
+  #endif
+  if (PyObject_SetAttr(__pyx_m, __pyx_n_s_CuDSS, (PyObject *) __pyx_ptype_11cudss_wrapp_CuDSS) < 0) __PYX_ERR(0, 106, __pyx_L1_error)
+  #if !CYTHON_COMPILING_IN_LIMITED_API
+  if (__Pyx_setup_reduce((PyObject *) __pyx_ptype_11cudss_wrapp_CuDSS) < 0) __PYX_ERR(0, 106, __pyx_L1_error)
+  #endif
   __Pyx_RefNannyFinishContext();
   return 0;
+  __pyx_L1_error:;
+  __Pyx_RefNannyFinishContext();
+  return -1;
 }
 
 static int __Pyx_modinit_type_import_code(void) {
@@ -5300,7 +5890,7 @@ if (!__Pyx_RefNanny) {
   (void)__Pyx_modinit_global_init_code();
   (void)__Pyx_modinit_variable_export_code();
   (void)__Pyx_modinit_function_export_code();
-  (void)__Pyx_modinit_type_init_code();
+  if (unlikely((__Pyx_modinit_type_init_code() < 0))) __PYX_ERR(0, 1, __pyx_L1_error)
   (void)__Pyx_modinit_type_import_code();
   (void)__Pyx_modinit_variable_import_code();
   (void)__Pyx_modinit_function_import_code();
@@ -5360,16 +5950,38 @@ if (!__Pyx_RefNanny) {
   __Pyx_DECREF(__pyx_t_3); __pyx_t_3 = 0;
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
-  /* "ccuDSS.pyx":104
- *     cudssStatus_t cudssConfigDestroy(cudssConfig_t solverConfig)
+  /* "ccuDSS.pyx":133
+ *         self.sym_fact = 0
  * 
- * def spsolve_with_CUDSS(A, b):             # <<<<<<<<<<<<<<
- *     cdef cudssStatus_t status
- *     cdef cudssHandle_t handle
+ *     def spsolve_with_CUDSS(self,A, b):             # <<<<<<<<<<<<<<
+ * 
+ *         cdef int n = A.shape[0]
  */
-  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_11cudss_wrapp_1spsolve_with_CUDSS, 0, __pyx_n_s_spsolve_with_CUDSS, NULL, __pyx_n_s_cudss_wrapp, __pyx_d, ((PyObject *)__pyx_codeobj__22)); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 104, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_11cudss_wrapp_5CuDSS_3spsolve_with_CUDSS, __Pyx_CYFUNCTION_CCLASS, __pyx_n_s_CuDSS_spsolve_with_CUDSS, NULL, __pyx_n_s_cudss_wrapp, __pyx_d, ((PyObject *)__pyx_codeobj__21)); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 133, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
-  if (PyDict_SetItem(__pyx_d, __pyx_n_s_spsolve_with_CUDSS, __pyx_t_2) < 0) __PYX_ERR(0, 104, __pyx_L1_error)
+  if (__Pyx_SetItemOnTypeDict((PyObject *)__pyx_ptype_11cudss_wrapp_CuDSS, __pyx_n_s_spsolve_with_CUDSS, __pyx_t_2) < 0) __PYX_ERR(0, 133, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
+  PyType_Modified(__pyx_ptype_11cudss_wrapp_CuDSS);
+
+  /* "(tree fragment)":1
+ * def __reduce_cython__(self):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):
+ */
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_11cudss_wrapp_5CuDSS_7__reduce_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_n_s_CuDSS___reduce_cython, NULL, __pyx_n_s_cudss_wrapp, __pyx_d, ((PyObject *)__pyx_codeobj__23)); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 1, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_2);
+  if (PyDict_SetItem(__pyx_d, __pyx_n_s_reduce_cython, __pyx_t_2) < 0) __PYX_ERR(1, 1, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
+
+  /* "(tree fragment)":3
+ * def __reduce_cython__(self):
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ * def __setstate_cython__(self, __pyx_state):             # <<<<<<<<<<<<<<
+ *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
+ */
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_11cudss_wrapp_5CuDSS_9__setstate_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_n_s_CuDSS___setstate_cython, NULL, __pyx_n_s_cudss_wrapp, __pyx_d, ((PyObject *)__pyx_codeobj__25)); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 3, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_2);
+  if (PyDict_SetItem(__pyx_d, __pyx_n_s_setstate_cython, __pyx_t_2) < 0) __PYX_ERR(1, 3, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
   /* "ccuDSS.pyx":1
@@ -5861,6 +6473,266 @@ static void __Pyx_RaiseArgtupleInvalid(
                  (num_expected == 1) ? "" : "s", num_found);
 }
 
+/* KeywordStringCheck */
+static int __Pyx_CheckKeywordStrings(
+    PyObject *kw,
+    const char* function_name,
+    int kw_allowed)
+{
+    PyObject* key = 0;
+    Py_ssize_t pos = 0;
+#if CYTHON_COMPILING_IN_PYPY
+    if (!kw_allowed && PyDict_Next(kw, &pos, &key, 0))
+        goto invalid_keyword;
+    return 1;
+#else
+    if (CYTHON_METH_FASTCALL && likely(PyTuple_Check(kw))) {
+        Py_ssize_t kwsize;
+#if CYTHON_ASSUME_SAFE_MACROS
+        kwsize = PyTuple_GET_SIZE(kw);
+#else
+        kwsize = PyTuple_Size(kw);
+        if (kwsize < 0) return 0;
+#endif
+        if (unlikely(kwsize == 0))
+            return 1;
+        if (!kw_allowed) {
+#if CYTHON_ASSUME_SAFE_MACROS
+            key = PyTuple_GET_ITEM(kw, 0);
+#else
+            key = PyTuple_GetItem(kw, pos);
+            if (!key) return 0;
+#endif
+            goto invalid_keyword;
+        }
+#if PY_VERSION_HEX < 0x03090000
+        for (pos = 0; pos < kwsize; pos++) {
+#if CYTHON_ASSUME_SAFE_MACROS
+            key = PyTuple_GET_ITEM(kw, pos);
+#else
+            key = PyTuple_GetItem(kw, pos);
+            if (!key) return 0;
+#endif
+            if (unlikely(!PyUnicode_Check(key)))
+                goto invalid_keyword_type;
+        }
+#endif
+        return 1;
+    }
+    while (PyDict_Next(kw, &pos, &key, 0)) {
+        #if PY_MAJOR_VERSION < 3
+        if (unlikely(!PyString_Check(key)))
+        #endif
+            if (unlikely(!PyUnicode_Check(key)))
+                goto invalid_keyword_type;
+    }
+    if (!kw_allowed && unlikely(key))
+        goto invalid_keyword;
+    return 1;
+invalid_keyword_type:
+    PyErr_Format(PyExc_TypeError,
+        "%.200s() keywords must be strings", function_name);
+    return 0;
+#endif
+invalid_keyword:
+    #if PY_MAJOR_VERSION < 3
+    PyErr_Format(PyExc_TypeError,
+        "%.200s() got an unexpected keyword argument '%.200s'",
+        function_name, PyString_AsString(key));
+    #else
+    PyErr_Format(PyExc_TypeError,
+        "%s() got an unexpected keyword argument '%U'",
+        function_name, key);
+    #endif
+    return 0;
+}
+
+/* PyObjectCall */
+#if CYTHON_COMPILING_IN_CPYTHON
+static CYTHON_INLINE PyObject* __Pyx_PyObject_Call(PyObject *func, PyObject *arg, PyObject *kw) {
+    PyObject *result;
+    ternaryfunc call = Py_TYPE(func)->tp_call;
+    if (unlikely(!call))
+        return PyObject_Call(func, arg, kw);
+    #if PY_MAJOR_VERSION < 3
+    if (unlikely(Py_EnterRecursiveCall((char*)" while calling a Python object")))
+        return NULL;
+    #else
+    if (unlikely(Py_EnterRecursiveCall(" while calling a Python object")))
+        return NULL;
+    #endif
+    result = (*call)(func, arg, kw);
+    Py_LeaveRecursiveCall();
+    if (unlikely(!result) && unlikely(!PyErr_Occurred())) {
+        PyErr_SetString(
+            PyExc_SystemError,
+            "NULL result without error in PyObject_Call");
+    }
+    return result;
+}
+#endif
+
+/* RaiseException */
+#if PY_MAJOR_VERSION < 3
+static void __Pyx_Raise(PyObject *type, PyObject *value, PyObject *tb, PyObject *cause) {
+    __Pyx_PyThreadState_declare
+    CYTHON_UNUSED_VAR(cause);
+    Py_XINCREF(type);
+    if (!value || value == Py_None)
+        value = NULL;
+    else
+        Py_INCREF(value);
+    if (!tb || tb == Py_None)
+        tb = NULL;
+    else {
+        Py_INCREF(tb);
+        if (!PyTraceBack_Check(tb)) {
+            PyErr_SetString(PyExc_TypeError,
+                "raise: arg 3 must be a traceback or None");
+            goto raise_error;
+        }
+    }
+    if (PyType_Check(type)) {
+#if CYTHON_COMPILING_IN_PYPY
+        if (!value) {
+            Py_INCREF(Py_None);
+            value = Py_None;
+        }
+#endif
+        PyErr_NormalizeException(&type, &value, &tb);
+    } else {
+        if (value) {
+            PyErr_SetString(PyExc_TypeError,
+                "instance exception may not have a separate value");
+            goto raise_error;
+        }
+        value = type;
+        type = (PyObject*) Py_TYPE(type);
+        Py_INCREF(type);
+        if (!PyType_IsSubtype((PyTypeObject *)type, (PyTypeObject *)PyExc_BaseException)) {
+            PyErr_SetString(PyExc_TypeError,
+                "raise: exception class must be a subclass of BaseException");
+            goto raise_error;
+        }
+    }
+    __Pyx_PyThreadState_assign
+    __Pyx_ErrRestore(type, value, tb);
+    return;
+raise_error:
+    Py_XDECREF(value);
+    Py_XDECREF(type);
+    Py_XDECREF(tb);
+    return;
+}
+#else
+static void __Pyx_Raise(PyObject *type, PyObject *value, PyObject *tb, PyObject *cause) {
+    PyObject* owned_instance = NULL;
+    if (tb == Py_None) {
+        tb = 0;
+    } else if (tb && !PyTraceBack_Check(tb)) {
+        PyErr_SetString(PyExc_TypeError,
+            "raise: arg 3 must be a traceback or None");
+        goto bad;
+    }
+    if (value == Py_None)
+        value = 0;
+    if (PyExceptionInstance_Check(type)) {
+        if (value) {
+            PyErr_SetString(PyExc_TypeError,
+                "instance exception may not have a separate value");
+            goto bad;
+        }
+        value = type;
+        type = (PyObject*) Py_TYPE(value);
+    } else if (PyExceptionClass_Check(type)) {
+        PyObject *instance_class = NULL;
+        if (value && PyExceptionInstance_Check(value)) {
+            instance_class = (PyObject*) Py_TYPE(value);
+            if (instance_class != type) {
+                int is_subclass = PyObject_IsSubclass(instance_class, type);
+                if (!is_subclass) {
+                    instance_class = NULL;
+                } else if (unlikely(is_subclass == -1)) {
+                    goto bad;
+                } else {
+                    type = instance_class;
+                }
+            }
+        }
+        if (!instance_class) {
+            PyObject *args;
+            if (!value)
+                args = PyTuple_New(0);
+            else if (PyTuple_Check(value)) {
+                Py_INCREF(value);
+                args = value;
+            } else
+                args = PyTuple_Pack(1, value);
+            if (!args)
+                goto bad;
+            owned_instance = PyObject_Call(type, args, NULL);
+            Py_DECREF(args);
+            if (!owned_instance)
+                goto bad;
+            value = owned_instance;
+            if (!PyExceptionInstance_Check(value)) {
+                PyErr_Format(PyExc_TypeError,
+                             "calling %R should have returned an instance of "
+                             "BaseException, not %R",
+                             type, Py_TYPE(value));
+                goto bad;
+            }
+        }
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+            "raise: exception class must be a subclass of BaseException");
+        goto bad;
+    }
+    if (cause) {
+        PyObject *fixed_cause;
+        if (cause == Py_None) {
+            fixed_cause = NULL;
+        } else if (PyExceptionClass_Check(cause)) {
+            fixed_cause = PyObject_CallObject(cause, NULL);
+            if (fixed_cause == NULL)
+                goto bad;
+        } else if (PyExceptionInstance_Check(cause)) {
+            fixed_cause = cause;
+            Py_INCREF(fixed_cause);
+        } else {
+            PyErr_SetString(PyExc_TypeError,
+                            "exception causes must derive from "
+                            "BaseException");
+            goto bad;
+        }
+        PyException_SetCause(value, fixed_cause);
+    }
+    PyErr_SetObject(type, value);
+    if (tb) {
+      #if PY_VERSION_HEX >= 0x030C00A6
+        PyException_SetTraceback(value, tb);
+      #elif CYTHON_FAST_THREAD_STATE
+        PyThreadState *tstate = __Pyx_PyThreadState_Current;
+        PyObject* tmp_tb = tstate->curexc_traceback;
+        if (tb != tmp_tb) {
+            Py_INCREF(tb);
+            tstate->curexc_traceback = tb;
+            Py_XDECREF(tmp_tb);
+        }
+#else
+        PyObject *tmp_type, *tmp_value, *tmp_tb;
+        PyErr_Fetch(&tmp_type, &tmp_value, &tmp_tb);
+        Py_INCREF(tb);
+        PyErr_Restore(tmp_type, tmp_value, tb);
+        Py_XDECREF(tmp_tb);
+#endif
+    }
+bad:
+    Py_XDECREF(owned_instance);
+    return;
+}
+#endif
+
 /* RaiseDoubleKeywords */
 static void __Pyx_RaiseDoubleKeywordsError(
     const char* func_name,
@@ -6318,31 +7190,6 @@ done:
 }
 #endif
 
-/* PyObjectCall */
-#if CYTHON_COMPILING_IN_CPYTHON
-static CYTHON_INLINE PyObject* __Pyx_PyObject_Call(PyObject *func, PyObject *arg, PyObject *kw) {
-    PyObject *result;
-    ternaryfunc call = Py_TYPE(func)->tp_call;
-    if (unlikely(!call))
-        return PyObject_Call(func, arg, kw);
-    #if PY_MAJOR_VERSION < 3
-    if (unlikely(Py_EnterRecursiveCall((char*)" while calling a Python object")))
-        return NULL;
-    #else
-    if (unlikely(Py_EnterRecursiveCall(" while calling a Python object")))
-        return NULL;
-    #endif
-    result = (*call)(func, arg, kw);
-    Py_LeaveRecursiveCall();
-    if (unlikely(!result) && unlikely(!PyErr_Occurred())) {
-        PyErr_SetString(
-            PyExc_SystemError,
-            "NULL result without error in PyObject_Call");
-    }
-    return result;
-}
-#endif
-
 /* PyObjectCallMethO */
 #if CYTHON_COMPILING_IN_CPYTHON
 static CYTHON_INLINE PyObject* __Pyx_PyObject_CallMethO(PyObject *func, PyObject *arg) {
@@ -6557,6 +7404,576 @@ static CYTHON_INLINE PyObject* __Pyx_PyObject_CallOneArg(PyObject *func, PyObjec
     return __Pyx_PyObject_FastCall(func, args+1, 1 | __Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET);
 }
 
+/* WriteUnraisableException */
+static void __Pyx_WriteUnraisable(const char *name, int clineno,
+                                  int lineno, const char *filename,
+                                  int full_traceback, int nogil) {
+    PyObject *old_exc, *old_val, *old_tb;
+    PyObject *ctx;
+    __Pyx_PyThreadState_declare
+#ifdef WITH_THREAD
+    PyGILState_STATE state;
+    if (nogil)
+        state = PyGILState_Ensure();
+    else state = (PyGILState_STATE)0;
+#endif
+    CYTHON_UNUSED_VAR(clineno);
+    CYTHON_UNUSED_VAR(lineno);
+    CYTHON_UNUSED_VAR(filename);
+    CYTHON_MAYBE_UNUSED_VAR(nogil);
+    __Pyx_PyThreadState_assign
+    __Pyx_ErrFetch(&old_exc, &old_val, &old_tb);
+    if (full_traceback) {
+        Py_XINCREF(old_exc);
+        Py_XINCREF(old_val);
+        Py_XINCREF(old_tb);
+        __Pyx_ErrRestore(old_exc, old_val, old_tb);
+        PyErr_PrintEx(0);
+    }
+    #if PY_MAJOR_VERSION < 3
+    ctx = PyString_FromString(name);
+    #else
+    ctx = PyUnicode_FromString(name);
+    #endif
+    __Pyx_ErrRestore(old_exc, old_val, old_tb);
+    if (!ctx) {
+        PyErr_WriteUnraisable(Py_None);
+    } else {
+        PyErr_WriteUnraisable(ctx);
+        Py_DECREF(ctx);
+    }
+#ifdef WITH_THREAD
+    if (nogil)
+        PyGILState_Release(state);
+#endif
+}
+
+/* FixUpExtensionType */
+#if CYTHON_USE_TYPE_SPECS
+static int __Pyx_fix_up_extension_type_from_spec(PyType_Spec *spec, PyTypeObject *type) {
+#if PY_VERSION_HEX > 0x030900B1 || CYTHON_COMPILING_IN_LIMITED_API
+    CYTHON_UNUSED_VAR(spec);
+    CYTHON_UNUSED_VAR(type);
+#else
+    const PyType_Slot *slot = spec->slots;
+    while (slot && slot->slot && slot->slot != Py_tp_members)
+        slot++;
+    if (slot && slot->slot == Py_tp_members) {
+        int changed = 0;
+#if !(PY_VERSION_HEX <= 0x030900b1 && CYTHON_COMPILING_IN_CPYTHON)
+        const
+#endif
+            PyMemberDef *memb = (PyMemberDef*) slot->pfunc;
+        while (memb && memb->name) {
+            if (memb->name[0] == '_' && memb->name[1] == '_') {
+#if PY_VERSION_HEX < 0x030900b1
+                if (strcmp(memb->name, "__weaklistoffset__") == 0) {
+                    assert(memb->type == T_PYSSIZET);
+                    assert(memb->flags == READONLY);
+                    type->tp_weaklistoffset = memb->offset;
+                    changed = 1;
+                }
+                else if (strcmp(memb->name, "__dictoffset__") == 0) {
+                    assert(memb->type == T_PYSSIZET);
+                    assert(memb->flags == READONLY);
+                    type->tp_dictoffset = memb->offset;
+                    changed = 1;
+                }
+#if CYTHON_METH_FASTCALL
+                else if (strcmp(memb->name, "__vectorcalloffset__") == 0) {
+                    assert(memb->type == T_PYSSIZET);
+                    assert(memb->flags == READONLY);
+#if PY_VERSION_HEX >= 0x030800b4
+                    type->tp_vectorcall_offset = memb->offset;
+#else
+                    type->tp_print = (printfunc) memb->offset;
+#endif
+                    changed = 1;
+                }
+#endif
+#else
+                if ((0));
+#endif
+#if PY_VERSION_HEX <= 0x030900b1 && CYTHON_COMPILING_IN_CPYTHON
+                else if (strcmp(memb->name, "__module__") == 0) {
+                    PyObject *descr;
+                    assert(memb->type == T_OBJECT);
+                    assert(memb->flags == 0 || memb->flags == READONLY);
+                    descr = PyDescr_NewMember(type, memb);
+                    if (unlikely(!descr))
+                        return -1;
+                    if (unlikely(PyDict_SetItem(type->tp_dict, PyDescr_NAME(descr), descr) < 0)) {
+                        Py_DECREF(descr);
+                        return -1;
+                    }
+                    Py_DECREF(descr);
+                    changed = 1;
+                }
+#endif
+            }
+            memb++;
+        }
+        if (changed)
+            PyType_Modified(type);
+    }
+#endif
+    return 0;
+}
+#endif
+
+/* PyObjectCallNoArg */
+static CYTHON_INLINE PyObject* __Pyx_PyObject_CallNoArg(PyObject *func) {
+    PyObject *arg[2] = {NULL, NULL};
+    return __Pyx_PyObject_FastCall(func, arg + 1, 0 | __Pyx_PY_VECTORCALL_ARGUMENTS_OFFSET);
+}
+
+/* PyObjectGetMethod */
+static int __Pyx_PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method) {
+    PyObject *attr;
+#if CYTHON_UNPACK_METHODS && CYTHON_COMPILING_IN_CPYTHON && CYTHON_USE_PYTYPE_LOOKUP
+    __Pyx_TypeName type_name;
+    PyTypeObject *tp = Py_TYPE(obj);
+    PyObject *descr;
+    descrgetfunc f = NULL;
+    PyObject **dictptr, *dict;
+    int meth_found = 0;
+    assert (*method == NULL);
+    if (unlikely(tp->tp_getattro != PyObject_GenericGetAttr)) {
+        attr = __Pyx_PyObject_GetAttrStr(obj, name);
+        goto try_unpack;
+    }
+    if (unlikely(tp->tp_dict == NULL) && unlikely(PyType_Ready(tp) < 0)) {
+        return 0;
+    }
+    descr = _PyType_Lookup(tp, name);
+    if (likely(descr != NULL)) {
+        Py_INCREF(descr);
+#if defined(Py_TPFLAGS_METHOD_DESCRIPTOR) && Py_TPFLAGS_METHOD_DESCRIPTOR
+        if (__Pyx_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR))
+#elif PY_MAJOR_VERSION >= 3
+        #ifdef __Pyx_CyFunction_USED
+        if (likely(PyFunction_Check(descr) || __Pyx_IS_TYPE(descr, &PyMethodDescr_Type) || __Pyx_CyFunction_Check(descr)))
+        #else
+        if (likely(PyFunction_Check(descr) || __Pyx_IS_TYPE(descr, &PyMethodDescr_Type)))
+        #endif
+#else
+        #ifdef __Pyx_CyFunction_USED
+        if (likely(PyFunction_Check(descr) || __Pyx_CyFunction_Check(descr)))
+        #else
+        if (likely(PyFunction_Check(descr)))
+        #endif
+#endif
+        {
+            meth_found = 1;
+        } else {
+            f = Py_TYPE(descr)->tp_descr_get;
+            if (f != NULL && PyDescr_IsData(descr)) {
+                attr = f(descr, obj, (PyObject *)Py_TYPE(obj));
+                Py_DECREF(descr);
+                goto try_unpack;
+            }
+        }
+    }
+    dictptr = _PyObject_GetDictPtr(obj);
+    if (dictptr != NULL && (dict = *dictptr) != NULL) {
+        Py_INCREF(dict);
+        attr = __Pyx_PyDict_GetItemStr(dict, name);
+        if (attr != NULL) {
+            Py_INCREF(attr);
+            Py_DECREF(dict);
+            Py_XDECREF(descr);
+            goto try_unpack;
+        }
+        Py_DECREF(dict);
+    }
+    if (meth_found) {
+        *method = descr;
+        return 1;
+    }
+    if (f != NULL) {
+        attr = f(descr, obj, (PyObject *)Py_TYPE(obj));
+        Py_DECREF(descr);
+        goto try_unpack;
+    }
+    if (likely(descr != NULL)) {
+        *method = descr;
+        return 0;
+    }
+    type_name = __Pyx_PyType_GetName(tp);
+    PyErr_Format(PyExc_AttributeError,
+#if PY_MAJOR_VERSION >= 3
+                 "'" __Pyx_FMT_TYPENAME "' object has no attribute '%U'",
+                 type_name, name);
+#else
+                 "'" __Pyx_FMT_TYPENAME "' object has no attribute '%.400s'",
+                 type_name, PyString_AS_STRING(name));
+#endif
+    __Pyx_DECREF_TypeName(type_name);
+    return 0;
+#else
+    attr = __Pyx_PyObject_GetAttrStr(obj, name);
+    goto try_unpack;
+#endif
+try_unpack:
+#if CYTHON_UNPACK_METHODS
+    if (likely(attr) && PyMethod_Check(attr) && likely(PyMethod_GET_SELF(attr) == obj)) {
+        PyObject *function = PyMethod_GET_FUNCTION(attr);
+        Py_INCREF(function);
+        Py_DECREF(attr);
+        *method = function;
+        return 1;
+    }
+#endif
+    *method = attr;
+    return 0;
+}
+
+/* PyObjectCallMethod0 */
+static PyObject* __Pyx_PyObject_CallMethod0(PyObject* obj, PyObject* method_name) {
+    PyObject *method = NULL, *result = NULL;
+    int is_method = __Pyx_PyObject_GetMethod(obj, method_name, &method);
+    if (likely(is_method)) {
+        result = __Pyx_PyObject_CallOneArg(method, obj);
+        Py_DECREF(method);
+        return result;
+    }
+    if (unlikely(!method)) goto bad;
+    result = __Pyx_PyObject_CallNoArg(method);
+    Py_DECREF(method);
+bad:
+    return result;
+}
+
+/* ValidateBasesTuple */
+#if CYTHON_COMPILING_IN_CPYTHON || CYTHON_COMPILING_IN_LIMITED_API || CYTHON_USE_TYPE_SPECS
+static int __Pyx_validate_bases_tuple(const char *type_name, Py_ssize_t dictoffset, PyObject *bases) {
+    Py_ssize_t i, n;
+#if CYTHON_ASSUME_SAFE_MACROS
+    n = PyTuple_GET_SIZE(bases);
+#else
+    n = PyTuple_Size(bases);
+    if (n < 0) return -1;
+#endif
+    for (i = 1; i < n; i++)
+    {
+#if CYTHON_AVOID_BORROWED_REFS
+        PyObject *b0 = PySequence_GetItem(bases, i);
+        if (!b0) return -1;
+#elif CYTHON_ASSUME_SAFE_MACROS
+        PyObject *b0 = PyTuple_GET_ITEM(bases, i);
+#else
+        PyObject *b0 = PyTuple_GetItem(bases, i);
+        if (!b0) return -1;
+#endif
+        PyTypeObject *b;
+#if PY_MAJOR_VERSION < 3
+        if (PyClass_Check(b0))
+        {
+            PyErr_Format(PyExc_TypeError, "base class '%.200s' is an old-style class",
+                         PyString_AS_STRING(((PyClassObject*)b0)->cl_name));
+#if CYTHON_AVOID_BORROWED_REFS
+            Py_DECREF(b0);
+#endif
+            return -1;
+        }
+#endif
+        b = (PyTypeObject*) b0;
+        if (!__Pyx_PyType_HasFeature(b, Py_TPFLAGS_HEAPTYPE))
+        {
+            __Pyx_TypeName b_name = __Pyx_PyType_GetName(b);
+            PyErr_Format(PyExc_TypeError,
+                "base class '" __Pyx_FMT_TYPENAME "' is not a heap type", b_name);
+            __Pyx_DECREF_TypeName(b_name);
+#if CYTHON_AVOID_BORROWED_REFS
+            Py_DECREF(b0);
+#endif
+            return -1;
+        }
+        if (dictoffset == 0)
+        {
+            Py_ssize_t b_dictoffset = 0;
+#if CYTHON_USE_TYPE_SLOTS || CYTHON_COMPILING_IN_PYPY
+            b_dictoffset = b->tp_dictoffset;
+#else
+            PyObject *py_b_dictoffset = PyObject_GetAttrString((PyObject*)b, "__dictoffset__");
+            if (!py_b_dictoffset) goto dictoffset_return;
+            b_dictoffset = PyLong_AsSsize_t(py_b_dictoffset);
+            Py_DECREF(py_b_dictoffset);
+            if (b_dictoffset == -1 && PyErr_Occurred()) goto dictoffset_return;
+#endif
+            if (b_dictoffset) {
+                {
+                    __Pyx_TypeName b_name = __Pyx_PyType_GetName(b);
+                    PyErr_Format(PyExc_TypeError,
+                        "extension type '%.200s' has no __dict__ slot, "
+                        "but base type '" __Pyx_FMT_TYPENAME "' has: "
+                        "either add 'cdef dict __dict__' to the extension type "
+                        "or add '__slots__ = [...]' to the base type",
+                        type_name, b_name);
+                    __Pyx_DECREF_TypeName(b_name);
+                }
+#if !(CYTHON_USE_TYPE_SLOTS || CYTHON_COMPILING_IN_PYPY)
+              dictoffset_return:
+#endif
+#if CYTHON_AVOID_BORROWED_REFS
+                Py_DECREF(b0);
+#endif
+                return -1;
+            }
+        }
+#if CYTHON_AVOID_BORROWED_REFS
+        Py_DECREF(b0);
+#endif
+    }
+    return 0;
+}
+#endif
+
+/* PyType_Ready */
+static int __Pyx_PyType_Ready(PyTypeObject *t) {
+#if CYTHON_USE_TYPE_SPECS || !(CYTHON_COMPILING_IN_CPYTHON || CYTHON_COMPILING_IN_LIMITED_API) || defined(PYSTON_MAJOR_VERSION)
+    (void)__Pyx_PyObject_CallMethod0;
+#if CYTHON_USE_TYPE_SPECS
+    (void)__Pyx_validate_bases_tuple;
+#endif
+    return PyType_Ready(t);
+#else
+    int r;
+    PyObject *bases = __Pyx_PyType_GetSlot(t, tp_bases, PyObject*);
+    if (bases && unlikely(__Pyx_validate_bases_tuple(t->tp_name, t->tp_dictoffset, bases) == -1))
+        return -1;
+#if PY_VERSION_HEX >= 0x03050000 && !defined(PYSTON_MAJOR_VERSION)
+    {
+        int gc_was_enabled;
+    #if PY_VERSION_HEX >= 0x030A00b1
+        gc_was_enabled = PyGC_Disable();
+        (void)__Pyx_PyObject_CallMethod0;
+    #else
+        PyObject *ret, *py_status;
+        PyObject *gc = NULL;
+        #if PY_VERSION_HEX >= 0x030700a1 && (!CYTHON_COMPILING_IN_PYPY || PYPY_VERSION_NUM+0 >= 0x07030400)
+        gc = PyImport_GetModule(__pyx_kp_u_gc);
+        #endif
+        if (unlikely(!gc)) gc = PyImport_Import(__pyx_kp_u_gc);
+        if (unlikely(!gc)) return -1;
+        py_status = __Pyx_PyObject_CallMethod0(gc, __pyx_kp_u_isenabled);
+        if (unlikely(!py_status)) {
+            Py_DECREF(gc);
+            return -1;
+        }
+        gc_was_enabled = __Pyx_PyObject_IsTrue(py_status);
+        Py_DECREF(py_status);
+        if (gc_was_enabled > 0) {
+            ret = __Pyx_PyObject_CallMethod0(gc, __pyx_kp_u_disable);
+            if (unlikely(!ret)) {
+                Py_DECREF(gc);
+                return -1;
+            }
+            Py_DECREF(ret);
+        } else if (unlikely(gc_was_enabled == -1)) {
+            Py_DECREF(gc);
+            return -1;
+        }
+    #endif
+        t->tp_flags |= Py_TPFLAGS_HEAPTYPE;
+#if PY_VERSION_HEX >= 0x030A0000
+        t->tp_flags |= Py_TPFLAGS_IMMUTABLETYPE;
+#endif
+#else
+        (void)__Pyx_PyObject_CallMethod0;
+#endif
+    r = PyType_Ready(t);
+#if PY_VERSION_HEX >= 0x03050000 && !defined(PYSTON_MAJOR_VERSION)
+        t->tp_flags &= ~Py_TPFLAGS_HEAPTYPE;
+    #if PY_VERSION_HEX >= 0x030A00b1
+        if (gc_was_enabled)
+            PyGC_Enable();
+    #else
+        if (gc_was_enabled) {
+            PyObject *tp, *v, *tb;
+            PyErr_Fetch(&tp, &v, &tb);
+            ret = __Pyx_PyObject_CallMethod0(gc, __pyx_kp_u_enable);
+            if (likely(ret || r == -1)) {
+                Py_XDECREF(ret);
+                PyErr_Restore(tp, v, tb);
+            } else {
+                Py_XDECREF(tp);
+                Py_XDECREF(v);
+                Py_XDECREF(tb);
+                r = -1;
+            }
+        }
+        Py_DECREF(gc);
+    #endif
+    }
+#endif
+    return r;
+#endif
+}
+
+/* PyObject_GenericGetAttrNoDict */
+#if CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP && PY_VERSION_HEX < 0x03070000
+static PyObject *__Pyx_RaiseGenericGetAttributeError(PyTypeObject *tp, PyObject *attr_name) {
+    __Pyx_TypeName type_name = __Pyx_PyType_GetName(tp);
+    PyErr_Format(PyExc_AttributeError,
+#if PY_MAJOR_VERSION >= 3
+                 "'" __Pyx_FMT_TYPENAME "' object has no attribute '%U'",
+                 type_name, attr_name);
+#else
+                 "'" __Pyx_FMT_TYPENAME "' object has no attribute '%.400s'",
+                 type_name, PyString_AS_STRING(attr_name));
+#endif
+    __Pyx_DECREF_TypeName(type_name);
+    return NULL;
+}
+static CYTHON_INLINE PyObject* __Pyx_PyObject_GenericGetAttrNoDict(PyObject* obj, PyObject* attr_name) {
+    PyObject *descr;
+    PyTypeObject *tp = Py_TYPE(obj);
+    if (unlikely(!PyString_Check(attr_name))) {
+        return PyObject_GenericGetAttr(obj, attr_name);
+    }
+    assert(!tp->tp_dictoffset);
+    descr = _PyType_Lookup(tp, attr_name);
+    if (unlikely(!descr)) {
+        return __Pyx_RaiseGenericGetAttributeError(tp, attr_name);
+    }
+    Py_INCREF(descr);
+    #if PY_MAJOR_VERSION < 3
+    if (likely(PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_HAVE_CLASS)))
+    #endif
+    {
+        descrgetfunc f = Py_TYPE(descr)->tp_descr_get;
+        if (unlikely(f)) {
+            PyObject *res = f(descr, obj, (PyObject *)tp);
+            Py_DECREF(descr);
+            return res;
+        }
+    }
+    return descr;
+}
+#endif
+
+/* PyObject_GenericGetAttr */
+#if CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP && PY_VERSION_HEX < 0x03070000
+static PyObject* __Pyx_PyObject_GenericGetAttr(PyObject* obj, PyObject* attr_name) {
+    if (unlikely(Py_TYPE(obj)->tp_dictoffset)) {
+        return PyObject_GenericGetAttr(obj, attr_name);
+    }
+    return __Pyx_PyObject_GenericGetAttrNoDict(obj, attr_name);
+}
+#endif
+
+/* SetupReduce */
+#if !CYTHON_COMPILING_IN_LIMITED_API
+static int __Pyx_setup_reduce_is_named(PyObject* meth, PyObject* name) {
+  int ret;
+  PyObject *name_attr;
+  name_attr = __Pyx_PyObject_GetAttrStrNoError(meth, __pyx_n_s_name);
+  if (likely(name_attr)) {
+      ret = PyObject_RichCompareBool(name_attr, name, Py_EQ);
+  } else {
+      ret = -1;
+  }
+  if (unlikely(ret < 0)) {
+      PyErr_Clear();
+      ret = 0;
+  }
+  Py_XDECREF(name_attr);
+  return ret;
+}
+static int __Pyx_setup_reduce(PyObject* type_obj) {
+    int ret = 0;
+    PyObject *object_reduce = NULL;
+    PyObject *object_getstate = NULL;
+    PyObject *object_reduce_ex = NULL;
+    PyObject *reduce = NULL;
+    PyObject *reduce_ex = NULL;
+    PyObject *reduce_cython = NULL;
+    PyObject *setstate = NULL;
+    PyObject *setstate_cython = NULL;
+    PyObject *getstate = NULL;
+#if CYTHON_USE_PYTYPE_LOOKUP
+    getstate = _PyType_Lookup((PyTypeObject*)type_obj, __pyx_n_s_getstate);
+#else
+    getstate = __Pyx_PyObject_GetAttrStrNoError(type_obj, __pyx_n_s_getstate);
+    if (!getstate && PyErr_Occurred()) {
+        goto __PYX_BAD;
+    }
+#endif
+    if (getstate) {
+#if CYTHON_USE_PYTYPE_LOOKUP
+        object_getstate = _PyType_Lookup(&PyBaseObject_Type, __pyx_n_s_getstate);
+#else
+        object_getstate = __Pyx_PyObject_GetAttrStrNoError((PyObject*)&PyBaseObject_Type, __pyx_n_s_getstate);
+        if (!object_getstate && PyErr_Occurred()) {
+            goto __PYX_BAD;
+        }
+#endif
+        if (object_getstate != getstate) {
+            goto __PYX_GOOD;
+        }
+    }
+#if CYTHON_USE_PYTYPE_LOOKUP
+    object_reduce_ex = _PyType_Lookup(&PyBaseObject_Type, __pyx_n_s_reduce_ex); if (!object_reduce_ex) goto __PYX_BAD;
+#else
+    object_reduce_ex = __Pyx_PyObject_GetAttrStr((PyObject*)&PyBaseObject_Type, __pyx_n_s_reduce_ex); if (!object_reduce_ex) goto __PYX_BAD;
+#endif
+    reduce_ex = __Pyx_PyObject_GetAttrStr(type_obj, __pyx_n_s_reduce_ex); if (unlikely(!reduce_ex)) goto __PYX_BAD;
+    if (reduce_ex == object_reduce_ex) {
+#if CYTHON_USE_PYTYPE_LOOKUP
+        object_reduce = _PyType_Lookup(&PyBaseObject_Type, __pyx_n_s_reduce); if (!object_reduce) goto __PYX_BAD;
+#else
+        object_reduce = __Pyx_PyObject_GetAttrStr((PyObject*)&PyBaseObject_Type, __pyx_n_s_reduce); if (!object_reduce) goto __PYX_BAD;
+#endif
+        reduce = __Pyx_PyObject_GetAttrStr(type_obj, __pyx_n_s_reduce); if (unlikely(!reduce)) goto __PYX_BAD;
+        if (reduce == object_reduce || __Pyx_setup_reduce_is_named(reduce, __pyx_n_s_reduce_cython)) {
+            reduce_cython = __Pyx_PyObject_GetAttrStrNoError(type_obj, __pyx_n_s_reduce_cython);
+            if (likely(reduce_cython)) {
+                ret = PyDict_SetItem(((PyTypeObject*)type_obj)->tp_dict, __pyx_n_s_reduce, reduce_cython); if (unlikely(ret < 0)) goto __PYX_BAD;
+                ret = PyDict_DelItem(((PyTypeObject*)type_obj)->tp_dict, __pyx_n_s_reduce_cython); if (unlikely(ret < 0)) goto __PYX_BAD;
+            } else if (reduce == object_reduce || PyErr_Occurred()) {
+                goto __PYX_BAD;
+            }
+            setstate = __Pyx_PyObject_GetAttrStrNoError(type_obj, __pyx_n_s_setstate);
+            if (!setstate) PyErr_Clear();
+            if (!setstate || __Pyx_setup_reduce_is_named(setstate, __pyx_n_s_setstate_cython)) {
+                setstate_cython = __Pyx_PyObject_GetAttrStrNoError(type_obj, __pyx_n_s_setstate_cython);
+                if (likely(setstate_cython)) {
+                    ret = PyDict_SetItem(((PyTypeObject*)type_obj)->tp_dict, __pyx_n_s_setstate, setstate_cython); if (unlikely(ret < 0)) goto __PYX_BAD;
+                    ret = PyDict_DelItem(((PyTypeObject*)type_obj)->tp_dict, __pyx_n_s_setstate_cython); if (unlikely(ret < 0)) goto __PYX_BAD;
+                } else if (!setstate || PyErr_Occurred()) {
+                    goto __PYX_BAD;
+                }
+            }
+            PyType_Modified((PyTypeObject*)type_obj);
+        }
+    }
+    goto __PYX_GOOD;
+__PYX_BAD:
+    if (!PyErr_Occurred()) {
+        __Pyx_TypeName type_obj_name =
+            __Pyx_PyType_GetName((PyTypeObject*)type_obj);
+        PyErr_Format(PyExc_RuntimeError,
+            "Unable to initialize pickling for " __Pyx_FMT_TYPENAME, type_obj_name);
+        __Pyx_DECREF_TypeName(type_obj_name);
+    }
+    ret = -1;
+__PYX_GOOD:
+#if !CYTHON_USE_PYTYPE_LOOKUP
+    Py_XDECREF(object_reduce);
+    Py_XDECREF(object_reduce_ex);
+    Py_XDECREF(object_getstate);
+    Py_XDECREF(getstate);
+#endif
+    Py_XDECREF(reduce);
+    Py_XDECREF(reduce_ex);
+    Py_XDECREF(reduce_cython);
+    Py_XDECREF(setstate);
+    Py_XDECREF(setstate_cython);
+    return ret;
+}
+#endif
+
 /* Import */
 static PyObject *__Pyx_Import(PyObject *name, PyObject *from_list, int level) {
     PyObject *module = 0;
@@ -6693,7 +8110,7 @@ static PyObject *__Pyx_ImportDottedModule_WalkParts(PyObject *module, PyObject *
 #endif
 static PyObject *__Pyx__ImportDottedModule(PyObject *name, PyObject *parts_tuple) {
 #if PY_MAJOR_VERSION < 3
-    PyObject *module, *from_list, *star = __pyx_n_s__19;
+    PyObject *module, *from_list, *star = __pyx_n_s__18;
     CYTHON_UNUSED_VAR(parts_tuple);
     from_list = PyList_New(1);
     if (unlikely(!from_list))
@@ -6756,7 +8173,7 @@ static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name) {
         if (unlikely(!module_name_str)) { goto modbad; }
         module_name = PyUnicode_FromString(module_name_str);
         if (unlikely(!module_name)) { goto modbad; }
-        module_dot = PyUnicode_Concat(module_name, __pyx_kp_u__20);
+        module_dot = PyUnicode_Concat(module_name, __pyx_kp_u__19);
         if (unlikely(!module_dot)) { goto modbad; }
         full_name = PyUnicode_Concat(module_dot, name);
         if (unlikely(!full_name)) { goto modbad; }
@@ -6785,79 +8202,6 @@ static PyObject* __Pyx_ImportFrom(PyObject* module, PyObject* name) {
     }
     return value;
 }
-
-/* FixUpExtensionType */
-#if CYTHON_USE_TYPE_SPECS
-static int __Pyx_fix_up_extension_type_from_spec(PyType_Spec *spec, PyTypeObject *type) {
-#if PY_VERSION_HEX > 0x030900B1 || CYTHON_COMPILING_IN_LIMITED_API
-    CYTHON_UNUSED_VAR(spec);
-    CYTHON_UNUSED_VAR(type);
-#else
-    const PyType_Slot *slot = spec->slots;
-    while (slot && slot->slot && slot->slot != Py_tp_members)
-        slot++;
-    if (slot && slot->slot == Py_tp_members) {
-        int changed = 0;
-#if !(PY_VERSION_HEX <= 0x030900b1 && CYTHON_COMPILING_IN_CPYTHON)
-        const
-#endif
-            PyMemberDef *memb = (PyMemberDef*) slot->pfunc;
-        while (memb && memb->name) {
-            if (memb->name[0] == '_' && memb->name[1] == '_') {
-#if PY_VERSION_HEX < 0x030900b1
-                if (strcmp(memb->name, "__weaklistoffset__") == 0) {
-                    assert(memb->type == T_PYSSIZET);
-                    assert(memb->flags == READONLY);
-                    type->tp_weaklistoffset = memb->offset;
-                    changed = 1;
-                }
-                else if (strcmp(memb->name, "__dictoffset__") == 0) {
-                    assert(memb->type == T_PYSSIZET);
-                    assert(memb->flags == READONLY);
-                    type->tp_dictoffset = memb->offset;
-                    changed = 1;
-                }
-#if CYTHON_METH_FASTCALL
-                else if (strcmp(memb->name, "__vectorcalloffset__") == 0) {
-                    assert(memb->type == T_PYSSIZET);
-                    assert(memb->flags == READONLY);
-#if PY_VERSION_HEX >= 0x030800b4
-                    type->tp_vectorcall_offset = memb->offset;
-#else
-                    type->tp_print = (printfunc) memb->offset;
-#endif
-                    changed = 1;
-                }
-#endif
-#else
-                if ((0));
-#endif
-#if PY_VERSION_HEX <= 0x030900b1 && CYTHON_COMPILING_IN_CPYTHON
-                else if (strcmp(memb->name, "__module__") == 0) {
-                    PyObject *descr;
-                    assert(memb->type == T_OBJECT);
-                    assert(memb->flags == 0 || memb->flags == READONLY);
-                    descr = PyDescr_NewMember(type, memb);
-                    if (unlikely(!descr))
-                        return -1;
-                    if (unlikely(PyDict_SetItem(type->tp_dict, PyDescr_NAME(descr), descr) < 0)) {
-                        Py_DECREF(descr);
-                        return -1;
-                    }
-                    Py_DECREF(descr);
-                    changed = 1;
-                }
-#endif
-            }
-            memb++;
-        }
-        if (changed)
-            PyType_Modified(type);
-    }
-#endif
-    return 0;
-}
-#endif
 
 /* FetchSharedCythonModule */
 static PyObject *__Pyx_FetchSharedCythonABIModule(void) {
@@ -9064,7 +10408,7 @@ __Pyx_PyType_GetName(PyTypeObject* tp)
     if (unlikely(name == NULL) || unlikely(!PyUnicode_Check(name))) {
         PyErr_Clear();
         Py_XDECREF(name);
-        name = __Pyx_NewRef(__pyx_n_s__23);
+        name = __Pyx_NewRef(__pyx_n_s__26);
     }
     return name;
 }

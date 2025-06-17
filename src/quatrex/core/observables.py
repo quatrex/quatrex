@@ -230,3 +230,64 @@ def device_current(
         axis=0,
         mask=x_lesser._stack_padding_mask,
     )
+
+
+def current_conservation(
+    x_lesser: DSDBSparse,
+    x_greater: DSDBSparse,
+    se_int_lesser: DSDBSparse,
+    se_int_greater: DSDBSparse,
+) -> NDArray:
+    """Checks current conservation.
+    See eq. (12.34) in H. Haug and A.-P. Jauho,
+    "Quantum Kinetics in Transport and Optics of Semiconductors"
+
+    $$
+    \int dE dk sum_{ij} sigma_{ij}^< * G_{ji}^> - sigma_{ij}^> * G_{ji}^< = 0
+    $$
+
+    We can use the skew-symmetric property of the Green's functions.
+
+    Parameters
+    ----------
+    x_lesser : DSDBSparse
+        The lesser Green's function.
+    x_greater : DSDBSparse
+        The greater Green's function.
+    se_int_lesser : DSDBSparse
+        The lesser interaction self-energy.
+    se_int_greater : DSDBSparse
+        The greater interaction self-energy.
+    Returns
+    -------
+    tuple[NDArray, NDArray]
+        The absolute value of the current conservation and the
+        relative value of the current conservation.
+    """
+    term1 = (se_int_lesser.data * (-x_greater.data.conj())).sum()
+    term2 = (se_int_greater.data * (-x_lesser.data.conj())).sum()
+
+    sendbuff = xp.array([term1, term2], dtype=x_lesser.dtype)
+    recvbuff_block = xp.empty_like(sendbuff)
+    comm.block.all_reduce(sendbuff, recvbuff_block)
+    recvbuff_stack = xp.empty_like(sendbuff)
+    comm.stack.all_reduce(recvbuff_block, recvbuff_stack)
+
+    term1, term2 = recvbuff_stack
+
+    if comm.rank == 0:
+        print("max se_int_lesser:", xp.max(xp.abs(se_int_lesser.data)))
+        print("max se_int_greater:", xp.max(xp.abs(se_int_greater.data)))
+        print("max x_lesser:", xp.max(xp.abs(x_lesser.data)))
+        print("max x_greater:", xp.max(xp.abs(x_greater.data)))
+        print(f"term1: {term1}, term2: {term2}", flush=True)
+
+    current_conservation_absolute = term1 - term2
+    current_conservation_relative = (
+        current_conservation_absolute / (term1 + term2) if (term1 + term2) != 0 else 0
+    )
+
+    return (
+        xp.abs(current_conservation_absolute),
+        xp.abs(current_conservation_relative),
+    )

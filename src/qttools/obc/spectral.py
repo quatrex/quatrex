@@ -440,8 +440,8 @@ class Spectral(OBCSolver):
 
         """
 
-        if a_ii.ndim != 2 and return_injected:
-            raise NotImplementedError
+        #if a_ii.ndim != 2 and return_injected:
+        #   raise NotImplementedError
 
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]

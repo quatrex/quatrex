@@ -48,11 +48,9 @@ class SigmaFock(ScatteringSelfEnergy):
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
         self.prefactor = (
-            1j
-            / (2 * xp.pi * np.prod(number_of_kpoints))
-            * (self.energies[1] - self.energies[0])
+            1j / (2 * xp.pi * kpoint_volume) * (self.energies[1] - self.energies[0])
         )
         (
             coulomb_matrix.dtranspose()

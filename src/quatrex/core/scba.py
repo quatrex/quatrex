@@ -367,7 +367,6 @@ class SCBA:
                         coulomb_matrix_dict[periodic_shift] = (
                             coulomb_matrix_sparray.astype(xp.complex128)
                         )
-                coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
 
             else:
                 try:
@@ -379,7 +378,6 @@ class SCBA:
                     coulomb_matrix_dict = distributed_load(
                         quatrex_config.input_dir / "coulomb_matrix.pkl"
                     )
-                    coulomb_matrix_sparray = sum(coulomb_matrix_dict.values())
                 block_sizes = self.data.g_retarded.block_sizes
 
             coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(

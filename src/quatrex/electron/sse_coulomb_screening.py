@@ -143,13 +143,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
     ):
         """Initializes the scattering self-energy."""
         self.energies = electron_energies
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
         self.num_energies = self.energies.size
         self.prefactor = (
             1j
             / (2 * xp.pi)
             * (self.energies[1] - self.energies[0])
-            / np.prod(number_of_kpoints)
+            / self.kpoint_volume
         )
         self.big_block_sizes = None
         self.batch_size = compute_config.convolve.batch_size
@@ -354,14 +354,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
                 # negative energy part
                 sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
-                # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
                 sigma_retarded.data[..., batch] += (
                     # Wrong sign somewhere? Negative sign opens the bandgap, but I don't know why.
                     # -self.prefactor
                     self.prefactor
                     * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
-                    # Here we shouldn't divide with the number of kpoints
-                    * np.prod(sigma_retarded.shape[1:-2])
+                    # Here we shouldn't divide with kpoint volume, as we are
+                    # convolving in E-space
+                    * self.kpoint_volume
+                    # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
                     # + antihermitian / 2
                 )
 

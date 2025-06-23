@@ -168,7 +168,7 @@ def test_create_coordinate_grid(
 
 
 @pytest.mark.parametrize(
-    "hr, num_transport_cells, transport_dir, transport_cell, block_start, block_end, return_sparse, cutoff, coords, lat_vecs",
+    "hr, num_transport_cells, transport_dir, transport_cell, block_start, block_end, return_sparse, cutoff, coords, lat_vecs, format",
     [
         (
             xp.ones((3, 3, 3, 5, 5)),
@@ -181,6 +181,7 @@ def test_create_coordinate_grid(
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
+            None,
         ),
         (
             xp.ones((3, 3, 3, 5, 5)),
@@ -193,6 +194,20 @@ def test_create_coordinate_grid(
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
+            "coo",
+        ),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            None,
+            None,
+            True,
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
+            "csr",
         ),
         (
             xp.ones((3, 3, 3, 5, 5)),
@@ -205,6 +220,7 @@ def test_create_coordinate_grid(
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
+            None,
         ),
         (
             xp.ones((3, 3, 3, 5, 5)),
@@ -217,13 +233,29 @@ def test_create_coordinate_grid(
             2,
             xp.zeros((5, 3)),
             xp.eye(3),
+            "coo",
+        ),
+        (
+            xp.ones((3, 3, 3, 5, 5)),
+            10,
+            "x",
+            (2, 1, 1),
+            0,
+            2,
+            True,
+            2,
+            xp.zeros((5, 3)),
+            xp.eye(3),
+            "csr",
         ),
     ],
     ids=[
         "dense_no-block-inds",
-        "sparse_no-block-inds",
+        "sparse-coo_no-block-inds",
+        "sparse-csr_no-block-inds",
         "dense_with-block-inds",
-        "sparse_with-block-inds",
+        "sparse-coo_with-block-inds",
+        "sparse-csr_with-block-inds",
     ],
 )
 def test_create_hamiltonian(
@@ -237,6 +269,7 @@ def test_create_hamiltonian(
     cutoff: float,
     coords: NDArray,
     lat_vecs: NDArray,
+    format: str | None,
 ):
     hamiltonians = create_hamiltonian(
         hr,
@@ -249,6 +282,7 @@ def test_create_hamiltonian(
         cutoff=cutoff,
         coords=coords,
         lattice_vectors=lat_vecs,
+        format=format,
     )
     block_start = block_start or 0
     block_end = block_end or num_transport_cells
@@ -327,3 +361,7 @@ def test_create_hamiltonian(
                         assert xp.allclose(
                             h_lower[block_slice][col_unit_slice, row_unit_slice], 1
                         )
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

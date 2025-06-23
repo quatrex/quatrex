@@ -482,6 +482,90 @@ def create_hamiltonian(
             result = top_brow
             if num_blocks > 2:
                 result = sparse.vstack((result, middle_brow), format="csr")
+            for bidx in range(block_start + 2, block_end - 1):
+                middle_brow.indices += block_num_rows
+                result = sparse.vstack((result, middle_brow), format="csr")
+            if num_blocks > 1:
+                result = sparse.vstack((result, bottom_brow), format="csr")
+            if block_end < num_transport_cells:
+                result = sparse.vstack(
+                    (
+                        result,
+                        sparse.csr_matrix(
+                            (
+                                (num_transport_cells - block_end) * block_num_rows,
+                                matrix_shape,
+                            )
+                        ),
+                    ),
+                    format="csr",
+                )
+
+            result.sort_indices()
+            result.eliminate_zeros()
+            result.sum_duplicates()
+
+        else:
+
+        block_num_rows = diag_block.shape[0]
+        matrix_shape = num_transport_cells * diag_block.shape[0]
+        block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+
+        if format == "csr":
+
+            # For CSR output
+            off = block_start * diag_block.shape[0]
+            top_brow_rows = xp.hstack([diag_block.row, upper_block.row]) + off
+            top_brow_cols = (
+                xp.hstack([diag_block.col, upper_block.col + diag_block.shape[0]]) + off
+            )
+            top_brow_data = xp.hstack([diag_block.data, upper_block.data])
+            top_brow = sparse.csr_matrix(
+                (top_brow_data, (top_brow_rows, top_brow_cols)),
+                shape=((block_start + 1) * diag_block.shape[0], matrix_shape),
+            )
+            middle_brow_rows = xp.hstack(
+                [lower_block.row, diag_block.row, upper_block.row]
+            )
+            middle_brow_cols = (
+                xp.hstack(
+                    [
+                        lower_block.col,
+                        diag_block.col + diag_block.shape[0],
+                        upper_block.col + 2 * diag_block.shape[0],
+                    ]
+                )
+                + off
+            )
+            middle_brow_data = xp.hstack(
+                [lower_block.data, diag_block.data, upper_block.data]
+            )
+            middle_brow = sparse.csr_matrix(
+                (middle_brow_data, (middle_brow_rows, middle_brow_cols)),
+                shape=(diag_block.shape[0], matrix_shape),
+            )
+            bottom_brow_rows = xp.hstack([lower_block.row, diag_block.row])
+            bottom_brow_cols = xp.hstack(
+                [
+                    lower_block.col + (block_end - 2) * diag_block.shape[0],
+                    diag_block.col + (block_end - 1) * diag_block.shape[0],
+                ]
+            )
+            bottom_brow_data = xp.hstack([lower_block.data, diag_block.data])
+            bottom_brow = sparse.csr_matrix(
+                (bottom_brow_data, (bottom_brow_rows, bottom_brow_cols)),
+                shape=(diag_block.shape[0], matrix_shape),
+            )
+
+            del diag_block, upper_block, lower_block
+            del top_brow_rows, top_brow_cols, top_brow_data
+            del middle_brow_rows, middle_brow_cols, middle_brow_data
+            del bottom_brow_rows, bottom_brow_cols, bottom_brow_data
+            free_mempool()
+
+            result = top_brow
+            if num_blocks > 2:
+                result = sparse.vstack((result, middle_brow), format="csr")
                 del top_brow
             for bidx in range(block_start + 2, block_end - 1):
                 middle_brow.indices += block_num_rows

@@ -54,6 +54,52 @@ def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
     )
 
 
+@profiler.profile(level="api")
+def hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
+    """Computes the Hilbert transform of the array a, assuming the symmetries of the
+    polarization.
+
+    Assumes that the first axis corresponds to the energy axis.
+
+    Parameters
+    ----------
+    a : NDArray
+        The array to transform.
+    energies : NDArray
+        The energy values corresponding to the first axis of a.
+    eta : float, optional
+        For the principle part. Small part to avoid singularity, by
+        default 1e-8.
+
+    Returns
+    -------
+    NDArray
+         The Hilbert transform of a.
+
+    """
+    # eta for removing the singularity. See Cauchy principal value.
+    de = energies[1] - energies[0]
+    eta = de / 2
+    energy_differences = (
+        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
+    )
+    ne = energies.size
+    hilbert_kernel_fft = xp.fft.fft(
+        # 1 / energy_differences * xp.tanh(energy_differences * 10), 2 * ne - 1, axis=0
+        1 / energy_differences,
+        2 * ne - 1,
+        axis=0,
+    )
+    a_t = xp.fft.fft(a, 2 * ne - 1, axis=0)
+    b = xp.fft.ifft(
+        a_t * hilbert_kernel_fft
+        - a_t * hilbert_kernel_fft.conj()
+        - a_t.conj() * hilbert_kernel_fft,
+        axis=0,
+    )[:ne]
+    return b / (2 * xp.pi) * (energies[1] - energies[0])
+
+
 class PCoulombScreening(ScatteringSelfEnergy):
     """Computes the dynamic polarization from the electronic system.
 
@@ -74,13 +120,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
             / xp.pi
             * xp.abs(self.energies[1] - self.energies[0])
-            / xp.prod(xp.array(number_of_kpoints))
+            / self.kpoint_volume
         )
         self.batch_size = compute_config.convolve.batch_size
 
@@ -110,7 +156,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (g_lesser, g_greater):
                 # These should ideally already be in nnz-distribution.
                 m.dtranspose() if m.distribution_state != "nnz" else None
-            for m in (p_lesser, p_greater):
+            for m in (p_lesser, p_greater, p_retarded):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
 
@@ -181,6 +227,19 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # energy convolution.
                     p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                    p_retarded.data[..., batch] = (
+                        -self.prefactor
+                        * (
+                            hilbert_transform_polarization(
+                                (
+                                    p_greater.data[..., batch]
+                                    - p_lesser.data[..., batch]
+                                ),
+                                self.energies,
+                            )
+                        )
+                        * self.kpoint_volume
+                    )
 
         # Barrier before communication
         synchronize_device()
@@ -198,7 +257,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         t_all2all2_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
-            for m in (p_lesser, p_greater):
+            for m in (p_lesser, p_greater, p_retarded):
                 m.dtranspose() if m.distribution_state != "stack" else None
             # NOTE: The Green's functions must not be transposed back to
             # stack distribution, as they are needed in nnz distribution for
@@ -220,12 +279,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
         if not p_lesser.symmetry:
             p_lesser.symmetrize(xp.subtract)
             p_greater.symmetrize(xp.subtract)
+            p_retarded.symmetrize(xp.add)
 
         # Discard the real part.
-        p_lesser.data.real = 0
-        p_greater.data.real = 0
+        # p_lesser.data.real = 0
+        # p_greater.data.real = 0
+        # p_retarded._data[:] = 0
 
-        p_retarded.data = (p_greater.data - p_lesser.data) / 2
+        p_retarded.data += (p_greater.data - p_lesser.data) / 2
 
         synchronize_device()
         t_symmetrization_end = time.perf_counter()

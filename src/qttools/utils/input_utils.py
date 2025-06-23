@@ -482,11 +482,14 @@ def create_hamiltonian(
             result = top_brow
             if num_blocks > 2:
                 result = sparse.vstack((result, middle_brow), format="csr")
+                del top_brow
             for bidx in range(block_start + 2, block_end - 1):
                 middle_brow.indices += block_num_rows
                 result = sparse.vstack((result, middle_brow), format="csr")
             if num_blocks > 1:
+                del middle_brow
                 result = sparse.vstack((result, bottom_brow), format="csr")
+            del bottom_brow
             if block_end < num_transport_cells:
                 result = sparse.vstack(
                     (
@@ -501,9 +504,11 @@ def create_hamiltonian(
                     format="csr",
                 )
 
+            free_mempool()
             result.sort_indices()
             result.eliminate_zeros()
             result.sum_duplicates()
+            free_mempool()
 
         else:
 

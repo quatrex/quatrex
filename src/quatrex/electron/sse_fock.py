@@ -48,18 +48,14 @@ class SigmaFock(ScatteringSelfEnergy):
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
-        kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
-        self.prefactor = (
-            1j / (2 * xp.pi * kpoint_volume) * (self.energies[1] - self.energies[0])
-        )
+        self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
+        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
         (
             coulomb_matrix.dtranspose()
             if coulomb_matrix.distribution_state != "nnz"
             else None
         )
-        self.coulomb_matrix_data = (
-            coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r
-        )
+        self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     @profiler.profile(level="api")
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
@@ -98,10 +94,13 @@ class SigmaFock(ScatteringSelfEnergy):
         # Compute the electron density by summing over energies.
         t_sse_start = time.perf_counter()
         gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-        sigma_retarded.data += fft_circular_convolve(
-            gl_density,
-            self.coulomb_matrix_data,
-            axes=tuple(range(gl_density.ndim - 1)),
+        sigma_retarded.data += (
+            fft_circular_convolve(
+                gl_density,
+                self.coulomb_matrix_data,
+                axes=tuple(range(gl_density.ndim - 1)),
+            )
+            / self.kpoint_volume
         )
         synchronize_device()
         t_sse_end = time.perf_counter()

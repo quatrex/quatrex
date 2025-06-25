@@ -5,12 +5,15 @@ from pathlib import Path
 
 import numpy as np
 
-from qttools import NDArray, _DType, sparse, xp
+from qttools import FloatType, NDArray, sparse, xp
 from qttools.utils.gpu_utils import debug_gpu_memory_usage, free_mempool
 
 
 def read_hr_dat(
-    path: Path, return_all: bool = False, dtype: _DType = xp.complex128, read_fast=False
+    path: Path,
+    return_all: bool = False,
+    dtype: xp.dtype[FloatType] = xp.complex128,
+    read_fast=False,
 ) -> tuple[NDArray, ...]:
     """Parses the contents of a `seedname_hr.dat` file.
 

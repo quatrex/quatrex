@@ -2,11 +2,11 @@
 
 import itertools
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
-from qttools import ArrayLike, NDArray, sparse, xp
+from qttools import ArrayLike, FloatType, IntType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import empty_like_pinned, free_mempool, synchronize_device
@@ -133,14 +133,43 @@ class DSDBSparse(ABC):
 
     def __init__(
         self,
-        data: NDArray,
-        block_sizes: NDArray,
-        global_stack_shape: tuple | int,
+        arg: NDArray[FloatType] | tuple[Sequence[int], xp.dtype[FloatType]],
+        block_sizes: NDArray[IntType],
+        global_stack_shape: Sequence[int] | int,
         return_dense: bool = True,
         symmetry: bool | None = False,
-        symmetry_op: Callable = xp.conj,
+        symmetry_op: Callable[[NDArray[FloatType]], NDArray[FloatType]] = xp.conj,
+        allocate: bool = True,
+        copy: bool = True,
     ):
         """Initializes a DSBDSparse matrix."""
+
+        # Determine the stack distribution.
+        stack_section_sizes, total_stack_size = get_section_sizes(
+            global_stack_shape[0], comm.stack.size, strategy="balanced"
+        )
+        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
+        self.stack_section_sizes = stack_section_sizes
+        self.total_stack_size = total_stack_size
+
+        if isinstance(arg, (list, tuple)):
+            if len(arg) != 2 or not isinstance(arg[0], (list, tuple)):
+                raise ValueError(
+                    "Argument must be a tuple of (shape, dtype) or an array."
+                )
+            data = None
+            data_shape, data_dtype = arg
+        else:
+            data = arg
+            if len(data.shape) > 1:
+                data_shape = data.shape
+            else:
+                data_shape = (
+                    self.stack_section_sizes_offset,
+                    *global_stack_shape[1:],
+                    data.shape[-1],
+                )
+            data_dtype = data.dtype
 
         # --- Things concerning stack distribution ---------------------
 
@@ -158,22 +187,15 @@ class DSDBSparse(ABC):
         self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
-        if comm.block is None or comm.stack is None:
+        if not comm.is_configured():
             raise ValueError(
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."
             )
 
-        # Determine how the data is distributed across the stack.
-        stack_section_sizes, total_stack_size = get_section_sizes(
-            global_stack_shape[0], comm.stack.size, strategy="balanced"
-        )
-        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
-        self.stack_section_sizes = stack_section_sizes
-        self.total_stack_size = total_stack_size
-
+        # Determine the nnz distribution.
         nnz_section_sizes, total_nnz_size = get_section_sizes(
-            data.shape[-1], comm.stack.size, strategy="greedy"
+            data_shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes = nnz_section_sizes
         self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
@@ -200,14 +222,19 @@ class DSDBSparse(ABC):
             *global_stack_shape[1:],
             total_nnz_size,
         )
-        if data.shape != padded_shape:
-            self._data = xp.zeros(
-                (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-                dtype=data.dtype,
-            )
-            self._data[: data.shape[0], ..., : data.shape[-1]] = data
-        else:
+
+        if not copy and data is not None and data.shape == padded_shape:
+            # If we are not copying the data and the data is already
+            # in the correct shape, we can just use it as is.
             self._data = data
+        else:
+            # Otherwise, we need to create a new array.
+            if allocate:
+                self._data = xp.zeros(padded_shape, dtype=data_dtype)
+                if data is not None:
+                    self._data[: data_shape[0], ..., : data_shape[-1]] = data
+            else:
+                self._data = None
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -218,8 +245,8 @@ class DSDBSparse(ABC):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
 
-        self.stack_shape = data.shape[:-1]
-        self.local_nnz = data.shape[-1]
+        self.stack_shape = data_shape[:-1]
+        self.local_nnz = data_shape[-1]
         # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
@@ -247,7 +274,7 @@ class DSDBSparse(ABC):
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = data.dtype
+        self.dtype = data_dtype
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)
@@ -834,8 +861,8 @@ class DSDBSparse(ABC):
 
     def allocate_data(self) -> None:
         """Allocates the local data."""
-        free_mempool()
         if self._data is None:
+            free_mempool()
             self._data = xp.empty(
                 (
                     int(max(self.stack_section_sizes)),
@@ -870,6 +897,7 @@ class DSDBSparse(ABC):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        allocate: bool = True,
     ) -> "DSDBSparse":
         """Creates a new DSDBSparse matrix from a scipy.sparse array.
 
@@ -892,7 +920,43 @@ class DSDBSparse(ABC):
         ...
 
     @classmethod
-    @abstractmethod
+    def empty_like(
+        cls, dsdbsparse: "DSDBSparse", allocate: bool = True
+    ) -> "DSDBSparse":
+        """Creates a new DSDBSparse matrix with the same shape and dtype.
+
+        All non-zero elements are set to zero, but the sparsity pattern
+        is preserved.
+
+        Parameters
+        ----------
+        dsdbsparse : DSDBSparse
+            The matrix to copy the shape and dtype from.
+        allocate : bool, optional
+            Whether to allocate memory for the data. Default is True.
+
+        Returns
+        -------
+        DSDBSparse
+            The new DSDBSparse matrix.
+
+        """
+        shape = dsdbsparse.stack_shape + (dsdbsparse.local_nnz,)
+        dtype = dsdbsparse.dtype
+
+        return cls(
+            arg=(shape, dtype),
+            rows=dsdbsparse.rows,
+            cols=dsdbsparse.cols,
+            block_sizes=dsdbsparse.block_sizes,
+            global_stack_shape=dsdbsparse.global_stack_shape,
+            return_dense=dsdbsparse.return_dense,
+            symmetry=dsdbsparse.symmetry,
+            symmetry_op=dsdbsparse.symmetry_op,
+            allocate=allocate,
+        )
+
+    @classmethod
     def zeros_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
         """Creates a new DSDBSparse matrix with the same shape and dtype.
 
@@ -910,7 +974,9 @@ class DSDBSparse(ABC):
             The new DSDBSparse matrix.
 
         """
-        ...
+        out = cls.empty_like(dsdbsparse, allocate=True)
+        out._data[:] = 0
+        return out
 
 
 class _DStackIndexer:

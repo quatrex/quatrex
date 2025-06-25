@@ -934,9 +934,6 @@ class SCBA:
             t_solve_start = time.perf_counter()
             self.data.g_retarded.allocate_data()
             self.electron_solver.solve(
-                # self.data.sigma_lesser,
-                # self.data.sigma_greater,
-                # self.data.sigma_retarded,
                 self.data.sigma_lesser_prev,
                 self.data.sigma_greater_prev,
                 self.data.sigma_retarded_prev,
@@ -977,23 +974,6 @@ class SCBA:
                     flush=True,
                 )
 
-            # # Stash current into previous self-energy buffer.
-            # t_stash_start = time.perf_counter()
-            # self._stash_sigma()
-            # synchronize_device()
-            # t_stash_end = time.perf_counter()
-            # comm.barrier()
-            # t_stash_end_all = time.perf_counter()
-            # if comm.rank == 0:
-            #     print(
-            #         f"Time for swapping: {t_stash_end - t_stash_start:.3f} s",
-            #         flush=True,
-            #     )
-            #     print(
-            #         f"Time for swapping all: {t_stash_end_all - t_stash_start:.3f} s",
-            #         flush=True,
-            #     )
-
             # Transpose to nnz distribution.
             # NOTE: While computing all interactions, we only ever need
             # to access the Green's function and the self-energies in
@@ -1002,13 +982,6 @@ class SCBA:
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "nnz"
-            # for m in (
-            #     self.data.sigma_lesser,
-            #     self.data.sigma_greater,
-            #     self.data.sigma_retarded,
-            # ):
-            #     m.dtranspose(discard=True)  # These can be safely discarded.
-            #     assert m.distribution_state == "nnz"
             synchronize_device()
             t_end_transpose = time.perf_counter()
             comm.barrier()

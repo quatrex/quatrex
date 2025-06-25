@@ -1,17 +1,18 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from pathlib import Path
+from typing import Any
 
 import scipy.sparse as sps
 from mpi4py import MPI
-from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import COMM_WORLD
 from mpi4py.util import pkl5
 
 from qttools import NDArray, sparse, xp
 from qttools.profiling import Profiler
 
 profiler = Profiler()
-comm = pkl5.Intracomm(comm)
+comm = pkl5.Intracomm(COMM_WORLD)
 
 
 @profiler.profile(level="debug")
@@ -19,7 +20,7 @@ def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
     strategy: str = "balanced",
-) -> tuple[list, int]:
+) -> tuple[list[int], int]:
     """Computes the number of un-evenly divided elements per section.
 
     Parameters
@@ -70,7 +71,7 @@ def get_section_sizes(
 
 
 @profiler.profile(level="debug")
-def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
+def distributed_load(path: Path) -> sparse.spmatrix | NDArray[Any]:
     """Loads an array from disk and distributes it to all ranks.
 
     Parameters
@@ -110,7 +111,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
 
 @profiler.profile(level="debug")
-def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
+def get_local_slice(global_array: NDArray[Any], comm: MPI.Comm = comm) -> NDArray[Any]:
     """Returns the local slice of a distributed array.
 
     Parameters

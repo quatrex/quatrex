@@ -142,38 +142,31 @@ class SCBAData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
+            allocate=False,
         )
-        # self.g_retarded.data[:] = 0.0  # Initialize to zero.
-        self.g_retarded.free_data()
-
         self.g_lesser = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape,
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            allocate=False,
         )
-        # self.g_lesser = dsdbsparse_type.zeros_like(self.g_retarded)
-        # self.g_retarded.free_data()
-        # self.g_lesser.symmetry = quatrex_config.scba.symmetric
-        # self.g_lesser.symmetry_op = lambda a: -a.conj()
-        # self.g_lesser.free_data()
-        self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.g_greater.free_data()
+        self.g_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
-        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_lesser_prev.free_data()
-        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_lesser.free_data()
-        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater_prev.free_data()
-        self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater.free_data()
+        self.sigma_lesser_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.sigma_greater_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.sigma_retarded_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
-        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded_prev.free_data()
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded.free_data()
         if quatrex_config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
@@ -183,12 +176,9 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_retarded.free_data()
-            self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_lesser.free_data()
-            self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_greater.free_data()
+            self.p_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
             num_connected_blocks = quatrex_config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -211,12 +201,9 @@ class SCBAData:
                 global_stack_shape=electron_energies.shape,
                 symmetry=quatrex_config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
+                allocate=False,
             )
-            self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
-            self.w_lesser.free_data()
-            self.w_greater.free_data()
-
-        self.g_lesser.free_data()
+            self.w_greater = dsdbsparse_type.empty_like(self.w_lesser, allocate=False)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -410,23 +397,27 @@ class SCBA:
                 self.electron_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
+            debug_gpu_memory_usage("After SigmaFock initialization")
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
                 self.compute_config,
                 self.coulomb_screening_energies,
             )
+            debug_gpu_memory_usage("After PCoulombScreening initialization")
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
                 self.compute_config,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
+            debug_gpu_memory_usage("After CoulombScreeningSolver initialization")
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.quatrex_config,
                 self.compute_config,
                 self.electron_energies,
             )
+            debug_gpu_memory_usage("After SigmaCoulombScreening initialization")
 
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
@@ -617,6 +608,8 @@ class SCBA:
                 flush=True,
             )
 
+        self.data.g_lesser.to_host()
+        self.data.g_greater.to_host()
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
@@ -657,11 +650,13 @@ class SCBA:
                 flush=True,
             )
 
-        # self.data.p_lesser.free_data()
-        # self.data.p_greater.free_data()
-        # self.data.p_retarded.free_data()
+        self.data.p_lesser.free_data()
+        self.data.p_greater.free_data()
+        self.data.p_retarded.free_data()
 
         t_sigma_fock_start = time.perf_counter()
+        self.data.g_lesser.to_device()
+        self.data.g_greater.to_device()
         for m in (
             self.data.sigma_lesser,
             self.data.sigma_greater,
@@ -885,7 +880,6 @@ class SCBA:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
-        self.data.g_retarded.allocate_data()
         self.data.g_lesser.allocate_data()
         self.data.g_greater.allocate_data()
         self.data.sigma_lesser.allocate_data()

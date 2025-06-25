@@ -349,6 +349,7 @@ class ElectronSolver(SubsystemSolver):
                 * (grid_transport - grid_transport[0])
                 / (grid_transport[-1] - grid_transport[0])
             ) - 1
+            # Create a potential profile
             self.potential = bias / 2 * (xp.tanh(3 * grid_transport) + 1)
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")

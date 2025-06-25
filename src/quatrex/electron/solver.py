@@ -169,29 +169,6 @@ class ElectronSolver(SubsystemSolver):
             )
             print(f"    Block sizes: {self.block_sizes}", flush=True)
 
-        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
-            hamiltonian_sparray.astype(xp.complex128),
-            block_sizes=self.block_sizes,
-            global_stack_shape=(comm.stack.size,),
-            symmetry=quatrex_config.scba.symmetric,
-            symmetry_op=xp.conj,
-        )
-        self.hamiltonian.to_host()
-
-        debug_gpu_memory_usage("After creating Hamiltonian DSDBSparse")
-
-        # Make sure that the the system matrix sparsity is a superset of
-        # self-energy and Hamiltonian sparsity.
-        sparsity_pattern += hamiltonian_sparray
-        del hamiltonian_sparray
-        free_mempool()
-        sparsity_pattern.sum_duplicates()
-        sparsity_pattern = sparsity_pattern.astype(xp.complex128)
-        sparsity_pattern = sparsity_pattern.tocoo()
-        free_mempool()
-
-        debug_gpu_memory_usage("After constructing system matrix sparsity pattern")
-
         synchronize_device()
         t_ham_load_end = time.perf_counter()
         comm.barrier()
@@ -206,18 +183,16 @@ class ElectronSolver(SubsystemSolver):
                 flush=True,
             )
 
-        # self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
-        #     hamiltonian_sparray.astype(xp.complex128),
-        #     block_sizes=self.block_sizes,
-        #     global_stack_shape=(comm.stack.size,),
-        #     symmetry=quatrex_config.scba.symmetric,
-        #     symmetry_op=xp.conj,
-        # )
-        # del hamiltonian_sparray
-        # free_mempool()
-        # self.hamiltonian.to_host()
+        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
+            hamiltonian_sparray.astype(xp.complex128),
+            block_sizes=self.block_sizes,
+            global_stack_shape=(comm.stack.size,),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
+        )
+        self.hamiltonian.to_host()
 
-        # debug_gpu_memory_usage("After creating Hamiltonian DSDBSparse")
+        debug_gpu_memory_usage("After creating Hamiltonian DSDBSparse")
 
         synchronize_device()
         t_ham_create_end = time.perf_counter()
@@ -233,14 +208,26 @@ class ElectronSolver(SubsystemSolver):
                 flush=True,
             )
 
+        # Make sure that the the system matrix sparsity is a superset of
+        # self-energy and Hamiltonian sparsity.
+        sparsity_pattern += hamiltonian_sparray
+        del hamiltonian_sparray
+        free_mempool()
+        sparsity_pattern.sum_duplicates()
+        sparsity_pattern = sparsity_pattern.astype(xp.complex128)
+        sparsity_pattern = sparsity_pattern.tocoo()
+        free_mempool()
+
+        debug_gpu_memory_usage("After constructing system matrix sparsity pattern")
+
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             # sparsity_pattern.astype(xp.complex128),
             sparsity_pattern,
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
+            allocate=False,
         )
-        self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
         free_mempool()
 

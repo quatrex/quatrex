@@ -3,7 +3,7 @@
 import time
 
 import numpy as np
-from qttools import NDArray, _DType, sparse, xp
+from qttools import FloatType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
@@ -34,7 +34,7 @@ profiler = Profiler()
 
 @profiler.profile(level="debug")
 def _compute_sparsity_pattern(
-    *matrices: DSDBSparse, dtype: _DType = None
+    *matrices: DSDBSparse, dtype: xp.dtype[FloatType] = None
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern of the product of several DSDBSparse matrices."""
     num_blocks = matrices[0].num_blocks
@@ -149,9 +149,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
+            allocate=False,
         )
-        self.system_matrix.free_data()
-        # Explicitely try to free the memory for the sparsity pattern.
+        # Explicitly try to free the memory for the sparsity pattern.
         del v_times_p_sparsity_pattern
 
         l_sparsity_pattern = _compute_sparsity_pattern(
@@ -168,12 +168,14 @@ class CoulombScreeningSolver(SubsystemSolver):
             global_stack_shape=self.energies.shape,
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            allocate=False,
         )
-        self.l_greater = compute_config.dsdbsparse_type.zeros_like(self.l_lesser)
+        self.l_greater = compute_config.dsdbsparse_type.empty_like(
+            self.l_lesser, allocate=False
+        )
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
-        self.l_lesser.free_data()
-        self.l_greater.free_data()
+
         # Load the Coulomb matrix.
         if quatrex_config.device.construct_from_unit_cell:
 
@@ -198,6 +200,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 block_start=start_block,
                 block_end=end_block,
                 return_sparse=True,
+                format="csr",
             )
             coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
             coulomb_matrix_sparray.sum_duplicates()
@@ -218,13 +221,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         debug_gpu_memory_usage("After freeing memory pool")
 
         self.coulomb_matrix += coulomb_matrix_sparray
-        # self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-        #     coulomb_matrix_sparray,
-        #     block_sizes=self.small_block_sizes,
-        #     global_stack_shape=(comm.stack.size,),
-        #     symmetry=quatrex_config.scba.symmetric,
-        #     symmetry_op=xp.conj,
-        # )
         # Explicitely try to free the memory for the sparsity pattern.
         del coulomb_matrix_sparray
 

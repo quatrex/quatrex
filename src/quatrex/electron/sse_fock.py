@@ -7,7 +7,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import free_mempool, get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
@@ -65,6 +65,7 @@ class SigmaFock(ScatteringSelfEnergy):
                 block_start=start_block,
                 block_end=end_block,
                 return_sparse=True,
+                format="csr",
             )
             coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
             coulomb_matrix_sparray.sum_duplicates()
@@ -104,6 +105,8 @@ class SigmaFock(ScatteringSelfEnergy):
         self.coulomb_matrix_data = (
             coulomb_matrix.data[0] / quatrex_config.coulomb_screening.epsilon_r
         )
+        del coulomb_matrix
+        free_mempool()
 
     @profiler.profile(level="api")
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:

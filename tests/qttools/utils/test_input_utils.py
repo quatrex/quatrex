@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from qttools import NDArray, _DType, xp
+from qttools import FloatType, NDArray, xp
 from qttools.utils.input_utils import (
     create_coordinate_grid,
     create_hamiltonian,
@@ -25,7 +25,7 @@ R_ref = xp.loadtxt(Path(__file__).parent / "data" / "R_ref.txt", dtype=int)
         (True, xp.complex128, True),
     ],
 )
-def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
+def test_read_hr_dat(return_all: bool, dtype: xp.dtype[FloatType], read_fast: bool):
     if return_all:
         hr, R = read_hr_dat(wannier90_hr_path, return_all, dtype, read_fast)
     else:

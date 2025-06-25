@@ -210,29 +210,29 @@ class RGF(GFSolver):
 
             # Check if there are OBC blocks for the current layer.
             obc_r = obc_blocks.retarded[0]
-            a_00 = (
+            a_jj = (
                 a_.blocks[0, 0]
                 if obc_r is None
                 else a_.blocks[0, 0] - obc_r[stack_slice]
             )
             obc_l = obc_blocks.lesser[0]
-            sl_00 = (
+            sl_jj = (
                 sigma_lesser_.blocks[0, 0]
                 if obc_l is None
                 else sigma_lesser_.blocks[0, 0] + obc_l[stack_slice]
             )
             obc_g = obc_blocks.greater[0]
-            sg_00 = (
+            sg_jj = (
                 sigma_greater_.blocks[0, 0]
                 if obc_g is None
                 else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             )
 
-            xr_00 = inv(a_00)
-            xr_00_dagger = xr_00.conj().swapaxes(-2, -1)
-            xr_diag_blocks[0] = xr_00
-            xl_diag_blocks[0] = xr_00 @ sl_00 @ xr_00_dagger
-            xg_diag_blocks[0] = xr_00 @ sg_00 @ xr_00_dagger
+            xr_jj = inv(a_jj)
+            xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
+            xr_diag_blocks[0] = xr_jj
+            xl_diag_blocks[0] = xr_jj @ sl_jj @ xr_jj_dagger
+            xg_diag_blocks[0] = xr_jj @ sg_jj @ xr_jj_dagger
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -267,31 +267,33 @@ class RGF(GFSolver):
 
                 # Precompute some terms that are used multiple times.
                 a_ji_xr_ii = a_ji @ xr_ii
-                a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
-                a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
 
                 xr_jj = inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
+
+                a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
 
                 xl_diag_blocks[j] = (
                     xr_jj
                     @ (
                         sl_jj
                         + a_ji @ xl_diag_blocks[i] @ a_ji_dagger
-                        + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sl_ij
+                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sx_ij
                     )
                     @ xr_jj_dagger
                 )
+
+                a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
 
                 xg_diag_blocks[j] = (
                     xr_jj
                     @ (
                         sg_jj
                         + a_ji @ xg_diag_blocks[i] @ a_ji_dagger
-                        + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sg_ij
+                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sx_ij
                     )
                     @ xr_jj_dagger
                 )
@@ -324,34 +326,27 @@ class RGF(GFSolver):
 
                 # Precompute the transposes that are used multiple times.
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
-                xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
-                a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
 
                 # Precompute the terms that are used multiple times.
-                a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
-                a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
                 xr_ii_a_ij = xr_ii @ a_ij
+                a_ij_dagger_xr_ii_dagger = xr_ii_a_ij.conj().swapaxes(-2, -1)
                 xr_jj_a_ji = xr_jj @ a_ji
+                a_ji_dagger_xr_jj_dagger = xr_jj_a_ji.conj().swapaxes(-2, -1)
                 xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
-                xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(
-                    -2, -1
+                xr_jj_dagger_a_ij_dagger_xr_ii_dagger = (
+                    xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
                 )
                 xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
-                xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
-                xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
 
-                temp_1_l = (
-                    xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+                temp_1x = (
+                    xr_ii_a_ij_xr_jj_a_ji @ xl_ii
+                    - xr_ii @ sigma_lesser_ij @ xr_jj_dagger_a_ij_dagger_xr_ii_dagger
                 )
-                temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
-
-                temp_1_g = (
-                    xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
-                )
-                temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
+                temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+                temp_2x = xr_ii_a_ij @ xl_jj
 
                 xl_ij = (
-                    -xr_ii_a_ij_xl_jj
+                    -temp_2x
                     - xl_ii @ a_ji_dagger_xr_jj_dagger
                     + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
                 )
@@ -360,8 +355,20 @@ class RGF(GFSolver):
                 if not xl_.symmetry:
                     xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
+                xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
+                xl_.blocks[i, i] = 0.5 * (
+                    xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
+                )
+
+                temp_1x = (
+                    xr_ii_a_ij_xr_jj_a_ji @ xg_ii
+                    - xr_ii @ sigma_greater_ij @ xr_jj_dagger_a_ij_dagger_xr_ii_dagger
+                )
+                temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+                temp_2x = xr_ii_a_ij @ xg_jj
+
                 xg_ij = (
-                    -xr_ii_a_ij_xg_jj
+                    -temp_2x
                     - xg_ii @ a_ji_dagger_xr_jj_dagger
                     + xr_ii @ sigma_greater_ij @ xr_jj_dagger
                 )
@@ -370,19 +377,24 @@ class RGF(GFSolver):
                 if not xg_.symmetry:
                     xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
+                xg_diag_blocks[i] = xg_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
+                xg_.blocks[i, i] = 0.5 * (
+                    xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
+                )
+
                 if return_current:
                     a_ji_xr_ii = a_ji @ xr_ii
-                    a_ji_xr_ii_sl_ij = a_ji_xr_ii @ sigma_lesser_ij
-                    a_ji_xr_ii_sg_ij = a_ji_xr_ii @ sigma_greater_ij
+                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
                     sigma_lesser_tilde = (
                         a_ji @ xl_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sl_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sl_ij
+                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sx_ij
                     )
+                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_ij
                     sigma_greater_tilde = (
                         a_ji @ xg_ii @ a_ji_dagger
-                        + a_ji_xr_ii_sg_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sg_ij
+                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                        - a_ji_xr_ii_sx_ij
                     )
                     current[stack_slice, i] = xp.trace(
                         sigma_greater_tilde @ xl_diag_blocks[j]
@@ -391,28 +403,6 @@ class RGF(GFSolver):
                         axis2=-1,
                     )
 
-                temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
-
-                temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
-
-                xl_diag_blocks[i] = (
-                    xl_ii
-                    + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
-                    - temp_1_l
-                    + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
-                )
-                xl_.blocks[i, i] = 0.5 * (
-                    xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
-                )
-                xg_diag_blocks[i] = (
-                    xg_ii
-                    + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
-                    - temp_1_g
-                    + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
-                )
-                xg_.blocks[i, i] = 0.5 * (
-                    xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
-                )
                 xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]

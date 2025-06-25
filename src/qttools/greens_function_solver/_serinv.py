@@ -463,30 +463,30 @@ class ReducedSystem:
                 )
 
             # Precompute some terms that are used multiple times.
-            xr_ji_xr_ij = self.xr_lower_blocks[i] @ self.xr_diag_blocks[i]
+            xr_ji_xr_ii = self.xr_lower_blocks[i] @ self.xr_diag_blocks[i]
             xr_ji = self.xr_lower_blocks[i]
             xr_ji_dagger = xr_ji.conj().swapaxes(-2, -1)
             if self.selected_solve:
-                xr_ji_xr_ij_xl_ij = xr_ji_xr_ij @ self.xl_upper_blocks[i]
-                xr_ji_xr_ij_xg_ij = xr_ji_xr_ij @ self.xg_upper_blocks[i]
+                xr_ji_xr_ii_xl_ij = xr_ji_xr_ii @ self.xl_upper_blocks[i]
+                xr_ji_xr_ii_xg_ij = xr_ji_xr_ii @ self.xg_upper_blocks[i]
 
             # Update the next diagonal block
             self.xr_diag_blocks[i + 1] = (
-                self.xr_diag_blocks[i + 1] - xr_ji_xr_ij @ self.xr_upper_blocks[i]
+                self.xr_diag_blocks[i + 1] - xr_ji_xr_ii @ self.xr_upper_blocks[i]
             )
             if self.selected_solve:
                 self.xl_diag_blocks[i + 1] = (
                     self.xl_diag_blocks[i + 1]
                     + xr_ji @ self.xl_diag_blocks[i] @ xr_ji_dagger
-                    + xr_ji_xr_ij_xl_ij.conj().swapaxes(-2, -1)
-                    - xr_ji_xr_ij_xl_ij
+                    + xr_ji_xr_ii_xl_ij.conj().swapaxes(-2, -1)
+                    - xr_ji_xr_ii_xl_ij
                 )
 
                 self.xg_diag_blocks[i + 1] = (
                     self.xg_diag_blocks[i + 1]
                     + xr_ji @ self.xg_diag_blocks[i] @ xr_ji_dagger
-                    + xr_ji_xr_ij_xg_ij.conj().swapaxes(-2, -1)
-                    - xr_ji_xr_ij_xg_ij
+                    + xr_ji_xr_ii_xg_ij.conj().swapaxes(-2, -1)
+                    - xr_ji_xr_ii_xg_ij
                 )
 
         # Invert the last diagonal block.
@@ -521,72 +521,67 @@ class ReducedSystem:
             xl_jj = self.xl_diag_blocks[i + 1]
             xg_ii = self.xg_diag_blocks[i]
             xg_jj = self.xg_diag_blocks[i + 1]
-            tmp_xl_ij = self.xl_upper_blocks[i]
-            tmp_xg_ij = self.xg_upper_blocks[i]
 
             # Precompute the transposes that are used multiple times.
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
-            xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
-            xr_ij_dagger = xr_ij.conj().swapaxes(-2, -1)
 
-            # Precompute the terms that are used multiple times.
-            xr_ji_dagger_xr_jj_dagger = xr_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
-            xr_ij_dagger_xr_ii_dagger = xr_ij_dagger @ xr_ii_dagger
+            # Precompute the terms that are used multiple times._dagger
             xr_ii_xr_ij = xr_ii @ xr_ij
+            xr_ij_dagger_xr_ii_dagger = xr_ii_xr_ij.conj().swapaxes(-2, -1)
             xr_jj_xr_ji = xr_jj @ xr_ji
+            xr_ji_dagger_xr_jj_dagger = xr_jj_xr_ji.conj().swapaxes(-2, -1)
             xr_ii_xr_ij_xr_jj = xr_ii_xr_ij @ xr_jj
             xr_jj_dagger_xr_ij_dagger_xr_ii_dagger = xr_ii_xr_ij_xr_jj.conj().swapaxes(
                 -2, -1
             )
             xr_ii_xr_ij_xr_jj_xr_ji = xr_ii_xr_ij @ xr_jj_xr_ji
-            xr_ii_xr_ij_xl_jj = xr_ii_xr_ij @ xl_jj
-            xr_ii_xr_ij_xg_jj = xr_ii_xr_ij @ xg_jj
-
-            temp_1_l = xr_ii @ tmp_xl_ij @ xr_jj_dagger_xr_ij_dagger_xr_ii_dagger
-            temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
-
-            temp_1_g = xr_ii @ tmp_xg_ij @ xr_jj_dagger_xr_ij_dagger_xr_ii_dagger
-            temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
 
             if self.selected_solve:
-                self.xl_upper_blocks[i] = (
-                    -xr_ii_xr_ij_xl_jj
-                    - xl_ii @ xr_ji_dagger_xr_jj_dagger
-                    + xr_ii @ tmp_xl_ij @ xr_jj_dagger
-                )
 
-                temp_2_l = xr_ii_xr_ij_xr_jj_xr_ji @ xl_ii
+                temp_1x = (
+                    xr_ii_xr_ij_xr_jj_xr_ji @ xl_ii
+                    - xr_ii
+                    @ self.xl_upper_blocks[i]
+                    @ xr_jj_dagger_xr_ij_dagger_xr_ii_dagger
+                )
+                temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+                temp_2x = xr_ii_xr_ij @ xl_jj
+                self.xl_upper_blocks[i] = (
+                    -temp_2x
+                    - xl_ii @ xr_ji_dagger_xr_jj_dagger
+                    + xr_ii @ self.xl_upper_blocks[i] @ xr_jj_dagger
+                )
                 self.xl_diag_blocks[i] = (
-                    xl_ii
-                    + xr_ii_xr_ij_xl_jj @ xr_ij_dagger_xr_ii_dagger
-                    - temp_1_l
-                    + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
+                    xl_ii + temp_2x @ xr_ij_dagger_xr_ii_dagger + temp_1x
                 )
                 self.xl_diag_blocks[i] = 0.5 * (
                     self.xl_diag_blocks[i]
                     - self.xl_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                self.xg_upper_blocks[i] = (
-                    -xr_ii_xr_ij_xg_jj
-                    - xg_ii @ xr_ji_dagger_xr_jj_dagger
-                    + xr_ii @ tmp_xg_ij @ xr_jj_dagger
+                temp_1x = (
+                    xr_ii_xr_ij_xr_jj_xr_ji @ xg_ii
+                    - xr_ii
+                    @ self.xg_upper_blocks[i]
+                    @ xr_jj_dagger_xr_ij_dagger_xr_ii_dagger
                 )
-
-                temp_2_g = xr_ii_xr_ij_xr_jj_xr_ji @ xg_ii
+                temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+                temp_2x = xr_ii_xr_ij @ xg_jj
+                self.xg_upper_blocks[i] = (
+                    -temp_2x
+                    - xg_ii @ xr_ji_dagger_xr_jj_dagger
+                    + xr_ii @ self.xg_upper_blocks[i] @ xr_jj_dagger
+                )
                 self.xg_diag_blocks[i] = (
-                    xg_ii
-                    + xr_ii_xr_ij_xg_jj @ xr_ij_dagger_xr_ii_dagger
-                    - temp_1_g
-                    + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
+                    xg_ii + temp_2x @ xr_ij_dagger_xr_ii_dagger + temp_1x
                 )
                 self.xg_diag_blocks[i] = 0.5 * (
                     self.xg_diag_blocks[i]
                     - self.xg_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-            self.xr_lower_blocks[i] = -xr_jj_xr_ji @ self.xr_diag_blocks[i]
-            self.xr_upper_blocks[i] = -xr_ii_xr_ij @ self.xr_diag_blocks[i + 1]
+            self.xr_lower_blocks[i] = -xr_jj_xr_ji @ xr_ii
+            self.xr_upper_blocks[i] = -xr_ii_xr_ij_xr_jj
             self.xr_diag_blocks[i] = xr_ii + xr_ii_xr_ij_xr_jj_xr_ji @ xr_ii
 
     def scatter(
@@ -1167,67 +1162,53 @@ def downward_selinv(
 
         # Precompute the transposes that are used multiple times.
         xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
-        xr_ii_dagger = xr_ii.conj().swapaxes(-2, -1)
-        a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
 
         # Precompute the terms that are used multiple times.
-        a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
-        a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
         xr_ii_a_ij = xr_ii @ a_ij
         xr_jj_a_ji = xr_jj @ a_ji
-        xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
-        xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
+        a_ij_dagger_xr_ii_dagger = xr_ii_a_ij.conj().swapaxes(-2, -1)
+        a_ji_dagger_xr_jj_dagger = xr_jj_a_ji.conj().swapaxes(-2, -1)
+        xr_jj_dagger_aij_dagger_xr_ii_dagger = (
+            (xr_ii_a_ij @ xr_jj).conj().swapaxes(-2, -1)
+        )
         xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
-        xr_ii_a_ij_xl_jj = xr_ii_a_ij @ xl_jj
-        xr_ii_a_ij_xg_jj = xr_ii_a_ij @ xg_jj
-
-        temp_1_l = xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
-        temp_1_l -= temp_1_l.conj().swapaxes(-2, -1)
-
-        temp_1_g = xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
-        temp_1_g -= temp_1_g.conj().swapaxes(-2, -1)
 
         if selected_solve:
 
+            temp_1x = (
+                xr_ii_a_ij_xr_jj_a_ji @ xl_ii
+                - xr_ii @ sigma_lesser_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
+            )
+            temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+            temp_2x = xr_ii_a_ij @ xl_jj
             xl_ij = (
-                -xr_ii_a_ij_xl_jj
+                -temp_2x
                 - xl_ii @ a_ji_dagger_xr_jj_dagger
                 + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
             )
-
             xl_out.blocks[i, j] = xl_ij
             if not xl_out.symmetry:
                 xl_out.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
-
-            xg_ij = (
-                -xr_ii_a_ij_xg_jj
-                - xg_ii @ a_ji_dagger_xr_jj_dagger
-                + xr_ii @ sigma_greater_ij @ xr_jj_dagger
-            )
-
-            xg_out.blocks[i, j] = xg_ij
-            if not xg_out.symmetry:
-                xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
-
-            temp_2_l = xr_ii_a_ij_xr_jj_a_ji @ xl_ii
-
-            temp_2_g = xr_ii_a_ij_xr_jj_a_ji @ xg_ii
-
-            xl_diag_blocks[i] = (
-                xl_ii
-                + xr_ii_a_ij_xl_jj @ a_ij_dagger_xr_ii_dagger
-                - temp_1_l
-                + (temp_2_l - temp_2_l.conj().swapaxes(-2, -1))
-            )
+            xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
             xl_out.blocks[i, i] = 0.5 * (
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
-            xg_diag_blocks[i] = (
-                xg_ii
-                + xr_ii_a_ij_xg_jj @ a_ij_dagger_xr_ii_dagger
-                - temp_1_g
-                + (temp_2_g - temp_2_g.conj().swapaxes(-2, -1))
+
+            temp_1x = (
+                xr_ii_a_ij_xr_jj_a_ji @ xg_ii
+                - xr_ii @ sigma_greater_ij @ xr_jj_dagger_aij_dagger_xr_ii_dagger
             )
+            temp_1x -= temp_1x.conj().swapaxes(-2, -1)
+            temp_2x = xr_ii_a_ij @ xg_jj
+            xg_ij = (
+                -temp_2x
+                - xg_ii @ a_ji_dagger_xr_jj_dagger
+                + xr_ii @ sigma_greater_ij @ xr_jj_dagger
+            )
+            xg_out.blocks[i, j] = xg_ij
+            if not xg_out.symmetry:
+                xg_out.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
+            xg_diag_blocks[i] = xg_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
             xg_out.blocks[i, i] = 0.5 * (
                 xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
             )
@@ -1279,10 +1260,10 @@ def upward_selinv(
         a_ij_dagger = a_ij.conj().swapaxes(-2, -1)
 
         # Precompute the terms that are used multiple times.
-        a_ji_dagger_xr_jj_dagger = a_ji.conj().swapaxes(-2, -1) @ xr_jj_dagger
         a_ij_dagger_xr_ii_dagger = a_ij_dagger @ xr_ii_dagger
         xr_ii_a_ij = xr_ii @ a_ij
         xr_jj_a_ji = xr_jj @ a_ji
+        a_ji_dagger_xr_jj_dagger = xr_jj_a_ji.conj().swapaxes(-2, -1)
         xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
         xr_jj_dagger_aij_dagger_xr_ii_dagger = xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
         xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
@@ -1372,130 +1353,94 @@ def permuted_selinv(
     """Performs the permuted selected inversion."""
     for i in range(a.num_local_blocks - 2, 0, -1):
 
-        B1 = (
-            a.blocks[i, i + 1] @ xr_diag_blocks[i + 1]
-            + xr_buffer_upper[i - 1] @ xr_buffer_lower[i]
-        )
-        B2 = (
-            a.blocks[i, i + 1] @ xr_buffer_upper[i]
-            + xr_buffer_upper[i - 1] @ xr_diag_blocks[0]
-        )
-        C1 = (
-            xr_diag_blocks[i + 1] @ a.blocks[i + 1, i]
-            + xr_buffer_upper[i] @ xr_buffer_lower[i - 1]
-        )
-        C2 = (
-            xr_buffer_lower[i] @ a.blocks[i + 1, i]
-            + xr_diag_blocks[0] @ xr_buffer_lower[i - 1]
-        )
+        xr_i = xr_diag_blocks[i]
+        xr_ip1 = xr_diag_blocks[i + 1]
+        xr_0 = xr_diag_blocks[0]
+        a_i_ip1 = a.blocks[i, i + 1]
+        a_ip1_i = a.blocks[i + 1, i]
+        xr_buf_upper_im1 = xr_buffer_upper[i - 1]
+        xr_buf_upper_i = xr_buffer_upper[i]
+        xr_buf_lower_im1 = xr_buffer_lower[i - 1]
+        xr_buf_lower_i = xr_buffer_lower[i]
+
+        # Precompute reused products
+        xr_ip1_a_ip1_i = xr_ip1 @ a_ip1_i
+        xr_buf_upper_i_xr_buf_lower_im1 = xr_buf_upper_i @ xr_buf_lower_im1
+        B1 = a_i_ip1 @ xr_ip1 + xr_buf_upper_im1 @ xr_buf_lower_i
+        B2 = a_i_ip1 @ xr_buf_upper_i + xr_buf_upper_im1 @ xr_0
+        C1 = xr_ip1_a_ip1_i + xr_buf_upper_i_xr_buf_lower_im1
+        C2 = xr_buf_lower_i @ a_ip1_i + xr_0 @ xr_buf_lower_im1
 
         if selected_solve:
-            temp_B_13 = xl_buffer_upper[i - 1]
-            # temp_B_31 = xl_buffer_lower[i - 1]
-            temp_B_31 = -xl_buffer_upper[i - 1].conj().swapaxes(-2, -1)
 
-            bl_upper_block = (
-                -xr_diag_blocks[i]
-                @ (
-                    a.blocks[i, i + 1] @ xl_diag_blocks[i + 1]
-                    - xr_buffer_upper[i - 1]
-                    @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
-                    # + xr_buffer_upper[i - 1] @ xl_buffer_lower[i]
-                )
-                - xl_diag_blocks[i]
-                @ (
-                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                    + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                )
-                + xr_diag_blocks[i]
-                @ (
-                    sigma_lesser.blocks[i, i + 1]
-                    @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                    + xl_buffer_upper[i - 1]
-                    @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                )
+            xl_i = xl_diag_blocks[i]
+            xl_ip1 = xl_diag_blocks[i + 1]
+            xl_0 = xl_diag_blocks[0]
+            sigma_lesser_i_ip1 = sigma_lesser.blocks[i, i + 1]
+
+            # Precompute reused products for lesser
+            a_i_ip1_xx_ip1 = a_i_ip1 @ xl_ip1
+            xr_buf_upper_im1_xx_buf_upper_i_dag = xr_buf_upper_im1 @ xl_buffer_upper[
+                i
+            ].conj().swapaxes(-2, -1)
+            a_ip1_i_dag_xr_ip1_dag = xr_ip1_a_ip1_i.conj().swapaxes(-2, -1)
+            xr_buf_lower_im1_dag_xr_buf_upper_i_dag = (
+                xr_buf_upper_i_xr_buf_lower_im1.conj().swapaxes(-2, -1)
             )
-            xl_buffer_upper[i - 1] = (
-                -xr_diag_blocks[i]
-                @ (
-                    a.blocks[i, i + 1] @ xl_buffer_upper[i]
-                    + xr_buffer_upper[i - 1] @ xl_diag_blocks[0]
-                )
-                - xl_diag_blocks[i]
-                @ (
-                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                    + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                )
-                + xr_diag_blocks[i]
-                @ (
-                    sigma_lesser.blocks[i, i + 1]
-                    @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                    + xl_buffer_upper[i - 1] @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                )
+
+            xr_ip1_a_ip1_i = None
+            xr_buf_upper_i_xr_buf_lower_im1 = None
+
+            sigma_x_i_ip1_xr_ip1_dag = sigma_lesser_i_ip1 @ xr_ip1.conj().swapaxes(
+                -2, -1
+            )
+            xx_buf_upper_im1_xr_buf_upper_i_dag = xl_buffer_upper[
+                i - 1
+            ] @ xr_buf_upper_i.conj().swapaxes(-2, -1)
+            tmp1_x = (
+                a_i_ip1 @ xl_buffer_upper[i] + xr_buf_upper_im1 @ xl_0
+            )  # Depends on lesser/greater
+            tmp2 = xr_i @ (B1 @ a_ip1_i + B2 @ xr_buf_lower_im1)
+            tmp3 = C2.conj().swapaxes(-2, -1)
+            tmp4 = (
+                (a_ip1_i_dag_xr_ip1_dag + xr_buf_lower_im1_dag_xr_buf_upper_i_dag)
+                @ a_i_ip1.conj().swapaxes(-2, -1)
+                + tmp3 @ xr_buf_upper_im1.conj().swapaxes(-2, -1)
+            ) @ xr_i.conj().swapaxes(-2, -1)
+            tmp5_x = sigma_lesser_i_ip1 @ xr_buf_lower_i.conj().swapaxes(
+                -2, -1
+            ) + xl_buffer_upper[i - 1] @ xr_0.conj().swapaxes(-2, -1)
+            tmp6_x = (
+                sigma_x_i_ip1_xr_ip1_dag
+                + xx_buf_upper_im1_xr_buf_upper_i_dag
+                - a_i_ip1_xx_ip1
+                + xr_buf_upper_im1_xx_buf_upper_i_dag
+            )
+
+            temp_B_31_x = (
+                -xl_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            )  # Depends on lesser/greater
+
+            bl_upper_block = xr_i @ tmp6_x - xl_i @ (
+                a_ip1_i_dag_xr_ip1_dag + xr_buf_lower_im1_dag_xr_buf_upper_i_dag
             )
 
             xl_diag_blocks[i] = (
-                xl_diag_blocks[i]
-                + xr_diag_blocks[i]
+                +xl_i
+                + tmp2 @ xl_i
+                + xl_i @ tmp4
+                - xr_i
                 @ (
-                    (
-                        a.blocks[i, i + 1] @ xl_diag_blocks[i + 1]
-                        - xr_buffer_upper[i - 1]
-                        @ xl_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        a.blocks[i, i + 1] @ xl_buffer_upper[i]
-                        + xr_buffer_upper[i - 1] @ xl_diag_blocks[0]
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+                    B1 @ sigma_lesser.blocks[i + 1, i]
+                    + B2 @ temp_B_31_x
+                    + (tmp5_x - tmp1_x) @ xr_buf_upper_im1.conj().swapaxes(-2, -1)
+                    + tmp6_x @ a_i_ip1.conj().swapaxes(-2, -1)
                 )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                + xr_diag_blocks[i]
-                @ ((B1) @ a.blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
-                @ xl_diag_blocks[i]
-                + xl_diag_blocks[i]
-                @ (
-                    (
-                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                        @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                        + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                        @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                        @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                        + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                        @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ ((B1) @ sigma_lesser.blocks[i + 1, i] + (B2) @ temp_B_31)
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ (
-                    (
-                        sigma_lesser.blocks[i, i + 1]
-                        @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                        + temp_B_13 @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        sigma_lesser.blocks[i, i + 1]
-                        @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                        + temp_B_13 @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+                @ xr_i.conj().swapaxes(-2, -1)
             )
+
+            xl_buffer_upper[i - 1] = xr_i @ (tmp5_x - tmp1_x) - xl_i @ tmp3
+
             # Streaming/Sparsifying back to DSDBSparse
             xl_out.blocks[i, i + 1] = bl_upper_block
             if not xl_out.symmetry:
@@ -1504,110 +1449,54 @@ def permuted_selinv(
                 xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
             )
 
-            temp_B_13 = xg_buffer_upper[i - 1]
-            temp_B_31 = -xg_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+            xg_i = xg_diag_blocks[i]
+            xg_ip1 = xg_diag_blocks[i + 1]
+            xg_0 = xg_diag_blocks[0]
+            sigma_greater_i_ip1 = sigma_greater.blocks[i, i + 1]
 
-            bg_upper_block = (
-                -xr_diag_blocks[i]
-                @ (
-                    a.blocks[i, i + 1] @ xg_diag_blocks[i + 1]
-                    - xr_buffer_upper[i - 1]
-                    @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
-                )
-                - xg_diag_blocks[i]
-                @ (
-                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                    + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                )
-                + xr_diag_blocks[i]
-                @ (
-                    sigma_greater.blocks[i, i + 1]
-                    @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                    + xg_buffer_upper[i - 1]
-                    @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                )
+            a_i_ip1_xx_ip1 = a_i_ip1 @ xg_ip1
+            xr_buf_upper_im1_xx_buf_upper_i_dag = xr_buf_upper_im1 @ xg_buffer_upper[
+                i
+            ].conj().swapaxes(-2, -1)
+            sigma_x_i_ip1_xr_ip1_dag = sigma_greater_i_ip1 @ xr_ip1.conj().swapaxes(
+                -2, -1
             )
-            xg_buffer_upper[i - 1] = (
-                -xr_diag_blocks[i]
-                @ (
-                    a.blocks[i, i + 1] @ xg_buffer_upper[i]
-                    + xr_buffer_upper[i - 1] @ xg_diag_blocks[0]
-                )
-                - xg_diag_blocks[i]
-                @ (
-                    a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                    @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                    + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                    @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                )
-                + xr_diag_blocks[i]
-                @ (
-                    sigma_greater.blocks[i, i + 1]
-                    @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                    + xg_buffer_upper[i - 1] @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                )
+            xx_buf_upper_im1_xr_buf_upper_i_dag = xg_buffer_upper[
+                i - 1
+            ] @ xr_buf_upper_i.conj().swapaxes(-2, -1)
+            tmp1_x = a_i_ip1 @ xg_buffer_upper[i] + xr_buf_upper_im1 @ xg_0
+            tmp5_x = sigma_greater_i_ip1 @ xr_buf_lower_i.conj().swapaxes(
+                -2, -1
+            ) + xg_buffer_upper[i - 1] @ xr_0.conj().swapaxes(-2, -1)
+            tmp6_x = (
+                sigma_x_i_ip1_xr_ip1_dag
+                + xx_buf_upper_im1_xr_buf_upper_i_dag
+                - a_i_ip1_xx_ip1
+                + xr_buf_upper_im1_xx_buf_upper_i_dag
+            )
+
+            temp_B_31_x = -xg_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+
+            bg_upper_block = xr_i @ tmp6_x - xg_i @ (
+                a_ip1_i_dag_xr_ip1_dag + xr_buf_lower_im1_dag_xr_buf_upper_i_dag
             )
 
             xg_diag_blocks[i] = (
-                xg_diag_blocks[i]
-                + xr_diag_blocks[i]
+                +xg_i
+                + tmp2 @ xg_i
+                + xg_i @ tmp4
+                - xr_i
                 @ (
-                    (
-                        a.blocks[i, i + 1] @ xg_diag_blocks[i + 1]
-                        - xr_buffer_upper[i - 1]
-                        @ xg_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        a.blocks[i, i + 1] @ xg_buffer_upper[i]
-                        + xr_buffer_upper[i - 1] @ xg_diag_blocks[0]
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
+                    B1 @ sigma_greater.blocks[i + 1, i]
+                    + B2 @ temp_B_31_x
+                    + (tmp5_x - tmp1_x) @ xr_buf_upper_im1.conj().swapaxes(-2, -1)
+                    + tmp6_x @ a_i_ip1.conj().swapaxes(-2, -1)
                 )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                + xr_diag_blocks[i]
-                @ ((B1) @ a.blocks[i + 1, i] + (B2) @ xr_buffer_lower[i - 1])
-                @ xg_diag_blocks[i]
-                + xg_diag_blocks[i]
-                @ (
-                    (
-                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                        @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                        + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                        @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        a.blocks[i + 1, i].conj().swapaxes(-2, -1)
-                        @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                        + xr_buffer_lower[i - 1].conj().swapaxes(-2, -1)
-                        @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ ((B1) @ sigma_greater.blocks[i + 1, i] + (B2) @ temp_B_31)
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
-                - xr_diag_blocks[i]
-                @ (
-                    (
-                        sigma_greater.blocks[i, i + 1]
-                        @ xr_diag_blocks[i + 1].conj().swapaxes(-2, -1)
-                        + temp_B_13 @ xr_buffer_upper[i].conj().swapaxes(-2, -1)
-                    )
-                    @ a.blocks[i, i + 1].conj().swapaxes(-2, -1)
-                    + (
-                        sigma_greater.blocks[i, i + 1]
-                        @ xr_buffer_lower[i].conj().swapaxes(-2, -1)
-                        + temp_B_13 @ xr_diag_blocks[0].conj().swapaxes(-2, -1)
-                    )
-                    @ xr_buffer_upper[i - 1].conj().swapaxes(-2, -1)
-                )
-                @ xr_diag_blocks[i].conj().swapaxes(-2, -1)
+                @ xr_i.conj().swapaxes(-2, -1)
             )
+
+            xg_buffer_upper[i - 1] = xr_i @ (tmp5_x - tmp1_x) - xg_i @ tmp3
+
             # Streaming/Sparsifying back to DSDBSparse
             xg_out.blocks[i, i + 1] = bg_upper_block
             if not xg_out.symmetry:
@@ -1617,22 +1506,14 @@ def permuted_selinv(
             )
 
         if return_retarded:
-            xr_out.blocks[i, i + 1] = -xr_diag_blocks[i] @ B1
+            xr_out.blocks[i, i + 1] = -xr_i @ B1
+            xr_out.blocks[i + 1, i] = -C1 @ xr_i
 
-        xr_buffer_upper[i - 1] = -xr_diag_blocks[i] @ B2
+        xr_buffer_upper[i - 1] = -xr_i @ B2
+        xr_buffer_lower[i - 1] = -C2 @ xr_i
 
-        D1 = a.blocks[i + 1, i]
-        D2 = xr_buffer_lower[i - 1]
+        xr_diag_blocks[i] = xr_i + tmp2 @ xr_i
 
-        if return_retarded:
-            xr_out.blocks[i + 1, i] = -C1 @ xr_diag_blocks[i]
-
-        xr_buffer_lower[i - 1] = -C2 @ xr_diag_blocks[i]
-
-        xr_diag_blocks[i] = (
-            xr_diag_blocks[i]
-            + xr_diag_blocks[i] @ (B1 @ D1 + B2 @ D2) @ xr_diag_blocks[i]
-        )
         # Streaming/Sparsifying back to DSDBSparse
         if return_retarded:
             xr_out.blocks[i, i] = xr_diag_blocks[i]

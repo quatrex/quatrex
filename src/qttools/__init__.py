@@ -1,9 +1,10 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2025 ETH Zurich and the authors of the qttools package.
 
 import os
 import warnings
-from typing import Any, TypeAlias, TypeVar
+from typing import TypeAlias, TypeVar, Union
 
+import numpy as np
 from mpi4py.MPI import COMM_WORLD as global_comm
 from numpy.typing import ArrayLike
 
@@ -66,8 +67,21 @@ else:
 QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Some type aliases for the array module.
-_ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
-_DType = xp.dtype[_ScalarType]
-NDArray: TypeAlias = xp.ndarray[Any, _DType]
+# NOTE: CuPy is currently not type-annotated (see https://github.com/cupy/cupy/pull/9148), so we use numpy's types.
 
-__all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]
+_ScalarType = TypeVar("_ScalarType", bound=np.generic, covariant=True)
+NDArray: TypeAlias = np.ndarray[tuple[int, ...], np.dtype[_ScalarType]]
+IntType: TypeAlias = Union[np.int32, np.int64]
+FloatType: TypeAlias = Union[
+    np.float16, np.float32, np.float64, np.complex64, np.complex128
+]
+
+__all__ = [
+    "__version__",
+    "xp",
+    "sparse",
+    "ArrayLike",
+    "NDArray",
+    "IntType",
+    "FloatType",
+]

@@ -72,7 +72,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
 
     """
     if overlap is None:
-        local_density = x.diagonal().imag
+        local_density = x.diagonal()  # .imag
         return comm.stack.all_gather_v(
             local_density,
             axis=0,
@@ -106,7 +106,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
                 axis2=-1,
             )
 
-        local_density.append(local_density_slice.imag)
+        local_density.append(local_density_slice)  # .imag)
 
     local_density = xp.concatenate(local_density, axis=-1)
 
@@ -246,7 +246,8 @@ def current_conservation(
     \int dE dk sum_{ij} sigma_{ij}^< * G_{ji}^> - sigma_{ij}^> * G_{ji}^< = 0
     $$
 
-    We can use the skew-symmetric property of the Green's functions.
+    We can use the skew-symmetric property of the Green's functions $G_{ji}^< = -[G_{ij}^<]^*$
+    such that we don't have to communicate the greater Green's function.
 
     Parameters
     ----------
@@ -274,13 +275,6 @@ def current_conservation(
     comm.stack.all_reduce(recvbuff_block, recvbuff_stack)
 
     term1, term2 = recvbuff_stack
-
-    if comm.rank == 0:
-        print("max se_int_lesser:", xp.max(xp.abs(se_int_lesser.data)))
-        print("max se_int_greater:", xp.max(xp.abs(se_int_greater.data)))
-        print("max x_lesser:", xp.max(xp.abs(x_lesser.data)))
-        print("max x_greater:", xp.max(xp.abs(x_greater.data)))
-        print(f"term1: {term1}, term2: {term2}", flush=True)
 
     current_conservation_absolute = term1 - term2
     current_conservation_relative = (

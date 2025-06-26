@@ -906,8 +906,10 @@ class _DStackIndexer:
     def __getitem__(self, index: tuple) -> "_DStackView":
         """Gets a substack view."""
         return _DStackView(self._dsdbsparse, index)
-    
-    def __setitem__(self, stack_index: tuple, other: "DSDBSparse | sparse.spmatrix") -> None:
+
+    def __setitem__(
+        self, stack_index: tuple, other: "DSDBSparse | sparse.spmatrix"
+    ) -> None:
         """Sets a substack."""
         # NOTE: This replacement of ellipsis is nicked from
         # https://github.com/dask/dask/blob/main/dask/array/slicing.py
@@ -927,13 +929,13 @@ class _DStackIndexer:
                 + (slice(None, None, None),) * extra_dimensions
                 + stack_index[loc + 1 :]
             )
-        
+
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[stack_index] = csr[self._dsdbsparse.spy()]
             return self._dsdbsparse
 
-        #self._dsdbsparse.data[stack_index] = other.data[:]
+        # self._dsdbsparse.data[stack_index] = other.data[:]
         self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 
@@ -1013,25 +1015,41 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
-        """In-place addition of two DSDBSparse matrices."""
+        """In-place addition of sparse matrix."""
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsdbsparse.data[self._stack_index] += csr[self._dsdbsparse.spy()]
+            self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                csr[self._dsdbsparse.spy()]
+            )
             return self._dsdbsparse
-
-        self._dsdbsparse._check_commensurable(other)
-        self._dsdbsparse.data[self._stack_index] += other.data[:]
+        try:
+            # TODO: Lots more checks should be done here.
+            # For example, the nnz sizes should match.
+            self._dsdbsparse.data[self._stack_index] += xp.squeeze(other.data[:])
+        except ValueError as e:
+            raise ValueError(
+                "In-place addition requires the shapes of the two "
+                "DSDBSparse matrices to match."
+            ) from e
         return self._dsdbsparse
-    
+
     def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
         """In-place subtraction of two DSDBSparse matrices."""
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsdbsparse.data[self._stack_index] -= csr[self._dsdbsparse.spy()]
+            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(
+                csr[self._dsdbsparse.spy()]
+            )
             return self._dsdbsparse
-
-        self._dsdbsparse._check_commensurable(other)
-        self._dsdbsparse.data[self._stack_index] -= other.data[:]
+        try:
+            # TODO: Lots more checks should be done here.
+            # For example, the nnz sizes should match.
+            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(other.data[:])
+        except ValueError as e:
+            raise ValueError(
+                "In-place addition requires the shapes of the two "
+                "DSDBSparse matrices to match."
+            ) from e
         return self._dsdbsparse
 
     @property

@@ -340,6 +340,60 @@ class TestAccess:
         dense[*stack_index][..., inds, inds] = 0.5 * (symmetry_op(2) + 2)
         assert xp.allclose(dense, dsdbsparse.to_dense())
 
+    def test_set_stack(
+        self,
+        dsdbsparse_type_dist: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+        stack_index: tuple,
+    ):
+        """Tests that we can set the stackview of a DSDBSparse matrix for
+        a specific stack index.
+        """
+        if symmetry_type[0]:
+            # TODO: not implemented
+            pytest.skip("Skipping test for symmetric DSDBSparse.")
+
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type_dist,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+        )
+
+        csr_array = coo.tocsr()[dsdbsparse.spy()]
+        csr_new = _create_coo(
+            block_sizes,
+            symmetric=symmetry,
+            symmetry_op=symmetry_op,
+        ).tocsr()
+
+        # Set the stackview to a new value.
+        dsdbsparse.stack[stack_index] = csr_new
+        csr_new_array = csr_new[dsdbsparse.spy()]
+
+        # Create a boolean mask to track modified stack indices.
+        mask = np.zeros(dsdbsparse.shape[:-2], dtype=bool)
+        mask[stack_index] = True
+
+        # Check that the stackview has been updated correctly
+        # by looping through the stack indices.
+        for s_index in np.ndindex(*dsdbsparse.shape[:-2]):
+            if mask[s_index]:
+                # If the stack index is in the modified stack indices,
+                # check that the stackview has been updated correctly.
+                assert xp.array_equiv(
+                    csr_new_array,
+                    dsdbsparse.data[s_index],
+                )
+            else:
+                assert xp.array_equiv(
+                    csr_array,
+                    dsdbsparse.data[s_index],
+                )
+
 
 class TestArithmetic:
     """Tests for the arithmetic operations of DSDBSparse."""
@@ -491,6 +545,185 @@ class TestArithmetic:
         dense = dsdbsparse.to_dense()
 
         assert xp.allclose(-dense, (-dsdbsparse).to_dense())
+
+    def test_iadd_stack(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+        stack_index: tuple[int, ...],
+    ):
+        """Tests the in-place addition of a stackview."""
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+        )
+        substack_shape = (1,)
+        dsdbsparse_substack = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            substack_shape,
+            symmetry=symmetry_type[0],
+            symmetry_op=symmetry_type[1],
+        )
+        dsdbsparse.stack[stack_index] += dsdbsparse_substack
+
+        sum_array = (coo + coo).tocsr()[dsdbsparse.spy()]
+        coo_data = coo.tocsr()[dsdbsparse.spy()]
+
+        # Create a boolean mask to track modified stack indices.
+        mask = np.zeros(dsdbsparse.shape[:-2], dtype=bool)
+        mask[stack_index] = True
+        # Check that the stackview has been updated correctly
+        for s_index in np.ndindex(*dsdbsparse.shape[:-2]):
+            if mask[s_index]:
+                # If the stack index is in the modified stack indices,
+                # check that the stackview has been updated correctly.
+                assert xp.allclose(
+                    dsdbsparse.data[s_index],
+                    sum_array,
+                )
+            else:
+                assert xp.array_equiv(
+                    dsdbsparse.data[s_index],
+                    coo_data,
+                )
+
+    def test_iadd_coo_stack(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+        stack_index: tuple[int, ...],
+    ):
+        """Tests the in-place addition of a stackview with a COO matrix."""
+
+        if symmetry_type[0]:
+            pytest.skip("Symmetric DSDBSparse does not support in-place addition.")
+
+        coo, dsdbsparse_type = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+        )
+        dsdbsparse_type.stack[stack_index] += coo
+
+        sum_array = (coo + coo).tocsr()[dsdbsparse_type.spy()]
+        coo_data = coo.tocsr()[dsdbsparse_type.spy()]
+
+        # Create a boolean mask to track modified stack indices.
+        mask = np.zeros(dsdbsparse_type.shape[:-2], dtype=bool)
+        mask[stack_index] = True
+
+        # Check that the stackview has been updated correctly
+        for s_index in np.ndindex(*dsdbsparse_type.shape[:-2]):
+            if mask[s_index]:
+                # If the stack index is in the modified stack indices,
+                # check that the stackview has been updated correctly.
+                assert xp.allclose(
+                    dsdbsparse_type.data[s_index],
+                    sum_array,
+                )
+            else:
+                assert xp.array_equiv(
+                    dsdbsparse_type.data[s_index],
+                    coo_data,
+                )
+
+    def test_isub_stack(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+        stack_index: tuple[int, ...],
+    ):
+        """Tests the in-place subtraction of a stackview."""
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+        )
+        substack_shape = (1,)
+        dsdbsparse_substack = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            substack_shape,
+            symmetry=symmetry_type[0],
+            symmetry_op=symmetry_type[1],
+        )
+        dsdbsparse.stack[stack_index] -= dsdbsparse_substack
+
+        diff_array = (coo - coo).tocsr()[dsdbsparse.spy()]
+        coo_data = coo.tocsr()[dsdbsparse.spy()]
+
+        # Create a boolean mask to track modified stack indices.
+        mask = np.zeros(dsdbsparse.shape[:-2], dtype=bool)
+        mask[stack_index] = True
+
+        # Check that the stackview has been updated correctly
+        for s_index in np.ndindex(*dsdbsparse.shape[:-2]):
+            if mask[s_index]:
+                # If the stack index is in the modified stack indices,
+                # check that the stackview has been updated correctly.
+                assert xp.allclose(
+                    dsdbsparse.data[s_index],
+                    diff_array,
+                )
+            else:
+                assert xp.array_equiv(
+                    dsdbsparse.data[s_index],
+                    coo_data,
+                )
+
+    def test_isub_coo_stack(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+        stack_index: tuple[int, ...],
+    ):
+        """Tests the in-place subtraction of a stackview with a COO matrix."""
+
+        if symmetry_type[0]:
+            pytest.skip("Symmetric DSDBSparse does not support in-place subtraction.")
+
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+        )
+        dsdbsparse.stack[stack_index] -= coo
+
+        diff_array = (coo - coo).tocsr()[dsdbsparse.spy()]
+        coo_data = coo.tocsr()[dsdbsparse.spy()]
+
+        # Create a boolean mask to track modified stack indices.
+        mask = np.zeros(dsdbsparse.shape[:-2], dtype=bool)
+        mask[stack_index] = True
+
+        # Check that the stackview has been updated correctly
+        for s_index in np.ndindex(*dsdbsparse.shape[:-2]):
+            if mask[s_index]:
+                # If the stack index is in the modified stack indices,
+                # check that the stackview has been updated correctly.
+                assert xp.allclose(
+                    dsdbsparse.data[s_index],
+                    diff_array,
+                )
+            else:
+                assert xp.array_equiv(
+                    dsdbsparse.data[s_index],
+                    coo_data,
+                )
 
 
 # Shape of the dense array.

@@ -308,7 +308,7 @@ class ElectronSolver(SubsystemSolver):
         # Load the potential.
         try:
             self.potential = distributed_load(
-                quatrex_config.input_dir / "potential_wrong.npy"
+                quatrex_config.input_dir / "potential.npy"
             )
         except FileNotFoundError:
             # No potential provided. Assume zero potential.

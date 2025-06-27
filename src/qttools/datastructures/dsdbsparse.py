@@ -889,6 +889,47 @@ class DSDBSparse(ABC):
         ...
 
 
+def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:
+    """Replaces ellipsis with the correct number of slices.
+
+    Note
+    ----
+    This replacement of ellipsis is nicked from
+    https://github.com/dask/dask/blob/main/dask/array/slicing.py
+
+    See the license at
+    https://github.com/dask/dask/blob/main/LICENSE.txt
+
+    Parameters
+    ----------
+    stack_index : tuple
+        The stack index to replace the ellipsis in.
+    ndim : int
+        The number of dimensions of the data.
+
+    Returns
+    -------
+    stack_index : tuple
+        The stack index with the ellipsis replaced.
+
+    """
+    is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+    if is_ellipsis:
+        if len(is_ellipsis) > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+
+        loc = is_ellipsis[0]
+        extra_dimensions = (ndim - 1) - (
+            len(stack_index) - sum(i is None for i in stack_index) - 1
+        )
+        stack_index = (
+            stack_index[:loc]
+            + (slice(None, None, None),) * extra_dimensions
+            + stack_index[loc + 1 :]
+        )
+    return stack_index
+
+
 class _DStackIndexer:
     """A utility class to locate substacks in the distributed stack.
 
@@ -911,24 +952,8 @@ class _DStackIndexer:
         self, stack_index: tuple, other: "DSDBSparse | sparse.spmatrix"
     ) -> None:
         """Sets a substack."""
-        # NOTE: This replacement of ellipsis is nicked from
-        # https://github.com/dask/dask/blob/main/dask/array/slicing.py
-        # See the license at
-        # https://github.com/dask/dask/blob/main/LICENSE.txt
-        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
-        if is_ellipsis:
-            if len(is_ellipsis) > 1:
-                raise IndexError("an index can only have a single ellipsis ('...')")
 
-            loc = is_ellipsis[0]
-            extra_dimensions = (self._dsdbsparse.data.ndim - 1) - (
-                len(stack_index) - sum(i is None for i in stack_index) - 1
-            )
-            stack_index = (
-                stack_index[:loc]
-                + (slice(None, None, None),) * extra_dimensions
-                + stack_index[loc + 1 :]
-            )
+        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
 
         if sparse.issparse(other):
             csr = other.tocsr()
@@ -957,7 +982,7 @@ class _DStackView:
         self.symmetry = dsdbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
-        stack_index = self._replace_ellipsis(stack_index)
+        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
         self._stack_index = stack_index
         self._block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, cache_stack=True
@@ -965,44 +990,6 @@ class _DStackView:
         self._sparse_block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, return_dense=False, cache_stack=True
         )
-
-    def _replace_ellipsis(self, stack_index: tuple) -> tuple:
-        """Replaces ellipsis with the correct number of slices.
-
-        Note
-        ----
-        This replacement of ellipsis is nicked from
-        https://github.com/dask/dask/blob/main/dask/array/slicing.py
-
-        See the license at
-        https://github.com/dask/dask/blob/main/LICENSE.txt
-
-        Parameters
-        ----------
-        stack_index : tuple
-            The stack index to replace the ellipsis in.
-
-        Returns
-        -------
-        stack_index : tuple
-            The stack index with the ellipsis replaced.
-
-        """
-        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
-        if is_ellipsis:
-            if len(is_ellipsis) > 1:
-                raise IndexError("an index can only have a single ellipsis ('...')")
-
-            loc = is_ellipsis[0]
-            extra_dimensions = (self._dsdbsparse._data.ndim - 1) - (
-                len(stack_index) - sum(i is None for i in stack_index) - 1
-            )
-            stack_index = (
-                stack_index[:loc]
-                + (slice(None, None, None),) * extra_dimensions
-                + stack_index[loc + 1 :]
-            )
-        return stack_index
 
     def __getitem__(self, index: tuple[ArrayLike, ArrayLike]) -> NDArray:
         """Gets the requested data from the substack."""

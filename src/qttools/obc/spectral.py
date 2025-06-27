@@ -196,12 +196,8 @@ class Spectral(OBCSolver):
         diff = xp.abs(dEk_dk[..., :, xp.newaxis] + dEk_dk[..., xp.newaxis, :])
         match_indices = xp.argmin(diff, axis=-1)
 
-        ks_match = xp.array(
-            [ks[i][match_indices[i]] for i in xp.ndindex(match_indices.shape[:-1])]
-        ).reshape(*match_indices.shape[:-1], ks.shape[-1])
-        dEk_dk_match = xp.array(
-            [dEk_dk[i][match_indices[i]] for i in xp.ndindex(match_indices.shape[:-1])]
-        ).reshape(*match_indices.shape[:-1], dEk_dk.shape[-1])
+        ks_match = xp.take_along_axis(ks, match_indices, axis=-1)
+        dEk_dk_match = xp.take_along_axis(dEk_dk, match_indices, axis=-1)
 
         # pair of modes decay slowly
         mask_pairwise_propagating = (

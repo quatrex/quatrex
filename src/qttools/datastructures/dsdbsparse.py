@@ -1006,13 +1006,15 @@ class _DStackView:
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[self._stack_index] += xp.squeeze(
-                csr[self._dsdbsparse.spy()]
+                xp.asarray(csr[self._dsdbsparse.spy()])
             )
             return self._dsdbsparse
         try:
             # TODO: Lots more checks should be done here.
             # For example, the nnz sizes should match.
-            self._dsdbsparse.data[self._stack_index] += xp.squeeze(other.data[:])
+            self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                xp.asarray(other.data[:])
+            )
         except ValueError as e:
             raise ValueError(
                 "In-place addition requires the shapes of the two "
@@ -1025,13 +1027,15 @@ class _DStackView:
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[self._stack_index] -= xp.squeeze(
-                csr[self._dsdbsparse.spy()]
+                xp.asarray(csr[self._dsdbsparse.spy()])
             )
             return self._dsdbsparse
         try:
             # TODO: Lots more checks should be done here.
             # For example, the nnz sizes should match.
-            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(other.data[:])
+            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(
+                xp.asarray(other.data[:])
+            )
         except ValueError as e:
             raise ValueError(
                 "In-place addition requires the shapes of the two "

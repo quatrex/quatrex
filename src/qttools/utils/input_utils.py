@@ -379,11 +379,11 @@ def create_hamiltonian(
         raise ValueError("block_start must be greater than or equal to 0.")
 
     if (np.abs(periodic_shift) > np.array(hR.shape[:3]) // 2).any():
-        raise Warning(
+        warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
     if periodic_shift[transport_dir] != 0:
-        raise Warning(
+        warnings.warn(
             "Periodic shift in the transport direction. This does not make sense and will be ignored."
         )
 

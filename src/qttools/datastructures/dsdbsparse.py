@@ -958,10 +958,11 @@ class _DStackIndexer:
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[stack_index] = csr[self._dsdbsparse.spy()]
-            return self._dsdbsparse
+            # return self._dsdbsparse
 
-        # self._dsdbsparse.data[stack_index] = other.data[:]
-        self._dsdbsparse.data[stack_index] = other.data[stack_index]
+        # Not sure what the expected behavior should be here
+        self._dsdbsparse.data[stack_index] = other.data[:]
+        #self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 
 class _DStackView:
@@ -1038,7 +1039,7 @@ class _DStackView:
             )
         except ValueError as e:
             raise ValueError(
-                "In-place addition requires the shapes of the two "
+                "In-place subtraction requires the shapes of the two "
                 "DSDBSparse matrices to match."
             ) from e
         return self._dsdbsparse

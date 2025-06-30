@@ -605,33 +605,33 @@ class TestArithmetic:
         if symmetry_type[0]:
             pytest.skip("Symmetric DSDBSparse does not support in-place addition.")
 
-        coo, dsdbsparse_type = _create_coo_dsdbsparse(
+        coo, dsdbsparse = _create_coo_dsdbsparse(
             dsdbsparse_type,
             block_sizes,
             global_stack_shape,
             symmetry_type,
         )
-        dsdbsparse_type.stack[stack_index] += coo
+        dsdbsparse.stack[stack_index] += coo
 
-        sum_array = (coo + coo).tocsr()[dsdbsparse_type.spy()]
-        coo_data = coo.tocsr()[dsdbsparse_type.spy()]
+        sum_array = (coo + coo).tocsr()[dsdbsparse.spy()]
+        coo_data = coo.tocsr()[dsdbsparse.spy()]
 
         # Create a boolean mask to track modified stack indices.
-        mask = np.zeros(dsdbsparse_type.shape[:-2], dtype=bool)
+        mask = np.zeros(dsdbsparse.shape[:-2], dtype=bool)
         mask[stack_index] = True
 
         # Check that the stackview has been updated correctly
-        for s_index in np.ndindex(*dsdbsparse_type.shape[:-2]):
+        for s_index in np.ndindex(*dsdbsparse.shape[:-2]):
             if mask[s_index]:
                 # If the stack index is in the modified stack indices,
                 # check that the stackview has been updated correctly.
                 assert xp.allclose(
-                    dsdbsparse_type.data[s_index],
+                    dsdbsparse.data[s_index],
                     sum_array,
                 )
             else:
                 assert xp.array_equiv(
-                    dsdbsparse_type.data[s_index],
+                    dsdbsparse.data[s_index],
                     coo_data,
                 )
 

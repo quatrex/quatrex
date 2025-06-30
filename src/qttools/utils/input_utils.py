@@ -288,10 +288,10 @@ def create_hamiltonian(
     hR: NDArray,
     num_transport_cells: int,
     transport_dir: int | str = "x",
-    transport_cell: list = None,
+    transport_cell: tuple = None,
     block_start: int = None,
     block_end: int = None,
-    periodic_shift: list = [0, 0, 0],
+    periodic_shift: tuple = (0, 0, 0),
     return_sparse: bool = True,
     cutoff: float = xp.inf,
     coords: NDArray = None,
@@ -328,15 +328,15 @@ def create_hamiltonian(
     transport_dir : int or str, optional
         Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
     transport_cell : tuple, optional
-        Size of the transport cell. E.g. [2, 2, 1] for a 2x2 xy-transport cell.
+        Size of the transport cell. E.g. (2, 2, 1) for a 2x2 xy-transport cell.
     block_start : int, optional
         Starting block index for arrow shape partition. Defaults to `None`.
     block_end : int, optional
         Ending block index for arrow shape partition. Defaults to `None`.
-    periodic_shift : list, optional
+    periodic_shift : tuple, optional
         Incase the system is periodic in non-transport directions, the periodic shift
         can be used to get interactions between the transport cell and the periodic cells.
-        E.g. [0, 0, 1] for one of the periodic shifts in the z-direction.
+        E.g. (0, 0, 1) for one of the periodic shifts in the z-direction.
     return_sparse : bool, optional
         Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
     cutoff : float, optional

@@ -958,11 +958,12 @@ class _DStackIndexer:
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[stack_index] = csr[self._dsdbsparse.spy()]
+            return None
             # return self._dsdbsparse
 
         # Not sure what the expected behavior should be here
-        self._dsdbsparse.data[stack_index] = other.data[:]
-        #self._dsdbsparse.data[stack_index] = other.data[stack_index]
+        #self._dsdbsparse.data[stack_index] = other.data[:]
+        self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 
 class _DStackView:

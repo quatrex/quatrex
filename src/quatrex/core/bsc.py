@@ -294,16 +294,20 @@ class BSC:
         hamiltonian_dict = {}
         # Create the Hamiltonian for each periodic shift.
         for periodic_shift in xp.ndindex(
-            quatrex_config.device.cells_in_periodic_directions
+            tuple(
+                2 * ps - 1 for ps in quatrex_config.device.cells_in_periodic_directions
+            )
         ):
-            for i in range(1, -2, -2):
-                if i == -1 and not any(periodic_shift):
-                    break
-                periodic_shift = tuple([i * ps for ps in periodic_shift])
-                hamiltonian_block = get_hamiltonian_block(
-                    hamiltonian_unit_cells, (1, 1, 1), periodic_shift
-                )
-                hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
+            periodic_shift = tuple(
+                [
+                    ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                    for i, ps in enumerate(periodic_shift)
+                ]
+            )
+            hamiltonian_block = get_hamiltonian_block(
+                hamiltonian_unit_cells, (1, 1, 1), periodic_shift
+            )
+            hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
 
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             self.data.sparsity_pattern,
@@ -342,21 +346,25 @@ class BSC:
                 )
             coulomb_matrix_dict = {}
             for periodic_shift in xp.ndindex(
-                quatrex_config.device.cells_in_periodic_directions
+                tuple(
+                    2 * ps - 1
+                    for ps in quatrex_config.device.cells_in_periodic_directions
+                )
             ):
-                # i = -1 and 1, back and forth in the periodic directions.
-                for i in range(1, -2, -2):
-                    if i == -1 and not any(periodic_shift):
-                        break
-                    periodic_shift = tuple([i * ps for ps in periodic_shift])
-                    coulomb_matrix_block = get_hamiltonian_block(
-                        coulomb_matrix_unit_cells,
-                        (1, 1, 1),
-                        periodic_shift,
-                    )
-                    coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
-                        coulomb_matrix_block
-                    )
+                periodic_shift = tuple(
+                    [
+                        ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                        for i, ps in enumerate(periodic_shift)
+                    ]
+                )
+                coulomb_matrix_block = get_hamiltonian_block(
+                    coulomb_matrix_unit_cells,
+                    (1, 1, 1),
+                    periodic_shift,
+                )
+                coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
+                    coulomb_matrix_block
+                )
 
             self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
                 self.data.sparsity_pattern.astype(xp.complex128),

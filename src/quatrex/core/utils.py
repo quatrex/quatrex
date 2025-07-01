@@ -86,13 +86,9 @@ def assemble_kpoint_dsb(
         for j in rolled_indices[1]:
             for k in rolled_indices[2]:
                 stack_index = tuple(
-                    [i]
-                    if number_of_kpoints[0] > 1
-                    else (
-                        [] + [j]
-                        if number_of_kpoints[1] > 1
-                        else [] + [k] if number_of_kpoints[2] > 1 else []
-                    )
+                    ([i] if number_of_kpoints[0] > 1 else [])
+                    + ([j] if number_of_kpoints[1] > 1 else [])
+                    + ([k] if number_of_kpoints[2] > 1 else [])
                 )
                 ik = k_values[0][i]
                 jk = k_values[1][j]

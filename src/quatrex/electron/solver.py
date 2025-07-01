@@ -116,25 +116,30 @@ class ElectronSolver(SubsystemSolver):
             hamiltonian_dict = {}
             # Create the Hamiltonian for each periodic shift.
             for periodic_shift in xp.ndindex(
-                quatrex_config.device.cells_in_periodic_directions
+                tuple(
+                    2 * ps - 1
+                    for ps in quatrex_config.device.cells_in_periodic_directions
+                )
             ):
-                for i in range(1, -2, -2):
-                    if i == -1 and not any(periodic_shift):
-                        break
-                    periodic_shift = tuple([i * ps for ps in periodic_shift])
-                    hamiltonian_sparray, block_sizes = create_hamiltonian(
-                        hamiltonian_unit_cells,
-                        quatrex_config.device.number_of_supercells,
-                        quatrex_config.device.transport_direction,
-                        quatrex_config.device.unit_cell_per_supercell,
-                        block_start=start_block,
-                        block_end=end_block,
-                        periodic_shift=periodic_shift,
-                        return_sparse=True,
-                    )
-                    hamiltonian_dict[periodic_shift] = hamiltonian_sparray.astype(
-                        xp.complex128
-                    )
+                periodic_shift = tuple(
+                    [
+                        ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                        for i, ps in enumerate(periodic_shift)
+                    ]
+                )
+                hamiltonian_sparray, block_sizes = create_hamiltonian(
+                    hamiltonian_unit_cells,
+                    quatrex_config.device.number_of_supercells,
+                    quatrex_config.device.transport_direction,
+                    quatrex_config.device.unit_cell_per_supercell,
+                    block_start=start_block,
+                    block_end=end_block,
+                    periodic_shift=periodic_shift,
+                    return_sparse=True,
+                )
+                hamiltonian_dict[periodic_shift] = hamiltonian_sparray.astype(
+                    xp.complex128
+                )
             hamiltonian_sparray = sum(hamiltonian_dict.values())
             hamiltonian_sparray.sum_duplicates()
             block_sizes = get_host(block_sizes)

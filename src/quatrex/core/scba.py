@@ -349,24 +349,30 @@ class SCBA:
                     )
                 coulomb_matrix_dict = {}
                 for periodic_shift in xp.ndindex(
-                    quatrex_config.device.cells_in_periodic_directions
+                    tuple(
+                        2 * ps - 1
+                        for ps in quatrex_config.device.cells_in_periodic_directions
+                    )
                 ):
-                    # i = -1 and 1, back and forth in the periodic directions.
-                    for i in range(1, -2, -2):
-                        if i == -1 and not any(periodic_shift):
-                            break
-                        periodic_shift = tuple([i * ps for ps in periodic_shift])
-                        coulomb_matrix_sparray, block_sizes = create_hamiltonian(
-                            coulomb_matrix_unit_cells,
-                            quatrex_config.device.number_of_supercells,
-                            quatrex_config.device.transport_direction,
-                            quatrex_config.device.unit_cell_per_supercell,
-                            periodic_shift=periodic_shift,
-                            return_sparse=True,
-                        )
-                        coulomb_matrix_dict[periodic_shift] = (
-                            coulomb_matrix_sparray.astype(xp.complex128)
-                        )
+                    periodic_shift = tuple(
+                        [
+                            ps
+                            - quatrex_config.device.cells_in_periodic_directions[i]
+                            + 1
+                            for i, ps in enumerate(periodic_shift)
+                        ]
+                    )
+                    coulomb_matrix_sparray, block_sizes = create_hamiltonian(
+                        coulomb_matrix_unit_cells,
+                        quatrex_config.device.number_of_supercells,
+                        quatrex_config.device.transport_direction,
+                        quatrex_config.device.unit_cell_per_supercell,
+                        periodic_shift=periodic_shift,
+                        return_sparse=True,
+                    )
+                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_sparray.astype(
+                        xp.complex128
+                    )
 
             else:
                 try:

@@ -533,7 +533,11 @@ class DSDBCOO(DSDBSparse):
         """In-place addition of two DSDBCOO matrices."""
 
         if sparse.issparse(other):
-
+            # Perform checks on the shape of the sparse matrix.
+            if other.shape != self.shape[-2:]:
+                raise ValueError(
+                    f"Sparse matrix shape does not match DSDBCOO shape: {other.shape} != {self.shape[-2:]}"
+                )
             csr = other.tocsr()
             self.data += csr[
                 self.rows + self.global_block_offset,

@@ -10,17 +10,20 @@ from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.kernels.linalg import inv
+from qttools.datastructures import DSDBSparse
+from qttools.datastructures.routines import bd_matmul, bd_sandwich
+from qttools.greens_function_solver import RGF
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import cutoff_hr, get_hamiltonian_block
 from qttools.utils.mpi_utils import distributed_load, get_local_slice
 from qttools.utils.stack_utils import scale_stack
+from scipy.signal import find_peaks
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import density
 from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.core.statistics import fermi_dirac
+from quatrex.core.statistics import bose_einstein, fermi_dirac
 from quatrex.core.utils import assemble_kpoint_dsb
 from quatrex.coulomb_screening import PCoulombScreening
 from quatrex.electron import SigmaCoulombScreening, SigmaFock, SigmaPhonon, SigmaPhoton
@@ -28,6 +31,75 @@ from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
+
+
+def _spectral_function(
+    retarded: DSDBSparse, out: DSDBSparse | None = None
+) -> DSDBSparse:
+    """Computes the spectral function `A-A.dagger` from the retarded Green's function.
+
+    Parameters
+    ----------
+    retarded : DSDBSparse
+        The retarded Green's function.
+    out : DSDBSparse, optional
+        The output matrix to store the result. If None, a new matrix is created.
+
+    Returns
+    -------
+    DSDBSparse
+        The spectral function.
+
+    """
+    return_out = False
+    if out is None:
+        return_out = True
+        out = retarded.zeros_like()
+    retarded_ = retarded.stack[...]
+    for i in range(retarded.num_local_blocks):
+        out.blocks[i, i] = retarded_.blocks[i, i] - retarded_.blocks[
+            i, i
+        ].conj().swapaxes(-1, -2)
+
+        j = i + 1
+        if j >= retarded.num_local_blocks and comm.block.rank == comm.block.size - 1:
+            # The last rank does not have these blocks.
+            continue
+
+        out.blocks[i, j] = retarded_.blocks[i, j] - retarded_.blocks[
+            j, i
+        ].conj().swapaxes(-1, -2)
+        out.blocks[j, i] = out.blocks[i, j].conj().swapaxes(-1, -2)
+
+    if return_out:
+        return out
+
+
+def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
+    """Subtracts b from a on the block-tridiagonal.
+
+    This is an in-place operation, i.e. a is modified.
+
+    Parameters
+    ----------
+    a : DSDBSparse
+        The matrix to subtract from.
+    b : DSDBSparse
+        The matrix to subtract.
+
+    """
+    a_ = a.stack[...]
+    b_ = b.stack[...]
+    for i in range(a.num_local_blocks):
+        a_.blocks[i, i] -= b_.blocks[i, i]
+
+        j = i + 1
+        if j >= a.num_local_blocks and comm.block.rank == comm.block.size - 1:
+            # The last rank does not have these blocks.
+            continue
+
+        a_.blocks[i, j] -= b_.blocks[i, j]
+        a_.blocks[j, i] -= b_.blocks[j, i]
 
 
 class BSCData:
@@ -50,21 +122,21 @@ class BSCData:
     ) -> None:
         """Initializes the BSC data."""
         # Load orbital positions, energy vector and block-sizes.
-        if quatrex_config.device.construct_from_unit_cell:
-            wannier_centers = distributed_load(
-                quatrex_config.input_dir / "wannier_centers.npy"
-            )
-            # lattice_vectors = distributed_load(
-            #    quatrex_config.input_dir / "lattice_vectors.npy"
-            # )
+        wannier_centers = distributed_load(
+            quatrex_config.input_dir / "wannier_centers.npy"
+        )
+        # lattice_vectors = distributed_load(
+        #    quatrex_config.input_dir / "lattice_vectors.npy"
+        # )
 
-        else:
-            # Not supported yet.
-            raise NotImplementedError(
-                "Constructing the BSC from a non-unit cell is not supported yet."
-            )
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
-        # We only use dense matrices for the BSC
+        # We only use dense matrices for the BSC.
+        # Sure, the Hamiltonian can be sparse, but the sparsity pattern is not
+        # the usual block-tridiagonal one, there are also corner blocks that have
+        # to be taken into account. If the Hamiltonian is very sparse, it is better
+        # to use open boundary conditions (transport calculations with flat bands).
+        # Note that then no bandstructure is obtained, but for large matrices only
+        # the gamma point is usually needed.
         self.sparsity_pattern = sparse.csr_matrix(
             np.ones(
                 (len(wannier_centers), len(wannier_centers)),
@@ -115,6 +187,7 @@ class BSCData:
             self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
+            self.dielectric_inverse = dsdbsparse_type.zeros_like(self.g_retarded)
             self.w_retarded = dsdbsparse_type.zeros_like(self.g_retarded)
             self.w_system_matrix = dsdbsparse_type.zeros_like(self.g_retarded)
             self.w_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
@@ -137,9 +210,6 @@ class Observables:
     electron_ldos: NDArray = None
     electron_density: NDArray = None
     hole_density: NDArray = None
-
-    valence_band_edges: NDArray = None
-    conduction_band_edges: NDArray = None
 
     excess_charge_density: NDArray = None
 
@@ -206,6 +276,19 @@ class BSC:
         self.compute_config = compute_config
 
         self.observables = Observables()
+
+        self.solver = RGF(
+            max_batch_size=quatrex_config.electron.solver.max_batch_size,
+        )
+
+        self.conduction_band_edges = self.quatrex_config.electron.conduction_band_edge
+        self.valence_band_edges = self.quatrex_config.electron.valence_band_edge
+        # TODO: Now the Fermi level is fixed to the conduction band edge.
+        self.fermi_level = self.quatrex_config.electron.fermi_level
+        self.delta_conduction_band_edge = (
+            self.quatrex_config.electron.conduction_band_edge
+            - self.quatrex_config.electron.fermi_level
+        )
         electron_energies = xp.zeros((comm.size,))
         self.data = BSCData(
             quatrex_config, compute_config, electron_energies=electron_energies
@@ -262,7 +345,7 @@ class BSC:
             self.electron_energies, comm.stack
         )
         self.occupancies = fermi_dirac(
-            self.local_electron_energies - quatrex_config.electron.fermi_level,
+            self.local_electron_energies - self.fermi_level,
             quatrex_config.electron.temperature,
         )
         min_energy = self.electron_energies[0]
@@ -281,33 +364,44 @@ class BSC:
             )
 
         # ----- Read the Hamiltonian -----------------------------------
-        hamiltonian_unit_cells = distributed_load(
-            quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-        ).astype(xp.complex128)
-
-        # Apply the cutoff.
-        if quatrex_config.device.R_cutoff is not None:
-            hamiltonian_unit_cells = cutoff_hr(
-                hamiltonian_unit_cells,
-                R_cutoff=quatrex_config.device.R_cutoff,
+        try:
+            hamiltonian_dict = distributed_load(
+                quatrex_config.input_dir / "hamiltonian.pkl"
             )
-        hamiltonian_dict = {}
-        # Create the Hamiltonian for each periodic shift.
-        for periodic_shift in xp.ndindex(
-            quatrex_config.device.cells_in_periodic_directions
-        ):
-            for i in range(1, -2, -2):
-                if i == -1 and not any(periodic_shift):
-                    break
-                periodic_shift = tuple([i * ps for ps in periodic_shift])
+        except FileNotFoundError:
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            ).astype(xp.complex128)
+
+            # Apply the cutoff.
+            if quatrex_config.device.R_cutoff is not None:
+                hamiltonian_unit_cells = cutoff_hr(
+                    hamiltonian_unit_cells,
+                    R_cutoff=quatrex_config.device.R_cutoff,
+                )
+            hamiltonian_dict = {}
+            # Create the Hamiltonian for each periodic shift.
+            for periodic_shift in xp.ndindex(
+                tuple(
+                    2 * ps - 1
+                    for ps in quatrex_config.device.cells_in_periodic_directions
+                )
+            ):
+                periodic_shift = tuple(
+                    [
+                        ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                        for i, ps in enumerate(periodic_shift)
+                    ]
+                )
                 hamiltonian_block = get_hamiltonian_block(
                     hamiltonian_unit_cells, (1, 1, 1), periodic_shift
                 )
                 hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
+            del hamiltonian_block
 
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             self.data.sparsity_pattern,
-            block_sizes=xp.array([hamiltonian_block.shape[0]]),
+            block_sizes=xp.array([self.data.sparsity_pattern.shape[0]]),
             global_stack_shape=(comm.stack.size,)
             + tuple(
                 [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
@@ -325,8 +419,44 @@ class BSC:
             number_of_kpoints,
             0,
         )
-        del hamiltonian_block
         del hamiltonian_dict
+
+        # Create the overlap matrix.
+        self.overlap = compute_config.dsdbsparse_type.from_sparray(
+            self.data.sparsity_pattern,
+            block_sizes=xp.array([self.data.sparsity_pattern.shape[0]]),
+            global_stack_shape=(comm.stack.size,)
+            + tuple(
+                [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
+            ),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
+        )
+        self.overlap.data = 0.0
+        try:
+            # Load the overlap matrix from file, if it exists...
+            self.overlap_sparray_dict = distributed_load(
+                quatrex_config.input_dir / "overlap_matrix.pkl"
+            )
+            number_of_kpoints = xp.array(
+                [
+                    1 if k <= 1 else k
+                    for k in self.quatrex_config.electron.number_of_kpoints
+                ]
+            )
+            assemble_kpoint_dsb(
+                self.overlap,
+                self.overlap_sparray_dict,
+                number_of_kpoints,
+                0,
+            )
+            del self.overlap_sparray_dict
+        except FileNotFoundError:
+            # ... otherwise, assume the overlap matrix is the identity (orthonormal basis).
+            self.overlap += sparse.eye(
+                self.overlap.shape[-1],
+                dtype=xp.complex128,
+            )
 
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
@@ -398,7 +528,14 @@ class BSC:
                 self.electron_energies - self.electron_energies[0]
             )
             # Remove the zero energy to avoid division by zero.
-            self.coulomb_screening_energies += 1e-6
+            self.coulomb_screening_energies += 1e-12
+            local_coulomb_screening_energies = get_local_slice(
+                self.coulomb_screening_energies, comm.stack
+            )
+            self.occupancies_coulomb_screening = bose_einstein(
+                local_coulomb_screening_energies,
+                quatrex_config.coulomb_screening.temperature,
+            )
 
             (
                 self.coulomb_matrix.dtranspose()
@@ -463,6 +600,103 @@ class BSC:
             quatrex_config, compute_config, electron_energies=self.electron_energies
         )  # real data
 
+    def _assemble_greens_function_system_matrix(self, sse_retarded: DSDBSparse) -> None:
+        """Assembles the system matrix.
+
+        Parameters
+        ----------
+        sse_retarded : DSDBSparse
+            The retarded scattering self-energy.
+
+        """
+        self.data.g_system_matrix.data = 0.0
+        # TODO: prove that k-points don't matter here.
+        self.data.g_system_matrix.data[:] += self.overlap.data
+        scale_stack(
+            self.data.g_system_matrix.data,
+            self.local_electron_energies + 1j * self.quatrex_config.electron.eta,
+        )
+        # self.data.g_system_matrix -= sparse.diags(self.potential, format="csr")
+        _btd_subtract(self.data.g_system_matrix, self.hamiltonian)
+        _btd_subtract(self.data.g_system_matrix, sse_retarded)
+
+    def _assemble_screened_interaction_system_matrix(
+        self, p_retarded: DSDBSparse
+    ) -> None:
+        """Assembles the system matrix."""
+        self.data.w_system_matrix.data = 0.0
+
+        bd_matmul(
+            self.coulomb_matrix,
+            p_retarded,
+            out=self.data.w_system_matrix,
+        )
+        xp.negative(self.data.w_system_matrix.data, out=self.data.w_system_matrix.data)
+        # I believe it should be the overlap matrix here
+        self.data.w_system_matrix.data[:] += self.overlap.data
+
+    def _find_band_edges(self) -> None:
+        """Find the band edges (conduction band minima and valence band maxima)."""
+        # Find peaks in the electron density.
+        dos = xp.sum(
+            -density(
+                self.data.g_retarded,
+                self.overlap,
+            ).imag
+            / (2 * xp.pi),
+            axis=-1,
+        )
+        energies = self.electron_energies
+        kpoints = dos.shape[1:]
+        mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
+        conduction_band_edge = np.zeros(kpoints)
+        valence_band_edge = np.zeros(kpoints)
+        for kp in np.ndindex(kpoints):
+            peaks, _ = find_peaks(dos[:, *kp])
+            bands = energies[peaks]
+            # Find the conduction and valence band edges.
+            conduction_band_edge[kp] = xp.min(bands[bands > mid_bandgap])
+            valence_band_edge[kp] = xp.max(bands[bands < mid_bandgap])
+        self.conduction_band_edges = xp.min(conduction_band_edge)
+        self.valence_band_edges = xp.max(valence_band_edge)
+        if comm.rank == 0:
+            print(
+                f"Conduction Band Edges: {self.conduction_band_edges}, k-point: {xp.argmin(conduction_band_edge)}",
+                flush=True,
+            )
+            print(
+                f"Valence Band Edges: {self.valence_band_edges}, k-point: {xp.argmax(valence_band_edge)}",
+                flush=True,
+            )
+
+    def _update_fermi_level(self) -> None:
+        """Update the Fermi level based on the current band edges."""
+        # TODO: This is a naive implementation, should be self-consistent such that
+        # total charge is conserved.
+        # Should the potential also be updated?
+        self.fermi_level = self.conduction_band_edges - self.delta_conduction_band_edge
+        self.occupancies = fermi_dirac(
+            self.local_electron_energies - self.fermi_level,
+            self.quatrex_config.electron.temperature,
+        )
+
+    def _compute_total_charge(self) -> float:
+        """Compute the total charge in the system. Prefactors are not included."""
+        ldos = -density(
+            self.data.g_retarded,
+            self.overlap,
+        ).imag / (2 * xp.pi)
+        # Sum all axis except the first one (which is the energy axis).
+        dos = xp.sum(ldos, axis=tuple(i for i in range(1, ldos.ndim)))
+        # Gather the occupancies across all ranks.
+        occupancies = comm.stack.all_gather_v(
+            self.occupancies,
+            axis=0,
+        )
+        # Compute the total charge in the system.
+        total_charge = xp.sum(dos * occupancies)
+        return total_charge
+
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
         self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
@@ -494,6 +728,8 @@ class BSC:
         synchronize_device()
         time_start = time.perf_counter()
         if not self.quatrex_config.scba.symmetric:
+            # This is not relly necessary as sigma_lesser and sigma_greater
+            # currently aren't used.
             self.data.sigma_lesser.symmetrize(xp.subtract)
             self.data.sigma_greater.symmetrize(xp.subtract)
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
@@ -501,11 +737,12 @@ class BSC:
 
         # self.data.sigma_lesser._data.real = 0
         # self.data.sigma_greater._data.real = 0
+        # self.data.sigma_retarded._data *= -1
 
         # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
-        )
+        # self.data.sigma_retarded.data += 0.5 * (
+        #    self.data.sigma_greater.data - self.data.sigma_lesser.data
+        # )
         synchronize_device()
         time_end = time.perf_counter()
         if comm.rank == 0:
@@ -575,34 +812,49 @@ class BSC:
                 flush=True,
             )
 
+        self.data.dielectric_inverse.allocate_data()
+        self.data.w_retarded.allocate_data()
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
-        self.data.w_retarded.allocate_data()
 
         # Coulomb screening interaction.
+
         t_coulomb_start = time.perf_counter()
-        self.data.w_system_matrix.data = 0
-        self.data.w_system_matrix += sparse.eye(
-            self.data.w_system_matrix.shape[-1],
-            dtype=xp.complex128,
+        self._assemble_screened_interaction_system_matrix(
+            self.data.p_retarded,
         )
-        self.data.w_system_matrix.blocks[0, 0] -= (
-            self.coulomb_matrix.blocks[0, 0] @ self.data.p_retarded.blocks[0, 0]
+
+        self.solver.selected_inv(
+            self.data.w_system_matrix,
+            out=self.data.dielectric_inverse,
         )
-        self.data.w_retarded.blocks[0, 0] = (
-            inv(self.data.w_system_matrix.blocks[0, 0])
-            @ self.coulomb_matrix.blocks[0, 0]
+        bd_matmul(
+            self.data.dielectric_inverse,
+            self.coulomb_matrix,
+            out=self.data.w_retarded,
         )
-        self.data.w_lesser.blocks[0, 0] = (
-            self.data.w_retarded.blocks[0, 0]
-            @ self.data.p_lesser.blocks[0, 0]
-            @ self.data.w_retarded.blocks[0, 0].conj().swapaxes(-1, -2)
+
+        # Omega = self.data.w_retarded.blocks[0, 0] - self.data.w_retarded.blocks[0, 0].conj().swapaxes(-1, -2)
+        # self.data.w_lesser.blocks[0, 0] = scale_stack(
+        #   Omega.copy(), self.occupancies_coulomb_screening
+        # )
+        # self.data.w_greater.blocks[0, 0] = scale_stack(
+        #   Omega.copy(), (1 + self.occupancies_coulomb_screening)
+        # )
+
+        bd_sandwich(
+            self.data.w_retarded,
+            self.data.p_lesser,
+            out=self.data.w_lesser,
+            symmetric=False,
         )
-        self.data.w_greater.blocks[0, 0] = (
-            self.data.w_retarded.blocks[0, 0]
-            @ self.data.p_greater.blocks[0, 0]
-            @ self.data.w_retarded.blocks[0, 0].conj().swapaxes(-1, -2)
+        bd_sandwich(
+            self.data.w_retarded,
+            self.data.p_greater,
+            out=self.data.w_greater,
+            symmetric=False,
         )
+
         synchronize_device()
         t_coulomb_end = time.perf_counter()
         comm.barrier()
@@ -682,6 +934,7 @@ class BSC:
                 flush=True,
             )
 
+        self.data.dielectric_inverse.free_data()
         self.data.w_retarded.free_data()
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
@@ -692,57 +945,57 @@ class BSC:
         if self.quatrex_config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
 
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                # self.electron_solver.overlap_sparray,
+                self.overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
 
         if self.quatrex_config.outputs.polarization_density:
-            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-                2 * xp.pi
-            )
-            self.observables.p_lesser_density = density(self.data.p_lesser) / (
-                2 * xp.pi
-            )
-            self.observables.p_greater_density = -density(self.data.p_greater) / (
-                2 * xp.pi
-            )
+            self.observables.p_retarded_density = -density(
+                self.data.p_retarded, self.overlap
+            ) / (2 * xp.pi)
+            self.observables.p_lesser_density = -density(
+                self.data.p_lesser, self.overlap
+            ) / (2 * xp.pi)
+            self.observables.p_greater_density = -density(
+                self.data.p_greater, self.overlap
+            ) / (2 * xp.pi)
 
         if self.quatrex_config.outputs.coulomb_screening_density:
-            self.observables.w_retarded_density = -density(self.data.w_retarded) / (
-                2 * xp.pi
-            )
-            self.observables.w_lesser_density = density(self.data.w_lesser) / (
-                2 * xp.pi
-            )
-            self.observables.w_greater_density = -density(self.data.w_greater) / (
-                2 * xp.pi
-            )
+            self.observables.w_retarded_density = -density(
+                self.data.w_retarded, self.overlap
+            ) / (2 * xp.pi)
+            self.observables.w_lesser_density = -density(
+                self.data.w_lesser, self.overlap
+            ) / (2 * xp.pi)
+            self.observables.w_greater_density = -density(
+                self.data.w_greater, self.overlap
+            ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
@@ -813,31 +1066,36 @@ class BSC:
             t_iteration_start = time.perf_counter()
 
             t_solve_start = time.perf_counter()
-            self.data.g_system_matrix.data = 0
-            # Assumes orthonormal basis, so the overlap matrix is the identity.
-            self.data.g_system_matrix += sparse.eye(
-                self.data.g_system_matrix.shape[-1],
-                dtype=xp.complex128,
+            self._assemble_greens_function_system_matrix(
+                self.data.sigma_retarded,
             )
-            scale_stack(
-                self.data.g_system_matrix.data,
-                self.local_electron_energies + 1j * self.quatrex_config.electron.eta,
+
+            self.solver.selected_inv(
+                self.data.g_system_matrix,
+                out=self.data.g_retarded,
             )
-            self.data.g_system_matrix.blocks[0, 0] -= (
-                self.hamiltonian.blocks[0, 0] + self.data.sigma_retarded.blocks[0, 0]
-            )
-            self.data.g_retarded.blocks[0, 0] = inv(
-                self.data.g_system_matrix.blocks[0, 0]
-            )
-            spectral_function = self.data.g_retarded.blocks[
-                0, 0
-            ] - self.data.g_retarded.blocks[0, 0].conj().swapaxes(-1, -2)
-            self.data.g_lesser.blocks[0, 0] = scale_stack(
-                -spectral_function, self.occupancies
-            )
-            self.data.g_greater.blocks[0, 0] = scale_stack(
-                spectral_function, 1 - self.occupancies
-            )
+
+            # Find the band edges and update the Fermi level (for charge neutrality).
+            self._find_band_edges()
+            self._update_fermi_level()
+            if i == 0:
+                previous_charge = self._compute_total_charge()
+            else:
+                current_charge = self._compute_total_charge()
+                if comm.rank == 0:
+                    print(f"Current charge: {current_charge}", flush=True)
+                    print(f"Previous charge: {previous_charge}", flush=True)
+                    print(
+                        f"Charge difference: {current_charge - previous_charge}",
+                        flush=True,
+                    )
+                previous_charge = current_charge
+
+            _spectral_function(self.data.g_retarded, out=self.data.g_lesser)
+            self.data.g_greater.data[:] = self.data.g_lesser.data
+            scale_stack(self.data.g_lesser.data, -self.occupancies)
+            scale_stack(self.data.g_greater.data, 1 - self.occupancies)
+
             synchronize_device()
             t_solve_end = time.perf_counter()
             comm.barrier()

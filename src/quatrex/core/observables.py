@@ -54,14 +54,16 @@ def get_block(
     return block
 
 
-def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
+def density(
+    x: DSDBSparse, overlap: sparse.spmatrix | DSDBSparse | None = None
+) -> NDArray:
     """Computes the density from Green's function and overlap matrix.
 
     Parameters
     ----------
     x : DSDBSparse
         The Green's function.
-    overlap : sparse.spmatrix, optional
+    overlap : sparse.spmatrix | DSDBSparse, optional
         The overlap matrix, by default None.
 
     Returns
@@ -78,6 +80,16 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
             axis=0,
             mask=x._stack_padding_mask,
         )
+    elif isinstance(overlap, sparse.spmatrix):
+        overlap = overlap.tocoo()
+        _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
+    elif isinstance(overlap, DSDBSparse):
+        # _overlap_block =  lambda index: overlap.blocks[index[0], index[1]]
+        def _overlap_block(index):
+            return overlap.blocks[index[0], index[1]]
+
+    else:
+        raise TypeError("Overlap must be a sparse matrix or DSDBSparse.")
 
     if comm.block.size > 1:
         raise NotImplementedError(
@@ -85,8 +97,6 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
         )
 
     local_density = []
-    overlap = overlap.tocoo()
-    _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
     for i in range(x.num_blocks):
         local_density_slice = xp.diagonal(
             x.blocks[i, i] @ _overlap_block((i, i)),

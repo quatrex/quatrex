@@ -12,11 +12,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import (
-    create_coordinate_grid,
-    create_hamiltonian,
-    cutoff_hr,
-)
+from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import (
@@ -30,6 +26,8 @@ from quatrex.core.utils import (
     assemble_kpoint_dsb,
     compute_num_connected_blocks,
     compute_sparsity_pattern,
+    load_matrix_from_files,
+    load_matrix_from_unit_cell,
 )
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -337,54 +335,11 @@ class SCBA:
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
             # Load the Coulomb matrix.
-            if quatrex_config.device.construct_from_unit_cell:
-                coulomb_matrix_unit_cells = distributed_load(
-                    quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
-                ).astype(xp.complex128)
-                # Apply the cutoff to the Coulomb matrix.
-                if quatrex_config.device.R_cutoff is not None:
-                    coulomb_matrix_unit_cells = cutoff_hr(
-                        coulomb_matrix_unit_cells,
-                        R_cutoff=quatrex_config.device.R_cutoff,
-                    )
-                coulomb_matrix_dict = {}
-                for periodic_shift in xp.ndindex(
-                    tuple(
-                        2 * ps - 1
-                        for ps in quatrex_config.device.cells_in_periodic_directions
-                    )
-                ):
-                    periodic_shift = tuple(
-                        [
-                            ps
-                            - quatrex_config.device.cells_in_periodic_directions[i]
-                            + 1
-                            for i, ps in enumerate(periodic_shift)
-                        ]
-                    )
-                    coulomb_matrix_sparray, block_sizes = create_hamiltonian(
-                        coulomb_matrix_unit_cells,
-                        quatrex_config.device.number_of_supercells,
-                        quatrex_config.device.transport_direction,
-                        quatrex_config.device.unit_cell_per_supercell,
-                        periodic_shift=periodic_shift,
-                        return_sparse=True,
-                    )
-                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_sparray.astype(
-                        xp.complex128
-                    )
-
-            else:
-                try:
-                    coulomb_matrix_sparray = distributed_load(
-                        quatrex_config.input_dir / "coulomb_matrix.npz"
-                    ).astype(xp.complex128)
-                    coulomb_matrix_dict = None
-                except FileNotFoundError:
-                    coulomb_matrix_dict = distributed_load(
-                        quatrex_config.input_dir / "coulomb_matrix.pkl"
-                    )
-                block_sizes = self.data.g_retarded.block_sizes
+            coulomb_matrix_sparray, coulomb_matrix_dict, block_sizes = (
+                load_matrix_from_unit_cell(quatrex_config, "coulomb_matrix")
+                if quatrex_config.device.construct_from_unit_cell
+                else load_matrix_from_files(quatrex_config, "coulomb_matrix")
+            )
 
             coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
                 self.data.sparsity_pattern.astype(xp.complex128),
@@ -411,6 +366,7 @@ class SCBA:
                     coulomb_matrix_dict,
                     number_of_kpoints,
                     -(number_of_kpoints // 2),
+                    transport_direction=quatrex_config.device.transport_direction,
                 )
             # Explicitely try to free the memory
             del coulomb_matrix_sparray

@@ -1057,6 +1057,60 @@ class BSC:
         for filename, data in outputs.items():
             xp.save(self.quatrex_config.output_dir / filename, data)
 
+    def _compute_valley_difference(self, sp1, sp2, band="conduction") -> float:
+        """
+        Compute the valley differences between the `sp1` and `sp2` symmetry points in the `band` band edge.
+
+        Parameters
+        ----------
+        sp1 : array-like
+            The first symmetry point.
+        sp2 : array-like
+            The second symmetry point.
+        band : str
+            The band edge to consider ('conduction' or 'valence').
+        """
+        dos = xp.sum(
+            -density(self.data.g_retarded, self.overlap).imag / (2 * xp.pi),
+            axis=-1,
+        )
+        number_of_kpoints = np.array(
+            [kp for kp in self.quatrex_config.electron.number_of_kpoints if kp > 1]
+        )
+        grids = [(np.arange(n) - n // 2) / n for n in number_of_kpoints]
+        kpoint_mesh = np.meshgrid(*grids, indexing="ij")
+        # Find the corresponding k-point indices for the symmetry points. The closest k-point is used.
+        sp1 = xp.array(sp1)
+        sp2 = xp.array(sp2)
+        sp1_idx = divmod(
+            xp.argmin(
+                xp.linalg.norm(kpoint_mesh - sp1.reshape(-1, 1, 1), axis=0),
+            ),
+            number_of_kpoints[-1],
+        )
+        sp2_idx = divmod(
+            xp.argmin(
+                xp.linalg.norm(kpoint_mesh - sp2.reshape(-1, 1, 1), axis=0),
+            ),
+            number_of_kpoints[-1],
+        )
+        # Find the peaks in the density of states at the symmetry points.
+        peaks_sp1, _ = find_peaks(dos[:, *sp1_idx])
+        peaks_sp2, _ = find_peaks(dos[:, *sp2_idx])
+        energies_sp1 = self.electron_energies[peaks_sp1]
+        energies_sp2 = self.electron_energies[peaks_sp2]
+        mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
+        if band == "conduction":
+            edge_sp1 = xp.min(energies_sp1[energies_sp1 > mid_bandgap])
+            edge_sp2 = xp.min(energies_sp2[energies_sp2 > mid_bandgap])
+        elif band == "valence":
+            edge_sp1 = xp.max(energies_sp1[energies_sp1 < mid_bandgap])
+            edge_sp2 = xp.max(energies_sp2[energies_sp2 < mid_bandgap])
+        else:
+            raise ValueError("band must be either 'conduction' or 'valence'.")
+        valley_difference = edge_sp1 - edge_sp2
+        return valley_difference
+
     @profiler.profile(level="basic")
     def run(self) -> None:
         """Runs the SCBA to convergence."""
@@ -1094,6 +1148,29 @@ class BSC:
                         flush=True,
                     )
                 previous_charge = current_charge
+
+            # Compute the valley difference between symmetry points.
+            # The `K` and `Q` symmetry points are used for the conduction band edge.
+            K_symmetry_point = xp.array([1 / 3, 1 / 3])
+            Q_symmetry_point = xp.array([1 / 6, 1 / 6])
+            valley_difference = self._compute_valley_difference(
+                K_symmetry_point, Q_symmetry_point
+            )
+            if comm.rank == 0:
+                print(
+                    f"Valley difference between K and Q symmetry points: {valley_difference}",
+                    flush=True,
+                )
+            # The `K` and `G` symmetry points are used for the valence band edge.
+            G_symmetry_point = xp.array([0, 0])
+            valley_difference = self._compute_valley_difference(
+                K_symmetry_point, G_symmetry_point, band="valence"
+            )
+            if comm.rank == 0:
+                print(
+                    f"Valley difference between K and G symmetry points: {valley_difference}",
+                    flush=True,
+                )
 
             _spectral_function(self.data.g_retarded, out=self.data.g_lesser)
             self.data.g_greater.data[:] = self.data.g_lesser.data

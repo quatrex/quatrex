@@ -186,7 +186,7 @@ def _create_matrix_from_unit_cells(
 
 
 def load_matrix_from_files(
-    self, quatrex_config, matrix_name: str
+    quatrex_config, matrix_name: str
 ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
     """Generic method to load a matrix from pre-computed files.
 

@@ -733,17 +733,17 @@ class SCBA:
         if self.quatrex_config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
         if self.quatrex_config.outputs.contact_currents:
@@ -781,20 +781,21 @@ class SCBA:
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                # self.electron_solver.overlap_sparray,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
 
+        # NOTE: The overlap is maybe missing here (it is not used)
         if self.quatrex_config.outputs.polarization_density:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (
                 2 * xp.pi

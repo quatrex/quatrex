@@ -32,10 +32,22 @@ def assemble_kpoint_dsb(
     lattice_matrix: dict[tuple, sparse.csr_matrix],
     number_of_kpoints: xp.ndarray,
     roll_index: int | xp.ndarray,
+    transport_direction: str | None = None,
 ) -> DSDBSparse:
     """Assembles a DSBSparse with the k-point distribution."""
     if isinstance(roll_index, int):
         roll_index = xp.array([roll_index, roll_index, roll_index])
+
+    # Pre-filter cells based on transport direction
+    if transport_direction is not None:
+        transport_idx = "xyz".index(transport_direction)
+        # Interacting cells in transport direction should not be included.
+        valid_cells = [
+            cell for cell in lattice_matrix.keys() if cell[transport_idx] == 0
+        ]
+    else:
+        valid_cells = list(lattice_matrix.keys())
+
     for i, ii in enumerate(xp.roll(xp.arange(number_of_kpoints[0]), roll_index[0])):
         for j, jj in enumerate(xp.roll(xp.arange(number_of_kpoints[1]), roll_index[1])):
             for k, kk in enumerate(
@@ -53,7 +65,8 @@ def assemble_kpoint_dsb(
                 ik = (ii - number_of_kpoints[0] // 2) / number_of_kpoints[0]
                 jk = (jj - number_of_kpoints[1] // 2) / number_of_kpoints[1]
                 kk = (kk - number_of_kpoints[2] // 2) / number_of_kpoints[2]
-                for cell_index in lattice_matrix.keys():
+                for cell_index in valid_cells:
+                    # Add the contribution of the current k-point to the buffer.
                     buffer.stack[(...,) + stack_index] += (
                         xp.exp(
                             2

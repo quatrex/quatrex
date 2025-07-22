@@ -92,75 +92,10 @@ class ElectronSolver(SubsystemSolver):
         synchronize_device()
         comm.barrier()
         t_ham_load_start = time.perf_counter()
-        if quatrex_config.device.construct_from_unit_cell:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
 
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, comm.block.size
-            )
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            start_block = section_offsets[comm.block.rank]
-            end_block = section_offsets[comm.block.rank + 1]
-
-            # Apply the cutoff.
-            if quatrex_config.device.R_cutoff is not None:
-                hamiltonian_unit_cells = cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.R_cutoff,
-                )
-            hamiltonian_dict = {}
-            # Create the Hamiltonian for each periodic shift.
-            for periodic_shift in xp.ndindex(
-                tuple(
-                    2 * ps - 1
-                    for ps in quatrex_config.device.cells_in_periodic_directions
-                )
-            ):
-                periodic_shift = tuple(
-                    [
-                        ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
-                        for i, ps in enumerate(periodic_shift)
-                    ]
-                )
-                hamiltonian_sparray, block_sizes = create_hamiltonian(
-                    hamiltonian_unit_cells,
-                    quatrex_config.device.number_of_supercells,
-                    quatrex_config.device.transport_direction,
-                    quatrex_config.device.unit_cell_per_supercell,
-                    block_start=start_block,
-                    block_end=end_block,
-                    periodic_shift=periodic_shift,
-                    return_sparse=True,
-                )
-                hamiltonian_dict[periodic_shift] = hamiltonian_sparray.astype(
-                    xp.complex128
-                )
-            hamiltonian_sparray = sum(hamiltonian_dict.values())
-            hamiltonian_sparray.sum_duplicates()
-            block_sizes = get_host(block_sizes)
-            self.block_sizes = np.asarray(
-                [block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-
-        else:
-            try:
-                hamiltonian_sparray = distributed_load(
-                    quatrex_config.input_dir / "hamiltonian.npz"
-                ).astype(xp.complex128)
-                hamiltonian_dict = None
-            except FileNotFoundError:
-                hamiltonian_dict = distributed_load(
-                    quatrex_config.input_dir / "hamiltonian.pkl"
-                )
-                hamiltonian_sparray = sum(hamiltonian_dict.values())
-            self.block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
+        hamiltonian_sparray, hamiltonian_dict, self.block_sizes = (
+            self._load_hamiltonian_matrix(quatrex_config)
+        )
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
 
         # Make sure that the the system matrix sparsity is a superset of
@@ -197,10 +132,7 @@ class ElectronSolver(SubsystemSolver):
             self.hamiltonian += hamiltonian_sparray
         else:
             number_of_kpoints = xp.array(
-                [
-                    1 if k <= 1 else k
-                    for k in self.quatrex_config.electron.number_of_kpoints
-                ]
+                [1 if k <= 1 else k for k in number_of_kpoints]
             )
             assemble_kpoint_dsb(
                 self.hamiltonian,
@@ -210,20 +142,6 @@ class ElectronSolver(SubsystemSolver):
             )
         del hamiltonian_sparray
         del hamiltonian_dict
-
-        synchronize_device()
-        t_ham_create_end = time.perf_counter()
-        comm.barrier()
-        t_ham_create_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
-                flush=True,
-            )
-            print(
-                f"    Create Hamiltonian all: {t_ham_create_end_all-t_ham_load_end_all}",
-                flush=True,
-            )
 
         synchronize_device()
         t_ham_create_end = time.perf_counter()
@@ -257,46 +175,43 @@ class ElectronSolver(SubsystemSolver):
                 f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
             )
 
-        if quatrex_config.device.construct_from_unit_cell:
-            try:
-                overlap_unit_cells = distributed_load(
-                    quatrex_config.input_dir / "overlap_unit_cells.npy"
-                ).astype(xp.complex128)
-                overlap_sparray, __ = create_hamiltonian(
-                    cutoff_hr(
-                        overlap_unit_cells,
-                        R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                    ),
-                    quatrex_config.device.number_of_supercells,
-                    quatrex_config.device.transport_direction,
-                    quatrex_config.device.unit_cell_per_supercell,
-                    return_sparse=True,
-                )
-                self.overlap_sparray = overlap_sparray.astype(xp.complex128)
-            except FileNotFoundError:
-                # No overlap provided. Assume orthonormal basis.
-                self.overlap_sparray = sparse.eye(
-                    self.hamiltonian.shape[-2],
-                    format="coo",
-                    dtype=self.hamiltonian.dtype,
-                )
+        # Create the overlap matrix.
+        overlap_sparray, overlap_sparray_dict = self._load_overlap_matrix(
+            quatrex_config
+        )
 
+        # Create the overlap matrix DSDBSparse object.
+        self.overlap = compute_config.dsdbsparse_type.from_sparray(
+            overlap_sparray.astype(xp.complex128),
+            block_sizes=self.block_sizes,
+            global_stack_shape=(comm.stack.size,)
+            + tuple(
+                [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
+            ),
+            symmetry=quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
+        )
+        self.overlap.data = 0.0
+
+        if overlap_sparray_dict is None:
+            self.overlap += overlap_sparray
         else:
-            # Load the overlap matrix.
-            try:
-                self.overlap_sparray = distributed_load(
-                    quatrex_config.input_dir / "overlap.npz"
-                ).astype(xp.complex128)
-            except FileNotFoundError:
-                # No overlap provided. Assume orthonormal basis.
-                self.overlap_sparray = sparse.eye(
-                    self.hamiltonian.shape[-2],
-                    format="coo",
-                    dtype=self.hamiltonian.dtype,
-                )
+            number_of_kpoints = xp.array(
+                [
+                    1 if k <= 1 else k
+                    for k in self.quatrex_config.electron.number_of_kpoints
+                ]
+            )
+            assemble_kpoint_dsb(
+                self.overlap,
+                overlap_sparray_dict,
+                number_of_kpoints,
+                0,
+            )
+            del overlap_sparray_dict
 
         # Check that the overlap matrix and Hamiltonian matrix match.
-        if self.overlap_sparray.shape != self.hamiltonian.shape[-2:]:
+        if self.overlap.shape != self.hamiltonian.shape:
             raise ValueError(
                 "Overlap matrix and Hamiltonian matrix have different shapes."
             )
@@ -306,8 +221,10 @@ class ElectronSolver(SubsystemSolver):
         # TODO: Not implemented for k-points yet.
         if not self.hamiltonian.symmetry:
             self.hamiltonian.symmetrize()
+
+        # Store symmetrized overlap matrix as sparse array for later use
         self.overlap_sparray = (
-            0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
+            0.5 * (overlap_sparray + overlap_sparray.conj().T)
         ).tocoo()
 
         # Load the potential.
@@ -507,6 +424,500 @@ class ElectronSolver(SubsystemSolver):
         ] = coo.data[mask]
 
         return block
+
+    def _create_identity_overlap(self) -> sparse.coo_matrix:
+        """Create an identity matrix for orthonormal basis assumption.
+
+        Returns
+        -------
+        sparse.coo_matrix
+            Identity matrix with appropriate shape and dtype.
+        """
+        return sparse.eye(
+            self.hamiltonian.shape[-2],
+            format="coo",
+            dtype=self.hamiltonian.dtype,
+        )
+
+    def _load_matrix_from_unit_cell(
+        self, quatrex_config, matrix_name: str, use_r_cutoff: bool = True
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to load a matrix from unit cell data.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+        use_r_cutoff : bool
+            Whether to apply R_cutoff to the unit cells.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        unit_cells = distributed_load(
+            quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
+        ).astype(xp.complex128)
+
+        # Apply cutoff if requested and available
+        if use_r_cutoff and quatrex_config.device.R_cutoff is not None:
+            unit_cells = cutoff_hr(
+                unit_cells,
+                R_cutoff=quatrex_config.device.R_cutoff,
+            )
+        elif matrix_name == "overlap":
+            # For overlap, use unit_cell_per_supercell as R_cutoff
+            unit_cells = cutoff_hr(
+                unit_cells,
+                R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+            )
+
+        return self._create_matrix_from_unit_cells(quatrex_config, unit_cells)
+
+    def _create_matrix_from_unit_cells(
+        self, quatrex_config, unit_cells
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to create a matrix from unit cells with periodic shifts.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        unit_cells : NDArray
+            The unit cell data.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        # Determine the local slice of the data.
+        # NOTE: This is arrow-wise partitioning.
+        # TODO: Allow more options, e.g., block row-wise partitioning.
+        section_sizes, __ = get_section_sizes(
+            quatrex_config.device.number_of_supercells, comm.block.size
+        )
+        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+        start_block = section_offsets[comm.block.rank]
+        end_block = section_offsets[comm.block.rank + 1]
+
+        matrix_dict = {}
+        # Create the matrix for each periodic shift
+        for periodic_shift in xp.ndindex(
+            tuple(
+                2 * ps - 1 for ps in quatrex_config.device.cells_in_periodic_directions
+            )
+        ):
+            periodic_shift = tuple(
+                [
+                    ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                    for i, ps in enumerate(periodic_shift)
+                ]
+            )
+            matrix_sparray, block_sizes = create_hamiltonian(
+                unit_cells,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                periodic_shift=periodic_shift,
+                return_sparse=True,
+            )
+            matrix_dict[periodic_shift] = matrix_sparray.astype(xp.complex128)
+
+        matrix_sparray = sum(matrix_dict.values())
+        matrix_sparray.sum_duplicates()
+        block_sizes = get_host(block_sizes)
+        block_sizes_array = np.asarray(
+            [block_sizes[0]] * quatrex_config.device.number_of_supercells
+        )
+
+        return matrix_sparray, matrix_dict, block_sizes_array
+
+    def _load_matrix_from_files(
+        self, quatrex_config, matrix_name: str
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to load a matrix from pre-computed files.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        # Define file loading priority for each matrix type
+        if matrix_name == "hamiltonian":
+            file_patterns = [
+                ("hamiltonian.npz", "npz"),
+                ("hamiltonian.pkl", "pkl"),
+            ]
+        else:  # overlap
+            file_patterns = [
+                ("overlap_matrix.pkl", "pkl"),
+                ("overlap.npz", "npz"),
+            ]
+
+        # Try loading files in priority order
+        for filename, file_type in file_patterns:
+            try:
+                if file_type == "pkl":
+                    matrix_dict = distributed_load(quatrex_config.input_dir / filename)
+                    matrix_sparray = sum(matrix_dict.values())
+                    matrix_sparray.sum_duplicates()
+                    block_sizes = self._load_block_sizes(quatrex_config, matrix_name)
+                    return matrix_sparray, matrix_dict, block_sizes
+
+                else:  # npz
+                    matrix_sparray = distributed_load(
+                        quatrex_config.input_dir / filename
+                    ).astype(xp.complex128)
+                    block_sizes = self._load_block_sizes(quatrex_config, matrix_name)
+                    return matrix_sparray, None, block_sizes
+
+            except FileNotFoundError:
+                continue
+
+        # If no files found, handle fallback
+        if matrix_name == "overlap":
+            # For overlap, fall back to identity matrix
+            return self._create_identity_overlap(), None, None
+        else:
+            # For Hamiltonian, this is an error
+            raise FileNotFoundError(
+                f"No {matrix_name} files found in {quatrex_config.input_dir}"
+            )
+
+    def _load_block_sizes(self, quatrex_config, matrix_name: str) -> NDArray | None:
+        """Load block sizes if available and needed.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+
+        Returns
+        -------
+        NDArray | None
+            Block sizes array or None if not needed/available.
+        """
+        if matrix_name == "hamiltonian":
+            try:
+                return get_host(
+                    distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+                )
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    "block_sizes.npy required for Hamiltonian loading"
+                )
+        return None
+
+    def _load_overlap_matrix(
+        self, quatrex_config
+    ) -> tuple[sparse.coo_matrix, dict | None]:
+        """Load overlap matrix from various sources.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None]
+            The overlap matrix and optional dictionary for k-point assembly.
+        """
+        try:
+            if quatrex_config.device.construct_from_unit_cell:
+                matrix_sparray, matrix_dict, _ = self._load_matrix_from_unit_cell(
+                    quatrex_config, "overlap", use_r_cutoff=False
+                )
+            else:
+                matrix_sparray, matrix_dict, _ = self._load_matrix_from_files(
+                    quatrex_config, "overlap"
+                )
+            return matrix_sparray, matrix_dict
+        except FileNotFoundError:
+            # Fallback to identity matrix for overlap
+            return self._create_identity_overlap(), None
+
+    def _load_hamiltonian_matrix(
+        self, quatrex_config
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray]:
+        """Load Hamiltonian matrix from various sources.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray]
+            The Hamiltonian matrix, optional k-point dictionary, and block sizes.
+        """
+        if quatrex_config.device.construct_from_unit_cell:
+            return self._load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
+        else:
+            return self._load_matrix_from_files(quatrex_config, "hamiltonian")
+
+    def _create_identity_overlap(self) -> sparse.coo_matrix:
+        """Create an identity matrix for orthonormal basis assumption.
+
+        Returns
+        -------
+        sparse.coo_matrix
+            Identity matrix with appropriate shape and dtype.
+        """
+        return sparse.eye(
+            self.hamiltonian.shape[-2],
+            format="coo",
+            dtype=self.hamiltonian.dtype,
+        )
+
+    def _load_matrix_from_unit_cell(
+        self, quatrex_config, matrix_name: str, use_r_cutoff: bool = True
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to load a matrix from unit cell data.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+        use_r_cutoff : bool
+            Whether to apply R_cutoff to the unit cells.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        unit_cells = distributed_load(
+            quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
+        ).astype(xp.complex128)
+
+        # Apply cutoff if requested and available
+        if use_r_cutoff and quatrex_config.device.R_cutoff is not None:
+            unit_cells = cutoff_hr(
+                unit_cells,
+                R_cutoff=quatrex_config.device.R_cutoff,
+            )
+        elif matrix_name == "overlap":
+            # For overlap, use unit_cell_per_supercell as R_cutoff
+            unit_cells = cutoff_hr(
+                unit_cells,
+                R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+            )
+
+        return self._create_matrix_from_unit_cells(quatrex_config, unit_cells)
+
+    def _create_matrix_from_unit_cells(
+        self, quatrex_config, unit_cells
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to create a matrix from unit cells with periodic shifts.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        unit_cells : NDArray
+            The unit cell data.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        # Determine the local slice of the data.
+        # NOTE: This is arrow-wise partitioning.
+        # TODO: Allow more options, e.g., block row-wise partitioning.
+        section_sizes, __ = get_section_sizes(
+            quatrex_config.device.number_of_supercells, comm.block.size
+        )
+        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+        start_block = section_offsets[comm.block.rank]
+        end_block = section_offsets[comm.block.rank + 1]
+
+        matrix_dict = {}
+        # Create the matrix for each periodic shift
+        for periodic_shift in xp.ndindex(
+            tuple(
+                2 * ps - 1 for ps in quatrex_config.device.cells_in_periodic_directions
+            )
+        ):
+            periodic_shift = tuple(
+                [
+                    ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
+                    for i, ps in enumerate(periodic_shift)
+                ]
+            )
+            matrix_sparray, block_sizes = create_hamiltonian(
+                unit_cells,
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                periodic_shift=periodic_shift,
+                return_sparse=True,
+            )
+            matrix_dict[periodic_shift] = matrix_sparray.astype(xp.complex128)
+
+        matrix_sparray = sum(matrix_dict.values())
+        matrix_sparray.sum_duplicates()
+        block_sizes = get_host(block_sizes)
+        block_sizes_array = np.asarray(
+            [block_sizes[0]] * quatrex_config.device.number_of_supercells
+        )
+
+        return matrix_sparray, matrix_dict, block_sizes_array
+
+    def _load_matrix_from_files(
+        self, quatrex_config, matrix_name: str
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+        """Generic method to load a matrix from pre-computed files.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray | None]
+            The matrix, optional k-point dictionary, and optional block sizes.
+        """
+        # Define file loading priority for each matrix type
+        if matrix_name == "hamiltonian":
+            file_patterns = [
+                ("hamiltonian.npz", "npz"),
+                ("hamiltonian.pkl", "pkl"),
+            ]
+        else:  # overlap
+            file_patterns = [
+                ("overlap_matrix.pkl", "pkl"),
+                ("overlap.npz", "npz"),
+            ]
+
+        # Try loading files in priority order
+        for filename, file_type in file_patterns:
+            try:
+                if file_type == "pkl":
+                    matrix_dict = distributed_load(quatrex_config.input_dir / filename)
+                    matrix_sparray = sum(matrix_dict.values())
+                    matrix_sparray.sum_duplicates()
+                    block_sizes = self._load_block_sizes(quatrex_config, matrix_name)
+                    return matrix_sparray, matrix_dict, block_sizes
+
+                else:  # npz
+                    matrix_sparray = distributed_load(
+                        quatrex_config.input_dir / filename
+                    ).astype(xp.complex128)
+                    block_sizes = self._load_block_sizes(quatrex_config, matrix_name)
+                    return matrix_sparray, None, block_sizes
+
+            except FileNotFoundError:
+                continue
+
+        # If no files found, handle fallback
+        if matrix_name == "overlap":
+            # For overlap, fall back to identity matrix
+            return self._create_identity_overlap(), None, None
+        else:
+            # For Hamiltonian, this is an error
+            raise FileNotFoundError(
+                f"No {matrix_name} files found in {quatrex_config.input_dir}"
+            )
+
+    def _load_block_sizes(self, quatrex_config, matrix_name: str) -> NDArray | None:
+        """Load block sizes if available and needed.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+        matrix_name : str
+            Name of the matrix ('hamiltonian' or 'overlap').
+
+        Returns
+        -------
+        NDArray | None
+            Block sizes array or None if not needed/available.
+        """
+        if matrix_name == "hamiltonian":
+            try:
+                return get_host(
+                    distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+                )
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    "block_sizes.npy required for Hamiltonian loading"
+                )
+        return None
+
+    def _load_overlap_matrix(
+        self, quatrex_config
+    ) -> tuple[sparse.coo_matrix, dict | None]:
+        """Load overlap matrix from various sources.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None]
+            The overlap matrix and optional dictionary for k-point assembly.
+        """
+        try:
+            if quatrex_config.device.construct_from_unit_cell:
+                matrix_sparray, matrix_dict, _ = self._load_matrix_from_unit_cell(
+                    quatrex_config, "overlap", use_r_cutoff=False
+                )
+            else:
+                matrix_sparray, matrix_dict, _ = self._load_matrix_from_files(
+                    quatrex_config, "overlap"
+                )
+            return matrix_sparray, matrix_dict
+        except FileNotFoundError:
+            # Fallback to identity matrix for overlap
+            return self._create_identity_overlap(), None
+
+    def _load_hamiltonian_matrix(
+        self, quatrex_config
+    ) -> tuple[sparse.coo_matrix, dict | None, NDArray]:
+        """Load Hamiltonian matrix from various sources.
+
+        Parameters
+        ----------
+        quatrex_config : QuatrexConfig
+            The quatrex simulation configuration.
+
+        Returns
+        -------
+        tuple[sparse.coo_matrix, dict | None, NDArray]
+            The Hamiltonian matrix, optional k-point dictionary, and block sizes.
+        """
+        if quatrex_config.device.construct_from_unit_cell:
+            return self._load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
+        else:
+            return self._load_matrix_from_files(quatrex_config, "hamiltonian")
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.

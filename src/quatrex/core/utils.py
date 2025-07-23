@@ -226,14 +226,18 @@ def load_matrix_from_files(
                 matrix_dict = distributed_load(quatrex_config.input_dir / filename)
                 matrix_sparray = sum(matrix_dict.values())
                 matrix_sparray.sum_duplicates()
-                block_sizes = _load_block_sizes(quatrex_config, matrix_name)
+                block_sizes = get_host(
+                    distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+                )
                 return matrix_sparray, matrix_dict, block_sizes
 
             else:  # npz
                 matrix_sparray = distributed_load(
                     quatrex_config.input_dir / filename
                 ).astype(xp.complex128)
-                block_sizes = _load_block_sizes(quatrex_config, matrix_name)
+                block_sizes = get_host(
+                    distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+                )
                 return matrix_sparray, None, block_sizes
 
         except FileNotFoundError:
@@ -243,31 +247,6 @@ def load_matrix_from_files(
     raise FileNotFoundError(
         f"No {matrix_name} files found in {quatrex_config.input_dir}"
     )
-
-
-def _load_block_sizes(quatrex_config, matrix_name: str) -> NDArray | None:
-    """Load block sizes if available and needed.
-
-    Parameters
-    ----------
-    quatrex_config : QuatrexConfig
-        The quatrex simulation configuration.
-    matrix_name : str
-        Name of the matrix ('hamiltonian' or 'overlap').
-
-    Returns
-    -------
-    NDArray | None
-        Block sizes array or None if not needed/available.
-    """
-    if matrix_name == "hamiltonian":
-        try:
-            return get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
-        except FileNotFoundError:
-            raise FileNotFoundError("block_sizes.npy required for Hamiltonian loading")
-    return None
 
 
 def compute_sparsity_pattern(

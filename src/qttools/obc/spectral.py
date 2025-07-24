@@ -385,6 +385,8 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The surface Green's function.
+        x_ii_a_ij : NDArray
+            The Bloch matrix.
 
         """
         # Equation (13.1).
@@ -429,7 +431,7 @@ class Spectral(OBCSolver):
             The system's surface Green's function.
         sigma_retarded: NDArray
             The boundary self energy. Returned only if return_injected
-            is True. (only compatible with batchsize = 1)
+            is True. 
         inj: NDArray
             The Injection vector. Returned only if return_injected is
             True. (only compatible with batchsize = 1)

@@ -493,6 +493,8 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The surface Green's function.
+        x_ii_a_ij : NDArray
+            The Bloch matrix.
 
         """
         if self.two_sided and vls is None:
@@ -609,23 +611,18 @@ class Spectral(OBCSolver):
             The system's surface Green's function.
         sigma_retarded: NDArray
             The boundary self energy. Returned only if return_injected
-            is True. (only compatible with batchsize = 1)
+            is True. 
         inj: NDArray
             The Injection vector. Returned only if return_injected is
-            True. (only compatible with batchsize = 1)
-        w_inj: NDArray
-            The eigenvalues of the injected modes. Returned only if
-            return_injected is True. (only compatible with batchsize =
-            1)
-
+            True. 
+        num_injected: NDArray
+            The number of injected modes. Returned only if return_injected is
+            True. 
+        K: NDArray
+            The K matrix. Returned only if return_injected is True.
+        T: NDArray
+            The Bloch matrix. Returned only if return_injected is True.
         """
-
-        #if a_ii.ndim != 2 and return_injected:
-        #   raise NotImplementedError
-
-        #if return_injected and out is not None:
-        #    raise NotImplementedError
-
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
             a_ij = a_ij[xp.newaxis, :, :]
@@ -656,11 +653,12 @@ class Spectral(OBCSolver):
                 wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
             )
 
-        x_ii, T = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls)
+        x_ii, T = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls) #Returning also the Bloch matrix
 
-        # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
+        # Calculate the injection vector and return it together with the boundary self-energy
         if return_injected:
 
+            #Refine the Bloch matrix
             for __ in range(self.num_ref_iterations - 1):
                 T = - inv(a_ii + a_ji @ T) @ a_ij
 
@@ -702,6 +700,7 @@ class Spectral(OBCSolver):
                     -a_ji[i, :, :] @ vrs_inj @ inv(wrs_inj) - sigma_retarded[i,:,:] @ vrs_inj
                 )
 
+                #Compute the K matrix
                 K_i = vrs_inj @ inv(wrs_inj) - T_i @ vrs_inj
 
                 num_injected[i] = injection_i.shape[1]

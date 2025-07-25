@@ -20,6 +20,7 @@ from qttools.utils.gpu_utils import (
 )
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
     find_band_edges,
@@ -373,6 +374,9 @@ class ElectronSolver(SubsystemSolver):
         self._sigma_stream = create_stream()
         self._system_stream = create_stream()
 
+        # Batching.
+        self.max_batch_size = quatrex_config.electron.max_batch_size
+
     @staticmethod
     def load_hamiltonian(
         quatrex_config: QuatrexConfig,
@@ -541,7 +545,7 @@ class ElectronSolver(SubsystemSolver):
 
         return block
 
-    def _compute_obc(self) -> None:
+    def _compute_obc(self, stack_slice: slice) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
             # Extract the overlap matrix blocks.
@@ -569,11 +573,11 @@ class ElectronSolver(SubsystemSolver):
 
             # Compute and apply the lesser boundary self-energy.
             self.obc_blocks.lesser[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies
+                gamma_00.copy(), self.left_occupancies[stack_slice]
             )
             # Compute and apply the greater boundary self-energy.
             self.obc_blocks.greater[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies - 1
+                gamma_00.copy(), self.left_occupancies[stack_slice] - 1
             )
         if comm.block.rank == comm.block.size - 1:
             # Extract the overlap matrix blocks.
@@ -616,14 +620,16 @@ class ElectronSolver(SubsystemSolver):
             gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
 
             self.obc_blocks.lesser[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies
+                gamma_nn.copy(), self.right_occupancies[stack_slice]
             )
 
             self.obc_blocks.greater[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies - 1
+                gamma_nn.copy(), self.right_occupancies[stack_slice] - 1
             )
 
-    def _assemble_system_matrix(self, sse_retarded: DSDBSparse) -> None:
+    def _assemble_system_matrix(
+        self, sse_retarded: DSDBSparse, stack_slice: slice
+    ) -> None:
         """Assembles the system matrix.
 
         Parameters
@@ -639,11 +645,11 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix += self.overlap_sparray
         scale_stack(
             self.system_matrix.data,
-            self.local_energies + 1j * self.eta,
+            self.local_energies[stack_slice] + 1j * self.eta,
         )
 
         self.system_matrix -= sparse.diags(self.potential, format="csr")
-        _btd_subtract(self.system_matrix, sse_retarded)
+        _btd_subtract(self.system_matrix, sse_retarded.stack[stack_slice])
         synchronize_stream(self._system_stream)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 
@@ -788,49 +794,119 @@ class ElectronSolver(SubsystemSolver):
         sse_greater.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
         sse_retarded.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
 
-        t_obc_start = time.perf_counter()
-        self._compute_obc()
-        # synchronize_device()
-        synchronize_stream(None)
-        t_obc_end = time.perf_counter()
-        comm.barrier()
-        t_obc_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
-            print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
+        batch_sizes, batch_offsets = get_batches(
+            sse_retarded.shape[0], self.max_batch_size
+        )
 
-        t_solve_start = time.perf_counter()
-        if comm.block.size > 1:
-            self.solver_dist.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=sse_lesser,
-                sigma_greater=sse_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=True,
-            )
-        else:
-            self.meir_wingreen_current = self.solver.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=sse_lesser,
-                sigma_greater=sse_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=True,
-                return_current=self.compute_meir_wingreen_current,
-            )
-        # synchronize_device()
+        for i in range(len(batch_sizes)):
+
+            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+
+            if comm.rank == 0:
+                print(
+                    f"Processing slice {stack_slice} of {sse_retarded.shape[0]}",
+                    flush=True,
+                )
+
+            t_assemble_start = time.perf_counter()
+            self.system_matrix.allocate_data(stack_size=batch_sizes[i])
+
+            self._assemble_system_matrix(sse_retarded, stack_slice)
+            synchronize_device()
+            t_assemble_end = time.perf_counter()
+            comm.barrier()
+            t_assemble_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
+                print(
+                    f"    Assemble all: {t_assemble_end_all-t_assemble_start}",
+                    flush=True,
+                )
+
+            # if self.band_edge_tracking == "eigenvalues":
+            #     t_band_edges_start = time.perf_counter()
+            #     left_band_edges, right_band_edges = find_renormalized_eigenvalues(
+            #         hamiltonian=self.hamiltonian,
+            #         overlap=self.overlap_sparray,
+            #         potential=self.potential,
+            #         sigma_retarded=sse_retarded,
+            #         energies=self.energies,
+            #         conduction_band_guesses=(
+            #             self.left_fermi_level + self.delta_fermi_level_conduction_band,
+            #             self.right_fermi_level + self.delta_fermi_level_conduction_band,
+            #         ),
+            #         mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
+            #         band_edge_config=self.compute_config.band_edge,
+            #     )
+            #     self._update_fermi_levels(left_band_edges, right_band_edges)
+
+            #     synchronize_device()
+            #     t_band_edges_end = time.perf_counter()
+            #     comm.barrier()
+            #     t_band_edges_end_all = time.perf_counter()
+            #     if comm.rank == 0:
+            #         print(
+            #             f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
+            #         )
+            #         print(
+            #             f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+            #             flush=True,
+            #         )
+
+            t_obc_start = time.perf_counter()
+            self._compute_obc(stack_slice)
+            # synchronize_device()
         synchronize_stream(None)
-        self.system_matrix.free_data()
-        sse_lesser.free_data()
-        sse_greater.free_data()
-        sse_retarded.free_data()
-        t_solve_end = time.perf_counter()
-        comm.barrier()
-        t_solve_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-            print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+            t_obc_end = time.perf_counter()
+            comm.barrier()
+            t_obc_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
+                print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
+
+            out_l, out_g, out_r = out
+            out_slice = (
+                out_l.stack[stack_slice],
+                out_g.stack[stack_slice],
+                out_r.stack[stack_slice],
+            )
+
+            if comm.block.size > 1:
+                t_solve_start = time.perf_counter()
+                self.solver_dist.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser.stack[stack_slice],
+                    sigma_greater=sse_greater.stack[stack_slice],
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=True,
+                )
+                synchronize_device()
+                t_solve_end = time.perf_counter()
+                comm.barrier()
+                t_solve_end_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+                    print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+
+            else:
+                t_solve_start = time.perf_counter()
+                self.meir_wingreen_current = self.solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser.stack[stack_slice],
+                    sigma_greater=sse_greater.stack[stack_slice],
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=True,
+                    return_current=self.compute_meir_wingreen_current,
+                )
+                synchronize_device()
+                t_solve_end = time.perf_counter()
+                comm.barrier()
+                t_solve_end_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+                    print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
         if self.call_count < self.filtering_iteration_limit:

@@ -352,6 +352,8 @@ class ElectronConfig(BaseModel):
     energy_window_num: PositiveInt | None = None
     energy_window_num_per_rank: PositiveInt | None = None
 
+    max_batch_size: PositiveInt = 100
+
     flatband: bool | None = None
 
     dos_peak_limit: PositiveFloat = 100.0
@@ -421,6 +423,8 @@ class CoulombScreeningConfig(BaseModel):
 
     # How many blocks should be merged into a single block.
     num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
+
+    max_batch_size: PositiveInt = 100
 
     dos_peak_limit: PositiveFloat = 100.0
 

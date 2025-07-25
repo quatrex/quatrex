@@ -429,13 +429,24 @@ def create_hamiltonian(
 
         if format == "csr":
 
+            if num_blocks == 0:
+                # If there are no blocks, return an empty matrix.
+                return sparse.csr_matrix((matrix_shape, matrix_shape)), block_sizes
+
             # For CSR output
             off = block_start * diag_block.shape[0]
-            top_brow_rows = xp.hstack([diag_block.row, upper_block.row]) + off
-            top_brow_cols = (
-                xp.hstack([diag_block.col, upper_block.col + diag_block.shape[0]]) + off
-            )
-            top_brow_data = xp.hstack([diag_block.data, upper_block.data])
+            top_brow_rows = diag_block.row + off
+            top_brow_cols = diag_block.col + off
+            top_brow_data = diag_block.data
+            if block_start < num_transport_cells - 1:
+                top_brow_rows = xp.hstack([top_brow_rows, upper_block.row + off])
+                top_brow_cols = xp.hstack(
+                    [
+                        top_brow_cols,
+                        upper_block.col + diag_block.shape[0] + off,
+                    ]
+                )
+                top_brow_data = xp.hstack([top_brow_data, upper_block.data])
             top_brow = sparse.csr_matrix(
                 (top_brow_data, (top_brow_rows, top_brow_cols)),
                 shape=((block_start + 1) * diag_block.shape[0], matrix_shape),
@@ -456,10 +467,17 @@ def create_hamiltonian(
             middle_brow_data = xp.hstack(
                 [lower_block.data, diag_block.data, upper_block.data]
             )
-            middle_brow = sparse.csr_matrix(
-                (middle_brow_data, (middle_brow_rows, middle_brow_cols)),
-                shape=(diag_block.shape[0], matrix_shape),
-            )
+            try:
+                middle_brow = sparse.csr_matrix(
+                    (middle_brow_data, (middle_brow_rows, middle_brow_cols)),
+                    shape=(diag_block.shape[0], matrix_shape),
+                )
+            except ValueError:
+                # The middle row as defined above will have extraneous columns that are out of
+                # bounds when the partition only has two block rows. Moreover, a ValueError exception
+                # will occur if the partition is the last one. This is benign, as we do not use
+                # the middle row in those cases.
+                middle_brow = None
             bottom_brow_rows = xp.hstack([lower_block.row, diag_block.row])
             bottom_brow_cols = xp.hstack(
                 [
@@ -468,10 +486,30 @@ def create_hamiltonian(
                 ]
             )
             bottom_brow_data = xp.hstack([lower_block.data, diag_block.data])
+            bottom_num_rows = diag_block.shape[0]
+            if block_end < num_transport_cells:
+                # Add the right part of the fishtail.
+                bottom_brow_rows = xp.hstack([bottom_brow_rows, upper_block.row])
+                bottom_brow_cols = xp.hstack(
+                    [
+                        bottom_brow_cols,
+                        upper_block.col + block_end * diag_block.shape[0],
+                    ]
+                )
+                bottom_brow_data = xp.hstack([bottom_brow_data, upper_block.data])
             bottom_brow = sparse.csr_matrix(
                 (bottom_brow_data, (bottom_brow_rows, bottom_brow_cols)),
-                shape=(diag_block.shape[0], matrix_shape),
+                shape=(bottom_num_rows, matrix_shape),
             )
+            if num_blocks > 0 and block_end < num_transport_cells:
+                # Bottom part of the fishtail
+                btm_fishtail_rows = lower_block.row
+                btm_fishtail_cols = lower_block.col + (block_end - 1) * block_num_rows
+                btm_fishtail_data = lower_block.data
+                btm_fishtail = sparse.csr_matrix(
+                    (btm_fishtail_data, (btm_fishtail_rows, btm_fishtail_cols)),
+                    shape=(block_num_rows, matrix_shape),
+                )
 
             del diag_block, upper_block, lower_block
             del top_brow_rows, top_brow_cols, top_brow_data
@@ -482,18 +520,20 @@ def create_hamiltonian(
             result = top_brow
             if num_blocks > 2:
                 result = sparse.vstack((result, middle_brow), format="csr")
-            for bidx in range(block_start + 2, block_end - 1):
+            for _ in range(block_start + 2, block_end - 1):
                 middle_brow.indices += block_num_rows
                 result = sparse.vstack((result, middle_brow), format="csr")
             if num_blocks > 1:
                 result = sparse.vstack((result, bottom_brow), format="csr")
-            if block_end < num_transport_cells:
+            if num_blocks > 0 and block_end < num_transport_cells:
+                result = sparse.vstack((result, btm_fishtail), format="csr")
+            if block_end < num_transport_cells - 1:
                 result = sparse.vstack(
                     (
                         result,
                         sparse.csr_matrix(
                             (
-                                (num_transport_cells - block_end) * block_num_rows,
+                                (num_transport_cells - block_end - 1) * block_num_rows,
                                 matrix_shape,
                             )
                         ),
@@ -516,14 +556,20 @@ def create_hamiltonian(
                     xp.tile(block.data, num_blocks),
                 )
 
+            ul_blocks = num_blocks
+            ul_offsets = offsets
+            if block_end == num_transport_cells:
+                ul_blocks = num_blocks - 1
+                ul_offsets = offsets[:-1]
+
             diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
                 diag_block, num_blocks, offsets
             )
             upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
-                upper_block, num_blocks, offsets
+                upper_block, ul_blocks, ul_offsets
             )
             lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
-                lower_block, num_blocks, offsets
+                lower_block, ul_blocks, ul_offsets
             )
             upper_cols += diag_block.shape[0]
             lower_rows += diag_block.shape[0]
@@ -543,28 +589,22 @@ def create_hamiltonian(
             free_mempool()
 
             debug_gpu_memory_usage("After stacking sparse Hamiltonian blocks")
-            # Remove the fishtail at the end of the matrix.
-            # matrix_shape = num_transport_cells * diag_block.shape[0]
-            valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
-            full_rows = full_rows[valid_mask]
-            full_cols = full_cols[valid_mask]
-            full_data = full_data[valid_mask]
+            # # Remove the fishtail at the end of the matrix.
+            # # matrix_shape = num_transport_cells * diag_block.shape[0]
+            # valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
+            # full_rows = full_rows[valid_mask]
+            # full_cols = full_cols[valid_mask]
+            # full_data = full_data[valid_mask]
 
-            del valid_mask
-            free_mempool()
+            # del valid_mask
+            # free_mempool()
 
-            debug_gpu_memory_usage(
-                "After removing fishtail from sparse Hamiltonian blocks"
-            )
+            # debug_gpu_memory_usage(
+            #     "After removing fishtail from sparse Hamiltonian blocks"
+            # )
             # Also return the block sizes.
             # block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
-            if format == "csr":
-                # Convert to CSR format.
-                result = sparse.csr_matrix(
-                    (full_data, (full_rows, full_cols)),
-                    shape=(matrix_shape, matrix_shape),
-                )
-            elif format == "coo":
+            if format == "coo":
                 result = sparse.coo_matrix(
                     (full_data, (full_rows, full_cols)),
                     shape=(matrix_shape, matrix_shape),

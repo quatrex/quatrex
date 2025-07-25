@@ -864,13 +864,15 @@ class DSDBSparse(ABC):
         self._data = None
         free_mempool()
 
-    def allocate_data(self) -> None:
+    def allocate_data(self, stack_size: int = 0) -> None:
         """Allocates the local data."""
         if self._data is None:
             free_mempool()
+            if stack_size == 0:
+                stack_size = int(max(self.stack_section_sizes))
             self._data = xp.empty(
                 (
-                    int(max(self.stack_section_sizes)),
+                    stack_size,
                     *self.global_stack_shape[1:],
                     self.total_nnz_size,
                 ),
@@ -1018,6 +1020,25 @@ class DSDBSparse(ABC):
         return out
 
 
+def _compose_single(lhs, rhs, length):
+    out = range(length)[lhs][rhs]
+    return out if isinstance(out, int) else slice(out.start, out.stop, out.step)
+
+
+def _compose(shape, first, second):
+    def ensure_tuple(ndslice):
+        return ndslice if isinstance(ndslice, tuple) else (ndslice,)
+
+    first = ensure_tuple(first)
+    second = ensure_tuple(second)
+
+    out = list(first) + [slice(None)] * (len(shape) - len(first))
+    remaining_dims = [i for i, s in enumerate(out) if isinstance(s, slice)]
+    for i, rhs in zip(remaining_dims, second):
+        out[i] = _compose_single(out[i], rhs, length=shape[i])
+    return tuple(out)
+
+
 class _DStackIndexer:
     """A utility class to locate substacks in the distributed stack.
 
@@ -1028,13 +1049,66 @@ class _DStackIndexer:
 
     """
 
-    def __init__(self, dsdbsparse: DSDBSparse) -> None:
+    def __init__(self, dsdbsparse: "DSDBSparse | _DStackView") -> None:
         """Initializes the stack indexer."""
-        self._dsdbsparse = dsdbsparse
+        if isinstance(dsdbsparse, _DStackView):
+            self._dsdbsparse = dsdbsparse._dsdbsparse
+            self._base_index = dsdbsparse._stack_index
+        else:
+            self._dsdbsparse = dsdbsparse
+            self._base_index = None
+
+    def _replace_ellipsis(self, stack_index: tuple) -> tuple:
+        """Replaces ellipsis with the correct number of slices.
+
+        Note
+        ----
+        This replacement of ellipsis is nicked from
+        https://github.com/dask/dask/blob/main/dask/array/slicing.py
+
+        See the license at
+        https://github.com/dask/dask/blob/main/LICENSE.txt
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The stack index to replace the ellipsis in.
+
+        Returns
+        -------
+        stack_index : tuple
+            The stack index with the ellipsis replaced.
+
+        """
+        stack_index = stack_index if isinstance(stack_index, tuple) else (stack_index,)
+        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+        if is_ellipsis:
+            if len(is_ellipsis) > 1:
+                raise IndexError("an index can only have a single ellipsis ('...')")
+
+            loc = is_ellipsis[0]
+            extra_dimensions = (
+                len(self._base_index)
+                - 1
+                - (len(stack_index) - sum(i is None for i in stack_index) - 1)
+            )
+            stack_index = (
+                stack_index[:loc]
+                + (slice(None, None, None),) * extra_dimensions
+                + stack_index[loc + 1 :]
+            )
+        return stack_index
 
     def __getitem__(self, index: tuple) -> "_DStackView":
         """Gets a substack view."""
-        return _DStackView(self._dsdbsparse, index)
+        if self._base_index is not None:
+            index = self._replace_ellipsis(index)
+            composition = _compose(
+                self._dsdbsparse.stack_shape, self._base_index, index
+            )
+        else:
+            composition = index
+        return _DStackView(self._dsdbsparse, composition)
 
 
 class _DStackView:
@@ -1063,6 +1137,14 @@ class _DStackView:
         self._sparse_block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, return_dense=False, cache_stack=True
         )
+        shape = self._dsdbsparse.shape
+        stack_size = []
+        for i, s in enumerate(stack_index):
+            assert isinstance(s, slice)
+            start = s.start if s.start is not None else 0
+            stop = s.stop if s.stop is not None else shape[i]
+            stack_size.append(stop - start)
+        self.shape = tuple(stack_size) + shape[-2:]
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:
         """Replaces ellipsis with the correct number of slices.
@@ -1111,6 +1193,11 @@ class _DStackView:
         """Sets the requested data in the substack."""
         rows, cols = self._dsdbsparse._normalize_index(index)
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
+
+    @property
+    def stack(self) -> "_DStackIndexer":
+        """Returns the stack indexer on the substack."""
+        return _DStackIndexer(self)
 
     @property
     def num_local_blocks(self) -> int:

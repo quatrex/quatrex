@@ -97,7 +97,9 @@ def _configure_mesh_size_field(
     size: float,
     size_points: float,
     point_tags: set,
-):
+    min_threshold: float = 1.0,
+    max_threshold: float = 3.0,
+) -> None:
     """Configures the mesh size field in GMSH.
 
     Parameters
@@ -108,6 +110,13 @@ def _configure_mesh_size_field(
         The mesh size for the points.
     point_tags : set
         The tags of the points to be used in the mesh size field.
+    min_threshold : float, optional
+        The minimum distance threshold for the mesh size field, by
+        default 1.0 Å.
+    max_threshold : float, optional
+        The maximum distance threshold for the mesh size field, by
+        default 3.0 Å.
+
     """
 
     distance_field = gmsh.model.mesh.field.add("Distance")
@@ -118,8 +127,8 @@ def _configure_mesh_size_field(
     gmsh.model.mesh.field.setNumber(threshold_field, "InField", distance_field)
     gmsh.model.mesh.field.setNumber(threshold_field, "SizeMin", size_points)
     gmsh.model.mesh.field.setNumber(threshold_field, "SizeMax", size)
-    gmsh.model.mesh.field.setNumber(threshold_field, "DistMin", 1)  # 1 Å
-    gmsh.model.mesh.field.setNumber(threshold_field, "DistMax", 3)  # 3 Å
+    gmsh.model.mesh.field.setNumber(threshold_field, "DistMin", min_threshold)
+    gmsh.model.mesh.field.setNumber(threshold_field, "DistMax", max_threshold)
 
     min_field = gmsh.model.mesh.field.add("Min")
     gmsh.model.mesh.field.setNumbers(min_field, "FieldsList", [threshold_field])
@@ -127,7 +136,7 @@ def _configure_mesh_size_field(
     gmsh.model.mesh.field.setAsBackgroundMesh(min_field)
 
 
-def _apply_periodic_boundary_conditions(cell_vectors: NDArray, pbc: tuple):
+def _apply_periodic_boundary_conditions(cell_vectors: NDArray, pbc: tuple) -> None:
     """Applies periodic boundary conditions to the mesh in GMSH.
 
     Parameters

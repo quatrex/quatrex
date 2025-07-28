@@ -6,18 +6,21 @@ from scipy import sparse
 from skfem.helpers import dot, grad, mul
 
 
-def assemble_stiffness_matrix(basis):
+def assemble_stiffness_matrix(basis: skfem.Basis) -> sparse.csr_matrix:
     """Assemble the stiffness matrix for a tetrahedral mesh.
 
     Parameters
     ----------
-    mesh : meshio.Mesh
-        The tetrahedral mesh containing the nodes and elements.
+    basis : skfem.Basis
+        The basis for the tetrahedral mesh, which contains the
+        necessary information about the mesh and the finite element
+        space.
 
     Returns
     -------
     sparse.csr_matrix
         The assembled stiffness matrix.
+
     """
 
     epsilon_r = np.stack(basis.N * [np.eye(3)], axis=-1)
@@ -97,6 +100,12 @@ def assemble_mfc_transform(
         the mesh.
 
     """
+    shape = (basis.N, basis.N)
+
+    if not any(pbc):
+        # If no periodic boundary conditions are specified, return the
+        # identity matrix.
+        return sparse.eye(basis.N, format="csr")
 
     nodes_fractional = np.linalg.solve(cell_vectors.T, basis.doflocs).T
 
@@ -115,8 +124,6 @@ def assemble_mfc_transform(
         np.union1d(unique_actual_inds, image_inds),
         assume_unique=True,
     )
-
-    shape = (basis.N, basis.N)
 
     transformation_matrix = (
         # Multifreedom mapping.
@@ -171,6 +178,7 @@ def find_periodic_pairs(
         pair of nodes that are periodic images of each other.
 
     """
+    pbc = np.array(pbc, dtype=bool)
 
     periodic_pairs = []
     unique_actual_inds = set()

@@ -310,8 +310,6 @@ class Spectral(OBCSolver):
         if self.two_sided and vls is None:
             raise ValueError("Two-sided calculation requires left eigenvectors.")
 
-        batchsize = a_xx[0].shape[0]
-
         # Calculate the residual
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
             if self.residual_normalization == "operator":
@@ -349,11 +347,6 @@ class Spectral(OBCSolver):
 
             if self.residual_normalization == "eigenvalue":
                 residuals /= xp.abs(ws)
-
-        #if batchsize != 1 and find_injected:
-        #    raise ValueError(
-        #        "The injection vector can only be calculated with batchsize = 1"
-        #    )
 
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
@@ -611,13 +604,13 @@ class Spectral(OBCSolver):
             The system's surface Green's function.
         sigma_retarded: NDArray
             The boundary self energy. Returned only if return_injected
-            is True. 
+            is True.
         inj: NDArray
             The Injection vector. Returned only if return_injected is
-            True. 
+            True.
         num_injected: NDArray
             The number of injected modes. Returned only if return_injected is
-            True. 
+            True.
         K: NDArray
             The K matrix. Returned only if return_injected is True.
         T: NDArray
@@ -653,14 +646,16 @@ class Spectral(OBCSolver):
                 wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
             )
 
-        x_ii, T = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls) #Returning also the Bloch matrix
+        x_ii, T = self._compute_x_ii(
+            a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls
+        )  # Returning also the Bloch matrix
 
         # Calculate the injection vector and return it together with the boundary self-energy
         if return_injected:
 
-            #Refine the Bloch matrix
+            # Refine the Bloch matrix
             for __ in range(self.num_ref_iterations - 1):
-                T = - inv(a_ii + a_ji @ T) @ a_ij
+                T = -inv(a_ii + a_ji @ T) @ a_ij
 
             x_ii = inv(a_ii + a_ji @ T)
             x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
@@ -681,7 +676,7 @@ class Spectral(OBCSolver):
 
             num_injected = xp.zeros(a_ii.shape[0], dtype=int)
 
-            sigma_retarded =  -a_ji @ T   #In case of no ref. iterations
+            sigma_retarded = -a_ji @ T  # In case of no ref. iterations
 
             for i in range(a_ii.shape[0]):
                 injected_i = mask_injected[i, :]
@@ -691,16 +686,17 @@ class Spectral(OBCSolver):
 
                 T_i = T[i, :, :]
 
-                dE_dK_injected = dE_dK[i,injected_i]
+                dE_dK_injected = dE_dK[i, injected_i]
                 # Flux normalization
                 vrs_inj = vrs_inj / xp.sqrt(dE_dK_injected[None, :])
-                
+
                 # Compute injection vector
                 injection_i = (
-                    -a_ji[i, :, :] @ vrs_inj @ inv(wrs_inj) - sigma_retarded[i,:,:] @ vrs_inj
+                    -a_ji[i, :, :] @ vrs_inj @ inv(wrs_inj)
+                    - sigma_retarded[i, :, :] @ vrs_inj
                 )
 
-                #Compute the K matrix
+                # Compute the K matrix
                 K_i = vrs_inj @ inv(wrs_inj) - T_i @ vrs_inj
 
                 num_injected[i] = injection_i.shape[1]
@@ -709,7 +705,7 @@ class Spectral(OBCSolver):
                 K.append(K_i)
 
             return x_ii_ref, sigma_retarded, injection, num_injected, K, T
-        
+
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
             x_ii = inv(a_ii - a_ji @ x_ii @ a_ij)
@@ -726,7 +722,7 @@ class Spectral(OBCSolver):
                 f"High relative recursion error: {recursion_error:.2e}",
                 RuntimeWarning,
             )
-        
+
         # Return the surface Green's function.
         if out is not None:
             out[...] = x_ii_ref

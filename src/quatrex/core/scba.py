@@ -8,7 +8,7 @@ import numpy as np
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -129,13 +129,23 @@ class SCBAData:
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
         start_idx = block_offsets[section_offsets[comm.block.rank]]
         end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
-        self.sparsity_pattern = compute_sparsity_pattern(
-            grid,
-            max_interaction_cutoff,
-            transport_direction=quatrex_config.device.transport_direction,
-            start_idx=start_idx,
-            end_idx=end_idx,
-        )
+        if max_interaction_cutoff > 0.0:
+            self.sparsity_pattern = compute_sparsity_pattern(
+                grid,
+                max_interaction_cutoff,
+                transport_direction=quatrex_config.device.transport_direction,
+                start_idx=start_idx,
+                end_idx=end_idx,
+            )
+        else:
+            # If there is no interaction cutoff (no scattering), we use the identity matrix.
+            self.sparsity_pattern = sparse.coo_matrix(
+                (
+                    xp.ones(end_idx - start_idx, dtype=xp.float32),
+                    (xp.arange(start_idx, end_idx), xp.arange(start_idx, end_idx)),
+                ),
+                shape=(len(grid), len(grid)),
+            )
         synchronize_device()
         time_sparsity_end = time.perf_counter()
         if comm.rank == 0:

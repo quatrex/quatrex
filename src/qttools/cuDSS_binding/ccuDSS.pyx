@@ -1,8 +1,10 @@
-import cupy as cp
-from cupyx.scipy.sparse import csr_matrix
 from time import time
 
-from libc.stdint cimport intptr_t, int64_t
+import cupy as cp
+from cupyx.scipy.sparse import csr_matrix
+
+from libc.stdint cimport int64_t, intptr_t
+
 
 cdef extern from "/usr/local/nvidia_hpc_sdk/Linux_aarch64/25.3/cuda/12.8/include/library_types.h":
     ctypedef enum cudaDataType_t:

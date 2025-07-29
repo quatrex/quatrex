@@ -1,12 +1,14 @@
-from pathlib import Path
-from qttools import NDArray, obc, sparse, xp
-from qttools.utils.mpi_utils import distributed_load
-from quatrex.core.quatrex_config import QuatrexConfig
 import glob
 import re
+from pathlib import Path
+
 from mpi4py.MPI import COMM_WORLD as comm
+from qttools import NDArray, sparse, xp
+from qttools.utils.mpi_utils import distributed_load
 
 from quatrex.core.contact import Contact
+from quatrex.core.quatrex_config import QuatrexConfig
+
 
 def distributed_load_contact(filename: Path) -> tuple[int, list, list, list, list]:
     """
@@ -45,18 +47,14 @@ def distributed_load_contact(filename: Path) -> tuple[int, list, list, list, lis
             n = int(myfile.readline())
             for i in range(n):
                 # Read the name
-                name.append(
-                    myfile.readline().rstrip("\n")
-                )
-                origin.append(
-                    xp.asarray(myfile.readline().split(), dtype=xp.float64)
-                )  
-                vectors.append(xp.zeros((3,3), dtype=xp.float64))  # Initialize vectors
+                name.append(myfile.readline().rstrip("\n"))
+                origin.append(xp.asarray(myfile.readline().split(), dtype=xp.float64))
+                vectors.append(xp.zeros((3, 3), dtype=xp.float64))  # Initialize vectors
                 for i in range(3):
-                    vectors[-1][i,:]=xp.asarray(myfile.readline().split(), dtype=xp.float64)
-                direction.append(
-                    int(myfile.readline())
-                )  # Read the direction
+                    vectors[-1][i, :] = xp.asarray(
+                        myfile.readline().split(), dtype=xp.float64
+                    )
+                direction.append(int(myfile.readline()))  # Read the direction
 
     # Broadcast the data to all the ranks
     n = comm.bcast(n, root=0)
@@ -66,6 +64,7 @@ def distributed_load_contact(filename: Path) -> tuple[int, list, list, list, lis
     direction = comm.bcast(direction, root=0)
 
     return n, name, origin, vectors, direction
+
 
 def _get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray:
     """
@@ -96,6 +95,7 @@ def _get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArra
 
     return orb_potential
 
+
 def get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray:
     """
     Computes the potential for each orbital.
@@ -125,6 +125,7 @@ def get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray
 
     return orb_potential
 
+
 def distributed_read_orbitals(filename: Path) -> NDArray:
     """
     Reads the number of orbitals for each atom type from a file.
@@ -151,6 +152,7 @@ def distributed_read_orbitals(filename: Path) -> NDArray:
     orbitals = comm.bcast(orbitals, root=0)  # Broadcast the data to all the ranks
 
     return orbitals
+
 
 def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArray]:
     """
@@ -296,61 +298,67 @@ class Device:
         # Find all hamiltonian files in the input directory
         hamiltonian_pattern = str(quatrex_config.input_dir / "hamiltonian_*.npz")
         hamiltonian_files = glob.glob(hamiltonian_pattern)
-        
+
         # Parse indices from filenames and load files
         for file_path in hamiltonian_files:
-            filename = file_path.split('/')[-1]  # Get just the filename
-            match = re.match(r'hamiltonian_(-?\d+)_(-?\d+)\.npz', filename)
+            filename = file_path.split("/")[-1]  # Get just the filename
+            match = re.match(r"hamiltonian_(-?\d+)_(-?\d+)_(-?\d+)\.npz", filename)
             if match:
                 x_index = int(match.group(1))
                 y_index = int(match.group(2))
+                z_index = int(match.group(3))
                 try:
-                    self.hamiltonian[(x_index, y_index)] = distributed_load(
-                        Path(file_path)
-                    ).astype(xp.complex128).tocsr()
-                    print(f"Loaded Hamiltonian ({x_index} {y_index})")
+                    self.hamiltonian[(x_index, y_index, z_index)] = (
+                        distributed_load(Path(file_path)).astype(xp.complex128).tocsr()
+                    )
+                    print(f"Loaded Hamiltonian ({x_index} {y_index} {z_index})")
                 except Exception as e:
                     print(f"Failed to load {filename}: {e}")
-        
-        if (0, 0) not in self.hamiltonian:
+
+        if (0, 0, 0) not in self.hamiltonian:
             raise ValueError(
-                "Hamiltonian matrix for (0,0) not found. Please check the input files."
+                "Hamiltonian matrix for (0,0,0) not found. Please check the input files."
             )
-        
+
         print(f"Loaded {len(self.hamiltonian)} Hamiltonian matrices")
         self.num_hamiltonians = len(self.hamiltonian)
         if self.num_hamiltonians == 1:
-            print("Only Gamma point Hamiltonian found. K-Points calculations are not possible.")
+            print(
+                "Only Gamma point Hamiltonian found. K-Points calculations are not possible."
+            )
             self.gamma_only = True
 
         # Load all overlap files with format overlap_x_y.npz
         overlap_pattern = str(quatrex_config.input_dir / "overlap_*.npz")
         overlap_files = glob.glob(overlap_pattern)
-        
+
         # Parse indices from filenames and load files
         for file_path in overlap_files:
-            filename = file_path.split('/')[-1]  # Get just the filename
-            match = re.match(r'overlap_(-?\d+)_(-?\d+)\.npz', filename)
+            filename = file_path.split("/")[-1]  # Get just the filename
+            match = re.match(r"overlap_(-?\d+)_(-?\d+)_(-?\d+)\.npz", filename)
             if match:
                 x_index = int(match.group(1))
                 y_index = int(match.group(2))
+                z_index = int(match.group(3))
                 try:
-                    self.overlap[(x_index, y_index)] = distributed_load(
-                        Path(file_path)
-                    ).astype(xp.complex128).tocsr()
-                    print(f"Loaded Overlap ({x_index} {y_index})")
+                    self.overlap[(x_index, y_index, z_index)] = (
+                        distributed_load(Path(file_path)).astype(xp.complex128).tocsr()
+                    )
+                    print(f"Loaded Overlap ({x_index} {y_index} {z_index})")
                 except Exception as e:
                     print(f"Failed to load {filename}: {e}")
-        
-        if (0, 0) not in self.overlap:
-            print("Overlap matrix for (0,0) not found. Assuming identity matrix.")
-            self.overlap[(0, 0)] = sparse.eye(self.hamiltonian[(0, 0)].shape[0], dtype=xp.complex128)
-        
+
+        if (0, 0, 0) not in self.overlap:
+            print("Overlap matrix for (0,0,0) not found. Assuming identity matrix.")
+            self.overlap[(0, 0, 0)] = sparse.eye(
+                self.hamiltonian[(0, 0, 0)].shape[0], dtype=xp.complex128, format="csr"
+            )
+
         self.num_overlaps = len(self.overlap)
         print(f"Loaded {self.num_overlaps} overlap matrices")
 
-        #TODO # Check if the number of Hamiltonians and overlaps match
-    
+        # TODO # Check if the number of Hamiltonians and overlaps match
+
     def load_lattice(self, quatrex_config: QuatrexConfig) -> None:
         """
         Load the lattice structure from the specified configuration.
@@ -360,11 +368,13 @@ class Device:
             The configuration object containing the input directory and other settings.
         """
         # Load lattice structure from file
-        
+
         lattice_file = quatrex_config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
-        self.lattice_vector, self.atoms_list, self.coords, self.atom_type = distributed_read_xyz(lattice_file)
+        self.lattice_vector, self.atoms_list, self.coords, self.atom_type = (
+            distributed_read_xyz(lattice_file)
+        )
         print("Lattice structure loaded successfully.")
 
     def load_orbitals(self, quatrex_config: QuatrexConfig) -> NDArray:
@@ -374,7 +384,7 @@ class Device:
         ----------
         quatrex_config : QuatrexConfig
             The configuration object containing the input directory and other settings.
-        
+
         Returns
         -------
         NDArray
@@ -389,7 +399,7 @@ class Device:
             (xp.array([0]), xp.cumsum(self.orbitals_per_at[self.atom_type])),
             dtype=xp.int32,
         )
-    
+
     def load_potential(self, quatrex_config: QuatrexConfig) -> None:
         """
         Load the potential from the specified configuration.
@@ -400,7 +410,7 @@ class Device:
         """
 
         self.orb_potential = None
-        
+
         try:
             self.atom_potential = distributed_load(
                 quatrex_config.input_dir / "potential.npy"
@@ -411,21 +421,26 @@ class Device:
             )
 
         except FileNotFoundError:
-            print("No external potential is provided.", flush=True) if comm.rank == 0 else None
-    
-    def apply_potential(self,) -> None:
+            (
+                print("No external potential is provided.", flush=True)
+                if comm.rank == 0
+                else None
+            )
+
+    def apply_potential(
+        self,
+    ) -> None:
 
         if self.orb_potential is None:
             print("No potential loaded. Skipping potential application.")
             return
-        
+
         for key, value in self.overlap.items():
-            
+
             SV1 = value.multiply(self.orb_potential).tocsr()
             SV2 = value.multiply(self.orb_potential.T).tocsr()
             self.hamiltonian[key] += (SV1 + SV2) / 2
             self.hamiltonian[key].eliminate_zeros()
-
 
     def add_contacts(self, config) -> None:
         """
@@ -448,6 +463,5 @@ class Device:
         )
         for i in range(n):
             self.contacts.append(
-                Contact(name[i],self, vectors[i], origin[i], direction[i], config)
+                Contact(name[i], self, vectors[i], origin[i], direction[i], config)
             )
-            

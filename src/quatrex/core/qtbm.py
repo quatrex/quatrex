@@ -4,17 +4,19 @@
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from quatrex.core.device import Device
 
 # from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
-from qttools import NDArray, obc, sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
+
+from quatrex.core.device import Device
 
 # from scipy import sparse as sp_sparse
 
 try:
     from qttools.cuDSS_binding.cudss_wrapp import CuDSS
+
     CUDSS_AVAILABLE = True
     print("CUDSS available") if comm.rank == 0 else None
     cuDSS = CuDSS()
@@ -30,25 +32,18 @@ try:
 except ImportError:
     MUMPS_AVAILABLE = False
 
-from qttools.datastructures.dsbsparse import _block_view
 
 if xp.__name__ == "numpy":
     from scipy.sparse.linalg import splu  # , spsolve
 if xp.__name__ == "cupy":
     from cupyx.scipy.sparse.linalg import splu  # , spsolve
 
-if xp.__name__ == "numpy":
-    from numpy.linalg import solve, lstsq
-if xp.__name__ == "cupy":
-    from cupy.linalg import lstsq
-    from cupy.linalg import solve
-
-from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
 
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import OBCConfig, QuatrexConfig
+from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
+
 
 def distributed_read_slabs(filename: Path) -> tuple[int, int]:
     """
@@ -82,6 +77,7 @@ def distributed_read_slabs(filename: Path) -> tuple[int, int]:
     slab_y = slabs[1].get().item() if hasattr(slabs[1], "get") else slabs[1].item()
 
     return slab_x, slab_y
+
 
 def compute_slab_vector_X(
     coords: NDArray, n_slabs: int, orbitals: NDArray
@@ -175,6 +171,7 @@ def compute_slab_vector_X(
 
     return vec_atoms, vec_orb
 
+
 @dataclass
 class Observables:
     """Observable quantities for the SCBA."""
@@ -198,6 +195,7 @@ class Observables:
     conduction_band_edges: NDArray = None
 
     excess_charge_density: NDArray = None
+
 
 class QTBM:
     """Quantum Transmitting Boundary Method (QTBM) solver.
@@ -226,10 +224,12 @@ class QTBM:
         self.quatrex_config = quatrex_config
         self.k = k  # The wavevector for the QTBM
 
-        if self.device.gamma_only and (self.k[0] != 0 or self.k[1] != 0):
+        if self.device.gamma_only and (
+            self.k[0] != 0 or self.k[1] != 0 or self.k[2] != 0
+        ):
             raise ValueError(
                 "The device only has a Gamma point Hamiltonian, "
-                "but the wavevector is not (0,0)."
+                "but the wavevector is not (0,0,0)."
             )
 
         if compute_config is None:
@@ -248,9 +248,7 @@ class QTBM:
             quatrex_config.input_dir / "electron_energies.npy"
         )
         # Get the local slice of the electron energies
-        self.local_energies = get_local_slice(
-            self.electron_energies
-        )  
+        self.local_energies = get_local_slice(self.electron_energies)
 
         # CREATE VECTORS FOR EVERY SLAB
         self.n_slabs_x, self.n_slab_y = distributed_read_slabs(
@@ -313,18 +311,32 @@ class QTBM:
             self.local_energies - self.right_fermi_level, self.temperature
         )
 
-        self.sys_mat_shape = self.device.hamiltonian[(0, 0)].shape[0]
+        self.sys_mat_shape = self.device.hamiltonian[(0, 0, 0)].shape[0]
 
         self.reuse_sym = 0
 
-        self.hamiltonian_phase = sparse.csr_matrix(self.device.hamiltonian[(0,0)].shape, dtype=xp.complex128)
-        for key,value in self.device.hamiltonian.items():
-            self.hamiltonian_phase += value*xp.exp(1j*self.k[0]*key[0] + 1j*self.k[1]*key[1])
-        self.overlap_phase = sparse.csr_matrix(self.device.overlap[(0,0)].shape, dtype=xp.complex128)
-        for key,value in self.device.overlap.items():
-            self.overlap_phase += value*xp.exp(1j*self.k[0]*key[0] + 1j*self.k[1]*key[1])
-    
-    def compute_observables(self,phi: NDArray, inj_ind: list, i: int, S:list, K, T,E):
+        self.hamiltonian_phase = sparse.csr_matrix(
+            self.device.hamiltonian[(0, 0, 0)].shape, dtype=xp.complex128
+        )
+        for key, value in self.device.hamiltonian.items():
+            self.hamiltonian_phase += value * xp.exp(
+                1j * self.k[0] * key[0]
+                + 1j * self.k[1] * key[1]
+                + 1j * self.k[2] * key[2]
+            )
+        self.overlap_phase = sparse.csr_matrix(
+            self.device.overlap[(0, 0, 0)].shape, dtype=xp.complex128
+        )
+        for key, value in self.device.overlap.items():
+            self.overlap_phase += value * xp.exp(
+                1j * self.k[0] * key[0]
+                + 1j * self.k[1] * key[1]
+                + 1j * self.k[2] * key[2]
+            )
+
+    def compute_observables(
+        self, phi: NDArray, inj_ind: list, i: int, S: list, K, T, E
+    ):
         """
         Compute observables for the current iteration.
 
@@ -349,7 +361,9 @@ class QTBM:
         for n in range(self.n_transmissions):
 
             # Get the all the wavefunctions injected from contact 1 and extract the elements inside contact 2
-            phi_n = phi[self.device.contacts[cont_2].orbitals_contact.T, inj_ind[cont_1]]
+            phi_n = phi[
+                self.device.contacts[cont_2].orbitals_contact.T, inj_ind[cont_1]
+            ]
 
             # Compute the transmission
             if phi_n.size != 0:
@@ -358,12 +372,15 @@ class QTBM:
                         1j * phi_n.T.conj() @ (S[cont_2] - S[cont_2].T.conj()) @ phi_n
                     )
                 )
-            
-                print(
-                    f"Transmission {self.observables.electron_transmission_contacts_labels[n]}: {self.observables.electron_transmission_contacts[n, i]}",
-                    flush=True,
-                ) if comm.rank == 0 else None
-            
+
+                (
+                    print(
+                        f"Transmission {self.observables.electron_transmission_contacts_labels[n]}: {self.observables.electron_transmission_contacts[n, i]}",
+                        flush=True,
+                    )
+                    if comm.rank == 0
+                    else None
+                )
 
             cont_2 += 1
             if cont_2 == self.n_cont:
@@ -391,12 +408,29 @@ class QTBM:
         phi_ortho = self.overlap_phase @ phi  # "Orthogonalize" the wavefunction
         for n in range(self.n_cont):
 
-            phi_cont = K[self.device.contacts[n].orbitals_contact.squeeze(),:] + T[n] @ phi[self.device.contacts[n].orbitals_contact.squeeze(),:]
-            #TODO Add the spill over contribution
-            phi_ortho[self.device.contacts[n].orbitals_contact.squeeze(),:] += self.device.contacts[n].get_10(self.overlap_phase) @ phi_cont
-            #CHECK SPILL OVER ERROR (DEBUG)
-            error = xp.linalg.norm((E*self.device.contacts[n].get_10(self.overlap_phase)-self.device.contacts[n].get_10(self.hamiltonian_phase)) @ phi_cont + self.system_matrix[self.device.contacts[n].orbitals_contact.squeeze(),:] @ phi)
-            print(f"    Spill over error for contact {self.device.contacts[n].name[0]} at energy {E}: {error}")
+            phi_cont = (
+                K[self.device.contacts[n].orbitals_contact.squeeze(), :]
+                + T[n] @ phi[self.device.contacts[n].orbitals_contact.squeeze(), :]
+            )
+            # TODO Add the spill over contribution
+            phi_ortho[self.device.contacts[n].orbitals_contact.squeeze(), :] += (
+                self.device.contacts[n].get_10(self.overlap_phase) @ phi_cont
+            )
+            # CHECK SPILL OVER ERROR (DEBUG)
+            error = xp.linalg.norm(
+                (
+                    E * self.device.contacts[n].get_10(self.overlap_phase)
+                    - self.device.contacts[n].get_10(self.hamiltonian_phase)
+                )
+                @ phi_cont
+                + self.system_matrix[
+                    self.device.contacts[n].orbitals_contact.squeeze(), :
+                ]
+                @ phi
+            )
+            print(
+                f"    Spill over error for contact {self.device.contacts[n].name[0]} at energy {E}: {error}"
+            )
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.n_cont):
@@ -411,7 +445,7 @@ class QTBM:
                     self.observables.electron_DOS_x_slabs[n, s, i] = xp.real(
                         xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho)) / (2 * xp.pi)
                     )  # Compute the DOS
-    
+
     def run(self) -> None:
         """Runs the QTBM"""
         print("Entering QTBM calculation", flush=True) if comm.rank == 0 else None
@@ -423,9 +457,18 @@ class QTBM:
         times.append(time.perf_counter())
 
         for batch_start in range(0, len(self.local_energies), OBC_batch_size):
-            E_batch_OBC = self.local_energies[batch_start : batch_start + OBC_batch_size]
+            E_batch_OBC = self.local_energies[
+                batch_start : batch_start + OBC_batch_size
+            ]
 
-            print(f"Processing energies {batch_start} to {batch_start + len(E_batch_OBC) - 1}", flush=True) if comm.rank == 0 else None
+            (
+                print(
+                    f"Processing energies {batch_start} to {batch_start + len(E_batch_OBC) - 1}",
+                    flush=True,
+                )
+                if comm.rank == 0
+                else None
+            )
 
             # append for iteration time
             times.append(time.perf_counter())
@@ -441,25 +484,38 @@ class QTBM:
             for n in range(self.n_cont):
                 times.append(time.perf_counter())
 
-                sigma_b_cont, inj_cont, num_inj, T_cont, K_cont = self.device.contacts[n].compute_boundary(self.k[0],self.k[1],E_batch_OBC)
+                sigma_b_cont, inj_cont, num_inj, T_cont, K_cont = self.device.contacts[
+                    n
+                ].compute_boundary(self.k[0], self.k[1], self.k[2], E_batch_OBC)
 
                 sigma_b.append(sigma_b_cont)
                 inj.append(inj_cont)
                 K.append(K_cont)
                 T.append(T_cont)
 
-                #For every Energy in batch, compute a list with the indeces of evert injected vector
+                # For every Energy in batch, compute a list with the indeces of evert injected vector
                 inj_ind_temp = []
                 for i in range(len(E_batch_OBC)):
-                    i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
-                    n_i = num_inj[i].get().item() if hasattr(num_inj[i], 'get') else num_inj[i].item()
-                    inj_ind_temp.append(xp.arange(i0,i0+n_i))
+                    i0 = (
+                        ind_0[i].get().item()
+                        if hasattr(ind_0[i], "get")
+                        else ind_0[i].item()
+                    )
+                    n_i = (
+                        num_inj[i].get().item()
+                        if hasattr(num_inj[i], "get")
+                        else num_inj[i].item()
+                    )
+                    inj_ind_temp.append(xp.arange(i0, i0 + n_i))
                 inj_ind.append(inj_ind_temp)
                 ind_0 += num_inj
 
                 t_solve = time.perf_counter() - times.pop()
                 (
-                    print(f"Time for OBC in contact {self.device.contacts[n].name[0]}: {t_solve:.2f} s", flush=True)
+                    print(
+                        f"Time for OBC in contact {self.device.contacts[n].name[0]}: {t_solve:.2f} s",
+                        flush=True,
+                    )
                     if comm.rank == 0
                     else None
                 )
@@ -471,46 +527,78 @@ class QTBM:
                 else None
             )
 
-            for i,E in enumerate(E_batch_OBC):
+            for i, E in enumerate(E_batch_OBC):
 
                 times.append(time.perf_counter())
 
                 # Set up sytem matrix and rhs for electron solver.
-                i0 = ind_0[i].get().item() if hasattr(ind_0[i], 'get') else ind_0[i].item()
-                inj_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the injection vector as a zero matrix
-                K_V = xp.zeros((self.sys_mat_shape,i0), dtype=xp.complex128, order="F") #Set the K vector as a zero matrix
+                i0 = (
+                    ind_0[i].get().item()
+                    if hasattr(ind_0[i], "get")
+                    else ind_0[i].item()
+                )
+                inj_V = xp.zeros(
+                    (self.sys_mat_shape, i0), dtype=xp.complex128, order="F"
+                )  # Set the injection vector as a zero matrix
+                K_V = xp.zeros(
+                    (self.sys_mat_shape, i0), dtype=xp.complex128, order="F"
+                )  # Set the K vector as a zero matrix
 
                 ind1 = []
                 ind2 = []
                 sig_flat = []
-                #Iterate over contacts
+                # Iterate over contacts
                 for n in range(self.n_cont):
-                    ind1.append(xp.repeat(self.device.contacts[n].orbitals_contact.squeeze(), self.device.contacts[n].orbitals_contact.shape[1]))
-                    ind2.append(xp.tile(self.device.contacts[n].orbitals_contact.squeeze(), self.device.contacts[n].orbitals_contact.shape[1]))
-                    sig_flat.append(sigma_b[n][i,:,:].flatten())
-                    inj_V[self.device.contacts[n].orbitals_contact.T,inj_ind[n][i]] = inj[n][i] #Add the injection vector in the contact elements of the rhs
-                    K_V[self.device.contacts[n].orbitals_contact.T,inj_ind[n][i]] = K[n][i] #Add the K vector in the contact elements of the rhs
-                
-                #Concatenate the indices and the self-energies
+                    ind1.append(
+                        xp.repeat(
+                            self.device.contacts[n].orbitals_contact.squeeze(),
+                            self.device.contacts[n].orbitals_contact.shape[1],
+                        )
+                    )
+                    ind2.append(
+                        xp.tile(
+                            self.device.contacts[n].orbitals_contact.squeeze(),
+                            self.device.contacts[n].orbitals_contact.shape[1],
+                        )
+                    )
+                    sig_flat.append(sigma_b[n][i, :, :].flatten())
+                    inj_V[
+                        self.device.contacts[n].orbitals_contact.T, inj_ind[n][i]
+                    ] = inj[n][
+                        i
+                    ]  # Add the injection vector in the contact elements of the rhs
+                    K_V[self.device.contacts[n].orbitals_contact.T, inj_ind[n][i]] = K[
+                        n
+                    ][
+                        i
+                    ]  # Add the K vector in the contact elements of the rhs
+
+                # Concatenate the indices and the self-energies
                 ind1 = xp.concatenate(ind1)
                 ind2 = xp.concatenate(ind2)
                 sig_flat = xp.concatenate(sig_flat)
 
-                upd_0 = sparse.coo_matrix((sig_flat, (ind1, ind2)),shape=self.hamiltonian_phase.shape).tocsr()
+                upd_0 = sparse.coo_matrix(
+                    (sig_flat, (ind1, ind2)), shape=self.hamiltonian_phase.shape
+                ).tocsr()
                 upd_0.eliminate_zeros()  # Remove zeros from the self-energy matrix
-                if i==0 and batch_start == 0:
-                    self.system_matrix =  E * self.overlap_phase - self.hamiltonian_phase - upd_0
+                if i == 0 and batch_start == 0:
+                    self.system_matrix = (
+                        E * self.overlap_phase - self.hamiltonian_phase - upd_0
+                    )
                 else:
-                    self.system_matrix.data[:] =  (E * self.overlap_phase - self.hamiltonian_phase - upd_0).data
-                
-                #if i==0 and batch_start == 0:
+                    self.system_matrix.data[:] = (
+                        E * self.overlap_phase - self.hamiltonian_phase - upd_0
+                    ).data
+
+                # if i==0 and batch_start == 0:
                 #    self.system_matrix =  E * self.overlap_phase - self.hamiltonian_phase
-                #else:
+                # else:
                 #    self.system_matrix.data[:] = - h_V
                 #    self.system_matrix.data[:] += E * s_V
 
                 # Update the system matrix with the self-energies
-                #if i==0 and batch_start == 0:
+                # if i==0 and batch_start == 0:
                 #    self.system_matrix -= upd_0
 
                 #    self.system_matrix = self.system_matrix.tocoo()
@@ -526,12 +614,12 @@ class QTBM:
                 #        h_V = self.hamiltonian_phase[rows, cols].ravel()
                 #        s_V = self.overlap_phase[rows, cols].ravel()
 
-                #else:
+                # else:
                 #    if hasattr(upd_0.tocsr()[rows, cols], 'A'):
                 #        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].A.ravel()
                 #    else:
                 #        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].ravel()
-                
+
                 t_solve = time.perf_counter() - times.pop()
                 (
                     print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
@@ -548,13 +636,16 @@ class QTBM:
                         self.reuse_sym = 1
                     else:
                         if MUMPS_AVAILABLE:
-                            #USE MUMPS
+                            # USE MUMPS
                             inst = mumps.Context()
                             t_mumps = time.perf_counter()
                             inst.analyze(self.system_matrix)
                             t_analyze = time.perf_counter() - t_mumps
                             (
-                                print(f"Time for MUMPS analyze: {t_analyze:.2f} s", flush=True)
+                                print(
+                                    f"Time for MUMPS analyze: {t_analyze:.2f} s",
+                                    flush=True,
+                                )
                                 if comm.rank == 0
                                 else None
                             )
@@ -564,7 +655,8 @@ class QTBM:
                             t_factor = time.perf_counter() - t_mumps
                             (
                                 print(
-                                    f"Time for MUMPS factor: {t_factor:.2f} s", flush=True
+                                    f"Time for MUMPS factor: {t_factor:.2f} s",
+                                    flush=True,
                                 )
                                 if comm.rank == 0
                                 else None
@@ -574,7 +666,9 @@ class QTBM:
                             phi = inst.solve(inj_V)
                             t_solve = time.perf_counter() - t_mumps
                             (
-                                print(f"Time for MUMPS solve: {t_solve:.2f} s", flush=True)
+                                print(
+                                    f"Time for MUMPS solve: {t_solve:.2f} s", flush=True
+                                )
                                 if comm.rank == 0
                                 else None
                             )
@@ -590,12 +684,16 @@ class QTBM:
                 )
                 times.append(time.perf_counter())
                 # Get the bare system matrix back, needed for transmission calculation
-                upd_0.data[:] = 1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
-                self.system_matrix.data[:] = (E * self.overlap_phase - self.hamiltonian_phase - upd_0).data
-                #LL = upd_0.tocsr()[rows, cols]
-                #if hasattr(LL, 'A'):
+                upd_0.data[:] = (
+                    1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
+                )
+                self.system_matrix.data[:] = (
+                    E * self.overlap_phase - self.hamiltonian_phase - upd_0
+                ).data
+                # LL = upd_0.tocsr()[rows, cols]
+                # if hasattr(LL, 'A'):
                 #    self.system_matrix.data[:] += LL.A.ravel()
-                #else:
+                # else:
                 #    self.system_matrix.data[:] += LL.ravel()
 
                 if inj_V.size != 0:
@@ -604,23 +702,28 @@ class QTBM:
                     inj_ind_t = []
                     T_t = []
                     for nn in range(self.n_cont):
-                        sigma_b_t.append(sigma_b[nn][i,:,:])
+                        sigma_b_t.append(sigma_b[nn][i, :, :])
                         inj_ind_t.append(inj_ind[nn][i])
-                        T_t.append(T[nn][i,:,:])
-                    self.compute_observables(phi, inj_ind_t, batch_start+i, sigma_b_t, K_V, T_t,E)
+                        T_t.append(T[nn][i, :, :])
+                    self.compute_observables(
+                        phi, inj_ind_t, batch_start + i, sigma_b_t, K_V, T_t, E
+                    )
 
                 t_iteration = time.perf_counter() - times.pop()
                 (
-                    print(f"Time for computing observables: {t_iteration:.2f} s", flush=True)
+                    print(
+                        f"Time for computing observables: {t_iteration:.2f} s",
+                        flush=True,
+                    )
                     if comm.rank == 0
                     else None
                 )
 
             t_iteration = time.perf_counter() - times.pop()
             (
-            print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
+                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+                if comm.rank == 0
+                else None
             )
 
         t_iteration = time.perf_counter() - times.pop()

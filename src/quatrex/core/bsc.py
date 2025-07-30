@@ -498,10 +498,11 @@ class BSC:
                     coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
                         coulomb_matrix_block
                     )
+                del coulomb_matrix_block
 
             self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
                 self.data.sparsity_pattern.astype(xp.complex128),
-                block_sizes=np.array([coulomb_matrix_block.shape[0]]),
+                block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
                 global_stack_shape=(comm.size,)
                 + tuple(
                     [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
@@ -523,7 +524,6 @@ class BSC:
                 -(number_of_kpoints // 2),
             )
             # Explicitely try to free the memory
-            del coulomb_matrix_block
             del coulomb_matrix_dict
 
             # Make sure the Coulomb matrix is hermitian.

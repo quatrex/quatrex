@@ -461,24 +461,35 @@ class BSC:
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
             # Load the Coulomb matrix.
-            coulomb_matrix_unit_cells = distributed_load(
-                quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
-            ).astype(xp.complex128)
-            # Apply the cutoff to the Coulomb matrix.
-            if quatrex_config.device.R_cutoff is not None:
-                coulomb_matrix_unit_cells = cutoff_hr(
-                    coulomb_matrix_unit_cells,
-                    R_cutoff=quatrex_config.device.R_cutoff,
+            try:
+                coulomb_matrix_dict = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix.pkl"
                 )
-            coulomb_matrix_dict = {}
-            for periodic_shift in xp.ndindex(
-                quatrex_config.device.cells_in_periodic_directions
-            ):
-                # i = -1 and 1, back and forth in the periodic directions.
-                for i in range(1, -2, -2):
-                    if i == -1 and not any(periodic_shift):
-                        break
-                    periodic_shift = tuple([i * ps for ps in periodic_shift])
+            except FileNotFoundError:
+                coulomb_matrix_unit_cells = distributed_load(
+                    quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+                ).astype(xp.complex128)
+                # Apply the cutoff to the Coulomb matrix.
+                if quatrex_config.device.R_cutoff is not None:
+                    coulomb_matrix_unit_cells = cutoff_hr(
+                        coulomb_matrix_unit_cells,
+                        R_cutoff=quatrex_config.device.R_cutoff,
+                    )
+                coulomb_matrix_dict = {}
+                for periodic_shift in xp.ndindex(
+                    tuple(
+                        2 * ps - 1
+                        for ps in quatrex_config.device.cells_in_periodic_directions
+                    )
+                ):
+                    periodic_shift = tuple(
+                        [
+                            ps
+                            - quatrex_config.device.cells_in_periodic_directions[i]
+                            + 1
+                            for i, ps in enumerate(periodic_shift)
+                        ]
+                    )
                     coulomb_matrix_block = get_hamiltonian_block(
                         coulomb_matrix_unit_cells,
                         (1, 1, 1),

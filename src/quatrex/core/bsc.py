@@ -138,13 +138,13 @@ class BSCData:
         # Note that then no bandstructure is obtained, but for large matrices only
         # the gamma point is usually needed.
         self.sparsity_pattern = sparse.csr_matrix(
-            np.ones(
+            xp.ones(
                 (len(wannier_centers), len(wannier_centers)),
                 dtype=np.complex128,
             )
         )
 
-        block_sizes = xp.array([len(wannier_centers)])
+        block_sizes = np.array([len(wannier_centers)])
 
         dsdbsparse_type = compute_config.dsdbsparse_type
 
@@ -401,7 +401,7 @@ class BSC:
 
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
             self.data.sparsity_pattern,
-            block_sizes=xp.array([self.data.sparsity_pattern.shape[0]]),
+            block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
             global_stack_shape=(comm.stack.size,)
             + tuple(
                 [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
@@ -424,7 +424,7 @@ class BSC:
         # Create the overlap matrix.
         self.overlap = compute_config.dsdbsparse_type.from_sparray(
             self.data.sparsity_pattern,
-            block_sizes=xp.array([self.data.sparsity_pattern.shape[0]]),
+            block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
             global_stack_shape=(comm.stack.size,)
             + tuple(
                 [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
@@ -490,7 +490,7 @@ class BSC:
 
             self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
                 self.data.sparsity_pattern.astype(xp.complex128),
-                block_sizes=xp.array([coulomb_matrix_block.shape[0]]),
+                block_sizes=np.array([coulomb_matrix_block.shape[0]]),
                 global_stack_shape=(comm.size,)
                 + tuple(
                     [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
@@ -652,7 +652,8 @@ class BSC:
         conduction_band_edge = np.zeros(kpoints)
         valence_band_edge = np.zeros(kpoints)
         for kp in np.ndindex(kpoints):
-            peaks, _ = find_peaks(dos[:, *kp])
+            # NOTE: Find peaks don't work with cupy arrays, so we have to use numpy.
+            peaks, _ = find_peaks(get_host(dos[:, *kp]))
             bands = energies[peaks]
             # Find the conduction and valence band edges.
             conduction_band_edge[kp] = xp.min(bands[bands > mid_bandgap])
@@ -660,12 +661,13 @@ class BSC:
         self.conduction_band_edges = xp.min(conduction_band_edge)
         self.valence_band_edges = xp.max(valence_band_edge)
         if comm.rank == 0:
+            print(f"Mid bandgap: {mid_bandgap}", flush=True)
             print(
-                f"Conduction Band Edges: {self.conduction_band_edges}, k-point: {xp.argmin(conduction_band_edge)}",
+                f"Conduction Band Edge: {self.conduction_band_edges}, k-point: {np.argmin(conduction_band_edge)}",
                 flush=True,
             )
             print(
-                f"Valence Band Edges: {self.valence_band_edges}, k-point: {xp.argmax(valence_band_edge)}",
+                f"Valence Band Edge: {self.valence_band_edges}, k-point: {np.argmax(valence_band_edge)}",
                 flush=True,
             )
 
@@ -1076,32 +1078,33 @@ class BSC:
         grids = [(np.arange(n) - n // 2) / n for n in number_of_kpoints]
         kpoint_mesh = np.meshgrid(*grids, indexing="ij")
         # Find the corresponding k-point indices for the symmetry points. The closest k-point is used.
-        sp1 = xp.array(sp1)
-        sp2 = xp.array(sp2)
+        # Make sure the symmetry points are numpy arrays.
+        sp1 = get_host(xp.asarray(sp1))
+        sp2 = get_host(xp.asarray(sp2))
         sp1_idx = divmod(
-            xp.argmin(
-                xp.linalg.norm(kpoint_mesh - sp1.reshape(-1, 1, 1), axis=0),
+            np.argmin(
+                np.linalg.norm(kpoint_mesh - sp1.reshape(-1, 1, 1), axis=0),
             ),
             number_of_kpoints[-1],
         )
         sp2_idx = divmod(
-            xp.argmin(
-                xp.linalg.norm(kpoint_mesh - sp2.reshape(-1, 1, 1), axis=0),
+            np.argmin(
+                np.linalg.norm(kpoint_mesh - sp2.reshape(-1, 1, 1), axis=0),
             ),
             number_of_kpoints[-1],
         )
         # Find the peaks in the density of states at the symmetry points.
-        peaks_sp1, _ = find_peaks(dos[:, *sp1_idx])
-        peaks_sp2, _ = find_peaks(dos[:, *sp2_idx])
+        peaks_sp1, _ = find_peaks(get_host(dos[:, *sp1_idx]))
+        peaks_sp2, _ = find_peaks(get_host(dos[:, *sp2_idx]))
         energies_sp1 = self.electron_energies[peaks_sp1]
         energies_sp2 = self.electron_energies[peaks_sp2]
         mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
         if band == "conduction":
-            edge_sp1 = xp.min(energies_sp1[energies_sp1 > mid_bandgap])
-            edge_sp2 = xp.min(energies_sp2[energies_sp2 > mid_bandgap])
+            edge_sp1 = np.min(energies_sp1[energies_sp1 > mid_bandgap])
+            edge_sp2 = np.min(energies_sp2[energies_sp2 > mid_bandgap])
         elif band == "valence":
-            edge_sp1 = xp.max(energies_sp1[energies_sp1 < mid_bandgap])
-            edge_sp2 = xp.max(energies_sp2[energies_sp2 < mid_bandgap])
+            edge_sp1 = np.max(energies_sp1[energies_sp1 < mid_bandgap])
+            edge_sp2 = np.max(energies_sp2[energies_sp2 < mid_bandgap])
         else:
             raise ValueError("band must be either 'conduction' or 'valence'.")
         valley_difference = edge_sp1 - edge_sp2
@@ -1147,8 +1150,8 @@ class BSC:
 
             # Compute the valley difference between symmetry points.
             # The `K` and `Q` symmetry points are used for the conduction band edge.
-            K_symmetry_point = xp.array([1 / 3, 1 / 3])
-            Q_symmetry_point = xp.array([1 / 6, 1 / 6])
+            K_symmetry_point = np.array([1 / 3, 1 / 3])
+            Q_symmetry_point = np.array([1 / 6, 1 / 6])
             valley_difference = self._compute_valley_difference(
                 K_symmetry_point, Q_symmetry_point
             )
@@ -1158,7 +1161,7 @@ class BSC:
                     flush=True,
                 )
             # The `K` and `G` symmetry points are used for the valence band edge.
-            G_symmetry_point = xp.array([0, 0])
+            G_symmetry_point = np.array([0, 0])
             valley_difference = self._compute_valley_difference(
                 K_symmetry_point, G_symmetry_point, band="valence"
             )

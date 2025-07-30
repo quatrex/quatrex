@@ -262,9 +262,10 @@ class Device:
         Load the Hamiltonian and overlap matrix from the specified configuration.
     load_lattice(quatrex_config: QuatrexConfig) -> None
         Load the lattice structure from the specified configuration.
+
     """
 
-    def __init__(self):
+    def __init__(self, quatrex_config: QuatrexConfig) -> None:
 
         self.hamiltonian: dict = {}
         self.overlap: dict = {}
@@ -283,9 +284,15 @@ class Device:
         self.atom_potential: NDArray = None
         self.orb_potential: NDArray = None
 
-        self.gamma_only = False
+        self._load_hamiltonian(quatrex_config)
+        self._load_lattice(quatrex_config)
+        self._load_orbitals(quatrex_config)
+        self._load_potential(quatrex_config)
+        self._apply_potential()
 
-    def load_hamiltonian(self, quatrex_config: QuatrexConfig) -> None:
+        self.contacts = self._add_contacts(quatrex_config)
+
+    def _load_hamiltonian(self, quatrex_config: QuatrexConfig) -> None:
         """
         Load the Hamiltonian and overlap matrix from the specified configuration.
         Parameters
@@ -359,7 +366,7 @@ class Device:
 
         # TODO # Check if the number of Hamiltonians and overlaps match
 
-    def load_lattice(self, quatrex_config: QuatrexConfig) -> None:
+    def _load_lattice(self, quatrex_config: QuatrexConfig) -> None:
         """
         Load the lattice structure from the specified configuration.
         Parameters
@@ -377,7 +384,7 @@ class Device:
         )
         print("Lattice structure loaded successfully.")
 
-    def load_orbitals(self, quatrex_config: QuatrexConfig) -> NDArray:
+    def _load_orbitals(self, quatrex_config: QuatrexConfig) -> NDArray:
         """
         Load the number of orbitals for each atom type from the specified configuration.
         Parameters
@@ -400,7 +407,7 @@ class Device:
             dtype=xp.int32,
         )
 
-    def load_potential(self, quatrex_config: QuatrexConfig) -> None:
+    def _load_potential(self, quatrex_config: QuatrexConfig) -> None:
         """
         Load the potential from the specified configuration.
         Parameters
@@ -427,7 +434,7 @@ class Device:
                 else None
             )
 
-    def apply_potential(
+    def _apply_potential(
         self,
     ) -> None:
 
@@ -442,7 +449,7 @@ class Device:
             self.hamiltonian[key] += (SV1 + SV2) / 2
             self.hamiltonian[key].eliminate_zeros()
 
-    def add_contacts(self, config) -> None:
+    def _add_contacts(self, config) -> list[Contact]:
         """
         Add a contact to the device.
 
@@ -456,12 +463,14 @@ class Device:
             The origin of the contact.
         direction : int
             The direction of the contact.
+
         """
-        self.contacts = []
+        contacts = []
         n, name, origin, vectors, direction = distributed_load_contact(
             config.input_dir / "cont.dat"
         )
         for i in range(n):
-            self.contacts.append(
+            contacts.append(
                 Contact(name[i], self, vectors[i], origin[i], direction[i], config)
             )
+        return contacts

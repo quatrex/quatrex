@@ -582,6 +582,7 @@ class QTBM:
                     (sig_flat, (ind1, ind2)), shape=self.hamiltonian_phase.shape
                 ).tocsr()
                 upd_0.eliminate_zeros()  # Remove zeros from the self-energy matrix
+
                 if i == 0 and batch_start == 0:
                     self.system_matrix = (
                         E * self.overlap_phase - self.hamiltonian_phase - upd_0

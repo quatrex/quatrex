@@ -321,8 +321,8 @@ class Contact:
 
             if not found:
                 print(f"    Maximum radius: {radius-1}")
-                if self.n_rep_1 == 1 and self.n_rep_2 == 1 and (radius - 1) > 0:
-                    raise ValueError("1x1 UC but more than 1x1 coupling!")
+                # if self.n_rep_1 == 1 and self.n_rep_2 == 1 and (radius - 1) > 0:
+                #    raise ValueError("1x1 UC but more than 1x1 coupling!")
                 break
 
             radius += 1
@@ -485,16 +485,17 @@ class Contact:
         self.n_at_origin_cell = self.at_origin_cell.shape[0]
         self.n_orb_origin_cell = self.orb_origin_cell.shape[0]
 
-        # Check how many periodic repetitions are in the transverse directions
-        self._get_periodic_number_transverse()
         print(f"Contact {self.name}:")
         print(
             f"    Number of atoms inside the origin cell: {self.at_origin_cell.shape[0]}"
         )
+        print(f"    Atoms in the origin cell: {self.at_origin_cell}")
+
+        # Check how many periodic repetitions are in the transverse directions
+        self._get_periodic_number_transverse()
         print(
             f"    Number of periodic repetitions in the transverse directions: {self.n_rep_1} x {self.n_rep_2}"
         )
-        print(f"    Atoms in the origin cell: {self.at_origin_cell}")
 
         # TODO Check if the contact transverse UC vectors are in the same direction as the device vectors
 

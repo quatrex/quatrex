@@ -1,7 +1,7 @@
-import glob
-import re
+from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
@@ -10,63 +10,7 @@ from quatrex.core.contact import Contact
 from quatrex.core.quatrex_config import QuatrexConfig
 
 
-def distributed_load_contact(filename: Path) -> tuple[int, list, list, list, list]:
-    """
-    Loads the contact data from a file.
-
-    Parameters
-    ----------
-    filename : Path
-        The path to the contact file.
-
-    Returns
-    -------
-    n : int
-        The number of contacts.
-    name : list
-        List containing the names of the contacts.
-    origin : NDArray
-        List containint the origin of the contacts.
-    vectors : NDArray
-        List containing the vectors of the contacts.
-    direction : NDArray
-        List containint the direction of the contacts.
-
-    """
-
-    origin = []
-    vectors = []
-    direction = []
-    name = []
-    n = None
-
-    if comm.rank == 0:
-        with open(filename, "rt") as myfile:
-
-            # Read the number of contacts
-            n = int(myfile.readline())
-            for i in range(n):
-                # Read the name
-                name.append(myfile.readline().rstrip("\n"))
-                origin.append(xp.asarray(myfile.readline().split(), dtype=xp.float64))
-                vectors.append(xp.zeros((3, 3), dtype=xp.float64))  # Initialize vectors
-                for i in range(3):
-                    vectors[-1][i, :] = xp.asarray(
-                        myfile.readline().split(), dtype=xp.float64
-                    )
-                direction.append(int(myfile.readline()))  # Read the direction
-
-    # Broadcast the data to all the ranks
-    n = comm.bcast(n, root=0)
-    name = comm.bcast(name, root=0)
-    origin = comm.bcast(origin, root=0)
-    vectors = comm.bcast(vectors, root=0)
-    direction = comm.bcast(direction, root=0)
-
-    return n, name, origin, vectors, direction
-
-
-def _get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray:
+def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
     """
     Computes the potential for each orbital.
 
@@ -81,82 +25,15 @@ def _get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArra
     -------
     orb_potential : NDArray
         The potential for each orbital.
-    """
-
-    n_orb_tot = (
-        orbitals_per_atom[-1].get().item()
-        if hasattr(orbitals_per_atom[-1], "get")
-        else orbitals_per_atom[-1].item()
-    )
-
-    orb_potential = xp.zeros((n_orb_tot, 1), dtype=xp.float64)
-    for i in range(potential.shape[0]):
-        orb_potential[orbitals_per_atom[i] : orbitals_per_atom[i + 1]] = potential[i]
-
-    return orb_potential
-
-
-def get_orb_potential(potential: NDArray, orbitals_per_atom: NDArray) -> NDArray:
-    """
-    Computes the potential for each orbital.
-
-    Parameters
-    ----------
-    potential : NDArray
-        The potential.
-    orbitals : NDArray
-        The starting orbital (cumulative) for each atom.
-
-    Returns
-    -------
-    orb_potential : NDArray
-        The potential for each orbital.
-    """
-
-    n_orb_tot = (
-        orbitals_per_atom[-1].get().item()
-        if hasattr(orbitals_per_atom[-1], "get")
-        else orbitals_per_atom[-1].item()
-    )
-
-    orb_potential = xp.zeros((n_orb_tot, 1), dtype=xp.float64)
-    for i in range(potential.shape[0]):
-        orb_potential[orbitals_per_atom[i] : orbitals_per_atom[i + 1]] = potential[i]
-
-    return orb_potential
-
-
-def distributed_read_orbitals(filename: Path) -> NDArray:
-    """
-    Reads the number of orbitals for each atom type from a file.
-
-    Parameters
-    ----------
-    filename : Path
-        The path to the file containing the number of orbitals.
-
-    Returns
-    -------
-    orbitals : NDArray
-        The number of orbitals for each atom type.
 
     """
-
-    if comm.rank == 0:
-        orbitals = xp.reshape(
-            xp.loadtxt(filename, dtype=xp.int32), (-1, 1)
-        )  # Read the number of orbitals for each atom type
-    else:
-        orbitals = None
-
-    orbitals = comm.bcast(orbitals, root=0)  # Broadcast the data to all the ranks
-
-    return orbitals
+    orbitals_per_atom = np.diff(orbital_offsets, prepend=0)
+    orbital_potential = np.repeat(potential, orbitals_per_atom, axis=0)
+    return orbital_potential
 
 
 def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArray]:
-    """
-    Reads data from xyz files
+    """Reads data from xyz files
 
     Parameters
     ----------
@@ -173,53 +50,35 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
         A (*x3) array containing the atomic coordinates
     coordsType : NDArray
         An array containing each type of atom (as integer)
+
     """
 
-    atoms = []
-    coords = []
-    coordsType = []
-    lattice = []
+    lattice = None
+    coords = None
+    kinds = None
 
     if comm.rank == 0:
+        # Read only the second line of the file (this contains the lattice parameters)
+        with open(filename, "r") as f:
+            __ = f.readline()
+            lattice_line = f.readline().strip()
 
-        with open(filename, "rt") as myfile:
-            for line in myfile:
-                # num_atoms line
-                if len(line.split()) == 1:
-                    pass
-                # blank line
-                elif len(line.split()) == 0:
-                    pass
-                # line with cell parameters
-                elif "Lattice=" in line:
-                    lattice = line.replace('Lattice="', "")
-                    lattice = lattice.replace('"', "")
-                    lattice = lattice.split()[0:9]
-                    lattice = [float(item) for item in lattice]
-                    lattice = xp.array(lattice)
-                    lattice = xp.reshape(lattice, (3, -1))
+        if not lattice_line.startswith("Lattice="):
+            raise ValueError(
+                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
+            )
 
-                # line with atoms and positions
-                elif len(line.split()) == 4:
-                    c = line.split()[0]
-                    if atoms.count(c) == 0:
-                        atoms.append(c)
-                    coordsType.append(atoms.index(c))
-                    coords.append(line.split()[1:])
-                else:
-                    pass
-
-        coords = xp.asarray(coords, dtype=xp.float64)
-        coordsType = xp.asarray(coordsType, dtype=xp.int16)
-        lattice = xp.asarray(lattice, dtype=xp.float64)
+        lattice = lattice_line.split("=")[1].strip('"')
+        lattice = np.fromstring(lattice, dtype=np.float64, sep=" ").reshape(3, 3)
+        coords = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
+        kinds = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
 
     # Broadcast the data to all the ranks
     lattice = comm.bcast(lattice, root=0)
-    atoms = comm.bcast(atoms, root=0)
     coords = comm.bcast(coords, root=0)
-    coordsType = comm.bcast(coordsType, root=0)
+    kinds = comm.bcast(kinds, root=0)
 
-    return lattice, atoms, coords, coordsType
+    return lattice, np.unique(kinds), coords, kinds
 
 
 class Device:
@@ -267,189 +126,150 @@ class Device:
 
     def __init__(self, quatrex_config: QuatrexConfig) -> None:
 
-        self.hamiltonian: dict = {}
-        self.overlap: dict = {}
+        self.config = quatrex_config
 
-        self.num_hamiltonians = 0
-        self.num_overlaps = 0
+        self._init_hamiltonian()
+        self._init_lattice()
+        self._init_orbitals()
+        self._load_potential()
+        self.apply_potential()
+        self.contacts = self._add_contacts()
 
-        self.lattice_vector: NDArray = None
-        self.atoms_list: list = None
-        self.coords: NDArray = None
-        self.atom_type: NDArray = None
+    def _init_hamiltonian(self) -> None:
+        """Initializes Hamiltonian and overlap matrices."""
 
-        self.orbitals_per_at: NDArray = None
-        self.orbitals_vec: NDArray = None
+        self.hamiltonian = {}
+        self.overlap = {}
+        self.gamma_only = False
 
-        self.atom_potential: NDArray = None
-        self.orb_potential: NDArray = None
-
-        self._load_hamiltonian(quatrex_config)
-        self._load_lattice(quatrex_config)
-        self._load_orbitals(quatrex_config)
-        self._load_potential(quatrex_config)
-        self._apply_potential()
-
-        self.contacts = self._add_contacts(quatrex_config)
-
-    def _load_hamiltonian(self, quatrex_config: QuatrexConfig) -> None:
-        """
-        Load the Hamiltonian and overlap matrix from the specified configuration.
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The configuration object containing the input directory and other settings.
-        """
-
-        # Load all Hamiltonian files with format hamiltonian_x_y.npz
+        # Load all Hamiltonian files with format hamiltonian_x_y_z.npz
         # Find all hamiltonian files in the input directory
-        hamiltonian_pattern = str(quatrex_config.input_dir / "hamiltonian_*.npz")
-        hamiltonian_files = glob.glob(hamiltonian_pattern)
+        hamiltonian_paths = self.config.input_dir.glob("hamiltonian_*_*_*.npz")
 
         # Parse indices from filenames and load files
-        for file_path in hamiltonian_files:
-            filename = file_path.split("/")[-1]  # Get just the filename
-            match = re.match(r"hamiltonian_(-?\d+)_(-?\d+)_(-?\d+)\.npz", filename)
-            if match:
-                x_index = int(match.group(1))
-                y_index = int(match.group(2))
-                z_index = int(match.group(3))
-                try:
-                    self.hamiltonian[(x_index, y_index, z_index)] = (
-                        distributed_load(Path(file_path)).astype(xp.complex128).tocsr()
+        for hamiltonian_path in hamiltonian_paths:
+            x_index, y_index, z_index = map(int, hamiltonian_path.stem.split("_")[1:])
+            try:
+                self.hamiltonian[x_index, y_index, z_index] = (
+                    distributed_load(hamiltonian_path).astype(xp.complex128).tocsr()
+                )
+                if comm.rank == 0:
+                    print(
+                        f"Loaded Hamiltonian ({x_index} {y_index} {z_index})",
+                        flush=True,
                     )
-                    print(f"Loaded Hamiltonian ({x_index} {y_index} {z_index})")
-                except Exception as e:
-                    print(f"Failed to load {filename}: {e}")
+
+            except Exception as e:
+                if comm.rank == 0:
+                    print(f"Failed to load {hamiltonian_path.stem}: {e}", flush=True)
+
+            overlap_path = (
+                self.config.input_dir / f"overlap_{x_index}_{y_index}_{z_index}.npz"
+            )
+            # TODO: Mechanism to handle orthogonal basis sets.
+            try:
+                self.overlap[x_index, y_index, z_index] = (
+                    distributed_load(overlap_path).astype(xp.complex128).tocsr()
+                )
+                if comm.rank == 0:
+                    print(f"Loaded Overlap ({x_index} {y_index} {z_index})", flush=True)
+            except Exception as e:
+                if comm.rank == 0:
+                    print(f"Failed to load {overlap_path.stem}: {e}", flush=True)
 
         if (0, 0, 0) not in self.hamiltonian:
             raise ValueError(
                 "Hamiltonian matrix for (0,0,0) not found. Please check the input files."
             )
 
-        print(f"Loaded {len(self.hamiltonian)} Hamiltonian matrices")
         self.num_hamiltonians = len(self.hamiltonian)
+        if comm.rank == 0:
+            print(f"Loaded {self.num_hamiltonians} Hamiltonian matrices", flush=True)
+
         if self.num_hamiltonians == 1:
-            print(
-                "Only Gamma point Hamiltonian found. K-Points calculations are not possible."
-            )
+            if comm.rank == 0:
+                print(
+                    "Only Gamma point Hamiltonian found. K-Points calculations are not possible.",
+                    flush=True,
+                )
             self.gamma_only = True
 
-        # Load all overlap files with format overlap_x_y.npz
-        overlap_pattern = str(quatrex_config.input_dir / "overlap_*.npz")
-        overlap_files = glob.glob(overlap_pattern)
-
-        # Parse indices from filenames and load files
-        for file_path in overlap_files:
-            filename = file_path.split("/")[-1]  # Get just the filename
-            match = re.match(r"overlap_(-?\d+)_(-?\d+)_(-?\d+)\.npz", filename)
-            if match:
-                x_index = int(match.group(1))
-                y_index = int(match.group(2))
-                z_index = int(match.group(3))
-                try:
-                    self.overlap[(x_index, y_index, z_index)] = (
-                        distributed_load(Path(file_path)).astype(xp.complex128).tocsr()
-                    )
-                    print(f"Loaded Overlap ({x_index} {y_index} {z_index})")
-                except Exception as e:
-                    print(f"Failed to load {filename}: {e}")
-
         if (0, 0, 0) not in self.overlap:
-            print("Overlap matrix for (0,0,0) not found. Assuming identity matrix.")
+            if comm.rank == 0:
+                print(
+                    "Overlap matrix for (0,0,0) not found. Assuming identity matrix.",
+                    flush=True,
+                )
             self.overlap[(0, 0, 0)] = sparse.eye(
-                self.hamiltonian[(0, 0, 0)].shape[0], dtype=xp.complex128, format="csr"
+                self.hamiltonian[0, 0, 0].shape[0], dtype=xp.complex128, format="csr"
             )
 
         self.num_overlaps = len(self.overlap)
-        print(f"Loaded {self.num_overlaps} overlap matrices")
+        if comm.rank == 0:
+            print(f"Loaded {self.num_overlaps} overlap matrices", flush=True)
 
-        # TODO # Check if the number of Hamiltonians and overlaps match
+    def _init_lattice(self) -> None:
+        """Initalizes the lattice structure of the device."""
 
-    def _load_lattice(self, quatrex_config: QuatrexConfig) -> None:
-        """
-        Load the lattice structure from the specified configuration.
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The configuration object containing the input directory and other settings.
-        """
-        # Load lattice structure from file
-
-        lattice_file = quatrex_config.input_dir / "lattice.xyz"
+        # Load the lattice structure from file.
+        lattice_file = self.config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
         self.lattice_vector, self.atoms_list, self.coords, self.atom_type = (
             distributed_read_xyz(lattice_file)
         )
-        print("Lattice structure loaded successfully.")
+        if comm.rank == 0:
+            print("Lattice structure loaded successfully.", flush=True)
 
-    def _load_orbitals(self, quatrex_config: QuatrexConfig) -> NDArray:
-        """
-        Load the number of orbitals for each atom type from the specified configuration.
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The configuration object containing the input directory and other settings.
-
-        Returns
-        -------
-        NDArray
-            The number of orbitals for each atom type.
-        """
-        self.orbitals_per_at = distributed_read_orbitals(
-            quatrex_config.input_dir / "orb.dat"
+    def _init_orbitals(self):
+        """Initializes the orbitals of the device."""
+        orbitals_per_atom = np.fromiter(
+            map(
+                defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
+                self.atom_type,
+            ),
+            dtype=np.int32,
         )
-
         # Create a vector with the starting orbital for each atom
-        self.orbitals_vec = xp.concatenate(
-            (xp.array([0]), xp.cumsum(self.orbitals_per_at[self.atom_type])),
-            dtype=xp.int32,
-        )
+        self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
 
-    def _load_potential(self, quatrex_config: QuatrexConfig) -> None:
-        """
-        Load the potential from the specified configuration.
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The configuration object containing the input directory and other settings.
-        """
+    def _load_potential(self) -> None:
+        """Loads the potential from the specified configuration."""
 
-        self.orb_potential = None
+        self.orbital_potential = None
 
         try:
             self.atom_potential = distributed_load(
-                quatrex_config.input_dir / "potential.npy"
+                self.config.input_dir / "potential.npy"
             )
             # Upscale the potential to the number of orbitals
-            self.orb_potential = get_orb_potential(
-                self.atom_potential, self.orbitals_vec
+            self.orbital_potential = get_orbital_potential(
+                self.atom_potential, self.orbital_offsets
             )
 
         except FileNotFoundError:
-            (
+            if comm.rank == 0:
                 print("No external potential is provided.", flush=True)
-                if comm.rank == 0
-                else None
-            )
 
-    def _apply_potential(
-        self,
-    ) -> None:
+    # TODO: THis should probably not happen directly in the Hamiltonian,
+    # but rather during the construction of the system matrix.
+    def apply_potential(self) -> None:
+        """Applies the potential to the Hamiltonian."""
 
-        if self.orb_potential is None:
-            print("No potential loaded. Skipping potential application.")
+        if self.orbital_potential is None:
+            if comm.rank == 0:
+                print(
+                    "No potential loaded. Skipping potential application.", flush=True
+                )
             return
 
-        for key, value in self.overlap.items():
+        for r, s_r in self.overlap.items():
+            SV1 = s_r.multiply(self.orbital_potential).tocsr()
+            SV2 = s_r.multiply(self.orbital_potential.T).tocsr()
+            self.hamiltonian[r] += (SV1 + SV2) / 2
+            self.hamiltonian[r].eliminate_zeros()
 
-            SV1 = value.multiply(self.orb_potential).tocsr()
-            SV2 = value.multiply(self.orb_potential.T).tocsr()
-            self.hamiltonian[key] += (SV1 + SV2) / 2
-            self.hamiltonian[key].eliminate_zeros()
-
-    def _add_contacts(self, config) -> list[Contact]:
+    def _add_contacts(self) -> list[Contact]:
         """
         Add a contact to the device.
 
@@ -465,12 +285,16 @@ class Device:
             The direction of the contact.
 
         """
+
         contacts = []
-        n, name, origin, vectors, direction = distributed_load_contact(
-            config.input_dir / "cont.dat"
-        )
-        for i in range(n):
+        for contact_config in self.config.device.contacts:
             contacts.append(
-                Contact(name[i], self, vectors[i], origin[i], direction[i], config)
+                Contact(
+                    device=self,
+                    name=contact_config.name,
+                    origin=contact_config.origin,
+                    vectors=contact_config.size,
+                    direction=contact_config.direction,
+                )
             )
         return contacts

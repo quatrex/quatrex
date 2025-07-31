@@ -2,7 +2,6 @@
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
@@ -12,8 +11,8 @@ from qttools.utils.mpi_utils import distributed_load, get_local_slice
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.device import Device
 from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.core.statistics import fermi_dirac
 
+# ------------------------------------------------------------
 # TODO: This can be refactored into a common solver interface.
 try:
     from qttools.cuDSS_binding.cudss_wrapp import CuDSS
@@ -33,49 +32,33 @@ try:
 except ImportError:
     MUMPS_AVAILABLE = False
 
-
 if xp.__name__ == "numpy":
-    from scipy.sparse.linalg import splu  # , spsolve
+    from scipy.sparse.linalg import splu
 if xp.__name__ == "cupy":
-    from cupyx.scipy.sparse.linalg import splu  # , spsolve
+    from cupyx.scipy.sparse.linalg import splu
+
+# ------------------------------------------------------------
 
 
-def monkhorst_pack(size):
-    """Construct a uniform sampling of k-space of given size."""
+def monkhorst_pack(size: tuple[int]) -> NDArray:
+    """Constructs a Monkhorst-Pack grid of k-points.
+
+    Parameters
+    ----------
+    size : tuple
+        The size of the grid in each direction.
+    Returns
+    -------
+    kpts : NDArray
+        The Monkhorst-Pack grid of k-points.
+
+    """
     kpts = np.indices(size).transpose((1, 2, 3, 0)).reshape((-1, 3))
     return (kpts + 0.5) / size - 0.5
 
 
-def distributed_read_slabs(filename: Path) -> tuple[int, int]:
-    """Reads the number of slabs in x and y from a file.
-
-    Parameters
-    ----------
-    filename : Path
-        The path to the file containing the number of slabs.
-
-    Returns
-    -------
-    slab_x : int
-        The number of slabs in x.
-    slab_y : int
-        The number of slabs in y.
-
-    """
-
-    slabs = None
-    if comm.rank == 0:
-        slabs = np.loadtxt(
-            filename, dtype=xp.int32
-        )  # Read the number of slabs in x and y
-
-    slabs = comm.bcast(slabs, root=0)  # Broadcast the data to all the ranks
-
-    return slabs
-
-
 def compute_slab_vector_x(
-    coords: NDArray, num_slabs: int, orbitals: NDArray
+    atom_coords: NDArray, num_slabs: int, orbital_offsets: NDArray
 ) -> tuple[NDArray, NDArray]:
     """Computes the elements (atom,orbitals) for each slab in the x direction.
 
@@ -97,15 +80,15 @@ def compute_slab_vector_x(
 
     """
 
-    vec_atoms = []
-    vec_orb = []
+    atom_inds = []
+    orbital_inds = []
 
-    # dx is needed to allow every atom to be included in one slab slab
+    # dx is needed to allow every atom to be included in one slab
     dx = 0.001
 
     # Get the min and max x coordinates
-    x_min = coords[:, 0].min()
-    x_max = coords[:, 0].max()
+    x_min = atom_coords[:, 0].min()
+    x_max = atom_coords[:, 0].max()
 
     # Compute the width of each slab
     slab_width = (x_max - x_min) / num_slabs
@@ -113,58 +96,43 @@ def compute_slab_vector_x(
     # Assign some group of atoms to each slab
     for i in range(num_slabs):
         if i != num_slabs - 1:
-            vec_atoms.append(
+            atom_inds.append(
                 xp.nonzero(
                     xp.logical_and(
-                        coords[:, 0] >= x_min + i * slab_width - dx,
-                        coords[:, 0] < x_min + (i + 1) * slab_width - dx,
+                        atom_coords[:, 0] >= x_min + i * slab_width - dx,
+                        atom_coords[:, 0] < x_min + (i + 1) * slab_width - dx,
                     )
                 )[0]
             )
         else:
-            vec_atoms.append(
+            atom_inds.append(
                 xp.nonzero(
                     xp.logical_and(
-                        coords[:, 0] >= x_min + i * slab_width - dx,
-                        coords[:, 0] <= x_min + (i + 1) * slab_width + dx,
+                        atom_coords[:, 0] >= x_min + i * slab_width - dx,
+                        atom_coords[:, 0] <= x_min + (i + 1) * slab_width + dx,
                     )
                 )[0]
             )
 
     # Assign the orbitals to each slab
-    for i in range(num_slabs):
-        vec_orb_loc = xp.array([], dtype=xp.int32)
-        for j in range(vec_atoms[i].shape[0]):
-            # NEED TO MOVE THE INDEX ON THE CPU
-            # I USED A QUICK WORKAROUND FOR NOW
-            index = int(
-                vec_atoms[i][j].get()
-                if hasattr(vec_atoms[i][j], "get")
-                else vec_atoms[i][j]
+    for i, atom_ind in enumerate(atom_inds):
+        slab_orbital_inds = np.array([], dtype=xp.int32)
+        for ind in atom_ind:
+            slab_orbital_inds = np.concatenate(
+                (
+                    slab_orbital_inds,
+                    np.arange(orbital_offsets[ind], orbital_offsets[ind + 1]),
+                )
             )
-            k1 = int(
-                orbitals[index].get()
-                if hasattr(orbitals[index], "get")
-                else orbitals[index]
-            )
-            k2 = int(
-                orbitals[index + 1].get()
-                if hasattr(orbitals[index + 1], "get")
-                else orbitals[index + 1]
-            )
-            vec_orb_loc = xp.concatenate((vec_orb_loc, xp.arange(k1, k2)))
 
-        vec_orb.append(vec_orb_loc[None, :])
-        (
+        orbital_inds.append(slab_orbital_inds[None, :])
+        if comm.rank == 0:
             print(
-                f"Slab {i} has {vec_atoms[i].shape[0]} atoms and {vec_orb[i].shape[1]} orbitals",
+                f"Slab {i} has {atom_ind.shape[0]} atoms and {slab_orbital_inds.shape[0]} orbitals",
                 flush=True,
             )
-            if comm.rank == 0
-            else None
-        )
 
-    return vec_atoms, vec_orb
+    return atom_inds, orbital_inds
 
 
 @dataclass
@@ -245,18 +213,17 @@ class QTBM:
         self.local_energies = get_local_slice(self.electron_energies)
 
         # CREATE VECTORS FOR EVERY SLAB
-        self.num_slabs_x, self.num_slabs_y = distributed_read_slabs(
-            quatrex_config.input_dir / "slabs.dat"
-        )
+        self.num_slabs_x, self.num_slabs_y = quatrex_config.device.num_slabs
+
         self.slab_vec_x_at, self.slab_vec_x_orb = compute_slab_vector_x(
-            device.coords, self.num_slabs_x, device.orbitals_vec
+            device.coords, self.num_slabs_x, device.orbital_offsets
         )
 
         # Look for all the combinations of contacts
         self.num_transmissions = int((self.num_contacts**2 - self.num_contacts) / 2)
         cont_1 = 0
         cont_2 = 1
-        for n in range(self.num_transmissions):
+        for __ in range(self.num_transmissions):
             # Append the label for every transmission
             self.observables.electron_transmission_contacts_labels.append(
                 device.contacts[cont_1].name[0] + "->" + device.contacts[cont_2].name[0]
@@ -279,31 +246,19 @@ class QTBM:
             dtype=xp.float64,
         )
 
-        self.temperature = quatrex_config.electron.temperature
-
-        self.left_fermi_level = quatrex_config.electron.left_fermi_level
-        self.right_fermi_level = quatrex_config.electron.right_fermi_level
-
-        self.left_occupancies = fermi_dirac(
-            self.local_energies - self.left_fermi_level, self.temperature
-        )
-        self.right_occupancies = fermi_dirac(
-            self.local_energies - self.right_fermi_level, self.temperature
-        )
-
-        self.num_orbitals = self.device.hamiltonian[(0, 0, 0)].shape[0]
+        self.num_orbitals = self.device.hamiltonian[0, 0, 0].shape[0]
 
         # TODO: Hamiltonian should be assembled for each k-point.
         # (This can easily be vectorized)
         self.hamiltonian_phase = sparse.csr_matrix(
-            self.device.hamiltonian[(0, 0, 0)].shape, dtype=xp.complex128
+            self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
         )
         for r, h_r in self.device.hamiltonian.items():
             self.hamiltonian_phase += h_r * xp.exp(
                 1j * self.k[0] * r[0] + 1j * self.k[1] * r[1] + 1j * self.k[2] * r[2]
             )
         self.overlap_phase = sparse.csr_matrix(
-            self.device.overlap[(0, 0, 0)].shape, dtype=xp.complex128
+            self.device.overlap[0, 0, 0].shape, dtype=xp.complex128
         )
         for r, s_r in self.device.overlap.items():
             self.overlap_phase += s_r * xp.exp(
@@ -449,7 +404,7 @@ class QTBM:
             Ks = []
             Ts = []
             # Compute the boundary self-energy and the injection vector.
-            ind_0 = xp.zeros(len(energy_batch), dtype=xp.int32)
+            ind_0 = np.zeros(len(energy_batch), dtype=np.int32)
             for contact in self.device.contacts:
                 times.append(time.perf_counter())
 
@@ -466,11 +421,7 @@ class QTBM:
                 # indices of every injected vector.
                 inj_ind_temp = []
                 for i in range(len(energy_batch)):
-                    i0 = (
-                        ind_0[i].get().item()
-                        if hasattr(ind_0[i], "get")
-                        else ind_0[i].item()
-                    )
+                    i0 = ind_0[i]
                     n_i = (
                         num_inj[i].get().item()
                         if hasattr(num_inj[i], "get")
@@ -528,9 +479,8 @@ class QTBM:
                         )
                     )
                     sig_flat.append(sigma_obc[i, :, :].flatten())
-                    inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[
-                        i
-                    ]  # Add the injection vector in the contact elements of the rhs
+                    # Add the injection vector in the contact elements of the rhs
+                    inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[i]
                     # Add the K vector in the contact elements of the rhs
                     K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
@@ -583,11 +533,9 @@ class QTBM:
                 #        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].ravel()
 
                 t_solve = time.perf_counter() - times.pop()
-                (
+                if comm.rank == 0:
                     print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
-                    if comm.rank == 0
-                    else None
-                )
+
                 times.append(time.perf_counter())
                 # Solve for the wavefunction
 
@@ -602,47 +550,37 @@ class QTBM:
                             t_mumps = time.perf_counter()
                             inst.analyze(self.system_matrix)
                             t_analyze = time.perf_counter() - t_mumps
-                            (
+                            if comm.rank == 0:
                                 print(
                                     f"Time for MUMPS analyze: {t_analyze:.2f} s",
                                     flush=True,
                                 )
-                                if comm.rank == 0
-                                else None
-                            )
 
                             t_mumps = time.perf_counter()
                             inst.factor(self.system_matrix)
                             t_factor = time.perf_counter() - t_mumps
-                            (
+
+                            if comm.rank == 0:
                                 print(
                                     f"Time for MUMPS factor: {t_factor:.2f} s",
                                     flush=True,
                                 )
-                                if comm.rank == 0
-                                else None
-                            )
 
                             t_mumps = time.perf_counter()
                             phi = inst.solve(inj_V)
                             t_solve = time.perf_counter() - t_mumps
-                            (
+                            if comm.rank == 0:
                                 print(
                                     f"Time for MUMPS solve: {t_solve:.2f} s", flush=True
                                 )
-                                if comm.rank == 0
-                                else None
-                            )
+
                         else:
                             lu = splu(self.system_matrix)
                             phi = lu.solve(inj_V)
 
                 t_solve = time.perf_counter() - times.pop()
-                (
+                if comm.rank == 0:
                     print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
-                    if comm.rank == 0
-                    else None
-                )
                 times.append(time.perf_counter())
                 # Get the bare system matrix back, needed for transmission calculation
                 upd_0.data[:] = (
@@ -671,28 +609,20 @@ class QTBM:
                     )
 
                 t_iteration = time.perf_counter() - times.pop()
-                (
+                if comm.rank == 0:
                     print(
                         f"Time for computing observables: {t_iteration:.2f} s",
                         flush=True,
                     )
-                    if comm.rank == 0
-                    else None
-                )
 
             t_iteration = time.perf_counter() - times.pop()
-            (
+            if comm.rank == 0:
                 print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
-                if comm.rank == 0
-                else None
-            )
 
         t_iteration = time.perf_counter() - times.pop()
-        (
+        if comm.rank == 0:
             print(f"Time for QTBM: {t_iteration:.2f} s", flush=True)
-            if comm.rank == 0
-            else None
-        )
+
         # Gather the observables
         comm.Barrier()
         self.observables.electron_transmission_x_slabs = xp.concatenate(

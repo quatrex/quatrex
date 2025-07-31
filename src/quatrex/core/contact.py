@@ -1,3 +1,5 @@
+import numpy as np
+from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, obc, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
 
@@ -5,6 +7,137 @@ from quatrex.core.quatrex_config import OBCConfig
 
 
 class Contact:
+    """Class representing a contact for QTBM.
+
+    Parameters
+    ----------
+    name : str
+        The name of the contact.
+    device : Device
+        The device to which the contact is attached.
+    vectors : NDArray
+        The vectors defining the unit cell of the contact.
+    origin : NDArray
+        The origin of the contact cell in the device coordinates.
+    direction : int
+        The direction of the contact (0, 1, or 2).
+    config : QuatrexConfig
+        The configuration object containing the OBC settings.
+
+    """
+
+    def __init__(
+        self,
+        device,
+        name: str,
+        origin: NDArray,
+        vectors: NDArray,
+        direction: str,
+    ):
+        """Initializes the contact object."""
+
+        self.name = name
+        self.device = device
+        self.vectors = vectors
+        self.origin = origin
+
+        self.direction = "abc".index(direction)
+        self.transverse_axis = [0, 1, 2]
+        self.transverse_axis.remove(self.direction)
+
+        self.obc = self._configure_obc(device.config.electron.obc)
+
+        self.UC_hamiltonian = {}
+        self.UC_overlap = {}
+
+        self.S10_contact = {}
+        self.H10_contact = {}
+
+        if len(self.transverse_axis) != 2:
+            raise ValueError("Direction must be one of the three axes (0, 1, or 2).")
+
+        relative_coords = self.device.coords - self.origin
+        self.coeffs = relative_coords @ xp.linalg.inv(self.vectors)
+
+        # Get the atoms inside the origin cell (defined by the user)
+        self.at_origin_cell = self._get_atoms_inside_cell(0, 0, 0)
+        self.orb_origin_cell = self._get_orbitals(self.at_origin_cell)
+        self.n_at_origin_cell = self.at_origin_cell.shape[0]
+        self.n_orb_origin_cell = self.orb_origin_cell.shape[0]
+
+        if comm.rank == 0:
+            print(f"Contact {self.name}:", flush=True)
+            print(
+                f"    Number of atoms inside the origin cell: {self.at_origin_cell.shape[0]}",
+                flush=True,
+            )
+            print(f"    Atoms in the origin cell: {self.at_origin_cell}", flush=True)
+
+        # Check how many periodic repetitions are in the transverse directions
+        self._get_periodic_number_transverse()
+        if comm.rank == 0:
+            print(
+                f"    Number of periodic repetitions in the transverse directions: {self.n_rep_1} x {self.n_rep_2}",
+                flush=True,
+            )
+
+        # TODO Check if the contact transverse UC vectors are in the same direction as the device vectors
+
+        # Get the atoms (and orbtals) in the first contact cell
+        self.atoms = []
+        self.orbitals = []
+        self.atoms.append(self._get_atoms_transverse_sorted(0))
+        self.orbitals.append(self._get_orbitals(self.atoms[0]))
+
+        # Get the hamiltonian and overlap matrices for the first contact cell
+        self._get_matrix(0)
+
+        x = 1
+        # Iterate over the transport direction until there is no more residual coupling in the contact cell
+        while self._residual_coupling(self.orbitals) > 0:
+            if comm.rank == 0:
+                print(
+                    f"    Residual coupling={self._residual_coupling(self.orbitals)}",
+                    flush=True,
+                )
+
+            # Get atoms, orbitals and matrices for the next contact cell
+            self.atoms.append(self._get_atoms_transverse_sorted(x))
+            self.orbitals.append(self._get_orbitals(self.atoms[x]))
+            self._get_matrix(x)
+
+            x = x + 1
+
+        if comm.rank == 0:
+            print(f"    Maximum number of transverse repetitions: {x-1}", flush=True)
+
+        # In case of multiple contact cells in the transport direction,
+        # and in case of multiple unit cells in the transverse direction,
+        # we will obtain a the self energy sorted in different way.
+        # atoms_2 will be used to sort the atoms in a consistent way (sorted over the transport direction).
+        self.atoms_2 = []
+        self.orbitals_2 = []
+
+        for i in range(self.n_rep_1):
+            for j in range(self.n_rep_2):
+                for k in range(x - 1):
+                    # start = i*self.n_at_origin_cell*self.n_rep_2 + j*self.n_at_origin_cell
+                    # end = start + self.n_at_origin_cell
+                    # self.atoms_2.append(self.atoms[k][start:end])
+                    start = self.n_orb_origin_cell * (
+                        k * self.n_rep_1 * self.n_rep_2 + i * self.n_rep_2 + j
+                    )
+                    end = start + self.n_orb_origin_cell
+                    self.orbitals_2.append(xp.arange(start, end))
+
+        # Concatenate the atoms_2 list and get the orbitals order for the unsorted cell
+        # self.atoms_2 = xp.concatenate(self.atoms_2, dtype=int)
+        # self.orbitals_2 = self._get_orbitals(self.atoms_2)
+        self.orbitals_2 = xp.concatenate(self.orbitals_2, dtype=int)
+
+        self.orbitals_contact = xp.concatenate(self.orbitals[:-1])[None, :]
+
+        self.transverse_rep = x - 1
 
     def _get_atoms_inside_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Get the indices of atoms inside the repetition of the peridic cell.
@@ -42,7 +175,9 @@ class Contact:
 
         return inside_mask
 
-    def _reorder_atoms(self, at_inside_rep: NDArray, a: int, b: int, c: int) -> NDArray:
+    def _reorder_atoms(
+        self, at_inside_rep: NDArray, a: int, b: int, c: int, tol: float = 0.1
+    ) -> NDArray:
         """Reorder the atoms inside the cell to match the order in the origin cell.
 
         Parameters
@@ -64,7 +199,6 @@ class Contact:
 
         sorted = []
         # Tolerance for the distance check
-        tolerance = 0.1
 
         a = int(a)  # Ensure a, b, c are integers
         b = int(b)
@@ -77,7 +211,7 @@ class Contact:
             # Find the atoms in the periodic repetition that are close to the atom in the origin cell and have the same element
             delta = coords_rep - self.device.coords[at, :]
             found = xp.nonzero(
-                (xp.linalg.norm(delta, axis=1) < tolerance)
+                (xp.linalg.norm(delta, axis=1) < tol)
                 & (self.device.atom_type[at] == element_rep)
             )[0]
             if found.size == 0:
@@ -101,16 +235,19 @@ class Contact:
 
         def count_reps(axis: int, sign: int) -> int:
             """Count the number of periodic repetitions in a given transverse direction.
+
             Parameters
             ----------
             axis : int
                 The axis along which to count the repetitions (0, 1, or 2).
             sign : int
                 The sign of the direction to count the repetitions (1 for positive, -1 for negative).
+
             Returns
             -------
             int
                 The number of periodic repetitions in the given direction.
+
             """
             # Start counting from the origin cell
             n_rep = 0
@@ -149,14 +286,17 @@ class Contact:
 
     def _get_atoms_transverse_sorted(self, x: int) -> NDArray:
         """Get the indices of the atoms inside the periodic repetition (in transport direction) of the full contact cell.
+
         Parameters
         ----------
         x : int
             The index of the periodic repetition in the transport direction.
+
         Returns
         -------
         NDArray
             The indices of the atoms inside the periodic repetition.
+
         """
 
         atom_list = []
@@ -169,7 +309,11 @@ class Contact:
 
         while curr_cell[0] < max_cell[0]:
             while curr_cell[1] < max_cell[1]:
-                print(f"    Periodic repetition at: {curr_cell[0]}, {curr_cell[1]}")
+                if comm.rank == 0:
+                    print(
+                        f"    Periodic repetition at: {curr_cell[0]}, {curr_cell[1]}",
+                        flush=True,
+                    )
                 # Get the indices of the atoms inside the periodic repetition
                 idx = [curr_cell[0], curr_cell[1]]
                 idx.insert(self.direction, x)
@@ -180,7 +324,8 @@ class Contact:
                 at_inside_rep = self._reorder_atoms(
                     at_inside_rep, c_list[0], c_list[1], c_list[2]
                 )
-                print("    " + str(at_inside_rep))
+                if comm.rank == 0:
+                    print("    " + str(at_inside_rep), flush=True)
                 atom_list.append(at_inside_rep)
                 curr_cell[1] += 1
 
@@ -191,47 +336,53 @@ class Contact:
 
     def _get_orbitals(self, atoms: NDArray) -> NDArray:
         """Get the orbital indices corresponding to the atoms
+
         Parameters
         ----------
         atoms : NDArray
             The indices of the atoms.
+
         Returns
         -------
         NDArray
             The indices of the orbitals corresponding to the atoms.
+
         """
 
-        vec_orb = xp.array([], dtype=xp.int32)
+        orbital_ind = np.array([], dtype=np.int32)
         for i in range(atoms.shape[0]):
             # NEED TO MOVE THE INDEX ON THE CPU
             # I USED A QUICK WORKAROUND FOR NOW
             index = int(atoms[i].get() if hasattr(atoms[i], "get") else atoms[i])
             # Starting orbitals for the current atom
             k1 = int(
-                self.device.orbitals_vec[index].get()
-                if hasattr(self.device.orbitals_vec[index], "get")
-                else self.device.orbitals_vec[index]
+                self.device.orbital_offsets[index].get()
+                if hasattr(self.device.orbital_offsets[index], "get")
+                else self.device.orbital_offsets[index]
             )
-            # Ending orbitals for the current atom (can be computed from orbitals_vec)
+            # Ending orbitals for the current atom (can be computed from orbital_offsets)
             k2 = int(
-                self.device.orbitals_vec[index + 1].get()
-                if hasattr(self.device.orbitals_vec[index + 1], "get")
-                else self.device.orbitals_vec[index + 1]
+                self.device.orbital_offsets[index + 1].get()
+                if hasattr(self.device.orbital_offsets[index + 1], "get")
+                else self.device.orbital_offsets[index + 1]
             )
-            vec_orb = xp.concatenate((vec_orb, xp.arange(k1, k2)))
+            orbital_ind = np.concatenate((orbital_ind, np.arange(k1, k2)))
 
-        return vec_orb
+        return orbital_ind
 
     def _get_circumference_coordinates(self, radius: int) -> list:
         """Get coordinates only on the circumference (perimeter) of the grid, given a radius.
+
         Parameters
         ----------
         radius : int
             The radius of the circumference.
+
         Returns
         -------
         list
             A list of tuples representing the coordinates on the circumference.
+
         """
         coordinates = []
 
@@ -245,10 +396,12 @@ class Contact:
 
     def _get_matrix(self, x: int) -> None:
         """Get the hamiltonian matrix for the transverse contact cell at a given distance x in transport direction.
+
         Parameters
         ----------
         x : int
             The index of the periodic repetition in the transport direction.
+
         """
 
         # The hamiltonian and overlap matrices for a given transverse slice are obtained around the origin cell
@@ -329,22 +482,25 @@ class Contact:
 
     def _residual_coupling(self, orbitals: list) -> bool:
         """Check if there is residual coupling between the orbitals in the contact and the full device.
+
         Parameters
         ----------
         orbitals : list
             A list of orbital indices for which to check the residual coupling.
+
         Returns
         -------
         bool
             True if there is residual coupling, False otherwise.
+
         """
 
         tot_orb = xp.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
         tot_orb = tot_orb[~xp.isin(tot_orb, xp.concatenate(orbitals))]
 
-        return self.device.hamiltonian[(0, 0, 0)][orbitals[0], :][:, tot_orb].nnz
+        return self.device.hamiltonian[0, 0, 0][orbitals[0], :][:, tot_orb].nnz
 
-    def _configure_obc(self, obc_config: OBCConfig) -> obc.OBCSolver:
+    def _configure_obc(self, obc_config: OBCConfig) -> obc.Spectral:
         """Configures the OBC algorithm from the config.
 
         Parameters
@@ -384,11 +540,7 @@ class Contact:
             )
 
         if obc_config.memoizer.enable:
-            obc_solver = obc.OBCMemoizer(
-                obc_solver,
-                obc_config.memoizer.num_ref_iterations,
-                obc_config.memoizer.convergence_tol,
-            )
+            raise NotImplementedError("Memoizer for OBC is not implemented.")
 
         return obc_solver
 
@@ -437,131 +589,21 @@ class Contact:
             )
         return h10_temp.T.conj().todense()
 
-    def __init__(
-        self, name, device, vectors: NDArray, origin: NDArray, direction: int, config
-    ):
-        """Initialize the contact object.
-        Parameters
-        ----------
-        name : str
-            The name of the contact.
-        device : Device
-            The device to which the contact is attached.
-        vectors : NDArray
-            The vectors defining the unit cell of the contact.
-        origin : NDArray
-            The origin of the contact cell in the device coordinates.
-        direction : int
-            The direction of the contact (0, 1, or 2).
-        config : QuatrexConfig
-            The configuration object containing the OBC settings.
-        """
-
-        self.name = name
-        self.device = device
-        self.vectors = vectors
-        self.origin = origin
-        self.direction = direction
-        self.transverse_axis = [0, 1, 2]
-        self.transverse_axis.remove(direction)
-
-        self.obc = self._configure_obc(getattr(config, "electron").obc)
-
-        self.UC_hamiltonian = {}
-        self.UC_overlap = {}
-
-        self.S10_contact = {}
-        self.H10_contact = {}
-
-        if len(self.transverse_axis) != 2:
-            raise ValueError("Direction must be one of the three axes (0, 1, or 2).")
-
-        relative_coords = self.device.coords - self.origin
-        self.coeffs = relative_coords @ xp.linalg.inv(self.vectors)
-
-        # Get the atoms inside the origin cell (defined by the user)
-        self.at_origin_cell = self._get_atoms_inside_cell(0, 0, 0)
-        self.orb_origin_cell = self._get_orbitals(self.at_origin_cell)
-        self.n_at_origin_cell = self.at_origin_cell.shape[0]
-        self.n_orb_origin_cell = self.orb_origin_cell.shape[0]
-
-        print(f"Contact {self.name}:")
-        print(
-            f"    Number of atoms inside the origin cell: {self.at_origin_cell.shape[0]}"
-        )
-        print(f"    Atoms in the origin cell: {self.at_origin_cell}")
-
-        # Check how many periodic repetitions are in the transverse directions
-        self._get_periodic_number_transverse()
-        print(
-            f"    Number of periodic repetitions in the transverse directions: {self.n_rep_1} x {self.n_rep_2}"
-        )
-
-        # TODO Check if the contact transverse UC vectors are in the same direction as the device vectors
-
-        # Get the atoms (and orbtals) in the first contact cell
-        self.atoms = []
-        self.orbitals = []
-        self.atoms.append(self._get_atoms_transverse_sorted(0))
-        self.orbitals.append(self._get_orbitals(self.atoms[0]))
-
-        # Get the hamiltonian and overlap matrices for the first contact cell
-        self._get_matrix(0)
-
-        x = 1
-        # Iterate over the transport direction until there is no more residual coupling in the contact cell
-        while self._residual_coupling(self.orbitals) > 0:
-            print(f"    Residual coupling={self._residual_coupling(self.orbitals)}")
-
-            # Get atoms, orbitals and matrices for the next contact cell
-            self.atoms.append(self._get_atoms_transverse_sorted(x))
-            self.orbitals.append(self._get_orbitals(self.atoms[x]))
-            self._get_matrix(x)
-
-            x = x + 1
-
-        print(f"    Maximum number of transverse repetitions: {x-1}")
-
-        # In case of multiple contact cells in the transport direction,
-        # and in case of multiple unit cells in the transverse direction,
-        # we will obtain a the self energy sorted in different way.
-        # atoms_2 will be used to sort the atoms in a consistent way (sorted over the transport direction).
-        self.atoms_2 = []
-        self.orbitals_2 = []
-
-        for i in range(self.n_rep_1):
-            for j in range(self.n_rep_2):
-                for k in range(x - 1):
-                    # start = i*self.n_at_origin_cell*self.n_rep_2 + j*self.n_at_origin_cell
-                    # end = start + self.n_at_origin_cell
-                    # self.atoms_2.append(self.atoms[k][start:end])
-                    start = self.n_orb_origin_cell * (
-                        k * self.n_rep_1 * self.n_rep_2 + i * self.n_rep_2 + j
-                    )
-                    end = start + self.n_orb_origin_cell
-                    self.orbitals_2.append(xp.arange(start, end))
-
-        # Concatenate the atoms_2 list and get the orbitals order for the unsorted cell
-        # self.atoms_2 = xp.concatenate(self.atoms_2, dtype=int)
-        # self.orbitals_2 = self._get_orbitals(self.atoms_2)
-        self.orbitals_2 = xp.concatenate(self.orbitals_2, dtype=int)
-
-        self.orbitals_contact = xp.concatenate(self.orbitals[:-1])[None, :]
-
-        self.transverse_rep = x - 1
-
     def _get_list_mat_phase(self, k1: float, k2: float) -> NDArray:
         """Get the list of hopping matrices in transport direction with the corresponding phase factors (for the transverse direction).
+
         Parameters
         ----------
         k1 : float
             The k1 value for the phase factor.
         k2 : float
             The k2 value for the phase factor.
+
         Returns
         -------
         tuple
             A tuple containing two lists: the list of hamiltonian matrices and the list of overlap matrices.
+
         """
         # Size of the hamiltonian and overlap matrices
         n = self.UC_hamiltonian[(0, 0, 0)].shape[0]
@@ -597,16 +639,19 @@ class Contact:
 
     def _construct_circulant_matrix(self, list_mat: list, phase: float) -> NDArray:
         """Construct a circulant matrix from a list of matrices with a given phase factor.
+
         Parameters
         ----------
         list_mat : list
             A list of matrices to construct the circulant matrix from.
         phase : float
             The phase factor to apply to the matrices.
+
         Returns
         -------
         NDArray
             The constructed circulant matrix.
+
         """
         # Number of matrices in the list
         n = len(list_mat)
@@ -623,6 +668,7 @@ class Contact:
         self, SE_k: dict, k_1_list: NDArray, k_2_list: NDArray, k1: float, k2: float
     ) -> NDArray:
         """Upscale self-energy matrices using circulant matrix construction.
+
         Parameters
         ----------
         SE_k : dict
@@ -635,10 +681,12 @@ class Contact:
             The k1 value for the lower diagonal phase factor.
         k2 : float
             The k2 value for the lower diagonal phase factor.
+
         Returns
         -------
         NDArray
             The upscaled self-energy matrix.
+
         """
         SE_1 = []
         for i in range(self.n_rep_1):
@@ -667,16 +715,19 @@ class Contact:
 
     def _upscale_injection_modes(self, modes_k: dict, E: NDArray) -> NDArray:
         """Upscale injection vectors using phase multiplication and concatenation.
+
         Parameters
         ----------
         modes_k : dict
             A dictionary containing injection vectors indexed by (k1, k2) tuples.
         E : NDArray
             The batch of energies for which to compute the total inhection vectors.
+
         Returns
         -------
         NDArray
             The upscaled and concatenated injection vectors.
+
         """
         # Upscale the k-space modes
         # Iterate over the wavevector keys
@@ -720,6 +771,7 @@ class Contact:
 
     def compute_boundary(self, ka: float, kb: float, kc: float, E) -> None:
         """Compute the open boundary conditions for the contact at a given k1 and k2 and energy Batch E.
+
         Parameters
         ----------
         k1 : float
@@ -728,10 +780,12 @@ class Contact:
             K point in the second transverse direction.
         E : NDArray
             A batch of energies for which to compute the open boundary conditions.
+
         Returns
         -------
         tuple
             A tuple containing the self-energy, injection modes, number of injected modes, Bloch matrix, and Bloch injection matrix.
+
         """
 
         # FOR NOW, ONLY E BATCHING IS SUPPORTED
@@ -749,22 +803,22 @@ class Contact:
 
         # Create the k-space list needed to upscale the self-energy and injection modes in the transverse directions
         k_1_list = (
-            xp.linspace(0, xp.pi * 2, self.n_rep_1, endpoint=False) + k1 / self.n_rep_1
+            np.linspace(0, np.pi * 2, self.n_rep_1, endpoint=False) + k1 / self.n_rep_1
         )
         k_2_list = (
-            xp.linspace(0, xp.pi * 2, self.n_rep_2, endpoint=False) + k2 / self.n_rep_2
+            np.linspace(0, np.pi * 2, self.n_rep_2, endpoint=False) + k2 / self.n_rep_2
         )
 
-        SE_k = {}
+        sigma_obc_k = {}
         inj_k = {}
         num_inj_k = {}
         K_k = {}
         T_k = {}
 
-        for ki in k_1_list:
-            for kj in k_2_list:
+        for k_i in k_1_list:
+            for k_j in k_2_list:
                 # Construct the hamiltonian and overlap matrices for the given ki and kj
-                H_list, S_list = self._get_list_mat_phase(ki, kj)
+                H_list, S_list = self._get_list_mat_phase(k_i, k_j)
                 H_tot = sparse.hstack(H_list, format="csr")
                 S_tot = sparse.hstack(S_list, format="csr")
 
@@ -788,33 +842,28 @@ class Contact:
                 # Solve the OBC for the given ki and kj and store the results in dictionaries
                 self.obc.block_sections = self.transverse_rep
                 (
-                    _,
-                    SE_k[(ki.item(), kj.item())],
-                    inj_k[(ki.item(), kj.item())],
-                    num_inj_k[(ki.item(), kj.item())],
-                    K_k[(ki.item(), kj.item())],
-                    T_k[(ki.item(), kj.item())],
-                ) = self.obc(
-                    A_tot[1],
-                    A_tot[2],
-                    A_tot[0],
-                    "left",
-                    return_injected=True,
-                )
-                print(f"    Computed OBC for k1={ki}, k2={kj}")
+                    __,
+                    sigma_obc_k[k_i, k_j],
+                    inj_k[k_i, k_j],
+                    num_inj_k[k_i, k_j],
+                    K_k[k_i, k_j],
+                    T_k[k_i, k_j],
+                ) = self.obc(A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True)
+                if comm.rank == 0:
+                    print(f"    Computed OBC for k1={k_i}, k2={k_j}", flush=True)
 
         # Upscale self-energy and Bloch matrices
-        SE_1 = self._upscale_self_energy(SE_k, k_1_list, k_2_list, k1, k2)
-        T_1 = self._upscale_self_energy(T_k, k_1_list, k_2_list, k1, k2)
+        sigma_obc = self._upscale_self_energy(sigma_obc_k, k_1_list, k_2_list, k1, k2)
+        T = self._upscale_self_energy(T_k, k_1_list, k_2_list, k1, k2)
 
         # Upscale injection and Bloch injection matrices
         inj = self._upscale_injection_modes(inj_k, E)
         K = self._upscale_injection_modes(K_k, E)
 
         # Calculate total number of injected modes
-        inj_n = xp.zeros(E.shape[0], dtype=xp.int32)
+        num_inj = np.zeros(E.shape[0], dtype=np.int32)
         for i_E in range(E.shape[0]):
-            for key, value in num_inj_k.items():
-                inj_n[i_E] += value[i_E]
+            for value in num_inj_k.values():
+                num_inj[i_E] += value[i_E]
 
-        return SE_1, inj, inj_n, T_1, K
+        return sigma_obc, inj, num_inj, T, K

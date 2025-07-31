@@ -396,7 +396,12 @@ class Spectral(OBCSolver):
             mask_injected = dEk_dk.real > 0
             mask_injected &= xp.abs(ks.imag) < self.min_decay
 
-            return mask_propagating | mask_decaying, mask_injected, dEk_dk
+            return (
+                (mask_propagating | mask_decaying)
+                & (residuals < self.residual_tolerance),
+                mask_injected & (residuals < self.residual_tolerance),
+                dEk_dk,
+            )
 
         return (mask_propagating | mask_decaying) & (
             residuals < self.residual_tolerance

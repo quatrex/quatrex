@@ -26,6 +26,9 @@ def scale_stack(stacked: NDArray, factor: NDArray, axis: int = 0) -> NDArray:
 
     """
     if not stacked.shape[axis] == factor.shape[0]:
+        print(
+            f"Stacked shape: {stacked.shape}, axis: {axis}, factor shape: {factor.shape}"
+        )
         raise ValueError("The shape of the stack and the factor do not match.")
 
     for i in range(stacked.shape[axis]):

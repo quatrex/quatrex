@@ -1195,14 +1195,34 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
+    def dtype(self):
+        """Returns the dtype."""
+        return self._dsdbsparse.dtype
+
+    @property
     def stack(self) -> "_DStackIndexer":
         """Returns the stack indexer on the substack."""
         return _DStackIndexer(self)
 
     @property
+    def num_blocks(self) -> int:
+        """Returns the number of global (?) blocks."""
+        return self._dsdbsparse.num_blocks
+
+    @property
     def num_local_blocks(self) -> int:
         """Returns the number of local blocks."""
         return self._dsdbsparse.num_local_blocks
+
+    @property
+    def block_sizes(self) -> list[int]:
+        """Returns the global block sizes."""
+        return self._dsdbsparse.block_sizes
+
+    @property
+    def local_block_sizes(self) -> list[int]:
+        """Returns the local block sizes."""
+        return self._dsdbsparse.local_block_sizes
 
     @property
     def local_blocks(self) -> "_DSDBlockIndexer":
@@ -1223,6 +1243,16 @@ class _DStackView:
     def sparse_blocks(self) -> "_DSDBlockIndexer":
         """Returns a sparse block indexer on the substack."""
         return self._sparse_block_indexer
+
+    @property
+    def data(self) -> NDArray:
+        """Returns the local slice of the data, masking the padding."""
+        return self._dsdbsparse.data[self._stack_index]
+
+    @data.setter
+    def data(self, value: NDArray) -> None:
+        """Sets the local slice of the data."""
+        self._dsdbsparse.data[self._stack_index] = value
 
 
 @decorate_methods(profiler.profile(level="debug"))

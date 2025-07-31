@@ -1,3 +1,5 @@
+from typing import Callable
+
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
 
@@ -9,6 +11,7 @@ def _system_reduction_rows(
     a: NDArray,
     q: NDArray,
     contact: str,
+    stack_slice: slice | None,
     solve,
     rows_to_reduce: slice,
 ):
@@ -45,7 +48,7 @@ def _system_reduction_rows(
         @ a[..., rows_to_reduce, :].conj().swapaxes(-2, -1)
     )
 
-    x[..., rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat, contact)
+    x[..., rows_to_reduce, rows_to_reduce] = solve(a_hat, q_hat, contact, stack_slice)
 
     return x
 
@@ -55,6 +58,7 @@ def _system_reduction_cols(
     a: NDArray,
     q: NDArray,
     contact: str,
+    stack_slice: slice | None,
     solve,
     cols_to_reduce: slice,
 ):
@@ -84,7 +88,7 @@ def _system_reduction_cols(
 
     q_hat = q[..., cols_to_reduce, cols_to_reduce]
 
-    x_hat = solve(a_hat, q_hat, contact)
+    x_hat = solve(a_hat, q_hat, contact, stack_slice)
 
     a = xp.broadcast_to(a, q.shape)
     x = q + a[..., :, cols_to_reduce] @ x_hat @ a[
@@ -99,7 +103,8 @@ def system_reduction(
     a: NDArray,
     q: NDArray,
     contact: str,
-    solve,
+    stack_slice: slice | None = None,
+    solve: Callable | None = None,
     out: None | NDArray = None,
 ):
     """Computes the solution of the discrete-time Lyapunov equation.
@@ -172,9 +177,9 @@ def system_reduction(
     # Furthermore, possible to reduce to non contiguous rows/cols
 
     if length_row < length_col:
-        x = _system_reduction_rows(a, q, contact, solve, rows_to_reduce)
+        x = _system_reduction_rows(a, q, contact, stack_slice, solve, rows_to_reduce)
     else:
-        x = _system_reduction_cols(a, q, contact, solve, cols_to_reduce)
+        x = _system_reduction_cols(a, q, contact, stack_slice, solve, cols_to_reduce)
 
     if out is None:
         return x

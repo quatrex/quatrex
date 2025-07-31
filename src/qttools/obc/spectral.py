@@ -583,6 +583,7 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
         return_injected: bool = False,
     ) -> NDArray | None | tuple[NDArray, NDArray, NDArray]:

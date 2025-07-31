@@ -565,6 +565,7 @@ class ElectronSolver(SubsystemSolver):
                 a_ij=m_01 + s_01,
                 a_ji=m_10 + s_10,
                 contact="left",
+                stack_slice=stack_slice,
             )
             # Apply the retarded boundary self-energy.
             sigma_00 = m_10 @ g_00 @ m_01
@@ -605,6 +606,7 @@ class ElectronSolver(SubsystemSolver):
                 a_ij=xp.flip(m_nm + s_nm, axis=(-2, -1)),
                 a_ji=xp.flip(m_mn + s_mn, axis=(-2, -1)),
                 contact="right",
+                stack_slice=stack_slice,
             )
             # ... bop it.
             g_nn = xp.flip(g_nn, axis=(-2, -1))
@@ -798,17 +800,24 @@ class ElectronSolver(SubsystemSolver):
             sse_retarded.shape[0], self.max_batch_size
         )
 
+        if comm.rank == 0:
+            print(f"Max batch size: {self.max_batch_size}", flush=True)
+            print(f"Total size: {sse_retarded.shape[0]}", flush=True)
+            print(f"Batch sizes: {batch_sizes}", flush=True)
+            print(f"Batch offsets: {batch_offsets}", flush=True)
+
         for i in range(len(batch_sizes)):
 
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
 
             if comm.rank == 0:
                 print(
-                    f"Processing slice {stack_slice} of {sse_retarded.shape[0]}",
+                    f"Processing slice {stack_slice} of {sse_retarded.shape[0]}, batch size {batch_sizes[i]}",
                     flush=True,
                 )
 
             t_assemble_start = time.perf_counter()
+            self.system_matrix.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
             self._assemble_system_matrix(sse_retarded, stack_slice)

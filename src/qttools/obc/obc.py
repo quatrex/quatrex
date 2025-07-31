@@ -122,6 +122,7 @@ class OBCMemoizer:
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
     ) -> NDArray:
         """Calls the wrapped OBC solver with cache handling.
 
@@ -143,8 +144,9 @@ class OBCMemoizer:
 
         """
         x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact)
-        self._cache[contact] = x_ii.copy()
+        self._cache[(contact, stack_slice)] = x_ii.copy()
         return x_ii
+
 
     @profiler.profile(level="api")
     def __call__(
@@ -153,6 +155,7 @@ class OBCMemoizer:
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
     ) -> NDArray:
         """Returns the surface Green's function.
 
@@ -182,10 +185,10 @@ class OBCMemoizer:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact)
 
         # Try to reuse the result from the cache.
-        x_ii = self._cache.get(contact, None)
+        x_ii = self._cache.get((contact, stack_slice), None)
 
         if x_ii is None and self.memoizing_mode in ["auto", "force-after-first"]:
-            return self._call_with_cache(a_ii, a_ij, a_ji, contact)
+            return self._call_with_cache(a_ii, a_ij, a_ji, stack_slice, contact)
         elif self.memoizing_mode == "force":
             x_ii = linalg.inv(a_ii) if x_ii is None else x_ii
 
@@ -207,7 +210,7 @@ class OBCMemoizer:
             # NOTE: it would be possible to memoize even if few energies did not converge
             if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
-                return self._call_with_cache(a_ii, a_ij, a_ji, contact)
+                return self._call_with_cache(a_ii, a_ij, a_ji, contact, stack_slice)
 
         x_ii = x_ii_ref
 
@@ -230,9 +233,9 @@ class OBCMemoizer:
         ):
             warnings.warn(
                 f"High relative recursion error: {xp.max(relative_recursion_errors):.2e} "
-                + f"at rank {comm.stack.rank} for {contact} OBC",
+                + f"at rank {comm.stack.rank} for {contact} ({stack_slice}) OBC",
                 RuntimeWarning,
             )
 
-        self._cache[contact] = x_ii.copy()
+        self._cache[(contact, stack_slice)] = x_ii.copy()
         return x_ii

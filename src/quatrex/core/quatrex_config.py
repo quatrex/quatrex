@@ -6,6 +6,7 @@ from math import isclose
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -322,7 +323,31 @@ class OutputConfig(BaseModel):
     profiling_stats: bool = False
 
 
+class ContactConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["ohmic"] = "ohmic"
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    size: list[list[float]] = Field(
+        default_factory=lambda: [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    direction: Literal["a", "b", "c"]
+
+    @model_validator(mode="after")
+    def to_array(self) -> Self:
+        """Transforms origin and size to arrays."""
+        self.origin = np.array(self.origin, dtype=float)
+        self.size = np.array(self.size, dtype=float)
+        return self
+
+
 class DeviceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     construct_from_unit_cell: bool = False
 
@@ -330,6 +355,12 @@ class DeviceConfig(BaseModel):
     unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     number_of_supercells: PositiveInt = 1
     transport_direction: Literal["x", "y", "z"]
+
+    contacts: list[ContactConfig] = Field(default_factory=list)
+
+    num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
+
+    num_slabs: tuple[PositiveInt, PositiveInt] = (1, 1)
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

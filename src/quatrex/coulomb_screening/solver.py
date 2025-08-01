@@ -6,7 +6,11 @@ import numpy as np
 from qttools import NDArray, _DType, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import (
+    bd_matmul_distr,
+    bd_sandwich,
+    bd_sandwich_distr,
+)
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import get_host, synchronize_device
@@ -529,27 +533,41 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
 
         t_sandwich_start = time.perf_counter()
-        local_blocks, _ = get_section_sizes(
-            len(self.coulomb_matrix.block_sizes), comm.block.size
-        )
-        start_block = sum(local_blocks[: comm.block.rank])
-        end_block = start_block + local_blocks[comm.block.rank]
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_lesser,
-            out=self.l_lesser,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_greater,
-            out=self.l_greater,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
+        if comm.block.size > 1:
+            local_blocks, _ = get_section_sizes(
+                len(self.coulomb_matrix.block_sizes), comm.block.size
+            )
+            start_block = sum(local_blocks[: comm.block.rank])
+            end_block = start_block + local_blocks[comm.block.rank]
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_lesser,
+                out=self.l_lesser,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_greater,
+                out=self.l_greater,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+        else:
+            bd_sandwich(
+                self.coulomb_matrix,
+                p_lesser,
+                out=self.l_lesser,
+                spillover_correction=True,
+            )
+            bd_sandwich(
+                self.coulomb_matrix,
+                p_greater,
+                out=self.l_greater,
+                spillover_correction=True,
+            )
         synchronize_device()
         t_sandwich_end = time.perf_counter()
         comm.barrier()

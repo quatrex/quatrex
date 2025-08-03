@@ -58,7 +58,7 @@ def monkhorst_pack(size: tuple[int]) -> NDArray:
 
 
 def compute_slab_vector_x(
-    atom_coords: NDArray, num_slabs: int, orbital_offsets: NDArray
+    atom_coords: NDArray, num_slabs: int, orbital_offsets: NDArray, dx: float = 1e-3
 ) -> tuple[NDArray, NDArray]:
     """Computes the elements (atom,orbitals) for each slab in the x direction.
 
@@ -70,6 +70,8 @@ def compute_slab_vector_x(
         The number of slabs in the x direction.
     orbitals : NDArray
         The starting orbital (cumulative) for each atom.
+    dx is needed to allow every atom to be included in one slab
+        dx = 0.001
 
     Returns
     -------
@@ -79,58 +81,24 @@ def compute_slab_vector_x(
         Every orbital in each slab.
 
     """
-
-    atom_inds = []
-    orbital_inds = []
-
-    # dx is needed to allow every atom to be included in one slab
-    dx = 0.001
-
     # Get the min and max x coordinates
     x_min = atom_coords[:, 0].min()
     x_max = atom_coords[:, 0].max()
 
-    # Compute the width of each slab
-    slab_width = (x_max - x_min) / num_slabs
+    edges = np.linspace(x_min, x_max, num_slabs + 1, endpoint=True) - 1e-3
+    atom_slab_inds = np.digitize(atom_coords[:, 0], edges) - 1
+    atom_inds = [np.where(atom_slab_inds == i)[0] for i in range(num_slabs)]
 
-    # Assign some group of atoms to each slab
-    for i in range(num_slabs):
-        if i != num_slabs - 1:
-            atom_inds.append(
-                xp.nonzero(
-                    xp.logical_and(
-                        atom_coords[:, 0] >= x_min + i * slab_width - dx,
-                        atom_coords[:, 0] < x_min + (i + 1) * slab_width - dx,
-                    )
-                )[0]
-            )
-        else:
-            atom_inds.append(
-                xp.nonzero(
-                    xp.logical_and(
-                        atom_coords[:, 0] >= x_min + i * slab_width - dx,
-                        atom_coords[:, 0] <= x_min + (i + 1) * slab_width + dx,
-                    )
-                )[0]
-            )
+    # TODO: A bit clunky to have to recompute the number of orbitals per
+    # atom every time.
+    orbitals_per_atom = np.diff(orbital_offsets)
+    orbital_coords_x = np.repeat(atom_coords[:, 0], orbitals_per_atom, axis=0)
 
-    # Assign the orbitals to each slab
-    for i, atom_ind in enumerate(atom_inds):
-        slab_orbital_inds = np.array([], dtype=xp.int32)
-        for ind in atom_ind:
-            slab_orbital_inds = np.concatenate(
-                (
-                    slab_orbital_inds,
-                    np.arange(orbital_offsets[ind], orbital_offsets[ind + 1]),
-                )
-            )
-
-        orbital_inds.append(slab_orbital_inds[None, :])
-        if comm.rank == 0:
-            print(
-                f"Slab {i} has {atom_ind.shape[0]} atoms and {slab_orbital_inds.shape[0]} orbitals",
-                flush=True,
-            )
+    orbital_slab_inds = np.digitize(orbital_coords_x, edges) - 1
+    # TODO: Orbital indices need to have a new axis for some reason.
+    orbital_inds = [
+        np.where(orbital_slab_inds == i)[0][np.newaxis] for i in range(num_slabs)
+    ]
 
     return atom_inds, orbital_inds
 

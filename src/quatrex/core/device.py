@@ -27,7 +27,7 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
         The potential for each orbital.
 
     """
-    orbitals_per_atom = np.diff(orbital_offsets, prepend=0)
+    orbitals_per_atom = np.diff(orbital_offsets)
     orbital_potential = np.repeat(potential, orbitals_per_atom, axis=0)
     return orbital_potential
 

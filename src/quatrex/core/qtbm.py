@@ -45,12 +45,16 @@ def monkhorst_pack(size: tuple[int]) -> NDArray:
 
     Parameters
     ----------
-    size : tuple
-        The size of the grid in each direction.
+    size : tuple[int]
+        Grid dimensions as (nx, ny, nz) specifying the number of
+        k-points along each reciprocal lattice direction.
+
     Returns
     -------
     kpts : NDArray
-        The Monkhorst-Pack grid of k-points.
+        Array of k-points with shape (nx*ny*nz, 3). Each row contains
+        the (kx, ky, kz) coordinates of a k-point in reduced units.
+
 
     """
     kpts = np.indices(size).transpose((1, 2, 3, 0)).reshape((-1, 3))
@@ -60,25 +64,33 @@ def monkhorst_pack(size: tuple[int]) -> NDArray:
 def compute_slab_vector_x(
     atom_coords: NDArray, num_slabs: int, orbital_offsets: NDArray, dx: float = 1e-3
 ) -> tuple[NDArray, NDArray]:
-    """Computes the elements (atom,orbitals) for each slab in the x direction.
+    """Computes spatial slabs for current/DOS along the x-direction.
+
+    Divides the device into spatial slabs perpendicular to the x-axis
+    and determines which atoms and orbitals belong to each slab.
 
     Parameters
     ----------
-    coords : NDArray
-        The atomic coordinates.
-    n_slabs : int
-        The number of slabs in the x direction.
-    orbitals : NDArray
-        The starting orbital (cumulative) for each atom.
-    dx is needed to allow every atom to be included in one slab
-        dx = 0.001
+    atom_coords : NDArray
+        Atomic coordinates. The x-coordinates are used for slab
+        assignment.
+    num_slabs : int
+        Number of slabs to create along the x-direction.
+    orbital_offsets : NDArray
+        Cumulative orbital count array. Used to map from atoms to the
+        corresponding orbitals.
+    dx : float, optional
+        Small offset applied to slab boundaries to ensure all atoms are
+        included in exactly one slab, by default 1e-3.
 
     Returns
     -------
-    vec_atoms : NDArray
-        Every atom in each slab.
-    vec_orb : NDArray
-        Every orbital in each slab.
+    atom_inds : list[np.ndarray]
+        List of arrays, where each array contains indices of atoms in
+        the corresponding slab. Length is `num_slabs`.
+    orbital_inds : list[np.ndarray]
+        List of arrays, where each array contains indices of orbitals in
+        the corresponding slab. Length is `num_slabs`.
 
     """
     # Get the min and max x coordinates
@@ -105,7 +117,48 @@ def compute_slab_vector_x(
 
 @dataclass
 class Observables:
-    """Observable quantities for the QTBM."""
+    """Container for transport observables from QTBM calculations.
+
+    Attributes
+    ----------
+    electron_ldos : NDArray, optional
+        Local density of states (LDOS) for electrons with shape
+        (n_atoms, n_energies). Provides site-resolved DOS information.
+    electron_density : NDArray, optional
+        Electron density distribution with shape (n_atoms,).
+    hole_density : NDArray, optional
+        Hole density distribution with shape (n_atoms,).
+    electron_current : dict, optional
+        Dictionary containing current density information. Keys may
+        include directional components and spatial distributions.
+    spill_over_error : NDArray, optional
+        Error metric for boundary condition accuracy with shape
+        (n_energies,). Quantifies how well the open boundary conditions
+        are satisfied.
+    electron_transmission_contacts : NDArray, optional
+        Contact-to-contact transmission coefficients with shape
+        (n_contact_pairs, n_energies). Each element T_ij(E) gives the
+        transmission probability from contact i to contact j at energy
+        E.
+    electron_transmission_contacts_labels : list[str]
+        String labels for each contact pair in the format
+        "source->drain" corresponding to the transmission matrix rows.
+    electron_transmission_x_slabs : NDArray, optional
+        Spatial transmission between adjacent slabs with shape
+        (n_contacts, n_slabs-1, n_energies). Shows current flow as a
+        function of position for each injection contact.
+    electron_dos_x_slabs : NDArray, optional
+        Position-resolved density of states with shape (n_contacts,
+        n_slabs, n_energies). Provides spatial distribution of DOS for
+        each injection contact.
+    valence_band_edges : NDArray, optional
+        Valence band edge energies with shape (n_atoms,).
+    conduction_band_edges : NDArray, optional
+        Conduction band edge energies with shape (n_atoms,).
+    excess_charge_density : NDArray, optional
+        Excess charge density distribution with shape (n_atoms,).
+
+    """
 
     electron_ldos: NDArray = None
     electron_density: NDArray = None
@@ -128,15 +181,45 @@ class Observables:
 
 
 class QTBM:
-    """Quantum Transmitting Boundary Method (QTBM) solver.
+    """Quantum Transmitting Boundary Method solver.
 
     Parameters
     ----------
-    quatrex_config : Path
-        Quatrex configuration file.
-    compute_config : Path, optional
-        Compute configuration file, by default None. If None, the
-        default compute parameters are used.
+    device : Device
+        The quantum device object containing Hamiltonian, atomic
+        structure, and attached contacts.
+    k : tuple
+        k-point for the calculation as (kx, ky, kz). For gamma-only
+        calculations, this should be (0, 0, 0).
+    quatrex_config : QuatrexConfig
+        Configuration object containing calculation parameters, energy
+        grid, and numerical settings.
+    compute_config : ComputeConfig, optional
+        Computational configuration specifying solver options and
+        parallelization parameters. If None, default settings are used.
+
+    Attributes
+    ----------
+    device : Device
+        Reference to the device object.
+    num_contacts : int
+        Number of contacts attached to the device.
+    k : tuple
+        k-point for the calculation.
+    observables : Observables
+        Container for computed transport observables including
+        transmission matrices, density of states, and current
+        distributions.
+    electron_energies : NDArray
+        Full energy grid for the calculation.
+    local_energies : NDArray
+        Local portion of energy grid for MPI parallelization.
+    hamiltonian_phase : sparse matrix
+        Device Hamiltonian with k-point phase factors applied.
+    overlap_phase : sparse matrix
+        Device overlap matrix with k-point phase factors applied.
+    system_matrix : sparse matrix
+        System matrix (E*S - H - Σ) for the linear solve.
 
     """
 
@@ -147,7 +230,7 @@ class QTBM:
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig | None = None,
     ) -> None:
-        """Initializes a QTBM instance."""
+        """Initializes the QTBM solver."""
 
         self.device = device
         self.num_contacts = len(device.contacts)
@@ -216,8 +299,8 @@ class QTBM:
 
         self.num_orbitals = self.device.hamiltonian[0, 0, 0].shape[0]
 
-        # TODO: Hamiltonian should be assembled for each k-point.
-        # (This can easily be vectorized)
+        # TODO: Hamiltonian should be assembled for each k-point. (This
+        # can easily be vectorized)
         self.hamiltonian_phase = sparse.csr_matrix(
             self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
         )
@@ -236,18 +319,33 @@ class QTBM:
     def compute_observables(
         self, phi: NDArray, inj_ind: list, i: int, S: list, K, T, E
     ):
-        """Computes observables for the current iteration.
+        """Computes transport observables.
+
+        Calculates transmission coefficients, density of states, and
+        current distributions from the QTBM wavefunctions. This method
+        processes the solution at a single energy point and updates the
+        observable arrays.
 
         Parameters
         ----------
         phi : NDArray
-            The wavefunction.
+            Wavefunction solution matrix. Each column represents a
+            wavefunction for a specific injection mode.
         inj_ind : list
-            The indices of the injection vectors.
+            List of arrays containing injection mode indices for each
+            contact.
         i : int
-            The iteration number.
-        w : NDArray
-            The injected phase factor (per every injected vector)
+            Energy index in the local energy array for storing results.
+        S : list
+            Self-energy matrices for each contact, used for transmission
+            calculations.
+        K : list or NDArray
+            Bloch injection vectors for each contact.
+        T : list or NDArray
+            Bloch transmission matrices for each contact.
+        E : float
+            Energy value for the current calculation (used for error
+            checking).
 
         """
 
@@ -259,7 +357,8 @@ class QTBM:
         cont_2 = 1
         for n in range(self.num_transmissions):
 
-            # Get the all the wavefunctions injected from contact 1 and extract the elements inside contact 2
+            # Get the all the wavefunctions injected from contact 1 and
+            # extract the elements inside contact 2
             phi_n = phi[
                 self.device.contacts[cont_2].orbitals_contact.T, inj_ind[cont_1]
             ]
@@ -286,11 +385,13 @@ class QTBM:
         for n in range(self.num_contacts):
             for s in range(self.num_slabs_x - 1):
 
-                # For every slab, get the wavefunction injected from the contact
+                # For every slab, get the wavefunction injected from the
+                # contact
                 phi_1 = phi[self.slab_vec_x_orb[s].T, inj_ind[n]]
                 phi_2 = phi[self.slab_vec_x_orb[s + 1].T, inj_ind[n]]
 
-                # Get the transmission matrix between the slab and the next one
+                # Get the transmission matrix between the slab and the
+                # next one
                 T01 = self.system_matrix[
                     self.slab_vec_x_orb[s].T, self.slab_vec_x_orb[s + 1]
                 ]
@@ -339,7 +440,7 @@ class QTBM:
                     )  # Compute the DOS
 
     def run(self) -> None:
-        """Runs the QTBM calculation."""
+        """Runs the complete QTBM transport calculation."""
         if comm.rank == 0:
             print("Entering QTBM calculation", flush=True)
 
@@ -447,9 +548,11 @@ class QTBM:
                         )
                     )
                     sig_flat.append(sigma_obc[i, :, :].flatten())
-                    # Add the injection vector in the contact elements of the rhs
+                    # Add the injection vector in the contact elements
+                    # of the rhs
                     inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[i]
-                    # Add the K vector in the contact elements of the rhs
+                    # Add the K vector in the contact elements of the
+                    # rhs
                     K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
                 # Concatenate the indices and the self-energies
@@ -550,17 +653,16 @@ class QTBM:
                 if comm.rank == 0:
                     print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
                 times.append(time.perf_counter())
-                # Get the bare system matrix back, needed for transmission calculation
+                # Get the bare system matrix back, needed for
+                # transmission calculation
                 upd_0.data[:] = (
                     1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
                 )
                 self.system_matrix.data[:] = (
                     energy * self.overlap_phase - self.hamiltonian_phase - upd_0
                 ).data
-                # LL = upd_0.tocsr()[rows, cols]
-                # if hasattr(LL, 'A'):
-                #    self.system_matrix.data[:] += LL.A.ravel()
-                # else:
+                # LL = upd_0.tocsr()[rows, cols] if hasattr(LL, 'A'):
+                # self.system_matrix.data[:] += LL.A.ravel() else:
                 #    self.system_matrix.data[:] += LL.ravel()
 
                 if inj_V.size != 0:

@@ -11,20 +11,20 @@ from quatrex.core.quatrex_config import QuatrexConfig
 
 
 def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
-    """
-    Computes the potential for each orbital.
+    """Converts atom-resolved potential to orbital-resolved potential.
 
     Parameters
     ----------
     potential : NDArray
-        The potential.
-    orbitals : NDArray
-        The starting orbital (cumulative) for each atom.
+        Electrostatic potential at each atomic site.
+    orbital_offsets : NDArray
+        Cumulative orbital count array where orbital_offsets[i] gives
+        the starting orbital index for atom i.
 
     Returns
     -------
-    orb_potential : NDArray
-        The potential for each orbital.
+    NDArray
+        Electrostatic potential for each orbital.
 
     """
     orbitals_per_atom = np.diff(orbital_offsets)
@@ -33,23 +33,25 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
 
 
 def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArray]:
-    """Reads data from xyz files
+    """Reads atomic structure data from an XYZ file.
 
     Parameters
     ----------
-    filename : str
-        The name of the file to read (*.xyz)
+    filename : Path
+        Path to the XYZ file containing the atomic structure. The file
+        should have the standard XYZ format with lattice parameters on
+        the second line.
 
     Returns
     -------
     lattice : NDArray
-        A (3x3) array containing the (rectangular) unit cell size
-    atoms : list
-        A list containing the atom symbols
+        3x3 array containing the lattice vectors (in rows).
+    unique_kinds : list
+        List of unique atom symbols/types present in the structure.
     coords : NDArray
-        A (*x3) array containing the atomic coordinates
-    coordsType : NDArray
-        An array containing each type of atom (as integer)
+        (N_atoms, 3) array containing atomic coordinates.
+    atom_types : NDArray
+        (N_atoms,) array containing atom symbol for each atom.
 
     """
 
@@ -58,7 +60,8 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
     kinds = None
 
     if comm.rank == 0:
-        # Read only the second line of the file (this contains the lattice parameters)
+        # Read only the second line of the file (this contains the
+        # lattice parameters)
         with open(filename, "r") as f:
             __ = f.readline()
             lattice_line = f.readline().strip()
@@ -82,49 +85,65 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
 
 
 class Device:
-    """
-    A class to represent a device in the Quatrex framework.
+    """A quantum device for electronic transport calculations.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        Configuration object containing input paths, device parameters,
+        and computational settings.
 
     Attributes
     ----------
-
-    name : str
-        The name of the device.
+    config : QuatrexConfig
+        Reference to the configuration object.
     hamiltonian : dict
-        The Hamiltonian of the device.
-    num_hamiltonians : int
-        The number of Hamiltonian matrices loaded.
-    num_overlaps : int
-        The number of overlap matrices loaded.
+        Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
+        vectors. Keys are tuples representing the lattice vector
+        indices, values are sparse CSR matrices.
     overlap : dict
-        The overlap matrix of the device.
+        Dictionary of overlap matrices with the same indexing as
+        hamiltonian. For orthogonal basis sets, defaults to identity
+        matrices.
+    num_hamiltonians : int
+        Total number of Hamiltonian matrices loaded from input files.
+    num_overlaps : int
+        Total number of overlap matrices loaded from input files.
+    gamma_only : bool
+        True if only the Gamma point (0,0,0) Hamiltonian is available,
+        indicating that k-point calculations are not possible.
     lattice_vector : NDArray
-        The lattice vector of the device.
+        3x3 array containing the lattice vectors of the device unit
+        cell.
     atoms_list : list
-        A list of atom symbols in the device.
+        List of unique atom symbols present in the device.
     coords : NDArray
-        The coordinates of the atoms in the device.
+        Array of atomic coordinates.
     atom_type : NDArray
-        An array containing the type of each atom in the device (as an integer).
-    orbitals_per_at : NDArray
-        The number of orbitals for each atom type.
-    orbitals_vec : NDArray
-        A vector containing the starting orbital for each atom type.
-    atom_potential : NDArray
-        The potential for each atom type.
-    orb_potential : NDArray
-        The potential for each orbital.
+        Array of atom symbols for each atom.
+    orbital_offsets : NDArray
+        Array of cumulative orbital counts, used to map from atoms to
+        orbitals. orbital_offsets[i] gives the starting orbital index
+        for atom i.
+    atom_potential : NDArray, optional
+        Array of electrostatic potential at each atom site. None if no
+        external potential is provided.
+    orbital_potential : NDArray, optional
+        Array of electrostatic potential for each orbital. Derived from
+        atom_potential by replication according to orbitals per atom.
+    contacts : list[Contact]
+        List of Contact objects representing the semi-infinite leads
+        connected to this device.
 
     Methods
     -------
-    load_hamiltonian(quatrex_config: QuatrexConfig) -> None
-        Load the Hamiltonian and overlap matrix from the specified configuration.
-    load_lattice(quatrex_config: QuatrexConfig) -> None
-        Load the lattice structure from the specified configuration.
+    apply_potential()
+        Apply the electrostatic potential to the Hamiltonian matrices.
 
     """
 
     def __init__(self, quatrex_config: QuatrexConfig) -> None:
+        """Initializes a Device object from configuration."""
 
         self.config = quatrex_config
 
@@ -136,7 +155,19 @@ class Device:
         self.contacts = self._add_contacts()
 
     def _init_hamiltonian(self) -> None:
-        """Initializes Hamiltonian and overlap matrices."""
+        """Initializes Hamiltonian and overlap matrices from files.
+
+        Loads sparse matrices from .npz files in the input directory.
+        Files should be named "hamiltonian_i_j_k.npz" and
+        "overlap_i_j_k.npz" where (i,j,k) represent lattice vector
+        indices. The method automatically discovers all available matrix
+        files and loads them into dictionaries.
+
+        For missing overlap matrices, identity matrices are assumed
+        (orthogonal basis). The (0,0,0) Hamiltonian matrix is mandatory
+        and its absence raises an error.
+
+        """
 
         self.hamiltonian = {}
         self.overlap = {}
@@ -209,7 +240,8 @@ class Device:
             print(f"Loaded {self.num_overlaps} overlap matrices", flush=True)
 
     def _init_lattice(self) -> None:
-        """Initalizes the lattice structure of the device."""
+        """Initializes the atomic structure and lattice parameters of
+        the device."""
 
         # Load the lattice structure from file.
         lattice_file = self.config.input_dir / "lattice.xyz"
@@ -221,8 +253,18 @@ class Device:
         if comm.rank == 0:
             print("Lattice structure loaded successfully.", flush=True)
 
-    def _init_orbitals(self):
-        """Initializes the orbitals of the device."""
+    def _init_orbitals(self) -> None:
+        """Initializes the orbital indexing system for the device.
+
+        Sets up the mapping between atoms and orbitals by determining
+        how many orbitals each atom has and creating cumulative indexing
+        arrays.
+
+        The number of orbitals per atom is determined from the
+        configuration, with a default of 1 orbital per atom if not
+        specified.
+
+        """
         orbitals_per_atom = np.fromiter(
             map(
                 defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
@@ -234,7 +276,13 @@ class Device:
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
 
     def _load_potential(self) -> None:
-        """Loads the potential from the specified configuration."""
+        """Loads electrostatic potential data from input files.
+
+        Attempts to load the electrostatic potential from potential.npy
+        in the input directory. If found, the atom-resolved potential is
+        converted to orbital-resolved potential.
+
+        """
 
         self.orbital_potential = None
 
@@ -254,7 +302,7 @@ class Device:
     # TODO: THis should probably not happen directly in the Hamiltonian,
     # but rather during the construction of the system matrix.
     def apply_potential(self) -> None:
-        """Applies the potential to the Hamiltonian."""
+        """Applies electrostatic potential to device Hamiltonian."""
 
         if self.orbital_potential is None:
             if comm.rank == 0:
@@ -270,19 +318,18 @@ class Device:
             self.hamiltonian[r].eliminate_zeros()
 
     def _add_contacts(self) -> list[Contact]:
-        """
-        Add a contact to the device.
+        """Initializes and attaches contacts to the device.
 
-        Parameters
-        ----------
-        name : str
-            The name of the contact.
-        vectors : NDArray
-            The vectors defining the contact.
-        origin : NDArray
-            The origin of the contact.
-        direction : int
-            The direction of the contact.
+        Creates Contact objects for each contact defined in the device
+        configuration. Each contact represents a semi-infinite lead
+        connected to the finite device region, providing boundary
+        conditions for transport calculations.
+
+        Returns
+        -------
+        list[Contact]
+            List of initialized Contact objects, one for each contact
+            specified in the device configuration.
 
         """
 

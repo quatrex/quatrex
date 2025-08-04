@@ -122,6 +122,8 @@ class SolverConfig(BaseModel):
     # Whether to compute the current via the Meir-Wingreen formula.
     compute_current: bool = False
 
+    direct_solver: Literal["superlu", "mumps", "cudss"] = "superlu"
+
 
 class OBCConfig(BaseModel):
     r"""Options for open-boundary condition (OBC) solvers.

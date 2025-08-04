@@ -7,37 +7,17 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load, get_local_slice
+from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
 
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.device import Device
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 
-# ------------------------------------------------------------
-# TODO: This can be refactored into a common solver interface.
-try:
-    from qttools.cuDSS_binding.cudss_wrapp import CuDSS
-
-    CUDSS_AVAILABLE = True
-    print("CUDSS available") if comm.rank == 0 else None
-    cuDSS = CuDSS()
-except ImportError:
-    CUDSS_AVAILABLE = False
-
-
-try:
-    import mumps
-
-    MUMPS_AVAILABLE = True
-    print("MUMPS available") if comm.rank == 0 else None
-except ImportError:
-    MUMPS_AVAILABLE = False
-
-if xp.__name__ == "numpy":
-    from scipy.sparse.linalg import splu
-if xp.__name__ == "cupy":
-    from cupyx.scipy.sparse.linalg import splu
-
-# ------------------------------------------------------------
+preferred_matrix_type = {
+    "mumps": sparse.coo_matrix,
+    "superlu": sparse.csc_matrix,
+    "cudss": sparse.csr_matrix,
+}
 
 
 def monkhorst_pack(size: tuple[int]) -> NDArray:
@@ -299,22 +279,50 @@ class QTBM:
 
         self.num_orbitals = self.device.hamiltonian[0, 0, 0].shape[0]
 
+        self.solver = self._configure_solver(quatrex_config.electron.solver)
+        matrix_type = preferred_matrix_type[
+            quatrex_config.electron.solver.direct_solver
+        ]
+
         # TODO: Hamiltonian should be assembled for each k-point. (This
         # can easily be vectorized)
-        self.hamiltonian_phase = sparse.csr_matrix(
+        self.hamiltonian_phase = matrix_type(
             self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
         )
         for r, h_r in self.device.hamiltonian.items():
             self.hamiltonian_phase += h_r * xp.exp(
                 1j * self.k[0] * r[0] + 1j * self.k[1] * r[1] + 1j * self.k[2] * r[2]
             )
-        self.overlap_phase = sparse.csr_matrix(
+        self.overlap_phase = matrix_type(
             self.device.overlap[0, 0, 0].shape, dtype=xp.complex128
         )
         for r, s_r in self.device.overlap.items():
             self.overlap_phase += s_r * xp.exp(
                 1j * self.k[0] * r[0] + 1j * self.k[1] * r[1] + 1j * self.k[2] * r[2]
             )
+
+    def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
+        """Configures the wavefunction solver based on the config.
+
+        Parameters
+        ----------
+        solver_config : SolverConfig
+            The solver configuration containing solver type and options.
+
+        Returns
+        -------
+        WFSolver
+            The configured wavefunction solver instance.
+
+        """
+        if solver_config.direct_solver == "mumps":
+            return MUMPS()
+        if solver_config.direct_solver == "superlu":
+            return SuperLU()
+        if solver_config.direct_solver == "cudss":
+            return cuDSS()
+
+        raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
     def compute_observables(
         self, phi: NDArray, inj_ind: list, i: int, S: list, K, T, E
@@ -608,46 +616,10 @@ class QTBM:
                     print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
 
                 times.append(time.perf_counter())
+
                 # Solve for the wavefunction
-
                 if inj_V.size != 0:
-                    if CUDSS_AVAILABLE and xp.__name__ == "cupy":
-                        # USE CUDSS
-                        phi = cuDSS.spsolve_with_CUDSS(self.system_matrix, inj_V)
-                    else:
-                        if MUMPS_AVAILABLE:
-                            # USE MUMPS
-                            inst = mumps.Context()
-                            t_mumps = time.perf_counter()
-                            inst.analyze(self.system_matrix)
-                            t_analyze = time.perf_counter() - t_mumps
-                            if comm.rank == 0:
-                                print(
-                                    f"Time for MUMPS analyze: {t_analyze:.2f} s",
-                                    flush=True,
-                                )
-
-                            t_mumps = time.perf_counter()
-                            inst.factor(self.system_matrix)
-                            t_factor = time.perf_counter() - t_mumps
-
-                            if comm.rank == 0:
-                                print(
-                                    f"Time for MUMPS factor: {t_factor:.2f} s",
-                                    flush=True,
-                                )
-
-                            t_mumps = time.perf_counter()
-                            phi = inst.solve(inj_V)
-                            t_solve = time.perf_counter() - t_mumps
-                            if comm.rank == 0:
-                                print(
-                                    f"Time for MUMPS solve: {t_solve:.2f} s", flush=True
-                                )
-
-                        else:
-                            lu = splu(self.system_matrix)
-                            phi = lu.solve(inj_V)
+                    phi = self.solver.solve(self.system_matrix, inj_V)
 
                 t_solve = time.perf_counter() - times.pop()
                 if comm.rank == 0:

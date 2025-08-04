@@ -44,7 +44,7 @@ class MUMPS(WFSolver):
         self,
         reuse_analysis: bool = True,
         ordering: str = "metis",
-        verbose: bool = True,
+        verbose: bool = False,
     ) -> None:
         """Initializes the MUMPS wave function solver."""
         if not mumps_available:

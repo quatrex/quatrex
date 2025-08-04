@@ -31,11 +31,12 @@ class cuDSS(WFSolver):
         frequently, but may incur additional overhead. If False, the
         caller is responsible for ensuring that the matrix and
         right-hand side vector are correctly set before each solve.
-        Default is False, meaning the operands are not reset explicitly.
+        Default is True, meaning that the operands are reset explicitly
+        before each solve.
 
     """
 
-    def __init__(self, explicitely_reset_operands: bool = False) -> None:
+    def __init__(self, explicitely_reset_operands: bool = True) -> None:
         """Initializes the cuDSS wave function solver."""
         if not nvmath_available:
             raise ImportError(

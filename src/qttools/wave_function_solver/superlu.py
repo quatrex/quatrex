@@ -12,7 +12,7 @@ else:
 profiler = Profiler()
 
 
-class LU(WFSolver):
+class SuperLU(WFSolver):
     """Wave function solver using LU decomposition for solving.
 
     This solver uses the SuperLU on the CPU for facorization. Depending

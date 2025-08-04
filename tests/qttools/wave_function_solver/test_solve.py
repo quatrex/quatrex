@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.wave_function_solver import LU, MUMPS, cuDSS
+from qttools.wave_function_solver import MUMPS, SuperLU, cuDSS
 
 mumps_available = importlib.util.find_spec("mumps") is not None
 nvmath_available = importlib.util.find_spec("nvmath") is not None
@@ -53,7 +53,7 @@ class TestLU:
     def test_solve(self, n: int, m: int):
         """Tests the wave function solver."""
         a, b = _assemble_system(n, m, format="csc")
-        solver = LU()
+        solver = SuperLU()
 
         x = solver.solve(a, b)
 

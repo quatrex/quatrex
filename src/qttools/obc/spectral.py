@@ -528,7 +528,7 @@ class Spectral(OBCSolver):
                 )
                 x_ii[i] = vr @ inverse @ vr.conj().T
 
-            return x_ii
+            return x_ii, x_ii @ a_ij
 
         raise ValueError(
             f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
@@ -651,18 +651,18 @@ class Spectral(OBCSolver):
                 wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
             )
 
-        x_ii, T = self._compute_x_ii(
+        x_ii, x_ii_a_ij = self._compute_x_ii(
             a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls
-        )  # Returning also the Bloch matrix
+        )
 
         # Calculate the injection vector and return it together with the boundary self-energy
         if return_injected:
 
             # Refine the Bloch matrix
             for __ in range(self.num_ref_iterations - 1):
-                T = -inv(a_ii + a_ji @ T) @ a_ij
+                x_ii_a_ij = -inv(a_ii + a_ji @ x_ii_a_ij) @ a_ij
 
-            x_ii = inv(a_ii + a_ji @ T)
+            x_ii = inv(a_ii + a_ji @ x_ii_a_ij)
             x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
             # Check the batch average recursion error.
@@ -681,7 +681,7 @@ class Spectral(OBCSolver):
 
             num_injected = xp.zeros(a_ii.shape[0], dtype=int)
 
-            sigma_retarded = -a_ji @ T  # In case of no ref. iterations
+            sigma_retarded = -a_ji @ x_ii_a_ij  # In case of no ref. iterations
 
             for i in range(a_ii.shape[0]):
                 injected_i = mask_injected[i, :]
@@ -689,7 +689,7 @@ class Spectral(OBCSolver):
                 vrs_inj = vrs[i][:, injected_i]
                 wrs_inj = xp.diag(wrs[i, injected_i])
 
-                T_i = T[i, :, :]
+                T_i = x_ii_a_ij[i, :, :]
 
                 dE_dK_injected = dE_dK[i, injected_i]
                 # Flux normalization
@@ -709,7 +709,7 @@ class Spectral(OBCSolver):
 
                 K.append(K_i)
 
-            return x_ii_ref, sigma_retarded, injection, num_injected, K, T
+            return x_ii_ref, sigma_retarded, injection, num_injected, K, x_ii_a_ij
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):

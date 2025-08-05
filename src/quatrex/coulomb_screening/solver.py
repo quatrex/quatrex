@@ -6,14 +6,20 @@ import numpy as np
 from qttools import FloatType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import (
+    bd_matmul_distr,
+    bd_sandwich,
+    bd_sandwich_distr,
+)
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import (
+    create_stream,
     debug_gpu_memory_usage,
     free_mempool,
     get_host,
     synchronize_device,
+    synchronize_stream,
 )
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
@@ -251,6 +257,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             quatrex_config.coulomb_screening.filtering_iteration_limit
         )
 
+        self._system_stream = create_stream()
+
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
 
@@ -410,6 +418,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""
+        self.coulomb_matrix.to_device(
+            delete_host=False, stream=self._system_stream, sync=False
+        )
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
             len(self.system_matrix.block_sizes), comm.block.size
@@ -417,6 +428,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
+        synchronize_stream(self._system_stream)
         bd_matmul_distr(
             self.coulomb_matrix,
             p_retarded,
@@ -530,7 +542,6 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         # Assemble the system matrix (Includes matrix multiplication).
         t_assembly_start = time.perf_counter()
-        self.coulomb_matrix.to_device()
         self._assemble_system_matrix(p_retarded)
         p_retarded.free_data()
         synchronize_device()
@@ -545,30 +556,48 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
 
         t_sandwich_start = time.perf_counter()
-        local_blocks, _ = get_section_sizes(
-            len(self.coulomb_matrix.block_sizes), comm.block.size
-        )
-        start_block = sum(local_blocks[: comm.block.rank])
-        end_block = start_block + local_blocks[comm.block.rank]
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_lesser,
-            out=self.l_lesser,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        p_lesser.free_data()
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_greater,
-            out=self.l_greater,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        p_greater.free_data()
-        self.coulomb_matrix.to_host()
+        if comm.block.size > 1:
+            local_blocks, _ = get_section_sizes(
+                len(self.coulomb_matrix.block_sizes), comm.block.size
+            )
+            start_block = sum(local_blocks[: comm.block.rank])
+            end_block = start_block + local_blocks[comm.block.rank]
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_lesser,
+                out=self.l_lesser,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+            p_lesser.free_data()
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_greater,
+                out=self.l_greater,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+            p_greater.free_data()
+        else:
+            bd_sandwich(
+                self.coulomb_matrix,
+                p_lesser,
+                out=self.l_lesser,
+                spillover_correction=True,
+            )
+            p_lesser.free_data()
+            bd_sandwich(
+                self.coulomb_matrix,
+                p_greater,
+                out=self.l_greater,
+                spillover_correction=True,
+            )
+            p_greater.free_data()
+        synchronize_device()
+        self.coulomb_matrix.free_data()
+        # self.coulomb_matrix.to_host()
         synchronize_device()
         t_sandwich_end = time.perf_counter()
         comm.barrier()

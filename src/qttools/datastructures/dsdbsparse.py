@@ -1254,6 +1254,11 @@ class _DStackView:
         """Sets the local slice of the data."""
         self._dsdbsparse.data[self._stack_index] = value
 
+    @property
+    def distribution_state(self) -> str:
+        """Returns the distribution state of the underlying DSDBSparse."""
+        return self._dsdbsparse.distribution_state
+
 
 @decorate_methods(profiler.profile(level="debug"))
 class _DSDBlockIndexer:

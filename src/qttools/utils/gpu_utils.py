@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import inspect
+from typing import Union
 
 import numpy as np
 from mpi4py import MPI
@@ -313,6 +314,44 @@ def zeros_like_pinned(
         return cupyx.zeros_like_pinned(a, dtype=dtype, order=order, shape=shape)
     else:
         return xp.zeros_like(a, dtype=dtype, order=order, shape=shape)
+
+
+@profiler.profile(level="debug")
+def create_stream(non_blocking: bool = True) -> "xp.cuda.Stream":
+    """Creates a new CUDA stream if using cupy.
+
+    Parameters
+    ----------
+    non_blocking : bool, optional
+        If True, the stream is created in non-blocking mode. Default is True.
+
+    Returns
+    -------
+    cupy.cuda.Stream
+        The created stream.
+
+    """
+    if xp.__name__ == "cupy":
+        return xp.cuda.Stream(non_blocking=non_blocking)
+    else:
+        return None
+
+
+@profiler.profile(level="debug")
+def synchronize_stream(stream: Union[None, "xp.cuda.Stream"] = None):
+    """Synchronizes the input stream if using cupy.
+
+    Does nothing if using numpy. If using cupy and no stream is provided,
+    the Null stream is synchronized.
+
+    Parameters
+    ----------
+    stream : cupy.cuda.Stream, optional
+        The stream to synchronize. If not provided, the Null stream is used.
+
+    """
+    if xp.__name__ == "cupy":
+        (stream or xp.cuda.Stream.null).synchronize()
 
 
 @profiler.profile(level="debug")

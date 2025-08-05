@@ -9,7 +9,12 @@ import numpy as np
 from qttools import ArrayLike, FloatType, IntType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import empty_like_pinned, free_mempool, synchronize_device
+from qttools.utils.gpu_utils import (
+    empty_like_pinned,
+    free_mempool,
+    synchronize_device,
+    synchronize_stream,
+)
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -872,21 +877,55 @@ class DSDBSparse(ABC):
                 dtype=self.dtype,
             )
 
-    def to_host(self) -> None:
+    def to_host(
+        self,
+        delete_device: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
         """Transfers the data to the host memory."""
-        if self._data is not None and xp.__name__ == "cupy":
-            host_data = empty_like_pinned(self._data)
-            self._data.get(out=host_data)
-            self._data = host_data
-            synchronize_device()
-            free_mempool()
+        if xp.__name__ == "cupy":
+            if self._data is not None:
+                # NOTE: It is expected that we always copy in the same distribution (stack or nnz).
+                if not (hasattr(self, "_host_data") and self._host_data is not None):
+                    self._host_data = empty_like_pinned(self._data)
+                self._data.get(out=self._host_data, stream=stream, blocking=False)
+                if sync:
+                    synchronize_stream(stream)
+                if delete_device:
+                    # TODO: Is this safe if we are not synchronizing?
+                    # Probably yes; setting to None does not delete,
+                    # but just removes the reference to the data.
+                    # The data will be freed when the garbage collector runs.
+                    self._data = None
+                    free_mempool()
+            else:
+                raise ValueError(
+                    "Cannot transfer data to host, no device data available. "
+                    "Call `to_device()` first."
+                )
 
-    def to_device(self) -> None:
+    def to_device(
+        self,
+        delete_host: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
         """Transfers the data to the device memory."""
-        free_mempool()
-        if self._data is not None and xp.__name__ == "cupy":
-            self._data = xp.asarray(self._data)
-            synchronize_device()
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot transfer data to device, no host data available. "
+                    "Call `to_host()` first."
+                )
+            if self._data is None:
+                # Allocate the data on the device if it is not already allocated.
+                self._data = xp.empty_like(self._host_data)
+            self._data.set(self._host_data, stream=stream)
+            if sync:
+                synchronize_stream(stream)
+            if delete_host:
+                self._host_data = None
 
     @classmethod
     @abstractmethod

@@ -11,10 +11,12 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import (
+    create_stream,
     debug_gpu_memory_usage,
     free_mempool,
     get_host,
     synchronize_device,
+    synchronize_stream,
 )
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
@@ -368,6 +370,8 @@ class ElectronSolver(SubsystemSolver):
             quatrex_config.electron.filtering_iteration_limit
         )
 
+        self._system_stream = create_stream()
+
     @staticmethod
     def load_hamiltonian(
         quatrex_config: QuatrexConfig,
@@ -627,6 +631,9 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
+        self.hamiltonian.to_device(
+            delete_host=False, stream=self._system_stream, sync=False
+        )
         self.system_matrix.data = 0.0
         self.system_matrix += self.overlap_sparray
         scale_stack(
@@ -636,9 +643,8 @@ class ElectronSolver(SubsystemSolver):
 
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
-        self.hamiltonian.to_device()
+        synchronize_stream(self._system_stream)
         _btd_subtract(self.system_matrix, self.hamiltonian)
-        self.hamiltonian.to_host()
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -729,7 +735,11 @@ class ElectronSolver(SubsystemSolver):
 
         t_assemble_start = time.perf_counter()
         self.system_matrix.allocate_data()
-
+        sse_lesser.to_host(delete_device=False, stream=self._system_stream, sync=False)
+        sse_greater.to_host(delete_device=False, stream=self._system_stream, sync=False)
+        sse_retarded.to_host(
+            delete_device=False, stream=self._system_stream, sync=False
+        )
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
@@ -759,6 +769,7 @@ class ElectronSolver(SubsystemSolver):
             self._update_fermi_levels(left_band_edges, right_band_edges)
 
             synchronize_device()
+            self.hamiltonian.free_data()
             t_band_edges_end = time.perf_counter()
             comm.barrier()
             t_band_edges_end_all = time.perf_counter()

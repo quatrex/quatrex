@@ -11,7 +11,13 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import debug_gpu_memory_usage, get_host, synchronize_device
+from qttools.utils.gpu_utils import (
+    create_stream,
+    debug_gpu_memory_usage,
+    get_host,
+    synchronize_device,
+    synchronize_stream,
+)
 from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.bandstructure.contact import contact_band_structure
@@ -454,6 +460,8 @@ class SCBA:
         )  # real data
         self.data.sparsity_pattern = None
 
+        self._copy_stream = create_stream()
+
     def _determine_electron_energy_window(self, quatrex_config: QuatrexConfig):
         """Determine the energy window from the bandstructure."""
         hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(
@@ -491,9 +499,12 @@ class SCBA:
         self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
         self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
 
-        self.data.sigma_retarded.data[:] = 0.0
-        self.data.sigma_lesser.data[:] = 0.0
-        self.data.sigma_greater.data[:] = 0.0
+        self.data.sigma_retarded.free_data()
+        self.data.sigma_lesser.free_data()
+        self.data.sigma_greater.free_data()
+        # self.data.sigma_retarded.data[:] = 0.0
+        # self.data.sigma_lesser.data[:] = 0.0
+        # self.data.sigma_greater.data[:] = 0.0
 
     @profiler.profile(level="api")
     def _update_sigma(self) -> None:
@@ -584,16 +595,24 @@ class SCBA:
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
 
+        t_polarization_start = time.perf_counter()
         self.data.p_greater.allocate_data()
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
-
-        t_polarization_start = time.perf_counter()
+        self.data.g_lesser.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
+        if xp.__name__ == "cupy":
+            self.data.g_lesser.free_data()
+            self.data.g_greater.free_data()
         synchronize_device()
         t_polarization_end = time.perf_counter()
         comm.barrier()
@@ -608,12 +627,9 @@ class SCBA:
                 flush=True,
             )
 
-        self.data.g_lesser.to_host()
-        self.data.g_greater.to_host()
+        t_coulomb_start = time.perf_counter()
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
-
-        t_coulomb_start = time.perf_counter()
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
@@ -650,13 +666,16 @@ class SCBA:
                 flush=True,
             )
 
+        t_sigma_fock_start = time.perf_counter()
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
-
-        t_sigma_fock_start = time.perf_counter()
-        self.data.g_lesser.to_device()
-        self.data.g_greater.to_device()
+        self.data.g_lesser.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
+        )
         for m in (
             self.data.sigma_lesser,
             self.data.sigma_greater,
@@ -665,6 +684,7 @@ class SCBA:
             m.allocate_data()
             m.dtranspose(discard=True)  # These can be safely discarded.
             assert m.distribution_state == "nnz"
+        synchronize_stream(self._copy_stream)
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
@@ -695,6 +715,8 @@ class SCBA:
                 self.data.sigma_retarded,
             ),
         )
+        self.data.w_greater.free_data()
+        self.data.w_lesser.free_data()
         synchronize_device()
         t_sigma_end = time.perf_counter()
         comm.barrier()
@@ -708,9 +730,6 @@ class SCBA:
                 f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s",
                 flush=True,
             )
-
-        self.data.w_greater.free_data()
-        self.data.w_lesser.free_data()
 
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
@@ -903,9 +922,6 @@ class SCBA:
             # Stash current into previous self-energy buffer.
             t_stash_start = time.perf_counter()
             self._stash_sigma()
-            self.data.sigma_retarded.free_data()
-            self.data.sigma_lesser.free_data()
-            self.data.sigma_greater.free_data()
             synchronize_device()
             t_stash_end = time.perf_counter()
             comm.barrier()
@@ -928,9 +944,10 @@ class SCBA:
                 self.data.sigma_retarded_prev,
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
-            self.data.sigma_lesser_prev.to_host()
-            self.data.sigma_greater_prev.to_host()
-            self.data.sigma_retarded_prev.to_host()
+            if xp.__name__ == "cupy":
+                self.data.sigma_lesser_prev.free_data()
+                self.data.sigma_greater_prev.free_data()
+                self.data.sigma_retarded_prev.free_data()
             synchronize_device()
             t_solve_end = time.perf_counter()
             comm.barrier()
@@ -1024,6 +1041,15 @@ class SCBA:
 
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()
+            self.data.sigma_lesser_prev.to_device(
+                delete_host=False, stream=self._copy_stream, sync=False
+            )
+            self.data.sigma_greater_prev.to_device(
+                delete_host=False, stream=self._copy_stream, sync=False
+            )
+            self.data.sigma_retarded_prev.to_device(
+                delete_host=False, stream=self._copy_stream, sync=False
+            )
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "stack"
@@ -1050,9 +1076,6 @@ class SCBA:
                 )
 
             t_convergence_start = time.perf_counter()
-            self.data.sigma_lesser_prev.to_device()
-            self.data.sigma_greater_prev.to_device()
-            self.data.sigma_retarded_prev.to_device()
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)

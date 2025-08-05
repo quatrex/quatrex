@@ -651,7 +651,8 @@ class ElectronSolver(SubsystemSolver):
         )
 
         self.system_matrix -= sparse.diags(self.potential, format="csr")
-        _btd_subtract(self.system_matrix, sse_retarded.stack[stack_slice])
+        _btd_subtract(self.system_matrix, sse_retarded)
+        # _btd_subtract(self.system_matrix, sse_retarded.stack[stack_slice])
         synchronize_stream(self._system_stream)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 
@@ -742,60 +743,6 @@ class ElectronSolver(SubsystemSolver):
                     flush=True,
                 )
 
-        t_assemble_start = time.perf_counter()
-        self.system_matrix.allocate_data()
-        # sse_lesser.to_host(delete_device=False, stream=self._system_stream, sync=False)
-        # sse_greater.to_host(delete_device=False, stream=self._system_stream, sync=False)
-        # sse_retarded.to_host(
-        #     delete_device=False, stream=self._system_stream, sync=False
-        # )
-        self._assemble_system_matrix(sse_retarded)
-        synchronize_device()
-        t_assemble_end = time.perf_counter()
-        comm.barrier()
-        t_assemble_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
-            print(
-                f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
-            )
-
-        if self.band_edge_tracking == "eigenvalues":
-            t_band_edges_start = time.perf_counter()
-            left_band_edges, right_band_edges = find_renormalized_eigenvalues(
-                hamiltonian=self.hamiltonian,
-                overlap=self.overlap_sparray,
-                potential=self.potential,
-                sigma_retarded=sse_retarded,
-                energies=self.energies,
-                conduction_band_guesses=(
-                    self.left_fermi_level + self.delta_fermi_level_conduction_band,
-                    self.right_fermi_level + self.delta_fermi_level_conduction_band,
-                ),
-                mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
-                band_edge_config=self.compute_config.band_edge,
-            )
-            self._update_fermi_levels(left_band_edges, right_band_edges)
-
-            # synchronize_device()
-            synchronize_stream(None)
-            self.hamiltonian.free_data()
-            t_band_edges_end = time.perf_counter()
-            comm.barrier()
-            t_band_edges_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
-                )
-                print(
-                    f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
-                    flush=True,
-                )
-
-        sse_lesser.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
-        sse_greater.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
-        sse_retarded.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
-
         batch_sizes, batch_offsets = get_batches(
             sse_retarded.shape[0], self.max_batch_size
         )
@@ -809,6 +756,13 @@ class ElectronSolver(SubsystemSolver):
         for i in range(len(batch_sizes)):
 
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            sse_lesser_tmp = sse_lesser.stack[stack_slice]
+            sse_greater_tmp = sse_greater.stack[stack_slice]
+            sse_retarded_tmp = sse_retarded.stack[stack_slice]
+
+            reallocate = False
+            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                reallocate = True
 
             if comm.rank == 0:
                 print(
@@ -817,10 +771,20 @@ class ElectronSolver(SubsystemSolver):
                 )
 
             t_assemble_start = time.perf_counter()
-            self.system_matrix.free_data()
+            if reallocate:
+                self.system_matrix.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
-
-            self._assemble_system_matrix(sse_retarded, stack_slice)
+            if i == 0:
+                sse_lesser.to_host(
+                    delete_device=False, stream=self._system_stream, sync=False
+                )
+                sse_greater.to_host(
+                    delete_device=False, stream=self._system_stream, sync=False
+                )
+                sse_retarded.to_host(
+                    delete_device=False, stream=self._system_stream, sync=False
+                )
+            self._assemble_system_matrix(sse_retarded_tmp, stack_slice)
             synchronize_device()
             t_assemble_end = time.perf_counter()
             comm.barrier()
@@ -832,37 +796,47 @@ class ElectronSolver(SubsystemSolver):
                     flush=True,
                 )
 
-            # if self.band_edge_tracking == "eigenvalues":
-            #     t_band_edges_start = time.perf_counter()
-            #     left_band_edges, right_band_edges = find_renormalized_eigenvalues(
-            #         hamiltonian=self.hamiltonian,
-            #         overlap=self.overlap_sparray,
-            #         potential=self.potential,
-            #         sigma_retarded=sse_retarded,
-            #         energies=self.energies,
-            #         conduction_band_guesses=(
-            #             self.left_fermi_level + self.delta_fermi_level_conduction_band,
-            #             self.right_fermi_level + self.delta_fermi_level_conduction_band,
-            #         ),
-            #         mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
-            #         band_edge_config=self.compute_config.band_edge,
-            #     )
-            #     self._update_fermi_levels(left_band_edges, right_band_edges)
+            if i == 0 and self.band_edge_tracking == "eigenvalues":
+                t_band_edges_start = time.perf_counter()
+                left_band_edges, right_band_edges = find_renormalized_eigenvalues(
+                    hamiltonian=self.hamiltonian,
+                    overlap=self.overlap_sparray,
+                    potential=self.potential,
+                    sigma_retarded=sse_retarded,
+                    energies=self.energies,
+                    conduction_band_guesses=(
+                        self.left_fermi_level + self.delta_fermi_level_conduction_band,
+                        self.right_fermi_level + self.delta_fermi_level_conduction_band,
+                    ),
+                    mid_gap_energies=(
+                        self.left_mid_gap_energy,
+                        self.right_mid_gap_energy,
+                    ),
+                    band_edge_config=self.compute_config.band_edge,
+                )
+                self._update_fermi_levels(left_band_edges, right_band_edges)
 
-            #     synchronize_device()
-            #     t_band_edges_end = time.perf_counter()
-            #     comm.barrier()
-            #     t_band_edges_end_all = time.perf_counter()
-            #     if comm.rank == 0:
-            #         print(
-            #             f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
-            #         )
-            #         print(
-            #             f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
-            #             flush=True,
-            #         )
+                # synchronize_device()
+            synchronize_stream(None)
+                t_band_edges_end = time.perf_counter()
+                comm.barrier()
+                t_band_edges_end_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(
+                        f"    Band edges: {t_band_edges_end-t_band_edges_start}",
+                        flush=True,
+                    )
+                    print(
+                        f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+                        flush=True,
+                    )
+
+        sse_lesser.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+        sse_greater.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+        sse_retarded.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
 
             t_obc_start = time.perf_counter()
+            self.hamiltonian.free_data()
             self._compute_obc(stack_slice)
             # synchronize_device()
         synchronize_stream(None)
@@ -884,8 +858,8 @@ class ElectronSolver(SubsystemSolver):
                 t_solve_start = time.perf_counter()
                 self.solver_dist.selected_solve(
                     a=self.system_matrix,
-                    sigma_lesser=sse_lesser.stack[stack_slice],
-                    sigma_greater=sse_greater.stack[stack_slice],
+                    sigma_lesser=sse_lesser_tmp,
+                    sigma_greater=sse_greater_tmp,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
                     return_retarded=True,
@@ -902,8 +876,8 @@ class ElectronSolver(SubsystemSolver):
                 t_solve_start = time.perf_counter()
                 self.meir_wingreen_current = self.solver.selected_solve(
                     a=self.system_matrix,
-                    sigma_lesser=sse_lesser.stack[stack_slice],
-                    sigma_greater=sse_greater.stack[stack_slice],
+                    sigma_lesser=sse_lesser_tmp,
+                    sigma_greater=sse_greater_tmp,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
                     return_retarded=True,

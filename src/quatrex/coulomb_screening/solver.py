@@ -278,10 +278,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def _compute_obc(self, stack_slice: slice) -> None:
         """Computes open boundary conditions."""
+        t_obc_r_start = time.perf_counter()
+
         if comm.block.rank == 0:
-
-            t_obc_r_start = time.perf_counter()
-
             m_10, m_00, m_01 = get_periodic_superblocks(
                 a_ii=self.system_matrix.blocks[0, 0],
                 a_ji=self.system_matrix.blocks[1, 0],
@@ -296,20 +295,50 @@ class CoulombScreeningSolver(SubsystemSolver):
             m_10_x_00 = m_10 @ x_00
             self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
 
-            synchronize_device()
-            t_obc_r_end = time.perf_counter()
-            comm.stack.barrier()
-            t_obc_r_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True
-                )
-                print(
-                    f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
-                    flush=True,
-                )
+        if comm.block.rank == comm.block.size - 1:
+            n = self.system_matrix.num_local_blocks - 1
+            m = n - 1
 
-            t_lyapunov_start = time.perf_counter()
+            m_mn, m_nn, m_nm = get_periodic_superblocks(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
+                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
+                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
+                block_sections=self.block_sections,
+            )
+            # ... bop it.
+            m_nn = xp.flip(m_nn, axis=(-2, -1))
+            m_nm = xp.flip(m_nm, axis=(-2, -1))
+            m_mn = xp.flip(m_mn, axis=(-2, -1))
+            x_nn = self.obc(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(m_nn, axis=(-2, -1)),
+                a_ij=xp.flip(m_nm, axis=(-2, -1)),
+                a_ji=xp.flip(m_mn, axis=(-2, -1)),
+                contact="right",
+                stack_slice=stack_slice,
+            )
+            # ... bop it.
+            x_nn = xp.flip(x_nn, axis=(-2, -1))
+
+            m_mn_x_nn = m_mn @ x_nn
+
+            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
+
+        synchronize_device()
+        t_obc_r_end = time.perf_counter()
+        comm.stack.barrier()
+        t_obc_r_end_all = time.perf_counter()
+        if comm.stack.rank == 0:
+            print(f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True)
+            print(
+                f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
+                flush=True,
+            )
+
+        t_lyapunov_start = time.perf_counter()
+
+        if comm.block.rank == 0:
             # Compute and apply the left lesser/greater boundary self-energy.
             a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
             a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
@@ -346,49 +375,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                 -1, -2
             ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
 
-            synchronize_device()
-            t_lyapunov_end = time.perf_counter()
-            comm.stack.barrier()
-            t_lyapunov_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
-                print(
-                    f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
-
         if comm.block.rank == comm.block.size - 1:
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
-
-            m_mn, m_nn, m_nm = get_periodic_superblocks(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
-                block_sections=self.block_sections,
-            )
-            # ... bop it.
-            m_nn = xp.flip(m_nn, axis=(-2, -1))
-            m_nm = xp.flip(m_nm, axis=(-2, -1))
-            m_mn = xp.flip(m_mn, axis=(-2, -1))
-            x_nn = self.obc(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(m_nn, axis=(-2, -1)),
-                a_ij=xp.flip(m_nm, axis=(-2, -1)),
-                a_ji=xp.flip(m_mn, axis=(-2, -1)),
-                contact="right",
-                stack_slice=stack_slice,
-            )
-            # ... bop it.
-            x_nn = xp.flip(x_nn, axis=(-2, -1))
-
-            m_mn_x_nn = m_mn @ x_nn
-
-            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
 
             # Compute and apply the right lesser/greater boundary self-energy.
             a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
@@ -415,7 +404,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             q_nn = xp.stack((q_nn_lesser, q_nn_greater))
 
-            w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+            w_nn_lesser, w_nn_greater = self.lyapunov(
+                b_nn, q_nn, "right", stack_slice=stack_slice
+            )
 
             self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
                 -1, -2
@@ -425,9 +416,21 @@ class CoulombScreeningSolver(SubsystemSolver):
                 -1, -2
             ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
 
-    def _assemble_system_matrix(
-        self, p_retarded: DSDBSparse, stack_slice: slice
-    ) -> None:
+        synchronize_device()
+        t_lyapunov_end = time.perf_counter()
+        comm.stack.barrier()
+        t_lyapunov_end_all = time.perf_counter()
+        if comm.stack.rank == 0:
+            print(
+                f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
+                flush=True,
+            )
+            print(
+                f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
+                flush=True,
+            )
+
+    def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""
         self.coulomb_matrix.to_device(
             delete_host=False, stream=self._system_stream, sync=False
@@ -442,7 +445,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         synchronize_stream(self._system_stream)
         bd_matmul_distr(
             self.coulomb_matrix,
-            p_retarded.stack[stack_slice],
+            p_retarded,
             out=self.system_matrix,
             start_block=start_block,
             end_block=end_block,
@@ -544,6 +547,10 @@ class CoulombScreeningSolver(SubsystemSolver):
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
             off_slice = slice(0, int(batch_offsets[i + 1] - batch_offsets[i]))
 
+            reallocate = False
+            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                reallocate = True
+
             if comm.rank == 0:
                 print(
                     f"Processing slice {stack_slice} of {p_retarded.shape[0]}, batch size {batch_sizes[i]}",
@@ -552,12 +559,20 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             t_set_blocksize_start = time.perf_counter()
 
-            self.system_matrix.free_data()
+            if reallocate:
+                self.system_matrix.free_data()
+                self.l_lesser.free_data()
+                self.l_greater.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
-            self.l_lesser.free_data()
             self.l_lesser.allocate_data(stack_size=batch_sizes[i])
-            self.l_greater.free_data()
             self.l_greater.allocate_data(stack_size=batch_sizes[i])
+
+            p_lesser_tmp = p_lesser.stack[stack_slice]
+            p_greater_tmp = p_greater.stack[stack_slice]
+            p_retarded_tmp = p_retarded.stack[stack_slice]
+            l_lesser_tmp = self.l_lesser.stack[off_slice]
+            l_greater_tmp = self.l_greater.stack[off_slice]
+
             # Change the block sizes to match the Coulomb matrix.
             self._set_block_sizes(self.small_block_sizes)
             synchronize_device()
@@ -578,8 +593,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             # Assemble the system matrix (Includes matrix multiplication).
             t_assembly_start = time.perf_counter()
-            self.coulomb_matrix.to_device()
-            self._assemble_system_matrix(p_retarded, stack_slice)
+            self._assemble_system_matrix(p_retarded_tmp)
             if i == len(batch_sizes) - 1:
                 p_retarded.free_data()
             synchronize_device()
@@ -604,8 +618,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 end_block = start_block + local_blocks[comm.block.rank]
                 bd_sandwich_distr(
                     self.coulomb_matrix,
-                    p_lesser.stack[stack_slice],
-                    out=self.l_lesser.stack[off_slice],
+                    p_lesser_tmp,
+                    out=l_lesser_tmp,
                     start_block=start_block,
                     end_block=end_block,
                     spillover_correction=True,
@@ -614,8 +628,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     p_lesser.free_data()
                 bd_sandwich_distr(
                     self.coulomb_matrix,
-                    p_greater.stack[stack_slice],
-                    out=self.l_greater.stack[off_slice],
+                    p_greater_tmp,
+                    out=l_greater_tmp,
                     start_block=start_block,
                     end_block=end_block,
                     spillover_correction=True,
@@ -625,21 +639,22 @@ class CoulombScreeningSolver(SubsystemSolver):
             else:
                 bd_sandwich(
                     self.coulomb_matrix,
-                    p_lesser,
-                    out=self.l_lesser,
+                    p_lesser_tmp,
+                    out=l_lesser_tmp,
                     spillover_correction=True,
                 )
-                p_lesser.free_data()
+                if i == len(batch_sizes) - 1:
+                    p_lesser.free_data()
                 bd_sandwich(
                     self.coulomb_matrix,
-                    p_greater,
-                    out=self.l_greater,
+                    p_greater_tmp,
+                    out=l_greater_tmp,
                     spillover_correction=True,
                 )
-                p_greater.free_data()
+                if i == len(batch_sizes) - 1:
+                    p_greater.free_data()
             synchronize_device()
             self.coulomb_matrix.free_data()
-            # self.coulomb_matrix.to_host()
             synchronize_device()
             t_sandwich_end = time.perf_counter()
             comm.barrier()
@@ -710,8 +725,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 t_solve_start = time.perf_counter()
                 self.solver_dist.selected_solve(
                     a=self.system_matrix,
-                    sigma_lesser=self.l_lesser.stack[off_slice],
-                    sigma_greater=self.l_greater.stack[off_slice],
+                    sigma_lesser=l_lesser_tmp,
+                    sigma_greater=l_greater_tmp,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
                     return_retarded=False,
@@ -731,8 +746,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 t_solve_start = time.perf_counter()
                 self.solver.selected_solve(
                     a=self.system_matrix,
-                    sigma_lesser=self.l_lesser.stack[off_slice],
-                    sigma_greater=self.l_greater.stack[off_slice],
+                    sigma_lesser=l_lesser_tmp,
+                    sigma_greater=l_greater_tmp,
                     obc_blocks=self.obc_blocks,
                     out=out_slice,
                     return_retarded=False,

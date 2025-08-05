@@ -61,7 +61,7 @@ class TestLU:
         assert xp.allclose(a @ x, b, atol=1e-6)
 
 
-@pytest.mark.skipif(not mumps_available, reason="Requires pytohn-mumps package")
+@pytest.mark.skipif(not mumps_available, reason="Requires python-mumps package")
 @pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend")
 class TestMUMPS:
     def test_solve(self, n: int, m: int):
@@ -83,7 +83,7 @@ class TestMUMPS:
         assert np.allclose(a @ x1, b, atol=1e-6)
 
         # Reuse the analysis phase.
-        a.data *= 10  # Modify the matrix to change the solution.
+        a.data[:] *= 10  # Modify the matrix to change the solution.
 
         x2 = solver.solve(a, b)
         assert np.allclose(a @ x2, b, atol=1e-6)
@@ -117,12 +117,12 @@ class TestcuDSS:
         """Tests the wave function solver with explicit reset of operands."""
         a, b = _assemble_system(n, m, format="csr", order="F")
 
-        solver = cuDSS(explicitely_reset_operands=True)
+        solver = cuDSS(explicitely_reset_operands="a,b")
         x1 = solver.solve(a, b)
         assert xp.allclose(a @ x1, b, atol=1e-6)
 
         # Modify the matrix to change the solution.
-        a.data *= 10
+        a.data[:] *= 10
 
         x2 = solver.solve(a, b)
         assert xp.allclose(a @ x2, b, atol=1e-6)
@@ -131,12 +131,12 @@ class TestcuDSS:
         """Tests the wave function solver without explicit reset of operands."""
         a, b = _assemble_system(n, m, format="csr", order="F")
 
-        solver = cuDSS(explicitely_reset_operands=False)
+        solver = cuDSS(explicitely_reset_operands="b")
         x1 = solver.solve(a, b)
         assert xp.allclose(a @ x1, b, atol=1e-6)
 
         # Modify the matrix to change the solution.
-        a.data *= 10
+        a.data[:] *= 10
 
         # The solver should still work without explicit reset.
         x2 = solver.solve(a, b)

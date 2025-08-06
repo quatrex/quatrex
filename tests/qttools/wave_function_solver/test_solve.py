@@ -85,6 +85,8 @@ class TestMUMPS:
         # Reuse the analysis phase.
         a.data[:] *= 10  # Modify the matrix to change the solution.
 
+        __, b = _assemble_system(n, 2 * m, format="coo")
+
         x2 = solver.solve(a, b)
         assert np.allclose(a @ x2, b, atol=1e-6)
 
@@ -124,6 +126,7 @@ class TestcuDSS:
         # Modify the matrix to change the solution.
         a.data[:] *= 10
 
+        __, b = _assemble_system(n, 2 * m, format="csr", order="F")
         x2 = solver.solve(a, b)
         assert xp.allclose(a @ x2, b, atol=1e-6)
 
@@ -138,6 +141,7 @@ class TestcuDSS:
         # Modify the matrix to change the solution.
         a.data[:] *= 10
 
+        __, b = _assemble_system(n, 2 * m, format="csr", order="F")
         # The solver should still work without explicit reset.
         x2 = solver.solve(a, b)
         assert xp.allclose(a @ x2, b, atol=1e-6)

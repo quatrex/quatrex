@@ -544,13 +544,13 @@ class QTBM:
                     self.device.contacts, sigma_obcs, injs, inj_inds, Ks
                 ):
                     ind1.append(
-                        xp.repeat(
+                        np.repeat(
                             contact.orbitals_contact.squeeze(),
                             contact.orbitals_contact.shape[1],
                         )
                     )
                     ind2.append(
-                        xp.tile(
+                        np.tile(
                             contact.orbitals_contact.squeeze(),
                             contact.orbitals_contact.shape[1],
                         )
@@ -564,8 +564,9 @@ class QTBM:
                     K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
                 # Concatenate the indices and the self-energies
-                ind1 = xp.concatenate(ind1)
-                ind2 = xp.concatenate(ind2)
+                ind1 = xp.array(np.concatenate(ind1))
+                ind2 = xp.array(np.concatenate(ind2))
+
                 sig_flat = xp.concatenate(sig_flat)
 
                 upd_0 = sparse.coo_matrix(

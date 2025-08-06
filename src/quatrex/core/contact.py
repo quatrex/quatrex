@@ -89,7 +89,7 @@ class Contact:
             raise ValueError("Direction must be one of the three axes (0, 1, or 2).")
 
         relative_coords = self.device.coords - self.origin
-        self.coeffs = relative_coords @ xp.linalg.inv(self.vectors)
+        self.coeffs = relative_coords @ np.linalg.inv(self.vectors)
 
         # Get the atoms inside the origin cell (defined by the user)
         self.at_origin_cell = self._get_atoms_inside_cell(0, 0, 0)
@@ -166,14 +166,14 @@ class Contact:
                         k * self.n_rep_1 * self.n_rep_2 + i * self.n_rep_2 + j
                     )
                     end = start + self.n_orb_origin_cell
-                    self.orbitals_2.append(xp.arange(start, end))
+                    self.orbitals_2.append(np.arange(start, end))
 
         # Concatenate the atoms_2 list and get the orbitals order for
         # the unsorted cell self.atoms_2 = xp.concatenate(self.atoms_2,
         # dtype=int) self.orbitals_2 = self._get_orbitals(self.atoms_2)
-        self.orbitals_2 = xp.concatenate(self.orbitals_2, dtype=int)
+        self.orbitals_2 = np.concatenate(self.orbitals_2, dtype=int)
 
-        self.orbitals_contact = xp.concatenate(self.orbitals[:-1])[None, :]
+        self.orbitals_contact = np.concatenate(self.orbitals[:-1])[None, :]
 
         self.transverse_rep = x - 1
 
@@ -205,10 +205,10 @@ class Contact:
         relative_coords = self.device.coords - self.origin
 
         # Compute the coefficients relative to the contact cell
-        coeffs = relative_coords @ xp.linalg.inv(self.vectors)
+        coeffs = relative_coords @ np.linalg.inv(self.vectors)
 
         # Get the indices of the atoms inside the periodic repetition
-        inside_mask = xp.nonzero(
+        inside_mask = np.nonzero(
             (coeffs[:, 0] >= nx)
             & (coeffs[:, 0] <= nx + 1)
             & (coeffs[:, 1] >= ny)
@@ -257,15 +257,15 @@ class Contact:
         c = int(c)
         # Shift the coordinates of the atoms inside the periodic
         # repetition to match the origin cell
-        list_vec = xp.array([a, b, c], dtype=xp.float64)
+        list_vec = np.array([a, b, c], dtype=np.float64)
         coords_rep = self.device.coords[at_inside_rep, :] - self.vectors @ list_vec
         element_rep = self.device.atom_type[at_inside_rep]
         for at in self.at_origin_cell:
             # Find the atoms in the periodic repetition that are close
             # to the atom in the origin cell and have the same element
             delta = coords_rep - self.device.coords[at, :]
-            found = xp.nonzero(
-                (xp.linalg.norm(delta, axis=1) < tol)
+            found = np.nonzero(
+                (np.linalg.norm(delta, axis=1) < tol)
                 & (self.device.atom_type[at] == element_rep)
             )[0]
             if found.size == 0:
@@ -282,7 +282,7 @@ class Contact:
             # Append the index of the found atom to the sorted list
             sorted.append(at_inside_rep[found[0]])
 
-        return xp.array(sorted, dtype=int)
+        return np.array(sorted, dtype=int)
 
     def _get_periodic_number_transverse(self):
         """Determines number of periodic repetitions in transverse directions."""
@@ -339,7 +339,7 @@ class Contact:
 
         # Store the number of periodic repetitions in the contact object
         # and the coordinates of the origin cell
-        self.origin_cell = xp.array((n_rep_1_minus, n_rep_2_minus))
+        self.origin_cell = np.array((n_rep_1_minus, n_rep_2_minus))
         self.n_rep_1 = n_rep_1_plus + n_rep_1_minus + 1
         self.n_rep_2 = n_rep_2_plus + n_rep_2_minus + 1
 
@@ -366,7 +366,7 @@ class Contact:
         # user, so we start from -origin_cell (that is a tuple! (x,y))
         # and go up to (n_rep_1, n_rep_2)
         curr_cell = -self.origin_cell
-        max_cell = curr_cell + xp.array([self.n_rep_1, self.n_rep_2])
+        max_cell = curr_cell + np.array([self.n_rep_1, self.n_rep_2])
 
         while curr_cell[0] < max_cell[0]:
             while curr_cell[1] < max_cell[1]:
@@ -395,7 +395,7 @@ class Contact:
             curr_cell[0] += 1
             curr_cell[1] = -self.origin_cell[1]
 
-        return xp.concatenate(atom_list, dtype=int)
+        return np.concatenate(atom_list, dtype=int)
 
     def _get_orbitals(self, atom_inds: NDArray) -> NDArray:
         """Gets the orbital indices corresponding to the atoms
@@ -559,8 +559,8 @@ class Contact:
 
         """
 
-        tot_orb = xp.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
-        tot_orb = tot_orb[~xp.isin(tot_orb, xp.concatenate(orbitals))]
+        tot_orb = np.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
+        tot_orb = tot_orb[~np.isin(tot_orb, np.concatenate(orbitals))]
 
         return self.device.hamiltonian[0, 0, 0][orbitals[0], :][:, tot_orb].nnz
 

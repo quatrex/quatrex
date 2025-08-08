@@ -679,18 +679,8 @@ class ElectronSolver(SubsystemSolver):
             if reallocate:
                 self.system_matrix.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
-            if i == 0:
-                sse_lesser.to_host(
-                    delete_device=False, stream=self._system_stream, sync=False
-                )
-                sse_greater.to_host(
-                    delete_device=False, stream=self._system_stream, sync=False
-                )
-                sse_retarded.to_host(
-                    delete_device=False, stream=self._system_stream, sync=False
-                )
             self._assemble_system_matrix(sse_retarded_tmp, stack_slice)
-            synchronize_device()
+            synchronize_stream(None)
             t_assemble_end = time.perf_counter()
             comm.barrier()
             t_assemble_end_all = time.perf_counter()
@@ -722,7 +712,7 @@ class ElectronSolver(SubsystemSolver):
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
                 # synchronize_device()
-            synchronize_stream(None)
+                synchronize_stream(None)
                 t_band_edges_end = time.perf_counter()
                 comm.barrier()
                 t_band_edges_end_all = time.perf_counter()
@@ -736,15 +726,22 @@ class ElectronSolver(SubsystemSolver):
                         flush=True,
                     )
 
-        sse_lesser.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
-        sse_greater.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
-        sse_retarded.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+            if i == 0:
+                sse_lesser.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
+                sse_greater.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
+                sse_retarded.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
 
             t_obc_start = time.perf_counter()
             self.hamiltonian.free_data()
             self._compute_obc(stack_slice)
             # synchronize_device()
-        synchronize_stream(None)
+            synchronize_stream(None)
             t_obc_end = time.perf_counter()
             comm.barrier()
             t_obc_end_all = time.perf_counter()
@@ -759,8 +756,8 @@ class ElectronSolver(SubsystemSolver):
                 out_r.stack[stack_slice],
             )
 
+            t_solve_start = time.perf_counter()
             if comm.block.size > 1:
-                t_solve_start = time.perf_counter()
                 self.solver_dist.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_tmp,
@@ -769,16 +766,7 @@ class ElectronSolver(SubsystemSolver):
                     out=out_slice,
                     return_retarded=True,
                 )
-                synchronize_device()
-                t_solve_end = time.perf_counter()
-                comm.barrier()
-                t_solve_end_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                    print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
-
             else:
-                t_solve_start = time.perf_counter()
                 self.meir_wingreen_current = self.solver.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_tmp,
@@ -788,7 +776,7 @@ class ElectronSolver(SubsystemSolver):
                     return_retarded=True,
                     return_current=self.compute_meir_wingreen_current,
                 )
-                synchronize_device()
+                synchronize_stream(None)
                 t_solve_end = time.perf_counter()
                 comm.barrier()
                 t_solve_end_all = time.perf_counter()

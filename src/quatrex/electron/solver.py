@@ -370,6 +370,7 @@ class ElectronSolver(SubsystemSolver):
             quatrex_config.electron.filtering_iteration_limit
         )
 
+        self._sigma_stream = create_stream()
         self._system_stream = create_stream()
 
     @staticmethod
@@ -735,11 +736,11 @@ class ElectronSolver(SubsystemSolver):
 
         t_assemble_start = time.perf_counter()
         self.system_matrix.allocate_data()
-        sse_lesser.to_host(delete_device=False, stream=self._system_stream, sync=False)
-        sse_greater.to_host(delete_device=False, stream=self._system_stream, sync=False)
-        sse_retarded.to_host(
-            delete_device=False, stream=self._system_stream, sync=False
-        )
+        # sse_lesser.to_host(delete_device=False, stream=self._system_stream, sync=False)
+        # sse_greater.to_host(delete_device=False, stream=self._system_stream, sync=False)
+        # sse_retarded.to_host(
+        #     delete_device=False, stream=self._system_stream, sync=False
+        # )
         self._assemble_system_matrix(sse_retarded)
         synchronize_device()
         t_assemble_end = time.perf_counter()
@@ -768,7 +769,8 @@ class ElectronSolver(SubsystemSolver):
             )
             self._update_fermi_levels(left_band_edges, right_band_edges)
 
-            synchronize_device()
+            # synchronize_device()
+            synchronize_stream(None)
             self.hamiltonian.free_data()
             t_band_edges_end = time.perf_counter()
             comm.barrier()
@@ -782,9 +784,14 @@ class ElectronSolver(SubsystemSolver):
                     flush=True,
                 )
 
+        sse_lesser.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+        sse_greater.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+        sse_retarded.to_host(delete_device=False, stream=self._sigma_stream, sync=False)
+
         t_obc_start = time.perf_counter()
         self._compute_obc()
-        synchronize_device()
+        # synchronize_device()
+        synchronize_stream(None)
         t_obc_end = time.perf_counter()
         comm.barrier()
         t_obc_end_all = time.perf_counter()
@@ -792,8 +799,8 @@ class ElectronSolver(SubsystemSolver):
             print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
             print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
 
+        t_solve_start = time.perf_counter()
         if comm.block.size > 1:
-            t_solve_start = time.perf_counter()
             self.solver_dist.selected_solve(
                 a=self.system_matrix,
                 sigma_lesser=sse_lesser,
@@ -802,16 +809,7 @@ class ElectronSolver(SubsystemSolver):
                 out=out,
                 return_retarded=True,
             )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
-
         else:
-            t_solve_start = time.perf_counter()
             self.meir_wingreen_current = self.solver.selected_solve(
                 a=self.system_matrix,
                 sigma_lesser=sse_lesser,
@@ -821,19 +819,24 @@ class ElectronSolver(SubsystemSolver):
                 return_retarded=True,
                 return_current=self.compute_meir_wingreen_current,
             )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+        # synchronize_device()
+        synchronize_stream(None)
+        self.system_matrix.free_data()
+        sse_lesser.free_data()
+        sse_greater.free_data()
+        sse_retarded.free_data()
+        t_solve_end = time.perf_counter()
+        comm.barrier()
+        t_solve_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
+            print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
-        self.system_matrix.free_data()
         if self.call_count < self.filtering_iteration_limit:
             self._filter_peaks(out)
-        synchronize_device()
+        # synchronize_device()
+        synchronize_stream(None)
         t_filter_peaks_end = time.perf_counter()
         comm.barrier()
         t_filter_peaks_end_all = time.perf_counter()

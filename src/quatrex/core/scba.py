@@ -521,21 +521,37 @@ class SCBA:
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
-        self.data.sigma_lesser.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
+        # self.data.sigma_lesser.data[:] = (
+        #     (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
+        #     + self.mixing_factor * self.data.sigma_lesser.data
+        # )
+        # self.data.sigma_greater.data[:] = (
+        #     (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
+        #     + self.mixing_factor * self.data.sigma_greater.data
+        # )
+        # self.data.sigma_retarded.data[:] = (
+        #     (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
+        #     + self.mixing_factor * self.data.sigma_retarded.data
+        # )
+
+        self.data.sigma_lesser._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_lesser_prev
+            + self.mixing_factor * self.data.sigma_lesser._data
         )
-        self.data.sigma_greater.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
+        self.data.sigma_greater._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_greater_prev
+            + self.mixing_factor * self.data.sigma_greater._data
         )
-        self.data.sigma_retarded.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
+        self.data.sigma_retarded._data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_retarded_prev
+            + self.mixing_factor * self.data.sigma_retarded._data
         )
 
         # Symmetrization.
         synchronize_device()
+        self.data.sigma_lesser_prev = None
+        self.data.sigma_greater_prev = None
+        self.data.sigma_retarded_prev = None
         time_start = time.perf_counter()
         if not self.quatrex_config.scba.symmetric:
             self.data.sigma_lesser.symmetrize(xp.subtract)
@@ -563,7 +579,8 @@ class SCBA:
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        # diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        diff = self.data.sigma_retarded._data - self.data.sigma_retarded_prev
         local_max_diff = get_host(xp.max(xp.abs(diff)))
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
@@ -647,7 +664,17 @@ class SCBA:
             self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater),
         )
-        synchronize_device()
+        # synchronize_device()
+        synchronize_stream(None)
+        self.data.p_lesser.free_data()
+        self.data.p_greater.free_data()
+        self.data.p_retarded.free_data()
+        self.data.g_lesser.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
+        )
         t_coulomb_end = time.perf_counter()
         comm.barrier()
         t_coulomb_end_all = time.perf_counter()
@@ -678,15 +705,15 @@ class SCBA:
             )
 
         t_sigma_fock_start = time.perf_counter()
-        self.data.p_lesser.free_data()
-        self.data.p_greater.free_data()
-        self.data.p_retarded.free_data()
-        self.data.g_lesser.to_device(
-            delete_host=False, stream=self._copy_stream, sync=False
-        )
-        self.data.g_greater.to_device(
-            delete_host=False, stream=self._copy_stream, sync=False
-        )
+        # self.data.p_lesser.free_data()
+        # self.data.p_greater.free_data()
+        # self.data.p_retarded.free_data()
+        # self.data.g_lesser.to_device(
+        #     delete_host=False, stream=self._copy_stream, sync=False
+        # )
+        # self.data.g_greater.to_device(
+        #     delete_host=False, stream=self._copy_stream, sync=False
+        # )
         for m in (
             self.data.sigma_lesser,
             self.data.sigma_greater,
@@ -915,9 +942,12 @@ class SCBA:
         self.data.sigma_lesser.allocate_data()
         self.data.sigma_greater.allocate_data()
         self.data.sigma_retarded.allocate_data()
-        self.data.sigma_lesser_prev.allocate_data()
-        self.data.sigma_greater_prev.allocate_data()
-        self.data.sigma_retarded_prev.allocate_data()
+        # self.data.sigma_lesser_prev.allocate_data()
+        # self.data.sigma_greater_prev.allocate_data()
+        # self.data.sigma_retarded_prev.allocate_data()
+        self.data.sigma_lesser_prev = None
+        self.data.sigma_greater_prev = None
+        self.data.sigma_retarded_prev = None
 
         self.data.sigma_lesser.data[:] = 0.0
         self.data.sigma_greater.data[:] = 0.0
@@ -930,35 +960,38 @@ class SCBA:
             comm.barrier()
             t_iteration_start = time.perf_counter()
 
-            # Stash current into previous self-energy buffer.
-            t_stash_start = time.perf_counter()
-            self._stash_sigma()
-            synchronize_device()
-            t_stash_end = time.perf_counter()
-            comm.barrier()
-            t_stash_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for stashing: {t_stash_end - t_stash_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for stashing all: {t_stash_end_all - t_stash_start:.3f} s",
-                    flush=True,
-                )
+            # # Stash current into previous self-energy buffer.
+            # t_stash_start = time.perf_counter()
+            # self._stash_sigma()
+            # synchronize_device()
+            # t_stash_end = time.perf_counter()
+            # comm.barrier()
+            # t_stash_end_all = time.perf_counter()
+            # if comm.rank == 0:
+            #     print(
+            #         f"Time for stashing: {t_stash_end - t_stash_start:.3f} s",
+            #         flush=True,
+            #     )
+            #     print(
+            #         f"Time for stashing all: {t_stash_end_all - t_stash_start:.3f} s",
+            #         flush=True,
+            #     )
 
             t_solve_start = time.perf_counter()
             self.data.g_retarded.allocate_data()
             self.electron_solver.solve(
-                self.data.sigma_lesser_prev,
-                self.data.sigma_greater_prev,
-                self.data.sigma_retarded_prev,
+                # self.data.sigma_lesser_prev,
+                # self.data.sigma_greater_prev,
+                # self.data.sigma_retarded_prev,
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
-            if xp.__name__ == "cupy":
-                self.data.sigma_lesser_prev.free_data()
-                self.data.sigma_greater_prev.free_data()
-                self.data.sigma_retarded_prev.free_data()
+            # if xp.__name__ == "cupy":
+            #     self.data.sigma_lesser_prev.free_data()
+            #     self.data.sigma_greater_prev.free_data()
+            #     self.data.sigma_retarded_prev.free_data()
             synchronize_device()
             t_solve_end = time.perf_counter()
             comm.barrier()
@@ -990,6 +1023,11 @@ class SCBA:
                     f"Time for computing observables all: {t_oberservables_end_all - t_oberservables_start:.3f} s",
                     flush=True,
                 )
+
+            if xp.__name__ != "cupy":
+                self.data.sigma_lesser_prev = self.data.sigma_lesser._data.copy()
+                self.data.sigma_greater_prev = self.data.sigma_greater._data.copy()
+                self.data.sigma_retarded_prev = self.data.sigma_retarded._data.copy()
 
             # Transpose to nnz distribution.
             # NOTE: While computing all interactions, we only ever need
@@ -1030,13 +1068,33 @@ class SCBA:
                         flush=True,
                     )
 
+            if xp.__name__ == "cupy":
+                self.data.sigma_lesser_prev = xp.empty_like(
+                    self.data.sigma_lesser._host_data
+                )
+                self.data.sigma_lesser_prev.set(
+                    self.data.sigma_lesser._host_data, stream=self._copy_stream
+                )
+                self.data.sigma_greater_prev = xp.empty_like(
+                    self.data.sigma_greater._host_data
+                )
+                self.data.sigma_greater_prev.set(
+                    self.data.sigma_greater._host_data, stream=self._copy_stream
+                )
+                self.data.sigma_retarded_prev = xp.empty_like(
+                    self.data.sigma_retarded._host_data
+                )
+                self.data.sigma_retarded_prev.set(
+                    self.data.sigma_retarded._host_data, stream=self._copy_stream
+                )
+
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()
 
             if self.quatrex_config.scba.phonon:
                 t_start_phonon = time.perf_counter()
                 self._compute_phonon_interaction()
-                synchronize_device()
+                synchronize_stream(None)
                 t_end_phonon = time.perf_counter()
                 comm.barrier()
                 t_end_phonon_all = time.perf_counter()
@@ -1052,15 +1110,6 @@ class SCBA:
 
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()
-            self.data.sigma_lesser_prev.to_device(
-                delete_host=False, stream=self._copy_stream, sync=False
-            )
-            self.data.sigma_greater_prev.to_device(
-                delete_host=False, stream=self._copy_stream, sync=False
-            )
-            self.data.sigma_retarded_prev.to_device(
-                delete_host=False, stream=self._copy_stream, sync=False
-            )
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "stack"
@@ -1071,7 +1120,7 @@ class SCBA:
             ):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "stack"
-            synchronize_device()
+            synchronize_stream()
             t_transpose_sigma_end = time.perf_counter()
             comm.barrier()
             t_transpose_sigma_end_all = time.perf_counter()
@@ -1087,6 +1136,7 @@ class SCBA:
                 )
 
             t_convergence_start = time.perf_counter()
+            synchronize_stream(self._copy_stream)
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)

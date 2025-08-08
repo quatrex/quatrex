@@ -9,9 +9,8 @@ import numpy as np
 from qttools import ArrayLike, FloatType, IntType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import (
+from qttools.utils.gpu_utils import (  # free_mempool,
     empty_like_pinned,
-    free_mempool,
     synchronize_device,
     synchronize_stream,
 )
@@ -862,12 +861,12 @@ class DSDBSparse(ABC):
     def free_data(self) -> None:
         """Frees the local data."""
         self._data = None
-        free_mempool()
+        # free_mempool()
 
     def allocate_data(self, stack_size: int = 0) -> None:
         """Allocates the local data."""
         if self._data is None:
-            free_mempool()
+            # free_mempool()
             if stack_size == 0:
                 stack_size = int(max(self.stack_section_sizes))
             self._data = xp.empty(
@@ -900,7 +899,7 @@ class DSDBSparse(ABC):
                     # but just removes the reference to the data.
                     # The data will be freed when the garbage collector runs.
                     self._data = None
-                    free_mempool()
+                    # free_mempool()
             else:
                 raise ValueError(
                     "Cannot transfer data to host, no device data available. "

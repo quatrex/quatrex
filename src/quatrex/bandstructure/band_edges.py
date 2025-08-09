@@ -3,14 +3,14 @@
 import time
 from functools import partial
 
+import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
-from scipy import linalg as spla
 
 from quatrex.core.compute_config import BandEdgeConfig
 
@@ -100,7 +100,8 @@ def _compute_eigenvalues(
     overlap: sparse.spmatrix,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
-    ind: int,
+    inds: int,
+    weights: NDArray,
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
@@ -130,8 +131,13 @@ def _compute_eigenvalues(
     h_01 = _get_block(hamiltonian, index=blocks[1])[0, row_slice]
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
+
+    # Interpolate the self-energy to the conduction band edge guess.
+    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0]))[inds, row_slice]
+    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1]))[inds, row_slice]
+    # Average these along the energy axis to get the interpolated self-energy.
+    sigma_00 = xp.average(sigma_00, axis=0, weights=weights)
+    sigma_01 = xp.average(sigma_01, axis=0, weights=weights)
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
@@ -165,20 +171,15 @@ def _compute_eigenvalues(
     s_0 += s_0.conj().swapaxes(-2, -1)
     s_0 += s_00[:, :small_blocksize]
 
-    if band_edge_config.use_eigvalsh:
-        # NOTE: In this case we use only the real part of the retarded
-        # self-energy.
-        e_0 = eigvalsh(
-            # NOTE: Prevent eigvalsh from calling a batched routine (slow).
-            xp.squeeze(h_0),
-            xp.squeeze(s_0),
-            compute_module=band_edge_config.eigvalsh_compute_location,
-            use_pinned_memory=band_edge_config.use_pinned_memory,
-        )
-        return xp.sort(e_0.real)
-
-    h_0 += sum(sigma_retarded.blocks[*block][ind] for block in blocks)
-    e_0 = get_device(spla.eigvals(get_host(h_0), get_host(s_0)))
+    # NOTE: In this case we use only the real part of the retarded
+    # self-energy.
+    e_0 = eigvalsh(
+        # NOTE: Prevent eigvalsh from calling a batched routine (slow).
+        xp.squeeze(h_0),
+        xp.squeeze(s_0),
+        compute_module=band_edge_config.eigvalsh_compute_location,
+        use_pinned_memory=band_edge_config.use_pinned_memory,
+    )
     return xp.sort(e_0.real)
 
 
@@ -237,25 +238,60 @@ def find_renormalized_eigenvalues(
     left_mid_gap_energy, right_mid_gap_energy = mid_gap_energies
 
     section_sizes, __ = get_section_sizes(energies.size, comm.stack.size)
-    section_sizes = xp.array(section_sizes)
-    section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
+    section_sizes = np.array(section_sizes)
+    section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
 
     left_band_edges = xp.empty(2, dtype=float)
     right_band_edges = xp.empty(2, dtype=float)
 
     if comm.block.rank == 0:
         for __ in range(num_ref_iterations):
+            # We want to interpolate the self-energy to the conduction
+            # band edge guess. So determine the indices of the energy
+            # below and above the guess.
             ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
-            rank_left = xp.digitize(ind_left, section_offsets) - 1
+            if energies[ind_left] <= left_conduction_band_guess:
+                inds_left = np.array([ind_left, ind_left + 1])
+            else:
+                inds_left = np.array([ind_left - 1, ind_left])
+
+            # Ensure that the indices are within bounds.
+            if inds_left[0] < 0 or inds_left[1] >= energies.size:
+                raise ValueError(
+                    "The conduction band edge guess is outside the range of the energies."
+                    "Something has gone severely wrong."
+                )
+
+            # Compute the weights for the interpolation.
+            dE = energies[inds_left[1]] - energies[inds_left[0]]
+            weights = xp.array(
+                [
+                    (energies[inds_left[1]] - left_conduction_band_guess) / dE,
+                    (left_conduction_band_guess - energies[inds_left[0]]) / dE,
+                ]
+            )
+
+            # Determine which ranks hold the indices of the conduction
+            # band edge guess.
+            ranks_left = np.digitize(inds_left, section_offsets) - 1
+
+            # Now pray that the two indices are on the same rank.
+            if ranks_left[0] != ranks_left[1]:
+                raise NotImplementedError("This is slightly more complicated.")
+
+            # Our prayer was heard, so we can now compute the
+            # renormalized eigenvalues on only one rank.
+            rank_left = ranks_left[0]
 
             if rank_left == comm.stack.rank:
-                local_ind = ind_left - section_offsets[rank_left]
+                local_inds = inds_left - section_offsets[rank_left]
                 e_0_left = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
                     sigma_retarded=sigma_retarded,
-                    ind=local_ind,
+                    inds=local_inds,
+                    weights=weights,
                     side="left",
                     band_edge_config=band_edge_config,
                 )
@@ -290,17 +326,52 @@ def find_renormalized_eigenvalues(
 
     if comm.block.rank == comm.block.size - 1:
         for __ in range(num_ref_iterations):
+            # We want to interpolate the self-energy to the conduction
+            # band edge guess. So determine the indices of the energy
+            # below and above the guess.
             ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
-            rank_right = xp.digitize(ind_right, section_offsets) - 1
+            if energies[ind_right] <= right_conduction_band_guess:
+                inds_right = np.array([ind_right, ind_right + 1])
+            else:
+                inds_right = np.array([ind_right - 1, ind_right])
+
+            # Ensure that the indices are within bounds.
+            if inds_right[0] < 0 or inds_right[1] >= energies.size:
+                raise ValueError(
+                    "The conduction band edge guess is outside the range of the energies."
+                    "Something has gone severely wrong."
+                )
+
+            # Compute the weights for the interpolation.
+            dE = energies[inds_right[1]] - energies[inds_right[0]]
+            weights = xp.array(
+                [
+                    (energies[inds_right[1]] - right_conduction_band_guess) / dE,
+                    (right_conduction_band_guess - energies[inds_right[0]]) / dE,
+                ]
+            )
+
+            # Determine which ranks hold the indices of the conduction
+            # band edge guess.
+            ranks_right = np.digitize(inds_right, section_offsets) - 1
+
+            # Now pray that the two indices are on the same rank.
+            if ranks_right[0] != ranks_right[1]:
+                raise NotImplementedError("This is slightly more complicated.")
+
+            # Our prayer was heard, so we can now compute the
+            # renormalized eigenvalues on only one rank.
+            rank_right = ranks_right[0]
 
             if rank_right == comm.stack.rank:
-                local_ind = ind_right - section_offsets[rank_right]
+                local_inds = inds_right - section_offsets[rank_right]
                 e_0_right = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
                     sigma_retarded=sigma_retarded,
-                    ind=local_ind,
+                    inds=local_inds,
+                    weights=weights,
                     side="right",
                     band_edge_config=band_edge_config,
                 )

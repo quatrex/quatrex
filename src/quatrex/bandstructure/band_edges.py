@@ -100,6 +100,7 @@ def _compute_eigenvalues(
     overlap: sparse.spmatrix,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
+    sigma_retarded_blocks_interp: tuple[NDArray, NDArray] | None,
     inds: int,
     weights: NDArray,
     side: str,
@@ -132,12 +133,30 @@ def _compute_eigenvalues(
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
 
-    # Interpolate the self-energy to the conduction band edge guess.
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0]))[inds, row_slice]
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1]))[inds, row_slice]
-    # Average these along the energy axis to get the interpolated self-energy.
-    sigma_00 = xp.average(sigma_00, axis=0, weights=weights)
-    sigma_01 = xp.average(sigma_01, axis=0, weights=weights)
+    if sigma_retarded_blocks_interp is None:
+        # Interpolate the self-energy to the conduction band edge guess.
+        sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0]))[inds, row_slice]
+        sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1]))[inds, row_slice]
+        # Average these along the energy axis to get the interpolated self-energy.
+        sigma_00 = xp.average(sigma_00, axis=0, weights=weights)
+        sigma_01 = xp.average(sigma_01, axis=0, weights=weights)
+    else:
+        # Get the local self-energy blocks.
+        sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0]))[
+            inds[0], row_slice
+        ]
+        sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1]))[
+            inds[0], row_slice
+        ]
+
+        # Get the blocks that were sent from the other rank.
+        sigma_00_interp, sigma_01_interp = sigma_retarded_blocks_interp
+        sigma_00_interp = sigma_00_interp[row_slice]
+        sigma_01_interp = sigma_01_interp[row_slice]
+
+        # Interpolate the self-energy blocks.
+        sigma_00 = sigma_00 * weights[0] + sigma_00_interp * weights[1]
+        sigma_01 = sigma_01 * weights[0] + sigma_01_interp * weights[1]
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
@@ -275,12 +294,53 @@ def find_renormalized_eigenvalues(
             # band edge guess.
             ranks_left = np.digitize(inds_left, section_offsets) - 1
 
-            # Now pray that the two indices are on the same rank.
+            sigma_retarded_blocks_interp = None
             if ranks_left[0] != ranks_left[1]:
-                raise NotImplementedError("This is slightly more complicated.")
+                # We need to send the self-energy blocks at the energy
+                # above to the rank that holds the energy below.
+                sigma_00 = xp.empty(
+                    (sigma_retarded.block_sizes[0], sigma_retarded.block_sizes[0]),
+                    dtype=xp.float64,
+                )
+                sigma_01 = xp.empty(
+                    (sigma_retarded.block_sizes[0], sigma_retarded.block_sizes[1]),
+                    dtype=xp.float64,
+                )
+                if ranks_left[1] == comm.stack.rank:
+                    # NOTE: If we interpolate accross ranks, it will
+                    # always be between the last local energy on the
+                    # first rank and the first local energy on the
+                    # second rank.
+                    sigma_00 = xp.ascontiguousarray(
+                        xp.real(sigma_retarded.blocks[0, 0][0])
+                    )
+                    sigma_01 = xp.ascontiguousarray(
+                        xp.real(sigma_retarded.blocks[0, 1][0])
+                    )
 
-            # Our prayer was heard, so we can now compute the
-            # renormalized eigenvalues on only one rank.
+                    comm.stack._mpi_comm.Send(
+                        sigma_00,
+                        dest=ranks_left[0],
+                        tag=comm.stack.rank,
+                    )
+                    comm.stack._mpi_comm.Send(
+                        sigma_01,
+                        dest=ranks_left[0],
+                        tag=comm.stack.rank + 1,
+                    )
+                if ranks_left[0] == comm.stack.rank:
+                    comm.stack._mpi_comm.Recv(
+                        sigma_00,
+                        source=ranks_left[1],
+                        tag=ranks_left[1],
+                    )
+                    comm.stack._mpi_comm.Recv(
+                        sigma_01,
+                        source=ranks_left[1],
+                        tag=ranks_left[1] + 1,
+                    )
+                    sigma_retarded_blocks_interp = (sigma_00, sigma_01)
+
             rank_left = ranks_left[0]
 
             if rank_left == comm.stack.rank:
@@ -290,6 +350,7 @@ def find_renormalized_eigenvalues(
                     overlap=overlap,
                     potential=potential,
                     sigma_retarded=sigma_retarded,
+                    sigma_retarded_blocks_interp=sigma_retarded_blocks_interp,
                     inds=local_inds,
                     weights=weights,
                     side="left",
@@ -355,12 +416,49 @@ def find_renormalized_eigenvalues(
             # band edge guess.
             ranks_right = np.digitize(inds_right, section_offsets) - 1
 
-            # Now pray that the two indices are on the same rank.
+            sigma_retarded_blocks_interp = None
             if ranks_right[0] != ranks_right[1]:
-                raise NotImplementedError("This is slightly more complicated.")
+                # We need to send the self-energy blocks at the energy
+                # above to the rank that holds the energy below.
+                sigma_00 = xp.empty(
+                    (sigma_retarded.block_sizes[-1], sigma_retarded.block_sizes[-1]),
+                    dtype=xp.float64,
+                )
+                sigma_01 = xp.empty(
+                    (sigma_retarded.block_sizes[-1], sigma_retarded.block_sizes[-2]),
+                    dtype=xp.float64,
+                )
+                if ranks_right[1] == comm.stack.rank:
+                    # NOTE: If we interpolate accross ranks, it will
+                    # always be between the last local energy on the
+                    # first rank and the first local energy on the
+                    # second rank.
+                    sigma_00 = xp.real(sigma_retarded.blocks[-1, -1][0])
+                    sigma_01 = xp.real(sigma_retarded.blocks[-1, -2][0])
 
-            # Our prayer was heard, so we can now compute the
-            # renormalized eigenvalues on only one rank.
+                    comm.stack._mpi_comm.Send(
+                        sigma_00,
+                        dest=ranks_right[0],
+                        tag=comm.stack.rank,
+                    )
+                    comm.stack._mpi_comm.Send(
+                        sigma_01,
+                        dest=ranks_right[0],
+                        tag=comm.stack.rank + 1,
+                    )
+                if ranks_right[0] == comm.stack.rank:
+                    comm.stack._mpi_comm.Recv(
+                        sigma_00,
+                        source=ranks_right[1],
+                        tag=ranks_right[1],
+                    )
+                    comm.stack._mpi_comm.Recv(
+                        sigma_01,
+                        source=ranks_right[1],
+                        tag=ranks_right[1] + 1,
+                    )
+                    sigma_retarded_blocks_interp = (sigma_00, sigma_01)
+
             rank_right = ranks_right[0]
 
             if rank_right == comm.stack.rank:
@@ -370,6 +468,7 @@ def find_renormalized_eigenvalues(
                     overlap=overlap,
                     potential=potential,
                     sigma_retarded=sigma_retarded,
+                    sigma_retarded_blocks_interp=sigma_retarded_blocks_interp,
                     inds=local_inds,
                     weights=weights,
                     side="right",

@@ -14,6 +14,7 @@ from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import (
     create_stream,
     debug_gpu_memory_usage,
+    free_mempool,
     get_host,
     synchronize_device,
     synchronize_stream,
@@ -160,22 +161,22 @@ class SCBAData:
         )
         self.g_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
-        self.sigma_lesser_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
+        # self.sigma_lesser_prev = dsdbsparse_type.empty_like(
+        #     self.g_lesser, allocate=False
+        # )
         self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
-        self.sigma_greater_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
+        # self.sigma_greater_prev = dsdbsparse_type.empty_like(
+        #     self.g_lesser, allocate=False
+        # )
         self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
-        self.sigma_retarded_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
+        # self.sigma_retarded_prev = dsdbsparse_type.empty_like(
+        #     self.g_lesser, allocate=False
+        # )
         self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
         if quatrex_config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
-            self.sigma_retarded_prev.symmetry_op = lambda a: a
+            # self.sigma_retarded_prev.symmetry_op = lambda a: a
 
         if quatrex_config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
@@ -218,6 +219,8 @@ class SCBAData:
 
         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
             raise NotImplementedError
+
+        free_mempool()
 
 
 @dataclass
@@ -630,6 +633,7 @@ class SCBA:
         if xp.__name__ == "cupy":
             self.data.g_lesser.free_data()
             self.data.g_greater.free_data()
+        # free_mempool()
         synchronize_device()
         t_polarization_end = time.perf_counter()
         comm.barrier()
@@ -664,6 +668,7 @@ class SCBA:
         self.data.g_greater.to_device(
             delete_host=False, stream=self._copy_stream, sync=False
         )
+        # free_mempool()
         t_coulomb_end = time.perf_counter()
         comm.barrier()
         t_coulomb_end_all = time.perf_counter()
@@ -744,6 +749,7 @@ class SCBA:
         )
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
+        # free_mempool()
         synchronize_device()
         t_sigma_end = time.perf_counter()
         comm.barrier()
@@ -945,6 +951,7 @@ class SCBA:
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
+            free_mempool()
             synchronize_device()
             comm.barrier()
             t_iteration_start = time.perf_counter()
@@ -977,10 +984,11 @@ class SCBA:
                 self.data.sigma_retarded,
                 out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
             )
-            # if xp.__name__ == "cupy":
-            #     self.data.sigma_lesser_prev.free_data()
-            #     self.data.sigma_greater_prev.free_data()
-            #     self.data.sigma_retarded_prev.free_data()
+            if xp.__name__ == "cupy":
+                self.data.sigma_lesser.free_data()
+                self.data.sigma_greater.free_data()
+                self.data.sigma_retarded.free_data()
+            # free_mempool()
             synchronize_device()
             t_solve_end = time.perf_counter()
             comm.barrier()
@@ -1026,6 +1034,7 @@ class SCBA:
             for m in (self.data.g_lesser, self.data.g_greater):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "nnz"
+            # free_mempool()
             synchronize_device()
             t_end_transpose = time.perf_counter()
             comm.barrier()
@@ -1148,6 +1157,9 @@ class SCBA:
             # Update self-energy for next iteration with mixing factor.
             t_sigma_update_start = time.perf_counter()
             self._update_sigma()
+            self.data.sigma_lesser_prev = None
+            self.data.sigma_greater_prev = None
+            self.data.sigma_retarded_prev = None
             synchronize_device()
             t_sigma_update_end = time.perf_counter()
             comm.barrier()
@@ -1167,6 +1179,7 @@ class SCBA:
                 print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
 
             if xp.__name__ == "cupy":
+                free_mempool()
                 free_memory, total_memory = xp.cuda.Device().mem_info
                 usage = np.array((total_memory - free_memory) / total_memory)
                 average_usage = np.empty(1)

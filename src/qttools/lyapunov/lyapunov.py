@@ -183,7 +183,6 @@ class LyapunovMemoizer:
                 a, q, contact, stack_slice=stack_slice, out=out
             )
 
-        print(f"a shape: {a.shape}, q shape: {q.shape}, x shape: {x.shape}")
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         if not self.force_memoizing:

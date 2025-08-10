@@ -206,7 +206,6 @@ class LyapunovMemoizer:
         elif self.memoizing_mode == "force":
             x = q if x is None else x
 
-        print(f"a shape: {a.shape}, q shape: {q.shape}, x shape: {x.shape}")
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         if self.memoizing_mode == "auto":

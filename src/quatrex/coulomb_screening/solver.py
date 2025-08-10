@@ -329,7 +329,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_obc_r_end = time.perf_counter()
         comm.stack.barrier()
         t_obc_r_end_all = time.perf_counter()
-        if comm.stack.rank == 0:
+        if comm.rank == 0:
             print(f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True)
             print(
                 f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
@@ -420,7 +420,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_lyapunov_end = time.perf_counter()
         comm.stack.barrier()
         t_lyapunov_end_all = time.perf_counter()
-        if comm.stack.rank == 0:
+        if comm.rank == 0:
             print(
                 f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
                 flush=True,
@@ -563,6 +563,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 self.system_matrix.free_data()
                 self.l_lesser.free_data()
                 self.l_greater.free_data()
+                # free_mempool()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
             self.l_lesser.allocate_data(stack_size=batch_sizes[i])
             self.l_greater.allocate_data(stack_size=batch_sizes[i])
@@ -596,7 +597,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._assemble_system_matrix(p_retarded_tmp)
             if i == len(batch_sizes) - 1:
                 p_retarded.free_data()
-            synchronize_device()
+            synchronize_stream(None)
             t_assembly_end = time.perf_counter()
             comm.barrier()
             t_assembly_end_all = time.perf_counter()
@@ -653,9 +654,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                 )
                 if i == len(batch_sizes) - 1:
                     p_greater.free_data()
-            synchronize_device()
             self.coulomb_matrix.free_data()
-            synchronize_device()
+            # free_mempool()
+            synchronize_stream(None)
             t_sandwich_end = time.perf_counter()
             comm.barrier()
             t_sandwich_end_all = time.perf_counter()
@@ -705,7 +706,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             # Apply the OBC algorithm.
             t_obc_start = time.perf_counter()
             self._compute_obc(stack_slice)
-            synchronize_device()
+            synchronize_stream(None)
             t_obc_end = time.perf_counter()
             comm.barrier()
             t_obc_end_all = time.perf_counter()
@@ -721,8 +722,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
 
             # Solve the system
+            t_solve_start = time.perf_counter()
             if comm.block.size > 1:
-                t_solve_start = time.perf_counter()
                 self.solver_dist.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=l_lesser_tmp,
@@ -731,19 +732,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                     out=out_slice,
                     return_retarded=False,
                 )
-                synchronize_device()
-                t_solve_end = time.perf_counter()
-                comm.barrier()
-                t_solve_end_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                    print(
-                        f"    Solve all: {t_solve_end_all-t_solve_start:.3f}",
-                        flush=True,
-                    )
-
             else:
-                t_solve_start = time.perf_counter()
                 self.solver.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=l_lesser_tmp,
@@ -752,16 +741,16 @@ class CoulombScreeningSolver(SubsystemSolver):
                     out=out_slice,
                     return_retarded=False,
                 )
-                synchronize_device()
-                t_solve_end = time.perf_counter()
-                comm.barrier()
-                t_solve_end_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                    print(
-                        f"    Solve all: {t_solve_end_all-t_solve_start:.3f}",
-                        flush=True,
-                    )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
+                print(
+                    f"    Solve all: {t_solve_end_all-t_solve_start:.3f}",
+                    flush=True,
+                )
 
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.

@@ -9,7 +9,7 @@ import numpy as np
 from qttools import ArrayLike, FloatType, IntType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import (  # free_mempool,
+from qttools.utils.gpu_utils import (
     empty_like_pinned,
     synchronize_device,
     synchronize_stream,
@@ -792,15 +792,21 @@ class DSDBSparse(ABC):
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
             # Shuffle data to make it contiguous in memory
-            _data = xp.zeros_like(self._data)
-            _data[: self.global_stack_shape[0]] = self._data[self._stack_padding_mask]
-            self._data = _data
+            if not discard:
+                _data = xp.zeros_like(self._data)
+                _data[: self.global_stack_shape[0]] = self._data[
+                    self._stack_padding_mask
+                ]
+                self._data = _data
 
         else:
             # Undo the shuffle
-            _data = xp.zeros_like(self._data)
-            _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
-            self._data = _data
+            if not discard:
+                _data = xp.zeros_like(self._data)
+                _data[self._stack_padding_mask] = self._data[
+                    : self.global_stack_shape[0]
+                ]
+                self._data = _data
 
             self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
@@ -927,6 +933,27 @@ class DSDBSparse(ABC):
                 synchronize_stream(stream)
             if delete_host:
                 self._host_data = None
+
+    def set_to_host(self) -> None:
+        """Sets the data to the host memory."""
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot set data to host, no host data available. "
+                    "Call `to_host()` first."
+                )
+            self._tmp_data = self._data
+            self._data = self._host_data
+
+    def set_to_device(self) -> None:
+        """Sets the data to the device memory."""
+        if xp.__name__ == "cupy":
+            if not hasattr(self, "_tmp_data"):
+                raise ValueError(
+                    "Cannot set data to device, no tmp data available. "
+                    "Call `set_to_host()` first."
+                )
+            self._data = self._tmp_data
 
     @classmethod
     @abstractmethod

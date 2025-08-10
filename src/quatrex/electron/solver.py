@@ -54,14 +54,14 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
     b_ = b.stack[...]
     for i in range(a.num_local_blocks):
         j = i + 1
-        a_.blocks[i, i] -= b_.blocks[i, i]
+        a_.blocks[i, i] -= xp.asarray(b_.blocks[i, i])
 
         if j >= a.num_local_blocks and comm.block.rank == comm.block.size - 1:
             # The last rank does not have these blocks.
             continue
 
-        a_.blocks[i, j] -= b_.blocks[i, j]
-        a_.blocks[j, i] -= b_.blocks[j, i]
+        a_.blocks[i, j] -= xp.asarray(b_.blocks[i, j])
+        a_.blocks[j, i] -= xp.asarray(b_.blocks[j, i])
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
@@ -640,9 +640,9 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
-        self.hamiltonian.to_device(
-            delete_host=False, stream=self._system_stream, sync=False
-        )
+        # self.hamiltonian.to_device(
+        #     delete_host=False, stream=self._system_stream, sync=False
+        # )
         self.system_matrix.data = 0.0
         self.system_matrix += self.overlap_sparray
         scale_stack(
@@ -653,7 +653,7 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
         # _btd_subtract(self.system_matrix, sse_retarded.stack[stack_slice])
-        synchronize_stream(self._system_stream)
+        # synchronize_stream(self._system_stream)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -771,6 +771,7 @@ class ElectronSolver(SubsystemSolver):
                 )
 
             t_assemble_start = time.perf_counter()
+            self.hamiltonian.set_to_host()
             if reallocate:
                 self.system_matrix.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
@@ -833,7 +834,7 @@ class ElectronSolver(SubsystemSolver):
                 )
 
             t_obc_start = time.perf_counter()
-            self.hamiltonian.free_data()
+            self.hamiltonian.set_to_device()
             self._compute_obc(stack_slice)
             # synchronize_device()
             synchronize_stream(None)

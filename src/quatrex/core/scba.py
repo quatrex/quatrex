@@ -962,6 +962,9 @@ class SCBA:
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
+            self.data.sigma_lesser._data[:] = 0.0
+            self.data.sigma_greater._data[:] = 0.0
+            self.data.sigma_retarded._data[:] = 0.0
             free_mempool()
             synchronize_device()
             comm.barrier()

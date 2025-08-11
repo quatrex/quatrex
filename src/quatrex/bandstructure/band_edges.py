@@ -268,7 +268,7 @@ def find_renormalized_eigenvalues(
             # We want to interpolate the self-energy to the conduction
             # band edge guess. So determine the indices of the energy
             # below and above the guess.
-            ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
+            ind_left = int(np.argmin(np.abs(energies - left_conduction_band_guess)))
             if energies[ind_left] <= left_conduction_band_guess:
                 inds_left = np.array([ind_left, ind_left + 1])
             else:
@@ -390,7 +390,7 @@ def find_renormalized_eigenvalues(
             # We want to interpolate the self-energy to the conduction
             # band edge guess. So determine the indices of the energy
             # below and above the guess.
-            ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
+            ind_right = int(np.argmin(np.abs(energies - right_conduction_band_guess)))
             if energies[ind_right] <= right_conduction_band_guess:
                 inds_right = np.array([ind_right, ind_right + 1])
             else:

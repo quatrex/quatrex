@@ -806,9 +806,12 @@ class SCBA:
                 )
             )
         if self.quatrex_config.outputs.device_currents:
-            self.observables.electron_current["device"] = device_current(
-                self.data.g_lesser, self.electron_solver.hamiltonian
-            )
+            # NOTE: Don't compute the normal device current here.
+            # Instead we use only the Meir-Wingreen current.
+
+            # self.observables.electron_current["device"] = device_current(
+            #     self.data.g_lesser, self.electron_solver.hamiltonian
+            # )
             if self.quatrex_config.electron.solver.compute_current:
                 if comm.block.size > 1:
                     raise NotImplementedError(
@@ -891,9 +894,12 @@ class SCBA:
                 }
             )
         if self.quatrex_config.outputs.device_currents:
-            outputs[f"device_current_{iteration}.npy"] = (
-                self.observables.electron_current["device"]
-            )
+            # NOTE: Don't save the normal device current here.
+            # Instead we use only the Meir-Wingreen current.
+
+            # outputs[f"device_current_{iteration}.npy"] = (
+            #     self.observables.electron_current["device"]
+            # )
             if self.quatrex_config.electron.solver.compute_current:
                 if comm.block.size > 1:
                     raise NotImplementedError(
@@ -962,9 +968,9 @@ class SCBA:
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
-            self.data.sigma_lesser._data[:] = 0.0
-            self.data.sigma_greater._data[:] = 0.0
-            self.data.sigma_retarded._data[:] = 0.0
+            # self.data.sigma_lesser._data[:] = 0.0
+            # self.data.sigma_greater._data[:] = 0.0
+            # self.data.sigma_retarded._data[:] = 0.0
             free_mempool()
             synchronize_device()
             comm.barrier()

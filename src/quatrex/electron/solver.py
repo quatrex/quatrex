@@ -319,9 +319,15 @@ class ElectronSolver(SubsystemSolver):
 
         self.eta_obc = quatrex_config.electron.eta_obc
 
-        if quatrex_config.electron.solver.compute_current and comm.block.size > 1:
-            raise NotImplementedError(
-                "Current computation not implemented in distributed mode."
+        if quatrex_config.electron.solver.compute_current:
+            if comm.block.size > 1:
+                raise NotImplementedError(
+                    "Current computation not implemented in distributed mode."
+                )
+            # Initialize Meir-Wingreen current for batching.
+            self.meir_wingreen_current = xp.zeros(
+                (self.local_energies.size, self.hamiltonian.num_blocks - 1),
+                dtype=xp.complex128,
             )
 
         self.compute_meir_wingreen_current = (
@@ -768,7 +774,7 @@ class ElectronSolver(SubsystemSolver):
                     return_retarded=True,
                 )
             else:
-                self.meir_wingreen_current = self.solver.selected_solve(
+                self.meir_wingreen_current[stack_slice] = self.solver.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_tmp,
                     sigma_greater=sse_greater_tmp,

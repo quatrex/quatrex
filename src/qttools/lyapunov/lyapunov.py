@@ -198,6 +198,18 @@ class LyapunovMemoizer:
                 | (relative_recursion_errors < self.memoize_rel_tol)
             )
 
+            global_memoizing = xp.empty((1,), dtype=int)
+            comm.stack.all_reduce(
+                local_memoizing.astype(int),
+                global_memoizing,
+                backend="host_mpi",
+            )
+            if comm.stack.rank == 0:
+                print(
+                    f"Memoizing rate {contact} Lyapunov: {int(global_memoizing)} / {comm.stack.size}",
+                    flush=True,
+                )
+
             if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
                 return self._call_with_cache(

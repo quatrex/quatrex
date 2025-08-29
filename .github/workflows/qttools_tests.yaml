@@ -1,0 +1,40 @@
+# Copyright 2025 ETH Zurich and Quantum Transport Toolbox authors.
+name: Run Basic Tests and Determine Code Coverage
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test-cov:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.11"
+          channels: conda-forge,defaults
+          channel-priority: true
+          activate-environment: quatrex-dev
+          environment-file: environment-dev.yaml
+
+      - name: Install Numba
+        run: |
+          pip install numba
+
+      - name: Install quatrex without Dependencies
+        run: |
+          pip install --no-deps --editable .
+
+      - name: Run MPI Tests
+        run: |
+          NUMBA_DISABLE_JIT=1 mpiexec -np 6 pytest --only-mpi tests/qttools
+
+      - name: Run Normal Tests and Determine Coverage
+        run: |
+          NUMBA_DISABLE_JIT=1 pytest --with-mpi --cov=src/qttools --cov-report=term --cov-report=xml tests/qttools

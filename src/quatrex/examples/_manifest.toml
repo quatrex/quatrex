@@ -1,0 +1,13 @@
+# Copyright (c) 2025 ETH Zurich and the authors of the quatrex package.
+
+# This file contains a manifest of example datasets. Each dataset has a
+# name, a URL to download it from, and an optional SHA256 checksum to
+# verify the integrity of the downloaded file.
+
+[carbon-nanotube]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/cnt_w90/cnt_w90.npz"
+sha256 = "a49650281d17c28276cb1220903edf6cf6c879d8b4ed5fe0cce0d615f5f01477"
+
+[silicon-nanowire]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/sinw_w90/sinw_w90.npz"
+sha256 = "7e9608d54b3ae97b6629a7bb8e1728db0bf455b8002a854efff34b9a2507cdc5"

@@ -164,8 +164,9 @@ gmon.out
 dev/
 notebooks/
 
-# Example outputs
+# Examples directory and outputs
 **/outputs
+/examples/
 hostfile
 .vscode/
 

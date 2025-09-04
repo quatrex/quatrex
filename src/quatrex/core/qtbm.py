@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load, get_local_slice
 from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.device import Device
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
@@ -454,7 +454,7 @@ class QTBM:
 
         times = []
         comm.Barrier()
-        OBC_batch_size = 10
+        OBC_batch_size = 1
         self.system_matrix = None  # Initialize the system matrix
 
         times.append(time.perf_counter())

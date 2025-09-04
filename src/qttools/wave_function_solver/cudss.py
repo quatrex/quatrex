@@ -79,9 +79,9 @@ class cuDSS(WFSolver):
             ].pop(0)
 
             if multithreading_lib is None:
-                raise ImportError("No suitable multithreading library found for cuDSS.")
-
-            self.solver_options["multithreading_lib"] = multithreading_lib
+                print("WARNING! No suitable multithreading library found for cuDSS.")
+            else:
+                self.solver_options["multithreading_lib"] = multithreading_lib
 
     def __del__(self) -> None:
         """Cleans up the cuDSS solver context."""

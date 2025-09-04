@@ -118,11 +118,13 @@ def _eig_cupy(
     else:
         w, v = xp.linalg.eig(A)
 
+    return w, v
+
 
 @profiler.profile(level="api")
 def eig(
     A: NDArray | list[NDArray],
-    compute_module: str = "numpy",
+    compute_module: str = "cupy",
     output_module: str | None = None,
     use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray] | tuple[list[NDArray], list[NDArray]]:

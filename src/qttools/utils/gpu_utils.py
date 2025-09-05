@@ -1,6 +1,11 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 import inspect
+from typing import Union
+
+import numpy as np
+from mpi4py import MPI
+from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
@@ -312,6 +317,44 @@ def zeros_like_pinned(
 
 
 @profiler.profile(level="debug")
+def create_stream(non_blocking: bool = True) -> "xp.cuda.Stream":
+    """Creates a new CUDA stream if using cupy.
+
+    Parameters
+    ----------
+    non_blocking : bool, optional
+        If True, the stream is created in non-blocking mode. Default is True.
+
+    Returns
+    -------
+    cupy.cuda.Stream
+        The created stream.
+
+    """
+    if xp.__name__ == "cupy":
+        return xp.cuda.Stream(non_blocking=non_blocking)
+    else:
+        return None
+
+
+@profiler.profile(level="debug")
+def synchronize_stream(stream: Union[None, "xp.cuda.Stream"] = None):
+    """Synchronizes the input stream if using cupy.
+
+    Does nothing if using numpy. If using cupy and no stream is provided,
+    the Null stream is synchronized.
+
+    Parameters
+    ----------
+    stream : cupy.cuda.Stream, optional
+        The stream to synchronize. If not provided, the Null stream is used.
+
+    """
+    if xp.__name__ == "cupy":
+        (stream or xp.cuda.Stream.null).synchronize()
+
+
+@profiler.profile(level="debug")
 def synchronize_current_stream():
     """Synchronizes the current stream if using cupy.
 
@@ -342,3 +385,25 @@ def free_mempool():
     if xp.__name__ == "cupy":
         mempool = xp.get_default_memory_pool()
         mempool.free_all_blocks()
+
+
+def debug_gpu_memory_usage(msg: str = "") -> None:
+    """Prints the GPU memory usage."""
+    if xp.__name__ == "cupy":
+        free_memory, total_memory = xp.cuda.Device().mem_info
+        usage = np.array((total_memory - free_memory) / total_memory)
+        average_usage = np.empty(1)
+        max_usage = np.empty(1)
+        global_comm.Allreduce(usage, average_usage, op=MPI.SUM)
+        global_comm.Allreduce(usage, max_usage, op=MPI.MAX)
+        average_usage /= global_comm.size
+
+        if global_comm.rank == 0:
+            print(
+                f"{msg} | Rank-average device memory usage: {average_usage[0] * 100:.4f}%",
+                flush=True,
+            )
+            print(
+                f"{msg} | Max device memory usage: {max_usage[0] * 100:.4f}%",
+                flush=True,
+            )

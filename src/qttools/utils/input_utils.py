@@ -5,11 +5,15 @@ from pathlib import Path
 
 import numpy as np
 
-from qttools import NDArray, _DType, sparse, xp
+from qttools import FloatType, NDArray, sparse, xp
+from qttools.utils.gpu_utils import debug_gpu_memory_usage, free_mempool
 
 
 def read_hr_dat(
-    path: Path, return_all: bool = False, dtype: _DType = xp.complex128, read_fast=False
+    path: Path,
+    return_all: bool = False,
+    dtype: xp.dtype[FloatType] = xp.complex128,
+    read_fast=False,
 ) -> tuple[NDArray, ...]:
     """Parses the contents of a `seedname_hr.dat` file.
 
@@ -293,6 +297,7 @@ def create_hamiltonian(
     cutoff: float = xp.inf,
     coords: NDArray = None,
     lattice_vectors: NDArray = None,
+    format: str = "coo",
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
     The transport cell (same as supercell) is the cell that is repeated in the transport direction,
@@ -374,9 +379,13 @@ def create_hamiltonian(
     upper_ind = tuple([1 if i == transport_dir else 0 for i in range(3)])
     lower_ind = tuple([-1 if i == transport_dir else 0 for i in range(3)])
 
+    debug_gpu_memory_usage("Before creating Hamiltonian blocks")
+
     diag_block = get_hamiltonian_block(hR, transport_cell, (0, 0, 0))
     upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
     lower_block = get_hamiltonian_block(hR, transport_cell, lower_ind)
+
+    debug_gpu_memory_usage("After creating Hamiltonian blocks")
 
     # Enforce cutoff.
     if coords is not None and cutoff < xp.inf and lattice_vectors is not None:
@@ -402,52 +411,211 @@ def create_hamiltonian(
         diag_block = sparse.coo_matrix(diag_block)
         upper_block = sparse.coo_matrix(upper_block)
         lower_block = sparse.coo_matrix(lower_block)
-        # Canoncialize the sparse matrices.
+
+        debug_gpu_memory_usage("After creating sparse Hamiltonian blocks")
+        # Canonicalize the sparse matrices.
         # NOTE: Not sure if this is necessary.
         for mat in [diag_block, upper_block, lower_block]:
             if mat.has_canonical_format is False:
                 mat.sum_duplicates()
+                mat.eliminate_zeros()
         # Create the block-tridiagonal matrix.
         num_blocks = block_end - block_start
         offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
 
-        def _tile_sparse_blocks(block, num_blocks, offsets):
-            return (
-                xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
-                xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
-                xp.tile(block.data, num_blocks),
-            )
-
-        diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
-            diag_block, num_blocks, offsets
-        )
-        upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
-            upper_block, num_blocks, offsets
-        )
-        lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
-            lower_block, num_blocks, offsets
-        )
-        upper_cols += diag_block.shape[0]
-        lower_rows += diag_block.shape[0]
-
-        full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
-        full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
-        full_data = xp.hstack([diag_data, upper_data, lower_data])
-        # Remove the fishtail at the end of the matrix.
+        block_num_rows = diag_block.shape[0]
         matrix_shape = num_transport_cells * diag_block.shape[0]
-        valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
-        full_rows = full_rows[valid_mask]
-        full_cols = full_cols[valid_mask]
-        full_data = full_data[valid_mask]
-        # Also return the block sizes.
         block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
-        return (
-            sparse.coo_matrix(
-                (full_data, (full_rows, full_cols)),
-                shape=(matrix_shape, matrix_shape),
-            ),
-            block_sizes,
-        )
+
+        if format == "csr":
+
+            if num_blocks == 0:
+                # If there are no blocks, return an empty matrix.
+                return sparse.csr_matrix((matrix_shape, matrix_shape)), block_sizes
+
+            # For CSR output
+            off = block_start * diag_block.shape[0]
+            top_brow_rows = diag_block.row + off
+            top_brow_cols = diag_block.col + off
+            top_brow_data = diag_block.data
+            if block_start < num_transport_cells - 1:
+                top_brow_rows = xp.hstack([top_brow_rows, upper_block.row + off])
+                top_brow_cols = xp.hstack(
+                    [
+                        top_brow_cols,
+                        upper_block.col + diag_block.shape[0] + off,
+                    ]
+                )
+                top_brow_data = xp.hstack([top_brow_data, upper_block.data])
+            top_brow = sparse.csr_matrix(
+                (top_brow_data, (top_brow_rows, top_brow_cols)),
+                shape=((block_start + 1) * diag_block.shape[0], matrix_shape),
+            )
+            middle_brow_rows = xp.hstack(
+                [lower_block.row, diag_block.row, upper_block.row]
+            )
+            middle_brow_cols = (
+                xp.hstack(
+                    [
+                        lower_block.col,
+                        diag_block.col + diag_block.shape[0],
+                        upper_block.col + 2 * diag_block.shape[0],
+                    ]
+                )
+                + off
+            )
+            middle_brow_data = xp.hstack(
+                [lower_block.data, diag_block.data, upper_block.data]
+            )
+            try:
+                middle_brow = sparse.csr_matrix(
+                    (middle_brow_data, (middle_brow_rows, middle_brow_cols)),
+                    shape=(diag_block.shape[0], matrix_shape),
+                )
+            except ValueError:
+                # The middle row as defined above will have extraneous columns that are out of
+                # bounds when the partition only has two block rows. Moreover, a ValueError exception
+                # will occur if the partition is the last one. This is benign, as we do not use
+                # the middle row in those cases.
+                middle_brow = None
+            bottom_brow_rows = xp.hstack([lower_block.row, diag_block.row])
+            bottom_brow_cols = xp.hstack(
+                [
+                    lower_block.col + (block_end - 2) * diag_block.shape[0],
+                    diag_block.col + (block_end - 1) * diag_block.shape[0],
+                ]
+            )
+            bottom_brow_data = xp.hstack([lower_block.data, diag_block.data])
+            bottom_num_rows = diag_block.shape[0]
+            if block_end < num_transport_cells:
+                # Add the right part of the fishtail.
+                bottom_brow_rows = xp.hstack([bottom_brow_rows, upper_block.row])
+                bottom_brow_cols = xp.hstack(
+                    [
+                        bottom_brow_cols,
+                        upper_block.col + block_end * diag_block.shape[0],
+                    ]
+                )
+                bottom_brow_data = xp.hstack([bottom_brow_data, upper_block.data])
+            bottom_brow = sparse.csr_matrix(
+                (bottom_brow_data, (bottom_brow_rows, bottom_brow_cols)),
+                shape=(bottom_num_rows, matrix_shape),
+            )
+            if num_blocks > 0 and block_end < num_transport_cells:
+                # Bottom part of the fishtail
+                btm_fishtail_rows = lower_block.row
+                btm_fishtail_cols = lower_block.col + (block_end - 1) * block_num_rows
+                btm_fishtail_data = lower_block.data
+                btm_fishtail = sparse.csr_matrix(
+                    (btm_fishtail_data, (btm_fishtail_rows, btm_fishtail_cols)),
+                    shape=(block_num_rows, matrix_shape),
+                )
+
+            del diag_block, upper_block, lower_block
+            del top_brow_rows, top_brow_cols, top_brow_data
+            del middle_brow_rows, middle_brow_cols, middle_brow_data
+            del bottom_brow_rows, bottom_brow_cols, bottom_brow_data
+            free_mempool()
+
+            result = top_brow
+            if num_blocks > 2:
+                result = sparse.vstack((result, middle_brow), format="csr")
+            for _ in range(block_start + 2, block_end - 1):
+                middle_brow.indices += block_num_rows
+                result = sparse.vstack((result, middle_brow), format="csr")
+            if num_blocks > 1:
+                result = sparse.vstack((result, bottom_brow), format="csr")
+            if num_blocks > 0 and block_end < num_transport_cells:
+                result = sparse.vstack((result, btm_fishtail), format="csr")
+            if block_end < num_transport_cells - 1:
+                result = sparse.vstack(
+                    (
+                        result,
+                        sparse.csr_matrix(
+                            (
+                                (num_transport_cells - block_end - 1) * block_num_rows,
+                                matrix_shape,
+                            )
+                        ),
+                    ),
+                    format="csr",
+                )
+
+            free_mempool()
+            result.sort_indices()
+            result.eliminate_zeros()
+            result.sum_duplicates()
+            free_mempool()
+
+        else:
+
+            def _tile_sparse_blocks(block, num_blocks, offsets):
+                return (
+                    xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
+                    xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
+                    xp.tile(block.data, num_blocks),
+                )
+
+            ul_blocks = num_blocks
+            ul_offsets = offsets
+            if block_end == num_transport_cells:
+                ul_blocks = num_blocks - 1
+                ul_offsets = offsets[:-1]
+
+            diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
+                diag_block, num_blocks, offsets
+            )
+            upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
+                upper_block, ul_blocks, ul_offsets
+            )
+            lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
+                lower_block, ul_blocks, ul_offsets
+            )
+            upper_cols += diag_block.shape[0]
+            lower_rows += diag_block.shape[0]
+
+            del diag_block, upper_block, lower_block
+            free_mempool()
+
+            debug_gpu_memory_usage("After tiling sparse Hamiltonian blocks")
+
+            full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
+            full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
+            full_data = xp.hstack([diag_data, upper_data, lower_data])
+
+            del diag_rows, diag_cols, diag_data
+            del upper_rows, upper_cols, upper_data
+            del lower_rows, lower_cols, lower_data
+            free_mempool()
+
+            debug_gpu_memory_usage("After stacking sparse Hamiltonian blocks")
+            # # Remove the fishtail at the end of the matrix.
+            # # matrix_shape = num_transport_cells * diag_block.shape[0]
+            # valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
+            # full_rows = full_rows[valid_mask]
+            # full_cols = full_cols[valid_mask]
+            # full_data = full_data[valid_mask]
+
+            # del valid_mask
+            # free_mempool()
+
+            # debug_gpu_memory_usage(
+            #     "After removing fishtail from sparse Hamiltonian blocks"
+            # )
+            # Also return the block sizes.
+            # block_sizes = xp.ones(num_blocks, dtype=int) * diag_block.shape[0]
+            if format == "coo":
+                result = sparse.coo_matrix(
+                    (full_data, (full_rows, full_cols)),
+                    shape=(matrix_shape, matrix_shape),
+                )
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+
+            del full_rows, full_cols, full_data
+            free_mempool()
+        debug_gpu_memory_usage("After creating full sparse Hamiltonian matrix")
+        return result, block_sizes
     else:
         # Returns the block-tridiagonal Hamiltonian matrix as a tuple of arrays.
         diag = xp.tile(diag_block, (block_end - block_start, 1))

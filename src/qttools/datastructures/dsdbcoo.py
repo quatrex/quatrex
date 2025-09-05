@@ -9,6 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcoo_kernels, dsdbsparse_kernels
 from qttools.profiling.profiler import Profiler
+from qttools.utils.gpu_utils import debug_gpu_memory_usage, free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -58,7 +59,7 @@ class DSDBCOO(DSDBSparse):
 
     def __init__(
         self,
-        data: NDArray,
+        arg: NDArray,
         rows: NDArray,
         cols: NDArray,
         block_sizes: NDArray,
@@ -66,19 +67,24 @@ class DSDBCOO(DSDBSparse):
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        allocate: bool = True,
+        copy: bool = True,
     ):
         """Initializes a DSDBCOO matrix."""
         super().__init__(
-            data,
+            arg,
             block_sizes,
             global_stack_shape,
             return_dense,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            allocate=allocate,
+            copy=copy,
         )
 
         self.rows = xp.asarray(rows, dtype=xp.int32)
         self.cols = xp.asarray(cols, dtype=xp.int32)
+        # print(f"DSDBCOO.__init__ | NNZ: {self.rows.size}, {self.rows.data.ptr == rows.data.ptr}")
 
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
@@ -569,7 +575,7 @@ class DSDBCOO(DSDBSparse):
     def __neg__(self) -> "DSDBCOO":
         """Negation of the data."""
         return DSDBCOO(
-            data=-self.data,
+            arg=-self.data,
             rows=self.rows,
             cols=self.cols,
             block_sizes=self.block_sizes,
@@ -804,43 +810,6 @@ class DSDBCOO(DSDBSparse):
 
     @classmethod
     @profiler.profile(level="api")
-    def zeros_like(cls, dsdbsparse: "DSDBCOO") -> "DSDBCOO":
-        """Creates a new DSDBCOO matrix with the same shape and dtype.
-
-        All non-zero elements are set to zero, but the sparsity pattern
-        is preserved.
-
-        Parameters
-        ----------
-        dsdbcoo : DSDBCOO
-            The matrix to copy the shape and dtype from.
-
-        Returns
-        -------
-        dsdbcoo
-            The new DSDBCOO matrix.
-
-        """
-        # deepcopy can lead to issues with cupy
-        # segfaults in the tests observed
-        if dsdbsparse._data is None:
-            raise ValueError("Cannot create zeros_like from deallocated DSDBSparse.")
-
-        out = cls(
-            data=dsdbsparse.data,
-            rows=dsdbsparse.rows,
-            cols=dsdbsparse.cols,
-            block_sizes=dsdbsparse.block_sizes,
-            global_stack_shape=dsdbsparse.global_stack_shape,
-            return_dense=dsdbsparse.return_dense,
-            symmetry=dsdbsparse.symmetry,
-            symmetry_op=dsdbsparse.symmetry_op,
-        )
-        out._data[:] = 0
-        return out
-
-    @classmethod
-    @profiler.profile(level="api")
     def from_sparray(
         cls,
         sparray: sparse.spmatrix,
@@ -848,6 +817,7 @@ class DSDBCOO(DSDBSparse):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        allocate: bool = True,
     ) -> "DSDBCOO":
         """Constructs a DSDBCOO matrix from a COO matrix.
 
@@ -867,6 +837,8 @@ class DSDBCOO(DSDBSparse):
         symmetry_op : callable, optional
             The operation to use for the symmetry. Default is
             `xp.conj`.
+        allocate : bool, optional
+            Whether to allocate memory for the data. Default is True.
 
         Returns
         -------
@@ -878,31 +850,38 @@ class DSDBCOO(DSDBSparse):
         if comm.stack is None or comm.block is None:
             raise ValueError("Communicators must be initialized.")
 
-        # We only distribute the first dimension of the stack.
-        stack_section_sizes, __ = get_section_sizes(
-            global_stack_shape[0], comm.stack.size
-        )
-        section_size = stack_section_sizes[comm.stack.rank]
-        local_stack_shape = (section_size,) + global_stack_shape[1:]
+        debug_gpu_memory_usage("Before tocoo conversion")
 
         # coo: sparse.coo_matrix = sparray.tocoo().copy()
         coo: sparse.coo_matrix = sparray.tocoo()
+
+        debug_gpu_memory_usage("After tocoo conversion")
 
         # Canonicalizes the COO format.
         if symmetry:
             coo = sparse.triu(coo, format="coo")
 
+        debug_gpu_memory_usage("After symmetry conversion")
+
         if not coo.has_canonical_format:
             coo.sum_duplicates()
+            coo.eliminate_zeros()
+        free_mempool()
+
+        debug_gpu_memory_usage("After sum_duplicates")
 
         # Compute the block-sorting index.
         block_sort_index = dsdbcoo_kernels.compute_block_sort_index(
             coo.row, coo.col, block_sizes
         )
 
+        debug_gpu_memory_usage("After block_sort_index computation")
+
         _data = coo.data[block_sort_index]
         _rows = coo.row[block_sort_index]
         _cols = coo.col[block_sort_index]
+
+        debug_gpu_memory_usage("After block_sort_index application")
 
         # Determine the local slice of the data.
         # NOTE: This is arrow-wise partitioning.
@@ -917,22 +896,26 @@ class DSDBCOO(DSDBSparse):
             (_rows < end_idx) | (_cols < end_idx)
         )
 
-        data = xp.zeros(
-            local_stack_shape + (int(local_mask.sum()),), dtype=coo.data.dtype
-        )
-        data[..., :] = _data[local_mask]
+        debug_gpu_memory_usage("After local_mask computation")
+
+        data = _data[local_mask]
         rows = _rows[local_mask] - start_idx
         cols = _cols[local_mask] - start_idx
 
-        return cls(
-            data=data,
+        result = cls(
+            arg=data,
             rows=rows,
             cols=cols,
             block_sizes=block_sizes,
             global_stack_shape=global_stack_shape,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            allocate=allocate,
+            copy=True,
         )
+
+        debug_gpu_memory_usage("After DSDBOO construction")
+        return result
 
     def to_dense(self):
         """Converts the local data to a dense array.

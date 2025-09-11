@@ -3,9 +3,9 @@ from pathlib import Path
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
-
 from quatrex.core.contact import Contact
 from quatrex.core.quatrex_config import QuatrexConfig
 
@@ -27,8 +27,8 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
         Electrostatic potential for each orbital.
 
     """
-    orbitals_per_atom = np.diff(orbital_offsets)
-    orbital_potential = np.repeat(potential, orbitals_per_atom, axis=0)
+    orbitals_per_atom = list(np.diff(orbital_offsets))
+    orbital_potential = xp.repeat(potential, orbitals_per_atom, axis=0)
     return orbital_potential
 
 

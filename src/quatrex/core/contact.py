@@ -1,8 +1,8 @@
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, obc, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
-
 from quatrex.core.quatrex_config import OBCConfig
 
 
@@ -477,6 +477,9 @@ class Contact:
                 # Add the coordinates to the origin cell
                 a = coords[0] + self.origin_cell[0]
                 b = coords[1] + self.origin_cell[1]
+
+                if self.device.gamma_only and ( (self.n_rep_1 == 1 and coords[0] != 0) or (self.n_rep_2 == 1 and coords[1] != 0) ):
+                    continue
                 # The coupling is defined in the in the device
                 # hamiltonian at (H_1, H_2) (it can be in any hopping
                 # hamiltonian). Here we compute in which hopping
@@ -491,15 +494,14 @@ class Contact:
                 if self.device.gamma_only and (self.n_rep_1 > 1 or self.n_rep_2 > 1):
                     H_1 = 0
                     H_2 = 0
-                    if (2 * radius + 1) > self.n_rep_1 or (
-                        2 * radius + 1
-                    ) > self.n_rep_2:
+                    if (( 2 * radius + 1) > self.n_rep_1 and self.n_rep_1 > 1 ) or ((2 * radius + 1) > self.n_rep_2 and self.n_rep_2 > 1):
                         raise ValueError(
                             f"Error in contact {self.name}: \n"
                             f"I cannot obtain the UC matrices from the Gamma-point device matrix, probably because the basis decay is not enough.\n"
                             f"Possible solutions:\n"
                             f"  - Increase the UC to include the entire cross-section (1x1 contact UC)\n"
                             f"  - Provide all the hopping Hamiltonians in the device, not only the Gamma point."
+                            f"Error encountered with radius {radius}"
                         )
 
                 # These are the orbitals where to look for the coupling

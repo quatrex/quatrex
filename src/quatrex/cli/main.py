@@ -94,7 +94,6 @@ def fetch_example(
         "--force",
         "-f",
         help="Forces re-download even if the dataset already exists.",
-        is_flag=True,
     ),
 ):
     """
@@ -124,7 +123,6 @@ def run_example(
         "--force",
         "-f",
         help="Forces re-download even if the dataset already exists.",
-        is_flag=True,
     ),
 ):
     """

@@ -21,6 +21,8 @@ ALLOWED_EXAMPLES = {
     ],
 }
 
+assert len(ALLOWED_EXAMPLES) == len(set(ALLOWED_EXAMPLES.keys()))
+
 
 # Load manifest containing example dataset info.
 with open(files("quatrex.examples") / "_manifest.toml", "rb") as f:

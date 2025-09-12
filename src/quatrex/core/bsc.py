@@ -1032,7 +1032,10 @@ class BSC:
         outputs = {}
 
         if self.quatrex_config.outputs.electron_ldos:
-            outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
+            if self.quatrex_config.outputs.spatially_resolved:
+                outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
+            else:
+                outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos.sum(axis=-1)
         if self.quatrex_config.outputs.electron_density:
             outputs[f"electron_density_{iteration}.npy"] = (
                 self.observables.electron_density

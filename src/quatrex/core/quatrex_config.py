@@ -559,6 +559,8 @@ class OutputConfig(BaseModel):
 
     profiling_stats: bool = False
 
+    spatially_resolved: bool = True
+
 
 class ContactConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")

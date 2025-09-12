@@ -694,7 +694,7 @@ class BSC:
         )
 
     def _compute_total_charge(self) -> float:
-        """Compute the total charge in the system. Prefactors are not included."""
+        """Compute the total charge in the conduction band."""
         ldos = -density(
             self.data.g_retarded,
             self.overlap,
@@ -706,8 +706,15 @@ class BSC:
             self.occupancies,
             axis=0,
         )
+        mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
+        equilibrium_occupancies = fermi_dirac(
+            self.electron_energies - mid_bandgap,
+            self.quatrex_config.electron.temperature,
+        )
         # Compute the total charge in the system.
-        total_charge = xp.sum(dos * occupancies)
+        total_charge = xp.sum(dos * (occupancies-equilibrium_occupancies))
+        de = self.electron_energies[1] - self.electron_energies[0]
+        total_charge *= de
         return total_charge
 
     def _stash_sigma(self) -> None:

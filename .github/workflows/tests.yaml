@@ -17,7 +17,7 @@ jobs:
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           channels: conda-forge,defaults
           channel-priority: true
           activate-environment: quatrex-dev
@@ -33,8 +33,8 @@ jobs:
 
       - name: Run MPI Tests
         run: |
-          NUMBA_DISABLE_JIT=1 mpiexec -np 6 pytest --only-mpi tests/qttools
+          NUMBA_DISABLE_JIT=1 mpiexec -np 6 pytest --only-mpi tests
 
       - name: Run Normal Tests and Determine Coverage
         run: |
-          NUMBA_DISABLE_JIT=1 pytest --with-mpi --cov=src/qttools --cov-report=term --cov-report=xml tests/qttools
+          NUMBA_DISABLE_JIT=1 pytest --with-mpi --cov=src --cov-report=term --cov-report=xml tests

@@ -35,6 +35,7 @@ def download_and_extract(
     url: str,
     target_dir: Path,
     sha256: str | None = None,
+    force: bool = False,
 ) -> Path:
     """Downloads and extracts an archive from a URL.
 
@@ -49,6 +50,8 @@ def download_and_extract(
         Directory to extract the contents into.
     sha256 : str | None
         Optional SHA256 checksum to verify the download.
+    force : bool
+        If True, forces re-download even if the file already exists.
 
     Returns
     -------
@@ -62,7 +65,7 @@ def download_and_extract(
     tmp_path = target_dir / Path(url).name
 
     # Download file if not already present.
-    if not tmp_path.exists():
+    if not tmp_path.exists() or force:
         print(f"Downloading {url} ...")
         urllib.request.urlretrieve(url, tmp_path)
 

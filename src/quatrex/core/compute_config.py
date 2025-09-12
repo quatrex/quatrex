@@ -1,9 +1,11 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import tomllib
+import warnings
 from pathlib import Path
 from typing import Literal
 
+import numba as nb
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -11,9 +13,11 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from qttools import xp
-from qttools.datastructures import DSDBCOO, DSDBSparse
 from typing_extensions import Self
+
+from qttools import xp
+from qttools.comm import comm as qtx_comm
+from qttools.datastructures import DSDBCOO, DSDBSparse
 
 
 class LyapunovConfig(BaseModel):
@@ -110,6 +114,15 @@ class CommConfig(BaseModel):
                 "all_reduce": self.stack_all_reduce or "device_mpi",
                 "bcast": self.stack_bcast or "device_mpi",
             }
+
+        # configure the comm
+        qtx_comm.configure(
+            block_comm_size=self.block_comm_size,
+            block_comm_config=self.block_comm_config,
+            stack_comm_config=self.stack_comm_config,
+            override=True,
+        )
+
         return self
 
 
@@ -119,6 +132,12 @@ class ComputeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     dsdbsparse_type: DSDBSparse = DSDBCOO
+    numba_threading_layer: Literal["workqueue", "omp", "tbb"] = "workqueue"
+    threadpool_api: Literal["blas", "openmp", "tbb"] | None = "blas"
+    numba_num_threads: PositiveInt | None = None
+    blas_num_threads: PositiveInt | Literal["sequential_blas_under_openmp"] | None = (
+        None
+    )
 
     convolve: ConvolveConfig = ConvolveConfig()
     nevp: NEVPConfig = NEVPConfig()
@@ -132,6 +151,32 @@ class ComputeConfig(BaseModel):
         if value == "DSDBCOO":
             return DSDBCOO
         raise ValueError(f"Invalid value '{value}' for dbsparse")
+
+    @model_validator(mode="after")
+    def set_threading(self) -> Self:
+
+        # TODO: set the number of threads automatically based on the available cores
+        # problems is that we do not know yet how many energy points there will be
+        # has to be after unifying the configs
+        if self.numba_num_threads is None:
+            self.numba_num_threads = 1
+        if self.blas_num_threads is None:
+            self.blas_num_threads = "sequential_blas_under_openmp"
+
+        nb.set_num_threads(self.numba_num_threads)
+        nb.config.THREADING_LAYER = self.numba_threading_layer
+
+        if self.numba_num_threads == 1 and self.blas_num_threads in [
+            "sequential_blas_under_openmp",
+            1,
+        ]:
+            if qtx_comm.rank == 0:
+                warnings.warn(
+                    "The CPU code will run sequentially which may impact performance.",
+                    UserWarning,
+                )
+
+        return self
 
 
 def parse_config(config_file: Path) -> ComputeConfig:

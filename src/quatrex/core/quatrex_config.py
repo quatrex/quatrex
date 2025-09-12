@@ -374,6 +374,9 @@ class ElectronConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    # Use the anti-Hermitian part of the retarded self-energy
+    use_sigma_ah: bool = True
+
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""

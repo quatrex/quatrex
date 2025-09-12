@@ -4,9 +4,30 @@
 # name, a URL to download it from, and an optional SHA256 checksum to
 # verify the integrity of the downloaded file.
 
-[carbon-nanotube]
-url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/cnt_w90/cnt_w90.npz"
+[carbon-nanotube-hamiltonian]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/hamiltonian.npz"
 sha256 = "a49650281d17c28276cb1220903edf6cf6c879d8b4ed5fe0cce0d615f5f01477"
+
+# TODO: remove ref to PR branch once merged in huggingface
+[carbon-nanotube-coulomb-matrix]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/coulomb_matrix.npz"
+sha256 = "fdea29ceafab8e69103d644b3a877aba5b1d396de69600efe88ab1299db374ac"
+
+[carbon-nanotube-potential]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/potential.npy"
+sha256 = "91b0f3e7dc80cc0f6fdc11d5bb0a20c0d1a27621581bb09162d0caabda9818e5"
+
+[carbon-nanotube-grid]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/grid.npy"
+sha256 = "66f976b634732a38077e1db5aa69f72ed0c9ec4d4a4b55a051c1ef96a7d162b9"
+
+[carbon-nanotube-block-sizes]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/block_sizes.npy"
+sha256 = "5ae34aa4479a9b2154b14e677ae8ba6ec4814c3b724b610f2ab5f422fa4ad49f"
+
+[carbon-nanotube-quatrex-config]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/quatrex_config.toml"
+
 
 [silicon-nanowire]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/sinw_w90/sinw_w90.npz"

@@ -10,7 +10,7 @@ from numpy.typing import ArrayLike
 from qttools.__about__ import __version__
 
 
-def strtobool(s: str, default: bool | None = None) -> bool:
+def strtobool(s: str | None, default: bool | None = None) -> bool:
     """Convert a string to a boolean."""
     if s is None and default is not None:
         return default

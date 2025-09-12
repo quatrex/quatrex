@@ -34,6 +34,8 @@ dependencies = [
     "mpi4py",
     "pydantic",
     "matplotlib",
+    "threadpoolctl",
+    "typer",
 ]
     [project.optional-dependencies]
     gpu = ["cupy==13.2.0"]
@@ -60,6 +62,9 @@ dependencies = [
 
     [project.urls]
     Code = "https://github.com/quatrex-dev/quatrex"
+
+[project.scripts]
+quatrex = "quatrex.cli:run"
 
 [tool.setuptools.dynamic]
 version = { attr = "quatrex.__about__.__version__" }

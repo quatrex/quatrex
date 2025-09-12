@@ -1158,6 +1158,8 @@ class BSC:
             # Find the band edges and update the Fermi level (for charge neutrality).
             self._find_band_edges()
             self._update_fermi_level()
+            if comm.rank == 0:
+                print(f"Fermi level: {self.fermi_level}", flush=True)
             if i == 0:
                 previous_charge = self._compute_total_charge()
             else:

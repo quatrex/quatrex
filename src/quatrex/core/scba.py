@@ -5,16 +5,15 @@ import time
 from dataclasses import dataclass, field
 
 import numpy as np
-from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
+
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
-
 from quatrex.bandstructure.contact import contact_band_structure
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import contact_currents, density, device_current
@@ -274,7 +273,6 @@ class SCBA:
 
     """
 
-    @time_range()
     def __init__(
         self,
         quatrex_config: QuatrexConfig,

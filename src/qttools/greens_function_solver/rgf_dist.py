@@ -144,7 +144,7 @@ class RGFDist(GFSolver):
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
     ):
-        """Performs selected inversion of a block-tridiagonal matrix.
+        r"""Performs selected inversion of a block-tridiagonal matrix.
 
         Can optionally solve the quadratic system associated with the
         Bl and Bg matrices in the equation AXA^T = B.

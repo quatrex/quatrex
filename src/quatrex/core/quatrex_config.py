@@ -483,6 +483,8 @@ class OutputConfig(BaseModel):
 
     profiling_stats: bool = False
 
+    spatially_resolved: bool = True
+
 
 class DeviceConfig(BaseModel):
 

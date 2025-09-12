@@ -760,9 +760,11 @@ class BSC:
         # self.data.sigma_retarded._data *= -1
 
         # Now add the imaginary, skew-Hermitian part back.
-        # self.data.sigma_retarded.data += 0.5 * (
-        #    self.data.sigma_greater.data - self.data.sigma_lesser.data
-        # )
+        if self.quatrex_config.electron.use_sigma_ah:
+            self.data.sigma_retarded.data += 0.5 * (
+            self.data.sigma_greater.data - self.data.sigma_lesser.data
+            )
+        
         synchronize_device()
         time_end = time.perf_counter()
         if comm.rank == 0:

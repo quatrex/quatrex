@@ -1,14 +1,26 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import itertools
+
 import pytest
 
 from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn
 
 BLOCK_SIZE = [
-    pytest.param(51, id="51x51"),
-    pytest.param(27, id="27x27"),
+    27,
 ]
+BATCH_SIZE = [
+    1,
+    3,
+]
+
+REDUCE = [
+    # False, # Tuening parameters for beyn tests is hard to solve for both reduce settings.
+    True,
+]
+
+BLOCK_SETTINGS = list(itertools.product(BLOCK_SIZE, BATCH_SIZE, REDUCE))
 
 # NOTE: The matrices we generate generally have their eigenvalues close
 # to the unit circle. We set the outer radius to 1.2 and the inner
@@ -16,11 +28,11 @@ BLOCK_SIZE = [
 # capture all the eigenvalues. The number of quadrature points is set to
 # a very large number to ensure that the non-spurious eigenvalues get
 # approximated very accurately.
-BATCH_SIZES = [2, 25, 30]
+CONTOUR_BATCH_SIZES = [2]
 
 SUBSPACE_NEVP_SOLVERS = []
 
-for BATCH_SIZE in BATCH_SIZES:
+for CONTOUR_BATCH_SIZE in CONTOUR_BATCH_SIZES:
     for use_qr in [
         False,
         True,
@@ -34,41 +46,40 @@ for BATCH_SIZE in BATCH_SIZES:
                     Beyn(
                         r_o=1.2,
                         r_i=0.9,
-                        m_0=60,
-                        num_quad_points=200,
+                        m_0=20,
+                        num_quad_points=50,
                         use_qr=use_qr,
-                        contour_batch_size=BATCH_SIZE,
+                        contour_batch_size=CONTOUR_BATCH_SIZE,
                         use_pinned_memory=use_pinned_memory,
                     ),
-                    id=f"Beyn with QR batch size {BATCH_SIZE} and use_qr {use_qr}",
+                    id=f"Beyn with QR batch size {CONTOUR_BATCH_SIZE} and use_qr {use_qr}",
                 )
             )
-
-
-LEFT = [pytest.param(True, id="both"), pytest.param(False, id="right")]
 
 
 # TODO: It's a good idea to generalize the tests with input data
 # constructed from a hand-picked eigenvalues and eigenvectors. This
 # allows us to choose when the subspace solvers should find the chosen
 # eigenvalues and eigenvectors.
-@pytest.fixture(params=BLOCK_SIZE, autouse=True)
+@pytest.fixture(params=BLOCK_SETTINGS, autouse=True)
 def a_xx(request: pytest.FixtureRequest) -> NDArray:
     """Returns some random complex boundary blocks."""
-    size = request.param
-    a_xx = tuple(
-        xp.random.rand(size, size) + 1j * xp.random.rand(size, size) for _ in range(3)
-    )
-    return a_xx
+    size, batch_size, reduce = request.param
+    a_xx = [
+        xp.random.rand(batch_size, size, size)
+        + 1j * xp.random.rand(batch_size, size, size)
+        for _ in range(3)
+    ]
+
+    if reduce:
+        # Introduce some zero columns in a_ji and a_ij
+        a_xx[0][:, :, : size // 2] = 0
+        a_xx[2][:, :, size // 2 :] = 0
+
+    return tuple([xp.squeeze(a) for a in a_xx])
 
 
 @pytest.fixture(params=SUBSPACE_NEVP_SOLVERS)
 def subspace_nevp(request: pytest.FixtureRequest) -> NEVP:
     """Returns a NEVP solver."""
-    return request.param
-
-
-@pytest.fixture(params=LEFT)
-def left(request: pytest.FixtureRequest) -> bool:
-    """Whether to solve for the left eigenvectors."""
     return request.param

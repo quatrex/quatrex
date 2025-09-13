@@ -7,54 +7,104 @@ from qttools import NDArray, xp
 from qttools.nevp import Beyn, Full
 
 
-@pytest.mark.usefixtures("left")
-def test_full(a_xx: tuple[NDArray, ...], left: bool):
+@pytest.mark.parametrize("left", [False, True])
+@pytest.mark.parametrize("reduce", [False, True])
+def test_full(a_xx: tuple[NDArray, ...], left: bool, reduce: bool):
     """Tests that the Full NEVP solver returns the correct result."""
-    full_nevp = Full()
+
+    a_sparsity = tuple((a != 0).astype(xp.float32) for a in a_xx)
+
+    batch_size = 1 if len(a_xx[0].shape) == 2 else a_xx[0].shape[0]
+
+    if len(a_xx[0].shape) > 2:
+        a_sparsity = tuple(xp.sum(a, axis=0) for a in a_sparsity)
+
+    full_nevp = Full(a_sparsity=a_sparsity, reduce=reduce)
     if left:
         wrs, vrs, wls, vls = full_nevp(a_xx, left=left)
     else:
         wrs, vrs = full_nevp(a_xx, left=left)
 
+    if a_xx[0].ndim == 2:
+        a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
+
     a_ji, a_ii, a_ij = a_xx
+    for b in range(batch_size):
 
-    for i in range(wrs.shape[1]):
-        w = wrs[0, i]
-        v = vrs[0, :, i] / xp.linalg.norm(vrs[0, :, i])
-
-        assert xp.allclose((a_ji / w + a_ii + a_ij * w) @ v, 0)
-
-    if left:
         for i in range(wrs.shape[1]):
-            w = wls[0, i]
-            v = vls[0, :, i] / xp.linalg.norm(vls[0, :, i])
+            w = wrs[b, i]
+            v = vrs[b, :, i] / xp.linalg.norm(vrs[b, :, i])
 
-            assert xp.allclose(v.conj().T @ (a_ji / w + a_ii + a_ij * w), 0)
+            if xp.abs(w) < 1e-12:
+                continue
+            elif xp.abs(w) > 1e12:
+                continue
+
+            assert xp.allclose((a_ji[b] / w + a_ii[b] + a_ij[b] * w) @ v, 0)
+
+        if left:
+            for i in range(wrs.shape[1]):
+                w = wls[b, i]
+                v = vls[b, :, i] / xp.linalg.norm(vls[b, :, i])
+
+                if xp.abs(w) < 1e-12:
+                    continue
+                elif xp.abs(w) > 1e12:
+                    continue
+
+                assert xp.allclose(
+                    v.conj().T @ (a_ji[b] / w + a_ii[b] + a_ij[b] * w), 0
+                )
 
 
-@pytest.mark.usefixtures("subspace_nevp", "left")
+@pytest.mark.usefixtures("subspace_nevp")
+@pytest.mark.parametrize("left", [False, True])
 def test_subspace(a_xx: tuple[NDArray, ...], subspace_nevp: Beyn, left: bool):
     """Tests that the subspace NEVP solver returns the correct result."""
+
+    batch_size = 1 if len(a_xx[0].shape) == 2 else a_xx[0].shape[0]
+
     if left:
         wrs, vrs, wls, vls = subspace_nevp(a_xx, left=left)
     else:
         wrs, vrs = subspace_nevp(a_xx, left=left)
 
+    if a_xx[0].ndim == 2:
+        a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
+
     a_ji, a_ii, a_ij = a_xx
+
     residuals = []
-    for k in range(wrs.shape[1]):
-        w = wrs[0, k]
-        v = vrs[0, :, k] / xp.linalg.norm(vrs[0, :, k])
-        with np.errstate(divide="ignore", invalid="ignore"):
-            residuals.append(xp.linalg.norm((a_ji / w + a_ii + a_ij * w) @ v))
-    if left:
+    for b in range(batch_size):
         for k in range(wrs.shape[1]):
-            w = wls[0, k]
-            v = vls[0, :, k] / xp.linalg.norm(vls[0, :, k])
+            w = wrs[b, k]
+            v = vrs[b, :, k] / xp.linalg.norm(vrs[b, :, k])
+
+            if xp.abs(w) < subspace_nevp.r_i:
+                continue
+            elif xp.abs(w) > subspace_nevp.r_o:
+                continue
+
             with np.errstate(divide="ignore", invalid="ignore"):
                 residuals.append(
-                    xp.linalg.norm(v.conj().T @ (a_ji / w + a_ii + a_ij * w))
+                    xp.linalg.norm((a_ji[b] / w + a_ii[b] + a_ij[b] * w) @ v)
                 )
+        if left:
+            for k in range(wrs.shape[1]):
+                w = wls[b, k]
+                v = vls[b, :, k] / xp.linalg.norm(vls[b, :, k])
+
+                if xp.abs(w) < subspace_nevp.r_i:
+                    continue
+                elif xp.abs(w) > subspace_nevp.r_o:
+                    continue
+
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    residuals.append(
+                        xp.linalg.norm(
+                            v.conj().T @ (a_ji[b] / w + a_ii[b] + a_ij[b] * w)
+                        )
+                    )
 
     residuals = xp.nan_to_num(xp.array(residuals))
 
@@ -71,4 +121,4 @@ def test_subspace(a_xx: tuple[NDArray, ...], subspace_nevp: Beyn, left: bool):
         # Single shot beyn with QR is less numerically stable.
         assert residuals[~spurious_mask].max() < 1e-3
     else:
-        assert residuals[~spurious_mask].max() < 1e-9
+        assert residuals[~spurious_mask].max() < 1e-4

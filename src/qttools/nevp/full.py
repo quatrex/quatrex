@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import warnings
+
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
@@ -27,23 +29,116 @@ class Full(NEVP):
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". Only relevant if cupy is used.
+        The default is "numpy".
     use_pinned_memory : bool, optional
         Whether to use pinnend memory if cupy is used.
         Default is `True`.
+    a_sparsity : tuple[NDArray, ...] | None, optional
+        The sparsity patterns of the coefficient blocks of the NEVP.
+        Every array is a 2D matrix with entries 0 or 1 indicating
+        the sparsity pattern of the corresponding coefficient block.
+    reduce : bool, optional
+        Whether to reduce the problem size by eliminating columns
+        that are zero in the first and last coefficient blocks.
+        These corresponding eigenvalues are infinity or zero.
 
     """
 
     def __init__(
         self,
-        eig_compute_location: str = "cupy",
+        eig_compute_location: str = "numpy",
         use_pinned_memory: bool = True,
+        a_sparsity: tuple[NDArray, ...] | None = None,
+        reduce: bool = False,
     ):
         """Initializes the Full NEVP solver."""
         self.eig_compute_location = eig_compute_location
         self.use_pinned_memory = use_pinned_memory
 
+        self.zero_indices = None
+        self.nonzero_indices = None
+        self.all_indices = None
+
+        if reduce and a_sparsity is None:
+            raise ValueError(
+                "If reduce is True, a_sparsity must be provided.",
+            )
+
+        if a_sparsity is not None:
+            for a in a_sparsity:
+                if a.ndim != 2:
+                    raise ValueError(
+                        "a_sparsity must be a tuple of 2D arrays.",
+                    )
+                if a.shape[0] != a.shape[1]:
+                    raise ValueError(
+                        "a_sparsity must be a tuple of square arrays.",
+                    )
+
+            assert all(a.shape[0] == a_sparsity[0].shape[0] for a in a_sparsity), (
+                "All arrays in a_sparsity must have the same shape.",
+            )
+
+        if reduce and a_sparsity is not None:
+
+            sum_columns_first = xp.count_nonzero(a_sparsity[0], axis=0)
+            sum_columns_last = xp.count_nonzero(a_sparsity[-1], axis=0)
+            row_indices_first = xp.where(sum_columns_first == 0)[0]
+            row_indices_last = xp.where(sum_columns_last == 0)[0]
+
+            sum_rows_first = xp.count_nonzero(a_sparsity[0], axis=1)
+            sum_rows_last = xp.count_nonzero(a_sparsity[-1], axis=1)
+            col_indices_first = xp.where(sum_rows_first == 0)[0]
+            col_indices_last = xp.where(sum_rows_last == 0)[0]
+
+            # offset last indices by the size of all previous blocks
+            offset = sum(a.shape[1] for a in a_sparsity[:-2])
+
+            self.zero_indices = {
+                False: xp.concatenate((row_indices_first, row_indices_last + offset)),
+                True: xp.concatenate((col_indices_first, col_indices_last + offset)),
+            }
+
+            self.nonzero_indices = {
+                indicator: xp.setdiff1d(
+                    xp.arange(offset + a_sparsity[-1].shape[1]),
+                    self.zero_indices[indicator],
+                )
+                for indicator in [False, True]
+            }
+
+            self.all_indices = {
+                indicator: xp.concatenate(
+                    (self.nonzero_indices[indicator], self.zero_indices[indicator])
+                )
+                for indicator in [False, True]
+            }
+
+            if (
+                len(self.nonzero_indices[False]) == 0
+                or len(self.nonzero_indices[True]) == 0
+            ):
+                raise ValueError(
+                    "All columns are zero in the first or last blocks. "
+                    "This problem is ill-posed.",
+                )
+
+            if len(self.zero_indices[False]) == 0 and len(self.zero_indices[True]) == 0:
+                warnings.warn(
+                    "No columns are zero in the first and last blocks. "
+                    "Reduction has no effect.",
+                )
+                reduce = False
+                self.zero_indices = None
+                self.nonzero_indices = None
+                self.all_indices = None
+
+        self.reduce = reduce
+
     @profiler.profile(level="debug")
-    def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+    def _solve(
+        self, a_xx: tuple[NDArray, ...], transposed: bool = False
+    ) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -54,6 +149,9 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
+        transposed : bool, optional
+            Wether the problem is transposed.
+            Relevant only for the sparsity reduction.
 
         Returns
         -------
@@ -76,27 +174,17 @@ class Full(NEVP):
         B = xp.kron(xp.tri(len(a_xx) - 2).T, xp.eye(a_xx[0].shape[-1]))
         A[:, : B.shape[0], : B.shape[1]] -= B
 
-        print("FULL: Size of matrix before deleting elements:", A.shape)
-
-        # Find coloumns with all zeros
-        nnz = xp.count_nonzero(A[0], axis=0)
-        diag = xp.diagonal(A[0])
-
-        i_z = xp.where(nnz == 0)[0]
-
-        # Find coloumns with -1 on the diag and with norm 1
-        i_mo = xp.where((diag == -1) & (nnz == 1))[0]
-
         # Concatenate and delete
-        i_B = xp.concatenate((i_z, i_mo))
-        i_A = xp.setdiff1d(xp.arange(A.shape[-1]), i_B)
-        i_tot = xp.concatenate((i_A, i_B))
-
-        A_b = A[:, i_B, :][:, :, i_B].diagonal(axis1=-2, axis2=-1)
-        A_c = A[:, i_B, :][:, :, i_A]
-        A = A[:, i_A, :][:, :, i_A]
-
-        print("FULL: Size of matrix after deleting elements:", A.shape)
+        if self.reduce:
+            A_b = A[:, self.zero_indices[transposed], :][
+                :, :, self.nonzero_indices[transposed]
+            ]
+            A_c = A[:, self.zero_indices[transposed], :][
+                :, :, self.zero_indices[transposed]
+            ]
+            A = A[:, self.nonzero_indices[transposed], :][
+                :, :, self.nonzero_indices[transposed]
+            ]
 
         w, v = linalg.eig(
             A,
@@ -104,15 +192,16 @@ class Full(NEVP):
             use_pinned_memory=self.use_pinned_memory,
         )
 
-        v_y = xp.divide(
-            A_c @ v, w[:, xp.newaxis, :] - A_b[:, :, xp.newaxis]
-        )  # shape: (batch, len(i_B), num_eig)
+        if self.reduce:
+            v_zero = xp.divide(
+                A_b @ v,
+                w[:, xp.newaxis, :]
+                - A_c.diagonal(axis1=-2, axis2=-1)[:, :, xp.newaxis],
+            )
 
-        # v[:,i_tot,:] = xp.concatenate([v, v_y], axis=1) Without Memory copy it does not work
-
-        v_pre_sort = xp.concatenate([v, v_y], axis=1)
-        v = xp.empty_like(v_pre_sort)
-        v[:, i_tot, :] = v_pre_sort
+            tmp = xp.concatenate([v, v_zero], axis=1)
+            v = xp.empty_like(tmp)
+            v[:, self.all_indices[transposed], :] = tmp
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
@@ -158,13 +247,14 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
-        wrs, vrs = self._solve(a_xx)
+        wrs, vrs = self._solve(a_xx, transposed=False)
 
         if left:
             # solve for the left eigenvectors
             # by solving the right eigenvectors of the adjoint problem
             wls, vls = self._solve(
                 tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
+                transposed=True,
             )
             wls = wls.conj()
 

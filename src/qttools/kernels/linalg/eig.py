@@ -124,7 +124,7 @@ def _eig_cupy(
 @profiler.profile(level="api")
 def eig(
     A: NDArray | list[NDArray],
-    compute_module: str = "cupy",
+    compute_module: str = "numpy",
     output_module: str | None = None,
     use_pinned_memory: bool = True,
 ) -> tuple[NDArray, NDArray] | tuple[list[NDArray], list[NDArray]]:
@@ -145,7 +145,7 @@ def eig(
         The matrices.
     compute_module : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "numpy" or "cupy".
+        Can be either "numpy" or "cupy". The default is "numpy".
     output_module : str, optional
         The location where to store the eigenvalues and eigenvectors.
         Can be either "numpy"

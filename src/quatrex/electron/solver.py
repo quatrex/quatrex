@@ -3,6 +3,7 @@
 import time
 
 import numpy as np
+
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
@@ -12,7 +13,6 @@ from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
-
 from quatrex.bandstructure.band_edges import (
     find_band_edges,
     find_dos_peaks,
@@ -132,7 +132,10 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
-        sparsity_pattern += hamiltonian_sparray
+        if sparsity_pattern is None:
+            sparsity_pattern = hamiltonian_sparray.copy()
+        else:
+            sparsity_pattern += hamiltonian_sparray
 
         synchronize_device()
         t_ham_load_end = time.perf_counter()
@@ -311,6 +314,98 @@ class ElectronSolver(SubsystemSolver):
         self.filtering_iteration_limit = (
             quatrex_config.coulomb_screening.filtering_iteration_limit
         )
+
+    @staticmethod
+    def load_hamiltonian(
+        quatrex_config: QuatrexConfig,
+    ) -> tuple[sparse.coo_matrix, NDArray]:
+
+        # Load the device Hamiltonian.
+        synchronize_device()
+        comm.barrier()
+        t_ham_load_start = time.perf_counter()
+        if quatrex_config.device.construct_from_unit_cell:
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            ).astype(xp.complex128)
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, comm.block.size
+            )
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
+
+            hamiltonian_sparray, block_sizes = create_hamiltonian(
+                cutoff_hr(
+                    hamiltonian_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                return_sparse=True,
+            )
+            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+            hamiltonian_sparray.sum_duplicates()
+            block_sizes = get_host(block_sizes)
+            block_sizes = np.asarray(
+                [block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
+
+        else:
+            hamiltonian_sparray = distributed_load(
+                quatrex_config.input_dir / "hamiltonian.npz"
+            ).astype(xp.complex128)
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+
+        synchronize_device()
+        t_ham_load_end = time.perf_counter()
+        comm.barrier()
+        t_ham_load_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
+                flush=True,
+            )
+            print(
+                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
+                flush=True,
+            )
+
+        return hamiltonian_sparray, block_sizes
+
+    @staticmethod
+    def get_block(
+        coo: sparse.coo_matrix, block_sizes: NDArray, index: tuple
+    ) -> NDArray:
+        """Gets a block from a COO matrix."""
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+        row, col = index
+        row = row + len(block_sizes) if row < 0 else row
+        col = col + len(block_sizes) if col < 0 else col
+        mask = (
+            (block_offsets[row] <= coo.row)
+            & (coo.row < block_offsets[row + 1])
+            & (block_offsets[col] <= coo.col)
+            & (coo.col < block_offsets[col + 1])
+        )
+        block = xp.zeros(
+            (int(block_sizes[row]), int(block_sizes[col])), dtype=coo.dtype
+        )
+        block[
+            coo.row[mask] - block_offsets[row],
+            coo.col[mask] - block_offsets[col],
+        ] = coo.data[mask]
+
+        return block
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.

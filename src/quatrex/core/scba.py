@@ -337,7 +337,7 @@ class SCBA:
                                 """
                     print(message)
                 self.electron_energies = self._determine_electron_energy_window(
-                    quatrex_config, compute_config
+                    quatrex_config
                 )
 
         min_energy = self.electron_energies[0]
@@ -434,29 +434,20 @@ class SCBA:
             quatrex_config, compute_config, electron_energies=self.electron_energies
         )  # real data
 
-    def _determine_electron_energy_window(
-        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
-    ):
+    def _determine_electron_energy_window(self, quatrex_config: QuatrexConfig):
         """Determine the energy window from the bandstructure."""
-        electron_energies = xp.zeros((comm.size,))
-        electron_solver = ElectronSolver(
-            quatrex_config,
-            compute_config,
-            electron_energies,
+        hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(
+            quatrex_config
         )
-        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 0))
-        h_10 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (1, 0))
-        h_01 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (0, 1))
+        h_00 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (0, 0))
+        h_10 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (1, 0))
+        h_01 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (0, 1))
         num_k_points = 3
         e_k_l = contact_band_structure(h_10, h_00, h_01, num_k_points)
-        n = electron_solver.block_sizes.shape[0] - 1
-        h_00 = electron_solver._get_block(electron_solver.hamiltonian_sparray, (n, n))
-        h_10 = electron_solver._get_block(
-            electron_solver.hamiltonian_sparray, (n, n - 1)
-        )
-        h_01 = electron_solver._get_block(
-            electron_solver.hamiltonian_sparray, (n - 1, n)
-        )
+        n = block_sizes.shape[0] - 1
+        h_00 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (n, n))
+        h_10 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (n, n - 1))
+        h_01 = ElectronSolver.get_block(hamiltonian_sparray, block_sizes, (n - 1, n))
         e_k_r = contact_band_structure(h_10, h_00, h_01, num_k_points)
         energy_window_min = min(xp.min(e_k_r), xp.min(e_k_l)) - 1.0
         energy_window_max = max(xp.max(e_k_r), xp.max(e_k_l)) + 1.0

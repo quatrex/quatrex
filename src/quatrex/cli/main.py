@@ -28,6 +28,7 @@ HEADER = rf"""
 """
 
 quatrex_cli = typer.Typer(
+    pretty_exceptions_show_locals=False,
     add_completion=False,
     rich_markup_mode="markdown",
 )
@@ -80,7 +81,7 @@ def run_quatrex(
             print(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
-@quatrex_cli.command("fetch_example")
+@quatrex_cli.command("fetch-example")
 def fetch_example(
     name: str = typer.Option(
         ...,
@@ -109,52 +110,6 @@ def fetch_example(
         load_example(name + "-" + subname, folder=name + "/inputs", force=force)
 
 
-@quatrex_cli.command("run_example")
-def run_example(
-    name: str = typer.Option(
-        ...,
-        "--name",
-        "-n",
-        help="Name of the example to run. Allowed examples are: "
-        + ", ".join(ALLOWED_EXAMPLES.keys()),
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Forces re-download even if the dataset already exists.",
-    ),
-):
-    """
-    Run a preconfigured example by name.
-    """
-    if name not in ALLOWED_EXAMPLES.keys():
-        raise ValueError(
-            f"Unknown example: {name}. Allowed examples are: {list(ALLOWED_EXAMPLES.keys())}"
-        )
-
-    # fetch example if needed
-    fetch_example(name, force=force)
-
-    # get path to config file
-    quatrex_config = (
-        load_example(name + "-quatrex-config", folder=name, force=force)
-        / "quatrex_config.toml"
-    )
-    try:
-        compute_config = (
-            load_example(name + "-compute-config", folder=name, force=force)
-            / "compute_config.toml"
-        )
-    except (FileNotFoundError, ValueError):
-        compute_config = None
-
-    run_quatrex(
-        quatrex_config,
-        compute_config,
-    )
-
-
 @quatrex_cli.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -171,7 +126,7 @@ def main(
         Path.cwd() / "quatrex_config.toml",
         "--quatrex-config",
         "-qc",
-        help="Path to the Quatrex configuration file (default: ./quatrex_config.toml)",
+        help="Path to the Quatrex configuration file",
         file_okay=True,
         dir_okay=False,
         writable=False,
@@ -181,7 +136,8 @@ def main(
         None,
         "--compute-config",
         "-cc",
-        help="Path to the compute configuration file (default: None)",
+        help="Path to the compute configuration file",
+        show_default="None",
         file_okay=True,
         dir_okay=False,
         writable=False,

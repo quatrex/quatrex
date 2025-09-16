@@ -25,9 +25,6 @@ sha256 = "66f976b634732a38077e1db5aa69f72ed0c9ec4d4a4b55a051c1ef96a7d162b9"
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/block_sizes.npy"
 sha256 = "5ae34aa4479a9b2154b14e677ae8ba6ec4814c3b724b610f2ab5f422fa4ad49f"
 
-[carbon-nanotube-quatrex-config]
-url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/quatrex_config.toml"
-
 
 [silicon-nanowire]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/sinw_w90/sinw_w90.npz"

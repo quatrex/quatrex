@@ -17,15 +17,11 @@ jobs:
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           channels: conda-forge,defaults
           channel-priority: true
           activate-environment: quatrex-dev
           environment-file: environment-dev.yaml
-
-      - name: Install Numba
-        run: |
-          pip install numba
 
       - name: Install quatrex without Dependencies
         run: |

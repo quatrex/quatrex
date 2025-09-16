@@ -166,7 +166,7 @@ notebooks/
 
 # Examples directory and outputs
 **/outputs
-/examples/
+**/inputs
 hostfile
 .vscode/
 

@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from quatrex.cli.main import fetch_example, run_example
-from quatrex.examples import load as load_example
+from quatrex.cli.main import fetch_example, run_quatrex
+from quatrex.examples import EXAMPLES_DIR
 
 
 @pytest.mark.usefixtures("example_name")
@@ -20,58 +20,44 @@ def test_fetch_example(example_name: str):
 def test_fetch_example_cli(example_name: str):
     try:
         subprocess.run(
-            ["quatrex", "fetch_example", "--name", example_name, "--force"],
+            ["quatrex", "fetch-example", "--name", example_name, "--force"],
             check=True,
         )
     except subprocess.CalledProcessError as e:
-        pytest.fail(f"fetch_example CLI failed: {e}")
+        pytest.fail(f"fetch-example CLI failed: {e}")
 
 
 @pytest.mark.usefixtures("example_name")
-def test_run_example(example_name: str):
-    try:
-        run_example(example_name, force=True)
-    except Exception as e:
-        pytest.fail(f"run_example failed: {e}")
+def test_main(example_name: str):
 
+    quatrex_config = (
+        EXAMPLES_DIR / example_name / "quatrex_config.toml"
+    )
+    compute_config = None
 
-@pytest.mark.usefixtures("example_name")
-def test_run_example_cli(example_name: str):
-    try:
-        subprocess.run(
-            ["quatrex", "run_example", "--name", example_name, "--force"],
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        pytest.fail(f"run_example CLI failed: {e}")
+    run_quatrex(
+        quatrex_config,
+        compute_config,
+    )
 
 
 @pytest.mark.usefixtures("example_name")
 def test_main_cli(example_name: str):
 
+    quatrex_config_path = (
+        EXAMPLES_DIR / example_name / "quatrex_config.toml"
+    )
     try:
-        quatrex_config = (
-            load_example(
-                example_name + "-quatrex-config", folder=example_name, force=True
-            )
-            / "quatrex_config.toml"
+        compute_config_path = (
+            EXAMPLES_DIR / example_name / "compute_config.toml"
         )
-        try:
-            compute_config = (
-                load_example(
-                    example_name + "-compute-config", folder=example_name, force=True
-                )
-                / "compute_config.toml"
-            )
-        except (FileNotFoundError, ValueError):
-            compute_config = None
-    except Exception as e:
-        pytest.fail(f"Failed to load example configs: {e}")
+    except (FileNotFoundError, ValueError):
+        compute_config_path = None
 
     try:
-        if compute_config is None:
+        if compute_config_path is None:
             subprocess.run(
-                ["quatrex", "--quatrex-config", str(quatrex_config)],
+                ["quatrex", "--quatrex-config", str(quatrex_config_path)],
                 check=True,
             )
         else:
@@ -79,9 +65,9 @@ def test_main_cli(example_name: str):
                 [
                     "quatrex",
                     "--quatrex-config",
-                    str(quatrex_config),
+                    str(quatrex_config_path),
                     "--compute-config",
-                    str(compute_config),
+                    str(compute_config_path),
                 ],
                 check=True,
             )

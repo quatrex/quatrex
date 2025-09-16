@@ -5,78 +5,39 @@ import pytest
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.compute_config import parse_config as parse_compute_config
 from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-from quatrex.examples import load as load_example
-
+from quatrex.examples import EXAMPLES_DIR
 
 @pytest.mark.usefixtures("example_name")
 def test_parse_quatrex_config(example_name: str):
-    try:
-        quatrex_config_path = (
-            load_example(
-                example_name + "-quatrex-config", folder=example_name, force=True
-            )
-            / "quatrex_config.toml"
-        )
-    except Exception as e:
-        pytest.fail(f"Failed to load example config: {e}")
+    quatrex_config_path = (
+        EXAMPLES_DIR / example_name / "quatrex_config.toml"
+    )
 
-    try:
-        parse_quatrex_config(quatrex_config_path)
-    except Exception as e:
-        pytest.fail(f"Failed to parse config file: {e}")
+    parse_quatrex_config(quatrex_config_path)
 
 
 @pytest.mark.usefixtures("example_name")
 def test_parse_compute_config(example_name: str):
-    try:
-        try:
-            compute_config_path = (
-                load_example(
-                    example_name + "-compute-config", folder=example_name, force=True
-                )
-                / "compute_config.toml"
-            )
-        except (FileNotFoundError, ValueError):
-            compute_config_path = None
-    except Exception as e:
-        pytest.fail(f"Failed to load example config: {e}")
-
-    try:
-        if compute_config_path is not None:
-            parse_compute_config(compute_config_path)
-        else:
-            ComputeConfig()
-    except Exception as e:
-        pytest.fail(f"Failed to parse config file: {e}")
+    compute_config_path = (
+        EXAMPLES_DIR / example_name / "compute_config.toml"
+    )
+    if not compute_config_path.exists():
+        ComputeConfig()
+    else:
+        parse_compute_config(compute_config_path)
 
 
 @pytest.mark.usefixtures("example_name")
 def test_parse_config(example_name: str):
-    try:
-        quatrex_config_path = (
-            load_example(
-                example_name + "-quatrex-config", folder=example_name, force=True
-            )
-            / "quatrex_config.toml"
-        )
-        try:
-            compute_config_path = (
-                load_example(
-                    example_name + "-compute-config", folder=example_name, force=True
-                )
-                / "compute_config.toml"
-            )
-        except (FileNotFoundError, ValueError):
-            compute_config_path = None
-    except Exception as e:
-        pytest.fail(f"Failed to load example configs: {e}")
+    quatrex_config_path = (
+        EXAMPLES_DIR / example_name / "quatrex_config.toml"
+    )
+    compute_config_path = (
+        EXAMPLES_DIR / example_name / "compute_config.toml"
+    )
+    if not compute_config_path.exists():
+        ComputeConfig()
+    else:
+        parse_compute_config(compute_config_path)
 
-    try:
-        if compute_config_path is not None:
-            parse_compute_config(compute_config_path)
-        else:
-            ComputeConfig()
-
-        parse_quatrex_config(quatrex_config_path)
-    except Exception as e:
-        pytest.fail(f"Failed to parse config files: {e}")
+    parse_quatrex_config(quatrex_config_path)

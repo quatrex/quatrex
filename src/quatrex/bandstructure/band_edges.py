@@ -3,6 +3,8 @@
 import time
 from functools import partial
 
+from scipy import linalg as spla
+
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
@@ -10,8 +12,6 @@ from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
-from scipy import linalg as spla
-
 from quatrex.core.compute_config import BandEdgeConfig
 
 profiler = Profiler()
@@ -114,7 +114,8 @@ def _compute_eigenvalues(
         potential = xp.diag(potential[:small_blocksize])
         row_slice = slice(0, small_blocksize)
     elif side == "right":
-        blocks = [(-1, -1), (-1, -2)]  # , (-2, -1)]
+        n = sigma_retarded.num_blocks
+        blocks = [(n - 1, n - 1), (n - 1, n - 2)]  # , (n-2, n-1)]
         potential = xp.diag(potential[-small_blocksize:])
         row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:

@@ -30,9 +30,7 @@ def test_fetch_example_cli(example_name: str):
 @pytest.mark.usefixtures("example_name")
 def test_main(example_name: str):
 
-    quatrex_config = (
-        EXAMPLES_DIR / example_name / "quatrex_config.toml"
-    )
+    quatrex_config = EXAMPLES_DIR / example_name / "quatrex_config.toml"
     compute_config = None
 
     run_quatrex(
@@ -44,13 +42,9 @@ def test_main(example_name: str):
 @pytest.mark.usefixtures("example_name")
 def test_main_cli(example_name: str):
 
-    quatrex_config_path = (
-        EXAMPLES_DIR / example_name / "quatrex_config.toml"
-    )
+    quatrex_config_path = EXAMPLES_DIR / example_name / "quatrex_config.toml"
     try:
-        compute_config_path = (
-            EXAMPLES_DIR / example_name / "compute_config.toml"
-        )
+        compute_config_path = EXAMPLES_DIR / example_name / "compute_config.toml"
     except (FileNotFoundError, ValueError):
         compute_config_path = None
 

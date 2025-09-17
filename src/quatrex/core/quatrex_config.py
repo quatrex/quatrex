@@ -13,6 +13,7 @@ from pydantic import (
     NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
+    field_validator,
     model_validator,
 )
 from typing_extensions import Self
@@ -44,6 +45,7 @@ class SCBAConfig(BaseModel):
     output_interval: PositiveInt = 1
 
     coulomb_screening: bool = False
+    exciton: bool = False
     photon: bool = False
     phonon: bool = False
 
@@ -298,6 +300,14 @@ class PhononConfig(BaseModel):
         return self
 
 
+class ExcitonConfig(BaseModel):
+    """Options for the excitonic degrees of freedom."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_iteration: PositiveInt = 1
+
+
 class OutputConfig(BaseModel):
     """Options for the output."""
 
@@ -353,6 +363,8 @@ class QuatrexConfig(BaseModel):
     phonon: PhononConfig | None = None
     coulomb_screening: CoulombScreeningConfig | None = None
     photon: PhotonConfig | None = None
+    exciton: ExcitonConfig | None = None
+    exciton_start_iteration: int | None = None
 
     # --- Directory paths ----------------------------------------------
     config_dir: Path
@@ -393,6 +405,17 @@ class QuatrexConfig(BaseModel):
             return self
         self.input_dir = self.simulation_dir / "inputs/"
         return self
+
+    @field_validator("exciton_start_iteration", mode="after")
+    def get_exciton_start_iteration(self, value) -> PositiveInt:
+        if not self.scba.exciton:
+            return -1
+        else:
+            if self.exciton is None:
+                raise ValueError(
+                    "Exciton configuration must be provided if exciton is enabled in SCBA."
+                )
+            return self.exciton.start_iteration
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:

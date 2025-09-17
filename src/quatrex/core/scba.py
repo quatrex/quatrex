@@ -27,6 +27,7 @@ from quatrex.electron import (
     SigmaPhonon,
     SigmaPhoton,
 )
+from quatrex.exciton import BSESolver
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
@@ -398,6 +399,12 @@ class SCBA:
                 self.quatrex_config,
                 self.compute_config,
                 self.electron_energies,
+            )
+
+        # ----- Excitons -----------------------------------------------
+        if self.quatrex_config.scba.exciton:
+            self.exciton_solver = BSESolver(
+                sparsity=self.data.sparsity_pattern,
             )
 
         # ----- Photons ------------------------------------------------
@@ -939,23 +946,13 @@ class SCBA:
                     flush=True,
                 )
 
-            if self.quatrex_config.scba.coulomb_screening:
-                t_start_coulomb = time.perf_counter()
+            if self.quatrex_config.scba.coulomb_screening and (
+                i < self.quatrex_config.scba.excition_start_iteration
+            ):
                 self._compute_coulomb_screening_interaction()
-                synchronize_device()
-                t_end_coulomb = time.perf_counter()
-                comm.barrier()
-                t_end_coulomb_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(
-                        f"Time for Coulomb screening interaction: {t_end_coulomb - t_start_coulomb:.3f} s",
-                        flush=True,
-                    )
-                    print(
-                        f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
-                        flush=True,
-                    )
-            
+            else:
+                self.exciton_solver.solve()
+
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()
 

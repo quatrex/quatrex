@@ -903,7 +903,8 @@ def bd_sandwich_distr(
                 + a_[1, 0] @ b_[0, 0] @ a_[0, 1]
             )
             out_[0, 1] += a_[1, 0] @ b_[0, 1] @ a_[0, 1]
-            out_[1, 0] += a_[1, 0] @ b_[1, 0] @ a_[0, 1]
+            if not out_.dsdbsparse.symmetry:
+                out_[1, 0] += a_[1, 0] @ b_[1, 0] @ a_[0, 1]
 
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
@@ -914,6 +915,7 @@ def bd_sandwich_distr(
                 + a_[m2, m1] @ b_[m1, m1] @ a_[m1, m2]
             )
             out_[m1, m2] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m2]
-            out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
+            if not out_.dsdbsparse.symmetry:
+                out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
 
     return out_

@@ -9,6 +9,7 @@ from pprint import pprint
 from typing import Optional
 
 import typer
+from mpi4py.MPI import COMM_WORLD as comm
 from typing_extensions import Annotated
 
 import quatrex
@@ -36,7 +37,8 @@ quatrex_cli = typer.Typer(
 
 def secho_header():
     """Prints the header to the console."""
-    typer.secho(HEADER, fg="bright_white", bold=True)
+    if comm.rank == 0:
+        typer.secho(HEADER, fg="bright_white", bold=True)
 
 
 def version_callback(value: bool):
@@ -100,18 +102,21 @@ def fetch_example(
     """
     Fetch a preconfigured example by name.
     """
-    if name not in ALLOWED_EXAMPLES.keys():
-        raise ValueError(
-            f"Unknown example: {name}. Allowed examples are: {list(ALLOWED_EXAMPLES.keys())}"
-        )
+    if comm.rank == 0:
+        if name not in ALLOWED_EXAMPLES.keys():
+            raise ValueError(
+                f"Unknown example: {name}. Allowed examples are: {list(ALLOWED_EXAMPLES.keys())}"
+            )
 
-    typer.echo(f"Fetching example: {name}")
-    device_key, target_dir = get_example_dir(name)
+        typer.echo(f"Fetching example: {name}")
+        device_key, target_dir = get_example_dir(name)
 
-    for subname in ALLOWED_EXAMPLES[name]:
-        load_example(
-            device_key + "-" + subname, target_dir=target_dir / "inputs", force=force
-        )
+        for subname in ALLOWED_EXAMPLES[name]:
+            load_example(
+                device_key + "-" + subname,
+                target_dir=target_dir / "inputs",
+                force=force,
+            )
 
 
 @quatrex_cli.callback(invoke_without_command=True)
@@ -149,13 +154,14 @@ def main(
     ),
 ):
     """Main entrypoint for Quatrex CLI."""
-
-    typer.echo(HEADER)
+    if comm.rank == 0:
+        typer.echo(HEADER)
 
     if ctx.invoked_subcommand is None:
-        typer.echo(f"Quatrex config: {quatrex_config}")
-        if compute_config is not None:
-            typer.echo(f"Compute config: {compute_config}")
+        if comm.rank == 0:
+            typer.echo(f"Quatrex config: {quatrex_config}")
+            if compute_config is not None:
+                typer.echo(f"Compute config: {compute_config}")
 
         run_quatrex(
             quatrex_config,

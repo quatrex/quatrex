@@ -20,9 +20,9 @@ class FileCache:
         self._file = EXAMPLES_DIR / ".file_cache.npy"
 
         # Load existing cache if present
-        if self._file.exists():
+        try:
             self.paths = np.load(self._file, allow_pickle=True).item()
-        else:
+        except (FileNotFoundError, EOFError):
             self.paths = {}
 
         # Register save on exit

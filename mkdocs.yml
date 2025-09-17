@@ -1,0 +1,93 @@
+site_name: quatrex
+site_url: https://quatrex.github.io/quatrex/
+
+repo_url: https://github.com/quatrex/quatrex
+
+theme:
+  name: material
+  palette:
+    primary: custom
+  font:
+    text: Arimo
+    code: Fira Code
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.instant
+    - navigation.tabs
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - footnotes
+  - toc:
+      permalink: "#"
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      use_pygments: true
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+
+extra_javascript:
+  - javascript/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/custom.css
+  - stylesheets/mkdocstrings.css
+
+plugins:
+  - search
+  - autorefs
+  - gen-files:
+      scripts:
+        - docs/scripts/generate_api_reference.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          import:
+            - https://numpy.org/doc/stable/objects.inv
+            - https://docs.cupy.dev/en/stable/objects.inv
+            - https://docs.python.org/3/objects.inv
+          options:
+            # General options
+            show_source: false
+            # Headings options
+            show_root_toc_entry: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            # Members options
+            members_order: "source"
+            filters: [] # show all members
+            # Docstring options
+            docstring_style: "numpy"
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            # Signatures options
+            annotations_path: "source"
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting_started/installation.md
+  - Guides:
+      - guides/index.md
+      - User Guide: guides/user_guide.md
+      - Contributor Guide: guides/contributor_guide.md
+  - API Reference: reference/

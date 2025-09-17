@@ -32,14 +32,17 @@ jobs:
           NUMBA_DISABLE_JIT=1 mpiexec -np 6 coverage run --source=src --parallel-mode -m pytest -x --only-mpi tests
 
       - name: Run NUMBA Tests (QTTools Kernels)
+        if: success() || failure()
         run: |
           pytest --with-mpi --cov=src --cov-report=term --cov-report=xml tests/qttools/kernels
 
       - name: Run QTTools Tests
+        if: success() || failure()
         run: |
           NUMBA_DISABLE_JIT=1 pytest --with-mpi --cov=src --cov-report=term --cov-report=xml tests/qttools
       
       - name: Run QuaTrEx Tests and Determine Coverage
+        if: success() || failure()
         run: |
           NUMBA_DISABLE_JIT=1 pytest --with-mpi --cov=src --cov-report=term --cov-report=xml tests/quatrex
           coverage combine .; coverage report; coverage xml

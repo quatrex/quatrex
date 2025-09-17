@@ -4,6 +4,7 @@ import time
 import cupy as cp
 import numba as nb
 import numpy as np
+import os
 from cupyx.profiler import time_range
 
 # from cupyx.scipy import sparse as cusparse
@@ -257,12 +258,52 @@ def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
 
 
 class BSESolver:
+    def solve(self,out):
+        self._alloc_chi0(self.exciton_energies.shape[0])
+        self._alloc_chi0_bta()
+        
+        V = self.coulomb_matrix
+        if V.distribution_state != "stack":
+            V.dtranspose()
+        V = V.to_dense()[0]
+        W = V
+
+        if comm.rank == 0:
+            print(f"Begin calc kernel of BSE",flush=True)
+        self._calc_kernel_bta(V,W)
+
+        if comm.rank == 0:
+            print(f"Begin calc chi0 distributed",flush=True)
+        # bse._calc_chi0_distributed(self.data.g_greater,self.data.g_lesser,self.electron_energies,inz_batchsize=100)      
+        self._calc_chi0_v1(self.data.g_greater,self.data.g_lesser,self.electron_energies)
+        
+        if comm.rank == 0:
+            print(f"Begin permuting chi0 to BTA",flush=True)
+        self._permute_chi0_toBTA()
+        
+        if comm.rank == 0:
+            print(f"Begin solving chi interacting",flush=True)
+        P2 = self._solve_chi_interacting_BTA()
+
+        self._calc_sigma_BSE(out = out)
+
+        print(f"Writing output of BSE...", flush=True)
+        if not os.path.exists(self.quatrex_config.output_dir):
+            os.mkdir(self.quatrex_config.output_dir)
+        filename = 'BSE_P2'
+        xp.save(self.quatrex_config.output_dir / filename, P2)
+
+
     @time_range()
     def __init__(
         self,
         sparsity: sparse,
+        coulomb_matrix: DSBCOO,
+        exciton_energies: NDArray,
         ordering: str = "normal",
     ) -> None:
+        self.coulomb_matrix = coulomb_matrix
+        self.exciton_energies = exciton_energies
         num_sites = sparsity.shape[0]
         self.num_sites = num_sites
         self.sparsity = sparsity.tocoo()

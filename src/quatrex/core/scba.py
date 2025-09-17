@@ -405,6 +405,8 @@ class SCBA:
         if self.quatrex_config.scba.exciton:
             self.exciton_solver = BSESolver(
                 sparsity=self.data.sparsity_pattern,
+                coulomb_matrix=self.coulomb_screening_solver.coulomb_matrix,
+                coulomb_screening_energies=self.coulomb_screening_energies,
             )
 
         # ----- Photons ------------------------------------------------

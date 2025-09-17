@@ -1,13 +1,42 @@
 # Copyright (c) 2025 ETH Zurich and the authors of the quatrex package.
 
+import atexit
 import hashlib
 import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
+import numpy as np
+
 # 8KB chunk size for reading files.
 CHUNK_SIZE = 8192
+
+
+class FileCache:
+    def __init__(self):
+        REPO_ROOT = Path(__file__).resolve().parents[3]
+        EXAMPLES_DIR = REPO_ROOT / "examples"
+        self._file = EXAMPLES_DIR / ".file_cache.npy"
+
+        # Load existing cache if present
+        if self._file.exists():
+            self.paths = np.load(self._file, allow_pickle=True).item()
+        else:
+            self.paths = {}
+
+        # Register save on exit
+        atexit.register(self.save)
+
+    def save(self):
+        np.save(
+            self._file,
+            self.paths,
+            allow_pickle=True,
+        )
+
+
+_cache = FileCache()
 
 
 def _compute_sha256(filename: Path) -> str:
@@ -64,10 +93,23 @@ def download_and_extract(
     target_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = target_dir / Path(url).name
 
+    if url not in _cache.paths.keys():
+        _cache.paths[url] = str(tmp_path)
+
     # Download file if not already present.
-    if not tmp_path.exists() or force:
-        print(f"Downloading {url} ...")
-        urllib.request.urlretrieve(url, tmp_path)
+    if not tmp_path.exists():
+        # create symlink if file is already downloaded
+        if url in _cache.paths.keys() and not force:
+            cached_path = Path(_cache.paths[url])
+            if cached_path.exists():
+                print(f"Linking {cached_path} to {tmp_path} ...")
+                tmp_path.symlink_to(cached_path)
+            else:
+                print(f"Cached file {cached_path} not found, downloading {url} ...")
+                urllib.request.urlretrieve(url, tmp_path)
+        else:
+            print(f"Downloading {url} ...")
+            urllib.request.urlretrieve(url, tmp_path)
 
     # If checksum is given, verify it.
     if sha256:

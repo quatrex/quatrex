@@ -48,10 +48,34 @@ class BandEdgeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    use_eigvalsh: bool = False
-    eigvalsh_compute_location: Literal["numpy", "cupy"] = "cupy"
+    use_eigvalsh: bool = True
+    eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
     use_pinned_memory: bool = True
     block_sections: PositiveInt = 1
+
+    @field_validator("use_eigvalsh", mode="after")
+    def check_use_eigvalsh(cls, value, info) -> bool:
+        if not value:
+            raise NotImplementedError(
+                "Only use_eigvalsh=True is supported at the moment."
+            )
+        return value
+
+    @field_validator("eigvalsh_compute_location", mode="after")
+    def check_eigvalsh_location(cls, value) -> Literal["numpy", "cupy"]:
+        if value == "cupy" and xp.__name__ != "cupy":
+            warnings.warn(
+                "eigvalsh_compute_location is set to 'cupy' but cupy is not available. Falling back to 'numpy'.",
+                UserWarning,
+            )
+            return "numpy"
+        elif value == "numpy" and xp.__name__ == "cupy":
+            warnings.warn(
+                "eigvalsh_compute_location is set to 'numpy' but cupy is available. Consider setting it to 'cupy' for better performance.",
+                UserWarning,
+            )
+
+        return value
 
 
 class ConvolveConfig(BaseModel):

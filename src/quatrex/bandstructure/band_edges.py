@@ -3,14 +3,12 @@
 import time
 from functools import partial
 
-from scipy import linalg as spla
-
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_device, get_host, synchronize_device
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import BandEdgeConfig
 
@@ -114,8 +112,7 @@ def _compute_eigenvalues(
         potential = xp.diag(potential[:small_blocksize])
         row_slice = slice(0, small_blocksize)
     elif side == "right":
-        n = sigma_retarded.num_blocks
-        blocks = [(n - 1, n - 1), (n - 1, n - 2)]  # , (n-2, n-1)]
+        blocks = [(-1, -1), (-1, -2)]  # , (n-2, n-1)]
         potential = xp.diag(potential[-small_blocksize:])
         row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:
@@ -178,9 +175,9 @@ def _compute_eigenvalues(
         )
         return xp.sort(e_0.real)
 
-    h_0 += sum(sigma_retarded.blocks[*block][ind] for block in blocks)
-    e_0 = get_device(spla.eigvals(get_host(h_0), get_host(s_0)))
-    return xp.sort(e_0.real)
+    raise NotImplementedError(
+        "Only band_edge_config.use_eigvalsh=True is supported at the moment."
+    )
 
 
 @profiler.profile(level="api")

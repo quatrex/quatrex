@@ -12,7 +12,7 @@ import typer
 from typing_extensions import Annotated
 
 import quatrex
-from quatrex.examples import ALLOWED_EXAMPLES
+from quatrex.examples import ALLOWED_EXAMPLES, get_example_dir
 from quatrex.examples import load as load_example
 
 HEADER = rf"""
@@ -106,8 +106,12 @@ def fetch_example(
         )
 
     typer.echo(f"Fetching example: {name}")
+    device_key, target_dir = get_example_dir(name)
+
     for subname in ALLOWED_EXAMPLES[name]:
-        load_example(name + "-" + subname, folder=name + "/inputs", force=force)
+        load_example(
+            device_key + "-" + subname, target_dir=target_dir / "inputs", force=force
+        )
 
 
 @quatrex_cli.callback(invoke_without_command=True)

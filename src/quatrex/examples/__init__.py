@@ -3,6 +3,7 @@
 import tomllib
 from importlib.resources import files
 from pathlib import Path
+from typing import Tuple
 
 from quatrex.examples._downloader import download_and_extract
 
@@ -12,7 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_DIR = REPO_ROOT / "examples"
 
 ALLOWED_EXAMPLES = {
-    "carbon-nanotube": [
+    "carbon-nanotube:": [
+        "hamiltonian",
+        "coulomb-matrix",
+        "potential",
+        "grid",
+        "block-sizes",
+    ],
+    "carbon-nanotube:dist": [
         "hamiltonian",
         "coulomb-matrix",
         "potential",
@@ -30,6 +38,7 @@ with open(files("quatrex.examples") / "_manifest.toml", "rb") as f:
 
 
 for key, subnames in ALLOWED_EXAMPLES.items():
+    key, _ = key.split(":")
     for subname in subnames:
         name = f"{key}-{subname}"
         # check exists in manifest
@@ -37,7 +46,14 @@ for key, subnames in ALLOWED_EXAMPLES.items():
             raise ValueError(f"Example '{name}' not found in manifest.")
 
 
-def load(name: str, folder: str | None = None, force: bool = False) -> Path:
+def get_example_dir(name: str) -> Tuple[str, Path]:
+    """Returns the folder path for a given example name."""
+    device_key, config_key = name.split(":")
+    folder = device_key if config_key == "" else f"{device_key}-{config_key}"
+    return device_key, EXAMPLES_DIR / folder
+
+
+def load(name: str, target_dir: Path, force: bool = False) -> Path:
     """Loads an example dataset by name.
 
     Downloads and extracts the dataset if not already present.
@@ -46,9 +62,8 @@ def load(name: str, folder: str | None = None, force: bool = False) -> Path:
     ----------
     name : str
         Name of the example dataset to load.
-    folder : str | None
-        Optional folder name to store the dataset in. If None, uses the
-        example name as folder.
+    target_dir : Path
+        Folder to store the dataset in.
     force : bool
         If True, forces re-download even if the dataset already exists.
 
@@ -62,7 +77,6 @@ def load(name: str, folder: str | None = None, force: bool = False) -> Path:
         raise ValueError(f"Unknown example: {name}")
 
     info = MANIFEST[name]
-    target_dir = EXAMPLES_DIR / (folder if folder is not None else name)
 
     target_dir.mkdir(parents=True, exist_ok=True)
     download_and_extract(info["url"], target_dir, info.get("sha256"), force=force)

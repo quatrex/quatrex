@@ -11,14 +11,20 @@ from cupyx.profiler import time_range
 from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.MPI import Request
 from qttools import NDArray, sparse
-from qttools.datastructures import DSBCOO  # , DSBSparse
+from qttools.datastructures import DSBCOO, DSBSparse
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream, xp
 from qttools.utils.mpi_utils import check_gpu_aware_mpi  # , distributed_load
+
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
 # from qttools.utils.sparse_utils import product_sparsity_pattern
 # from qttools.utils.stack_utils import scale_stack
 # from scipy import sparse
 from serinv.algs import ddbtasinv
+
+from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.quatrex_config import QuatrexConfig
 
 from quatrex.exciton.response.polarization import correlate, kron_correlate
 
@@ -258,7 +264,11 @@ def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
 
 
 class BSESolver:
-    def solve(self,out):
+    def solve(
+            self,
+            G: tuple[DSBSparse, DSBSparse],
+            Sigma: tuple[DSBSparse, DSBSparse, DSBSparse],
+            ):
         self._alloc_chi0(self.exciton_energies.shape[0])
         self._alloc_chi0_bta()
         
@@ -275,7 +285,7 @@ class BSESolver:
         if comm.rank == 0:
             print(f"Begin calc chi0 distributed",flush=True)
         # bse._calc_chi0_distributed(self.data.g_greater,self.data.g_lesser,self.electron_energies,inz_batchsize=100)      
-        self._calc_chi0_v1(self.data.g_greater,self.data.g_lesser,self.electron_energies)
+        self._calc_chi0_v1(G.g_greater,G.g_lesser,self.electron_energies)
         
         if comm.rank == 0:
             print(f"Begin permuting chi0 to BTA",flush=True)
@@ -285,28 +295,77 @@ class BSESolver:
             print(f"Begin solving chi interacting",flush=True)
         P2 = self._solve_chi_interacting_BTA()
 
-        self._calc_sigma_BSE(out = out)
+        self._calc_sigma_BSE(Sigma = Sigma)
 
-        print(f"Writing output of BSE...", flush=True)
+        print(f"Writing output of BSE for debug...", flush=True)
         if not os.path.exists(self.quatrex_config.output_dir):
             os.mkdir(self.quatrex_config.output_dir)
         filename = 'BSE_P2'
         xp.save(self.quatrex_config.output_dir / filename, P2)
 
 
+    def _load_coulomb_matrix(self):
+        # Load the Coulomb matrix.
+        if self.quatrex_config.device.construct_from_unit_cell:
+            coulomb_matrix_unit_cells = distributed_load(
+                self.quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
+            ).astype(xp.complex128)
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                self.quatrex_config.device.number_of_supercells, comm.block.size
+            )
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
+
+            coulomb_matrix_sparray, __ = create_hamiltonian(
+                cutoff_hr(
+                    coulomb_matrix_unit_cells,
+                    R_cutoff=self.quatrex_config.device.unit_cell_per_supercell,
+                ),
+                self.quatrex_config.device.number_of_supercells,
+                self.quatrex_config.device.transport_direction,
+                self.quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                return_sparse=True,
+            )
+            coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
+            coulomb_matrix_sparray.sum_duplicates()
+
+        else:
+            coulomb_matrix_sparray = distributed_load(
+                self.quatrex_config.input_dir / "coulomb_matrix.npz"
+            ).astype(xp.complex128)
+
+        self.coulomb_matrix = self.compute_config.dsdbsparse_type.from_sparray(
+            self.sparsity_pattern.astype(xp.complex128),
+            block_sizes=self.small_block_sizes,
+            global_stack_shape=(comm.stack.size,),
+            symmetry=self.quatrex_config.scba.symmetric,
+            symmetry_op=xp.conj,
+        )
+
     @time_range()
     def __init__(
         self,
-        sparsity: sparse,
-        coulomb_matrix: DSBCOO,
+        quatrex_config: QuatrexConfig,
+        compute_config: ComputeConfig,
+        sparsity_pattern: sparse,
+        electron_energies: NDArray,
         exciton_energies: NDArray,
         ordering: str = "normal",
     ) -> None:
-        self.coulomb_matrix = coulomb_matrix
+        self.quatrex_config = quatrex_config
+        self.compute_config = compute_config
+        self.coulomb_matrix = self._load_coulomb_matrix()
+        self.electron_energies = electron_energies
         self.exciton_energies = exciton_energies
-        num_sites = sparsity.shape[0]
+        num_sites = sparsity_pattern.shape[0]
         self.num_sites = num_sites
-        self.sparsity = sparsity.tocoo()
+        self.sparsity = sparsity_pattern.tocoo()
         self.cutoff = max(abs(self.sparsity.col - self.sparsity.row)) + 1
         if comm.rank == 0:
             print(f"  Single-particle matrix NNZ ={self.sparsity.nnz}", flush=True)

@@ -406,7 +406,7 @@ class SCBA:
             self.exciton_solver = BSESolver(
                 sparsity=self.data.sparsity_pattern,
                 coulomb_matrix=self.coulomb_screening_solver.coulomb_matrix,
-                coulomb_screening_energies=self.coulomb_screening_energies,
+                exciton_energies=self.exciton_energies,
             )
 
         # ----- Photons ------------------------------------------------

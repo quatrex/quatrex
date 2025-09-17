@@ -1,0 +1,4 @@
+/* Symbol Names */
+code.doc-symbol-method::after {
+    content: "method";
+}

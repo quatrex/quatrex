@@ -185,7 +185,7 @@ class ComputeConfig(BaseModel):
         if self.numba_num_threads is None:
             self.numba_num_threads = 1
         if self.blas_num_threads is None:
-            self.blas_num_threads = "sequential_blas_under_openmp"
+            self.blas_num_threads = 1
 
         nb.set_num_threads(self.numba_num_threads)
         nb.config.THREADING_LAYER = self.numba_threading_layer

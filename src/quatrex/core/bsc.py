@@ -125,9 +125,10 @@ class BSCData:
         wannier_centers = distributed_load(
             quatrex_config.input_dir / "wannier_centers.npy"
         )
-        # lattice_vectors = distributed_load(
-        #    quatrex_config.input_dir / "lattice_vectors.npy"
-        # )
+        # TODO: Should maybe not be loaded here, but in the BSC class (needed for charge density calculation).
+        self.lattice_vectors = distributed_load(
+           quatrex_config.input_dir / "lattice_vectors.npy"
+        )
 
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
         # We only use dense matrices for the BSC.
@@ -683,15 +684,57 @@ class BSC:
             )
 
     def _update_fermi_level(self) -> None:
-        """Update the Fermi level based on the current band edges."""
+        """Update the Fermi level based on the current band edges or charge neutrality."""
         # TODO: This is a naive implementation, should be self-consistent such that
         # total charge is conserved.
         # Should the potential also be updated?
-        self.fermi_level = self.conduction_band_edges - self.delta_conduction_band_edge
-        self.occupancies = fermi_dirac(
-            self.local_electron_energies - self.fermi_level,
-            self.quatrex_config.electron.temperature,
-        )
+        if self.quatrex_config.electron.fermi_level_mode == "track_band_edge":
+            # NOTE: This option is not really converging well (should be dropped?).
+            self.fermi_level = self.conduction_band_edges - self.delta_conduction_band_edge
+            self.occupancies = fermi_dirac(
+                self.local_electron_energies - self.fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+        # TODO: Should clean this up a bit.
+        elif self.quatrex_config.electron.fermi_level_mode == "charge_neutrality":
+            from scipy.optimize import bisect
+            doping = self.quatrex_config.electron.doping
+            dos_density = self._compute_dos_density()
+            mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
+            equilibrium_occupancies = fermi_dirac(
+                self.electron_energies - mid_bandgap,
+                self.quatrex_config.electron.temperature,
+            )
+            def func(fermi_level):
+                occupancies = fermi_dirac(
+                    self.electron_energies - fermi_level,
+                    self.quatrex_config.electron.temperature,
+                )
+                charge_density = xp.sum(dos_density * (occupancies-equilibrium_occupancies))
+                return charge_density - doping
+            self.fermi_level = bisect(func, self.electron_energies[0], self.electron_energies[-1])
+            self.occupancies = fermi_dirac(
+                self.local_electron_energies - self.fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+
+    def _compute_dos_density(self) -> float:
+        """Compute the dos density (stupid name)."""
+        ldos = -density(
+            self.data.g_retarded,
+            self.overlap,
+        ).imag / (xp.pi)
+        # Sum all axis except the first one (which is the energy axis).
+        dos_density = xp.sum(ldos, axis=tuple(i for i in range(1, ldos.ndim)))
+        # Normalize the dos density to get it in 1/cm^2.
+        # TODO: This is hard coded for 2D materials.
+        de = self.electron_energies[1] - self.electron_energies[0]
+        nk = np.prod(self.quatrex_config.electron.number_of_kpoints)
+        uc_area = np.linalg.det(
+            self.data.lattice_vectors[:2, :2]
+        ) 
+        dos_density *= de / (nk * uc_area) * 1e16 # in 1/cm^2
+        return dos_density
 
     def _compute_total_charge(self) -> float:
         """Compute the total charge in the conduction band."""

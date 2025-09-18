@@ -109,7 +109,7 @@ def fetch_example(
             )
 
         typer.echo(f"Fetching example: {name}")
-        device_key, target_dir = get_example_dir(name)
+        device_key, _, target_dir = get_example_dir(name)
 
         for subname in ALLOWED_EXAMPLES[name]:
             load_example(

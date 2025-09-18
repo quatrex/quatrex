@@ -1188,16 +1188,44 @@ class BSC:
             comm.barrier()
             t_iteration_start = time.perf_counter()
 
-            t_solve_start = time.perf_counter()
+            t_assemble_start = time.perf_counter()
             self._assemble_greens_function_system_matrix(
                 self.data.sigma_retarded,
             )
-
+            synchronize_device()
+            t_assemble_end = time.perf_counter()
+            comm.barrier()
+            t_assemble_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for assembling system matrix: {t_assemble_end - t_assemble_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for assembling system matrix all: {t_assemble_end_all - t_assemble_start:.3f} s",
+                    flush=True,
+                )
+            
+            t_solve_start = time.perf_counter()
             self.solver.selected_inv(
                 self.data.g_system_matrix,
                 out=self.data.g_retarded,
             )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for inverting system matrix: {t_solve_end - t_solve_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for inverting system matrix all: {t_solve_end_all - t_solve_start:.3f} s",
+                    flush=True,
+                )
 
+            t_band_edge_start = time.perf_counter()
             # Find the band edges and update the Fermi level (for charge neutrality).
             self._find_band_edges()
             self._update_fermi_level()
@@ -1238,23 +1266,38 @@ class BSC:
                     f"Valley difference between K and G symmetry points: {valley_difference}",
                     flush=True,
                 )
+            
+            synchronize_device()
+            t_band_edge_end = time.perf_counter()
+            comm.barrier()
+            t_band_edge_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for band edge and fermi level: {t_band_edge_end - t_band_edge_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for band edge and fermi level all: {t_band_edge_end_all - t_band_edge_start:.3f} s",
+                    flush=True,
+                )
 
+            t_lesser_greater_start = time.perf_counter()
             _spectral_function(self.data.g_retarded, out=self.data.g_lesser)
             self.data.g_greater.data[:] = self.data.g_lesser.data
             scale_stack(self.data.g_lesser.data, -self.occupancies)
             scale_stack(self.data.g_greater.data, 1 - self.occupancies)
 
             synchronize_device()
-            t_solve_end = time.perf_counter()
+            t_lesser_greater_end = time.perf_counter()
             comm.barrier()
-            t_solve_end_all = time.perf_counter()
+            t_lesser_greater_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"Time for electron solver: {t_solve_end - t_solve_start:.3f} s",
+                    f"Time for  lesser/greater: {t_lesser_greater_end - t_lesser_greater_start:.3f} s",
                     flush=True,
                 )
                 print(
-                    f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s",
+                    f"Time for  lesser/greater all: {t_lesser_greater_end_all - t_lesser_greater_start:.3f} s",
                     flush=True,
                 )
 

@@ -46,11 +46,11 @@ for key, subnames in ALLOWED_EXAMPLES.items():
             raise ValueError(f"Example '{name}' not found in manifest.")
 
 
-def get_example_dir(name: str) -> Tuple[str, Path]:
+def get_example_dir(name: str) -> Tuple[str, str, Path]:
     """Returns the folder path for a given example name."""
     device_key, config_key = name.split(":")
     folder = device_key if config_key == "" else f"{device_key}-{config_key}"
-    return device_key, EXAMPLES_DIR / folder
+    return device_key, config_key, EXAMPLES_DIR / folder
 
 
 def load(name: str, target_dir: Path, force: bool = False) -> Path:

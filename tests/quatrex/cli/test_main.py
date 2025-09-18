@@ -35,7 +35,7 @@ def test_main(non_distributed_example: str):
     except Exception as e:
         pytest.fail(f"fetch-example failed: {e}")
 
-    _, example_path = get_example_dir(non_distributed_example)
+    _, _, example_path = get_example_dir(non_distributed_example)
 
     quatrex_config_path = example_path / "quatrex_config.toml"
     compute_config_path = example_path / "compute_config.toml"
@@ -57,7 +57,7 @@ def test_main_cli(example: str):
     except Exception as e:
         pytest.fail(f"fetch-example failed: {e}")
 
-    _, example_path = get_example_dir(example)
+    _, _, example_path = get_example_dir(example)
 
     quatrex_config_path = example_path / "quatrex_config.toml"
     compute_config_path = example_path / "compute_config.toml"

@@ -11,7 +11,7 @@ sha256 = "a49650281d17c28276cb1220903edf6cf6c879d8b4ed5fe0cce0d615f5f01477"
 # TODO: remove ref to PR branch once merged in huggingface
 [carbon-nanotube-coulomb-matrix]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/coulomb_matrix.npz"
-sha256 = "fdea29ceafab8e69103d644b3a877aba5b1d396de69600efe88ab1299db374ac"
+sha256 = "f07f1884afb83e16f5eaee4cd52e606852c93d157762f2ab7d9cf1723527a6d5"
 
 [carbon-nanotube-potential]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/potential.npy"
@@ -24,6 +24,22 @@ sha256 = "66f976b634732a38077e1db5aa69f72ed0c9ec4d4a4b55a051c1ef96a7d162b9"
 [carbon-nanotube-block-sizes]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/block_sizes.npy"
 sha256 = "5ae34aa4479a9b2154b14e677ae8ba6ec4814c3b724b610f2ab5f422fa4ad49f"
+
+[carbon-nanotube-i_meir-wingreen_1-]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/i_meir-wingreen_1_.npy"
+sha256 = "9a6e102793df4a569ddc0920f355db590dc062e032490f32f2a8b4c669927df0"
+
+[carbon-nanotube-electron_ldos_1-]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/electron_ldos_1_.npy"
+sha256 = "5b11a621825308d3c3b42631754c49387fb8a41c363e82bc8f89ca77a4de886d"
+
+[carbon-nanotube-electron_density_1-dist]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/electron_density_1_dist.npy"
+sha256 = "d0ee24232b309d528b55174044014e1f777efcdcd8fd9d8de5e14aafe843abbf"
+
+[carbon-nanotube-i_device_1-dist]
+url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/refs%2Fpr%2F4/quantum_transport/cnt_w90/i_device_1_dist.npy"
+sha256 = "a863ca38cdde927a424bde78342cd8805f85cf2d2a7147131a0223b06a2bd488"
 
 
 [silicon-nanowire]

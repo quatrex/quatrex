@@ -35,3 +35,8 @@ def example(request: pytest.FixtureRequest) -> str:
 @pytest.fixture(params=NON_DISTIRBUTED_EXAMPLES)
 def non_distributed_example(request: pytest.FixtureRequest) -> str:
     return request.param
+
+
+@pytest.fixture(params=DOMAIN_DISTTRIBUTED_EXAMPLES)
+def domain_distributed_example(request: pytest.FixtureRequest) -> str:
+    return request.param

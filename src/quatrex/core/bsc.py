@@ -664,7 +664,7 @@ class BSC:
         valence_band_edge = np.zeros(kpoints)
         for kp in np.ndindex(kpoints):
             # NOTE: Find peaks don't work with cupy arrays, so we have to use numpy.
-            peaks, _ = find_peaks(get_host(dos[:, *kp]))
+            peaks, _ = find_peaks(get_host(dos[:, *kp]), height=0.01)
             bands = energies[peaks]
             # Find the conduction and valence band edges.
             conduction_band_edge[kp] = xp.min(bands[bands > mid_bandgap])

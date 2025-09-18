@@ -342,12 +342,16 @@ class ElectronConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    doping: float = 0.0  # 1/cm^2
+
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
+
+    fermi_level_mode: Literal["fixed", "charge_neutrality"] = "fixed"
 
     fermi_level: float | None = None
     conduction_band_edge: float | None = None

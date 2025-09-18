@@ -771,25 +771,9 @@ class BSC:
         self.data.sigma_greater.data[:] = 0.0
 
     @profiler.profile(level="api")
-    def _update_sigma(self) -> None:
-        """Updates the self-energy with a mixing factor."""
+    def _symmetrize_sigma(self) -> None:
+        """Symmetrize the self-energy."""
 
-        self.data.sigma_lesser.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
-        )
-        self.data.sigma_greater.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
-        )
-        self.data.sigma_retarded.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
-        )
-
-        # Symmetrization.
-        synchronize_device()
-        time_start = time.perf_counter()
         if not self.quatrex_config.scba.symmetric:
             # This is not relly necessary as sigma_lesser and sigma_greater
             # currently aren't used.
@@ -807,11 +791,23 @@ class BSC:
             self.data.sigma_retarded.data += 0.5 * (
             self.data.sigma_greater.data - self.data.sigma_lesser.data
             )
-        
-        synchronize_device()
-        time_end = time.perf_counter()
-        if comm.rank == 0:
-            print(f"Symmetrization time: {time_end-time_start}", flush=True)
+
+    @profiler.profile(level="api")
+    def _update_sigma(self) -> None:
+        """Updates the self-energy with a mixing factor."""
+
+        self.data.sigma_lesser.data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
+            + self.mixing_factor * self.data.sigma_lesser.data
+        )
+        self.data.sigma_greater.data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
+            + self.mixing_factor * self.data.sigma_greater.data
+        )
+        self.data.sigma_retarded.data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
+            + self.mixing_factor * self.data.sigma_retarded.data
+        )
 
     @profiler.profile(level="api")
     def _has_converged(self) -> bool:
@@ -1433,6 +1429,23 @@ class BSC:
                 )
                 print(
                     f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
+            
+            t_sigma_symmetrize_start = time.perf_counter()
+            # Make sure the self-energies satify the required symmetries.
+            self._symmetrize_sigma()
+            synchronize_device()
+            t_sigma_symmetrize_end = time.perf_counter()
+            comm.barrier()
+            t_sigma_symmetrize_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for symmetrizing: {t_sigma_symmetrize_end - t_sigma_symmetrize_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for symmetrizing all: {t_sigma_symmetrize_end_all - t_sigma_symmetrize_start:.3f} s",
                     flush=True,
                 )
 

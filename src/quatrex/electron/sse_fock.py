@@ -93,15 +93,16 @@ class SigmaFock(ScatteringSelfEnergy):
 
         # Compute the electron density by summing over energies.
         t_sse_start = time.perf_counter()
-        gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-        sigma_retarded.data += (
-            fft_circular_convolve(
-                gl_density,
-                self.coulomb_matrix_data,
-                axes=tuple(range(gl_density.ndim - 1)),
+        if g_lesser.data.shape[-1] != 0:
+            gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+            sigma_retarded.data += (
+                fft_circular_convolve(
+                    gl_density,
+                    self.coulomb_matrix_data,
+                    axes=tuple(range(gl_density.ndim - 1)),
+                )
+                / self.kpoint_volume
             )
-            / self.kpoint_volume
-        )
         synchronize_device()
         t_sse_end = time.perf_counter()
         comm.barrier()

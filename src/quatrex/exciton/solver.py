@@ -8,12 +8,12 @@ import os
 from cupyx.profiler import time_range
 
 # from cupyx.scipy import sparse as cusparse
-from mpi4py.MPI import COMM_WORLD as comm
+from qttools.comm import comm
 from mpi4py.MPI import Request
 from qttools import NDArray, sparse
-from qttools.datastructures import DSBCOO, DSBSparse
+from qttools.datastructures import DSDBCOO, DSDBSparse
 from qttools.utils.gpu_utils import get_device, get_host, synchronize_current_stream, xp
-from qttools.utils.mpi_utils import check_gpu_aware_mpi  # , distributed_load
+# from qttools.comm import GPU_AWARE_MPI  # , distributed_load
 
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
@@ -34,7 +34,7 @@ from quatrex.exciton.response.polarization import correlate, kron_correlate
 # from quatrex.core.subsystem import SubsystemSolver
 # from quatrex.coulomb_screening.utils import assemble_boundary_blocks
 
-GPU_AWARE = check_gpu_aware_mpi()
+GPU_AWARE = False
 
 
 @nb.njit(parallel=True, fastmath=True)
@@ -178,18 +178,18 @@ def _get_mapping_raw(
     return L_idx
 
 
-def batched_assign(row: NDArray, col: NDArray, dsbcoo: DSBCOO, dense: NDArray):
+def batched_assign(row: NDArray, col: NDArray, DSDBCOO: DSDBCOO, dense: NDArray):
     inds = _get_mapping_raw(
         row,
         col,
-        dsbcoo.rows,
-        dsbcoo.cols,
+        DSDBCOO.rows,
+        DSDBCOO.cols,
         comm.rank,
-        dsbcoo.nnz_section_offsets,
+        DSDBCOO.nnz_section_offsets,
     )
     valid = xp.where(inds != -1)
 
-    dsbcoo._data[xp.ix_(dsbcoo._stack_padding_mask, inds[valid])] = dense[:, *valid]
+    DSDBCOO._data[xp.ix_(DSDBCOO._stack_padding_mask, inds[valid])] = dense[:, *valid]
 
 
 def _impose_bta_sparsity(
@@ -266,9 +266,9 @@ def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
 class BSESolver:
     def solve(
             self,
-            G: tuple[DSBSparse, DSBSparse],
-            W: DSBSparse,
-            Sigma: tuple[DSBSparse, DSBSparse, DSBSparse],
+            G: tuple[DSDBSparse, DSDBSparse],
+            W: DSDBSparse,
+            Sigma: tuple[DSDBSparse, DSDBSparse, DSDBSparse],
             ):
         self._alloc_L0(self.exciton_energies.shape[0])
         self._alloc_L0_bta()
@@ -338,7 +338,7 @@ class BSESolver:
             ).astype(xp.complex128)
 
         self.coulomb_matrix = self.compute_config.dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            coulomb_matrix_sparray,
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.stack.size,),
             symmetry=self.quatrex_config.scba.symmetric,
@@ -356,10 +356,10 @@ class BSESolver:
         ordering: str = "normal",
     ) -> None:
         self.quatrex_config = quatrex_config
-        self.compute_config = compute_config
-        self.coulomb_matrix = self._load_coulomb_matrix()
+        self.compute_config = compute_config        
         self.electron_energies = electron_energies
         self.exciton_energies = exciton_energies
+        self.small_block_sizes = xp.array([sparsity_pattern.shape[0],])
         # The sparsity pattern of the single-particle GF.
         num_sites = sparsity_pattern.shape[0]
         self.num_sites = num_sites
@@ -371,6 +371,7 @@ class BSESolver:
         self.ordering = ordering
         # The sparsity pattern of the two-particle GF.
         self._pair_sparsity()
+        self.coulomb_matrix = self._load_coulomb_matrix()
 
     # preprocessing the sparsity pattern and decide the block_size and
     # num_blocks in the BTA matrix
@@ -504,17 +505,17 @@ class BSESolver:
         coords = (self.pair_sparsity.row, self.pair_sparsity.col)
         coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
-        self.L0_lesser = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.L0_greater = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.L0_r = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_lesser = DSDBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_greater = DSDBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_r = DSDBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
         return
 
     @time_range()
     def _calc_L0_distributed(
         self,
-        GG: DSBCOO,
-        GL: DSBCOO,
+        GG: DSDBCOO,
+        GL: DSDBCOO,
         G_energies: NDArray,
         step_E: int = 1,
         inz_batchsize: int = 4,
@@ -826,7 +827,7 @@ class BSESolver:
 
     @time_range()
     def _calc_L0_v1(
-        self, GG: DSBCOO, GL: DSBCOO, G_energies: NDArray, step_E: int = 1
+        self, GG: DSDBCOO, GL: DSDBCOO, G_energies: NDArray, step_E: int = 1
     ):
 
         if self.L0_lesser.distribution_state == "stack":
@@ -1057,11 +1058,11 @@ class BSESolver:
         coords = (self.pair_sparsity_bta.row, self.pair_sparsity_bta.col)
         coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
-        self.L0_lesser_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.L0_greater_bta = DSBCOO.from_sparray(
+        self.L0_lesser_bta = DSDBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_greater_bta = DSDBCOO.from_sparray(
             coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE
         )
-        self.L0_r_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_r_bta = DSDBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
         return
 

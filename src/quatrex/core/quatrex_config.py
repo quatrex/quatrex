@@ -406,7 +406,7 @@ class QuatrexConfig(BaseModel):
         self.input_dir = self.simulation_dir / "inputs/"
         return self
 
-    @field_validator("exciton_start_iteration", mode="after")
+    # @field_validator("exciton_start_iteration", mode="after")
     def get_exciton_start_iteration(self, value) -> PositiveInt:
         if not self.scba.exciton:
             return -1

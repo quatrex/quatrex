@@ -8,6 +8,15 @@ from qttools.utils.gpu_utils import xp
 
 from quatrex.exciton.response.comm import fetch_overlaping_data
 
+def kron_correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
+    """Convolves two 1D arrays using FFT and performs kronecker."""
+    n = a.shape[0] + b.shape[0] - 1
+    a_fft = xp.fft.fftn(a, (n,), axes=(0,))
+    b_fft = xp.fft.fftn(b[::-1], (n,), axes=(0,))
+
+    x_fft = xp.einsum("ei,ej->eij", a_fft, b_fft)
+
+    return xp.fft.ifftn(x_fft, axes=(0,))
 
 def calc_four_point_correlation_distributed(
     GG_local: NDArray,
@@ -246,3 +255,53 @@ def find_overlaping_data_for_L(
         nnz_rank.append(list_rank_to_fetch_from[offset[i] : offset[i + 1]])
 
     return nnz_to_fetch, nnz_rank
+
+
+def correlate(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
+    """Computes the correlation of two 1D arrays.
+
+    This is slightly different from the usual definition of correlation
+    in signal processing, where the second array is conjugated.
+
+    Here, we use the definition of correlation as the convolution of
+    the first array with the reversed second array.
+
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First array.
+    b : np.ndarray
+        Second array.
+
+    Returns
+    -------
+    np.ndarray
+        Correlation of `a` and `b` including the "full" correlation.
+
+    """
+    return fftconvolve(a, b[::-1])
+
+
+
+def fftconvolve(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
+    """Convolves two 1D arrays using FFT.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First array.
+    b : np.ndarray
+        Second array.
+
+    Returns
+    -------
+    np.ndarray
+        Convolution of `a` and `b` including the "full" convolution.
+
+    """
+    n = len(a) + len(b) - 1
+    a_fft = xp.fft.fft(a, n)
+    b_fft = xp.fft.fft(b, n)
+    return xp.fft.ifft(a_fft * b_fft)
+

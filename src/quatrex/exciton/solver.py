@@ -221,8 +221,8 @@ def _impose_bta_sparsity(
 @staticmethod
 def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
     """
-    Figure out the info to locate the needed nonzero elements (nnz) whichin an interaction range of `ndiag` of
-    the nnz on the i-th rank.
+    Figure out the info to locate the needed nonzero elements (nnz) whiLn an interaction 
+    range of `ndiag` of the nnz on the i-th rank.
 
         - get_nnz_size: number of the nnz to gether
         - get_nnz_idx: indices ...
@@ -267,33 +267,30 @@ class BSESolver:
     def solve(
             self,
             G: tuple[DSBSparse, DSBSparse],
+            W: DSBSparse,
             Sigma: tuple[DSBSparse, DSBSparse, DSBSparse],
             ):
-        self._alloc_chi0(self.exciton_energies.shape[0])
-        self._alloc_chi0_bta()
+        self._alloc_L0(self.exciton_energies.shape[0])
+        self._alloc_L0_bta()
         
-        V = self.coulomb_matrix
-        if V.distribution_state != "stack":
-            V.dtranspose()
-        V = V.to_dense()[0]
-        W = V
-
+        self.screened_coulomb_matrix = W
+        
         if comm.rank == 0:
             print(f"Begin calc kernel of BSE",flush=True)
-        self._calc_kernel_bta(V,W)
+        self._calc_kernel_bta()
 
         if comm.rank == 0:
-            print(f"Begin calc chi0 distributed",flush=True)
-        # bse._calc_chi0_distributed(self.data.g_greater,self.data.g_lesser,self.electron_energies,inz_batchsize=100)      
-        self._calc_chi0_v1(G.g_greater,G.g_lesser,self.electron_energies)
+            print(f"Begin calc L0 distributed",flush=True)
+        # bse._calc_L0_distributed(self.data.g_greater,self.data.g_lesser,self.electron_energies,inz_batchsize=100)      
+        self._calc_L0_v1(G.g_greater,G.g_lesser,self.electron_energies)
         
         if comm.rank == 0:
-            print(f"Begin permuting chi0 to BTA",flush=True)
-        self._permute_chi0_toBTA()
+            print(f"Begin permuting L0 to BTA",flush=True)
+        self._permute_L0_toBTA()
         
         if comm.rank == 0:
-            print(f"Begin solving chi interacting",flush=True)
-        P2 = self._solve_chi_interacting_BTA()
+            print(f"Begin solving L interacting",flush=True)
+        P2 = self._solve_L_interacting_BTA()
 
         self._calc_sigma_BSE(Sigma = Sigma)
 
@@ -363,6 +360,7 @@ class BSESolver:
         self.coulomb_matrix = self._load_coulomb_matrix()
         self.electron_energies = electron_energies
         self.exciton_energies = exciton_energies
+        # The sparsity pattern of the single-particle GF.
         num_sites = sparsity_pattern.shape[0]
         self.num_sites = num_sites
         self.sparsity = sparsity_pattern.tocoo()
@@ -371,6 +369,7 @@ class BSESolver:
             print(f"  Single-particle matrix NNZ ={self.sparsity.nnz}", flush=True)
             print(f"  Single-particle matrix bandwidth ={self.cutoff}", flush=True)
         self.ordering = ordering
+        # The sparsity pattern of the two-particle GF.
         self._pair_sparsity()
 
     # preprocessing the sparsity pattern and decide the block_size and
@@ -398,9 +397,8 @@ class BSESolver:
             coo.row = row
             coo.col = col
             self.permuted_sparsity = coo
-
-            lut = xp.zeros((self.num_sites, self.num_sites), dtype=np.int32)
             # construct a lookup table of reordered indices matrix
+            lut = xp.zeros((self.num_sites, self.num_sites), dtype=np.int32)            
             lut[self.permuted_sparsity.row, self.permuted_sparsity.col] = range(
                 len(self.permuted_sparsity.row)
             )
@@ -496,7 +494,7 @@ class BSESolver:
         return
 
     @time_range()
-    def _alloc_chi0(self, num_energy: int, dtype=np.complex128):
+    def _alloc_L0(self, num_energy: int, dtype=np.complex128):
         ARRAY_SHAPE = (self.totalsize, self.totalsize)
         BLOCK_SIZES = np.array([int(self.blocksize)] * int(self.num_blocks))
         GLOBAL_STACK_SHAPE = (num_energy,)
@@ -506,14 +504,14 @@ class BSESolver:
         coords = (self.pair_sparsity.row, self.pair_sparsity.col)
         coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
-        self.chi0_lesser = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.chi0_greater = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.chi0_r = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_lesser = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_greater = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_r = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
         return
 
     @time_range()
-    def _calc_chi0_distributed(
+    def _calc_L0_distributed(
         self,
         GG: DSBCOO,
         GL: DSBCOO,
@@ -524,10 +522,10 @@ class BSESolver:
         start_time = time.time()
         self.g_lesser = GL
         self.g_greater = GG
-        if self.chi0_lesser.distribution_state == "stack":
-            self.chi0_lesser.dtranspose()
-            self.chi0_greater.dtranspose()
-            self.chi0_r.dtranspose()
+        if self.L0_lesser.distribution_state == "stack":
+            self.L0_lesser.dtranspose()
+            self.L0_greater.dtranspose()
+            self.L0_r.dtranspose()
 
         if GG.distribution_state == "stack":
             GG.dtranspose()
@@ -647,26 +645,26 @@ class BSESolver:
                 GG.cols[inz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
             ]
 
-            chi_x_full = self.prefactor * kron_correlate(
+            L_x_full = self.prefactor * kron_correlate(
                 GG.data[:, iinz : iinz + inz_batchsize], GL.data
             )
 
             batched_assign(
                 row,
                 col,
-                self.chi0_greater,
-                chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                self.L0_greater,
+                L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
             )
 
-            chi_x_full = self.prefactor * kron_correlate(
+            L_x_full = self.prefactor * kron_correlate(
                 GL.data[:, iinz : iinz + inz_batchsize], GG.data
             )
 
             batched_assign(
                 row,
                 col,
-                self.chi0_lesser,
-                chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                self.L0_lesser,
+                L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
             )
 
         # compute terms that require GF data from MPI recv buffer
@@ -715,26 +713,26 @@ class BSESolver:
                     GG.cols[inz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
                 ]
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     GG.data[:, iinz : iinz + inz_batchsize], gl_recbuf
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_greater,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_greater,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     GL.data[:, iinz : iinz + inz_batchsize], gg_recbuf
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_lesser,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_lesser,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
                 # buf and local
@@ -746,26 +744,26 @@ class BSESolver:
                     GG.cols[jnz[:, None]], GG.rows[inz[iinz : iinz + inz_batchsize]]
                 ]
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     gg_recbuf, GL.data[:, iinz : iinz + inz_batchsize]
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_greater,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_greater,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     gl_recbuf, GG.data[:, iinz : iinz + inz_batchsize]
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_lesser,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_lesser,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
             for iinz in range(0, len(jnz), inz_batchsize):
@@ -782,29 +780,29 @@ class BSESolver:
                     GG.cols[jnz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
                 ]
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     gg_recbuf[:, iinz : iinz + inz_batchsize], gl_recbuf
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_greater,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_greater,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
-                chi_x_full = self.prefactor * kron_correlate(
+                L_x_full = self.prefactor * kron_correlate(
                     gl_recbuf[:, iinz : iinz + inz_batchsize], gg_recbuf
                 )
 
                 batched_assign(
                     row,
                     col,
-                    self.chi0_lesser,
-                    chi_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
+                    self.L0_lesser,
+                    L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
-        self.chi0_r.data = (self.chi0_greater.data - self.chi0_lesser.data) / 2
+        self.L0_r.data = (self.L0_greater.data - self.L0_lesser.data) / 2
 
         finish_time = time.time()
         print(
@@ -813,9 +811,9 @@ class BSESolver:
         start_time = finish_time
 
         # transpose to stack distribution
-        self.chi0_lesser.dtranspose()
-        self.chi0_greater.dtranspose()
-        self.chi0_r.dtranspose()
+        self.L0_lesser.dtranspose()
+        self.L0_greater.dtranspose()
+        self.L0_r.dtranspose()
 
         finish_time = time.time()
         print(
@@ -827,17 +825,17 @@ class BSESolver:
         return
 
     @time_range()
-    def _calc_chi0_v1(
+    def _calc_L0_v1(
         self, GG: DSBCOO, GL: DSBCOO, G_energies: NDArray, step_E: int = 1
     ):
 
-        if self.chi0_lesser.distribution_state == "stack":
-            self.chi0_lesser.dtranspose()
-            self.chi0_greater.dtranspose()
-            self.chi0_r.dtranspose()
+        if self.L0_lesser.distribution_state == "stack":
+            self.L0_lesser.dtranspose()
+            self.L0_greater.dtranspose()
+            self.L0_r.dtranspose()
 
         nnz_section_offsets = np.hstack(
-            ([0], np.cumsum(self.chi0_lesser.nnz_section_sizes))
+            ([0], np.cumsum(self.L0_lesser.nnz_section_sizes))
         )
         start_inz = int(nnz_section_offsets[comm.rank])
         end_inz = int(nnz_section_offsets[comm.rank + 1])
@@ -847,35 +845,35 @@ class BSESolver:
         self.g_lesser = GL
         self.g_greater = GG
 
-        chi_g = xp.zeros((G_nen * 2 - 1, end_inz - start_inz), dtype=GG.dtype)
-        chi_l = xp.zeros_like(chi_g)
+        L_g = xp.zeros((G_nen * 2 - 1, end_inz - start_inz), dtype=GG.dtype)
+        L_l = xp.zeros_like(L_g)
 
         for inz in range(start_inz, end_inz):
-            row = self.chi0_lesser.rows[inz]
-            col = self.chi0_lesser.cols[inz]
+            row = self.L0_lesser.rows[inz]
+            col = self.L0_lesser.cols[inz]
 
             i = self.sparsity.row[row]
             j = self.sparsity.col[row]
             k = self.sparsity.row[col]
             L = self.sparsity.col[col]
 
-            chi_g[:, inz - start_inz] = self.prefactor * correlate(GG[i, k], GL[L, j])
-            chi_l[:, inz - start_inz] = self.prefactor * correlate(GL[i, k], GG[L, j])
+            L_g[:, inz - start_inz] = self.prefactor * correlate(GG[i, k], GL[L, j])
+            L_l[:, inz - start_inz] = self.prefactor * correlate(GL[i, k], GG[L, j])
 
-        self.chi0_greater._data[
-            xp.ix_(self.chi0_greater._stack_padding_mask, range(start_inz, end_inz))
-        ] = chi_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
+        self.L0_greater._data[
+            xp.ix_(self.L0_greater._stack_padding_mask, range(start_inz, end_inz))
+        ] = L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
 
-        self.chi0_lesser._data[
-            xp.ix_(self.chi0_lesser._stack_padding_mask, range(start_inz, end_inz))
-        ] = chi_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
+        self.L0_lesser._data[
+            xp.ix_(self.L0_lesser._stack_padding_mask, range(start_inz, end_inz))
+        ] = L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
 
         # transpose to stack distribution
-        self.chi0_lesser.dtranspose()
-        self.chi0_greater.dtranspose()
+        self.L0_lesser.dtranspose()
+        self.L0_greater.dtranspose()
         return
 
-    def _calc_chi0_less_fft(
+    def _calc_L0_less_fft(
         self, GG, GL, start_inz, end_inz, inz_batchsize: int = 4, step_E: int = 1
     ):
 
@@ -894,19 +892,19 @@ class BSESolver:
             )
 
             for inz in range(start_inz, end_inz):
-                row = self.chi0_lesser.rows[inz]
-                col = self.chi0_lesser.cols[inz]
+                row = self.L0_lesser.rows[inz]
+                col = self.L0_lesser.cols[inz]
 
                 i = self.sparsity.row[row]
                 j = self.sparsity.col[row]
                 k = self.sparsity.row[col]
                 L = self.sparsity.col[col]
 
-                chi_g = self.prefactor * xp.fft.ifftn(
+                L_g = self.prefactor * xp.fft.ifftn(
                     GG_fft[i, k] * GL_fft[L, j], (n,), axes=(0,)
                 )
-                self.chi0_greater._data[self.chi0_greater._stack_padding_mask, inz] = (
-                    chi_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
+                self.L0_greater._data[self.L0_greater._stack_padding_mask, inz] = (
+                    L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
                 )
         GL_fft = None
 
@@ -920,24 +918,24 @@ class BSESolver:
             )
 
             for inz in range(start_inz, end_inz):
-                row = self.chi0_lesser.rows[inz]
-                col = self.chi0_lesser.cols[inz]
+                row = self.L0_lesser.rows[inz]
+                col = self.L0_lesser.cols[inz]
 
                 i = self.sparsity.row[row]
                 j = self.sparsity.col[row]
                 k = self.sparsity.row[col]
                 L = self.sparsity.col[col]
 
-                chi_l = self.prefactor * xp.fft.ifftn(
+                L_l = self.prefactor * xp.fft.ifftn(
                     GL_fft[i, k] * GG_fft[L, j], (n,), axes=(0,)
                 )
-                self.chi0_lesser._data[self.chi0_lesser._stack_padding_mask, inz] = (
-                    chi_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
+                self.L0_lesser._data[self.L0_lesser._stack_padding_mask, inz] = (
+                    L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
                 )
         GG_fft = None
 
 
-    def _calc_chi0_less_fft_v2(
+    def _calc_L0_less_fft_v2(
         self, GG_data:NDArray, GL_data:NDArray, start_inz, end_inz, inz_batchsize: int = 4, step_E: int = 1
     ):
 
@@ -964,32 +962,31 @@ class BSESolver:
                 k = self.sparsity.row[jjnz]
                 L = self.sparsity.col[jjnz]
 
-                ind = np.where((self.chi0_greater.rows == iinz) & (self.chi0_greater.cols == jjnz))[0]
+                ind = np.where((self.L0_greater.rows == iinz) & (self.L0_greater.cols == jjnz))[0]
                 if ind.size == 0:
                     continue
-                data_rank = np.where(self.chi0_greater.section_offsets <= ind[0])[0][-1]
+                data_rank = np.where(self.L0_greater.section_offsets <= ind[0])[0][-1]
                 if comm.rank != data_rank:
                     continue
-                idx = ind[0] - self.chi0_greater.section_offsets[data_rank]
+                idx = ind[0] - self.L0_greater.section_offsets[data_rank]
 
                 if sparsity_csr[i,k] != -1 and sparsity_csr[L,j] != -1:
 
-                    chi_g = self.prefactor * xp.fft.ifftn(
+                    L_g = self.prefactor * xp.fft.ifftn(
                         GG_fft[:, self.inverse_table[i, k]] * GL_fft[:, self.inverse_table[L, j]], (n,), axes=(0,)
                     )
-                    self.chi0_greater._data[xp.ix_(self.chi0_greater._stack_padding_mask, idx)] = (
-                        chi_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
+                    self.L0_greater._data[xp.ix_(self.L0_greater._stack_padding_mask, idx)] = (
+                        L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
                     )
         GL_fft = None
 
         
 
-    def _calc_kernel(self, V: DSBCOO, W: DSBCOO):
-        self.bare_Coulomb = V
-        self.screened_Coulomb = W
+    def _calc_kernel(self):
+        
         self.kernel = sparse.lil_array(
             (self.totalsize, self.totalsize),
-            dtype=self.chi0_greater.dtype,
+            dtype=self.L0_greater.dtype,
         )
 
         for i in range(self.num_sites):
@@ -1011,14 +1008,13 @@ class BSESolver:
         self.kernel = self.kernel.tocoo()
 
     @time_range()
-    def _calc_kernel_bta(self, V: DSBCOO, W: DSBCOO):
-        self.bare_Coulomb = V
-        self.screened_Coulomb = W
+    def _calc_kernel_bta(self):
+        
         kernel_tip = xp.zeros(
-            (self.tipsize, self.tipsize), dtype=self.chi0_lesser.dtype
+            (self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
         )
         kernel_diag = xp.zeros(
-            (self.bta_totalsize - self.tipsize), dtype=self.chi0_lesser.dtype
+            (self.bta_totalsize - self.tipsize), dtype=self.L0_lesser.dtype
         )
 
         for i in range(self.num_sites):
@@ -1039,7 +1035,7 @@ class BSESolver:
 
         self.kernel_bta = sparse.lil_array(
             (self.bta_totalsize, self.bta_totalsize),
-            dtype=self.chi0_greater.dtype,
+            dtype=self.L0_greater.dtype,
         )
         for i in range(self.num_sites):
             for j in range(self.num_sites):
@@ -1049,7 +1045,7 @@ class BSESolver:
         self.kernel_bta = self.kernel_bta.tocoo()
 
     @time_range()
-    def _alloc_chi0_bta(self, dtype=xp.complex128):
+    def _alloc_L0_bta(self, dtype=xp.complex128):
         ARRAY_SHAPE = (self.bta_totalsize, self.bta_totalsize)
         BLOCK_SIZES = np.array(
             [int(self.tipsize)]
@@ -1057,51 +1053,51 @@ class BSESolver:
         )
         GLOBAL_STACK_SHAPE = (self.num_E,)
 
-        data = xp.zeros(len(self.pair_sparsity_bta.row), dtype=self.chi0_greater.dtype)
+        data = xp.zeros(len(self.pair_sparsity_bta.row), dtype=self.L0_greater.dtype)
         coords = (self.pair_sparsity_bta.row, self.pair_sparsity_bta.col)
         coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 
-        self.chi0_lesser_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
-        self.chi0_greater_bta = DSBCOO.from_sparray(
+        self.L0_lesser_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_greater_bta = DSBCOO.from_sparray(
             coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE
         )
-        self.chi0_r_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
+        self.L0_r_bta = DSBCOO.from_sparray(coo, BLOCK_SIZES, GLOBAL_STACK_SHAPE)
 
         return
 
     @time_range()
-    def _permute_chi0_toBTA(self):
-        if self.chi0_lesser.distribution_state != "stack":
-            self.chi0_lesser.dtranspose()
-            self.chi0_greater.dtranspose()
-            self.chi0_r.dtranspose()
-        if self.chi0_lesser_bta.distribution_state != "stack":
-            self.chi0_lesser_bta.dtranspose()
-            self.chi0_greater_bta.dtranspose()
-            self.chi0_r_bta.dtranspose()
+    def _permute_L0_toBTA(self):
+        if self.L0_lesser.distribution_state != "stack":
+            self.L0_lesser.dtranspose()
+            self.L0_greater.dtranspose()
+            self.L0_r.dtranspose()
+        if self.L0_lesser_bta.distribution_state != "stack":
+            self.L0_lesser_bta.dtranspose()
+            self.L0_greater_bta.dtranspose()
+            self.L0_r_bta.dtranspose()
 
-        # reorder Chi0 matrix to BTA shape
+        # reorder L0 matrix to BTA shape
         start_time = time.time()
 
         # compute the row and col in the BTA ordering
 
         perm_rows = self.inverse_table_bta[
-            self.sparsity.row[self.chi0_lesser.rows],
-            self.sparsity.col[self.chi0_lesser.rows],
+            self.sparsity.row[self.L0_lesser.rows],
+            self.sparsity.col[self.L0_lesser.rows],
         ]
         perm_cols = self.inverse_table_bta[
-            self.sparsity.row[self.chi0_lesser.cols],
-            self.sparsity.col[self.chi0_lesser.cols],
+            self.sparsity.row[self.L0_lesser.cols],
+            self.sparsity.col[self.L0_lesser.cols],
         ]
 
-        self.chi0_lesser_bta[perm_rows, perm_cols] = self.chi0_lesser[
-            self.chi0_lesser.rows, self.chi0_lesser.cols
+        self.L0_lesser_bta[perm_rows, perm_cols] = self.L0_lesser[
+            self.L0_lesser.rows, self.L0_lesser.cols
         ]
-        self.chi0_greater_bta[perm_rows, perm_cols] = self.chi0_greater[
-            self.chi0_greater.rows, self.chi0_greater.cols
+        self.L0_greater_bta[perm_rows, perm_cols] = self.L0_greater[
+            self.L0_greater.rows, self.L0_greater.cols
         ]
-        self.chi0_r_bta[perm_rows, perm_cols] = self.chi0_r[
-            self.chi0_r.rows, self.chi0_r.cols
+        self.L0_r_bta[perm_rows, perm_cols] = self.L0_r[
+            self.L0_r.rows, self.L0_r.cols
         ]
 
         finish_time = time.time()
@@ -1116,30 +1112,30 @@ class BSESolver:
         return
 
     @time_range()
-    def _densesolve_chi_interacting_bta(self, return_P3=False, return_chi=False):
+    def _densesolve_L_interacting_bta(self, return_P3=False, return_L=False):
         """mostly only for debugging purpose as reference solution"""
-        if self.chi0_r_bta.distribution_state != "stack":
-            self.chi0_r_bta.dtranspose()
+        if self.L0_r_bta.distribution_state != "stack":
+            self.L0_r_bta.dtranspose()
 
         (kernel_tip, kernel_diag) = self.kernel_bta
 
-        local_nen = self.chi0_r_bta.stack_shape[0]
-        K = xp.zeros((self.size, self.size), dtype=self.chi0_lesser_bta.dtype)
+        local_nen = self.L0_r_bta.stack_shape[0]
+        K = xp.zeros((self.size, self.size), dtype=self.L0_lesser_bta.dtype)
 
-        if return_chi:
-            chi = xp.zeros(
+        if return_L:
+            L = xp.zeros(
                 (local_nen, self.size, self.size),
-                dtype=self.chi0_lesser_bta.dtype,
+                dtype=self.L0_lesser_bta.dtype,
             )
         if return_P3:
             P3 = xp.zeros(
                 (local_nen, self.tipsize, self.tipsize, self.tipsize),
-                dtype=self.chi0_lesser_bta.dtype,
+                dtype=self.L0_lesser_bta.dtype,
             )
         else:
             P2 = xp.zeros(
                 (local_nen, self.tipsize, self.tipsize),
-                dtype=self.chi0_lesser_bta.dtype,
+                dtype=self.L0_lesser_bta.dtype,
             )
 
         K[: self.tipsize, : self.tipsize] = kernel_tip
@@ -1151,16 +1147,16 @@ class BSESolver:
             for ie in range(local_nen):
                 print("rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
 
-                data = self.chi0_r_bta.data[ie]
+                data = self.L0_r_bta.data[ie]
 
-                coords = (self.chi0_r_bta.rows, self.chi0_r_bta.cols)
+                coords = (self.L0_r_bta.rows, self.L0_r_bta.cols)
 
                 L0 = sparse.coo_matrix(
                     (data, coords), shape=(self.size, self.size)
                 ).todense()
 
                 A = -L0 @ K + xp.diag(
-                    xp.ones(self.size, dtype=self.chi0_lesser_bta.dtype)
+                    xp.ones(self.size, dtype=self.L0_lesser_bta.dtype)
                 )
 
                 # OBC
@@ -1178,8 +1174,8 @@ class BSESolver:
                 # multiply RHS
                 A = invA @ L0
 
-                if return_chi:
-                    chi[ie, :, :] = A
+                if return_L:
+                    L[ie, :, :] = A
 
                 if return_P3:
                     # 3-tensor polarization including the vertex $P3(123) = G(14) G(52) Gamma(453)$
@@ -1196,8 +1192,8 @@ class BSESolver:
                         -1j * A[: self.tipsize, : self.tipsize]
                     )
 
-        if return_chi:
-            return chi
+        if return_L:
+            return L
 
         if return_P3:
             return P3
@@ -1205,45 +1201,45 @@ class BSESolver:
             return P2
 
     @time_range()
-    def _densesolve_chi_interacting(self, return_P3=False, return_chi=False):
+    def _densesolve_L_interacting(self, return_P3=False, return_L=False):
         """mostly only for debugging purpose as reference solution"""
-        if self.chi0_lesser.distribution_state != "stack":
-            self.chi0_lesser.dtranspose()
+        if self.L0_lesser.distribution_state != "stack":
+            self.L0_lesser.dtranspose()
 
-        self.chi0_r = self.chi0_lesser
+        self.L0_r = self.L0_lesser
 
         K = self.kernel.todense()  # .to_dense()[0,:,:]
 
-        local_nen = self.chi0_r.stack_shape[0]
+        local_nen = self.L0_r.stack_shape[0]
 
-        if return_chi:
-            chi = xp.zeros(
+        if return_L:
+            L = xp.zeros(
                 (local_nen, self.size, self.size),
-                dtype=self.chi0_lesser_bta.dtype,
+                dtype=self.L0_lesser_bta.dtype,
             )
 
         if return_P3:
             P3 = xp.zeros(
                 (local_nen, self.tipsize, self.tipsize, self.tipsize),
-                dtype=self.chi0_lesser.dtype,
+                dtype=self.L0_lesser.dtype,
             )
         else:
             P2 = xp.zeros(
-                (local_nen, self.tipsize, self.tipsize), dtype=self.chi0_lesser.dtype
+                (local_nen, self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
             )
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
                 print(" rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
 
-                data = self.chi0_r.data[ie]
-                coords = (self.chi0_r.rows, self.chi0_r.cols)
+                data = self.L0_r.data[ie]
+                coords = (self.L0_r.rows, self.L0_r.cols)
 
                 L0 = sparse.coo_matrix(
                     (data, coords), shape=(self.size, self.size)
                 ).todense()
 
-                A = -L0 @ K + xp.diag(xp.ones(self.size, dtype=self.chi0_lesser.dtype))
+                A = -L0 @ K + xp.diag(xp.ones(self.size, dtype=self.L0_lesser.dtype))
 
                 # OBC
 
@@ -1254,20 +1250,20 @@ class BSESolver:
                 # multiply RHS
                 A = invA @ L0
 
-                if return_chi:
+                if return_L:
                     # compute the row and col in the BTA ordering
 
                     perm_rows = self.inverse_table_bta[
-                        self.sparsity.row[self.chi0_lesser.rows],
-                        self.sparsity.col[self.chi0_lesser.rows],
+                        self.sparsity.row[self.L0_lesser.rows],
+                        self.sparsity.col[self.L0_lesser.rows],
                     ]
                     perm_cols = self.inverse_table_bta[
-                        self.sparsity.row[self.chi0_lesser.cols],
-                        self.sparsity.col[self.chi0_lesser.cols],
+                        self.sparsity.row[self.L0_lesser.cols],
+                        self.sparsity.col[self.L0_lesser.cols],
                     ]
 
-                    chi[ie, perm_rows, perm_cols] = A[
-                        self.chi0_lesser.rows, self.chi0_lesser.cols
+                    L[ie, perm_rows, perm_cols] = A[
+                        self.L0_lesser.rows, self.L0_lesser.cols
                     ]
 
                 if return_P3:
@@ -1285,8 +1281,8 @@ class BSESolver:
                         for j in range(self.num_sites):
                             col = self.inverse_table[j, j]
                             P2[ie, i, j] = -1j * A[row, col]
-        if return_chi:
-            return chi
+        if return_L:
+            return L
 
         if return_P3:
             return P3
@@ -1294,36 +1290,36 @@ class BSESolver:
             return P2
 
     @time_range()
-    def _calc_chi0_retarded(self): ...
+    def _calc_L0_retarded(self): ...
 
     @time_range()
-    def _calc_chi0_retarded_bta(self): ...
+    def _calc_L0_retarded_bta(self): ...
 
     @time_range()
-    def _solve_chi_interacting_BTA(
+    def _solve_L_interacting_BTA(
         self,
         return_P3: bool = False,
-        return_chi: bool = False,
+        return_L: bool = False,
     ):
-        if self.chi0_r_bta.distribution_state != "stack":
-            self.chi0_r_bta.dtranspose()
+        if self.L0_r_bta.distribution_state != "stack":
+            self.L0_r_bta.dtranspose()
 
         start_time = time.time()
         (kernel_tip, kernel_diag) = self.kernel_bta
 
         K = xp.zeros(
-            (self.bta_totalsize, self.bta_totalsize), dtype=self.chi0_r_bta.dtype
+            (self.bta_totalsize, self.bta_totalsize), dtype=self.L0_r_bta.dtype
         )
         K[: self.tipsize, : self.tipsize] = kernel_tip
         K[self.tipsize :, self.tipsize :] = np.diag(kernel_diag)
 
         A_arrow_right_blocks = xp.zeros(
             (int(self.arrow_num_blocks), int(self.arrow_blocksize), int(self.tipsize)),
-            dtype=self.chi0_r_bta.dtype,
+            dtype=self.L0_r_bta.dtype,
         )
         A_arrow_bottom_blocks = xp.zeros(
             (int(self.arrow_num_blocks), int(self.tipsize), int(self.arrow_blocksize)),
-            dtype=self.chi0_r_bta.dtype,
+            dtype=self.L0_r_bta.dtype,
         )
         A_diagonal_blocks = xp.zeros(
             (
@@ -1331,7 +1327,7 @@ class BSESolver:
                 int(self.arrow_blocksize),
                 int(self.arrow_blocksize),
             ),
-            dtype=self.chi0_r_bta.dtype,
+            dtype=self.L0_r_bta.dtype,
         )
         A_upper_diagonal_blocks = xp.zeros(
             (
@@ -1339,7 +1335,7 @@ class BSESolver:
                 int(self.arrow_blocksize),
                 int(self.arrow_blocksize),
             ),
-            dtype=self.chi0_r_bta.dtype,
+            dtype=self.L0_r_bta.dtype,
         )
         A_lower_diagonal_blocks = xp.zeros(
             (
@@ -1347,17 +1343,17 @@ class BSESolver:
                 int(self.arrow_blocksize),
                 int(self.arrow_blocksize),
             ),
-            dtype=self.chi0_r_bta.dtype,
+            dtype=self.L0_r_bta.dtype,
         )
 
-        local_nen = self.chi0_r_bta.stack_shape[0]
+        local_nen = self.L0_r_bta.stack_shape[0]
         P2 = xp.zeros(
-            (self.tipsize, self.tipsize, local_nen), dtype=self.chi0_r_bta.dtype
+            (self.tipsize, self.tipsize, local_nen), dtype=self.L0_r_bta.dtype
         )
 
         # P3 = xp.zeros(
         #     (self.tipsize, self.blocksize * self.arrow_num_blocks, local_nen),
-        #     dtype=self.chi0_r_bta.dtype,
+        #     dtype=self.L0_r_bta.dtype,
         # )
 
         for ie in range(local_nen):
@@ -1370,7 +1366,7 @@ class BSESolver:
 
                 A_arrow_tip_block = xp.transpose(
                     xp.flip(
-                        -self.chi0_r_bta.stack[ie].blocks[0, 0] @ kernel_tip
+                        -self.L0_r_bta.stack[ie].blocks[0, 0] @ kernel_tip
                         + xp.eye(self.tipsize)
                     )
                 )
@@ -1378,7 +1374,7 @@ class BSESolver:
                 for k in range(self.arrow_num_blocks):
                     A_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.chi0_r_bta.stack[ie].blocks[k + 1, k + 1]
+                            -self.L0_r_bta.stack[ie].blocks[k + 1, k + 1]
                             @ xp.diag(
                                 kernel_diag[
                                     self.arrow_blocksize
@@ -1393,7 +1389,7 @@ class BSESolver:
                 for k in range(self.arrow_num_blocks - 1):
                     A_upper_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.chi0_r_bta.stack[ie].blocks[k + 1, k + 2]
+                            -self.L0_r_bta.stack[ie].blocks[k + 1, k + 2]
                             @ xp.diag(
                                 kernel_diag[
                                     self.arrow_blocksize
@@ -1405,7 +1401,7 @@ class BSESolver:
                     )
                     A_lower_diagonal_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.chi0_r_bta.stack[ie].blocks[k + 2, k + 1]
+                            -self.L0_r_bta.stack[ie].blocks[k + 2, k + 1]
                             @ xp.diag(
                                 kernel_diag[
                                     self.arrow_blocksize
@@ -1419,12 +1415,12 @@ class BSESolver:
                 for k in range(self.arrow_num_blocks):
                     A_arrow_bottom_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.chi0_r_bta.stack[ie].blocks[k + 1, 0] @ kernel_tip
+                            -self.L0_r_bta.stack[ie].blocks[k + 1, 0] @ kernel_tip
                         )
                     )
                     A_arrow_right_blocks[-k - 1, :, :] = xp.transpose(
                         xp.flip(
-                            -self.chi0_r_bta.stack[ie].blocks[0, k + 1]
+                            -self.L0_r_bta.stack[ie].blocks[0, k + 1]
                             @ xp.diag(
                                 kernel_diag[
                                     self.arrow_blocksize
@@ -1460,7 +1456,7 @@ class BSESolver:
                 tmp = (
                     -1j
                     * xp.transpose(xp.flip(X_arrow_tip_block_serinv))
-                    @ self.chi0_r_bta.stack[ie].blocks[0, 0]
+                    @ self.L0_r_bta.stack[ie].blocks[0, 0]
                 )
                 for k in range(self.arrow_num_blocks):
                     tmp += (
@@ -1468,7 +1464,7 @@ class BSESolver:
                         * xp.transpose(
                             xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
                         )
-                        @ self.chi0_r_bta.stack[ie].blocks[k + 1, 0]
+                        @ self.L0_r_bta.stack[ie].blocks[k + 1, 0]
                     )
                 # for row in range(self.tipsize):
                 #     for col in range(self.tipsize):

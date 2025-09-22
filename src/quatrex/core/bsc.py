@@ -460,7 +460,7 @@ class BSC:
             )
 
         # ----- Coulomb screening --------------------------------------
-        if self.quatrex_config.bsc.coulomb_screening:
+        if self.quatrex_config.bsc.coulomb_screening or self.quatrex_config.bsc.hartree:
             # Load the Coulomb matrix.
             try:
                 coulomb_matrix_dict = distributed_load(
@@ -535,7 +535,15 @@ class BSC:
                 quatrex_config.coulomb_screening.epsilon_r
                 * self.quatrex_config.coulomb_screening.num_adiabatic_steps
             )
-
+        
+        if self.quatrex_config.bsc.hartree:
+            self.sigma_hartree = SigmaHartree(
+                self.quatrex_config,
+                self.coulomb_matrix,
+                self.electron_energies,
+            )
+        
+        if self.quatrex_config.bsc.coulomb_screening:
             self.coulomb_screening_energies = (
                 self.electron_energies - self.electron_energies[0]
             )
@@ -554,11 +562,6 @@ class BSC:
                 if self.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
-            self.sigma_hartree = SigmaHartree(
-                self.quatrex_config,
-                self.coulomb_matrix,
-                self.electron_energies,
-            )
             self.sigma_fock = SigmaFock(
                 self.quatrex_config,
                 self.coulomb_matrix,
@@ -570,7 +573,6 @@ class BSC:
                 if self.coulomb_matrix.distribution_state == "nnz"
                 else None
             )
-
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
@@ -828,6 +830,27 @@ class BSC:
 
         return False  # TODO: :-)
 
+    def _compute_hartree_interaction(self):
+        """Computes the Hartree interaction."""
+        t_sigma_hartree_start = time.perf_counter()
+        self.sigma_hartree.compute(
+            self.data.g_lesser,
+            out=(self.data.sigma_retarded,),
+        )
+        synchronize_device()
+        t_sigma_hartree_end = time.perf_counter()
+        comm.barrier()
+        t_sigma_hartree_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"  Time for Hartree self-energy: {t_sigma_hartree_end - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Hartree self-energy all: {t_sigma_hartree_end_all - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
+
     @profiler.profile(level="api")
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
@@ -954,25 +977,6 @@ class BSC:
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
-
-        t_sigma_hartree_start = time.perf_counter()
-        self.sigma_hartree.compute(
-            self.data.g_lesser,
-            out=(self.data.sigma_retarded,),
-        )
-        synchronize_device()
-        t_sigma_hartree_end = time.perf_counter()
-        comm.barrier()
-        t_sigma_hartree_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Hartree self-energy: {t_sigma_hartree_end - t_sigma_hartree_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for Hartree self-energy all: {t_sigma_hartree_end_all - t_sigma_hartree_start:.3f} s",
-                flush=True,
-            )
 
         t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
@@ -1355,6 +1359,9 @@ class BSC:
                     flush=True,
                 )
 
+            if self.quatrex_config.bsc.hartree:
+                self._compute_hartree_interaction()
+
             # Transpose to nnz distribution.
             # NOTE: While computing all interactions, we only ever need
             # to access the Green's function and the self-energies in
@@ -1390,7 +1397,6 @@ class BSC:
                     and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
                 ):
                     self.coulomb_matrix.data *= (i + 1) / i
-                    self.sigma_hartree.coulomb_matrix_data *= (i + 1) / i
                     self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
 
             if self.quatrex_config.bsc.coulomb_screening:
@@ -1409,7 +1415,7 @@ class BSC:
                         f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
                         flush=True,
                     )
-
+            
             if self.quatrex_config.bsc.photon:
                 self._compute_photon_interaction()
 

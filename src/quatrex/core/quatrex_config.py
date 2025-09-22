@@ -33,6 +33,7 @@ class BSCConfig(BaseModel):
     output_interval: PositiveInt = 1
 
     coulomb_screening: bool = False
+    hartree: bool = False
     photon: bool = False
     phonon: bool = False
 

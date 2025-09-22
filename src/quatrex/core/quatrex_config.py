@@ -18,6 +18,23 @@ from pydantic import (
 )
 from typing_extensions import Self
 
+class BSCConfig(BaseModel):
+    """Options for the band-structure calculation."""
+    # NOTE: so far same as SCBAConfig
+    model_config = ConfigDict(extra="forbid")
+
+    min_iterations: PositiveInt = 1
+    max_iterations: PositiveInt = 100
+    convergence_tol: PositiveFloat = 1e-5
+
+    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+    output_interval: PositiveInt = 1
+
+    coulomb_screening: bool = False
+    photon: bool = False
+    phonon: bool = False
+
+    symmetric: bool = False
 
 class SCSPConfig(BaseModel):
     """Options for the self-consistent Schrödinger-Poisson loop."""
@@ -522,6 +539,7 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
+    bsc: BSCConfig = BSCConfig()
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     poisson: PoissonConfig = PoissonConfig()

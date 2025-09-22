@@ -163,7 +163,7 @@ class BSCData:
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in number_of_kpoints if k > 1]),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=quatrex_config.bsc.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
@@ -175,11 +175,11 @@ class BSCData:
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-        if quatrex_config.scba.symmetric:
+        if quatrex_config.bsc.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
 
-        if quatrex_config.scba.coulomb_screening:
+        if quatrex_config.bsc.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
@@ -196,16 +196,16 @@ class BSCData:
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
-        if quatrex_config.scba.photon:
+        if quatrex_config.bsc.photon:
             raise NotImplementedError
 
-        if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
+        if quatrex_config.bsc.phonon and quatrex_config.phonon.model == "negf":
             raise NotImplementedError
 
 
 @dataclass
 class Observables:
-    """Observable quantities for the SCBA."""
+    """Observable quantities for the BSC."""
 
     # --- Electrons ----------------------------------------------------
     electron_ldos: NDArray = None
@@ -268,7 +268,7 @@ class BSC:
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig | None = None,
     ) -> None:
-        """Initializes an SCBA instance."""
+        """Initializes an BSC instance."""
         self.quatrex_config = quatrex_config
 
         if compute_config is None:
@@ -294,7 +294,7 @@ class BSC:
         self.data = BSCData(
             quatrex_config, compute_config, electron_energies=electron_energies
         )  # dummy data
-        self.mixing_factor = self.quatrex_config.scba.mixing_factor
+        self.mixing_factor = self.quatrex_config.bsc.mixing_factor
 
         # ----- Electrons ----------------------------------------------
         if (self.quatrex_config.electron.energy_window_max is not None) and (
@@ -407,7 +407,7 @@ class BSC:
             + tuple(
                 [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
             ),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=quatrex_config.bsc.symmetric,
             symmetry_op=xp.conj,
         )
         self.hamiltonian.data = 0.0
@@ -430,7 +430,7 @@ class BSC:
             + tuple(
                 [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
             ),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=quatrex_config.bsc.symmetric,
             symmetry_op=xp.conj,
         )
         self.overlap.data = 0.0
@@ -460,7 +460,7 @@ class BSC:
             )
 
         # ----- Coulomb screening --------------------------------------
-        if self.quatrex_config.scba.coulomb_screening:
+        if self.quatrex_config.bsc.coulomb_screening:
             # Load the Coulomb matrix.
             try:
                 coulomb_matrix_dict = distributed_load(
@@ -508,7 +508,7 @@ class BSC:
                 + tuple(
                     [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
                 ),
-                symmetry=quatrex_config.scba.symmetric,
+                symmetry=quatrex_config.bsc.symmetric,
                 symmetry_op=xp.conj,
             )
             self.coulomb_matrix._data[:] = 0.0  # Initialize to zero.
@@ -579,7 +579,7 @@ class BSC:
             )
 
         # ----- Photons ------------------------------------------------
-        if self.quatrex_config.scba.photon:
+        if self.quatrex_config.bsc.photon:
             energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
             self.photon_energies = distributed_load(energies_path)
             self.pi_photon = PiPhoton(...)
@@ -592,7 +592,7 @@ class BSC:
             self.sigma_photon = SigmaPhoton(...)
 
         # ----- Phonons ------------------------------------------------
-        if self.quatrex_config.scba.phonon:
+        if self.quatrex_config.bsc.phonon:
             if self.quatrex_config.phonon.model == "negf":
                 energies_path = self.quatrex_config.input_dir / "phonon_energies.npy"
                 self.phonon_energies = distributed_load(energies_path)
@@ -774,7 +774,7 @@ class BSC:
     def _symmetrize_sigma(self) -> None:
         """Symmetrize the self-energy."""
 
-        if not self.quatrex_config.scba.symmetric:
+        if not self.quatrex_config.bsc.symmetric:
             # This is not relly necessary as sigma_lesser and sigma_greater
             # currently aren't used.
             self.data.sigma_lesser.symmetrize(xp.subtract)
@@ -811,7 +811,7 @@ class BSC:
 
     @profiler.profile(level="api")
     def _has_converged(self) -> bool:
-        """Checks if the SCBA has converged."""
+        """Checks if the BSC has converged."""
         # Infinity norm of the self-energy update.
         diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
         local_max_diff = get_host(xp.max(xp.abs(diff)))
@@ -1082,7 +1082,7 @@ class BSC:
         if self.quatrex_config.outputs.hole_density:
             outputs[f"hole_density_{iteration}.npy"] = self.observables.hole_density
 
-        if self.quatrex_config.scba.coulomb_screening:
+        if self.quatrex_config.bsc.coulomb_screening:
             if self.quatrex_config.outputs.polarization_density:
                 outputs.update(
                     {
@@ -1174,10 +1174,10 @@ class BSC:
 
     @profiler.profile(level="basic")
     def run(self) -> None:
-        """Runs the SCBA to convergence."""
-        print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
+        """Runs the BSC to convergence."""
+        print("Entering BSC loop...", flush=True) if comm.rank == 0 else None
 
-        for i in range(self.quatrex_config.scba.max_iterations):
+        for i in range(self.quatrex_config.bsc.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
             # append for iteration time
             synchronize_device()
@@ -1352,15 +1352,15 @@ class BSC:
             t_end_transpose_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"scba: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s",
+                    f"bsc: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s",
                     flush=True,
                 )
                 print(
-                    f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
+                    f"bsc: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
                     flush=True,
                 )
 
-            if self.quatrex_config.scba.coulomb_screening:
+            if self.quatrex_config.bsc.coulomb_screening:
                 if (
                     i >= 1
                     and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
@@ -1368,7 +1368,7 @@ class BSC:
                     self.coulomb_matrix.data *= (i + 1) / i
                     self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
 
-            if self.quatrex_config.scba.coulomb_screening:
+            if self.quatrex_config.bsc.coulomb_screening:
                 t_start_coulomb = time.perf_counter()
                 self._compute_coulomb_screening_interaction()
                 synchronize_device()
@@ -1385,10 +1385,10 @@ class BSC:
                         flush=True,
                     )
 
-            if self.quatrex_config.scba.photon:
+            if self.quatrex_config.bsc.photon:
                 self._compute_photon_interaction()
 
-            if self.quatrex_config.scba.phonon:
+            if self.quatrex_config.bsc.phonon:
                 t_start_phonon = time.perf_counter()
                 self._compute_phonon_interaction()
                 synchronize_device()
@@ -1424,11 +1424,11 @@ class BSC:
 
             if comm.rank == 0:
                 print(
-                    f"scba: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s",
+                    f"bsc: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s",
                     flush=True,
                 )
                 print(
-                    f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
+                    f"bsc: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
                     flush=True,
                 )
             
@@ -1509,7 +1509,7 @@ class BSC:
                         flush=True,
                     )
 
-            if i % self.quatrex_config.scba.output_interval == 0:
+            if i % self.quatrex_config.bsc.output_interval == 0:
                 synchronize_device()
                 comm.barrier()
                 t_write_start = time.perf_counter()
@@ -1530,4 +1530,4 @@ class BSC:
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:
-                print(f"SCBA did not converge after {i} iterations.")
+                print(f"BSC did not converge after {i} iterations.")

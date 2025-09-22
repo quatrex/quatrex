@@ -113,8 +113,9 @@ class SigmaHartree(ScatteringSelfEnergy):
             # TODO: Inplace all_reduce?
             comm.stack.all_reduce(recvbuff, gl_density, op="sum")
             gl_density = recvbuff
-            # Perform the Multiplication with the Coulomb matrix \sum_j V_ij rho_j in the orbital basis.
+            # Should it have a energy dimension?
             hartree_potential = xp.zeros(g_lesser.shape[:-1], dtype=xp.complex128)
+            # Perform the Multiplication with the Coulomb matrix \sum_j V_ij rho_j in the orbital basis.
             num_blocks = len(self.coulomb_matrix.block_sizes)
             for i in range(num_blocks):
                 row_start = sum(self.coulomb_matrix.block_sizes[:i])
@@ -125,9 +126,9 @@ class SigmaHartree(ScatteringSelfEnergy):
                     hartree_potential[
                         ..., row_start:row_end
                     ] += (
-                        self.coulomb_matrix.blocks[i, j]
-                        @ gl_density[..., col_start:col_end]
-                    )
+                        self.coulomb_matrix.blocks[i, j][0]
+                        @ gl_density[..., col_start:col_end, np.newaxis]
+                    )[..., 0]
             sigma_retarded.fill_diagonal(
                hartree_potential 
             )
@@ -145,7 +146,3 @@ class SigmaHartree(ScatteringSelfEnergy):
                 f"    SigmaHartree: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
                 flush=True,
             )
-
-        # NOTE: The electron Green's functions and self-energies must
-        # not be transposed back to stack distribution, as they are
-        # needed in nnz distribution for the other interactions.

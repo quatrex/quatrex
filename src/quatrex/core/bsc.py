@@ -26,7 +26,7 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein, fermi_dirac
 from quatrex.core.utils import assemble_kpoint_dsb
 from quatrex.coulomb_screening import PCoulombScreening
-from quatrex.electron import SigmaCoulombScreening, SigmaFock, SigmaPhonon, SigmaPhoton
+from quatrex.electron import SigmaCoulombScreening, SigmaFock, SigmaHartree, SigmaPhonon, SigmaPhoton
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
@@ -554,6 +554,11 @@ class BSC:
                 if self.coulomb_matrix.distribution_state != "nnz"
                 else None
             )
+            self.sigma_hartree = SigmaHartree(
+                self.quatrex_config,
+                self.coulomb_matrix,
+                self.electron_energies,
+            )
             self.sigma_fock = SigmaFock(
                 self.quatrex_config,
                 self.coulomb_matrix,
@@ -949,6 +954,25 @@ class BSC:
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
+
+        t_sigma_hartree_start = time.perf_counter()
+        self.sigma_hartree.compute(
+            self.data.g_lesser,
+            out=(self.data.sigma_retarded,),
+        )
+        synchronize_device()
+        t_sigma_hartree_end = time.perf_counter()
+        comm.barrier()
+        t_sigma_hartree_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"  Time for Hartree self-energy: {t_sigma_hartree_end - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Hartree self-energy all: {t_sigma_hartree_end_all - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
 
         t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
@@ -1366,6 +1390,7 @@ class BSC:
                     and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
                 ):
                     self.coulomb_matrix.data *= (i + 1) / i
+                    self.sigma_hartree.coulomb_matrix_data *= (i + 1) / i
                     self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
 
             if self.quatrex_config.bsc.coulomb_screening:

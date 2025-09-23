@@ -7,10 +7,11 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
-from qttools.utils.mpi_utils import distributed_load, get_local_slice
+from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.device import Device
+from quatrex.core.energies import get_electron_energies
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 
 preferred_matrix_type = {
@@ -236,10 +237,9 @@ class QTBM:
         self.eta_obc = quatrex_config.electron.eta_obc
         self.block_sections = quatrex_config.electron.obc.block_sections
 
-        # Load the electron energies.
-        self.electron_energies = distributed_load(
-            quatrex_config.input_dir / "electron_energies.npy"
-        )
+        # Get the electron energies.
+        self.electron_energies = get_electron_energies(quatrex_config)
+
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
 

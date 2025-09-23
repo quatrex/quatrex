@@ -54,7 +54,7 @@ def _spectral_function(
     return_out = False
     if out is None:
         return_out = True
-        out = retarded.zeros_like()
+        out = retarded.zeros_like(retarded)
     retarded_ = retarded.stack[...]
     for i in range(retarded.num_local_blocks):
         out.blocks[i, i] = retarded_.blocks[i, i] - retarded_.blocks[
@@ -833,12 +833,12 @@ class BSC:
     def _compute_hartree_interaction(self):
         """Computes the Hartree interaction."""
         t_sigma_hartree_start = time.perf_counter()
-        intrinsic_occupancies=fermi_dirac(
+        intrinsic_occupancies = fermi_dirac(
             self.local_electron_energies - (self.conduction_band_edges + self.valence_band_edges) / 2,
             self.quatrex_config.electron.temperature,
         )
         self.sigma_hartree.compute(
-            self.data.g_retarded,
+            _spectral_function(self.data.g_retarded),
             self.occupancies,
             intrinsic_occupancies,
             out=(self.data.sigma_retarded,),
@@ -1348,7 +1348,7 @@ class BSC:
                     flush=True,
                 )
 
-            # Stash current into previous self-energy buffer.
+            # Stash current into previous self-energy buffer, also zero out current self-energy.
             t_stash_start = time.perf_counter()
             self._stash_sigma()
             synchronize_device()
@@ -1365,6 +1365,8 @@ class BSC:
                     flush=True,
                 )
 
+            # Hartree interaction.
+            # Can (should) be computed in stack distribution.
             if self.quatrex_config.bsc.hartree:
                 self._compute_hartree_interaction()
 
@@ -1373,13 +1375,13 @@ class BSC:
             # to access the Green's function and the self-energies in
             # their nnz-distributed state.
             t_start_transpose = time.perf_counter()
-            for m in (self.data.g_lesser, self.data.g_greater):
+            for m in (self.data.g_lesser, self.data.g_greater, self.data.sigma_retarded):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "nnz"
             for m in (
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
-                self.data.sigma_retarded,
+                #self.data.sigma_retarded,
             ):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "nnz"

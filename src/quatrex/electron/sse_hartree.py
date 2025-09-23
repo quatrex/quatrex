@@ -71,23 +71,35 @@ class SigmaHartree(ScatteringSelfEnergy):
 
 
     @profiler.profile(level="api")
-    def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
-        """Computes the Hartree self-energy.
+    def compute(self, g_retarded: DSDBSparse, occupancy: NDArray, intrinsic_occupancy: NDArray, out: tuple[DSDBSparse, ...]) -> None:
+        """Computes the Hartree self-energy. Note that it is the free charge that is used to compute the Hartree potential,
+        i.e., the intrinsic charge is subtracted from the electron density. This is because the intrinsic charge to some degree
+        is already included in the Hamiltonian.
 
         Parameters
         ----------
-        g_lesser : DSDBSparse
-            The lesser Green's function.
+        g_retarded : DSDBSparse
+            The retarded Green's function.
+        occupancy : NDArray
+            The occupancy of the states, for calculating the electron density.
+        intrinsic_occupancy : float
+            The intrinsic occupancy of the states, for calculating the intrinsic electron density.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
             sigma_retarded.
 
         """
+        free_charge_occupancy = occupancy - intrinsic_occupancy
+        # Add new axis for k-points and orbitals.
+        free_charge_occupancy = free_charge_occupancy.reshape(
+            (-1,) + (1,) * (g_retarded.data.ndim - 1)
+        )
         # TODO: Check again if we really need to transpose the matrices
         # here.
         t_all2all_start = time.perf_counter()
         (sigma_retarded,) = out
-        for m in (g_lesser, sigma_retarded):
+        for m in (g_retarded, sigma_retarded):
+            # Should already be in stack format.
             m.dtranspose() if m.distribution_state != "stack" else None
         synchronize_device()
         t_all2all_end = time.perf_counter()
@@ -105,16 +117,16 @@ class SigmaHartree(ScatteringSelfEnergy):
 
         # Compute the electron density by summing over energies.
         t_sse_start = time.perf_counter()
-        if g_lesser.data.shape[-1] != 0:
+        if g_retarded.data.shape[-1] != 0:
             # NOTE: This sum is different than the Fock self-energy
-            gl_density = self.prefactor * g_lesser.diagonal().sum(axis=0)
+            gl_density = self.prefactor * (free_charge_occupancy * g_retarded.diagonal()).sum(axis=0)
             recvbuff = xp.empty_like(gl_density)
             # Sum the density over all MPI ranks.
             # TODO: Inplace all_reduce?
             comm.stack.all_reduce(recvbuff, gl_density, op="sum")
             gl_density = recvbuff
             # Should it have a energy dimension?
-            hartree_potential = xp.zeros(g_lesser.shape[:-1], dtype=xp.complex128)
+            hartree_potential = xp.zeros(g_retarded.shape[:-1], dtype=xp.complex128)
             # Perform the Multiplication with the Coulomb matrix \sum_j V_ij rho_j in the orbital basis.
             num_blocks = len(self.coulomb_matrix.block_sizes)
             for i in range(num_blocks):

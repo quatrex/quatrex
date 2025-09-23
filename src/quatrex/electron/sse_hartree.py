@@ -9,6 +9,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 
+from qttools.utils.stack_utils import scale_stack
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
@@ -48,38 +49,37 @@ class SigmaHartree(ScatteringSelfEnergy):
     ):
         """Initializes the bare Hartree self-energy."""
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
-        self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        self.prefactor = -1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        self.coulomb_matrix = coulomb_matrix.zeros_like(coulomb_matrix)
         (
-            coulomb_matrix.dtranspose()
-            if coulomb_matrix.distribution_state != "stack"
+            self.coulomb_matrix.dtranspose()
+            if self.coulomb_matrix.distribution_state != "stack"
             else None
         )
-        self.coulomb_matrix = coulomb_matrix
         # Roll the k-point axes such that they agree with the k-point ordering of the Hamiltonian/Green's functions.
-        #number_of_kpoints = xp.array(
-        #    [
-        #        1 if k <= 1 else k
-        #        for k in self.quatrex_config.electron.number_of_kpoints
-        #    ]
-        #)
-        #roll_index = number_of_kpoints // 2
-        ## TODO: Dubbelcheck this
-        #self.coulomb_matrix_data = xp.roll(
-        #    self.coulomb_matrix_data, shift=-roll_index, axis=tuple(range(1, 1 + len(number_of_kpoints))))
-        #self.coulomb_matrix_data = xp.ascontiguousarray(self.coulomb_matrix_data)
+        number_of_kpoints = xp.array(
+            [
+                1 if k <= 1 else k
+                for k in quatrex_config.electron.number_of_kpoints
+            ]
+        )
+        roll_index = number_of_kpoints // 2
+        # TODO: Dubbelcheck this
+        self.coulomb_matrix.data[:] = xp.roll(
+            coulomb_matrix.data, shift=-roll_index, axis=tuple(range(1, 1 + len(number_of_kpoints)))
+        )
 
 
     @profiler.profile(level="api")
-    def compute(self, g_retarded: DSDBSparse, occupancy: NDArray, intrinsic_occupancy: NDArray, out: tuple[DSDBSparse, ...]) -> None:
+    def compute(self, spectral_function: DSDBSparse, occupancy: NDArray, intrinsic_occupancy: NDArray, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Hartree self-energy. Note that it is the free charge that is used to compute the Hartree potential,
         i.e., the intrinsic charge is subtracted from the electron density. This is because the intrinsic charge to some degree
         is already included in the Hamiltonian.
 
         Parameters
         ----------
-        g_retarded : DSDBSparse
-            The retarded Green's function.
+        spectral_function : DSDBSparse
+            The spectral function.
         occupancy : NDArray
             The occupancy of the states, for calculating the electron density.
         intrinsic_occupancy : float
@@ -92,13 +92,13 @@ class SigmaHartree(ScatteringSelfEnergy):
         free_charge_occupancy = occupancy - intrinsic_occupancy
         # Add new axis for k-points and orbitals.
         free_charge_occupancy = free_charge_occupancy.reshape(
-            (-1,) + (1,) * (g_retarded.data.ndim - 1)
+            (-1,) + (1,) * (spectral_function.data.ndim - 1)
         )
         # TODO: Check again if we really need to transpose the matrices
         # here.
         t_all2all_start = time.perf_counter()
         (sigma_retarded,) = out
-        for m in (g_retarded, sigma_retarded):
+        for m in (spectral_function, sigma_retarded):
             # Should already be in stack format.
             m.dtranspose() if m.distribution_state != "stack" else None
         synchronize_device()
@@ -117,16 +117,16 @@ class SigmaHartree(ScatteringSelfEnergy):
 
         # Compute the electron density by summing over energies.
         t_sse_start = time.perf_counter()
-        if g_retarded.data.shape[-1] != 0:
+        if spectral_function.data.shape[-1] != 0:
             # NOTE: This sum is different than the Fock self-energy
-            gl_density = self.prefactor * (free_charge_occupancy * g_retarded.diagonal()).sum(axis=0)
+            gl_density = self.prefactor * scale_stack(spectral_function.diagonal(), -free_charge_occupancy).sum(axis=0)
             recvbuff = xp.empty_like(gl_density)
             # Sum the density over all MPI ranks.
-            # TODO: Inplace all_reduce?
+            # TODO: In-place all_reduce?
             comm.stack.all_reduce(recvbuff, gl_density, op="sum")
             gl_density = recvbuff
-            # Should it have a energy dimension?
-            hartree_potential = xp.zeros(g_retarded.shape[:-1], dtype=xp.complex128)
+            # Should it have an energy dimension?
+            hartree_potential = xp.zeros(spectral_function.shape[:-1], dtype=xp.complex128)
             # Perform the Multiplication with the Coulomb matrix \sum_j V_ij rho_j in the orbital basis.
             num_blocks = len(self.coulomb_matrix.block_sizes)
             for i in range(num_blocks):
@@ -142,7 +142,7 @@ class SigmaHartree(ScatteringSelfEnergy):
                         @ gl_density[..., col_start:col_end, np.newaxis]
                     )[..., 0]
             sigma_retarded.fill_diagonal(
-               hartree_potential 
+               hartree_potential + sigma_retarded.diagonal() 
             )
 
         synchronize_device()

@@ -235,6 +235,32 @@ class ElectronConfig(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def verify_energies(self) -> Self:
+        """Verifies the energy window settings."""
+
+        if (
+            self.energy_window_min is not None
+            or self.energy_window_max is not None
+            or self.energy_window_num is not None
+            or self.energy_window_num_per_rank is not None
+        ):
+
+            if (self.energy_window_min is None) and (self.energy_window_max is None):
+                raise ValueError(
+                    "When the energy grid is not read from file, should set both `energy_window_min` and `energy_window_max`."
+                )
+
+            if (
+                self.energy_window_num is not None
+                and self.energy_window_num_per_rank is not None
+            ):
+                raise ValueError(
+                    "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                )
+
+        return self
+
 
 class CoulombScreeningConfig(BaseModel):
     """Options for the Coulomb screening solver."""
@@ -425,6 +451,25 @@ class QuatrexConfig(BaseModel):
             self.input_dir = Path(self.input_dir).resolve()
             return self
         self.input_dir = self.simulation_dir / "inputs/"
+        return self
+
+    @model_validator(mode="after")
+    def validate_paths(self) -> Self:
+        """Validates the input file paths."""
+
+        if (
+            self.electron.energy_window_min is None
+            and self.electron.energy_window_max is None
+            and self.electron.energy_window_num is None
+            and self.electron.energy_window_num_per_rank is None
+        ):
+            if not (self.input_dir / "electron_energies.npy").resolve().is_file():
+                raise ValueError(
+                    f"Energy grid not specified and file '{(self.input_dir / 'electron_energies.npy').resolve()}' does not exist."
+                )
+
+        # TODO: extend this to other paths, not only energies
+
         return self
 
 

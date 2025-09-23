@@ -833,8 +833,14 @@ class BSC:
     def _compute_hartree_interaction(self):
         """Computes the Hartree interaction."""
         t_sigma_hartree_start = time.perf_counter()
+        intrinsic_occupancies=fermi_dirac(
+            self.local_electron_energies - (self.conduction_band_edges + self.valence_band_edges) / 2,
+            self.quatrex_config.electron.temperature,
+        )
         self.sigma_hartree.compute(
-            self.data.g_lesser,
+            self.data.g_retarded,
+            self.occupancies,
+            intrinsic_occupancies,
             out=(self.data.sigma_retarded,),
         )
         synchronize_device()

@@ -4,16 +4,19 @@ include:
 test-job:
   extends: .uenv-runner-daint-gh200
   image: prgenv-gnu/24.11:v1
-  script:
-    - gcc --version
+  script: |
+    gcc --version
+    echo "Hello World"
   variables:
     WITH_UENV_VIEW: 'default'
 
 test-job-multi:
   extends: .uenv-runner-daint-gh200
   image:  prgenv-gnu/24.11:v1
-  script:
-    - gcc --version
+  script: |
+    gcc --version
+    module list
+    echo "Hello World"
   variables:
     WITH_UENV_VIEW: 'modules'
     SLURM_JOB_NUM_NODES: 1

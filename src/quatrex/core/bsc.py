@@ -1135,13 +1135,22 @@ class BSC:
                 )
 
         if self.quatrex_config.outputs.self_energy_density:
-            outputs.update(
-                {
-                    f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
-                    f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
-                    f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
-                }
-            )
+            if self.quatrex_config.outputs.spatially_resolved:
+                outputs.update(
+                    {
+                        f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
+                        f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
+                        f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
+                    }
+                )
+            else:
+                outputs.update(
+                    {
+                        f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density.sum(axis=-1),
+                        f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density.sum(axis=-1),
+                        f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density.sum(axis=-1),
+                    }
+                )
 
         print(f"Writing output for iteration {iteration}...", flush=True)
 

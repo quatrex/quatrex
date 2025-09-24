@@ -123,7 +123,7 @@ class SigmaHartree(ScatteringSelfEnergy):
             recvbuff = xp.empty_like(gl_density)
             # Sum the density over all MPI ranks.
             # TODO: In-place all_reduce?
-            comm.stack.all_reduce(recvbuff, gl_density, op="sum")
+            comm.stack.all_reduce(gl_density, recvbuff, op="sum")
             gl_density = recvbuff
             # Should it have an energy dimension?
             hartree_potential = xp.zeros(spectral_function.shape[:-1], dtype=xp.complex128)

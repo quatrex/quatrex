@@ -95,8 +95,8 @@ class Full(NEVP):
             offset = sum(a.shape[1] for a in a_sparsity[:-2])
 
             self.zero_indices = {
-                False: xp.concatenate((row_indices_first, row_indices_last + offset)),
-                True: xp.concatenate((col_indices_first, col_indices_last + offset)),
+                "right": xp.concatenate((row_indices_first, row_indices_last + offset)),
+                "left": xp.concatenate((col_indices_first, col_indices_last + offset)),
             }
 
             self.nonzero_indices = {
@@ -104,26 +104,29 @@ class Full(NEVP):
                     xp.arange(offset + a_sparsity[-1].shape[1]),
                     self.zero_indices[indicator],
                 )
-                for indicator in [False, True]
+                for indicator in ["right", "left"]
             }
 
             self.all_indices = {
                 indicator: xp.concatenate(
                     (self.nonzero_indices[indicator], self.zero_indices[indicator])
                 )
-                for indicator in [False, True]
+                for indicator in ["right", "left"]
             }
 
             if (
-                len(self.nonzero_indices[False]) == 0
-                or len(self.nonzero_indices[True]) == 0
+                len(self.nonzero_indices["right"]) == 0
+                or len(self.nonzero_indices["left"]) == 0
             ):
                 raise ValueError(
                     "All columns are zero in the first or last blocks. "
                     "This problem is ill-posed.",
                 )
 
-            if len(self.zero_indices[False]) == 0 and len(self.zero_indices[True]) == 0:
+            if (
+                len(self.zero_indices["right"]) == 0
+                and len(self.zero_indices["left"]) == 0
+            ):
                 warnings.warn(
                     "No columns are zero in the first and last blocks. "
                     "Reduction has no effect.",
@@ -137,7 +140,7 @@ class Full(NEVP):
 
     @profiler.profile(level="debug")
     def _solve(
-        self, a_xx: tuple[NDArray, ...], transposed: bool = False
+        self, a_xx: tuple[NDArray, ...], side: str = "right"
     ) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
@@ -149,8 +152,8 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        transposed : bool, optional
-            Wether the problem is transposed.
+        side : str, optional
+            Whether for the left or right eigenvectors should be solved.
             Relevant only for the sparsity reduction.
 
         Returns
@@ -176,15 +179,9 @@ class Full(NEVP):
 
         # Concatenate and delete
         if self.reduce:
-            A_b = A[:, self.zero_indices[transposed], :][
-                :, :, self.nonzero_indices[transposed]
-            ]
-            A_c = A[:, self.zero_indices[transposed], :][
-                :, :, self.zero_indices[transposed]
-            ]
-            A = A[:, self.nonzero_indices[transposed], :][
-                :, :, self.nonzero_indices[transposed]
-            ]
+            A_b = A[:, self.zero_indices[side], :][:, :, self.nonzero_indices[side]]
+            A_c = A[:, self.zero_indices[side], :][:, :, self.zero_indices[side]]
+            A = A[:, self.nonzero_indices[side], :][:, :, self.nonzero_indices[side]]
 
         w, v = linalg.eig(
             A,
@@ -201,7 +198,7 @@ class Full(NEVP):
 
             tmp = xp.concatenate([v, v_zero], axis=1)
             v = xp.empty_like(tmp)
-            v[:, self.all_indices[transposed], :] = tmp
+            v[:, self.all_indices[side], :] = tmp
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
@@ -247,14 +244,14 @@ class Full(NEVP):
         if a_xx[0].ndim == 2:
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
-        wrs, vrs = self._solve(a_xx, transposed=False)
+        wrs, vrs = self._solve(a_xx, side="right")
 
         if left:
             # solve for the left eigenvectors
             # by solving the right eigenvectors of the adjoint problem
             wls, vls = self._solve(
                 tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
-                transposed=True,
+                side="left",
             )
             wls = wls.conj()
 

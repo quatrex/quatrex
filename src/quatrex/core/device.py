@@ -6,6 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
+from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.contact import Contact
 from quatrex.core.quatrex_config import QuatrexConfig
 
@@ -92,11 +93,16 @@ class Device:
     quatrex_config : QuatrexConfig
         Configuration object containing input paths, device parameters,
         and computational settings.
+    compute_config : ComputeConfig
+        Configuration object specifying computational resources and
+        parallelization settings.
 
     Attributes
     ----------
-    config : QuatrexConfig
+    quatrex_config : QuatrexConfig
         Reference to the configuration object.
+    compute_config : ComputeConfig
+        Reference to the compute configuration object.
     hamiltonian : dict
         Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
         vectors. Keys are tuples representing the lattice vector
@@ -142,10 +148,13 @@ class Device:
 
     """
 
-    def __init__(self, quatrex_config: QuatrexConfig) -> None:
+    def __init__(
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
+    ) -> None:
         """Initializes a Device object from configuration."""
 
-        self.config = quatrex_config
+        self.quatrex_config = quatrex_config
+        self.compute_config = compute_config
 
         self._init_hamiltonian()
         self._init_lattice()
@@ -175,7 +184,7 @@ class Device:
 
         # Load all Hamiltonian files with format hamiltonian_x_y_z.npz
         # Find all hamiltonian files in the input directory
-        hamiltonian_paths = self.config.input_dir.glob("hamiltonian_*_*_*.npz")
+        hamiltonian_paths = self.quatrex_config.input_dir.glob("hamiltonian_*_*_*.npz")
 
         # Parse indices from filenames and load files
         for hamiltonian_path in hamiltonian_paths:
@@ -195,7 +204,8 @@ class Device:
                     print(f"Failed to load {hamiltonian_path.stem}: {e}", flush=True)
 
             overlap_path = (
-                self.config.input_dir / f"overlap_{x_index}_{y_index}_{z_index}.npz"
+                self.quatrex_config.input_dir
+                / f"overlap_{x_index}_{y_index}_{z_index}.npz"
             )
             # TODO: Mechanism to handle orthogonal basis sets.
             try:
@@ -244,7 +254,7 @@ class Device:
         the device."""
 
         # Load the lattice structure from file.
-        lattice_file = self.config.input_dir / "lattice.xyz"
+        lattice_file = self.quatrex_config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
         self.lattice_vector, self.atoms_list, self.coords, self.atom_type = (
@@ -267,7 +277,9 @@ class Device:
         """
         orbitals_per_atom = np.fromiter(
             map(
-                defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
+                defaultdict(
+                    lambda: 1, self.quatrex_config.device.num_orbitals_per_atom
+                ).get,
                 self.atom_type,
             ),
             dtype=np.int32,
@@ -288,7 +300,7 @@ class Device:
 
         try:
             self.atom_potential = distributed_load(
-                self.config.input_dir / "potential.npy"
+                self.quatrex_config.input_dir / "potential.npy"
             )
             # Upscale the potential to the number of orbitals
             self.orbital_potential = get_orbital_potential(
@@ -334,7 +346,7 @@ class Device:
         """
 
         contacts = []
-        for contact_config in self.config.device.contacts:
+        for contact_config in self.quatrex_config.device.contacts:
             contacts.append(
                 Contact(
                     device=self,

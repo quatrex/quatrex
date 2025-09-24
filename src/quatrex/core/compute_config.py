@@ -35,12 +35,17 @@ class NEVPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+
+    # Parameters for contour NEVP solvers.
     project_compute_location: Literal["numpy", "cupy"] = "numpy"
     use_pinned_memory: bool = True
 
     use_qr: bool = False
     contour_batch_size: PositiveInt | None = None
     num_threads_contour: PositiveInt = 1024
+
+    # Parameters for full NEVP solvers.
+    reduce_sparsity: bool = False
 
 
 class BandEdgeConfig(BaseModel):

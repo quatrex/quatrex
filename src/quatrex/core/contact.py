@@ -3,6 +3,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, obc, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
+from quatrex.core.compute_config import NEVPConfig
 from quatrex.core.quatrex_config import OBCConfig
 
 
@@ -76,8 +77,6 @@ class Contact:
         self.direction = "abc".index(direction)
         self.transverse_axis = [0, 1, 2]
         self.transverse_axis.remove(self.direction)
-
-        self.obc = self._configure_obc(device.config.electron.obc)
 
         self.UC_hamiltonian = {}
         self.UC_overlap = {}
@@ -176,6 +175,10 @@ class Contact:
         self.orbitals_contact = np.concatenate(self.orbitals[:-1])[None, :]
 
         self.transverse_rep = x - 1
+
+        self.obc = self._configure_obc(
+            device.quatrex_config.electron.obc, device.compute_config.nevp
+        )
 
     def _get_atoms_inside_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -478,7 +481,10 @@ class Contact:
                 a = coords[0] + self.origin_cell[0]
                 b = coords[1] + self.origin_cell[1]
 
-                if self.device.gamma_only and ( (self.n_rep_1 == 1 and coords[0] != 0) or (self.n_rep_2 == 1 and coords[1] != 0) ):
+                if self.device.gamma_only and (
+                    (self.n_rep_1 == 1 and coords[0] != 0)
+                    or (self.n_rep_2 == 1 and coords[1] != 0)
+                ):
                     continue
                 # The coupling is defined in the in the device
                 # hamiltonian at (H_1, H_2) (it can be in any hopping
@@ -494,7 +500,9 @@ class Contact:
                 if self.device.gamma_only and (self.n_rep_1 > 1 or self.n_rep_2 > 1):
                     H_1 = 0
                     H_2 = 0
-                    if (( 2 * radius + 1) > self.n_rep_1 and self.n_rep_1 > 1 ) or ((2 * radius + 1) > self.n_rep_2 and self.n_rep_2 > 1):
+                    if ((2 * radius + 1) > self.n_rep_1 and self.n_rep_1 > 1) or (
+                        (2 * radius + 1) > self.n_rep_2 and self.n_rep_2 > 1
+                    ):
                         raise ValueError(
                             f"Error in contact {self.name}: \n"
                             f"I cannot obtain the UC matrices from the Gamma-point device matrix, probably because the basis decay is not enough.\n"
@@ -566,7 +574,9 @@ class Contact:
 
         return self.device.hamiltonian[0, 0, 0][orbitals[0], :][:, tot_orb].nnz
 
-    def _configure_obc(self, obc_config: OBCConfig) -> obc.Spectral:
+    def _configure_obc(
+        self, obc_config: OBCConfig, nevp_config: NEVPConfig
+    ) -> obc.Spectral:
         """Configures the OBC solver.
 
         Parameters
@@ -575,6 +585,9 @@ class Contact:
             Configuration object containing OBC algorithm settings
             including solver type, convergence parameters, and numerical
             options.
+        nevp_config : NEVPConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
 
         Returns
         -------
@@ -589,7 +602,7 @@ class Contact:
             )
 
         elif obc_config.algorithm == "spectral":
-            nevp = self._configure_nevp(obc_config)
+            nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
                 block_sections=obc_config.block_sections,
@@ -613,12 +626,15 @@ class Contact:
 
         return obc_solver
 
-    def _configure_nevp(self, obc_config: OBCConfig) -> NEVP:
+    def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
         """Configures the Nonlinear Eigenvalue Problem (NEVP) solver.
 
         Parameters
         ----------
         obc_config : OBCConfig
+            Configuration object containing NEVP solver settings
+            including solver type and algorithm-specific parameters.
+        nevp_config : NEVPConfig
             Configuration object containing NEVP solver settings
             including solver type and algorithm-specific parameters.
 
@@ -634,9 +650,40 @@ class Contact:
                 r_i=obc_config.r_i,
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
+                num_threads_contour=nevp_config.nevp.num_threads_contour,
+                eig_compute_location=nevp_config.nevp.eig_compute_location,
+                project_compute_location=nevp_config.nevp.project_compute_location,
+                use_qr=nevp_config.nevp.use_qr,
+                contour_batch_size=nevp_config.nevp.contour_batch_size,
+                use_pinned_memory=nevp_config.nevp.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
-            return Full()
+
+            a_sparsity = None
+            if nevp_config.reduce_sparsity:
+
+                a_sparsity = [
+                    xp.zeros_like(self.UC_hamiltonian[0, 0, 0].toarray())
+                    for _ in range(2 * self.transverse_rep + 1)
+                ]
+
+                for key, values in self.UC_hamiltonian.items():
+                    values = values.toarray()
+                    a_sparsity[self.transverse_rep + key[0]] += values != 0
+                    a_sparsity[self.transverse_rep - key[0]] += values.T != 0
+
+                for key, values in self.UC_overlap.items():
+                    values = values.toarray()
+                    a_sparsity[self.transverse_rep + key[0]] += values != 0
+                    a_sparsity[self.transverse_rep - key[0]] += values.T != 0
+
+                a_sparsity = tuple(a_sparsity)
+
+            return Full(
+                eig_compute_location=nevp_config.eig_compute_location,
+                a_sparsity=a_sparsity,
+                reduce=nevp_config.reduce_sparsity,
+            )
 
         raise NotImplementedError(
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."

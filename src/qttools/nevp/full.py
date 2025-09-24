@@ -61,8 +61,8 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        transposed : bool, optional
-            Wether the problem is transposed.
+        side : str, optional
+            Whether for the left or right eigenvectors should be solved.
             Relevant only for the sparsity reduction.
 
         Returns
@@ -91,15 +91,9 @@ class Full(NEVP):
 
         # Concatenate and delete
         if self.reduce:
-            A_b = A[:, self.zero_indices[transposed], :][
-                :, :, self.nonzero_indices[transposed]
-            ]
-            A_c = A[:, self.zero_indices[transposed], :][
-                :, :, self.zero_indices[transposed]
-            ]
-            A = A[:, self.nonzero_indices[transposed], :][
-                :, :, self.nonzero_indices[transposed]
-            ]
+            A_b = A[:, self.zero_indices[side], :][:, :, self.nonzero_indices[side]]
+            A_c = A[:, self.zero_indices[side], :][:, :, self.zero_indices[side]]
+            A = A[:, self.nonzero_indices[side], :][:, :, self.nonzero_indices[side]]
 
         w, v = linalg.eig(
             A,
@@ -116,7 +110,7 @@ class Full(NEVP):
 
             tmp = xp.concatenate([v, v_zero], axis=1)
             v = xp.empty_like(tmp)
-            v[:, self.all_indices[transposed], :] = tmp
+            v[:, self.all_indices[side], :] = tmp
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

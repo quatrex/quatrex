@@ -385,8 +385,6 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The surface Green's function.
-        x_ii_a_ij : NDArray
-            The Bloch matrix.
 
         """
         # Equation (13.1).
@@ -487,6 +485,32 @@ class Spectral(OBCSolver):
                 f"High relative recursion error: {recursion_error:.2e}",
                 RuntimeWarning,
             )
+        x_ii = x_ii_ref
+
+        # Calculate the surface phi and return it together with the boundary surface green's function
+        if return_injected:
+
+            phi_surface = []
+
+            x_ii_a_ij = x_ii @ a_ij
+
+            for i in range(a_ii.shape[0]):
+                mask_injected_i = mask_injected[i, :]
+
+                vrs_injected = vrs[i][:, mask_injected_i]
+                wrs_injected = wrs[i, mask_injected_i]
+                dE_dK_injected = dE_dK[i, mask_injected_i]
+
+                # Flux normalization
+                vrs_injected = vrs_injected / xp.sqrt(dE_dK_injected[xp.newaxis, :])
+
+                # Compute surface phi
+                phi_surface.append(
+                    vrs_injected / wrs_injected[xp.newaxis, :]
+                    + x_ii_a_ij[i] @ vrs_injected
+                )
+
+            return x_ii, phi_surface
 
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_injected:
@@ -512,4 +536,4 @@ class Spectral(OBCSolver):
 
             return x_ii_ref, sigma_retarded, injection, ws[0, mask_injected]
 
-        return x_ii_ref
+        return x_ii

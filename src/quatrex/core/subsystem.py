@@ -7,7 +7,6 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import (
     LyapunovConfig,
@@ -93,7 +92,10 @@ class SubsystemSolver(ABC):
                 use_pinned_memory=compute_config.nevp.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
-            return Full(eig_compute_location=compute_config.nevp.eig_compute_location)
+            return Full(
+                eig_compute_location=compute_config.nevp.eig_compute_location,
+                reduce=compute_config.nevp.reduce_sparsity,
+            )
 
         raise NotImplementedError(
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."

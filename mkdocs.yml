@@ -1,20 +1,40 @@
 site_name: quatrex
 site_url: https://quatrex.github.io/quatrex/
+site_description: Quantum transport simulations at the exascale and beyond.
 
 repo_url: https://github.com/quatrex/quatrex
 
 theme:
   name: material
   palette:
-    primary: custom
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      primary: white
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      primary: white
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   font:
     text: Arimo
     code: Fira Code
   features:
-    - content.action.edit
-    - content.code.copy
-    - navigation.instant
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
     - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - content.code.copy
+
 
 markdown_extensions:
   - attr_list
@@ -36,7 +56,6 @@ markdown_extensions:
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
   - pymdownx.superfences
 
 extra_javascript:
@@ -45,42 +64,10 @@ extra_javascript:
 
 extra_css:
   - stylesheets/custom.css
-  - stylesheets/mkdocstrings.css
 
 plugins:
   - search
-  - autorefs
-  - gen-files:
-      scripts:
-        - docs/scripts/generate_api_reference.py
-  - literate-nav:
-      nav_file: SUMMARY.md
-  - section-index
-  - mkdocstrings:
-      default_handler: python
-      handlers:
-        python:
-          import:
-            - https://numpy.org/doc/stable/objects.inv
-            - https://docs.cupy.dev/en/stable/objects.inv
-            - https://docs.python.org/3/objects.inv
-          options:
-            # General options
-            show_source: false
-            # Headings options
-            show_root_toc_entry: false
-            show_symbol_type_heading: true
-            show_symbol_type_toc: true
-            # Members options
-            members_order: "source"
-            filters: [] # show all members
-            # Docstring options
-            docstring_style: "numpy"
-            docstring_options:
-              ignore_init_summary: true
-            merge_init_into_class: true
-            # Signatures options
-            annotations_path: "source"
+  - mkapi
 
 nav:
   - Home: index.md
@@ -90,4 +77,6 @@ nav:
       - guides/index.md
       - User Guide: guides/user_guide.md
       - Contributor Guide: guides/contributor_guide.md
-  - API Reference: reference/
+  - API Reference:
+    - $api:src/qttools.***
+    - $api:src/quatrex.***

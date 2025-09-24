@@ -491,8 +491,6 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The surface Green's function.
-        x_ii_a_ij : NDArray
-            The Bloch matrix.
 
         """
         if self.two_sided and vls is None:
@@ -514,7 +512,7 @@ class Spectral(OBCSolver):
                 x_ii_a_ij[i] = vr / w @ v_inv
 
             # Calculate the surface Green's function.
-            return inv(a_ii + a_ji @ x_ii_a_ij), x_ii_a_ij
+            return inv(a_ii + a_ji @ x_ii_a_ij)
 
         if self.x_ii_formula == "direct":
             # Equation (15).
@@ -528,7 +526,7 @@ class Spectral(OBCSolver):
                 )
                 x_ii[i] = vr @ inverse @ vr.conj().T
 
-            return x_ii, x_ii @ a_ij
+            return x_ii
 
         raise ValueError(
             f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
@@ -584,7 +582,7 @@ class Spectral(OBCSolver):
         contact: str,
         out: None | NDArray = None,
         return_injected: bool = False,
-    ) -> NDArray | None | tuple[NDArray, NDArray, NDArray]:
+    ) -> NDArray | None | tuple[NDArray, list[NDArray]]:
         """Returns the surface Green's function.
 
         Parameters
@@ -607,19 +605,9 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The system's surface Green's function.
-        sigma_retarded: NDArray
-            The boundary self energy. Returned only if return_injected
-            is True.
-        inj: NDArray
-            The Injection vector. Returned only if return_injected is
-            True.
-        num_injected: NDArray
-            The number of injected modes. Returned only if return_injected is
-            True.
-        K: NDArray
-            The K matrix. Returned only if return_injected is True.
-        T: NDArray
-            The Bloch matrix. Returned only if return_injected is True.
+        phi_surface: NDArray
+            The surface phi. Returned only if return_injected is True.
+
         """
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
@@ -651,65 +639,7 @@ class Spectral(OBCSolver):
                 wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
             )
 
-        x_ii, x_ii_a_ij = self._compute_x_ii(
-            a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls
-        )
-
-        # Calculate the injection vector and return it together with the boundary self-energy
-        if return_injected:
-
-            # Refine the Bloch matrix
-            for __ in range(self.num_ref_iterations - 1):
-                x_ii_a_ij = -inv(a_ii + a_ji @ x_ii_a_ij) @ a_ij
-
-            x_ii = inv(a_ii + a_ji @ x_ii_a_ij)
-            x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
-
-            # Check the batch average recursion error.
-            recursion_error = xp.max(
-                xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
-                / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
-            )
-            if recursion_error > self.warning_threshold:
-                warnings.warn(
-                    f"High relative recursion error: {recursion_error:.2e}",
-                    RuntimeWarning,
-                )
-
-            injection = []
-            K = []
-
-            num_injected = xp.zeros(a_ii.shape[0], dtype=int)
-
-            sigma_retarded = -a_ji @ x_ii_a_ij  # In case of no ref. iterations
-
-            for i in range(a_ii.shape[0]):
-                injected_i = mask_injected[i, :]
-
-                vrs_inj = vrs[i][:, injected_i]
-                wrs_inj = xp.diag(wrs[i, injected_i])
-
-                T_i = x_ii_a_ij[i, :, :]
-
-                dE_dK_injected = dE_dK[i, injected_i]
-                # Flux normalization
-                vrs_inj = vrs_inj / xp.sqrt(dE_dK_injected[None, :])
-
-                # Compute injection vector
-                injection_i = (
-                    -a_ji[i, :, :] @ vrs_inj @ inv(wrs_inj)
-                    - sigma_retarded[i, :, :] @ vrs_inj
-                )
-
-                # Compute the K matrix
-                K_i = vrs_inj @ inv(wrs_inj) - T_i @ vrs_inj
-
-                num_injected[i] = injection_i.shape[1]
-                injection.append(injection_i)
-
-                K.append(K_i)
-
-            return x_ii_ref, sigma_retarded, injection, num_injected, K, x_ii_a_ij
+        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls)
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
@@ -727,10 +657,36 @@ class Spectral(OBCSolver):
                 f"High relative recursion error: {recursion_error:.2e}",
                 RuntimeWarning,
             )
+        x_ii = x_ii_ref
+
+        # Calculate the surface phi and return it together with the boundary surface green's function
+        if return_injected:
+
+            phi_surface = []
+
+            x_ii_a_ij = x_ii @ a_ij
+
+            for i in range(a_ii.shape[0]):
+                mask_injected_i = mask_injected[i, :]
+
+                vrs_injected = vrs[i][:, mask_injected_i]
+                wrs_injected = wrs[i, mask_injected_i]
+                dE_dK_injected = dE_dK[i, mask_injected_i]
+
+                # Flux normalization
+                vrs_injected = vrs_injected / xp.sqrt(dE_dK_injected[xp.newaxis, :])
+
+                # Compute surface phi
+                phi_surface.append(
+                    vrs_injected / wrs_injected[xp.newaxis, :]
+                    + x_ii_a_ij[i] @ vrs_injected
+                )
+
+            return x_ii, phi_surface
 
         # Return the surface Green's function.
         if out is not None:
-            out[...] = x_ii_ref
+            out[...] = x_ii
             return
 
-        return x_ii_ref
+        return x_ii

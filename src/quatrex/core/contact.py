@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -176,7 +178,7 @@ class Contact:
 
         self.transverse_rep = x - 1
 
-        self.obc = self._configure_obc(
+        self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
         )
 
@@ -345,6 +347,7 @@ class Contact:
         self.origin_cell = np.array((n_rep_1_minus, n_rep_2_minus))
         self.n_rep_1 = n_rep_1_plus + n_rep_1_minus + 1
         self.n_rep_2 = n_rep_2_plus + n_rep_2_minus + 1
+        self.n_reps = [self.n_rep_1, self.n_rep_2]
 
     def _get_atoms_transverse_sorted(self, x: int) -> NDArray:
         """Gets the indices of the atoms inside the periodic repetition.
@@ -591,7 +594,7 @@ class Contact:
 
         Returns
         -------
-        obc.Spectral
+        obc_solver: obc.Spectral
             Configured spectral OBC solver ready for boundary condition
             calculations.
 
@@ -917,20 +920,15 @@ class Contact:
 
         return modes
 
-    def compute_boundary(self, ka: float, kb: float, kc: float, E) -> tuple:
+    def compute_boundary(
+        self, k_outer: tuple[float, float, float], E: NDArray
+    ) -> tuple:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
         ----------
-        ka : float
-            K-point component in the 'a' direction (corresponding to
-            x-axis).
-        kb : float
-            K-point component in the 'b' direction (corresponding to
-            y-axis).
-        kc : float
-            K-point component in the 'c' direction (corresponding to
-            z-axis).
+        k_outer : tuple[float, float, float]
+            Wavevector. Captures periodicity in transverse directions.
         E : NDArray
             Batch of energy values for which to compute the boundary
             conditions.
@@ -945,26 +943,22 @@ class Contact:
         """
 
         # FOR NOW, ONLY E BATCHING IS SUPPORTED
+        k_outer = list(k_outer)
 
-        kl = [ka, kb, kc]
-        if kl[self.direction] != 0:
+        if k_outer[self.direction] != 0:
             raise ValueError(
                 f"Error in contact {self.name}: "
                 f"You can't compute the OBC for a non-zero k-point in the transport direction ({self.direction}). "
             )
         # Remove the k-point in the transport direction
-        kl.pop(self.direction)
-        k1 = kl[0]
-        k2 = kl[1]
+        k_outer.pop(self.direction)
 
         # Create the k-space list needed to upscale the self-energy and
         # injection modes in the transverse directions
-        k_1_list = (
-            np.linspace(0, np.pi * 2, self.n_rep_1, endpoint=False) + k1 / self.n_rep_1
-        )
-        k_2_list = (
-            np.linspace(0, np.pi * 2, self.n_rep_2, endpoint=False) + k2 / self.n_rep_2
-        )
+        k_inner = [
+            np.linspace(0, np.pi * 2, n_rep, endpoint=False) + k_outer[i] / n_rep
+            for i, n_rep in enumerate(self.n_reps)
+        ]
 
         sigma_obc_k = {}
         inj_k = {}
@@ -972,49 +966,61 @@ class Contact:
         K_k = {}
         T_k = {}
 
-        for k_i in k_1_list:
-            for k_j in k_2_list:
-                # Construct the hamiltonian and overlap matrices for the
-                # given ki and kj
-                H_list, S_list = self._get_list_mat_phase(k_i, k_j)
-                H_tot = sparse.hstack(H_list, format="csr")
-                S_tot = sparse.hstack(S_list, format="csr")
+        for k_i, k_j in itertools.product(k_inner[0], k_inner[1]):
+            # Construct the hamiltonian and overlap matrices for the
+            # given ki and kj
+            H_list, S_list = self._get_list_mat_phase(k_i, k_j)
+            H_tot = sparse.hstack(H_list, format="csr")
+            S_tot = sparse.hstack(S_list, format="csr")
 
-                # Create the toeplitz structure for the hamiltonian and
-                # overlap matrices (in transport direction)
-                for ii in range(self.transverse_rep - 1):
-                    H_list.insert(0, H_list.pop())
-                    S_list.insert(0, S_list.pop())
-                    H_tot = sparse.vstack(
-                        [H_tot, sparse.hstack(H_list, format="csr")], format="csr"
-                    )
-                    S_tot = sparse.vstack(
-                        [S_tot, sparse.hstack(S_list, format="csr")], format="csr"
-                    )
+            # Create the toeplitz structure for the hamiltonian and
+            # overlap matrices (in transport direction)
+            for ii in range(self.transverse_rep - 1):
+                H_list.insert(0, H_list.pop())
+                S_list.insert(0, S_list.pop())
+                H_tot = sparse.vstack(
+                    [H_tot, sparse.hstack(H_list, format="csr")], format="csr"
+                )
+                S_tot = sparse.vstack(
+                    [S_tot, sparse.hstack(S_list, format="csr")], format="csr"
+                )
 
-                S_dense = xp.array(S_tot.todense())
-                H_dense = xp.array(H_tot.todense())
+            S_dense = xp.array(S_tot.todense())
+            H_dense = xp.array(H_tot.todense())
 
-                # Construct the system matrices for the OBC solver
-                A_tot = xp.split((E[:, None, None] * S_dense - H_dense), 3, axis=2)
+            # Construct the system matrices for the OBC solver
+            A_tot = xp.split((E[:, None, None] * S_dense - H_dense), 3, axis=2)
 
-                # Solve the OBC for the given ki and kj and store the
-                # results in dictionaries
-                self.obc.block_sections = self.transverse_rep
-                (
-                    __,
-                    sigma_obc_k[k_i, k_j],
-                    inj_k[k_i, k_j],
-                    num_inj_k[k_i, k_j],
-                    K_k[k_i, k_j],
-                    T_k[k_i, k_j],
-                ) = self.obc(A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True)
-                if comm.rank == 0:
-                    print(f"    Computed OBC for k1={k_i}, k2={k_j}", flush=True)
+            # Solve the OBC for the given ki and kj and store the
+            # results in dictionaries
+            self.obc_solver.block_sections = self.transverse_rep
+
+            x_ii, phi_surface = self.obc_solver(
+                A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True
+            )
+            sigma_obc_k[k_i, k_j] = A_tot[0] @ x_ii @ A_tot[2]
+            inj_k[k_i, k_j] = []
+
+            for i, phi in enumerate(phi_surface):
+                inj_k[k_i, k_j].append(-A_tot[0][i] @ phi)
+
+            num_inj_k[k_i, k_j] = []
+            for phi in phi_surface:
+                num_inj_k[k_i, k_j].append(phi.shape[1])
+
+            K_k[k_i, k_j] = phi_surface
+            T_k[k_i, k_j] = -x_ii @ A_tot[2]
+
+            if comm.rank == 0:
+                print(f"    Computed OBC for k1={k_i}, k2={k_j}", flush=True)
 
         # Upscale self-energy and Bloch matrices
-        sigma_obc = self._upscale_self_energy(sigma_obc_k, k_1_list, k_2_list, k1, k2)
-        T = self._upscale_self_energy(T_k, k_1_list, k_2_list, k1, k2)
+        sigma_obc = self._upscale_self_energy(
+            sigma_obc_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
+        )
+        T = self._upscale_self_energy(
+            T_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
+        )
 
         # Upscale injection and Bloch injection matrices
         inj = self._upscale_injection_modes(inj_k, E)

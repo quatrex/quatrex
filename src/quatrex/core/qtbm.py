@@ -486,7 +486,7 @@ class QTBM:
                 times.append(time.perf_counter())
 
                 sigma_obc, inj, num_inj, T, K = contact.compute_boundary(
-                    self.k[0], self.k[1], self.k[2], energy_batch
+                    self.k, energy_batch
                 )
 
                 sigma_obcs.append(sigma_obc)

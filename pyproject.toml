@@ -51,7 +51,7 @@ dependencies = [
         "ruff",
         "just",
     ]
-    docs = ["mkdocs", "mkdocs-material", "mkdocstrings", "mkapi"]
+    docs = ["mkdocs", "mkdocs-material", "mkdocstrings-python", "mkapi"]
 
     [project.urls]
     Code = "https://github.com/quatrex-dev/quatrex"

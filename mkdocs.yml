@@ -72,11 +72,14 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started:
-      - Installation: getting_started/installation.md
-  - Guides:
-      - guides/index.md
-      - User Guide: guides/user_guide.md
-      - Contributor Guide: guides/contributor_guide.md
+    - Installation: getting_started/installation.md
+  - User Guide:
+    - Overview: user_guide/index.md
+    - Introduction: user_guide/introduction.md
+    - Methodology: user_guide/methodology.md
+    # - Parameters: user_guide/introduction.md
+  - Contributing: contributing/index.md
   - API Reference:
+    - Overview: api/index.md
     - $api:src/qttools.***
     - $api:src/quatrex.***

@@ -1,17 +1,14 @@
-/* ETH Colors. */
-:root {
-  --md-primary-fg-color:        #215caf;
-  --md-primary-fg-color--light: #7a9dcf;
-  --md-primary-fg-color--dark:  #08407e;
+/* Custom CSS for MkDocs Material */
+
+/* Enables ligatures and kerning for code, kbd and pre elements */
+.md-typeset code,
+.md-typeset kbd,
+.md-typeset pre {
+  font-feature-settings: "kern", "liga";
+  font-variant-ligatures: normal;
 }
 
-/* Indentation. */
-div.doc-contents:not(.first) {
-  padding-left: 25px;
-  border-left: .05rem solid var(--md-typeset-table-color);
-}
-
-a.external:hover::after,
-a.autorefs-external:hover::after {
-  background-color: var(--md-accent-fg-color);
+/* Overrides the default max-width for more space */
+.md-grid {
+    max-width: 1440px;
 }

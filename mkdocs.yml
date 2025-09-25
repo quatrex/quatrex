@@ -67,7 +67,18 @@ extra_css:
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          inventories:
+          - https://docs.pydantic.dev/latest/objects.inv
+          - https://docs.python.org/3/objects.inv
+          - https://numpy.org/doc/stable/objects.inv
+          - https://docs.scipy.org/doc/scipy/objects.inv
+          - https://docs.cupy.dev/en/stable/objects.inv
   - mkapi
+  # - mkdocs-jupyter:
+  #     ignore_h1_titles: True
 
 nav:
   - Home: index.md
@@ -77,6 +88,8 @@ nav:
     - Overview: user_guide/index.md
     - Introduction: user_guide/introduction.md
     - Methodology: user_guide/methodology.md
+    - Examples:
+      - Carbon Nanotube: user_guide/examples/cnt.md
     # - Parameters: user_guide/introduction.md
   - Contributing: contributing/index.md
   - API Reference:

@@ -15,6 +15,18 @@ Welcome to the documentation for `quatrex`!
 
     ---
 
-    [:octicons-arrow-right-24: Browse the API reference](reference/qttools/index.md)
+    [:octicons-arrow-right-24: Browse the API reference](api/index.md)
+
+- :material-account:{ .lg .middle } **User guide**
+
+    ---
+
+    [:octicons-arrow-right-24: Browse the user guide](user_guide/index.md)
+
+- :material-source-pull:{ .lg .middle } **Contributor Guide**
+
+    ---
+
+    [:octicons-arrow-right-24: Browse the contributor Guide](contributing/index.md)
 
 </div>

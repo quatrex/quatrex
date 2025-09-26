@@ -29,8 +29,6 @@ class FileCache:
         atexit.register(self.save)
 
     def save(self):
-        # Ensure directory exists.
-        self._file.parent.mkdir(parents=True, exist_ok=True)
         np.save(
             self._file,
             self.paths,

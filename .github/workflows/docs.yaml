@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # - uses: mpi4py/setup-mpi@v1
       - name: Configure Git Credentials
         run: |
           git config user.name github-actions[bot]
@@ -27,5 +26,5 @@ jobs:
           path: ~/.cache 
           restore-keys: |
             mkdocs-material-
-      - run: pip install -e ".[docs]"
+      - run: pip install --editable ".[docs]"
       - run: mkdocs gh-deploy --force

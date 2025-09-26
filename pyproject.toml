@@ -51,13 +51,19 @@ dependencies = [
         "ruff",
         "just",
     ]
-    docs = ["mkdocs", "mkdocs-material", "mkdocstrings-python", "mkapi"]
+    docs = [
+        "mkdocs",
+        "mkdocs-material",
+        "mkdocstrings-python",
+        "mkapi",
+        "mpich",  # If not present, mkapi cannot build the api docs.
+    ]
 
     [project.urls]
     Code = "https://github.com/quatrex-dev/quatrex"
 
-[project.scripts]
-quatrex = "quatrex.cli:run"
+    [project.scripts]
+    quatrex = "quatrex.cli:run"
 
 [tool.setuptools.dynamic]
 version = { attr = "quatrex.__about__.__version__" }

@@ -1,4 +1,4 @@
-name: Documentation Deployment
+name: deploy-docs
 on:
   push:
       branches:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mpi4py/setup-mpi@v1
+      # - uses: mpi4py/setup-mpi@v1
       - name: Configure Git Credentials
         run: |
           git config user.name github-actions[bot]
@@ -27,5 +27,5 @@ jobs:
           path: ~/.cache 
           restore-keys: |
             mkdocs-material-
-      - run: pip install ".[docs]"
+      - run: pip install -r requirements-docs.txt # ".[docs]"
       - run: mkdocs gh-deploy --force

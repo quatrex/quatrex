@@ -71,12 +71,14 @@ plugins:
       handlers:
         python:
           inventories:
-          - https://docs.pydantic.dev/latest/objects.inv
           - https://docs.python.org/3/objects.inv
           - https://numpy.org/doc/stable/objects.inv
-          - https://docs.scipy.org/doc/scipy/objects.inv
           - https://docs.cupy.dev/en/stable/objects.inv
-  - mkapi
+          - https://docs.scipy.org/doc/scipy/objects.inv
+          - https://docs.pydantic.dev/latest/objects.inv
+  - mkapi:
+      exclude:
+        - quatex.examples
   # - mkdocs-jupyter:
   #     ignore_h1_titles: True
 

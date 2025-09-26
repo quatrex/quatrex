@@ -78,6 +78,7 @@ plugins:
           - https://docs.pydantic.dev/latest/objects.inv
   - mkapi:
       exclude:
+        - quatex.cli
         - quatex.examples
   # - mkdocs-jupyter:
   #     ignore_h1_titles: True

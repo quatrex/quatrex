@@ -394,7 +394,8 @@ class Spectral(OBCSolver):
         if find_injected:
 
             mask_injected = dEk_dk.real > 0
-            mask_injected &= xp.abs(ks.imag) < self.min_decay
+            # mask_injected &= xp.abs(ks.imag) < self.min_decay
+            mask_injected &= xp.abs(dEk_dk.imag) < 1e-8
 
             return (
                 (mask_propagating | mask_decaying)

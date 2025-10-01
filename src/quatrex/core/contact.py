@@ -68,11 +68,15 @@ class Contact:
         origin: NDArray,
         vectors: NDArray,
         direction: str,
+        fermi_level: float,
     ):
         """Initializes the contact object."""
 
         self.name = name
         self.device = device
+
+        self.fermi_level = fermi_level
+
         self.vectors = vectors
         self.origin = origin
 
@@ -104,7 +108,6 @@ class Contact:
                 f"    Number of atoms inside the origin cell: {self.at_origin_cell.shape[0]}",
                 flush=True,
             )
-            print(f"    Atoms in the origin cell: {self.at_origin_cell}", flush=True)
 
         # Check how many periodic repetitions are in the transverse
         # directions
@@ -126,6 +129,7 @@ class Contact:
 
         # Get the hamiltonian and overlap matrices for the first contact
         # cell
+        print("    Getting matrices for contact cell in repetition=0", flush=True)
         self._get_matrix(0)
 
         x = 1
@@ -134,19 +138,25 @@ class Contact:
         while self._residual_coupling(self.orbitals) > 0:
             if comm.rank == 0:
                 print(
-                    f"    Residual coupling={self._residual_coupling(self.orbitals)}",
+                    f"        Residual coupling={self._residual_coupling(self.orbitals)}",
                     flush=True,
                 )
 
             # Get atoms, orbitals and matrices for the next contact cell
             self.atoms.append(self._get_atoms_transverse_sorted(x))
             self.orbitals.append(self._get_orbitals(self.atoms[x]))
+            print(
+                f"    Getting matrices for contact cell in repetition={x}", flush=True
+            )
             self._get_matrix(x)
 
             x = x + 1
 
         if comm.rank == 0:
-            print(f"    Maximum number of transverse repetitions: {x-1}", flush=True)
+            print(
+                f"    Maximum number of repetitions in transport direction: {x-1}",
+                flush=True,
+            )
 
         # In case of multiple contact cells in the transport direction,
         # and in case of multiple unit cells in the transverse
@@ -177,7 +187,6 @@ class Contact:
         self.orbitals_contact = np.concatenate(self.orbitals[:-1])[None, :]
 
         self.transverse_rep = x - 1
-
         self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
         )
@@ -225,7 +234,7 @@ class Contact:
         return inside_mask
 
     def _reorder_atoms(
-        self, at_inside_rep: NDArray, a: int, b: int, c: int, tol: float = 0.1
+        self, at_inside_rep: NDArray, a: int, b: int, c: int, tol: float = 0.3
     ) -> NDArray:
         """Reorders atoms to match the ordering in the origin cell.
 
@@ -277,6 +286,7 @@ class Contact:
                 raise ValueError(
                     f"Error in contact {self.name}: "
                     f"Atom {at} not found in the periodic repetition at ({a}, {b}, {c})."
+                    f"Min distance found: {np.min(np.linalg.norm(delta, axis=1))}"
                 )
             if found.size > 1:
                 raise ValueError(
@@ -376,11 +386,6 @@ class Contact:
 
         while curr_cell[0] < max_cell[0]:
             while curr_cell[1] < max_cell[1]:
-                if comm.rank == 0:
-                    print(
-                        f"    Periodic repetition at: {curr_cell[0]}, {curr_cell[1]}",
-                        flush=True,
-                    )
                 # Get the indices of the atoms inside the periodic
                 # repetition
                 idx = [curr_cell[0], curr_cell[1]]
@@ -393,8 +398,6 @@ class Contact:
                 at_inside_rep = self._reorder_atoms(
                     at_inside_rep, c_list[0], c_list[1], c_list[2]
                 )
-                if comm.rank == 0:
-                    print("    " + str(at_inside_rep), flush=True)
                 atom_list.append(at_inside_rep)
                 curr_cell[1] += 1
 
@@ -528,7 +531,6 @@ class Contact:
                 ham_tu = [H_1, H_2]
                 ham_tu.insert(self.direction, 0)
                 ham_tu = tuple(ham_tu)
-
                 # Now get the hamiltonian and overlap matrices for the
                 # current coordinates
                 if ham_tu in self.device.hamiltonian:
@@ -537,6 +539,11 @@ class Contact:
                     ]
                     if ham_read.nnz != 0:
                         self.UC_hamiltonian[(x, coords[0], coords[1])] = ham_read
+                        if x == 0:
+                            # FORCE THE HAMILTONIAN TO BE HERMITIAN
+                            self.UC_hamiltonian[(x, -coords[0], -coords[1])] = (
+                                ham_read.T.conj()
+                            )
                         found = True
                 if ham_tu in self.device.overlap:
                     overlap_read = self.device.overlap[ham_tu][self.orb_origin_cell, :][
@@ -544,10 +551,15 @@ class Contact:
                     ]
                     if overlap_read.nnz != 0:
                         self.UC_overlap[(x, coords[0], coords[1])] = overlap_read
+                        if x == 0:
+                            # FORCE THE OVERLAP TO BE HERMITIAN
+                            self.UC_overlap[(x, -coords[0], -coords[1])] = (
+                                overlap_read.T.conj()
+                            )
                         found = True
 
             if not found:
-                print(f"    Maximum radius: {radius-1}")
+                print(f"        Maximum coupling radius: {radius-1}")
                 # if self.n_rep_1 == 1 and self.n_rep_2 == 1 and (radius
                 #    - 1) > 0: raise ValueError("1x1 UC but more than
                 #    1x1 coupling!")

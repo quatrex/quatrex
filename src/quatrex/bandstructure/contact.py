@@ -1,10 +1,10 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 import numpy as np
-from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
 from scipy.optimize import minimize_scalar
 
+from qttools import NDArray, xp
+from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
 from quatrex.core.statistics import fermi_dirac
 
 

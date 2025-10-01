@@ -149,7 +149,7 @@ class Device:
     """
 
     def __init__(
-        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig = None
     ) -> None:
         """Initializes a Device object from configuration."""
 
@@ -324,10 +324,22 @@ class Device:
             return
 
         for r, s_r in self.overlap.items():
-            SV1 = s_r.multiply(self.orbital_potential).tocsr()
-            SV2 = s_r.multiply(self.orbital_potential.T).tocsr()
-            self.hamiltonian[r] += (SV1 + SV2) / 2
+            # SV1 = s_r.multiply(self.orbital_potential).tocsr()
+            # SV2 = s_r.multiply(self.orbital_potential.T).tocsr()
+            # self.hamiltonian[r] += (SV1 + SV2) / 2
+            # self.hamiltonian[r].eliminate_zeros()
+
+            V_s = sparse.diags(self.orbital_potential + 1e-10, format="csr")
+            self.hamiltonian[r] += (V_s @ s_r + s_r @ V_s) / 2
             self.hamiltonian[r].eliminate_zeros()
+
+            # from scipy import sparse as sparse_s
+            # sparse_s.save_npz(
+            ##    self.quatrex_config.output_dir
+            #   / f"hamiltonian_{r[0]}_{r[1]}_{r[2]}.npz",
+            #   self.hamiltonian[r].get(),
+            # )
+            # raise Exception("Debug: Exiting after potential application.")
 
     def _add_contacts(self) -> list[Contact]:
         """Initializes and attaches contacts to the device.
@@ -354,6 +366,7 @@ class Device:
                     origin=contact_config.origin,
                     vectors=contact_config.size,
                     direction=contact_config.direction,
+                    fermi_level=contact_config.fermi_level,
                 )
             )
         return contacts

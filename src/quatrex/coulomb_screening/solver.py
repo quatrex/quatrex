@@ -3,6 +3,7 @@
 import time
 
 import numpy as np
+
 from qttools import NDArray, _DType, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
@@ -13,7 +14,6 @@ from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein

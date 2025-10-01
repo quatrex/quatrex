@@ -13,6 +13,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.device import Device
 from quatrex.core.energies import get_electron_energies
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
+from quatrex.core.statistics import fermi_dirac
 
 preferred_matrix_type = {
     "mumps": sparse.coo_matrix,
@@ -150,10 +151,12 @@ class Observables:
 
     electron_transmission_contacts: NDArray = None
     electron_transmission_contacts_labels = []
+    electron_transmission_indices = []
 
-    electron_transmission_x_slabs: NDArray = None
+    electron_dos_orb: NDArray = None
 
-    electron_dos_x_slabs: NDArray = None
+    electron_charge_orb: NDArray = None
+    electron_charge_at: NDArray = None
 
     valence_band_edges: NDArray = None
     conduction_band_edges: NDArray = None
@@ -185,7 +188,7 @@ class QTBM:
         Reference to the device object.
     num_contacts : int
         Number of contacts attached to the device.
-    k : tuple
+    k_grid : tuple
         k-point for the calculation.
     observables : Observables
         Container for computed transport observables including
@@ -195,36 +198,32 @@ class QTBM:
         Full energy grid for the calculation.
     local_energies : NDArray
         Local portion of energy grid for MPI parallelization.
-    hamiltonian_phase : sparse matrix
-        Device Hamiltonian with k-point phase factors applied.
-    overlap_phase : sparse matrix
-        Device overlap matrix with k-point phase factors applied.
-    system_matrix : sparse matrix
-        System matrix (E*S - H - Σ) for the linear solve.
-
     """
 
     def __init__(
         self,
         device: Device,
-        k: tuple,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig | None = None,
+        k_grid: tuple = (1, 1, 1),
+        k_shift: tuple = (0, 0, 0),
     ) -> None:
         """Initializes the QTBM solver."""
 
         self.device = device
+        self.num_orbitals = device.hamiltonian[0, 0, 0].shape[0]
         self.num_contacts = len(device.contacts)
         self.quatrex_config = quatrex_config
-        self.k = k  # The wavevector for the QTBM
 
-        if self.device.gamma_only and (
-            self.k[0] != 0 or self.k[1] != 0 or self.k[2] != 0
-        ):
+        if self.device.gamma_only and k_grid != (1, 1, 1):
             raise ValueError(
                 "The device only has a Gamma point Hamiltonian, "
                 "but the wavevector is not (0,0,0)."
             )
+
+        self.k_vector = monkhorst_pack(k_grid)  # The wavevector for the QTBM
+        self.k_vector += k_shift
+        self.num_kpoints = self.k_vector.shape[0]
 
         if compute_config is None:
             compute_config = ComputeConfig()
@@ -251,55 +250,46 @@ class QTBM:
         )
 
         # Look for all the combinations of contacts
-        self.num_transmissions = int((self.num_contacts**2 - self.num_contacts) / 2)
-        cont_1 = 0
-        cont_2 = 1
-        for __ in range(self.num_transmissions):
-            # Append the label for every transmission
-            self.observables.electron_transmission_contacts_labels.append(
-                device.contacts[cont_1].name[0] + "->" + device.contacts[cont_2].name[0]
-            )
-            cont_2 += 1
-            if cont_2 == self.num_contacts:
-                cont_1 += 1
-                cont_2 = cont_1 + 1
+        self.num_transmissions = int((self.num_contacts**2 - self.num_contacts))
+
+        for cont_1 in range(self.num_contacts):
+            for cont_2 in range(self.num_contacts):
+                if cont_2 != cont_1:
+                    self.observables.electron_transmission_contacts_labels.append(
+                        f"{self.device.contacts[cont_1].name[0]}->{self.device.contacts[cont_2].name[0]}"
+                    )
+                    self.observables.electron_transmission_indices.append(
+                        (cont_1, cont_2)
+                    )
 
         # Initialize the observables
         self.observables.electron_transmission_contacts = xp.zeros(
-            (self.num_transmissions, self.local_energies.shape[0]), dtype=xp.float64
-        )
-        self.observables.electron_transmission_x_slabs = xp.zeros(
-            (self.num_contacts, self.num_slabs_x, self.local_energies.shape[0]),
-            dtype=xp.float64,
-        )
-        self.observables.electron_dos_x_slabs = xp.zeros(
-            (self.num_contacts, self.num_slabs_x, self.local_energies.shape[0]),
+            (self.num_kpoints, self.num_transmissions, self.local_energies.shape[0]),
             dtype=xp.float64,
         )
 
-        self.num_orbitals = self.device.hamiltonian[0, 0, 0].shape[0]
+        self.observables.electron_dos_orb = xp.zeros(
+            (
+                self.num_kpoints,
+                self.num_contacts,
+                self.num_orbitals,
+                self.local_energies.shape[0],
+            ),
+            dtype=xp.float64,
+        )
 
         self.solver = self._configure_solver(quatrex_config.electron.solver)
-        matrix_type = preferred_matrix_type[
+        self.matrix_type = preferred_matrix_type[
             quatrex_config.electron.solver.direct_solver
         ]
 
-        # TODO: Hamiltonian should be assembled for each k-point. (This
-        # can easily be vectorized)
-        self.hamiltonian_phase = matrix_type(
-            self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
+        self.observables.electron_current["contact_current"] = xp.zeros(
+            self.num_transmissions
         )
-        for r, h_r in self.device.hamiltonian.items():
-            self.hamiltonian_phase += h_r * xp.exp(
-                1j * self.k[0] * r[0] + 1j * self.k[1] * r[1] + 1j * self.k[2] * r[2]
-            )
-        self.overlap_phase = matrix_type(
-            self.device.overlap[0, 0, 0].shape, dtype=xp.complex128
+
+        self.observables.electron_charge_orb = xp.zeros(
+            (self.num_orbitals,), dtype=xp.complex128
         )
-        for r, s_r in self.device.overlap.items():
-            self.overlap_phase += s_r * xp.exp(
-                1j * self.k[0] * r[0] + 1j * self.k[1] * r[1] + 1j * self.k[2] * r[2]
-            )
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
@@ -325,7 +315,17 @@ class QTBM:
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
     def compute_observables(
-        self, phi: NDArray, inj_ind: list, i: int, S: list, K, T, E
+        self,
+        phi: NDArray,
+        inj_ind: list,
+        i_batch: int,
+        i_en: int,
+        S: list,
+        K,
+        T,
+        system_matrix,
+        overlap_phase,
+        K_ind,
     ):
         """Computes transport observables.
 
@@ -361,91 +361,65 @@ class QTBM:
             return
         # Compute transmissions for all the possible contact couples
 
-        cont_1 = 0
-        cont_2 = 1
-        for n in range(self.num_transmissions):
-
+        for n_t in range(self.num_transmissions):
             # Get the all the wavefunctions injected from contact 1 and
             # extract the elements inside contact 2
+            cont_1, cont_2 = self.observables.electron_transmission_indices[n_t]
             phi_n = phi[
-                self.device.contacts[cont_2].orbitals_contact.T, inj_ind[cont_1]
+                self.device.contacts[cont_2].orbitals_contact.T,
+                inj_ind[cont_1][i_batch],
             ]
-
             # Compute the transmission
             if phi_n.size != 0:
-                self.observables.electron_transmission_contacts[n, i] = xp.trace(
-                    xp.real(
-                        1j * phi_n.T.conj() @ (S[cont_2] - S[cont_2].T.conj()) @ phi_n
+                self.observables.electron_transmission_contacts[K_ind, n_t, i_en] = (
+                    xp.trace(
+                        xp.real(
+                            1j
+                            * phi_n.T.conj()
+                            @ (
+                                S[cont_2][i_batch, :, :]
+                                - S[cont_2][i_batch, :, :].T.conj()
+                            )
+                            @ phi_n
+                        )
                     )
                 )
                 if comm.rank == 0:
                     print(
-                        f"Transmission {self.observables.electron_transmission_contacts_labels[n]}: {self.observables.electron_transmission_contacts[n, i]}",
+                        f"Transmission {self.observables.electron_transmission_contacts_labels[n_t]}: {self.observables.electron_transmission_contacts[K_ind, n_t, i_en]}",
                         flush=True,
                     )
 
-            cont_2 += 1
-            if cont_2 == self.num_contacts:
-                cont_1 += 1
-                cont_2 = cont_1 + 1
-
-        # Compute transmission for all the x slabs and all the contacts
-        for n in range(self.num_contacts):
-            for s in range(self.num_slabs_x - 1):
-
-                # For every slab, get the wavefunction injected from the
-                # contact
-                phi_1 = phi[self.slab_vec_x_orb[s].T, inj_ind[n]]
-                phi_2 = phi[self.slab_vec_x_orb[s + 1].T, inj_ind[n]]
-
-                # Get the transmission matrix between the slab and the
-                # next one
-                T01 = self.system_matrix[
-                    self.slab_vec_x_orb[s].T, self.slab_vec_x_orb[s + 1]
-                ]
-
-                if phi_1.size != 0:
-                    self.observables.electron_transmission_x_slabs[n, s, i] = xp.trace(
-                        2 * xp.imag(phi_1.T.conj() @ T01 @ phi_2)
-                    )
-
-        phi_ortho = self.overlap_phase @ phi  # "Orthogonalize" the wavefunction
+        phi_ortho = overlap_phase @ phi  # "Orthogonalize" the wavefunction
         for n, contact in enumerate(self.device.contacts):
 
             phi_cont = (
                 K[contact.orbitals_contact.squeeze(), :]
-                + T[n] @ phi[contact.orbitals_contact.squeeze(), :]
+                + T[n][i_batch] @ phi[contact.orbitals_contact.squeeze(), :]
             )
             # TODO Add the spill over contribution
             phi_ortho[contact.orbitals_contact.squeeze(), :] += (
-                contact.get_10(self.overlap_phase) @ phi_cont
+                contact.get_10(overlap_phase) @ phi_cont
             )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = xp.linalg.norm(
-                (
-                    E * contact.get_10(self.overlap_phase)
-                    - contact.get_10(self.hamiltonian_phase)
-                )
-                @ phi_cont
-                + self.system_matrix[contact.orbitals_contact.squeeze(), :] @ phi
+                contact.get_10(system_matrix) @ phi_cont
+                + system_matrix[contact.orbitals_contact.squeeze(), :] @ phi
             )
-            print(
-                f"    Spill over error for contact {contact.name[0]} at energy {E}: {error}"
-            )
+            print(f"    Spill over error for contact {contact.name[0]}: {error}")
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.num_contacts):
-            for s in range(self.num_slabs_x):
-                phi_D = phi[
-                    self.slab_vec_x_orb[s].T, inj_ind[n]
-                ].squeeze()  # Get the wavefunction in the slab
-                phi_D_ortho = phi_ortho[
-                    self.slab_vec_x_orb[s].T, inj_ind[n]
-                ].squeeze()  # Get the "orthogonalized" wavefunction in the slab
-                if phi_D.size != 0:
-                    self.observables.electron_dos_x_slabs[n, s, i] = xp.real(
-                        xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho)) / (2 * xp.pi)
-                    )  # Compute the DOS
+            phi_D = phi[
+                :, inj_ind[n][i_batch]
+            ].squeeze()  # Get the wavefunction in the slab
+            phi_D_ortho = phi_ortho[
+                :, inj_ind[n][i_batch]
+            ].squeeze()  # Get the "orthogonalized" wavefunction in the slab
+            if phi_D.size != 0:
+                self.observables.electron_dos_orb[K_ind, n, :, i_en] = xp.real(
+                    xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho), axis=1) / (2 * xp.pi)
+                )  # Compute the DOS
 
     def run(self) -> None:
         """Runs the complete QTBM transport calculation."""
@@ -454,213 +428,219 @@ class QTBM:
 
         times = []
         comm.Barrier()
-        OBC_batch_size = 1
-        self.system_matrix = None  # Initialize the system matrix
+        system_matrix = None  # Initialize the system matrix
 
-        times.append(time.perf_counter())
+        print(self.k_vector)
 
-        for batch_start in range(0, len(self.local_energies), OBC_batch_size):
-            energy_batch = self.local_energies[
-                batch_start : batch_start + OBC_batch_size
-            ]
+        for k_ind in range(self.num_kpoints):
 
             if comm.rank == 0:
-                print(
-                    f"Processing energies {batch_start} to {batch_start + len(energy_batch) - 1}",
-                    flush=True,
-                )
-
-            # append for iteration time
-            times.append(time.perf_counter())
+                print(f"Processing k-point {k_ind+1} of {self.num_kpoints}", flush=True)
+            k = self.k_vector[k_ind, :]
+            print(k)
 
             times.append(time.perf_counter())
 
-            sigma_obcs = []
-            injs = []
-            inj_inds = []
-            Ks = []
-            Ts = []
-            # Compute the boundary self-energy and the injection vector.
-            ind_0 = np.zeros(len(energy_batch), dtype=np.int32)
-            for contact in self.device.contacts:
-                times.append(time.perf_counter())
-
-                sigma_obc, inj, num_inj, T, K = contact.compute_boundary(
-                    self.k, energy_batch
+            # Precompute the Hamiltonian and overlap with k-point
+            # phase factors applied.
+            hamiltonian_phase = self.matrix_type(
+                self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
+            )
+            for r, h_r in self.device.hamiltonian.items():
+                hamiltonian_phase += h_r * xp.exp(
+                    1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
                 )
 
-                sigma_obcs.append(sigma_obc)
-                injs.append(inj)
-                Ks.append(K)
-                Ts.append(T)
+            overlap_phase = self.matrix_type(
+                self.device.overlap[0, 0, 0].shape, dtype=xp.complex128
+            )
+            for r, s_r in self.device.overlap.items():
+                overlap_phase += s_r * xp.exp(
+                    1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
+                )
 
-                # For every energy in batch, compute a list with the
-                # indices of every injected vector.
-                inj_ind_temp = []
-                for i in range(len(energy_batch)):
-                    i0 = ind_0[i]
-                    n_i = (
-                        num_inj[i].get().item()
-                        if hasattr(num_inj[i], "get")
-                        else num_inj[i].item()
-                    )
-                    inj_ind_temp.append(xp.arange(i0, i0 + n_i))
-                inj_inds.append(inj_ind_temp)
-                ind_0 += num_inj
+            times.append(time.perf_counter())
 
-                t_solve = time.perf_counter() - times.pop()
+            for batch_start in range(
+                0, len(self.local_energies), self.quatrex_config.electron.obc_batch_size
+            ):
+
+                energy_batch = self.local_energies[
+                    batch_start : batch_start
+                    + self.quatrex_config.electron.obc_batch_size
+                ]
+
                 if comm.rank == 0:
                     print(
-                        f"Time for OBC in contact {contact.name[0]}: {t_solve:.2f} s",
+                        f"Processing energies {batch_start} to {batch_start + len(energy_batch) - 1}",
                         flush=True,
                     )
 
-            t_solve = time.perf_counter() - times.pop()
-            if comm.rank == 0:
-                print(f"Time for OBC: {t_solve:.2f} s", flush=True)
-
-            for i, energy in enumerate(energy_batch):
+                # append for iteration time
+                times.append(time.perf_counter())
 
                 times.append(time.perf_counter())
 
-                # Set up sytem matrix and rhs for electron solver.
-                i0 = (
-                    ind_0[i].get().item()
-                    if hasattr(ind_0[i], "get")
-                    else ind_0[i].item()
-                )
-                inj_V = xp.zeros(
-                    (self.num_orbitals, i0), dtype=xp.complex128, order="F"
-                )  # Set the injection vector as a zero matrix
-                K_V = xp.zeros(
-                    (self.num_orbitals, i0), dtype=xp.complex128, order="F"
-                )  # Set the K vector as a zero matrix
+                sigma_obcs = []
+                injs = []
+                inj_inds = []
+                Ks = []
+                Ts = []
+                # Compute the boundary self-energy and the injection vector.
+                ind_0 = np.zeros(len(energy_batch), dtype=np.int32)
+                for contact in self.device.contacts:
+                    times.append(time.perf_counter())
 
-                ind1 = []
-                ind2 = []
-                sig_flat = []
-                # Iterate over contacts
-                for contact, sigma_obc, inj, inj_ind, K in zip(
-                    self.device.contacts, sigma_obcs, injs, inj_inds, Ks
-                ):
-                    ind1.append(
-                        np.repeat(
-                            contact.orbitals_contact.squeeze(),
-                            contact.orbitals_contact.shape[1],
+                    sigma_obc, inj, num_inj, T, K = contact.compute_boundary(
+                        k * 2 * np.pi, energy_batch
+                    )
+
+                    sigma_obcs.append(sigma_obc)
+                    injs.append(inj)
+                    Ks.append(K)
+                    Ts.append(T)
+
+                    # For every energy in batch, compute a list with the
+                    # indices of every injected vector.
+                    inj_ind_temp = []
+                    for i in range(len(energy_batch)):
+                        i0 = ind_0[i]
+                        n_i = (
+                            num_inj[i].get().item()
+                            if hasattr(num_inj[i], "get")
+                            else num_inj[i].item()
                         )
-                    )
-                    ind2.append(
-                        np.tile(
-                            contact.orbitals_contact.squeeze(),
-                            contact.orbitals_contact.shape[1],
+                        inj_ind_temp.append(xp.arange(i0, i0 + n_i))
+                    inj_inds.append(inj_ind_temp)
+                    ind_0 += num_inj
+
+                    t_solve = time.perf_counter() - times.pop()
+                    if comm.rank == 0:
+                        print(
+                            f"Time for OBC in contact {contact.name[0]}: {t_solve:.2f} s",
+                            flush=True,
                         )
+
+                t_solve = time.perf_counter() - times.pop()
+                if comm.rank == 0:
+                    print(f"Time for OBC: {t_solve:.2f} s", flush=True)
+
+                for i, energy in enumerate(energy_batch):
+
+                    times.append(time.perf_counter())
+
+                    # Set up sytem matrix and rhs for electron solver.
+                    i0 = (
+                        ind_0[i].get().item()
+                        if hasattr(ind_0[i], "get")
+                        else ind_0[i].item()
                     )
-                    sig_flat.append(sigma_obc[i, :, :].flatten())
-                    # Add the injection vector in the contact elements
-                    # of the rhs
-                    inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[i]
-                    # Add the K vector in the contact elements of the
-                    # rhs
-                    K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
+                    inj_V = xp.zeros(
+                        (self.num_orbitals, i0), dtype=xp.complex128, order="F"
+                    )  # Set the injection vector as a zero matrix
+                    K_V = xp.zeros(
+                        (self.num_orbitals, i0), dtype=xp.complex128, order="F"
+                    )  # Set the K vector as a zero matrix
 
-                # Concatenate the indices and the self-energies
-                ind1 = xp.array(np.concatenate(ind1))
-                ind2 = xp.array(np.concatenate(ind2))
+                    ind1 = []
+                    ind2 = []
+                    sig_flat = []
+                    # Iterate over contacts
+                    for contact, sigma_obc, inj, inj_ind, K in zip(
+                        self.device.contacts, sigma_obcs, injs, inj_inds, Ks
+                    ):
+                        ind1.append(
+                            np.repeat(
+                                contact.orbitals_contact.squeeze(),
+                                contact.orbitals_contact.shape[1],
+                            )
+                        )
+                        ind2.append(
+                            np.tile(
+                                contact.orbitals_contact.squeeze(),
+                                contact.orbitals_contact.shape[1],
+                            )
+                        )
+                        sig_flat.append(sigma_obc[i, :, :].flatten())
+                        # Add the injection vector in the contact elements
+                        # of the rhs
+                        inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[i]
+                        # Add the K vector in the contact elements of the
+                        # rhs
+                        K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
-                sig_flat = xp.concatenate(sig_flat)
+                    # Concatenate the indices and the self-energies
+                    ind1 = xp.array(np.concatenate(ind1))
+                    ind2 = xp.array(np.concatenate(ind2))
 
-                upd_0 = sparse.coo_matrix(
-                    (sig_flat, (ind1, ind2)), shape=self.hamiltonian_phase.shape
-                ).tocsr()
-                upd_0.eliminate_zeros()  # Remove zeros from the self-energy matrix
+                    sig_flat = xp.concatenate(sig_flat)
 
-                if i == 0 and batch_start == 0:
-                    self.system_matrix = (
-                        energy * self.overlap_phase - self.hamiltonian_phase - upd_0
+                    upd_0 = sparse.coo_matrix(
+                        (sig_flat, (ind1, ind2)), shape=hamiltonian_phase.shape
+                    ).tocsr()
+                    upd_0.eliminate_zeros()  # Remove zeros from the self-energy matrix
+
+                    if i == 0 and batch_start == 0 and k_ind == 0:
+                        system_matrix = (
+                            (energy) * overlap_phase - hamiltonian_phase - upd_0
+                        )
+                    else:
+                        system_matrix.data[:] = (
+                            (energy) * overlap_phase - hamiltonian_phase - upd_0
+                        ).data
+
+                    t_solve = time.perf_counter() - times.pop()
+                    if comm.rank == 0:
+                        print(
+                            f"Time to set up system of eq.: {t_solve:.2f} s", flush=True
+                        )
+
+                    times.append(time.perf_counter())
+
+                    # Solve for the wavefunction
+                    if inj_V.size != 0:
+                        phi = self.solver.solve(system_matrix, inj_V)
+
+                    t_solve = time.perf_counter() - times.pop()
+                    if comm.rank == 0:
+                        print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
+                    times.append(time.perf_counter())
+                    # Get the bare system matrix back, needed for
+                    # transmission calculation
+                    upd_0.data[:] = (
+                        1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
                     )
-                else:
-                    self.system_matrix.data[:] = (
-                        energy * self.overlap_phase - self.hamiltonian_phase - upd_0
+                    system_matrix.data[:] = (
+                        (energy) * overlap_phase - hamiltonian_phase - upd_0
                     ).data
+                    # LL = upd_0.tocsr()[rows, cols] if hasattr(LL, 'A'):
+                    # self.system_matrix.data[:] += LL.A.ravel() else:
+                    #    self.system_matrix.data[:] += LL.ravel()
 
-                # if i==0 and batch_start == 0:
-                #    self.system_matrix =  E * self.overlap_phase - self.hamiltonian_phase
-                # else:
-                #    self.system_matrix.data[:] = - h_V
-                #    self.system_matrix.data[:] += E * s_V
+                    if inj_V.size != 0:
+                        self.compute_observables(
+                            phi,
+                            inj_inds,
+                            i,
+                            batch_start + i,
+                            sigma_obcs,
+                            K_V,
+                            Ts,
+                            system_matrix,
+                            overlap_phase,
+                            k_ind,
+                        )
 
-                # Update the system matrix with the self-energies
-                # if i==0 and batch_start == 0:
-                #    self.system_matrix -= upd_0
-
-                #    self.system_matrix = self.system_matrix.tocoo()
-                #    rows = self.system_matrix.row
-                #    cols = self.system_matrix.col
-
-                #    self.system_matrix = self.system_matrix.tocsr()
-
-                #    if hasattr(self.hamiltonian_phase[rows, cols], 'A'):
-                #        h_V = self.hamiltonian_phase[rows, cols].A.ravel()
-                #        s_V = self.overlap_phase[rows, cols].A.ravel()
-                #    else:
-                #        h_V = self.hamiltonian_phase[rows, cols].ravel()
-                #        s_V = self.overlap_phase[rows, cols].ravel()
-
-                # else:
-                #    if hasattr(upd_0.tocsr()[rows, cols], 'A'):
-                #        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].A.ravel()
-                #    else:
-                #        self.system_matrix.data[:] -= upd_0.tocsr()[rows, cols].ravel()
-
-                t_solve = time.perf_counter() - times.pop()
-                if comm.rank == 0:
-                    print(f"Time to set up system of eq.: {t_solve:.2f} s", flush=True)
-
-                times.append(time.perf_counter())
-
-                # Solve for the wavefunction
-                if inj_V.size != 0:
-                    phi = self.solver.solve(self.system_matrix, inj_V)
-
-                t_solve = time.perf_counter() - times.pop()
-                if comm.rank == 0:
-                    print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
-                times.append(time.perf_counter())
-                # Get the bare system matrix back, needed for
-                # transmission calculation
-                upd_0.data[:] = (
-                    1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
-                )
-                self.system_matrix.data[:] = (
-                    energy * self.overlap_phase - self.hamiltonian_phase - upd_0
-                ).data
-                # LL = upd_0.tocsr()[rows, cols] if hasattr(LL, 'A'):
-                # self.system_matrix.data[:] += LL.A.ravel() else:
-                #    self.system_matrix.data[:] += LL.ravel()
-
-                if inj_V.size != 0:
-                    # Compute observables (DOS and Transmission)
-                    sigma_b_t = []
-                    inj_ind_t = []
-                    T_t = []
-                    for nn in range(self.num_contacts):
-                        sigma_b_t.append(sigma_obcs[nn][i, :, :])
-                        inj_ind_t.append(inj_inds[nn][i])
-                        T_t.append(Ts[nn][i, :, :])
-                    self.compute_observables(
-                        phi, inj_ind_t, batch_start + i, sigma_b_t, K_V, T_t, energy
-                    )
+                    t_iteration = time.perf_counter() - times.pop()
+                    if comm.rank == 0:
+                        print(
+                            f"Time for computing observables: {t_iteration:.2f} s",
+                            flush=True,
+                        )
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:
-                    print(
-                        f"Time for computing observables: {t_iteration:.2f} s",
-                        flush=True,
-                    )
-
-            t_iteration = time.perf_counter() - times.pop()
-            if comm.rank == 0:
-                print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+                    print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
         t_iteration = time.perf_counter() - times.pop()
         if comm.rank == 0:
@@ -668,12 +648,63 @@ class QTBM:
 
         # Gather the observables
         comm.Barrier()
-        self.observables.electron_transmission_x_slabs = xp.concatenate(
-            comm.allgather(self.observables.electron_transmission_x_slabs), axis=-1
+        self.observables.electron_transmission_contacts = xp.concatenate(
+            comm.allgather(self.observables.electron_transmission_contacts), axis=-1
         )
-        self.observables.electron_transmission_contacts = xp.hstack(
-            comm.allgather(self.observables.electron_transmission_contacts)
+        self.observables.electron_dos_orb = xp.concatenate(
+            comm.allgather(self.observables.electron_dos_orb), axis=-1
         )
-        self.observables.electron_dos_x_slabs = xp.concatenate(
-            comm.allgather(self.observables.electron_dos_x_slabs), axis=-1
+
+        if comm.rank == 0:
+            print(self.observables.electron_transmission_contacts.shape)
+            print(self.observables.electron_dos_orb.shape)
+
+        # Compute the current from all the k dependent transmissions
+        for n_t in range(self.num_transmissions):
+            cont_1, cont_2 = self.observables.electron_transmission_indices[n_t]
+            Fermi_factor = fermi_dirac(
+                self.electron_energies - self.device.contacts[cont_1].fermi_level,
+                self.quatrex_config.electron.temperature,
+            ) - fermi_dirac(
+                self.electron_energies - self.device.contacts[cont_2].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+
+            self.observables.electron_current["contact_current"][n_t] = (
+                xp.sum(
+                    xp.trapz(
+                        Fermi_factor
+                        * self.observables.electron_transmission_contacts[:, n_t, :],
+                        self.electron_energies,
+                        axis=1,
+                    )
+                )
+                / self.num_kpoints
+                * 7.7480917310e-5
+            )
+
+        # Compute the orbital charge density per orbital
+        for n in range(self.num_contacts):
+            Fermi_factor = fermi_dirac(
+                self.electron_energies - self.device.contacts[n].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+            self.observables.electron_charge_orb += (
+                2
+                * xp.sum(
+                    xp.trapz(
+                        self.observables.electron_dos_orb[:, n, :, :] * Fermi_factor,
+                        self.electron_energies,
+                        axis=2,
+                    ),
+                    axis=0,
+                )
+                / self.num_kpoints
+            )
+
+        self.observables.electron_charge_at = xp.zeros(
+            self.device.orbital_offsets.shape[0] - 1
+        )
+        self.observables.electron_charge_at = xp.add.reduceat(
+            self.observables.electron_charge_orb, self.device.orbital_offsets[:-1]
         )

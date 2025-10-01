@@ -2,6 +2,7 @@
 
 import os
 import tomllib
+import warnings
 from math import isclose
 from pathlib import Path
 from typing import Literal
@@ -335,6 +336,8 @@ class ElectronConfig(BaseModel):
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
 
+    obc_batch_size: PositiveInt = 1
+
     fermi_level: float | None = None
     conduction_band_edge: float | None = None
     valence_band_edge: float | None = None
@@ -364,13 +367,13 @@ class ElectronConfig(BaseModel):
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
         if (self.left_fermi_level is None) != (self.right_fermi_level is None):
-            raise ValueError(
+            warnings.warn(
                 "Either both left and right Fermi levels must be set or neither."
             )
 
         if self.left_fermi_level is None and self.right_fermi_level is None:
             if self.fermi_level is None:
-                raise ValueError("Fermi level must be set.")
+                warnings.warn("Fermi level must be set.")
 
             self.left_fermi_level = self.fermi_level
             self.right_fermi_level = self.fermi_level
@@ -394,11 +397,12 @@ class ElectronConfig(BaseModel):
     @model_validator(mode="after")
     def set_flatband(self) -> Self:
         """Sets the flatband flags if not already set."""
-        if self.flatband is None:
-            if isclose(self.left_fermi_level, self.right_fermi_level):
-                self.flatband = True
-            else:
-                self.flatband = False
+        if self.left_fermi_level is not None or self.right_fermi_level is not None:
+            if self.flatband is None:
+                if isclose(self.left_fermi_level, self.right_fermi_level):
+                    self.flatband = True
+                else:
+                    self.flatband = False
 
         return self
 
@@ -520,6 +524,7 @@ class OutputConfig(BaseModel):
 class ContactConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    fermi_level: float
     name: str
     type: Literal["ohmic"] = "ohmic"
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0)

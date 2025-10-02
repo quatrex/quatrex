@@ -7,9 +7,11 @@ import numpy as np
 from scipy import sparse as sps
 import os
 from cupyx.profiler import time_range
+from cupyx.scipy import sparse as cusparse
 
 # from cupyx.scipy import sparse as cusparse
 from qttools.comm import comm
+# from mpi4py.MPI import Comm as MPI_Comm
 from mpi4py.MPI import Request
 from qttools import NDArray, sparse
 from qttools.datastructures import DSDBCOO, DSDBSparse
@@ -29,11 +31,6 @@ from quatrex.core.quatrex_config import QuatrexConfig
 
 from quatrex.exciton.response.polarization import correlate, kron_correlate
 
-# from quatrex.core.compute_config import ComputeConfig
-# from quatrex.core.quatrex_config import QuatrexConfig
-# from quatrex.core.statistics import bose_einstein
-# from quatrex.core.subsystem import SubsystemSolver
-# from quatrex.coulomb_screening.utils import assemble_boundary_blocks
 
 GPU_AWARE = False
 
@@ -440,7 +437,7 @@ class BSESolver:
         self.pair_bandwidth = bandwidth
         self.blocksize = bandwidth
         self.num_blocks = int(np.ceil(self.size / self.blocksize))
-        self.totalsize = int(self.blocksize) * int(self.num_blocks)
+        self.totalsize = int(self.blocksize) * int(self.num_blocks) # total size of the block matrix L with padding
 
         if comm.rank == 0:
             print("  +--------------- Normal ordering ---------------+ ")
@@ -588,7 +585,7 @@ class BSESolver:
                 if np.isnan(gg_sendbuf[j]).any():
                     raise ValueError(f"rank {comm.rank}: gg send buffer contains NaNs")
 
-                send_reqs.append(comm.Isend(gg_sendbuf[j], dest=j, tag=1))
+                send_reqs.append(comm.stack.isend(gg_sendbuf[j], dest=j, tag=1))
 
                 gl_sendbuf[j] = GL.data[
                     ..., inds_rank_to_j - GL.nnz_section_offsets[comm.rank]
@@ -597,7 +594,7 @@ class BSESolver:
                 if np.isnan(gl_sendbuf[j]).any():
                     raise ValueError(f"rank {comm.rank}: gl send buffer contains NaNs")
 
-                send_reqs.append(comm.Isend(gl_sendbuf[j], dest=j, tag=0))
+                send_reqs.append(comm.stack.isend(gl_sendbuf[j], dest=j, tag=0))
             else:
                 gg_sendbuf[j] = GG.data[
                     ..., inds_rank_to_j - GG.nnz_section_offsets[comm.rank]
@@ -605,14 +602,14 @@ class BSESolver:
                 if np.isnan(gg_sendbuf[j]).any():
                     raise ValueError(f"rank {comm.rank}: gg send buffer contains NaNs")
 
-                send_reqs.append(comm.Isend(gg_sendbuf[j], dest=j, tag=1))
+                send_reqs.append(comm.stack.isend(gg_sendbuf[j], dest=j, tag=1))
                 gl_sendbuf[j] = GL.data[
                     ..., inds_rank_to_j - GL.nnz_section_offsets[comm.rank]
                 ]
                 if np.isnan(gl_sendbuf[j]).any():
                     raise ValueError(f"rank {comm.rank}: gl send buffer contains NaNs")
 
-                send_reqs.append(comm.Isend(gl_sendbuf[j], dest=j, tag=0))
+                send_reqs.append(comm.stack.isend(gl_sendbuf[j], dest=j, tag=0))
 
         recv_reqs = []
 
@@ -632,8 +629,8 @@ class BSESolver:
 
             print(f" Posting receive {i}-->{comm.rank}", flush=True)
 
-            recv_reqs.append(comm.Irecv(gl_recbuf[i], source=i, tag=0))
-            recv_reqs.append(comm.Irecv(gg_recbuf[i], source=i, tag=1))
+            recv_reqs.append(comm.stack.irecv(gl_recbuf[i], source=i, tag=0))
+            recv_reqs.append(comm.stack.irecv(gg_recbuf[i], source=i, tag=1))
 
         # compute terms that only require local GF data
 
@@ -1000,7 +997,7 @@ class BSESolver:
         W = screened_coulomb_matrix        
 
         self.kernel = sps.lil_array(
-            (self.totalsize, self.totalsize),
+            (self.size, self.size),
             dtype=self.L0_greater.dtype,
         )
         
@@ -1038,12 +1035,12 @@ class BSESolver:
         V = self.coulomb_matrix 
         W = screened_coulomb_matrix
 
-        kernel_tip = xp.zeros(
-            (self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
-        )
-        kernel_diag = xp.zeros(
-            (self.bta_totalsize - self.tipsize), dtype=self.L0_lesser.dtype
-        )
+        # kernel_tip = xp.zeros(
+        #     (self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
+        # )
+        # kernel_diag = xp.zeros(
+        #     (self.bta_totalsize - self.tipsize), dtype=self.L0_lesser.dtype
+        # )
         self.kernel_bta = sps.lil_array(
             (self.bta_totalsize, self.bta_totalsize),
             dtype=self.L0_greater.dtype,
@@ -1168,13 +1165,17 @@ class BSESolver:
     @time_range()
     def _densesolve_L_interacting_bta(self, return_P3=False, return_L=False):
         """mostly only for debugging purpose as reference solution"""
+        if comm.rank == 0:
+            print(" Solve dense BSE ...", flush=True)
+
         if self.L0_r_bta.distribution_state != "stack":
             self.L0_r_bta.dtranspose()
 
-        (kernel_tip, kernel_diag) = self.kernel_bta
+        # kernel_tip = self.kernel_bta[: self.tipsize, : self.tipsize]
+        # kernel_diag = self.kernel_bta[self.tipsize :, self.tipsize :].diagonal()
 
         local_nen = self.L0_r_bta.stack_shape[0]
-        K = xp.zeros((self.size, self.size), dtype=self.L0_lesser_bta.dtype)
+        K = self.kernel_bta.todense()  
 
         if return_L:
             L = xp.zeros(
@@ -1192,10 +1193,10 @@ class BSESolver:
                 dtype=self.L0_lesser_bta.dtype,
             )
 
-        K[: self.tipsize, : self.tipsize] = kernel_tip
-        K[self.tipsize :, self.tipsize :] = xp.diag(
-            kernel_diag[: self.size - self.tipsize]
-        )
+        # K[: self.tipsize, : self.tipsize] = kernel_tip
+        # K[self.tipsize :, self.tipsize :] = xp.diag(
+        #     kernel_diag[: self.size - self.tipsize]
+        # )
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
@@ -1208,7 +1209,7 @@ class BSESolver:
                 L0 = sparse.coo_matrix(
                     (data, coords), shape=(self.size, self.size)
                 ).todense()
-
+                print(comm.rank, L0.shape, K.shape)
                 A = -L0 @ K + xp.diag(
                     xp.ones(self.size, dtype=self.L0_lesser_bta.dtype)
                 )
@@ -1257,12 +1258,15 @@ class BSESolver:
     @time_range()
     def _densesolve_L_interacting(self, return_P3=False, return_L=False):
         """mostly only for debugging purpose as reference solution"""
+        if comm.rank == 0:
+            print(" Solve sparse BSE with dense inverse ...", flush=True)
+
         if self.L0_lesser.distribution_state != "stack":
             self.L0_lesser.dtranspose()
 
         self.L0_r = self.L0_lesser
 
-        K = self.kernel.todense()  # .to_dense()[0,:,:]
+        K = self.kernel.tocsr()  
 
         local_nen = self.L0_r.stack_shape[0]
 
@@ -1284,6 +1288,7 @@ class BSESolver:
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
+
                 print(" rank=", comm.rank, "ie=", ie + 1, "/", local_nen, flush=True)
 
                 data = self.L0_r.data[ie]
@@ -1291,18 +1296,20 @@ class BSESolver:
 
                 L0 = sparse.coo_matrix(
                     (data, coords), shape=(self.size, self.size)
-                ).todense()
+                ).tocsr()
 
-                A = -L0 @ K + xp.diag(xp.ones(self.size, dtype=self.L0_lesser.dtype))
+                # print(comm.rank, L0.shape, K.shape)
+                
+                A = -L0 @ K + cusparse.diags(xp.ones(self.size, dtype=self.L0_lesser.dtype))
 
                 # OBC
 
                 # call dense solver
 
-                invA = xp.linalg.inv(A)
+                invA = xp.linalg.inv(A.todense())
 
                 # multiply RHS
-                A = invA @ L0
+                A = invA @ L0.tocsc()
 
                 if return_L:
                     # compute the row and col in the BTA ordering
@@ -1340,6 +1347,7 @@ class BSESolver:
 
         if return_P3:
             return P3
+        
         else:
             return P2
 
@@ -1355,6 +1363,9 @@ class BSESolver:
         return_P3: bool = False,
         return_L: bool = False,
     ):
+        if comm.rank == 0:
+            print(" Solve BSE ...", flush=True)
+
         if self.L0_r_bta.distribution_state != "stack":
             self.L0_r_bta.dtranspose()
 

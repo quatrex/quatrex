@@ -232,6 +232,30 @@ class _SubCommunicator:
                 f"sendbuf and recvbuf must be of the same type, but got {sendbuf.dtype} and {recvbuf.dtype}."
             )
 
+    def isend(self, sendbuf: NDArray, dest: int, tag: int = 0) -> MPI.Request:
+        """Performs non-blocking send communication."""
+        if dest < 0 or dest >= self.size:
+            raise ValueError(f"Invalid destination rank: {dest}")
+
+        if get_array_module_name(sendbuf) == "cupy" and not GPU_AWARE_MPI:
+            raise ValueError(
+                "Non-blocking send is not available with this MPI implementation."
+            )
+
+        return self._mpi_comm.Isend(sendbuf, dest=dest, tag=tag)
+    
+    def irecv(self, recvbuf: NDArray, source: int, tag: int = 0) -> MPI.Request:
+        """Performs non-blocking receive communication."""
+        if source < 0 or source >= self.size:
+            raise ValueError(f"Invalid source rank: {source}")
+
+        if get_array_module_name(recvbuf) == "cupy" and not GPU_AWARE_MPI:
+            raise ValueError(
+                "Non-blocking receive is not available with this MPI implementation."
+            )
+
+        return self._mpi_comm.Irecv(recvbuf, source=source, tag=tag)
+    
     def all_to_all(
         self, sendbuf: NDArray, recvbuf: NDArray, backend: str | None = None
     ):

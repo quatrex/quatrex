@@ -217,11 +217,11 @@ def find_overlaping_data_for_L(
 ):
     nnz_to_fetch = []
     nnz_rank = []
-    for ii, jj in zip(L_rows, L_cols):
-        i = G_rows[ii]
-        j = G_cols[ii]
-        k = G_rows[jj]
-        L = G_cols[jj]
+    for ij, kl in zip(L_rows, L_cols):
+        i = G_rows[ij]
+        j = G_cols[ij]
+        k = G_rows[kl]
+        L = G_cols[kl]
         ind1 = find_index(G_rows, G_cols, int(L), int(j))
         ind2 = find_index(G_rows, G_cols, int(i), int(k))
         ind = [ind1, ind2]

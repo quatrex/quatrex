@@ -416,7 +416,14 @@ class QTBM:
             phi_D_ortho = phi_ortho[
                 :, inj_ind[n][i_batch]
             ].squeeze()  # Get the "orthogonalized" wavefunction in the slab
+
             if phi_D.size != 0:
+
+                # Ensure phi_D is always 2D
+                if phi_D.ndim == 1:
+                    phi_D = phi_D[:, xp.newaxis]
+                    phi_D_ortho = phi_D_ortho[:, xp.newaxis]
+
                 self.observables.electron_dos_orb[K_ind, n, :, i_en] = xp.real(
                     xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho), axis=1) / (2 * xp.pi)
                 )  # Compute the DOS

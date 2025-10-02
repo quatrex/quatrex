@@ -871,6 +871,31 @@ class CommConfig(BaseModel):
 
         return self
 
+class MixedPrecisionConfig(BaseModel):
+    """Configuration for mixed precision computation settings.
+    
+    This class defines parameters for controlling mixed precision operations,
+    which can improve performance by using lower precision arithmetic where
+    appropriate while maintaining numerical accuracy.
+    
+    Example configuration:
+        [mixed_precision]
+        precision = "mix"
+        rgf_mask = "0xFFFFFFFFFFFF0000"
+        accumulate_matmul = true
+    
+    Attributes:
+        precision: Mixed precision mode setting. Currently supports "mix".
+        rgf_mask: Hexadecimal mask for recursive Green's function calculations.
+        accumulate_matmul: Whether to use accumulation in matrix multiplication.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    precision: Literal["mix"] | None = None
+    rgf_mask: str | None = None
+    emulate_matmul: bool | None = None
+
 
 class ComputeConfig(BaseModel):
     """All configurations concerning computational details."""
@@ -890,6 +915,8 @@ class ComputeConfig(BaseModel):
     lyapunov: LyapunovComputeConfig = LyapunovComputeConfig()
     band_edge: BandEdgeConfig = BandEdgeConfig()
     comm: CommConfig = CommConfig()
+
+    mixed_precision: MixedPrecisionConfig = MixedPrecisionConfig()
 
     @field_validator("dsdbsparse_type", mode="before")
     def set_dsdbsparse(cls, value) -> DSDBSparse:

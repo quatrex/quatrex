@@ -8,6 +8,7 @@ from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
 from quatrex.core.config import (
+    ComputeConfig,
     LyapunovComputeConfig,
     LyapunovConfig,
     NEVPConfig,
@@ -51,7 +52,7 @@ class SubsystemSolver(ABC):
             getattr(config, self.system).lyapunov,
             config.compute.lyapunov,
         )
-        self.solver = self._configure_solver(getattr(config, self.system).solver)
+        self.solver = self._configure_solver(getattr(config, self.system).solver, config.compute.lyapunov)
         self.solver_dist = RGFDist(
             max_batch_size=getattr(config, self.system).solver.max_batch_size,
         )
@@ -200,13 +201,15 @@ class SubsystemSolver(ABC):
             )
         return lyapunov_solver
 
-    def _configure_solver(self, solver_config: SolverConfig) -> GFSolver:
+    def _configure_solver(self, solver_config: SolverConfig, compute_config: ComputeConfig) -> GFSolver:
         """Configures the solver algorithm from the config.
 
         Parameters
         ----------
         solver : SolverConfig
             The solver configuration.
+        compute_config : ComputeConfig
+            The compute configuration.
 
         Returns
         -------
@@ -215,7 +218,7 @@ class SubsystemSolver(ABC):
 
         """
         if solver_config.algorithm == "rgf":
-            return RGF(max_batch_size=solver_config.max_batch_size)
+            return RGF(max_batch_size=solver_config.max_batch_size, mask=compute_config.mixed_precision.rgf_mask)
 
         if solver_config.algorithm == "inv":
             return Inv(max_batch_size=solver_config.max_batch_size)

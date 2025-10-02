@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-from qttools import NDArray
+from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 
 
@@ -20,6 +20,15 @@ class OBCBlocks:
     num_blocks : int
         Number of blocks in the structure.
 
+    Attributes
+    ----------
+    retarded : list[NDArray | None]
+        List of retarded Green's function blocks.
+    lesser : list[NDArray | None]
+        List of lesser Green's function blocks.
+    greater : list[NDArray | None]
+        List of greater Green's function blocks.
+
     """
 
     def __init__(self, num_blocks: int):
@@ -27,7 +36,11 @@ class OBCBlocks:
         self.lesser: list[NDArray | None] = [None] * num_blocks
         self.greater: list[NDArray | None] = [None] * num_blocks
 
-
+    def set_obc_precision(self, dtype: type):
+        self.retarded = [None if r is None else r.astype(dtype) for r in self.retarded]
+        self.lesser = [None if r is None else r.astype(dtype) for r in self.lesser]
+        self.greater = [None if r is None else r.astype(dtype) for r in self.greater]
+        
 class GFSolver(ABC):
     """Abstract base class for the Green's function solvers."""
 

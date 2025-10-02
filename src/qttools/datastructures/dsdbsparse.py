@@ -135,6 +135,7 @@ class DSDBSparse(ABC):
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        dtype: type | None = None,
     ):
         """Initializes a DSBDSparse matrix."""
 
@@ -193,9 +194,11 @@ class DSDBSparse(ABC):
         # same data size for the all-to-all communication.
         self._data = xp.zeros(
             (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=data.dtype,
+            dtype=dtype or data.dtype,
         )
-        self._data[: data.shape[0], ..., : data.shape[-1]] = data
+        self._data[: data.shape[0], ..., : data.shape[-1]] = data.astype(
+            dtype or data.dtype
+        )
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -235,7 +238,7 @@ class DSDBSparse(ABC):
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = data.dtype
+        self.dtype = dtype or data.dtype
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)

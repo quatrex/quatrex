@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse, xp, _DType
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
@@ -69,9 +69,12 @@ class ElectronSolver(SubsystemSolver):
         config: QuatrexConfig,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
+        dtype: _DType = None
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(config, energies)
+
+        self.dtype = dtype or xp.complex128
 
         self.local_energies = get_local_slice(energies, comm.stack)
 
@@ -123,10 +126,11 @@ class ElectronSolver(SubsystemSolver):
 
         # Allocate memory for the system matrix.
         self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
+            sparsity_pattern.astype(self.dtype),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
+            dtype=self.dtype
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -383,6 +387,7 @@ class ElectronSolver(SubsystemSolver):
             self.obc_blocks.greater[-1] = 1j * scale_stack(
                 gamma_nn.copy(), self.right_occupancies - 1
             )
+        self.obc_blocks.set_obc_precision(self.dtype)
 
     def _assemble_system_matrix(self, sse_retarded: DSDBSparse) -> None:
         """Assembles the system matrix.

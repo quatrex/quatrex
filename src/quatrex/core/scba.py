@@ -108,6 +108,9 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
+
+        self.dtype = xp.complex64 if config.compute.mixed_precision.precision == "mix" else xp.complex128
+
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm
         ):
@@ -131,20 +134,22 @@ class SCBAData:
         dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            self.sparsity_pattern.astype(self.dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
+            dtype=self.dtype,
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            self.sparsity_pattern.astype(self.dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            dtype=self.dtype,
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
@@ -184,12 +189,13 @@ class SCBAData:
             )
 
             self.w_lesser = dsdbsparse_type.from_sparray(
-                self.sparsity_pattern.astype(xp.complex128),
+                self.sparsity_pattern.astype(self.dtype),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
+                dtype=self.dtype
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
@@ -296,6 +302,7 @@ class SCBA:
             self.config,
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
+            dtype=self.data.dtype,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -351,6 +358,7 @@ class SCBA:
                 coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
+                dtype=self.data.dtype
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,

@@ -63,6 +63,7 @@ class DSDBCOO(DSDBSparse):
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        dtype: type | None = None,
     ):
         """Initializes a DSDBCOO matrix."""
         super().__init__(
@@ -72,6 +73,7 @@ class DSDBCOO(DSDBSparse):
             return_dense,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            dtype=dtype,
         )
 
         self.rows = xp.asarray(rows, dtype=xp.int32)
@@ -834,7 +836,7 @@ class DSDBCOO(DSDBSparse):
             )
 
     @classmethod
-    def zeros_like(cls, dsdbsparse: "DSDBCOO") -> "DSDBCOO":
+    def zeros_like(cls, dsdbsparse: "DSDBCOO", dtype: type | None = None) -> "DSDBCOO":
         """Creates a new DSDBCOO matrix with the same shape and dtype.
 
         All non-zero elements are set to zero, but the sparsity pattern
@@ -844,6 +846,9 @@ class DSDBCOO(DSDBSparse):
         ----------
         dsdbcoo : DSDBCOO
             The matrix to copy the shape and dtype from.
+        dtype : type, optional
+            The dtype of the new matrix. Default is None, in which case
+            the dtype of the input matrix is used.
 
         Returns
         -------
@@ -865,6 +870,7 @@ class DSDBCOO(DSDBSparse):
             return_dense=dsdbsparse.return_dense,
             symmetry=dsdbsparse.symmetry,
             symmetry_op=dsdbsparse.symmetry_op,
+            dtype=dtype or dsdbsparse.dtype,
         )
         out._data[:] = 0
         return out
@@ -877,6 +883,7 @@ class DSDBCOO(DSDBSparse):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        dtype: type | None = None,
     ) -> "DSDBCOO":
         """Constructs a DSDBCOO matrix from a COO matrix.
 
@@ -947,7 +954,7 @@ class DSDBCOO(DSDBSparse):
         )
 
         data = xp.zeros(
-            local_stack_shape + (int(local_mask.sum()),), dtype=coo.data.dtype
+            local_stack_shape + (int(local_mask.sum()),), dtype=dtype or coo.data.dtype
         )
         data[..., :] = _data[local_mask]
         rows = _rows[local_mask] - start_idx
@@ -961,6 +968,7 @@ class DSDBCOO(DSDBSparse):
             global_stack_shape=global_stack_shape,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            dtype=dtype,
         )
 
     def to_dense(self):

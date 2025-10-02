@@ -11,7 +11,7 @@ from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import synchronize_device
 
 
-def to_fp48_precision(x):
+def mask_precision(x, mask):
     """
     Convert FP32 to BF16 precision by truncating mantissa.
 
@@ -20,11 +20,11 @@ def to_fp48_precision(x):
     """
     # Use bit manipulation to simulate BF16 precision.
     x_int = x.view(xp.uint64)
-    mask = xp.uint64(0xFFFFFFFFFFFF0000)  # Keep sign, exponent, and upper 7 mantissa bits
-    x_fp48_int = x_int & mask
-    return x_fp48_int.view(xp.float64)
+    # mask is a str, convert it to uint64
+    mask_int = xp.uint64(int(mask, 16))
+    return (x_int & mask_int).view(xp.float64)
 
-def complex_gemm_to_real_high_precision(a, b, out=None, alpha=1.0, beta=0.0):
+def complex_gemm_to_real_with_mask(a, b, out=None, mask = None):
     """
     Custom function to perform complex GEMM by separating into real/imaginary parts.
     
@@ -54,15 +54,16 @@ def complex_gemm_to_real_high_precision(a, b, out=None, alpha=1.0, beta=0.0):
     array_like
         Result of the complex matrix multiplication
     """
+    if mask is None:
+        return a @ b
     # Handle different array backends (numpy/cupy)
     if hasattr(xp, 'real') and hasattr(xp, 'imag'):
         # Extract real and imaginary parts
-        a_real = to_fp48_precision(xp.real(a))
-        a_imag = to_fp48_precision(xp.imag(a))
-        b_real = to_fp48_precision(xp.real(b)) 
-        b_imag = to_fp48_precision(xp.imag(b))
+        a_real = mask_precision(xp.real(a).astype(xp.float64), mask)
+        a_imag = mask_precision(xp.imag(a).astype(xp.float64), mask)
+        b_real = mask_precision(xp.real(b).astype(xp.float64), mask) 
+        b_imag = mask_precision(xp.imag(b).astype(xp.float64), mask)
         
-        print(a_real.dtype)
         # Compute real and imaginary parts separately using real GEMM
         # C_real = A_real @ B_real - A_imag @ B_imag
         c_real = a_real @ b_real - a_imag @ b_imag
@@ -71,37 +72,18 @@ def complex_gemm_to_real_high_precision(a, b, out=None, alpha=1.0, beta=0.0):
         c_imag = a_real @ b_imag + a_imag @ b_real
         
         # Combine back to complex
-        result = to_fp48_precision(c_real) + 1j * to_fp48_precision(c_imag)
+        result = c_real + 1j * c_imag
         
-        # Apply alpha scaling
-        if alpha != 1.0:
-            result = alpha * result
-            
         # Handle output and beta scaling
         if out is not None:
-            if beta != 0.0:
-                out[:] = result + beta * out
-            else:
-                out[:] = result
+            out[:] = result
             return out
         else:
             return result
     else:
-        # Fallback to standard complex multiplication if real/imag not available
-        result = a @ b
-        if alpha != 1.0:
-            result = alpha * result
-        if out is not None:
-            if beta != 0.0:
-                out[:] = result + beta * out
-            else:
-                out[:] = result
-            return out
-        else:
-            return result
+        raise ValueError("Unsupported array backend")
 
-
-def to_bf16_precision(x):
+def to_bf16(x):
     """
     Convert FP32 to BF16 precision by truncating mantissa.
 
@@ -114,7 +96,6 @@ def to_bf16_precision(x):
     x_bf16_int = x_int & mask
     return x_bf16_int.view(xp.float32)
 
-
 def real_gemm_fastest(a, b):
     """
     Emulate FP32 matrix multiplication using 3 BF16 operations.
@@ -126,20 +107,17 @@ def real_gemm_fastest(a, b):
     b_fp32 = b.astype(xp.float32)
 
     # Step 1: Primary BF16 computation
-    a_bf16_1 = to_bf16_precision(a_fp32)
-    b_bf16_1 = to_bf16_precision(b_fp32)
-    c1 = a_bf16_1 @ b_bf16_1  # BF16 operation 1
+    a_bf16_high = to_bf16(a_fp32)
+    b_bf16_high = to_bf16(b_fp32)
+    c1 = a_bf16_high @ b_bf16_high  # BF16 operation 1
 
     # Step 2: Compute first-level residuals
-    a_err_1 = a_fp32 - a_bf16_1
-    b_err_1 = b_fp32 - b_bf16_1
+    a_bf16_low = a_fp32 - a_bf16_high
+    b_bf16_low = b_fp32 - b_bf16_high
 
     # Step 3: First correction terms
-    a_err_bf16_1 = to_bf16_precision(a_err_1)
-    c2 = a_err_bf16_1 @ b_bf16_1  # BF16 operation 2
-
-    b_err_bf16_1 = to_bf16_precision(b_err_1)
-    c3 = a_bf16_1 @ b_err_bf16_1  # BF16 operation 3
+    c2 = a_bf16_low @ b_bf16_high  # BF16 operation 2
+    c3 = a_bf16_high @ b_bf16_low  # BF16 operation 3
 
     # Step 4: Combine results with compensated summation
     result = c1
@@ -154,7 +132,7 @@ def real_gemm_fastest(a, b):
 
     return result
 
-def complex_gemm_to_real(a, b, out=None, alpha=1.0, beta=0.0):
+def complex_gemm_to_real(a, b, out = None, emulate = False):
     """
     Complex GEMM using 3 BF16 operations to emulate each FP32 matrix multiplication.
 
@@ -162,6 +140,10 @@ def complex_gemm_to_real(a, b, out=None, alpha=1.0, beta=0.0):
 
     Each real matrix multiplication uses 3 BF16 operations for the fastest performance.
     """
+
+    if not emulate:
+        return a @ b
+
     # Extract real and imaginary parts as FP32
     a_real = xp.real(a).astype(xp.float32)
     a_imag = xp.imag(a).astype(xp.float32)
@@ -181,14 +163,8 @@ def complex_gemm_to_real(a, b, out=None, alpha=1.0, beta=0.0):
     # Combine back to complex
     result = c_real + 1j * c_imag
     
-    if alpha != 1.0:
-        result = alpha * result
-        
     if out is not None:
-        if beta != 0.0:
-            out[:] = result + beta * out
-        else:
-            out[:] = result
+        out[:] = result + accumulate
         return out
     else:
         return result
@@ -214,7 +190,8 @@ def bd_matmul(
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype = None,
+    emulate: bool = False
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -236,7 +213,9 @@ def bd_matmul(
         This is necessary when the matrices represent open-ended
         systems. The default is False.
     accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
+        The data type of the temporary accumulator matrices. The default is None.
+    emulate : bool, optional
+        Whether to emulated precision. The default is None.
 
     TODO: replace @ by appropriate gemm
 
@@ -298,17 +277,17 @@ def bd_matmul(
                             sum_b = xp.zeros_like(b_[0].blocks[k_b, j_b])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k_b, j_b])
-                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], sum_b)
+                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], sum_b, emulate = emulate)
                         else:
-                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], b_.blocks[k_b, j_b])
+                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], b_.blocks[k_b, j_b], emulate = emulate)
                     else:
                         if isinstance(b, list):
                             sum_b = xp.zeros_like(b_[0].blocks[k, j])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k, j])
-                            partsum += complex_gemm_to_real(a_.blocks[i, k], sum_b)
+                            partsum += complex_gemm_to_real(a_.blocks[i, k], sum_b, emulate = emulate)
                         else:
-                            partsum += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j])
+                            partsum += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j], emulate = emulate)
 
             if out_block:
                 out[i, j] = partsum
@@ -326,8 +305,9 @@ def bd_sandwich(
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype = None,
     accumulate: bool = False,
+    emulate: bool = False
 ):
     """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
 
@@ -408,11 +388,11 @@ def bd_sandwich(
                     else:
                         b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = complex_gemm_to_real(a_im, b_.blocks[b_m, b_k]).astype(
+                    ab_ik[k] = complex_gemm_to_real(a_im, b_.blocks[b_m, b_k], emulate = emulate).astype(
                         accumulator_dtype
                     )  # cast data type
                 else:
-                    ab_ik[k] += complex_gemm_to_real(a_im, b_.blocks[b_m, b_k]).astype(
+                    ab_ik[k] += complex_gemm_to_real(a_im, b_.blocks[b_m, b_k], emulate = emulate).astype(
                         accumulator_dtype
                     )  # cast data type
 
@@ -444,12 +424,12 @@ def bd_sandwich(
                 if ab_ik[k] is None:
                     continue
                 if a_is_hermitian:
-                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_k, a_j]).astype(
+                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_k, a_j], emulate = emulate).astype(
                         accumulator_dtype
                     )  # cast data type
 
                 else:
-                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj()).astype(
+                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), emulate = emulate).astype(
                         accumulator_dtype
                     )  # cast data type
 
@@ -471,6 +451,7 @@ def btd_matmul(
     b: DSDBSparse,
     out: DSDBSparse,
     spillover_correction: bool = False,
+    emulate: bool = False
 ):
     """Matrix multiplication of two `a @ b` BTD DSDBSparse matrices.
 
@@ -487,6 +468,8 @@ def btd_matmul(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
+    emulate : bool, optional
+        Whether to emulated precision. The default is False.
 
     """
     if a.distribution_state == "nnz" or b.distribution_state == "nnz":
@@ -507,7 +490,7 @@ def btd_matmul(
         for j in range(max(0, i - 2), min(num_blocks, i + 3)):
             out_ij = out.blocks[i, j]
             for k in range(max(0, i - 1), min(num_blocks, i + 2)):
-                out_ij += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j])
+                out_ij += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j], emulate = emulate)
 
             out_.blocks[i, j] = out_ij
 
@@ -516,8 +499,8 @@ def btd_matmul(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    out_.blocks[0, 0] += complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1])
-    out_.blocks[-1, -1] += complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2])
+    out_.blocks[0, 0] += complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
+    out_.blocks[-1, -1] += complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
 
 
 def btd_sandwich(
@@ -525,6 +508,7 @@ def btd_sandwich(
     b: DSDBSparse,
     out: DSDBSparse,
     spillover_correction: bool = False,
+    emulate: bool = False
 ):
     """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
@@ -541,6 +525,8 @@ def btd_sandwich(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
+    emulate : bool, optional
+        Whether to emulated precision. The default is False.
 
     """
     if a.distribution_state == "nnz" or b.distribution_state == "nnz":
@@ -563,8 +549,8 @@ def btd_sandwich(
             for k in range(max(0, i - 2), min(num_blocks, i + 3)):
                 a_kj = a_.blocks[k, j]
                 for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    temp_result = complex_gemm_to_real(a_.blocks[i, m], b_.blocks[m, k])
-                    out_ij += complex_gemm_to_real(temp_result, a_kj)
+                    temp_result = complex_gemm_to_real(a_.blocks[i, m], b_.blocks[m, k], emulate = emulate)
+                    out_ij += complex_gemm_to_real(temp_result, a_kj, emulate = emulate)
 
             out_.blocks[i, j] = out_ij
 
@@ -573,31 +559,31 @@ def btd_sandwich(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    temp1 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1])
-    temp2 = complex_gemm_to_real(a_.blocks[0, 0], b_.blocks[1, 0])
-    temp3 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 0])
+    temp1 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
+    temp2 = complex_gemm_to_real(a_.blocks[0, 0], b_.blocks[1, 0], emulate = emulate)
+    temp3 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 0], emulate = emulate)
     out_.blocks[0, 0] += (
-        complex_gemm_to_real(temp1, a_.blocks[0, 0])
-        + complex_gemm_to_real(temp2, a_.blocks[0, 1])
-        + complex_gemm_to_real(temp3, a_.blocks[0, 1])
+        complex_gemm_to_real(temp1, a_.blocks[0, 0], emulate = emulate)
+        + complex_gemm_to_real(temp2, a_.blocks[0, 1], emulate = emulate)
+        + complex_gemm_to_real(temp3, a_.blocks[0, 1], emulate = emulate)
     )
-    temp4 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1])
-    out_.blocks[0, 1] += complex_gemm_to_real(temp4, a_.blocks[0, 1])
-    temp5 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[1, 0])
-    out_.blocks[1, 0] += complex_gemm_to_real(temp5, a_.blocks[0, 1])
+    temp4 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
+    out_.blocks[0, 1] += complex_gemm_to_real(temp4, a_.blocks[0, 1], emulate = emulate)
+    temp5 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[1, 0], emulate = emulate)
+    out_.blocks[1, 0] += complex_gemm_to_real(temp5, a_.blocks[0, 1], emulate = emulate)
 
-    temp6 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2])
-    temp7 = complex_gemm_to_real(a_.blocks[-1, -1], b_.blocks[-2, -1])
-    temp8 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -1])
+    temp6 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
+    temp7 = complex_gemm_to_real(a_.blocks[-1, -1], b_.blocks[-2, -1], emulate = emulate)
+    temp8 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -1], emulate = emulate)
     out_.blocks[-1, -1] += (
-        complex_gemm_to_real(temp6, a_.blocks[-1, -1])
-        + complex_gemm_to_real(temp7, a_.blocks[-1, -2])
-        + complex_gemm_to_real(temp8, a_.blocks[-1, -2])
+        complex_gemm_to_real(temp6, a_.blocks[-1, -1], emulate = emulate)
+        + complex_gemm_to_real(temp7, a_.blocks[-1, -2], emulate = emulate)
+        + complex_gemm_to_real(temp8, a_.blocks[-1, -2], emulate = emulate)
     )
-    temp9 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2])
-    out_.blocks[-1, -2] += complex_gemm_to_real(temp9, a_.blocks[-1, -2])
-    temp10 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-2, -1])
-    out_.blocks[-2, -1] += complex_gemm_to_real(temp10, a_.blocks[-1, -2])
+    temp9 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
+    out_.blocks[-1, -2] += complex_gemm_to_real(temp9, a_.blocks[-1, -2], emulate = emulate)
+    temp10 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-2, -1], emulate = emulate)
+    out_.blocks[-2, -1] += complex_gemm_to_real(temp10, a_.blocks[-1, -2], emulate = emulate)
 
 
 class BlockMatrix(dict):
@@ -861,7 +847,8 @@ def bd_matmul_distr(
     start_block: int = 0,
     end_block: int = None,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype = None,
+    emulate: bool = False
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -883,7 +870,9 @@ def bd_matmul_distr(
         This is necessary when the matrices represent open-ended
         systems. The default is False.
     accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
+        The data type of the temporary accumulator matrices. The default is None.
+    emulate : bool, optional
+        Whether to emulated precision. The default is False.
 
     TODO: replace @ by appropriate gemm
 
@@ -988,9 +977,9 @@ def bd_matmul_distr(
                             k_b, j_b = k, j
                         try:
                             if partsum is None:
-                                partsum = complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b])
+                                partsum = complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b], emulate = emulate)
                             else:
-                                partsum += complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b])
+                                partsum += complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b], emulate = emulate)
                         except Exception as e:
                             rank = comm.block.rank if comm.block is not None else 0
                             print(e)
@@ -1012,7 +1001,8 @@ def bd_sandwich_distr(
     start_block: int = 0,
     end_block: int = None,
     spillover_correction: bool = False,
-    accumulator_dtype=xp.complex128,
+    accumulator_dtype = None,
+    emulate: bool = False
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -1034,7 +1024,9 @@ def bd_sandwich_distr(
         This is necessary when the matrices represent open-ended
         systems. The default is False.
     accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
+        The data type of the temporary accumulator matrices. The default is None.
+    emulate : bool, optional
+        Whether to emulated precision. The default is False.
 
     TODO: replace @ by appropriate gemm
 
@@ -1059,6 +1051,7 @@ def bd_sandwich_distr(
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
     b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
+    # TODO: use a more efficient algorithm
     tmp_num_diag = 2 * in_num_diag - 1
     tmp = bd_matmul_distr(
         a_,
@@ -1071,6 +1064,7 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
+        emulate = emulate
     )
     out_ = bd_matmul_distr(
         tmp,
@@ -1083,6 +1077,7 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
+        emulate = emulate
     )
 
     if spillover_correction:
@@ -1093,289 +1088,35 @@ def bd_sandwich_distr(
 
         # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
-            temp1 = complex_gemm_to_real(a_[1, 0], b_[0, 1])
-            temp2 = complex_gemm_to_real(a_[0, 0], b_[1, 0])
-            temp3 = complex_gemm_to_real(a_[1, 0], b_[0, 0])
+            temp1 = complex_gemm_to_real(a_[1, 0], b_[0, 1], emulate = emulate)
+            temp2 = complex_gemm_to_real(a_[0, 0], b_[1, 0], emulate = emulate)
+            temp3 = complex_gemm_to_real(a_[1, 0], b_[0, 0], emulate = emulate)
             out_[0, 0] += (
-                complex_gemm_to_real(temp1, a_[0, 0])
-                + complex_gemm_to_real(temp2, a_[0, 1])
-                + complex_gemm_to_real(temp3, a_[0, 1])
+                complex_gemm_to_real(temp1, a_[0, 0], emulate = emulate)
+                + complex_gemm_to_real(temp2, a_[0, 1], emulate = emulate)
+                + complex_gemm_to_real(temp3, a_[0, 1], emulate = emulate)
             )
-            temp4 = complex_gemm_to_real(a_[1, 0], b_[0, 1])
-            out_[0, 1] += complex_gemm_to_real(temp4, a_[0, 1])
+            temp4 = complex_gemm_to_real(a_[1, 0], b_[0, 1], emulate = emulate)
+            out_[0, 1] += complex_gemm_to_real(temp4, a_[0, 1], emulate = emulate)
             if not out_.dsdbsparse.symmetry:
-                temp5 = complex_gemm_to_real(a_[1, 0], b_[1, 0])
-                out_[1, 0] += complex_gemm_to_real(temp5, a_[0, 1])
+                temp5 = complex_gemm_to_real(a_[1, 0], b_[1, 0], emulate = emulate)
+                out_[1, 0] += complex_gemm_to_real(temp5, a_[0, 1], emulate = emulate)
 
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
             m2 = a.num_blocks - 2
-            temp6 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2])
-            temp7 = complex_gemm_to_real(a_[m1, m1], b_[m2, m1])
-            temp8 = complex_gemm_to_real(a_[m2, m1], b_[m1, m1])
+            temp6 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2], emulate = emulate)
+            temp7 = complex_gemm_to_real(a_[m1, m1], b_[m2, m1], emulate = emulate)
+            temp8 = complex_gemm_to_real(a_[m2, m1], b_[m1, m1], emulate = emulate)
             out_[m1, m1] += (
-                complex_gemm_to_real(temp6, a_[m1, m1])
-                + complex_gemm_to_real(temp7, a_[m1, m2])
-                + complex_gemm_to_real(temp8, a_[m1, m2])
+                complex_gemm_to_real(temp6, a_[m1, m1], emulate = emulate)
+                + complex_gemm_to_real(temp7, a_[m1, m2], emulate = emulate)
+                + complex_gemm_to_real(temp8, a_[m1, m2], emulate = emulate)
             )
-            temp9 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2])
-            out_[m1, m2] += complex_gemm_to_real(temp9, a_[m1, m2])
+            temp9 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2], emulate = emulate)
+            out_[m1, m2] += complex_gemm_to_real(temp9, a_[m1, m2], emulate = emulate)
             if not out_.dsdbsparse.symmetry:
-                temp10 = complex_gemm_to_real(a_[m2, m1], b_[m2, m1])
-                out_[m2, m1] += complex_gemm_to_real(temp10, a_[m1, m2])
+                temp10 = complex_gemm_to_real(a_[m2, m1], b_[m2, m1], emulate = emulate)
+                out_[m2, m1] += complex_gemm_to_real(temp10, a_[m1, m2], emulate = emulate)
 
     return out_
-
-
-
-
-
-
-
-
-
-
-def complex_gemm_to_real_normal(a, b, out=None, alpha=1.0, beta=0.0):
-    """
-    Custom function to perform complex GEMM by separating into real/imaginary parts.
-    
-    Computes: out = alpha * (a @ b) + beta * out
-    
-    For complex matrices A = A_r + i*A_i and B = B_r + i*B_i:
-    - C_r = A_r @ B_r - A_i @ B_i  
-    - C_i = A_r @ B_i + A_i @ B_r
-    
-    This allows using separate sgemm/dgemm calls instead of complex GEMM.
-    
-    Parameters
-    ----------
-    a : array_like
-        Input matrix A (complex)
-    b : array_like  
-        Input matrix B (complex)
-    out : array_like, optional
-        Output matrix C. If None, a new matrix is allocated.
-    alpha : float, optional
-        Scalar multiplier for a @ b. Default is 1.0.
-    beta : float, optional
-        Scalar multiplier for existing out values. Default is 0.0.
-        
-    Returns
-    -------
-    array_like
-        Result of the complex matrix multiplication
-    """
-    # Handle different array backends (numpy/cupy)
-    if hasattr(xp, 'real') and hasattr(xp, 'imag'):
-        # Extract real and imaginary parts
-        a_real = xp.real(a).astype(xp.float32)
-        a_imag = xp.imag(a).astype(xp.float32)
-        b_real = xp.real(b).astype(xp.float32) 
-        b_imag = xp.imag(b).astype(xp.float32)
-        
-        print(a_real.dtype)
-        # Compute real and imaginary parts separately using real GEMM
-        # C_real = A_real @ B_real - A_imag @ B_imag
-        c_real = a_real @ b_real - a_imag @ b_imag
-        
-        # C_imag = A_real @ B_imag + A_imag @ B_real  
-        c_imag = a_real @ b_imag + a_imag @ b_real
-        
-        # Combine back to complex
-        result = c_real + 1j * c_imag
-        # Apply alpha scaling
-        if alpha != 1.0:
-            result = alpha * result
-            
-        # Handle output and beta scaling
-        if out is not None:
-            if beta != 0.0:
-                out[:] = result + beta * out
-            else:
-                out[:] = result
-            return out
-        else:
-            return result
-    else:
-        # Fallback to standard complex multiplication if real/imag not available
-        result = a @ b
-        if alpha != 1.0:
-            result = alpha * result
-        if out is not None:
-            if beta != 0.0:
-                out[:] = result + beta * out
-            else:
-                out[:] = result
-            return out
-        else:
-            return result
-
-
-def real_gemm_high_precision(a, b):
-    """
-    Emulate FP32 matrix multiplication using 6 native BF16 operations.
-    
-    This implements a high-precision algorithm using native BF16 operations:
-    Algorithm based on compensated matrix multiplication.
-    """
-    # Ensure inputs are FP32
-    a_fp32 = a.astype(xp.float32)
-    b_fp32 = b.astype(xp.float32)
-    
-    # Step 1: Primary BF16 computation
-    a_bf16_1 = to_bf16_precision(a_fp32)
-    b_bf16_1 = to_bf16_precision(b_fp32)
-    c1 = a_bf16_1 @ b_bf16_1  # BF16 operation 1
-
-    # Step 2: Compute first-level residuals
-    a_err_1 = a_fp32 - a_bf16_1
-    b_err_1 = b_fp32 - b_bf16_1
-
-    # Step 3: First correction terms
-    a_err_bf16_1 = to_bf16_precision(a_err_1)
-    c2 = a_err_bf16_1 @ b_bf16_1  # BF16 operation 2
-
-    b_err_bf16_1 = to_bf16_precision(b_err_1)
-    c3 = a_bf16_1 @ b_err_bf16_1  # BF16 operation 3
-
-    # Step 4: Cross-error term
-    c4 = a_err_bf16_1 @ b_err_bf16_1  # BF16 operation 4
-
-    # Step 5: Second-level residuals for higher precision
-    a_err_2 = a_err_1 - a_err_bf16_1
-    b_err_2 = b_err_1 - b_err_bf16_1
-
-    # Step 6: Higher-order corrections
-    a_err_bf16_2 = to_bf16_precision(a_err_2)
-    c5 = a_err_bf16_2 @ b_bf16_1  # BF16 operation 5
-
-    b_err_bf16_2 = to_bf16_precision(b_err_2)
-    c6 = a_bf16_1 @ b_err_bf16_2  # BF16 operation 6
-    
-    # Step 7: Combine all results with compensated summation
-    result = c1
-    compensation = xp.zeros_like(result)
-    
-    corrections = [c2, c3, c4, c5, c6]
-    for correction in corrections:
-        y = correction - compensation
-        t = result + y
-        compensation = (t - result) - y
-        result = t
-    
-    return result
-
-def real_gemm_fast(a, b):
-    """
-    Emulate FP32 matrix multiplication using 4 BF16 operations.
-
-    This provides a faster, lower-precision alternative to the 6-operation method.
-    It omits the higher-order correction terms.
-    """
-    # Ensure inputs are FP32
-    a_fp32 = a.astype(xp.float32)
-    b_fp32 = b.astype(xp.float32)
-
-    # Step 1: Primary BF16 computation
-    a_bf16_1 = to_bf16_precision(a_fp32)
-    b_bf16_1 = to_bf16_precision(b_fp32)
-    c1 = a_bf16_1 @ b_bf16_1  # BF16 operation 1
-
-    # Step 2: Compute first-level residuals
-    a_err_1 = a_fp32 - a_bf16_1
-    b_err_1 = b_fp32 - b_bf16_1
-
-    # Step 3: First correction terms
-    a_err_bf16_1 = to_bf16_precision(a_err_1)
-    c2 = a_err_bf16_1 @ b_bf16_1  # BF16 operation 2
-
-    b_err_bf16_1 = to_bf16_precision(b_err_1)
-    c3 = a_bf16_1 @ b_err_bf16_1  # BF16 operation 3
-
-    # Step 4: Cross-error term
-    c4 = a_err_bf16_1 @ b_err_bf16_1  # BF16 operation 4
-
-    # Step 5: Combine results with compensated summation
-    result = c1
-    compensation = xp.zeros_like(result)
-
-    corrections = [c2, c3, c4]
-    for correction in corrections:
-        y = correction - compensation
-        t = result + y
-        compensation = (t - result) - y
-        result = t
-
-    return result
-
-@profiler.profile(level="api")
-def split_fp64_to_fp32(x):
-    """Splits an FP64 array into two FP32 arrays (high and low parts)."""
-    x_high = x.astype(xp.float32)
-    x_low = (x - x_high.astype(xp.float64)).astype(xp.float32)
-    return x_high, x_low
-
-def dgemm_emulated_with_bf16(a, b):
-    """
-    Emulates a double-precision (FP64) GEMM using 24 BF16 operations.
-
-    This is achieved by splitting each FP64 matrix into two FP32 matrices (high and low parts)
-    and then applying the 6-op BF16 emulation to the resulting four FP32 matrix products.
-    """
-    # Split FP64 inputs into high and low FP32 parts
-    a_h, a_l = split_fp64_to_fp32(a)
-    b_h, b_l = split_fp64_to_fp32(b)
-
-    # Emulate the four FP32 products using the 6-op BF16 method
-    p1 = real_gemm_high_precision(a_h, b_h)
-    p2 = real_gemm_high_precision(a_h, b_l)
-    p3 = real_gemm_high_precision(a_l, b_h)
-    p4 = real_gemm_high_precision(a_l, b_l)
-
-    # Combine the results using compensated summation for robust FP64 precision
-    result = p1.astype(xp.float64)
-    compensation = xp.zeros_like(result)
-
-    corrections = [p2.astype(xp.float64), p3.astype(xp.float64), p4.astype(xp.float64)]
-    for correction in corrections:
-        y = correction - compensation
-        t = result + y
-        compensation = (t - result) - y
-        result = t
-
-    return result
-
-def complex_dgemm_emulated_with_bf16(a, b, out=None, alpha=1.0, beta=0.0):
-    """
-    Complex DGEMM emulated with BF16 operations.
-    """
-    # Extract real and imaginary parts as FP64
-    a_real = xp.real(a).astype(xp.float64)
-    a_imag = xp.imag(a).astype(xp.float64)
-    b_real = xp.real(b).astype(xp.float64)
-    b_imag = xp.imag(b).astype(xp.float64)
-
-    # C_real = A_real @ B_real - A_imag @ B_imag
-    term1 = dgemm_emulated_with_bf16(a_real, b_real)
-    term2 = dgemm_emulated_with_bf16(a_imag, b_imag)
-    c_real = term1 - term2
-
-    # C_imag = A_real @ B_imag + A_imag @ B_real
-    term3 = dgemm_emulated_with_bf16(a_real, b_imag)
-    term4 = dgemm_emulated_with_bf16(a_imag, b_real)
-    c_imag = term3 + term4
-
-    # Combine back to complex128
-    result = c_real + 1j * c_imag
-
-    if alpha != 1.0:
-        result = alpha * result
-
-    if out is not None:
-        if beta != 0.0:
-            out[:] = result + beta * out
-        else:
-            out[:] = result
-        return out
-    else:
-        return result

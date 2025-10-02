@@ -1,0 +1,163 @@
+quatrex:
+  compiler: [gcc]
+  network:
+      mpi: cray-mpich@8.1.32 +cuda
+  unify: true
+  specs:
+
+
+
+  views:
+    develop:
+      link: roots
+      exclude: ["quatrex"]
+    default:
+      link: roots
+
+
+
+
+cp2k:
+  # NOTE: In the "cp2k" environment, DLA-Future is not used by CP2K
+  # NOTE: However, DLA-Future is still included in the "cp2k" environment
+  # NOTE: This is to ensure dependencies are the same and module names do not clash
+  compiler:
+  - toolchain: gcc
+    spec: gcc@12.3
+  unify: true
+  specs:
+  - cmake
+  - ninja
+  - cuda@12.4 # Can't be newer than driver version, for DBCSR
+  - openblas threads=openmp
+  - netlib-scalapack
+  - fftw
+  - libxc@7 ~cuda build_system=cmake
+  - spglib
+  - spla
+  - elpa
+  - plumed
+  # libint
+  - libint
+  - eigen@3
+  # pika
+  - pika@0.30.1 malloc=mimalloc
+  - mimalloc
+  - boost
+  - fmt
+  - spdlog
+  - hwloc
+  - whip
+  # Umpire
+  - umpire
+  - blt
+  - camp
+  # DLA-Future
+  - dla-future@0.7.3 +mpi_gpu_aware +mpi_gpu_force_contiguous +scalapack +miniapps
+  - blaspp
+  - lapackpp
+  - dla-future-fortran
+  # DFTD4
+  - dftd4
+  - multicharge
+  - mctc-lib
+  # COSMA
+  - tiled-mm
+  - costa
+  - cosma +gpu_direct
+  # SIRIUS
+  - hdf5
+  - spfft
+  - sirius +elpa ~dlaf +scalapack
+  # CP2K
+  - dbcsr@2.8.0
+  - cp2k@2025.1 +libxc +libint +spglib +cosma +spla +elpa ~dlaf +sirius +plumed +dftd4 lmax=5 build_system=cmake
+  variants:
+    - +mpi
+    - +openmp
+    - +cuda
+    - cuda_arch=90
+    - build_type=Release
+  mpi:
+    spec: cray-mpich@8.1.30
+    gpu: cuda
+  views:
+    develop:
+      link: roots
+      exclude: ["cp2k"]
+    cp2k:
+      link: roots
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  specs:
+  - quatrex@dev
+  - boost +chrono +filesystem +iostreams +mpi +python +regex +serialization +shared +system +timer
+  - cmake
+  - fftw
+  - fmt
+  - gsl
+  - hdf5+cxx+hl+fortran
+  - kokkos +aggressive_vectorization ~alloc_async cuda_arch=90 +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm cxxstd=17 +openmp +pic +serial +shared +tuning +wrapper
+  - kokkos-kernels +blas +cublas +cusparse +cusolver +execspace_cuda +execspace_openmp +execspace_serial +lapack +memspace_cudaspace +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu
+  - kokkos-tools +mpi +papi
+  - netlib-scalapack
+  - lua
+  - libtree
+  - lz4
+  - meson
+  - netcdf-c
+  - netcdf-cxx
+  - netcdf-fortran
+  - ninja
+  - openblas threads=openmp
+  - osu-micro-benchmarks
+  - papi
+  - python
+  - zlib-ng
+  # add GPU-specific packages here, for easier comparison with mc version
+  - nccl
+  - nccl-tests
+  - cuda
+  - xcb-util-cursor
+  - aws-ofi-nccl
+  - superlu
+  variants:
+  - +mpi
+  - +cuda
+  - cuda_arch=90a
+  views:
+    default:
+      link: roots
+      uenv:
+        add_compilers: true
+        prefix_paths:
+          LD_LIBRARY_PATH: [lib, lib64]

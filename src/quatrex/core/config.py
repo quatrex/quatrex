@@ -880,7 +880,7 @@ class MixedPrecisionConfig(BaseModel):
     
     Example configuration:
         [mixed_precision]
-        precision = "mix"
+        precision = "single"
         rgf_mask = "0xFFFFFFFFFFFF0000"
         accumulate_matmul = true
     
@@ -892,7 +892,7 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    precision: Literal["mix"] | None = None
+    precision: Literal["single", "double"] | None = None
     rgf_mask: str | None = None
     emulate_matmul: bool | None = None
 

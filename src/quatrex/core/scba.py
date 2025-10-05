@@ -109,7 +109,7 @@ class SCBAData:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
 
-        self.dtype = xp.complex64 if config.compute.mixed_precision.precision == "mix" else xp.complex128
+        self.dtype = xp.complex64 if config.compute.mixed_precision.precision == "single" else xp.complex128
 
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm

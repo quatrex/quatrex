@@ -288,7 +288,7 @@ class QTBM:
         )
 
         self.observables.electron_charge_orb = xp.zeros(
-            (self.num_orbitals,), dtype=xp.complex128
+            (self.num_orbitals,), dtype=xp.float64
         )
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:

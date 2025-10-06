@@ -72,7 +72,7 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
                 f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
             )
 
-        lattice = lattice_line.split("=")[1].strip('"')
+        lattice = lattice_line.split("=")[1].strip().split('"')[1]
         lattice = np.fromstring(lattice, dtype=np.float64, sep=" ").reshape(3, 3)
         coords = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
         kinds = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)

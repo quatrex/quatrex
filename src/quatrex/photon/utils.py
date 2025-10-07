@@ -9,7 +9,6 @@ import math
 # import scipy.constants import physical_constants
 import warnings
 import scipy.constants as const
-import torch
 
 grid = np.load("grid.npy", mmap_mode="r")
 

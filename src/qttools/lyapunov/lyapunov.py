@@ -73,8 +73,13 @@ class LyapunovMemoizer:
         Whether to reduce the sparsity of the system matrix.
         If sparsity of any obc is changed during runtime, then the cache
         needs to be invalidated.
-    force_memoizing: bool, optionak
-        Force memoizing using q as the initial guess.
+    memoizing_mode: str, optional
+        Possible modes are:
+        - 'auto': (default) automatically decide whether to memoize or
+          recompute based on the recursion error.
+        - 'force': always memoize
+        - 'force-after-first': always memoize after the first call
+        - 'off': never memoize
 
     """
 
@@ -86,7 +91,7 @@ class LyapunovMemoizer:
         memoize_abs_tol: float = 1e-6,
         warning_threshold: float = 1e-5,
         reduce_sparsity: bool = True,
-        force_memoizing: bool = False,
+        memoizing_mode: str = "auto",
     ) -> None:
         """Initializes the memoizer."""
         self.lyapunov_solver = lyapunov_solver
@@ -96,7 +101,7 @@ class LyapunovMemoizer:
         self.warning_threshold = warning_threshold
         self._cache = {}
         self.reduce_sparsity = reduce_sparsity
-        self.force_memoizing = force_memoizing
+        self.memoizing_mode = memoizing_mode
 
         if num_ref_iterations < 2:
             warnings.warn(
@@ -104,6 +109,18 @@ class LyapunovMemoizer:
                 RuntimeWarning,
             )
             self.num_ref_iterations = 2
+
+        assert self.memoizing_mode in [
+            "auto",
+            "force",
+            "force-after-first",
+            "off",
+        ], f"Invalid memoizing mode: {self.memoizing_mode}"
+        if self.memoizing_mode == "off":
+            warnings.warn(
+                "Memoizing mode is set to 'off'. The memoizer will not cache any results.",
+                RuntimeWarning,
+            )
 
     @profiler.profile(level="debug")
     def _call_with_cache(
@@ -172,15 +189,21 @@ class LyapunovMemoizer:
             The solution of the discrete-time Lyapunov equation.
 
         """
+
+        if self.memoizing_mode == "off":
+            return self._call_with_cache(a, q, contact, out=out)
+
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 
-        if x is None:
+        if x is None and self.memoizing_mode in ["auto", "force-after-first"]:
             return self._call_with_cache(a, q, contact, out=out)
+        elif self.memoizing_mode == "force":
+            x = q if x is None else x
 
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
-        if not self.force_memoizing:
+        if self.memoizing_mode == "auto":
 
             # Check for convergence accross all MPI ranks.
             absolute_recursion_errors = xp.linalg.norm(x_ref - x, axis=(-2, -1))

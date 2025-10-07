@@ -63,8 +63,7 @@ obc.r_i = 0.8
 obc.m_0 = 31
 obc.num_quad_points = 31
 
-obc.memoizer.enable = true
-# obc.memoizer.force = true
+obc.memoizer.mode = "auto"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
@@ -92,16 +91,14 @@ obc.m_0 = 32
 obc.num_quad_points = 31
 obc.residual_tolerance = 1e-4
 
-obc.memoizer.enable = true
-# obc.memoizer.force = true
+obc.memoizer.mode = "auto"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
 
-lyapunov.memoizer.enable = true
-# lyapunov.memoizer.force = true
+lyapunov.memoizer.mode = "auto"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6

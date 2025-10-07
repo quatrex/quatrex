@@ -154,6 +154,9 @@ class Device:
         """Initializes a Device object from configuration."""
 
         self.quatrex_config = quatrex_config
+
+        if compute_config is None:
+            compute_config = ComputeConfig()
         self.compute_config = compute_config
 
         self._init_hamiltonian()

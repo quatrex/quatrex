@@ -51,7 +51,11 @@ def test_memoizer(
 
     lyapunov_solver.reduce_sparsity = reduce_sparsity
 
-    lyapunov_solver = LyapunovMemoizer(lyapunov_solver, reduce_sparsity=reduce_sparsity)
+    lyapunov_solver = LyapunovMemoizer(
+        lyapunov_solver,
+        reduce_sparsity=reduce_sparsity,
+        memoizing_mode="force-after-first",
+    )
     x = lyapunov_solver(a, q, "contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
@@ -62,7 +66,5 @@ def test_memoizer(
     a[..., row_slice, col_slice] = 0
     a[..., row_slice, col_slice] = 0
 
-    # do not allow fallback
-    lyapunov_solver.force_memoizing = True
     x = lyapunov_solver(a, q, "contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

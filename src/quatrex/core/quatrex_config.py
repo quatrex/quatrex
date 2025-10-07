@@ -72,8 +72,7 @@ class MemoizerConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enable: bool = False
-    force: bool = False
+    mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
     relative_tol: PositiveFloat = 2e-1

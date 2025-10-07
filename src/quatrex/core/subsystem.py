@@ -7,7 +7,6 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import (
     LyapunovConfig,
@@ -143,14 +142,14 @@ class SubsystemSolver(ABC):
                 f"OBC algorithm '{obc_config.algorithm}' not implemented."
             )
 
-        if obc_config.memoizer.enable:
+        if obc_config.memoizer.mode != "off":
             obc_solver = obc.OBCMemoizer(
                 obc_solver=obc_solver,
                 num_ref_iterations=obc_config.memoizer.num_ref_iterations,
                 memoize_rel_tol=obc_config.memoizer.relative_tol,
                 memoize_abs_tol=obc_config.memoizer.absolute_tol,
                 warning_threshold=obc_config.memoizer.warning_threshold,
-                force_memoizing=obc_config.memoizer.force,
+                memoizing_mode=obc_config.memoizer.mode,
             )
 
         return obc_solver
@@ -191,14 +190,14 @@ class SubsystemSolver(ABC):
                 f"Lyapunov algorithm '{lyapunov_config.algorithm}' not implemented."
             )
 
-        if lyapunov_config.memoizer.enable:
+        if lyapunov_config.memoizer.mode != "off":
             lyapunov_solver = lyapunov.LyapunovMemoizer(
                 lyapunov_solver=lyapunov_solver,
                 num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
                 memoize_rel_tol=lyapunov_config.memoizer.relative_tol,
                 memoize_abs_tol=lyapunov_config.memoizer.absolute_tol,
                 warning_threshold=lyapunov_config.memoizer.warning_threshold,
-                force_memoizing=lyapunov_config.memoizer.force,
+                memoizing_mode=lyapunov_config.memoizer.mode,
                 reduce_sparsity=lyapunov_config.reduce_sparsity,
             )
         return lyapunov_solver

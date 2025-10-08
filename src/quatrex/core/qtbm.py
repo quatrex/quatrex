@@ -15,7 +15,7 @@ from quatrex.core.energies import get_electron_energies
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
 
-preferred_matrix_type = {
+_preferred_matrix_type = {
     "mumps": sparse.coo_matrix,
     "superlu": sparse.csc_matrix,
     "cudss": sparse.csr_matrix,
@@ -37,64 +37,9 @@ def monkhorst_pack(size: tuple[int]) -> NDArray:
         Array of k-points with shape (nx*ny*nz, 3). Each row contains
         the (kx, ky, kz) coordinates of a k-point in reduced units.
 
-
     """
     kpts = np.indices(size).transpose((1, 2, 3, 0)).reshape((-1, 3))
     return (kpts + 0.5) / size - 0.5
-
-
-def compute_slab_vector_x(
-    atom_coords: NDArray, num_slabs: int, orbital_offsets: NDArray, dx: float = 1e-3
-) -> tuple[NDArray, NDArray]:
-    """Computes spatial slabs for current/DOS along the x-direction.
-
-    Divides the device into spatial slabs perpendicular to the x-axis
-    and determines which atoms and orbitals belong to each slab.
-
-    Parameters
-    ----------
-    atom_coords : NDArray
-        Atomic coordinates. The x-coordinates are used for slab
-        assignment.
-    num_slabs : int
-        Number of slabs to create along the x-direction.
-    orbital_offsets : NDArray
-        Cumulative orbital count array. Used to map from atoms to the
-        corresponding orbitals.
-    dx : float, optional
-        Small offset applied to slab boundaries to ensure all atoms are
-        included in exactly one slab, by default 1e-3.
-
-    Returns
-    -------
-    atom_inds : list[np.ndarray]
-        List of arrays, where each array contains indices of atoms in
-        the corresponding slab. Length is `num_slabs`.
-    orbital_inds : list[np.ndarray]
-        List of arrays, where each array contains indices of orbitals in
-        the corresponding slab. Length is `num_slabs`.
-
-    """
-    # Get the min and max x coordinates
-    x_min = atom_coords[:, 0].min()
-    x_max = atom_coords[:, 0].max()
-
-    edges = np.linspace(x_min, x_max, num_slabs + 1, endpoint=True) - 1e-3
-    atom_slab_inds = np.digitize(atom_coords[:, 0], edges) - 1
-    atom_inds = [np.where(atom_slab_inds == i)[0] for i in range(num_slabs)]
-
-    # TODO: A bit clunky to have to recompute the number of orbitals per
-    # atom every time.
-    orbitals_per_atom = np.diff(orbital_offsets)
-    orbital_coords_x = np.repeat(atom_coords[:, 0], orbitals_per_atom, axis=0)
-
-    orbital_slab_inds = np.digitize(orbital_coords_x, edges) - 1
-    # TODO: Orbital indices need to have a new axis for some reason.
-    orbital_inds = [
-        np.where(orbital_slab_inds == i)[0][np.newaxis] for i in range(num_slabs)
-    ]
-
-    return atom_inds, orbital_inds
 
 
 @dataclass
@@ -172,9 +117,6 @@ class QTBM:
     device : Device
         The quantum device object containing Hamiltonian, atomic
         structure, and attached contacts.
-    k : tuple
-        k-point for the calculation as (kx, ky, kz). For gamma-only
-        calculations, this should be (0, 0, 0).
     quatrex_config : QuatrexConfig
         Configuration object containing calculation parameters, energy
         grid, and numerical settings.
@@ -205,30 +147,33 @@ class QTBM:
         device: Device,
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig | None = None,
-        k_grid: tuple = (1, 1, 1),
-        k_shift: tuple = (0, 0, 0),
     ) -> None:
         """Initializes the QTBM solver."""
 
         self.device = device
         self.num_orbitals = device.hamiltonian[0, 0, 0].shape[0]
         self.num_contacts = len(device.contacts)
+
         self.quatrex_config = quatrex_config
-
-        if self.device.gamma_only and k_grid != (1, 1, 1):
-            raise ValueError(
-                "The device only has a Gamma point Hamiltonian, "
-                "but the wavevector is not (0,0,0)."
-            )
-
-        self.k_vector = monkhorst_pack(k_grid)  # The wavevector for the QTBM
-        self.k_vector += k_shift
-        self.num_kpoints = self.k_vector.shape[0]
-
         if compute_config is None:
             compute_config = ComputeConfig()
 
         self.compute_config = compute_config
+
+        kpoint_grid = quatrex_config.device.kpoint_grid
+        if self.device.gamma_only and kpoint_grid != (1, 1, 1):
+            raise ValueError(
+                "The device only has a Gamma point Hamiltonian, "
+                "but more than one k-point is configured."
+            )
+
+        # Generate the Monkhorst-Pack k-point grid.
+        self.kpoints = monkhorst_pack(kpoint_grid)
+        # Shift the k-points.
+        self.kpoints += np.array(quatrex_config.device.kpoint_shift)
+        self.num_kpoints = self.kpoints.shape[0]
+
+        self.max_batch_size = self.quatrex_config.qtbm.max_batch_size
 
         self.observables = Observables()
 
@@ -241,13 +186,6 @@ class QTBM:
 
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
-
-        # CREATE VECTORS FOR EVERY SLAB
-        self.num_slabs_x, self.num_slabs_y = quatrex_config.device.num_slabs
-
-        self.slab_vec_x_at, self.slab_vec_x_orb = compute_slab_vector_x(
-            device.coords, self.num_slabs_x, device.orbital_offsets
-        )
 
         # Look for all the combinations of contacts
         self.num_transmissions = int((self.num_contacts**2 - self.num_contacts))
@@ -279,7 +217,7 @@ class QTBM:
         )
 
         self.solver = self._configure_solver(quatrex_config.electron.solver)
-        self.matrix_type = preferred_matrix_type[
+        self.matrix_type = _preferred_matrix_type[
             quatrex_config.electron.solver.direct_solver
         ]
 
@@ -437,13 +375,13 @@ class QTBM:
         comm.Barrier()
         system_matrix = None  # Initialize the system matrix
 
-        print(self.k_vector)
+        print(self.kpoints)
 
         for k_ind in range(self.num_kpoints):
 
             if comm.rank == 0:
                 print(f"Processing k-point {k_ind+1} of {self.num_kpoints}", flush=True)
-            k = self.k_vector[k_ind, :]
+            k = self.kpoints[k_ind, :]
             print(k)
 
             times.append(time.perf_counter())
@@ -468,13 +406,10 @@ class QTBM:
 
             times.append(time.perf_counter())
 
-            for batch_start in range(
-                0, len(self.local_energies), self.quatrex_config.electron.obc_batch_size
-            ):
+            for batch_start in range(0, len(self.local_energies), self.max_batch_size):
 
                 energy_batch = self.local_energies[
-                    batch_start : batch_start
-                    + self.quatrex_config.electron.obc_batch_size
+                    batch_start : batch_start + self.max_batch_size
                 ]
 
                 if comm.rank == 0:

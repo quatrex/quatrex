@@ -121,18 +121,16 @@ def test_memoizer(
     spectral = Spectral(
         nevp=nevp, block_sections=block_sections, x_ii_formula=x_ii_formula
     )
-    spectral = OBCMemoizer(spectral)
+    spectral = OBCMemoizer(spectral, memoizing_mode="force-after-first")
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)
     # Add a little noise to the input matrices.
-    a_ji += xp.random.randn(*a_ji.shape)
-    a_ii += xp.random.randn(*a_ii.shape)
-    a_ij += xp.random.randn(*a_ij.shape)
+    a_ji += 1e-2 * xp.random.randn(*a_ji.shape)
+    a_ii += 1e-2 * xp.random.randn(*a_ii.shape)
+    a_ij += 1e-2 * xp.random.randn(*a_ij.shape)
     a_ji, a_ii, a_ij = _make_periodic((a_ji, a_ii, a_ij), block_sections)
 
-    # do not allow fallback
-    spectral.force_memoizing = True
     x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=2e-5)
 

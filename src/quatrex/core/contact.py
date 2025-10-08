@@ -636,9 +636,6 @@ class Contact:
                 f"OBC algorithm '{obc_config.algorithm}' not implemented."
             )
 
-        if obc_config.memoizer.enable:
-            raise NotImplementedError("Memoizer for OBC is not implemented.")
-
         return obc_solver
 
     def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
@@ -665,12 +662,12 @@ class Contact:
                 r_i=obc_config.r_i,
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
-                num_threads_contour=nevp_config.nevp.num_threads_contour,
-                eig_compute_location=nevp_config.nevp.eig_compute_location,
-                project_compute_location=nevp_config.nevp.project_compute_location,
-                use_qr=nevp_config.nevp.use_qr,
-                contour_batch_size=nevp_config.nevp.contour_batch_size,
-                use_pinned_memory=nevp_config.nevp.use_pinned_memory,
+                num_threads_contour=nevp_config.num_threads_contour,
+                eig_compute_location=nevp_config.eig_compute_location,
+                project_compute_location=nevp_config.project_compute_location,
+                use_qr=nevp_config.use_qr,
+                contour_batch_size=nevp_config.contour_batch_size,
+                use_pinned_memory=nevp_config.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
 

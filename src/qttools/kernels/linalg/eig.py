@@ -264,6 +264,7 @@ def eig(
     compute_module : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy". The default is "numpy".
+        Can be either "numpy" or "cupy". The default is "numpy".
     output_module : str, optional
         The location where to store the eigenvalues and eigenvectors.
         Can be either "numpy"

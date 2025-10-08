@@ -72,8 +72,13 @@ class OBCMemoizer:
         If either of the tolerances is met, the result is memoized.
     warning_threshold : float, optional
         The threshold for the relative recursion error to issue a warning.
-    force_memoizing: bool, optionak
-        Force memoizing using q as the initial guess.
+    memoizing_mode: str, optional
+        Possible modes are:
+        - 'auto': (default) automatically decide whether to memoize or
+          recompute based on the recursion error.
+        - 'force': always memoize
+        - 'force-after-first': always memoize after the first call
+        - 'off': never memoize
 
     """
 
@@ -84,7 +89,7 @@ class OBCMemoizer:
         memoize_rel_tol: float = 1e-2,
         memoize_abs_tol: float = 1e-8,
         warning_threshold: float = 1e-4,
-        force_memoizing: bool = False,
+        memoizing_mode: str = "auto",
     ) -> None:
         """Initalizes the memoizer."""
         self.obc_solver = obc_solver
@@ -92,7 +97,7 @@ class OBCMemoizer:
         self.memoize_rel_tol = memoize_rel_tol
         self.memoize_abs_tol = memoize_abs_tol
         self.warning_threshold = warning_threshold
-        self.force_memoizing = force_memoizing
+        self.memoizing_mode = memoizing_mode
         self._cache = {}
 
         if num_ref_iterations < 2:
@@ -101,6 +106,18 @@ class OBCMemoizer:
                 RuntimeWarning,
             )
             self.num_ref_iterations = 2
+
+        assert self.memoizing_mode in [
+            "auto",
+            "force",
+            "force-after-first",
+            "off",
+        ], f"Invalid memoizing mode: {self.memoizing_mode}"
+        if self.memoizing_mode == "off":
+            warnings.warn(
+                "Memoizing mode is set to 'off'. The memoizer will not cache any results.",
+                RuntimeWarning,
+            )
 
     @profiler.profile(level="debug")
     def _call_with_cache(
@@ -177,15 +194,20 @@ class OBCMemoizer:
         # TODO: merge with Lyapunov memoizer
         # since there is code duplication
 
+        if self.memoizing_mode == "off":
+            return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
+
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)
 
-        if x_ii is None:
+        if x_ii is None and self.memoizing_mode in ["auto", "force-after-first"]:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
+        elif self.memoizing_mode == "force":
+            x_ii = xp.linalg.inv(a_ii) if x_ii is None else x_ii
 
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        if not self.force_memoizing:
+        if self.memoizing_mode == "auto":
 
             # Check for convergence accross all MPI ranks.
             absolute_recursion_errors = xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))

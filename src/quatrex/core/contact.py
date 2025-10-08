@@ -636,9 +636,6 @@ class Contact:
                 f"OBC algorithm '{obc_config.algorithm}' not implemented."
             )
 
-        if obc_config.memoizer.enable:
-            raise NotImplementedError("Memoizer for OBC is not implemented.")
-
         return obc_solver
 
     def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:

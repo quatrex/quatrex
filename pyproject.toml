@@ -60,7 +60,7 @@ dependencies = [
     ]
 
     [project.urls]
-    Code = "https://github.com/quatrex-dev/quatrex"
+    Code = "https://github.com/quatrex/quatrex"
 
     [project.scripts]
     quatrex = "quatrex.cli:run"

@@ -32,6 +32,15 @@ class SCSPConfig(BaseModel):
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
 
 
+class QTBMConfig(BaseModel):
+    """Options for the quantum transmitting boundary method (QTBM)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The maximum number of energies per batch.
+    max_batch_size: PositiveInt = 10
+
+
 class SCBAConfig(BaseModel):
     """Options for the self-consistent Born approximation."""
 
@@ -168,8 +177,6 @@ class ElectronConfig(BaseModel):
 
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
-
-    obc_batch_size: PositiveInt = 1
 
     fermi_level: float | None = None
     conduction_band_edge: float | None = None
@@ -392,12 +399,14 @@ class DeviceConfig(BaseModel):
 
     num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
 
-    num_slabs: tuple[PositiveInt, PositiveInt] = (1, 1)
+    kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""
         self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
+        self.kpoint_grid = tuple(self.kpoint_grid)
         return self
 
 
@@ -410,6 +419,7 @@ class QuatrexConfig(BaseModel):
     device: DeviceConfig
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
+    qtbm: QTBMConfig = QTBMConfig()
     poisson: PoissonConfig = PoissonConfig()
 
     electron: ElectronConfig

@@ -1,3 +1,9 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
 # Quantum Transport at the Exascale and Beyond :rocket:
 
 Welcome to the documentation for `quatrex`!
@@ -17,6 +23,10 @@ Welcome to the documentation for `quatrex`!
 
     [:octicons-arrow-right-24: Browse the API reference](api/index.md)
 
+</div>
+
+<div class="grid cards" markdown>
+
 - :material-account:{ .lg .middle } **User guide**
 
     ---
@@ -27,6 +37,6 @@ Welcome to the documentation for `quatrex`!
 
     ---
 
-    [:octicons-arrow-right-24: Browse the contributor Guide](contributing/index.md)
+    [:octicons-arrow-right-24: Browse the contributor Guide](contributing.md)
 
 </div>

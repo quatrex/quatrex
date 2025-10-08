@@ -78,8 +78,8 @@ plugins:
           - https://docs.pydantic.dev/latest/objects.inv
   - mkapi:
       exclude:
-        - quatex.cli
-        - quatex.examples
+        - quatrex.cli
+        - quatrex.examples
   # - mkdocs-jupyter:
   #     ignore_h1_titles: True
 
@@ -87,14 +87,25 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting_started/installation.md
+    - Setting up a simulation: getting_started/setup_simulations.md
+    - Running a simulation: getting_started/running_simulations.md
   - User Guide:
     - Overview: user_guide/index.md
     - Introduction: user_guide/introduction.md
     - Methodology: user_guide/methodology.md
+    - Parameters:
+      - Overview: user_guide/parameters/index.md
+      # - Device: user_guide/parameters/device.md
+      # - SCBA: user_guide/parameters/scba.md
+      # - Electrons: user_guide/parameters/electrons.md
+      # - Phonons: user_guide/parameters/phonons.md
+      # - Coulomb Screening: user_guide/parameters/coulomb_screening.md
+      # - OBC: user_guide/parameters/obc.md
+      # - Solver: user_guide/parameters/solver.md
+      # - Computation: user_guide/parameters/compute.md
     - Examples:
       - Carbon Nanotube: user_guide/examples/cnt.md
-    # - Parameters: user_guide/introduction.md
-  - Contributing: contributing/index.md
+  - Contributing: contributing.md
   - API Reference:
     - Overview: api/index.md
     - $api:src/qttools.***

@@ -2,7 +2,9 @@
 
 import numba as nb
 import numpy as np
+import nvmath
 from numba.typed import List
+from nvmath.bindings import cusolverDn
 
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
@@ -108,7 +110,9 @@ def _eig_cupy(
         The eigenvectors.
 
     """
-    if isinstance(A, list):
+    if isinstance(
+        A, list
+    ):  # comment: soon there will be batched geev, so pls replace for loop then.
         w = []
         v = []
         for a in A:
@@ -119,6 +123,124 @@ def _eig_cupy(
         w, v = xp.linalg.eig(A)
 
     return w, v
+
+
+@profiler.profile(level="debug")
+def _eig_nvmath(
+    A: NDArray | List[NDArray],
+) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
+    """Computes the eigenvalues and eigenvectors of multiple matrices.
+
+    Parameters
+    ----------
+    A : NDArray | List[NDArray]
+        The matrices.
+
+    Returns
+    -------
+    NDArray | List[NDArray]
+        The eigenvalues.
+    NDArray | List[NDArray]
+        The eigenvectors.
+
+    """
+    if isinstance(A, list):
+        w = []
+        v = []
+        for a in A:
+            w_, v_ = _eig_nvmath_kernel(a)
+            w.append(w_)
+            v.append(v_)
+    else:
+        # Loading in a batch of matrices:
+        batch_size = A.shape[0]
+        w = xp.zeros((batch_size, A.shape[1]), dtype=xp.complex128)
+        v = xp.zeros((batch_size, A.shape[1], A.shape[1]), dtype=xp.complex128)
+        for i in range(batch_size):
+            w[i, :], v[i, :, :] = _eig_nvmath_kernel(A[i, :, :])
+        # w, v = _eig_nvmath_kernel(A[0, :, :])
+    return w, v
+
+
+@profiler.profile(level="debug")
+def _eig_nvmath_kernel(
+    A: NDArray,
+) -> tuple[NDArray, NDArray]:
+    # Initialize cuSolver handle
+    handle = cusolverDn.create()
+    params = cusolverDn.create_params()
+
+    n = A.shape[0]
+    n_64 = np.int64(n)
+    lda = n_64
+    ldvl = n_64
+    ldvr = n_64
+
+    # Prepare input matrix (copy since xgeev modifies it) We need column major format here!
+    # Comment: I assume xp is cupy here, please check how you want to handle this
+    A_work = xp.asfortranarray(xp.copy(A))
+
+    # Allocate output arrays
+    w_complex = xp.zeros(n, dtype=xp.complex128)
+    vl = xp.zeros(
+        (n, n), dtype=xp.complex128, order="F"
+    )  # Left eigenvectors (not computed)
+    vr = xp.zeros((n, n), dtype=xp.complex128, order="F")  # Right eigenvectors
+    info = xp.zeros(1, dtype=xp.int64)
+
+    yes_vector = nvmath.bindings.cusolver.EigMode.VECTOR
+    no_vector = nvmath.bindings.cusolver.EigMode.NOVECTOR
+
+    # Query workspace size
+    lwork_device, lwork_host = cusolverDn.xgeev_buffer_size(
+        handle,
+        params,
+        no_vector,  # jobvl: don't compute left eigenvectors
+        yes_vector,  # jobvr: compute right eigenvectors
+        n_64,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_a
+        A_work.data.ptr,
+        lda,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_w
+        w_complex.data.ptr,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_vl
+        vl.data.ptr,
+        ldvl,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_vr
+        vr.data.ptr,
+        ldvr,
+        nvmath.CudaDataType.CUDA_C_64F,  # compute_type
+    )
+
+    workspace_device = xp.cuda.alloc(lwork_device)
+    workspace_host = np.empty(lwork_host, dtype=xp.int8)
+    # Compute eigenvalues and eigenvectors
+    cusolverDn.xgeev(
+        handle,
+        params,
+        no_vector,  # jobvl: don't compute left eigenvectors
+        yes_vector,  # jobvr: compute right eigenvectors
+        n_64,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_a
+        A_work.data.ptr,
+        lda,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_w
+        w_complex.data.ptr,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_vl
+        vl.data.ptr,
+        ldvl,
+        nvmath.CudaDataType.CUDA_C_64F,  # data_type_vr
+        vr.data.ptr,
+        ldvr,
+        nvmath.CudaDataType.CUDA_C_64F,  # compute_type
+        workspace_device.ptr,
+        lwork_device,
+        workspace_host.ctypes.data,
+        lwork_host,
+        info.data.ptr,
+    )
+
+    return w_complex, xp.ascontiguousarray(vr)
 
 
 @profiler.profile(level="api")
@@ -145,6 +267,7 @@ def eig(
         The matrices.
     compute_module : str, optional
         The location where to compute the eigenvalues and eigenvectors.
+        Can be either "numpy" or "cupy". The default is "numpy".
         Can be either "numpy" or "cupy". The default is "numpy".
     output_module : str, optional
         The location where to store the eigenvalues and eigenvectors.
@@ -174,8 +297,9 @@ def eig(
     if output_module is None:
         output_module = input_module
 
-    if compute_module == "cupy" and hasattr(xp.linalg, "eig") is False:
-        raise ValueError("Eig is not available in cupy.")
+    # see comment below (of course nvmath doesn't call it "eig")
+    # if compute_module == "cupy" and hasattr(xp.linalg, "eig") is False:
+    #     raise ValueError("Eig is not available in cupy.")
 
     if xp.__name__ == "numpy" and (
         compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
@@ -191,7 +315,12 @@ def eig(
         A = get_any_location(A, compute_module, use_pinned_memory=use_pinned_memory)
 
     if compute_module == "cupy":
-        w, v = _eig_cupy(A)
+        """comment: You seem to use "cupy" to mean "in GPU memory" when calling get_any_location,
+        and to use the cupy module when running eig so
+          i let you decide how you want to handle this situation.
+        """
+        # w, v = _eig_cupy(A)
+        w, v = _eig_nvmath(A)
     elif compute_module == "numpy":
         w, v = _eig_numpy(A)
 

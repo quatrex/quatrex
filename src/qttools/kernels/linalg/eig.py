@@ -152,10 +152,14 @@ def _eig_nvmath(
             w.append(w_)
             v.append(v_)
     else:
-        # Single matrix case
-        w, v = _eig_nvmath_kernel(A[0, :, :])
-
-    return w[xp.newaxis, :], v[xp.newaxis, :, :]
+        # Loading in a batch of matrices:
+        batch_size = A.shape[0]
+        w = xp.zeros((batch_size, A.shape[1]), dtype=xp.complex128)
+        v = xp.zeros((batch_size, A.shape[1], A.shape[1]), dtype=xp.complex128)
+        for i in range(batch_size):
+            w[i, :], v[i, :, :] = _eig_nvmath_kernel(A[i, :, :])
+        # w, v = _eig_nvmath_kernel(A[0, :, :])
+    return w, v
 
 
 @profiler.profile(level="debug")

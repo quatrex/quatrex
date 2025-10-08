@@ -78,10 +78,6 @@ class Observables:
         Position-resolved density of states with shape (n_contacts,
         n_slabs, n_energies). Provides spatial distribution of DOS for
         each injection contact.
-    valence_band_edges : NDArray, optional
-        Valence band edge energies with shape (n_atoms,).
-    conduction_band_edges : NDArray, optional
-        Conduction band edge energies with shape (n_atoms,).
     excess_charge_density : NDArray, optional
         Excess charge density distribution with shape (n_atoms,).
 
@@ -103,10 +99,8 @@ class Observables:
     electron_charge_orb: NDArray = None
     electron_charge_at: NDArray = None
 
-    valence_band_edges: NDArray = None
-    conduction_band_edges: NDArray = None
-
-    excess_charge_density: NDArray = None
+    hole_charge_orb: NDArray = None
+    hole_charge_at: NDArray = None
 
 
 class QTBM:
@@ -140,6 +134,8 @@ class QTBM:
         Full energy grid for the calculation.
     local_energies : NDArray
         Local portion of energy grid for MPI parallelization.
+    neutrality_level : float
+        Charge neutrality level for the device.
     """
 
     def __init__(
@@ -228,6 +224,24 @@ class QTBM:
         self.observables.electron_charge_orb = xp.zeros(
             (self.num_orbitals,), dtype=xp.float64
         )
+
+        self.observables.hole_charge_orb = xp.zeros(
+            (self.num_orbitals,), dtype=xp.float64
+        )
+
+        if (
+            self.quatrex_config.electron.conduction_band_edge is None
+            or self.quatrex_config.electron.valence_band_edge is None
+        ):
+            print(
+                "WARNING: No band edges provided, only electron charge will be computed."
+            )
+            self.neutrality_level = -np.inf
+        else:
+            self.neutrality_level = 0.5 * (
+                self.quatrex_config.electron.conduction_band_edge
+                + self.quatrex_config.electron.valence_band_edge
+            )
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
@@ -612,7 +626,7 @@ class QTBM:
                 self.quatrex_config.electron.temperature,
             )
 
-            self.observables.electron_current["contact_current"][n_t] = (
+            self.observables.electron_current["contact_current"][n_t] = -(
                 xp.sum(
                     xp.trapz(
                         Fermi_factor
@@ -625,12 +639,13 @@ class QTBM:
                 * 7.7480917310e-5
             )
 
-        # Compute the orbital charge density per orbital
+        # Compute the orbital electron charge density per orbital
         for n in range(self.num_contacts):
             Fermi_factor = fermi_dirac(
                 self.electron_energies - self.device.contacts[n].fermi_level,
                 self.quatrex_config.electron.temperature,
             )
+            Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
             self.observables.electron_charge_orb += (
                 2
                 * xp.sum(
@@ -644,9 +659,37 @@ class QTBM:
                 / self.num_kpoints
             )
 
+        # Compute the orbital hole charge density per orbital
+        for n in range(self.num_contacts):
+            Fermi_factor = fermi_dirac(
+                self.electron_energies - self.device.contacts[n].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+            Fermi_factor[self.electron_energies > self.neutrality_level] = 1
+            self.observables.hole_charge_orb += (
+                2
+                * xp.sum(
+                    xp.trapz(
+                        self.observables.electron_dos_orb[:, n, :, :]
+                        * (1 - Fermi_factor),
+                        self.electron_energies,
+                        axis=2,
+                    ),
+                    axis=0,
+                )
+                / self.num_kpoints
+            )
+
         self.observables.electron_charge_at = xp.zeros(
             self.device.orbital_offsets.shape[0] - 1
         )
         self.observables.electron_charge_at = xp.add.reduceat(
             self.observables.electron_charge_orb, self.device.orbital_offsets[:-1]
+        )
+
+        self.observables.hole_charge_at = xp.zeros(
+            self.device.orbital_offsets.shape[0] - 1
+        )
+        self.observables.hole_charge_at = xp.add.reduceat(
+            self.observables.hole_charge_orb, self.device.orbital_offsets[:-1]
         )

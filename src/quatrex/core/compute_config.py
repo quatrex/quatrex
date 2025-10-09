@@ -25,7 +25,7 @@ class LyapunovConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
     use_pinned_memory: bool = True
 
 
@@ -34,7 +34,7 @@ class NEVPConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
 
     # Parameters for contour NEVP solvers.
     project_compute_location: Literal["numpy", "cupy"] = "numpy"

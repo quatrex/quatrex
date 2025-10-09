@@ -61,18 +61,19 @@ def _compute_pair_sparsity_pattern(
     return dense_pair
 
 
-#    pair_cols = []
-#    pair_rows = []
-#    for i, a in enumerate(row):
-#        b = col[i]
-#        for j, c in enumerate(row):
-#            d = col[j]
-#            if (dense[a, c] != 0) and (dense[b, d] != 0):
-#                #dense_pair[i,j] = True
-#                pair_cols.append(i)
-#                pair_rows.append(j)
-#    rows, cols = xp.array(pair_rows), xp.array(pair_cols)
-#    return sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
+    # pair_cols = []
+    # pair_rows = []
+    # for i, a in enumerate(row):
+    #     b = col[i]
+    #     for j, c in enumerate(row):
+    #         d = col[j]
+    #         if (dense[a, c] != 0) and (dense[b, d] != 0):
+    #             #dense_pair[i,j] = True
+    #             pair_cols.append(i)
+    #             pair_rows.append(j)
+    # pair_rows, pair_cols = xp.array(pair_rows), xp.array(pair_cols)
+    # return sparse.coo_matrix((xp.ones_like(pair_rows, dtype=xp.float32), 
+    #                           (pair_rows, pair_cols)))
 
 
 @time_range()
@@ -350,7 +351,7 @@ class BSESolver:
         sparsity_pattern: sparse,
         electron_energies: NDArray,
         exciton_energies: NDArray,
-        ordering: str = "normal",
+        ordering: str = "block",
     ) -> None:
         if comm.rank == 0:
             print("=========================================================", flush=True)
@@ -408,7 +409,7 @@ class BSESolver:
             )
             if comm.rank == 0:
                 print(
-                    "  Begin compute 2-particle sparsity pattern...",
+                    "  Computes 2-particle sparsity pattern...",
                     flush=True,
                 )
             coo = _compute_pair_sparsity_pattern(
@@ -416,8 +417,8 @@ class BSESolver:
                 get_host(self.permuted_sparsity.col),
                 get_host(lut),
             )
-            coo = sparse.coo_matrix(get_device(coo))
-            self.pair_sparsity_bta = coo
+            coo = sps.coo_matrix(coo)            
+            self.pair_sparsity_bta = sparse.coo_matrix(coo)
             self.inverse_table_bta = lut
         #
         # to store the indexing of sparsity.data in a coo-matrix as item (i,j) for fast elementwise access
@@ -440,7 +441,7 @@ class BSESolver:
         self.totalsize = int(self.blocksize) * int(self.num_blocks) # total size of the block matrix L with padding
 
         if comm.rank == 0:
-            print("  +--------------- Normal ordering ---------------+ ")
+            print("  +--------------- Block ordering ---------------+ ")
             print("  + compressed 2-particle matrix size =", self.totalsize, flush=True)
             print("  + bandwidth=", bandwidth, flush=True)
             print("  + block size=", self.blocksize, flush=True)
@@ -475,15 +476,16 @@ class BSESolver:
             if comm.rank == 0:
                 print("  +--------------- BTA ordering ------------------+ ")
                 print(
-                    "  + compressed Two-particle matrix size =",
+                    "  + compressed 2-particle matrix size =",
                     self.bta_totalsize,
                     flush=True,
                 )
-                print("  + total arrow size=", self.arrowsize, flush=True)
+                print("  + total size=", self.bta_totalsize, flush=True)
+                print("  + arrow size=", self.arrowsize, flush=True)
                 print("  + arrow bandwidth=", self.arrow_bandwidth, flush=True)
                 print("  + arrow block size=", self.arrow_blocksize, flush=True)
                 print("  + arrow number of blocks=", self.arrow_num_blocks, flush=True)
-                print("  + tip block size=", self.tipsize, flush=True)
+                print("  + tip size=", self.tipsize, flush=True)
                 print("  + nonzero elements=", self.nnz / 1e6, " Million", flush=True)
                 print(
                     "  + nonzero ratio = ",
@@ -524,7 +526,7 @@ class BSESolver:
         inz_batchsize: int = 4,
     ):
         if comm.rank == 0:
-            print("  Calculating L0 distributed...", flush=True)
+            print("  Calculating L0 distributedly...", flush=True)
         start_time = time.time()
         self.g_lesser = GL
         self.g_greater = GG
@@ -808,7 +810,7 @@ class BSESolver:
                     L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
                 )
 
-        self.L0_r.data = (self.L0_greater.data - self.L0_lesser.data) / 2
+        self._calc_L0_retarded()
 
         finish_time = time.time()
         print(
@@ -875,6 +877,8 @@ class BSESolver:
         self.L0_lesser._data[
             xp.ix_(self.L0_lesser._stack_padding_mask, range(start_inz, end_inz))
         ] = L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
+
+        self._calc_L0_retarded()
 
         # transpose to stack distribution
         self.L0_lesser.dtranspose()
@@ -1257,7 +1261,10 @@ class BSESolver:
 
     @time_range()
     def _densesolve_L_interacting(self, return_P3=False, return_L=False):
-        """mostly only for debugging purpose as reference solution"""
+        """Method mostly only for testing purpose as reference solution"""
+
+        start_time = time.time()
+
         if comm.rank == 0:
             print(" Solve sparse BSE with dense inverse ...", flush=True)
 
@@ -1272,18 +1279,24 @@ class BSESolver:
 
         if return_L:
             L = xp.zeros(
-                (local_nen, self.size, self.size),
-                dtype=self.L0_lesser_bta.dtype,
+                (self.size, self.size, local_nen),
+                dtype=self.L0_r.dtype,
             )
 
         if return_P3:
             P3 = xp.zeros(
-                (local_nen, self.tipsize, self.tipsize, self.tipsize),
-                dtype=self.L0_lesser.dtype,
+                (self.tipsize, self.tipsize, self.tipsize, local_nen),
+                dtype=self.L0_r.dtype,
             )
         else:
             P2 = xp.zeros(
-                (local_nen, self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
+                (self.tipsize, self.tipsize, local_nen), dtype=self.L0_r.dtype
+            )
+            P2_lesser = xp.zeros(
+                (self.tipsize, self.tipsize, local_nen), dtype=self.L0_lesser.dtype
+            )
+            P2_greater = xp.zeros(
+                (self.tipsize, self.tipsize, local_nen), dtype=self.L0_greater.dtype
             )
 
         with time_range("dense solve", color_id=comm.rank):
@@ -1309,23 +1322,23 @@ class BSESolver:
                 invA = xp.linalg.inv(A.todense())
 
                 # multiply RHS
-                A = invA @ L0.tocsc()
+                A = invA @ L0.tocsc()                
 
                 if return_L:
                     # compute the row and col in the BTA ordering
 
-                    perm_rows = self.inverse_table_bta[
+                    perm_rows = self.inverse_table[
                         self.sparsity.row[self.L0_lesser.rows],
                         self.sparsity.col[self.L0_lesser.rows],
                     ]
-                    perm_cols = self.inverse_table_bta[
+                    perm_cols = self.inverse_table[
                         self.sparsity.row[self.L0_lesser.cols],
                         self.sparsity.col[self.L0_lesser.cols],
                     ]
 
-                    L[ie, perm_rows, perm_cols] = A[
+                    L[perm_rows, perm_cols, ie] = A[
                         self.L0_lesser.rows, self.L0_lesser.cols
-                    ]
+                    ]                                           
 
                 if return_P3:
                     # 3-tensor polarization including the vertex $P3(123) = G(14) G(52) Gamma(453)$
@@ -1334,14 +1347,55 @@ class BSESolver:
                         for col in range(self.size):
                             j = self.sparsity.row[col]
                             k = self.sparsity.col[col]
-                            P3[ie, i, j, k] = A[row, col]
+                            P3[i, j, k, ie] = A[row, col]
                 else:
                     # polarization including the vertex $P2(13) = P3(113)$
                     for i in range(self.num_sites):
                         row = self.inverse_table[i, i]
                         for j in range(self.num_sites):
                             col = self.inverse_table[j, j]
-                            P2[ie, i, j] = -1j * A[row, col]
+                            P2[i, j, ie] = -1j * A[row, col]
+
+                # lesser 
+                data = self.L0_lesser.data[ie]
+                coords = (self.L0_lesser.rows, self.L0_lesser.cols)
+
+                L0 = sparse.coo_matrix(
+                    (data, coords), shape=(self.size, self.size)
+                ).tocsc()
+
+                A = invA @ L0 @ invA.T.conj()        
+
+                for i in range(self.num_sites):
+                    row = self.inverse_table[i, i]
+                    for j in range(self.num_sites):
+                        col = self.inverse_table[j, j]
+                        P2_lesser[i, j, ie] = -1j * A[row, col]      
+                # greater
+                data = self.L0_greater.data[ie]
+                coords = (self.L0_greater.rows, self.L0_greater.cols)
+
+                L0 = sparse.coo_matrix(
+                    (data, coords), shape=(self.size, self.size)
+                ).tocsc()
+
+                A = invA @ L0 @ invA.T.conj()        
+
+                for i in range(self.num_sites):
+                    row = self.inverse_table[i, i]
+                    for j in range(self.num_sites):
+                        col = self.inverse_table[j, j]
+                        P2_greater[i, j, ie] = -1j * A[row, col]              
+
+        finish_time = time.time()
+        print(
+            " rank ",
+            comm.rank,
+            "solve time=",
+            finish_time - start_time,
+            flush=True,
+        )
+
         if return_L:
             return L
 
@@ -1349,13 +1403,15 @@ class BSESolver:
             return P3
         
         else:
-            return P2
+            return P2, P2_lesser, P2_greater
 
     @time_range()
-    def _calc_L0_retarded(self): ...
+    def _calc_L0_retarded(self): 
+        self.L0_r.data = 1j * xp.imag(self.L0_greater.data - self.L0_lesser.data) / 2
 
     @time_range()
-    def _calc_L0_retarded_bta(self): ...
+    def _calc_L0_retarded_bta(self): 
+        self.L0_r_bta.data = 1j * xp.imag(self.L0_greater_bta.data - self.L0_lesser_bta.data) / 2
 
     @time_range()
     def _solve_L_interacting_BTA(
@@ -1410,6 +1466,12 @@ class BSESolver:
         local_nen = self.L0_r_bta.stack_shape[0]
         P2 = xp.zeros(
             (self.tipsize, self.tipsize, local_nen), dtype=self.L0_r_bta.dtype
+        )
+        P2_lesser = xp.zeros(
+            (self.tipsize, self.tipsize, local_nen), dtype=self.L0_lesser_bta.dtype
+        )
+        P2_greater = xp.zeros(
+            (self.tipsize, self.tipsize, local_nen), dtype=self.L0_greater_bta.dtype
         )
 
         # P3 = xp.zeros(
@@ -1527,13 +1589,98 @@ class BSESolver:
                         )
                         @ self.L0_r_bta.stack[ie].blocks[k + 1, 0]
                     )
-                # for row in range(self.tipsize):
-                #     for col in range(self.tipsize):
-                #         i = self.table[0, row]
-                #         j = self.table[0, col]
+                
 
                 reorder = self.permuted_sparsity.row[: self.tipsize]
                 P2[reorder[:, None], reorder, ie] = tmp[:, :]
+
+                # lesser
+                with time_range("extract P lesser", color_id=comm.rank):
+                    tmp = (
+                        -1j
+                        * xp.transpose(xp.flip(X_arrow_tip_block_serinv))
+                        @ self.L0_lesser_bta.stack[ie].blocks[0, 0]
+                        @ xp.transpose(xp.flip(X_arrow_tip_block_serinv.T.conj()))
+                    )
+                    for k in range(self.arrow_num_blocks):
+                        tmp += (
+                            -1j
+                            * xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
+                            )
+                            @ self.L0_lesser_bta.stack[ie].blocks[k + 1, k + 1]
+                            @ xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :].T.conj())
+                            )
+                        )
+                        if k < self.arrow_num_blocks - 1:                            
+                            tmp += (
+                                -1j
+                                * xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
+                                )
+                                @ self.L0_lesser_bta.stack[ie].blocks[k + 1, k + 2]
+                                @ xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 2, :, :].T.conj())
+                                )
+                            )
+                            tmp += (
+                                -1j
+                                * xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 2, :, :])
+                                )
+                                @ self.L0_lesser_bta.stack[ie].blocks[k + 2, k + 1]
+                                @ xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :].T.conj())
+                                )
+                            )
+                                        
+                reorder = self.permuted_sparsity.row[: self.tipsize]
+                P2_lesser[reorder[:, None], reorder, ie] = tmp[:, :]
+
+                # greater
+                with time_range("extract P greater", color_id=comm.rank):
+                    tmp = (
+                        -1j
+                        * xp.transpose(xp.flip(X_arrow_tip_block_serinv))
+                        @ self.L0_greater_bta.stack[ie].blocks[0, 0]
+                        @ xp.transpose(xp.flip(X_arrow_tip_block_serinv.T.conj()))
+                    )
+                    for k in range(self.arrow_num_blocks):
+                        tmp += (
+                            -1j
+                            * xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
+                            )
+                            @ self.L0_greater_bta.stack[ie].blocks[k + 1, k + 1]
+                            @ xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :].T.conj())
+                            )
+                        )
+                        if k < self.arrow_num_blocks - 1:                            
+                            tmp += (
+                                -1j
+                                * xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
+                                )
+                                @ self.L0_greater_bta.stack[ie].blocks[k + 1, k + 2]
+                                @ xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 2, :, :].T.conj())
+                                )
+                            )
+                            tmp += (
+                                -1j
+                                * xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 2, :, :])
+                                )
+                                @ self.L0_greater_bta.stack[ie].blocks[k + 2, k + 1]
+                                @ xp.transpose(
+                                    xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :].T.conj())
+                                )
+                            )
+                                        
+                reorder = self.permuted_sparsity.row[: self.tipsize]
+                P2_greater[reorder[:, None], reorder, ie] = tmp[:, :]
 
                 # extract Gamma from upper-arrow block of L = A^{-1} @ L0, and Gamma_ijk := L_iijk
                 # L_01 = A_00 @ L0_01 + A_01 @ L0_11
@@ -1591,4 +1738,4 @@ class BSESolver:
             finish_time - start_time,
             flush=True,
         )
-        return P2
+        return P2, P2_lesser, P2_greater

@@ -22,7 +22,7 @@ class Spectral(LyapunovSolver):
         The threshold for the relative recursion error to issue a warning.
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "numpy" or "cupy". Only relevant if cupy is used.
+        Can be either "numpy" or "cupy" or "nvmath".
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix.
     use_pinned_memory : bool, optional

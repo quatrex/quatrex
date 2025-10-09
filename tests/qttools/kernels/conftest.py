@@ -67,6 +67,12 @@ COMPUTE_MODULE = [
     pytest.param("cupy", id="cupy"),
 ]
 
+EIG_COMPUTE_MODULE = [
+    pytest.param("numpy", id="numpy"),
+    pytest.param("cupy", id="cupy"),
+    pytest.param("nvmath", id="nvmath"),
+]
+
 OUTPUT_MODULE = [
     pytest.param("numpy", id="numpy"),
     pytest.param("cupy", id="cupy"),
@@ -150,6 +156,11 @@ def full_matrices(request: pytest.FixtureRequest):
 
 @pytest.fixture(params=COMPUTE_MODULE)
 def compute_module(request: pytest.FixtureRequest):
+    return request.param
+
+
+@pytest.fixture(params=EIG_COMPUTE_MODULE)
+def eig_compute_module(request: pytest.FixtureRequest):
     return request.param
 
 

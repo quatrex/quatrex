@@ -48,12 +48,11 @@ class Beyn(NEVP):
         Only relevant for GPU computations.
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "numpy" or "cupy". Only relevant if cupy is used.
+        Can be either "numpy" or "cupy" or "nvmath".
     project_compute_location : str, optional
         The location where to compute the singular value
         or qr decomposition for the projector.
-        Can be either "numpy" or "cupy". Only relevant if cupy is
-        used.
+        Can be either "numpy" or "cupy".
     use_qr : bool, optional
         Whether to use QR decomposition for the projector instead of SVD.
         Default is `False`.

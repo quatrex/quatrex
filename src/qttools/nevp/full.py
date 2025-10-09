@@ -28,8 +28,7 @@ class Full(NEVP):
     ----------
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
-        Can be either "numpy" or "cupy". Only relevant if cupy is used.
-        The default is "numpy".
+        Can be either "numpy" or "cupy" or "nvmath".
     use_pinned_memory : bool, optional
         Whether to use pinnend memory if cupy is used.
         Default is `True`.

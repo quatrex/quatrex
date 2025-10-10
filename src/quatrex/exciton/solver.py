@@ -30,35 +30,53 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 
 from quatrex.exciton.response.polarization import correlate, kron_correlate
+from quatrex.exciton.response.pair_interactions import compute_pair_sparsity_pattern
 
 
 GPU_AWARE = False
 
+@nb.njit(fastmath=True)
+def _determine_block_sizes_tridiagonalblocked(row,col):
+    block_size = 1
+    for i,j in zip(row, col):
+        if j > (i // block_size) * block_size + block_size * 2 or j < (i // block_size) * block_size - block_size * 2:
+            block_size = int(np.ceil(abs(j - (i // block_size) * block_size) / 2))
+    return block_size
 
-@nb.njit(parallel=True, fastmath=True)
-def _compute_pair_sparsity_pattern(
-    row: np.ndarray, col: np.ndarray, dense: np.ndarray
-) -> np.ndarray:
-    """Computes the sparsity pattern for a pair-interaction matrix A(a,b,c,d) flattened
-    into a COO matrix by combining first two and last two index.
+@nb.njit(fastmath=True)
+def _determine_block_sizes_TBA(row,col,tip_size):
+    block_size = 1    
+    for i,j in zip(row-tip_size, col-tip_size):
+        if i >= 0 and j >= 0:
+            if j > (i // block_size) * block_size + block_size * 2 or j < (i // block_size) * block_size - block_size * 2:
+                block_size = int(np.ceil(abs(j - (i // block_size) * block_size) / 2))
+    return block_size
 
-    Parameters
-    ----------
-    sparsity : sparse.coo_matrix
-        The sparsity pattern of interaction matrix.
 
-    Returns
-    -------
-    NDArray
-        The pair-interaction operator sparsity pattern.
+# @nb.njit(parallel=True, fastmath=True)
+# def _compute_pair_sparsity_pattern(
+#     row: np.ndarray, col: np.ndarray, dense: np.ndarray
+# ) -> np.ndarray:
+#     """Computes the sparsity pattern for a pair-interaction matrix A(a,b,c,d) flattened
+#     into a COO matrix by combining first two and last two index.
 
-    """
-    nnz = row.shape[0]
-    dense_pair = np.zeros((nnz, nnz), dtype=np.bool)
-    for i, (a, b) in enumerate(zip(row, col)):
-        for j, (c, d) in enumerate(zip(row, col)):
-            dense_pair[i, j] = (dense[a, c] != 0) and (dense[b, d] != 0)
-    return dense_pair
+#     Parameters
+#     ----------
+#     sparsity : sparse.coo_matrix
+#         The sparsity pattern of interaction matrix.
+
+#     Returns
+#     -------
+#     NDArray
+#         The pair-interaction operator sparsity pattern.
+
+#     """
+#     nnz = row.shape[0]
+#     dense_pair = np.zeros((nnz, nnz), dtype=np.bool)
+#     for i, (a, b) in enumerate(zip(row, col)):
+#         for j, (c, d) in enumerate(zip(row, col)):
+#             dense_pair[i, j] += (dense[a, c] != 0) and (dense[b, d] != 0)
+#     return dense_pair
 
 
     # pair_cols = []
@@ -352,7 +370,9 @@ class BSESolver:
         electron_energies: NDArray,
         exciton_energies: NDArray,
         ordering: str = "block",
+        dtype = xp.complex128
     ) -> None:
+        self.dtype = dtype
         if comm.rank == 0:
             print("=========================================================", flush=True)
             print(" Initializing BSE solver...", flush=True)
@@ -366,10 +386,9 @@ class BSESolver:
         num_sites = sparsity_pattern.shape[0]
         self.num_sites = num_sites
         self.sparsity = sparsity_pattern.tocoo()
-        self.cutoff = max(abs(self.sparsity.col - self.sparsity.row)) + 1
+        self.cutoff = max(abs(self.sparsity.col - self.sparsity.row)) 
         if comm.rank == 0:
-            print(f"  1-particle matrix NNZ ={self.sparsity.nnz}", flush=True)
-            print(f"  1-particle matrix bandwidth ={self.cutoff}", flush=True)
+            print(f"  1-particle matrix NNZ ={self.sparsity.nnz}", flush=True)            
         self.ordering = ordering
         # The sparsity pattern of the two-particle GF.
         self._pair_sparsity()
@@ -377,16 +396,22 @@ class BSESolver:
         if comm.rank == 0:
             print("=========================================================", flush=True)
 
+    
+
     # preprocessing the sparsity pattern and decide the block_size and
     # num_blocks in the BTA matrix
     @time_range()
     def _pair_sparsity(self):
         """Computes the sparsity pattern of pair interactions and the block-size."""
         if comm.rank == 0:
-            print("  1-particle matrix size (N) =", self.num_sites, flush=True)
+            print("  1-particle DoF (N) =", self.num_sites, flush=True)
             print(
-                "  2-particle matrix size (N^2) =", self.num_sites**2, flush=True
+                "  2-particle DoF (N^2) =", self.num_sites**2, flush=True
             )
+            print(
+                    " Computing 2-particle matrix sparsity pattern...",
+                    flush=True,
+                )
         if self.ordering == "arrowhead":
             # permute the sparsity pattern to allow arrowhead ordering of the pair-interaction matrix
             coo = self.sparsity.copy()
@@ -403,16 +428,12 @@ class BSESolver:
             coo.col = col
             self.permuted_sparsity = coo
             # construct a lookup table of reordered indices matrix
-            lut = xp.zeros((self.num_sites, self.num_sites), dtype=np.int32)            
+            lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.uint32)            
             lut[self.permuted_sparsity.row, self.permuted_sparsity.col] = range(
                 len(self.permuted_sparsity.row)
             )
-            if comm.rank == 0:
-                print(
-                    "  Computes 2-particle sparsity pattern...",
-                    flush=True,
-                )
-            coo = _compute_pair_sparsity_pattern(
+                
+            coo = compute_pair_sparsity_pattern(
                 get_host(self.permuted_sparsity.row),
                 get_host(self.permuted_sparsity.col),
                 get_host(lut),
@@ -422,21 +443,24 @@ class BSESolver:
             self.inverse_table_bta = lut
         #
         # to store the indexing of sparsity.data in a coo-matrix as item (i,j) for fast elementwise access
-        lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.int32)
+        lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.uint32)
         lut[self.sparsity.row, self.sparsity.col] = range(len(self.sparsity.row))
         
-        coo = _compute_pair_sparsity_pattern(
-            get_host(self.sparsity.row), get_host(self.sparsity.col), get_host(lut)
-        )
-        coo = sparse.coo_matrix(get_device(coo))
+        coo = compute_pair_sparsity_pattern(
+            get_host(self.sparsity.row), 
+            get_host(self.sparsity.col), 
+            get_host(lut)
+        )         
+        coo = sps.coo_matrix(coo)    
+        coo = sparse.coo_matrix(coo)
+        self.blocksize = _determine_block_sizes_tridiagonalblocked(coo.row.get(), coo.col.get()) # block size of the matrix
         self.pair_sparsity = coo
         self.inverse_table = lut        
         self.nnz = len(coo.row)
         self.size = len(self.sparsity.row)  # size of the pair-interaction matrix
 
-        bandwidth = max(self.pair_sparsity.col - self.pair_sparsity.row) + 1
-        self.pair_bandwidth = bandwidth
-        self.blocksize = bandwidth
+        bandwidth = max(abs(self.pair_sparsity.col - self.pair_sparsity.row)) + 1
+        self.pair_bandwidth = bandwidth        
         self.num_blocks = int(np.ceil(self.size / self.blocksize))
         self.totalsize = int(self.blocksize) * int(self.num_blocks) # total size of the block matrix L with padding
 
@@ -465,12 +489,16 @@ class BSESolver:
                 )
                 + 1
             )
-            self.arrow_blocksize = self.arrow_bandwidth
+            self.tipsize = self.num_sites
+
+            self.arrow_blocksize = _determine_block_sizes_TBA(self.pair_sparsity_bta.row.get(),
+                                                              self.pair_sparsity_bta.col.get(),
+                                                              self.tipsize)
             self.arrow_num_blocks = int(
                 np.ceil((self.size - self.num_sites) / self.arrow_blocksize)
             )
             self.arrowsize = int(self.arrow_blocksize) * int(self.arrow_num_blocks)
-            self.tipsize = self.num_sites
+            
             self.bta_totalsize = self.arrowsize + self.tipsize
 
             if comm.rank == 0:
@@ -479,8 +507,7 @@ class BSESolver:
                     "  + compressed 2-particle matrix size =",
                     self.bta_totalsize,
                     flush=True,
-                )
-                print("  + total size=", self.bta_totalsize, flush=True)
+                )                
                 print("  + arrow size=", self.arrowsize, flush=True)
                 print("  + arrow bandwidth=", self.arrow_bandwidth, flush=True)
                 print("  + arrow block size=", self.arrow_blocksize, flush=True)
@@ -646,12 +673,12 @@ class BSESolver:
 
             # print(f"      batch={iinz}", flush=True)
 
-            row = self.inverse_table[
+            row = get_device(self.inverse_table[
                 GG.rows[inz[iinz : iinz + inz_batchsize, None]], GG.cols[jnz[:]]
-            ]
-            col = self.inverse_table[
+            ])
+            col = get_device(self.inverse_table[
                 GG.cols[inz[iinz : iinz + inz_batchsize, None]], GG.rows[jnz[:]]
-            ]
+            ])
 
             L_x_full = self.prefactor * kron_correlate(
                 GG.data[:, iinz : iinz + inz_batchsize], GL.data
@@ -663,6 +690,8 @@ class BSESolver:
                 self.L0_greater,
                 L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E],
             )
+
+            # self.L0_greater[rows, cols] = L_x_full[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, rows, cols]
 
             L_x_full = self.prefactor * kron_correlate(
                 GL.data[:, iinz : iinz + inz_batchsize], GG.data
@@ -852,8 +881,8 @@ class BSESolver:
         G_nen = GG.shape[0]
         self.G_energies = G_energies
         self.prefactor = -1j / np.pi * (self.G_energies[1] - self.G_energies[0])
-        self.g_lesser = GL
-        self.g_greater = GG
+        # self.g_lesser = GL
+        # self.g_greater = GG
 
         L_g = xp.zeros((G_nen * 2 - 1, end_inz - start_inz), dtype=GG.dtype)
         L_l = xp.zeros_like(L_g)
@@ -872,17 +901,20 @@ class BSESolver:
 
         self.L0_greater._data[
             xp.ix_(self.L0_greater._stack_padding_mask, range(start_inz, end_inz))
-        ] = L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
+        ] = L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
 
         self.L0_lesser._data[
             xp.ix_(self.L0_lesser._stack_padding_mask, range(start_inz, end_inz))
-        ] = L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E, :]
+        ] = L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
 
         self._calc_L0_retarded()
 
         # transpose to stack distribution
+
         self.L0_lesser.dtranspose()
         self.L0_greater.dtranspose()
+        self.L0_r.dtranspose()
+        
         return
 
     def _calc_L0_less_fft(
@@ -1002,7 +1034,7 @@ class BSESolver:
 
         self.kernel = sps.lil_array(
             (self.size, self.size),
-            dtype=self.L0_greater.dtype,
+            dtype=self.dtype,
         )
         
         rows = get_host(self.inverse_table[V.rows, V.rows])
@@ -1038,6 +1070,7 @@ class BSESolver:
 
         V = self.coulomb_matrix 
         W = screened_coulomb_matrix
+        # print((abs(W.data[0])))
 
         # kernel_tip = xp.zeros(
         #     (self.tipsize, self.tipsize), dtype=self.L0_lesser.dtype
@@ -1046,19 +1079,20 @@ class BSESolver:
         #     (self.bta_totalsize - self.tipsize), dtype=self.L0_lesser.dtype
         # )
         self.kernel_bta = sps.lil_array(
-            (self.bta_totalsize, self.bta_totalsize),
-            dtype=self.L0_greater.dtype,
+            (self.size, self.size),
+            dtype=self.dtype,
         )
         rows = get_host(self.inverse_table_bta[V.rows, V.rows])
         cols = get_host(self.inverse_table_bta[V.cols, V.cols])
-        self.kernel_bta[rows,cols] = get_host(V.data * (-1j))
+        self.kernel_bta[rows,cols] = - get_host(V.data)
 
-        rows = get_host(self.inverse_table_bta[W.rows, W.rows])
+        rows = get_host(self.inverse_table_bta[W.rows, W.cols])
         cols = rows
-        self.kernel_bta[rows,cols] += get_host(W.data[0] * 1j)
+        self.kernel_bta[rows,cols] += get_host(W.data[0])
 
         self.kernel_bta *= 1j
         self.kernel_bta = sparse.csr_matrix(self.kernel_bta) 
+
         # for i in range(self.num_sites):
         #     for j in range(self.num_sites):
         #         row = int(self.inverse_table_bta[i, i])
@@ -1178,29 +1212,27 @@ class BSESolver:
         # kernel_tip = self.kernel_bta[: self.tipsize, : self.tipsize]
         # kernel_diag = self.kernel_bta[self.tipsize :, self.tipsize :].diagonal()
 
-        local_nen = self.L0_r_bta.stack_shape[0]
-        K = self.kernel_bta.todense()  
+        local_nen = self.L0_r_bta.stack_shape[0]        
+        K = self.kernel_bta.tocsr()  
 
         if return_L:
             L = xp.zeros(
-                (local_nen, self.size, self.size),
+                (self.size, self.size, local_nen),
                 dtype=self.L0_lesser_bta.dtype,
             )
         if return_P3:
             P3 = xp.zeros(
-                (local_nen, self.tipsize, self.tipsize, self.tipsize),
+                (self.tipsize, self.tipsize, self.tipsize, local_nen),
                 dtype=self.L0_lesser_bta.dtype,
             )
         else:
             P2 = xp.zeros(
-                (local_nen, self.tipsize, self.tipsize),
+                (self.tipsize, self.tipsize, local_nen),
                 dtype=self.L0_lesser_bta.dtype,
             )
+            P2_lesser = xp.zeros_like(P2)
+            P2_greater = xp.zeros_like(P2)
 
-        # K[: self.tipsize, : self.tipsize] = kernel_tip
-        # K[self.tipsize :, self.tipsize :] = xp.diag(
-        #     kernel_diag[: self.size - self.tipsize]
-        # )
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
@@ -1212,10 +1244,12 @@ class BSESolver:
 
                 L0 = sparse.coo_matrix(
                     (data, coords), shape=(self.size, self.size)
-                ).todense()
-                print(comm.rank, L0.shape, K.shape)
+                ).tocsr()
+
+                # print(comm.rank, L0.shape, K.shape)
+
                 A = -L0 @ K + xp.diag(
-                    xp.ones(self.size, dtype=self.L0_lesser_bta.dtype)
+                    xp.ones(self.size, dtype=self.dtype)
                 )
 
                 # OBC
@@ -1234,7 +1268,7 @@ class BSESolver:
                 A = invA @ L0
 
                 if return_L:
-                    L[ie, :, :] = A
+                    L[:, :, ie] = A
 
                 if return_P3:
                     # 3-tensor polarization including the vertex $P3(123) = G(14) G(52) Gamma(453)$
@@ -1243,13 +1277,43 @@ class BSESolver:
                         for col in range(self.size):
                             j = self.permuted_sparsity.row[col]
                             k = self.permuted_sparsity.col[col]
-                            P3[ie, i, j, k] = A[row, col]
+                            P3[i, j, k, ie] = A[row, col]
                 else:
                     # polarization including the vertex $P2(13) = P3(113)$
                     reorder = self.permuted_sparsity.row[: self.tipsize]
-                    P2[ie, reorder[:, None], reorder] = (
+                    P2[reorder[:, None], reorder, ie] = (
                         -1j * A[: self.tipsize, : self.tipsize]
                     )
+
+                    # lesser 
+                    data = self.L0_lesser_bta.data[ie]
+                    coords = (self.L0_lesser_bta.rows, self.L0_lesser_bta.cols)
+
+                    L0 = sparse.coo_matrix(
+                        (data, coords), shape=(self.size, self.size)
+                    ).tocsc()
+
+                    A = invA @ L0 @ invA.T.conj()        
+
+                    reorder = self.permuted_sparsity.row[: self.tipsize]
+                    P2_lesser[reorder[:, None], reorder, ie] = (
+                        -1j * A[: self.tipsize, : self.tipsize]
+                    )
+
+                    # greater
+                    data = self.L0_greater_bta.data[ie]
+                    coords = (self.L0_greater_bta.rows, self.L0_greater_bta.cols)
+
+                    L0 = sparse.coo_matrix(
+                        (data, coords), shape=(self.size, self.size)
+                    ).tocsc()
+
+                    A = invA @ L0 @ invA.T.conj()        
+
+                    reorder = self.permuted_sparsity.row[: self.tipsize]
+                    P2_greater[reorder[:, None], reorder, ie] = (
+                        -1j * A[: self.tipsize, : self.tipsize]
+                    )  
 
         if return_L:
             return L
@@ -1257,7 +1321,7 @@ class BSESolver:
         if return_P3:
             return P3
         else:
-            return P2
+            return P2, P2_lesser, P2_greater
 
     @time_range()
     def _densesolve_L_interacting(self, return_P3=False, return_L=False):
@@ -1292,12 +1356,8 @@ class BSESolver:
             P2 = xp.zeros(
                 (self.tipsize, self.tipsize, local_nen), dtype=self.L0_r.dtype
             )
-            P2_lesser = xp.zeros(
-                (self.tipsize, self.tipsize, local_nen), dtype=self.L0_lesser.dtype
-            )
-            P2_greater = xp.zeros(
-                (self.tipsize, self.tipsize, local_nen), dtype=self.L0_greater.dtype
-            )
+            P2_lesser = xp.zeros_like(P2)
+            P2_greater = xp.zeros_like(P2)
 
         with time_range("dense solve", color_id=comm.rank):
             for ie in range(local_nen):
@@ -1428,7 +1488,8 @@ class BSESolver:
         start_time = time.time()
         
         kernel_tip = self.kernel_bta[: self.tipsize, : self.tipsize]
-        kernel_diag = self.kernel_bta[self.tipsize :, self.tipsize :].diagonal()
+        kernel_diag = xp.zeros(int(self.bta_totalsize - self.tipsize), dtype= self.dtype)
+        kernel_diag[: int(self.size - self.tipsize)] = self.kernel_bta[self.tipsize :, self.tipsize :].diagonal()
 
         A_arrow_right_blocks = xp.zeros(
             (int(self.arrow_num_blocks), int(self.arrow_blocksize), int(self.tipsize)),
@@ -1647,6 +1708,27 @@ class BSESolver:
                         @ xp.transpose(xp.flip(X_arrow_tip_block_serinv.T.conj()))
                     )
                     for k in range(self.arrow_num_blocks):
+                        tmp += (
+                            -1j
+                            * xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :])
+                            )
+                            @ self.L0_greater_bta.stack[ie].blocks[k + 1, 0]
+                            @ xp.transpose(
+                                xp.flip(X_arrow_tip_block_serinv.T.conj())
+                            )
+                        )
+                        tmp += (
+                            -1j
+                            * xp.transpose(
+                                xp.flip(X_arrow_tip_block_serinv)
+                            )
+                            @ self.L0_greater_bta.stack[ie].blocks[0, k + 1]
+                            @ xp.transpose(
+                                xp.flip(X_arrow_right_blocks_serinv[-k - 1, :, :].T.conj())
+                            )
+                        )
+                        
                         tmp += (
                             -1j
                             * xp.transpose(

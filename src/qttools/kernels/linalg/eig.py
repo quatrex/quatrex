@@ -162,7 +162,7 @@ def _eig_nvmath(
         in_dtype = A.dtype
 
     # real matrices have complex eigenvalues/vectors in general
-    out_dtype = xp.complex128 if in_dtype == xp.float64 else xp.complex64
+    out_dtype = xp.complex128
 
     if in_dtype != xp.complex128:
         raise ValueError("nvmath implementation only supports complex128 matrices.")

@@ -54,7 +54,9 @@ dependencies = [
     docs = [
         "mkdocs",
         "mkdocs-material",
-        "mkdocstrings-python",
+        "griffe-pydantic",
+        "mkdocs-gen-files",
+        "tabulate",
         "mkapi",
         "mpich",  # If not present, mkapi cannot build the api docs.
     ]

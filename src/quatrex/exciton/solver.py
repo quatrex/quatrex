@@ -30,7 +30,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 
 from quatrex.exciton.response.polarization import correlate, kron_correlate
-from quatrex.exciton.response.pair_interactions import compute_pair_sparsity_pattern
+from quatrex.exciton.response.pair_interactions import compute_pair_sparsity_pattern, compute_cross_product_indices
 
 
 GPU_AWARE = False
@@ -441,33 +441,40 @@ class BSESolver:
             coo = sps.coo_matrix(coo)            
             self.pair_sparsity_bta = sparse.coo_matrix(coo)
             self.inverse_table_bta = lut
+            
         #
         # to store the indexing of sparsity.data in a coo-matrix as item (i,j) for fast elementwise access
         lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.uint32)
         lut[self.sparsity.row, self.sparsity.col] = range(len(self.sparsity.row))
         
+        G_row = get_host(self.sparsity.row)
+        G_col = get_host(self.sparsity.col)
+        G_index = get_host(lut)
         coo = compute_pair_sparsity_pattern(
-            get_host(self.sparsity.row), 
-            get_host(self.sparsity.col), 
-            get_host(lut)
+            G_row, 
+            G_col, 
+            G_index
         )         
         coo = sps.coo_matrix(coo)    
         coo = sparse.coo_matrix(coo)
+
+        self.ik, self.Lj = compute_cross_product_indices(get_host(coo.row),get_host(coo.col),
+                                                        G_row, G_col, G_index)
+
         self.blocksize = _determine_block_sizes_tridiagonalblocked(coo.row.get(), coo.col.get()) # block size of the matrix
         self.pair_sparsity = coo
-        self.inverse_table = lut        
+        self.inverse_table = lut
         self.nnz = len(coo.row)
         self.size = len(self.sparsity.row)  # size of the pair-interaction matrix
-
-        bandwidth = max(abs(self.pair_sparsity.col - self.pair_sparsity.row)) + 1
-        self.pair_bandwidth = bandwidth        
+        
+        self.pair_bandwidth = max(abs(self.pair_sparsity.col - self.pair_sparsity.row)) + 1
         self.num_blocks = int(np.ceil(self.size / self.blocksize))
         self.totalsize = int(self.blocksize) * int(self.num_blocks) # total size of the block matrix L with padding
 
         if comm.rank == 0:
             print("  +--------------- Block ordering ---------------+ ")
             print("  + compressed 2-particle matrix size =", self.totalsize, flush=True)
-            print("  + bandwidth=", bandwidth, flush=True)
+            print("  + bandwidth=", self.pair_bandwidth, flush=True)
             print("  + block size=", self.blocksize, flush=True)
             print("  + number of blocks=", self.num_blocks, flush=True)
             print("  + nonzero elements=", self.nnz / 1e6, " Million", flush=True)
@@ -555,8 +562,8 @@ class BSESolver:
         if comm.rank == 0:
             print("  Calculating L0 distributedly...", flush=True)
         start_time = time.time()
-        self.g_lesser = GL
-        self.g_greater = GG
+        # self.g_lesser = GL
+        # self.g_greater = GG
         if self.L0_lesser.distribution_state == "stack":
             self.L0_lesser.dtranspose()
             self.L0_greater.dtranspose()
@@ -918,66 +925,70 @@ class BSESolver:
         return
 
     def _calc_L0_less_fft(
-        self, GG, GL, start_inz, end_inz, inz_batchsize: int = 4, step_E: int = 1
+        self,
+        GG: DSDBCOO,
+        GL: DSDBCOO,
+        G_energies: NDArray,
+        step_E: int = 1,
+        batch_size: int = 1000000,
     ):
+        if self.L0_lesser.distribution_state == "stack":
+            self.L0_lesser.dtranspose()
+            self.L0_greater.dtranspose()
+            self.L0_r.dtranspose()
 
-        num_inz = end_inz - start_inz
+        if GG.distribution_state == "stack":
+            GG.dtranspose()
+
+        if GL.distribution_state == "stack":
+            GL.dtranspose()
+
+        if comm.rank == 0:
+            print("  Calculating L0 ...", flush=True)
+        start_time = time.time()
+
         G_nen = GG.shape[0]
+        prefactor = -1j / np.pi * (G_energies[1] - G_energies[0])  # only works for equispaced energies
 
         n = GG.shape[0] + GL.shape[0] - 1
 
-        GL_fft = xp.fft.fftn(GL[::-1], (n,), axes=(0,))
-        for iinz in range(0, num_inz, inz_batchsize):
-            # print(f"      batch={iinz}", flush=True)
-            GG_fft = xp.fft.fftn(
-                GG[:, start_inz + iinz : start_inz + iinz + inz_batchsize],
-                (n,),
-                axes=(0,),
-            )
+        GL_fft = xp.fft.fftn( GL.data[::-1], (n,), axes=(0,))
+        GG_fft = xp.fft.fftn( GG.data, (n,), axes=(0,))        
 
-            for inz in range(start_inz, end_inz):
-                row = self.L0_lesser.rows[inz]
-                col = self.L0_lesser.cols[inz]
+        batch_counts, _ = get_section_sizes(
+            GG.data.shape[-1],
+            int(np.ceil(GG.data.shape[-1] / batch_size)),
+        )
 
-                i = self.sparsity.row[row]
-                j = self.sparsity.col[row]
-                k = self.sparsity.row[col]
-                L = self.sparsity.col[col]
+        batch_displacements = np.cumsum(
+            np.concatenate(([0], np.array(batch_counts)))
+        )
+        
+        for start, end in zip(batch_displacements, batch_displacements[1:]):
+            batch = slice(start, end)
 
-                L_g = self.prefactor * xp.fft.ifftn(
-                    GG_fft[i, k] * GL_fft[L, j], (n,), axes=(0,)
-                )
-                self.L0_greater._data[self.L0_greater._stack_padding_mask, inz] = (
-                    L_g[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
-                )
-        GL_fft = None
+            L_t = xp.multiply(GG_fft[:,self.ik[batch]] , GL_fft[:,self.Lj[batch]])
 
-        GG_fft = xp.fft.fftn(GG[::-1], (n,), axes=(0,))
-        for iinz in range(0, num_inz, inz_batchsize):
-            # print(f"      batch={iinz}", flush=True)
-            GL_fft = xp.fft.fftn(
-                GL[:, start_inz + iinz : start_inz + iinz + inz_batchsize],
-                (n,),
-                axes=(0,),
-            )
+            LG = prefactor * xp.fft.ifftn(L_t, axes=(0,))
+            self.L0_greater.data[..., batch] = LG[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E] 
 
-            for inz in range(start_inz, end_inz):
-                row = self.L0_lesser.rows[inz]
-                col = self.L0_lesser.cols[inz]
+            # LL = -LG[::-1].conj()
+            self.L0_lesser.data[..., batch] =  LG[G_nen : G_nen - self.num_E * step_E : -step_E].conj()      
 
-                i = self.sparsity.row[row]
-                j = self.sparsity.col[row]
-                k = self.sparsity.row[col]
-                L = self.sparsity.col[col]
+        self._calc_L0_retarded()
 
-                L_l = self.prefactor * xp.fft.ifftn(
-                    GL_fft[i, k] * GG_fft[L, j], (n,), axes=(0,)
-                )
-                self.L0_lesser._data[self.L0_lesser._stack_padding_mask, inz] = (
-                    L_l[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E]
-                )
-        GG_fft = None
+        finish_time = time.time()
+        
+        print(
+            " rank ", comm.rank, "compute time=", finish_time - start_time, flush=True
+        )
 
+        # transpose to stack distribution
+        self.L0_lesser.dtranspose()
+        self.L0_greater.dtranspose()
+        self.L0_r.dtranspose()
+
+        return
 
     def _calc_L0_less_fft_v2(
         self, GG_data:NDArray, GL_data:NDArray, start_inz, end_inz, inz_batchsize: int = 4, step_E: int = 1
@@ -1292,6 +1303,10 @@ class BSESolver:
                     L0 = sparse.coo_matrix(
                         (data, coords), shape=(self.size, self.size)
                     ).tocsc()
+
+                    # _impose_bta_sparsity(
+                    #     L0, self.blocksize, self.tipsize, self.num_blocks, out=L0
+                    # )
 
                     A = invA @ L0 @ invA.T.conj()        
 

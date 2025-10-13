@@ -67,7 +67,6 @@ extra_css:
 
 plugins:
   - search
-  # - table-reader
   - gen-files:
       scripts:
         - docs/scripts/generate_parameter_docs.py # or any other name or path

@@ -391,17 +391,21 @@ class BSESolver:
             print(f"  1-particle matrix NNZ ={self.sparsity.nnz}", flush=True)            
         self.ordering = ordering
         # The sparsity pattern of the two-particle GF.
-        self._pair_sparsity()
-        self._load_coulomb_matrix()
-        if comm.rank == 0:
-            print("=========================================================", flush=True)
+        # self._pair_sparsity()
+        self._load_coulomb_matrix()        
 
-    
+
+    def _save_context(self):
+        """save context into a file"""
+        ...
+
+    def _load_context(self):
+        ...
 
     # preprocessing the sparsity pattern and decide the block_size and
     # num_blocks in the BTA matrix
     @time_range()
-    def _pair_sparsity(self):
+    def _calc_pair_sparsity(self):
         """Computes the sparsity pattern of pair interactions and the block-size."""
         if comm.rank == 0:
             print("  1-particle DoF (N) =", self.num_sites, flush=True)
@@ -426,6 +430,7 @@ class BSESolver:
             col = coo.col[perm]
             coo.row = row
             coo.col = col
+            self.permutation = perm
             self.permuted_sparsity = coo
             # construct a lookup table of reordered indices matrix
             lut = xp.zeros((self.num_sites, self.num_sites), dtype=xp.uint32)            
@@ -457,24 +462,36 @@ class BSESolver:
         )         
         coo = sps.coo_matrix(coo)    
         coo = sparse.coo_matrix(coo)
-
+        synchronize_current_stream()
+        if comm.rank == 0:            
+            print(
+                    " Computing cross product indices...",
+                    flush=True,
+                )
         self.ik, self.Lj = compute_cross_product_indices(get_host(coo.row),get_host(coo.col),
                                                         G_row, G_col, G_index)
-
-        self.blocksize = _determine_block_sizes_tridiagonalblocked(coo.row.get(), coo.col.get()) # block size of the matrix
+        if self.ordering == "arrowhead":
+            synchronize_current_stream()
+            print(' Computing cross product indices BTA...', flush=True)
+            self.ik_bta, self.Lj_bta = compute_cross_product_indices(get_host(self.pair_sparsity_bta.row),get_host(self.pair_sparsity_bta.col),
+                                                                     get_host(self.permuted_sparsity.row),get_host(self.permuted_sparsity.col), 
+                                                                     G_index)
+        synchronize_current_stream()
+        print(' Determine BTA block sizes...', flush=True)
+        self.blocksize = _determine_block_sizes_tridiagonalblocked(get_host(coo.row), get_host(coo.col)) # block size of the matrix        
         self.pair_sparsity = coo
         self.inverse_table = lut
         self.nnz = len(coo.row)
         self.size = len(self.sparsity.row)  # size of the pair-interaction matrix
         
-        self.pair_bandwidth = max(abs(self.pair_sparsity.col - self.pair_sparsity.row)) + 1
+        # self.pair_bandwidth = max(abs(self.pair_sparsity.col - self.pair_sparsity.row)) + 1
         self.num_blocks = int(np.ceil(self.size / self.blocksize))
         self.totalsize = int(self.blocksize) * int(self.num_blocks) # total size of the block matrix L with padding
 
         if comm.rank == 0:
             print("  +--------------- Block ordering ---------------+ ")
             print("  + compressed 2-particle matrix size =", self.totalsize, flush=True)
-            print("  + bandwidth=", self.pair_bandwidth, flush=True)
+            # print("  + bandwidth=", self.pair_bandwidth, flush=True)
             print("  + block size=", self.blocksize, flush=True)
             print("  + number of blocks=", self.num_blocks, flush=True)
             print("  + nonzero elements=", self.nnz / 1e6, " Million", flush=True)
@@ -486,20 +503,20 @@ class BSESolver:
             )
 
         if self.ordering == "arrowhead":
-            self.arrow_mask = (self.pair_sparsity_bta.row > self.num_sites) & (
-                self.pair_sparsity_bta.col > self.num_sites
-            )
-            self.arrow_bandwidth = (
-                np.max(
-                    self.pair_sparsity_bta.col[self.arrow_mask]
-                    - self.pair_sparsity_bta.row[self.arrow_mask]
-                )
-                + 1
-            )
+            # self.arrow_mask = (self.pair_sparsity_bta.row > self.num_sites) & (
+            #     self.pair_sparsity_bta.col > self.num_sites
+            # )
+            # self.arrow_bandwidth = (
+            #     np.max(
+            #         self.pair_sparsity_bta.col[self.arrow_mask]
+            #         - self.pair_sparsity_bta.row[self.arrow_mask]
+            #     )
+            #     + 1
+            # )
             self.tipsize = self.num_sites
 
-            self.arrow_blocksize = _determine_block_sizes_TBA(self.pair_sparsity_bta.row.get(),
-                                                              self.pair_sparsity_bta.col.get(),
+            self.arrow_blocksize = _determine_block_sizes_TBA(get_host(self.pair_sparsity_bta.row),
+                                                              get_host(self.pair_sparsity_bta.col),
                                                               self.tipsize)
             self.arrow_num_blocks = int(
                 np.ceil((self.size - self.num_sites) / self.arrow_blocksize)
@@ -516,7 +533,7 @@ class BSESolver:
                     flush=True,
                 )                
                 print("  + arrow size=", self.arrowsize, flush=True)
-                print("  + arrow bandwidth=", self.arrow_bandwidth, flush=True)
+                # print("  + arrow bandwidth=", self.arrow_bandwidth, flush=True)
                 print("  + arrow block size=", self.arrow_blocksize, flush=True)
                 print("  + arrow number of blocks=", self.arrow_num_blocks, flush=True)
                 print("  + tip size=", self.tipsize, flush=True)
@@ -527,6 +544,7 @@ class BSESolver:
                     " %",
                     flush=True,
                 )
+                print("=========================================================", flush=True)
 
         return
 
@@ -923,14 +941,81 @@ class BSESolver:
         self.L0_r.dtranspose()
         
         return
+    
 
+    def _calc_L0_less_fft_bta(
+        self,
+        GG: DSDBCOO,
+        GL: DSDBCOO,
+        G_energies: NDArray,
+        step_E: int = 1,
+        batch_size: int = 10000,
+    ):
+        if self.L0_lesser_bta.distribution_state == "stack":
+            self.L0_lesser_bta.dtranspose()
+            self.L0_greater_bta.dtranspose()
+            self.L0_r_bta.dtranspose()
+
+        if GG.distribution_state == "stack":
+            GG.dtranspose()
+
+        if GL.distribution_state == "stack":
+            GL.dtranspose()
+
+        if comm.rank == 0:
+            print("  Calculating L0 BTA...", flush=True)
+        start_time = time.time()
+
+        G_nen = GG.shape[0]
+        prefactor = -1j / np.pi * (G_energies[1] - G_energies[0])  # only works for equispaced energies
+
+        n = GG.shape[0] + GL.shape[0] - 1
+
+        GG_fft = xp.fft.fftn( GG.data, (n,), axes=(0,))        
+        GL_fft = xp.fft.fftn( GL.data[::-1], (n,), axes=(0,))
+
+        batch_counts, _ = get_section_sizes(
+            self.nnz, int(np.ceil(self.nnz / batch_size)),
+        )        
+
+        batch_displacements = np.cumsum(
+            np.concatenate(([0], np.array(batch_counts)))
+        )
+        
+        for start, end in zip(batch_displacements, batch_displacements[1:]):
+            batch = slice(start, end)
+
+            L_t = xp.multiply(GG_fft[:,self.ik_bta[batch]] , GL_fft[:,self.Lj_bta[batch]])
+
+            LG = prefactor * xp.fft.ifftn(L_t, axes=(0,))
+            self.L0_greater_bta.data[..., batch] = LG[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E] 
+
+            # LL = -LG[::-1].conj()
+            self.L0_lesser_bta.data[..., batch] = -LG[- G_nen : - G_nen - self.num_E * step_E : - step_E].conj()      
+
+        self._calc_L0_retarded_bta()
+
+        finish_time = time.time()
+        
+        print(
+            " rank ", comm.rank, "compute time=", finish_time - start_time, flush=True
+        )
+
+        # transpose to stack distribution
+        self.L0_lesser_bta.dtranspose()
+        self.L0_greater_bta.dtranspose()
+        self.L0_r_bta.dtranspose()
+
+        return
+    
+    
     def _calc_L0_less_fft(
         self,
         GG: DSDBCOO,
         GL: DSDBCOO,
         G_energies: NDArray,
         step_E: int = 1,
-        batch_size: int = 1000000,
+        batch_size: int = 10000,
     ):
         if self.L0_lesser.distribution_state == "stack":
             self.L0_lesser.dtranspose()
@@ -952,13 +1037,13 @@ class BSESolver:
 
         n = GG.shape[0] + GL.shape[0] - 1
 
-        GL_fft = xp.fft.fftn( GL.data[::-1], (n,), axes=(0,))
         GG_fft = xp.fft.fftn( GG.data, (n,), axes=(0,))        
+        GL_fft = xp.fft.fftn( GL.data[::-1], (n,), axes=(0,))
 
         batch_counts, _ = get_section_sizes(
-            GG.data.shape[-1],
-            int(np.ceil(GG.data.shape[-1] / batch_size)),
-        )
+            self.L0_lesser.data.shape[-1],
+            int(np.ceil(self.L0_lesser.data.shape[-1] / batch_size)),
+        )        
 
         batch_displacements = np.cumsum(
             np.concatenate(([0], np.array(batch_counts)))
@@ -973,7 +1058,7 @@ class BSESolver:
             self.L0_greater.data[..., batch] = LG[G_nen - 1 : G_nen - 1 + self.num_E * step_E : step_E] 
 
             # LL = -LG[::-1].conj()
-            self.L0_lesser.data[..., batch] =  LG[G_nen : G_nen - self.num_E * step_E : -step_E].conj()      
+            self.L0_lesser.data[..., batch] = -LG[- G_nen : - G_nen - self.num_E * step_E : - step_E].conj()      
 
         self._calc_L0_retarded()
 
@@ -1137,7 +1222,7 @@ class BSESolver:
         
 
     @time_range()
-    def _alloc_L0_bta(self, dtype=xp.complex128):
+    def _alloc_L0_bta(self, num_energies, dtype=xp.complex128):
         """Allocates the non-interacting two-particle Green's function L0 in BTA ordering."""
         if comm.rank == 0:
             print("  Allocating L0 in BTA ordering...", flush=True)
@@ -1147,9 +1232,10 @@ class BSESolver:
             [int(self.tipsize)]
             + [int(self.arrow_blocksize)] * int(self.arrow_num_blocks)
         )
-        GLOBAL_STACK_SHAPE = (self.num_E,)
+        GLOBAL_STACK_SHAPE = (num_energies,)
+        self.num_E = num_energies
 
-        data = xp.zeros(len(self.pair_sparsity_bta.row), dtype=self.L0_greater.dtype)
+        data = xp.zeros(self.nnz, dtype=self.dtype)
         coords = (self.pair_sparsity_bta.row, self.pair_sparsity_bta.col)
         coo = sparse.coo_matrix((data, coords), shape=ARRAY_SHAPE)
 

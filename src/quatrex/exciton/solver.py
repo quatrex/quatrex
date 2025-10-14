@@ -283,38 +283,32 @@ def _determine_rank_map(offset, ndiag: int, rows: xp.ndarray, cols: xp.ndarray):
 class BSESolver:
     def solve(
             self,
-            g_greater: DSDBSparse,
-            g_lesser: DSDBSparse,
-            screened_coulomb: DSDBSparse,
-            out_Sigma: tuple[DSDBSparse, DSDBSparse, DSDBSparse],
+            g_greater: DSDBSparse, g_lesser: DSDBSparse,          
+            screened_coulomb: DSDBSparse,            
+            out_Sigma: tuple[DSDBSparse, DSDBSparse, DSDBSparse] | None = None,
             ):
-        self._alloc_L0(self.exciton_energies.shape[0])
-        self._alloc_L0_bta()                
         
-        if comm.rank == 0:
-            print(f"Begin calc kernel of BSE",flush=True)
+        self._alloc_L0_bta(self.exciton_energies.shape[0])                
+                
         self._calc_kernel_bta(screened_coulomb)
-
-        if comm.rank == 0:
-            print(f"Begin calc L0 distributed",flush=True)
-        # bse._calc_L0_distributed(self.data.g_greater,self.data.g_lesser,self.electron_energies,inz_batchsize=100)      
-        self._calc_L0_v1(g_greater,g_lesser,self.electron_energies)
-        
-        if comm.rank == 0:
-            print(f"Begin permuting L0 to BTA",flush=True)
-        self._permute_L0_toBTA()
-        
-        if comm.rank == 0:
-            print(f"Begin solving L interacting",flush=True)
-        P2 = self._solve_L_interacting_BTA()
-
-        # self._calc_sigma_BSE(out_Sigma)
+             
+        self._calc_L0_less_fft_bta(g_greater,g_lesser,self.electron_energies)                
+                
+        P2, P2_lesser, P2_greater = self._solve_L_interacting_BTA(out_Sigma)        
 
         print(f"Writing output of BSE for debug...", flush=True)
         if not os.path.exists(self.quatrex_config.output_dir):
             os.mkdir(self.quatrex_config.output_dir)
-        filename = 'BSE_P2'
+        filename = 'BSE_P2R'
         xp.save(self.quatrex_config.output_dir / filename, P2)
+
+        # filename = 'BSE_P2L'
+        # xp.save(self.quatrex_config.output_dir / filename, P2_lesser)
+        
+        # filename = 'BSE_P2G'
+        # xp.save(self.quatrex_config.output_dir / filename, P2_greater)
+
+        self._free_L0_bta()
 
 
     def _load_coulomb_matrix(self):
@@ -1219,7 +1213,11 @@ class BSESolver:
         # for i in range(self.num_sites, self.bta_totalsize):
         #     self.kernel_bta[i, i] = get_host(kernel_diag[i - self.num_sites])
 
-        
+    def _free_L0_bta(self):
+        del self.L0_greater_bta
+        del self.L0_lesser_bta
+        del self.L0_r_bta
+        return
 
     @time_range()
     def _alloc_L0_bta(self, num_energies, dtype=xp.complex128):
@@ -1579,6 +1577,7 @@ class BSESolver:
         self,
         return_P3: bool = False,
         return_L: bool = False,
+        out_Sigma: tuple[DSDBSparse, DSDBSparse, DSDBSparse] | None = None,
     ):
         if comm.rank == 0:
             print(" Solve BSE ...", flush=True)
@@ -1756,7 +1755,7 @@ class BSESolver:
                 reorder = self.permuted_sparsity.row[: self.tipsize]
                 P2[reorder[:, None], reorder, ie] = tmp[:, :]
 
-                # lesser
+                # P2 lesser
                 with time_range("extract P lesser", color_id=comm.rank):
                     tmp = (
                         -1j
@@ -1800,7 +1799,7 @@ class BSESolver:
                 reorder = self.permuted_sparsity.row[: self.tipsize]
                 P2_lesser[reorder[:, None], reorder, ie] = tmp[:, :]
 
-                # greater
+                # P2 greater
                 with time_range("extract P greater", color_id=comm.rank):
                     tmp = (
                         -1j

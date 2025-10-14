@@ -307,6 +307,9 @@ class ExcitonConfig(BaseModel):
 
     start_iteration: PositiveInt = 1
 
+    energy_window_num: PositiveInt | None = None    
+    energy_window_step: PositiveInt | None = None
+
 
 class OutputConfig(BaseModel):
     """Options for the output."""
@@ -364,7 +367,6 @@ class QuatrexConfig(BaseModel):
     coulomb_screening: CoulombScreeningConfig | None = None
     photon: PhotonConfig | None = None
     exciton: ExcitonConfig | None = None
-    exciton_start_iteration: int | None = None
 
     # --- Directory paths ----------------------------------------------
     config_dir: Path
@@ -406,10 +408,10 @@ class QuatrexConfig(BaseModel):
         self.input_dir = self.simulation_dir / "inputs/"
         return self
 
-    # @field_validator("exciton_start_iteration", mode="after")
-    def get_exciton_start_iteration(self, value) -> PositiveInt:
+    @model_validator(mode="after")
+    def get_exciton_start_iteration(self) -> PositiveInt:
         if not self.scba.exciton:
-            return -1
+            return 1000000
         else:
             if self.exciton is None:
                 raise ValueError(

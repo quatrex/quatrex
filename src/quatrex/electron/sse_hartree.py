@@ -46,10 +46,20 @@ class SigmaHartree(ScatteringSelfEnergy):
         quatrex_config: QuatrexConfig,
         coulomb_matrix: DSDBSparse,
         electron_energies: NDArray,
+        lattice_vectors: NDArray,
     ):
         """Initializes the bare Hartree self-energy."""
         self.energies = electron_energies
-        self.prefactor = -1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
+        de = self.energies[1] - self.energies[0]
+        self.prefactor = -1j / (2 * xp.pi) * de
+        self.doping_density = quatrex_config.electron.doping
+        self.number_of_kpoints = np.array(
+            [kp for kp in quatrex_config.electron.number_of_kpoints if kp > 1]
+        )
+        # Go from correct units to Green's function "units".
+        uc_area = xp.linalg.det(lattice_vectors[:2, :2])
+        self.doping_density *= uc_area / de / 1e16 / coulomb_matrix.shape[-1]
+        # Create a copy of the Coulomb matrix to avoid modifying the original one.
         self.coulomb_matrix = coulomb_matrix.zeros_like(coulomb_matrix)
         (
             self.coulomb_matrix.dtranspose()
@@ -57,16 +67,9 @@ class SigmaHartree(ScatteringSelfEnergy):
             else None
         )
         # Roll the k-point axes such that they agree with the k-point ordering of the Hamiltonian/Green's functions.
-        number_of_kpoints = xp.array(
-            [
-                1 if k <= 1 else k
-                for k in quatrex_config.electron.number_of_kpoints
-            ]
-        )
-        roll_index = number_of_kpoints // 2
-        # TODO: Dubbelcheck this
+        roll_index = self.number_of_kpoints // 2
         self.coulomb_matrix.data[:] = xp.roll(
-            coulomb_matrix.data, shift=-roll_index, axis=tuple(range(1, 1 + len(number_of_kpoints)))
+            coulomb_matrix.data, shift=-roll_index, axis=tuple(range(1, 1 + len(self.number_of_kpoints)))
         )
 
 
@@ -125,6 +128,9 @@ class SigmaHartree(ScatteringSelfEnergy):
             # TODO: In-place all_reduce?
             comm.stack.all_reduce(gl_density, recvbuff, op="sum")
             gl_density = recvbuff
+            # Correct for the positive doping charges (is this the correct way to do this?)
+            # Correction is only for the Gamma-point (assuming uniform background charge).
+            gl_density[self.number_of_kpoints // 2] -= self.doping_density
             # Should it have an energy dimension?
             hartree_potential = xp.zeros(spectral_function.shape[:-1], dtype=xp.complex128)
             # Perform the Multiplication with the Coulomb matrix \sum_j V_ij rho_j in the orbital basis.

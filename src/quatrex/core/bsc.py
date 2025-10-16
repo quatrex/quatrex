@@ -541,6 +541,7 @@ class BSC:
                 self.quatrex_config,
                 self.coulomb_matrix,
                 self.electron_energies,
+                self.data.lattice_vectors,
             )
         
         if self.quatrex_config.bsc.coulomb_screening:

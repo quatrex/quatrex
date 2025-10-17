@@ -223,3 +223,54 @@ def show_tensor_cuts(D0, energies, e=None, i=None, j=None):
 
     plt.tight_layout()
     plt.show()
+
+
+    import numpy as np
+
+#Input enrgy
+
+def make_grids(E_min, E_max, n_points, photon_energy_min, photon_energy_max, tol=1e-9):
+    """
+    Build a uniformly spaced energy grid and a photon *angular frequency* grid
+    whose spacing matches Δω = ΔE / ħ. The photon range is provided in *energy*.
+    """
+    if n_points < 2:
+        raise ValueError("n_points must be >= 2")
+
+    # Energy grid (uniform)
+    energy_grid = np.linspace(E_min, E_max, n_points)
+    dE = (E_max - E_min) / (n_points - 1)
+
+    # Target Δω that must match your FFT convention
+    domega = dE
+
+    # Convert requested photon *energy* range to angular frequency range
+    omega_min = photon_energy_min 
+    omega_max = photon_energy_max 
+
+    # Choose integer count so that spacing is exactly Δω
+    n_omega = int(round((omega_max - omega_min) / domega)) + 1
+    if n_omega < 2:
+        n_omega = 2
+
+    photon_energy = omega_min + domega * np.arange(n_omega)
+
+    # Sanity checks
+    # 1) uniform grids
+    dE_all = np.diff(energy_grid)
+    if not np.allclose(dE_all, dE_all[0], rtol=1e-12, atol=1e-18):
+        raise ValueError("energy_grid must be uniformly spaced")
+
+    dω_all = np.diff(photon_energy)
+    if not np.allclose(dω_all, domega, rtol=1e-12, atol=1e-18):
+        raise ValueError("constructed photon_energy is not uniformly spaced as ΔE/ħ")
+
+    # 2) end coverage (we hit or overshoot the requested max within tolerance)
+    omega_requested_span = omega_max - omega_min
+    omega_built_span     = photon_energy[-1] - photon_energy[0]
+    if abs(omega_built_span - omega_requested_span) > (abs(domega) + tol):
+        # optional: trim last point if we overshoot too much
+        while len(photon_energy) > 2 and photon_energy[-1] - omega_max > domega * 0.51:
+            photon_energy = photon_energy[:-1]
+
+    return energy_grid, photon_energy

@@ -5,11 +5,11 @@
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
 import time
 from pathlib import Path
-from pprint import pprint
 from typing import Optional
 
 import typer
 from mpi4py.MPI import COMM_WORLD as comm
+from rich import print as pprint
 from typing_extensions import Annotated
 
 import quatrex
@@ -23,9 +23,7 @@ HEADER = rf"""
 | (_| | |_| | (_| | |_| | |  __/>  < 
  \__, |\__,_|\__,_|\__|_|  \___/_/\_\
     |_|                              
-
-
-                           version {quatrex.__version__}
+                        version {quatrex.__version__}
 """
 
 quatrex_cli = typer.Typer(
@@ -52,6 +50,16 @@ def run_quatrex(
     quatrex_config_path: Path,
     compute_config_path: Path | None = None,
 ):
+    """Runs quatrex with the given configuration files.
+
+    Parameters
+    ----------
+    quatrex_config_path : Path
+        Path to the quatrex configuration file.
+    compute_config_path : Path | None, optional
+        Path to the compute configuration file, by default None.
+
+    """
     # remove import overhead from cli startup time
     from mpi4py.MPI import COMM_WORLD as comm
 
@@ -83,33 +91,64 @@ def run_quatrex(
             print(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
-@quatrex_cli.command("fetch-example")
-def fetch_example(
-    name: str = typer.Option(
-        ...,
-        "--name",
-        "-n",
-        help="Name of the example to fetch. Allowed examples are: "
-        + ", ".join(ALLOWED_EXAMPLES.keys()),
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Forces re-download even if the dataset already exists.",
-    ),
+@quatrex_cli.command()
+def run(
+    quatrex_config: Annotated[
+        Path,
+        typer.Argument(
+            ...,
+            help="Path to the quatrex TOML configuration file",
+            dir_okay=False,
+            resolve_path=True,
+            exists=True,
+            metavar="quatrex_config.toml",
+        ),
+    ],
+    compute_config: Annotated[
+        Optional[Path],
+        typer.Argument(
+            ...,
+            help="Path to the compute TOML configuration file",
+            dir_okay=False,
+            resolve_path=True,
+            exists=True,
+            metavar="compute_config.toml",
+        ),
+    ] = None,
 ):
-    """
-    Fetch a preconfigured example by name.
-    """
+    """Runs quatrex with the given configuration files."""
+    secho_header()
+    run_quatrex(quatrex_config, compute_config)
+
+
+@quatrex_cli.command()
+def fetch_example(
+    name: Annotated[
+        str,
+        typer.Argument(
+            ...,
+            help="Name of the example to fetch. Allowed examples are:\n"
+            f"{'\n'.join([f'- `{ex}`' for ex in ALLOWED_EXAMPLES.keys()])}",
+        ),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Forces re-download even if the dataset already exists.",
+        ),
+    ] = False,
+):
+    """Fetches a preconfigured example by name."""
     if comm.rank == 0:
         if name not in ALLOWED_EXAMPLES.keys():
             raise ValueError(
-                f"Unknown example: {name}. Allowed examples are: {list(ALLOWED_EXAMPLES.keys())}"
+                f"Unknown example: {name}. Current examples are: {list(ALLOWED_EXAMPLES.keys())}"
             )
 
-        typer.echo(f"Fetching example: {name}")
-        device_key, _, target_dir = get_example_dir(name)
+        typer.secho(f"Fetching example: {name}")
+        device_key, __, target_dir = get_example_dir(name)
 
         for subname in ALLOWED_EXAMPLES[name]:
             load_example(
@@ -119,56 +158,22 @@ def fetch_example(
             )
 
 
-@quatrex_cli.callback(invoke_without_command=True)
+@quatrex_cli.callback(no_args_is_help=True)
 def main(
-    ctx: typer.Context,
     version: Annotated[
-        Optional[bool],
+        bool,
         typer.Option(
             "--version",
             callback=version_callback,
             is_eager=True,
             help="Print the version and exit.",
         ),
-    ] = None,
-    quatrex_config: Path = typer.Option(
-        Path.cwd() / "quatrex_config.toml",
-        "--quatrex-config",
-        "-qc",
-        help="Path to the Quatrex configuration file",
-        file_okay=True,
-        dir_okay=False,
-        writable=False,
-        resolve_path=True,
-    ),
-    compute_config: Path | None = typer.Option(
-        None,
-        "--compute-config",
-        "-cc",
-        help="Path to the compute configuration file",
-        show_default="None",
-        file_okay=True,
-        dir_okay=False,
-        writable=False,
-        resolve_path=True,
-    ),
+    ] = False,
 ):
-    """Main entrypoint for Quatrex CLI."""
-    if comm.rank == 0:
-        typer.echo(HEADER)
-
-    if ctx.invoked_subcommand is None:
-        if comm.rank == 0:
-            typer.echo(f"Quatrex config: {quatrex_config}")
-            if compute_config is not None:
-                typer.echo(f"Compute config: {compute_config}")
-
-        run_quatrex(
-            quatrex_config,
-            compute_config,
-        )
+    """Quantum Transport at the Exascale and Beyond."""
+    ...
 
 
-def run():
+def run_cli():
     """Runs the quatrex CLI app."""
     quatrex_cli()

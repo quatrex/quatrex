@@ -20,7 +20,7 @@ def test_fetch_example(example: str):
 def test_fetch_example_cli(example: str):
     try:
         subprocess.run(
-            ["quatrex", "fetch-example", "--name", example],
+            ["quatrex", "fetch-example", example],
             check=True,
         )
     except subprocess.CalledProcessError as e:
@@ -70,7 +70,7 @@ def test_main_cli(example: str):
                     "-n",
                     "6",
                     "quatrex",
-                    "--quatrex-config",
+                    "run",
                     str(quatrex_config_path),
                 ],
                 check=True,
@@ -84,9 +84,8 @@ def test_main_cli(example: str):
                     "-n",
                     "6",
                     "quatrex",
-                    "--quatrex-config",
+                    "run",
                     str(quatrex_config_path),
-                    "--compute-config",
                     str(compute_config_path),
                 ],
                 check=True,

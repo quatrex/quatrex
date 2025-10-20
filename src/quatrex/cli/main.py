@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from click import BadArgumentUsage
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
 from typing_extensions import Annotated
@@ -94,16 +95,16 @@ def run_quatrex(
 @quatrex_cli.command()
 def run(
     quatrex_config: Annotated[
-        Path,
+        Optional[Path],
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file",
-            dir_okay=False,
+            dir_okay=True,
             resolve_path=True,
             exists=True,
             metavar="quatrex_config.toml",
         ),
-    ],
+    ] = None,
     compute_config: Annotated[
         Optional[Path],
         typer.Argument(
@@ -117,6 +118,30 @@ def run(
     ] = None,
 ):
     """Runs quatrex with the given configuration files."""
+    if quatrex_config is None:
+        quatrex_config = Path("./quatrex_config.toml")
+        if not quatrex_config.exists():
+            raise BadArgumentUsage(
+                "No quatrex configuration file provided and default "
+                "'./quatrex_config.toml' does not exist."
+            )
+
+    if quatrex_config.is_dir():
+        if compute_config is not None:
+            raise BadArgumentUsage(
+                "If a directory is provided as quatrex_config, "
+                "compute_config must not be provided."
+            )
+        quatrex_config = quatrex_config / "quatrex_config.toml"
+        if not quatrex_config.exists():
+            raise BadArgumentUsage(
+                f"No quatrex configuration file found in directory: {quatrex_config.parent}"
+            )
+        compute_config = quatrex_config.parent / "compute_config.toml"
+        if not compute_config.exists():
+            # This is handled in run_quatrex.
+            compute_config = None
+
     secho_header()
     run_quatrex(quatrex_config, compute_config)
 

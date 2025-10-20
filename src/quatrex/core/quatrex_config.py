@@ -584,6 +584,7 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
+    formalism: Literal["qtbm", "negf"]
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     qtbm: QTBMConfig = QTBMConfig()

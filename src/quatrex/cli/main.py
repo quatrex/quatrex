@@ -62,8 +62,6 @@ def run_quatrex(
 
     """
     # remove import overhead from cli startup time
-    from mpi4py.MPI import COMM_WORLD as comm
-
     from quatrex.core.compute_config import ComputeConfig
     from quatrex.core.compute_config import parse_config as parse_compute_config
     from quatrex.core.quatrex_config import parse_config as parse_quatrex_config

@@ -47,39 +47,55 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-def run_quatrex(
-    quatrex_config_path: Path,
-    compute_config_path: Path | None = None,
-):
-    """Runs quatrex with the given configuration files.
+def _run_qtbm(quatrex_config, compute_config):
+    """Runs quatrex with the given configuration.
 
     Parameters
     ----------
-    quatrex_config_path : Path
-        Path to the quatrex configuration file.
-    compute_config_path : Path | None, optional
-        Path to the compute configuration file, by default None.
+    quatrex_config : QuatrexConfig
+        The main quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
 
     """
-    # remove import overhead from cli startup time
-    from quatrex.core.compute_config import ComputeConfig
-    from quatrex.core.compute_config import parse_config as parse_compute_config
-    from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-    from quatrex.core.scba import SCBA
-
-    if compute_config_path is not None:
-        compute_config = parse_compute_config(compute_config_path)
-    else:
-        compute_config = ComputeConfig()
-
-    quatrex_config = parse_quatrex_config(quatrex_config_path)
+    from quatrex.core.device import Device
+    from quatrex.core.qtbm import QTBM
 
     with threadpool_limits(
         limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
     ):
         pprint(threadpool_info()) if comm.rank == 0 else None
 
-        # TODO: decide SCBA or QTBM based on config
+        device = Device(quatrex_config)
+        qtbm = QTBM(device, quatrex_config, compute_config)
+
+        tic = time.perf_counter()
+        qtbm.run()
+        toc = time.perf_counter()
+
+        if comm.rank == 0:
+            typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
+
+
+def _run_scba(quatrex_config, compute_config):
+    """Runs quatrex with the given configuration using SCBA.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The main quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+
+    """
+
+    from quatrex.core.scba import SCBA
+
+    with threadpool_limits(
+        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
+    ):
+        pprint(threadpool_info()) if comm.rank == 0 else None
+
         scba = SCBA(quatrex_config, compute_config)
 
         tic = time.perf_counter()
@@ -87,7 +103,7 @@ def run_quatrex(
         toc = time.perf_counter()
 
         if comm.rank == 0:
-            print(f"Leaving SCBA after: {(toc - tic):.2f} s")
+            typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
 @quatrex_cli.command()
@@ -125,7 +141,6 @@ def run(
             )
         compute_config = Path("./compute_config.toml")
         if not compute_config.exists():
-            # This is handled in run_quatrex.
             compute_config = None
 
     # If a directory is provided, look for the config files inside.
@@ -142,11 +157,30 @@ def run(
             )
         compute_config = quatrex_config.parent / "compute_config.toml"
         if not compute_config.exists():
-            # This is handled in run_quatrex.
             compute_config = None
 
+    from quatrex.core.compute_config import ComputeConfig
+    from quatrex.core.compute_config import parse_config as parse_compute_config
+    from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+
+    quatrex_config = parse_quatrex_config(quatrex_config)
+
+    if compute_config is None:
+        compute_config = ComputeConfig()
+    else:
+        compute_config = parse_compute_config(compute_config)
+
     secho_header()
-    run_quatrex(quatrex_config, compute_config)
+
+    # Dispatch to the appropriate runner based on the formalism.
+    if quatrex_config.formalism == "qtbm":
+        _run_qtbm(quatrex_config, compute_config)
+    elif quatrex_config.formalism == "scba":
+        _run_scba(quatrex_config, compute_config)
+    else:
+        raise NotImplementedError(
+            f"Formalism '{quatrex_config.formalism}' is not implemented."
+        )
 
 
 @quatrex_cli.command()

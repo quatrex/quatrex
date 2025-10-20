@@ -96,26 +96,25 @@ def run(
         Optional[Path],
         typer.Argument(
             ...,
-            help="Path to the quatrex TOML configuration file",
+            help="Path to the quatrex TOML configuration file, "
+            "or a directory containing the configuration file(s).",
             dir_okay=True,
             resolve_path=True,
             exists=True,
-            metavar="quatrex_config.toml",
         ),
     ] = None,
     compute_config: Annotated[
         Optional[Path],
         typer.Argument(
             ...,
-            help="Path to the compute TOML configuration file",
+            help="Path to the compute TOML configuration file.",
             dir_okay=False,
             resolve_path=True,
             exists=True,
-            metavar="compute_config.toml",
         ),
     ] = None,
 ):
-    """Runs quatrex with the given configuration files."""
+    """Runs quatrex with the provided configuration."""
     # No arguments provided, use default paths.
     if quatrex_config is None:
         quatrex_config = Path("./quatrex_config.toml")

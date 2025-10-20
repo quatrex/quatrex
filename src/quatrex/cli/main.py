@@ -118,6 +118,7 @@ def run(
     ] = None,
 ):
     """Runs quatrex with the given configuration files."""
+    # No arguments provided, use default paths.
     if quatrex_config is None:
         quatrex_config = Path("./quatrex_config.toml")
         if not quatrex_config.exists():
@@ -125,7 +126,12 @@ def run(
                 "No quatrex configuration file provided and default "
                 "'./quatrex_config.toml' does not exist."
             )
+        compute_config = Path("./compute_config.toml")
+        if not compute_config.exists():
+            # This is handled in run_quatrex.
+            compute_config = None
 
+    # If a directory is provided, look for the config files inside.
     if quatrex_config.is_dir():
         if compute_config is not None:
             raise BadArgumentUsage(

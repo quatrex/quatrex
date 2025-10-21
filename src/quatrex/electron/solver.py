@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from qttools import NDArray, sparse, xp, _DType
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
@@ -74,7 +74,14 @@ class ElectronSolver(SubsystemSolver):
         """Initializes the electron solver."""
         super().__init__(config, energies)
 
-        self.dtype = dtype or xp.complex128
+        if compute_config.mixed_precision.precision == "single":
+            self.dtype = xp.complex64
+        elif compute_config.mixed_precision.precision == "double":
+            self.dtype = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid precision: {compute_config.mixed_precision.precision}"
+            )
 
         self.local_energies = get_local_slice(energies, comm.stack)
 
@@ -149,7 +156,7 @@ class ElectronSolver(SubsystemSolver):
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
-                self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
+                self.hamiltonian.shape[-2], dtype=self.dtype
             )
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
@@ -202,7 +209,31 @@ class ElectronSolver(SubsystemSolver):
         self.block_sections = config.electron.obc.block_sections
 
         self.call_count = 0
-        self.filtering_iteration_limit = config.electron.filtering_iteration_limit
+        self.filtering_iteration_limit = (
+            config.electron.filtering_iteration_limit
+        )
+
+        if self.config.compute.mixed_precision.obc_precision_g == "single":
+            self.obc_type = xp.complex64
+        elif self.config.compute.mixed_precision.obc_precision_g == "double":
+            self.obc_type = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid OBC precision: {self.config.compute.mixed_precision.obc_precision_g}"
+            )
+
+        if self.config.compute.mixed_precision.bandedge_precision == "single":
+            self.bandedge_type = xp.complex64
+        elif self.config.compute.mixed_precision.bandedge_precision == "double":
+            self.bandedge_type = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid band edge precision: {self.config.compute.mixed_precision.bandedge_precision}"
+            )
+        self.rgf_mm_mask = config.compute.mixed_precision.rgf_mm_g_mask
+        self.rgf_inv_mask = config.compute.mixed_precision.rgf_inv_g_mask
+        self.rgf_tmp_mask = config.compute.mixed_precision.rgf_tmp_g_mask
+
 
     @staticmethod
     def get_block(
@@ -313,11 +344,21 @@ class ElectronSolver(SubsystemSolver):
             s_00 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 0))
             s_01 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (0, 1))
             s_10 = 1j * self.eta_obc * self._get_block(self.overlap_sparray, (1, 0))
+            a_ii = self.system_matrix.blocks[0, 0]
+            a_ij = self.system_matrix.blocks[0, 1]
+            a_ji = self.system_matrix.blocks[1, 0]
+
+            a_ii = a_ii.astype(self.obc_type)
+            a_ij = a_ij.astype(self.obc_type)
+            a_ji = a_ji.astype(self.obc_type)
+            s_00 = s_00.astype(self.obc_type)
+            s_01 = s_01.astype(self.obc_type)
+            s_10 = s_10.astype(self.obc_type)
 
             m_10, m_00, m_01 = get_periodic_superblocks(
-                a_ii=self.system_matrix.blocks[0, 0],
-                a_ji=self.system_matrix.blocks[1, 0],
-                a_ij=self.system_matrix.blocks[0, 1],
+                a_ii=a_ii,
+                a_ji=a_ji,
+                a_ij=a_ij,
                 block_sections=self.block_sections,
             )
 
@@ -349,11 +390,22 @@ class ElectronSolver(SubsystemSolver):
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
 
+            a_ii = xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1))
+            a_ij = xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1))
+            a_ji = xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1))
+
+            a_ii = a_ii.astype(self.obc_type)
+            a_ij = a_ij.astype(self.obc_type)
+            a_ji = a_ji.astype(self.obc_type)
+            s_nn = s_nn.astype(self.obc_type)
+            s_nm = s_nm.astype(self.obc_type)
+            s_mn = s_mn.astype(self.obc_type)
+
             m_mn, m_nn, m_nm = get_periodic_superblocks(
                 # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
+                a_ii=a_ii,
+                a_ji=a_ji,
+                a_ij=a_ij,
                 block_sections=self.block_sections,
             )
             # ... bop it.
@@ -515,6 +567,7 @@ class ElectronSolver(SubsystemSolver):
                         self.right_mid_gap_energy,
                     ),
                     band_edge_config=self.config.compute.band_edge,
+                    compute_type=self.bandedge_type,
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
@@ -542,6 +595,9 @@ class ElectronSolver(SubsystemSolver):
                     out=out,
                     return_retarded=True,
                     return_current=self.compute_meir_wingreen_current,
+                    mm_mask=self.rgf_mm_mask,
+                    inv_mask=self.rgf_inv_mask,
+                    tmp_mask=self.rgf_tmp_mask,
                 )
 
         with profiler.profile_range(

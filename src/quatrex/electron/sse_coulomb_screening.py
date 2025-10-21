@@ -88,6 +88,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.big_block_sizes = None
         self.batch_size = config.compute.convolve.batch_size
 
+        if config.compute.mixed_precision.sigma_gw_precision == "fp32":
+            self.dtype = xp.complex64
+        else:
+            self.dtype = xp.complex128
+
         self.apply_hilbert_correction = (
             config.coulomb_screening.apply_hilbert_correction
         )
@@ -130,13 +135,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         nk = g_lesser.data.shape[1:-1]
 
         g_x_fft = xp.fft.fftn(
-            g_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            g_lesser.data[..., batch].astype(self.dtype), (n,) + nk, axes=tuple(range(len(nk) + 1))
         )
         w_lesser_fft = xp.fft.fftn(
-            w_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            w_lesser.data[..., batch].astype(self.dtype), (n,) + nk, axes=tuple(range(len(nk) + 1))
         )
         w_greater_fft = xp.fft.fftn(
-            w_greater.data[..., batch],
+            w_greater.data[..., batch].astype(self.dtype),
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -149,10 +154,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
         )
-        sigma_lesser.data[..., batch] += lesser
+        sigma_lesser.data[..., batch] += lesser.astype(
+                        sigma_lesser.data.dtype
+                    )
 
         g_x_fft = xp.fft.fftn(
-            g_greater.data[..., batch],
+            g_greater.data[..., batch].astype(self.dtype),
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -162,7 +169,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
         )
-        sigma_greater.data[..., batch] += greater
+        sigma_greater.data[..., batch] += greater.astype(
+                        sigma_lesser.data.dtype
+                    )
 
         # Compute retarded self-energy with a Hilbert transform.
         antihermitian = greater - lesser
@@ -174,7 +183,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         sigma_retarded.data[..., batch] += (
             self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
-        )
+        ).astype(
+                        sigma_lesser.data.dtype
+                    )
 
     def _compute_with_correction(
         self,

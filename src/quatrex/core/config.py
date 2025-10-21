@@ -873,28 +873,34 @@ class CommConfig(BaseModel):
 
 class MixedPrecisionConfig(BaseModel):
     """Configuration for mixed precision computation settings.
-    
+
     This class defines parameters for controlling mixed precision operations,
     which can improve performance by using lower precision arithmetic where
     appropriate while maintaining numerical accuracy.
-    
-    Example configuration:
-        [mixed_precision]
-        precision = "single"
-        rgf_mask = "0xFFFFFFFFFFFF0000"
-        accumulate_matmul = true
-    
-    Attributes:
-        precision: Mixed precision mode setting. Currently supports "mix".
-        rgf_mask: Hexadecimal mask for recursive Green's function calculations.
-        accumulate_matmul: Whether to use accumulation in matrix multiplication.
+
     """
 
     model_config = ConfigDict(extra="forbid")
 
     precision: Literal["single", "double"] | None = None
-    rgf_mask: str | None = None
-    emulate_matmul: bool | None = None
+
+    polarization_precision: Literal["fp32", "fp64"] = "fp64"
+    sigma_fock_precision: Literal["fp32", "fp64"] = "fp64"
+    sigma_gw_precision: Literal["fp32", "fp64"] = "fp64"
+
+    rgf_mm_g_mask: str | None = None
+    rgf_mm_w_mask: str | None = None
+
+    rgf_inv_g_mask: Literal["fp32", "fp64"] = "fp64"
+    rgf_inv_w_mask: Literal["fp32", "fp64"] = "fp64"
+
+    rgf_tmp_g_mask: Literal["fp32", "fp64"] = "fp64"
+    rgf_tmp_w_mask: Literal["fp32", "fp64"] = "fp64"
+
+    assembly_mask: Literal["fp32", "fp64", "tf32"] | None = "fp64"
+    obc_precision_g: Literal["single", "double"] = "double"
+    obc_precision_w: Literal["single", "double"] = "double"
+    bandedge_precision: Literal["single", "double"] = "double"
 
 
 class ComputeConfig(BaseModel):

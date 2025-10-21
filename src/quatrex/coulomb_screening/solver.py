@@ -51,8 +51,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         The energies at which to solve.
     sparsity_pattern : sparse.coo_matrix
         The sparsity pattern of the system matrix.
-    dtype : _DType, optional
-        The data type of the system matrix, by default None.
     """
 
     system = "coulomb_screening"
@@ -63,14 +61,21 @@ class CoulombScreeningSolver(SubsystemSolver):
         coulomb_matrix: DSDBSparse,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
-        dtype: _DType = None
     ) -> None:
         """Initializes the solver."""
         super().__init__(config, energies)
 
-        self.dtype = dtype or xp.complex128
+        if config.compute.mixed_precision.precision == "single":
+            self.dtype = xp.complex64
+        elif config.compute.mixed_precision.precision == "double":
+            self.dtype = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid precision: {config.compute.mixed_precision.precision}"
+            )
+
         self.scalar_type = xp.float64 if self.dtype == xp.complex128 else xp.float32
-        self.emulate_matmul = config.compute.mixed_precision.emulate_matmul
+        self.assembly_mask = config.compute.mixed_precision.assembly_mask
 
         self.coulomb_matrix = coulomb_matrix
         self.small_block_sizes = self.coulomb_matrix.block_sizes
@@ -174,6 +179,18 @@ class CoulombScreeningSolver(SubsystemSolver):
             config.coulomb_screening.filtering_iteration_limit
         )
 
+        if self.config.compute.mixed_precision.obc_precision_w == "single":
+            self.obc_type = xp.complex64
+        elif self.config.compute.mixed_precision.obc_precision_w == "double":
+            self.obc_type = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid OBC precision: {self.config.compute.mixed_precision.obc_precision_w}"
+            )
+        self.rgf_mm_mask = config.compute.mixed_precision.rgf_mm_g_mask
+        self.rgf_inv_mask = config.compute.mixed_precision.rgf_inv_g_mask
+        self.rgf_tmp_mask = config.compute.mixed_precision.rgf_tmp_w_mask
+
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
 
@@ -198,13 +215,20 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
 
+                a_ii = self.system_matrix.blocks[0, 0]
+                a_ji = self.system_matrix.blocks[1, 0]
+                a_ij = self.system_matrix.blocks[0, 1]
+
+                a_ii = a_ii.astype(self.obc_type)
+                a_ji = a_ji.astype(self.obc_type)
+                a_ij = a_ij.astype(self.obc_type)
+
                 m_10, m_00, m_01 = get_periodic_superblocks(
-                    a_ii=self.system_matrix.blocks[0, 0],
-                    a_ji=self.system_matrix.blocks[1, 0],
-                    a_ij=self.system_matrix.blocks[0, 1],
+                    a_ii=a_ii,
+                    a_ji=a_ji,
+                    a_ij=a_ij,
                     block_sections=self.block_sections,
                 )
-
                 x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
 
                 m_10_x_00 = m_10 @ x_00
@@ -216,13 +240,13 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the left lesser/greater boundary self-energy.
-                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
-                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1].astype(self.obc_type)
+                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1].astype(self.obc_type)
 
                 q_00_lesser = (
                     x_00
                     @ (
-                        self.l_lesser.blocks[0, 0]
+                        self.l_lesser.blocks[0, 0].astype(self.obc_type)
                         - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
                     )
                     @ x_00.conj().swapaxes(-1, -2)
@@ -230,7 +254,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 q_00_greater = (
                     x_00
                     @ (
-                        self.l_greater.blocks[0, 0]
+                        self.l_greater.blocks[0, 0].astype(self.obc_type)
                         - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
                     )
                     @ x_00.conj().swapaxes(-1, -2)
@@ -262,9 +286,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
                 m_mn, m_nn, m_nm = get_periodic_superblocks(
                     # Twist it, flip it, ...
-                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
+                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)).astype(self.obc_type),
+                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)).astype(self.obc_type),
+                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)).astype(self.obc_type),
                     block_sections=self.block_sections,
                 )
                 # ... bop it.
@@ -291,8 +315,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the right lesser/greater boundary self-energy.
-                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
-                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
+                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m].astype(self.obc_type)
+                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m].astype(self.obc_type)
 
                 q_nn_lesser = (
                     x_nn
@@ -349,7 +373,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
-            emulate=self.emulate_matmul
+            assembly_mask=self.assembly_mask,
         )
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
@@ -447,7 +471,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 start_block=start_block,
                 end_block=end_block,
                 spillover_correction=True,
-                emulate=self.emulate_matmul
+                emulate=self.assembly_mask
             )
             bd_sandwich_distr(
                 self.coulomb_matrix,
@@ -456,7 +480,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 start_block=start_block,
                 end_block=end_block,
                 spillover_correction=True,
-                emulate=self.emulate_matmul
+                emulate=self.assembly_mask
             )
 
         if self.flatband:
@@ -500,6 +524,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                     obc_blocks=self.obc_blocks,
                     out=out,
                     return_retarded=False,
+                    mm_mask=self.rgf_mm_mask,
+                    inv_mask=self.rgf_inv_mask,
+                    tmp_mask=self.rgf_tmp_mask,
                 )
 
         with profiler.profile_range(

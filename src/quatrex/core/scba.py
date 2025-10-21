@@ -108,7 +108,6 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-
         self.dtype = xp.complex64 if config.compute.mixed_precision.precision == "single" else xp.complex128
 
         with profiler.profile_range(
@@ -195,7 +194,7 @@ class SCBAData:
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
-                dtype=self.dtype
+                dtype=self.dtype,
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
@@ -302,7 +301,6 @@ class SCBA:
             self.config,
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
-            dtype=self.data.dtype,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -358,7 +356,6 @@ class SCBA:
                 coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
-                dtype=self.data.dtype
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,

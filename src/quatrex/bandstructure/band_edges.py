@@ -93,6 +93,7 @@ def _compute_eigenvalues(
     ind: tuple[int, ...],
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
+    compute_type=xp.complex128,
 ):
     """Computes the eigenvalues for the left or right contact."""
     big_blocksize = sigma_retarded.block_sizes[0]
@@ -122,6 +123,13 @@ def _compute_eigenvalues(
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
     sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
     sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
+
+    h_00 = h_00.astype(compute_type)
+    h_01 = h_01.astype(compute_type)
+    s_00 = s_00.astype(compute_type)
+    s_01 = s_01.astype(compute_type)
+    sigma_00 = sigma_00.astype(compute_type)
+    sigma_01 = sigma_01.astype(compute_type)
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
@@ -182,6 +190,7 @@ def find_renormalized_eigenvalues(
     mid_gap_energies: tuple[float, float],
     num_ref_iterations: int = 2,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
+    compute_type=xp.complex128,
 ) -> tuple[NDArray, NDArray]:
     """Computes renormalized eigenvalues for left and right contacts.
 
@@ -229,6 +238,8 @@ def find_renormalized_eigenvalues(
     section_sizes = xp.array(section_sizes)
     section_offsets = xp.hstack(([0], xp.cumsum(section_sizes)))
 
+    # left_band_edges = xp.empty(2, dtype=compute_type)
+    # right_band_edges = xp.empty(2, dtype=compute_type)
     left_band_edges = xp.empty(2, dtype=float)
     right_band_edges = xp.empty(2, dtype=float)
 
@@ -252,12 +263,17 @@ def find_renormalized_eigenvalues(
                     ind=local_ind,
                     side="left",
                     band_edge_config=band_edge_config,
+                    compute_type=compute_type,
                 )
-                left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
+                left_band_edges = find_band_edges(
+                    e_0_left, left_mid_gap_energy
+                )  # .astype(compute_type)
                 left_mid_gap_energy = xp.mean(left_band_edges)
                 __, left_conduction_band_guess = left_band_edges
 
-            left_packed = xp.array([left_conduction_band_guess, left_mid_gap_energy])
+            left_packed = xp.array(
+                [left_conduction_band_guess, left_mid_gap_energy]
+            )  # .astype(compute_type)
             comm.stack.bcast(
                 left_packed,
                 root=rank_left,
@@ -286,12 +302,17 @@ def find_renormalized_eigenvalues(
                     ind=local_ind,
                     side="right",
                     band_edge_config=band_edge_config,
+                    compute_type=compute_type,
                 )
-                right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
+                right_band_edges = find_band_edges(
+                    e_0_right, right_mid_gap_energy
+                )  # .astype(compute_type)
                 right_mid_gap_energy = xp.mean(right_band_edges)
                 __, right_conduction_band_guess = right_band_edges
 
-            right_packed = xp.array([right_conduction_band_guess, right_mid_gap_energy])
+            right_packed = xp.array(
+                [right_conduction_band_guess, right_mid_gap_energy]
+            )  # .astype(compute_type)
             comm.stack.bcast(right_packed, root=rank_right)
             right_conduction_band_guess, right_mid_gap_energy = right_packed
 

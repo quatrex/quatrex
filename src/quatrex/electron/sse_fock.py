@@ -32,6 +32,12 @@ class SigmaFock(ScatteringSelfEnergy):
         electron_energies: NDArray,
     ):
         """Initializes the bare Fock self-energy."""
+
+        if config.compute.mixed_precision.sigma_fock_precision == "fp32":
+            self.dtype = xp.complex64
+        else:
+            self.dtype = xp.complex128
+
         self.energies = electron_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
@@ -40,7 +46,7 @@ class SigmaFock(ScatteringSelfEnergy):
             if coulomb_matrix.distribution_state != "nnz"
             else None
         )
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = coulomb_matrix.data[0].astype(self.dtype)
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
@@ -70,7 +76,7 @@ class SigmaFock(ScatteringSelfEnergy):
             label="SigmaFock: SSE computation", level="default", comm=comm
         ):
             if g_lesser.data.shape[-1] != 0:
-                gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+                gl_density = self.prefactor * ((g_lesser.data).astype(self.dtype)).sum(axis=0)
                 sigma_retarded.data += (
                     fft_circular_convolve(
                         gl_density,
@@ -78,6 +84,8 @@ class SigmaFock(ScatteringSelfEnergy):
                         axes=tuple(range(gl_density.ndim - 1)),
                     )
                     / self.kpoint_volume
+                ).astype(
+                    sigma_retarded.data.dtype
                 )
 
         # NOTE: The electron Green's functions and self-energies must

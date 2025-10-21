@@ -11,6 +11,7 @@ from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import synchronize_device
 
 
+
 def mask_precision(x, mask):
     """
     Convert FP32 to BF16 precision by truncating mantissa.
@@ -24,23 +25,24 @@ def mask_precision(x, mask):
     mask_int = xp.uint64(int(mask, 16))
     return (x_int & mask_int).view(xp.float64)
 
-def complex_gemm_to_real_with_mask(a, b, out=None, mask = None):
+
+def complex_gemm_to_real_with_mask(a, b, out=None, mask=None):
     """
     Custom function to perform complex GEMM by separating into real/imaginary parts.
-    
+
     Computes: out = alpha * (a @ b) + beta * out
-    
+
     For complex matrices A = A_r + i*A_i and B = B_r + i*B_i:
-    - C_r = A_r @ B_r - A_i @ B_i  
+    - C_r = A_r @ B_r - A_i @ B_i
     - C_i = A_r @ B_i + A_i @ B_r
-    
+
     This allows using separate sgemm/dgemm calls instead of complex GEMM.
-    
+
     Parameters
     ----------
     a : array_like
         Input matrix A (complex)
-    b : array_like  
+    b : array_like
         Input matrix B (complex)
     out : array_like, optional
         Output matrix C. If None, a new matrix is allocated.
@@ -48,40 +50,114 @@ def complex_gemm_to_real_with_mask(a, b, out=None, mask = None):
         Scalar multiplier for a @ b. Default is 1.0.
     beta : float, optional
         Scalar multiplier for existing out values. Default is 0.0.
-        
+
     Returns
     -------
     array_like
         Result of the complex matrix multiplication
     """
+
+    in_type = a.dtype
+    assert in_type == b.dtype
+    if out is not None:
+        assert out.dtype == in_type
+
     if mask is None:
+        assert out is None
         return a @ b
+
+    if mask in ["fp32", "fp64"]:
+
+        if in_type in [xp.complex64, xp.complex128]:
+            compute_type = xp.complex64 if mask == "fp32" else xp.complex128
+        elif in_type in [xp.float32, xp.float64]:
+            compute_type = xp.float32 if mask == "fp32" else xp.float64
+        else:
+            raise ValueError("Unsupported input data type")
+
+        if in_type == compute_type:
+            return a @ b
+
+        a = a.astype(compute_type)
+        b = b.astype(compute_type)
+        assert out is None
+        return (a @ b).astype(in_type)
+
+    if mask in ["tf32"]:
+
+        assert out is None
+
+        from nvmath.linalg import ComputeType
+        from nvmath.linalg.advanced import MatmulOptions, matmul
+
+        options = MatmulOptions(
+            compute_type=ComputeType.COMPUTE_32F_FAST_TF32,
+        )
+        if in_type in [xp.complex64, xp.complex128]:
+            compute_type = xp.complex64
+
+            assert a.shape[-1] != b.shape[-1]
+            assert a.shape[-2] != b.shape[-2]
+            assert a.ndim == b.ndim
+
+            if a.ndim == 3 and b.ndim == 3:
+                if a.shape[0] != b.shape[0]:
+                    batch_size = max(a.shape[0], b.shape[0])
+
+                    # broadcast a and b to the same batch size
+                    a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2]))
+                    b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2]))
+
+            a_real = xp.real(a).astype(xp.float32)
+            a_imag = xp.imag(a).astype(xp.float32)
+            b_real = xp.real(b).astype(xp.float32)
+            b_imag = xp.imag(b).astype(xp.float32)
+
+            term1 = matmul(a_real, b_real, options=options)
+            term2 = matmul(a_imag, b_imag, options=options)
+            c_real = term1 - term2
+
+            # C_imag = A_real @ B_imag + A_imag @ B_real
+            term3 = matmul(a_real, b_imag, options=options)
+            term4 = matmul(a_imag, b_real, options=options)
+            c_imag = term3 + term4
+
+            return (c_real + 1j * c_imag).astype(in_type)
+
+        elif in_type in [xp.float32, xp.float64]:
+            a = a.astype(xp.float32)
+            b = b.astype(xp.float32)
+            return matmul(a, b, options=options).astype(in_type)
+        else:
+            raise ValueError("Unsupported input data type")
+
     # Handle different array backends (numpy/cupy)
-    if hasattr(xp, 'real') and hasattr(xp, 'imag'):
+    if hasattr(xp, "real") and hasattr(xp, "imag"):
         # Extract real and imaginary parts
         a_real = mask_precision(xp.real(a).astype(xp.float64), mask)
         a_imag = mask_precision(xp.imag(a).astype(xp.float64), mask)
-        b_real = mask_precision(xp.real(b).astype(xp.float64), mask) 
+        b_real = mask_precision(xp.real(b).astype(xp.float64), mask)
         b_imag = mask_precision(xp.imag(b).astype(xp.float64), mask)
-        
+
         # Compute real and imaginary parts separately using real GEMM
         # C_real = A_real @ B_real - A_imag @ B_imag
         c_real = a_real @ b_real - a_imag @ b_imag
-        
-        # C_imag = A_real @ B_imag + A_imag @ B_real  
+
+        # C_imag = A_real @ B_imag + A_imag @ B_real
         c_imag = a_real @ b_imag + a_imag @ b_real
-        
+
         # Combine back to complex
         result = c_real + 1j * c_imag
-        
+
         # Handle output and beta scaling
         if out is not None:
-            out[:] = result
+            out[:] = result.astype(in_type)
             return out
         else:
-            return result
+            return result.astype(in_type)
     else:
         raise ValueError("Unsupported array backend")
+
 
 def to_bf16(x):
     """
@@ -95,6 +171,7 @@ def to_bf16(x):
     mask = xp.uint32(0xFFFF0000)  # Keep sign, exponent, and upper 7 mantissa bits
     x_bf16_int = x_int & mask
     return x_bf16_int.view(xp.float32)
+
 
 def real_gemm_fastest(a, b):
     """
@@ -132,42 +209,77 @@ def real_gemm_fastest(a, b):
 
     return result
 
-def complex_gemm_to_real(a, b, out = None, emulate = False):
+
+def complex_gemm_to_real(a, b, out=None, assembly_mask=None):
     """
-    Complex GEMM using 3 BF16 operations to emulate each FP32 matrix multiplication.
+    Complex GEMM using 3 BF16 operations to assembly_mask each FP32 matrix multiplication.
 
     Computes: out = alpha * (a @ b) + beta * out
 
     Each real matrix multiplication uses 3 BF16 operations for the fastest performance.
     """
 
-    if not emulate:
+    in_type = a.dtype
+    assert in_type == b.dtype
+
+    if assembly_mask is None:
+        assert out is None
         return a @ b
 
-    # Extract real and imaginary parts as FP32
-    a_real = xp.real(a).astype(xp.float32)
-    a_imag = xp.imag(a).astype(xp.float32)
-    b_real = xp.real(b).astype(xp.float32)
-    b_imag = xp.imag(b).astype(xp.float32)
+    elif assembly_mask in ["fp32", "fp64"]:
+        if in_type in [xp.complex64, xp.complex128]:
+            compute_type = xp.complex64 if assembly_mask == "fp32" else xp.complex128
+        elif in_type in [xp.float32, xp.float64]:
+            compute_type = xp.float32 if assembly_mask == "fp32" else xp.float64
+        else:
+            raise ValueError("Unsupported input data type")
 
-    # C_real = A_real @ B_real - A_imag @ B_imag
-    term1 = real_gemm_fastest(a_real, b_real)
-    term2 = real_gemm_fastest(a_imag, b_imag)
-    c_real = term1 - term2
+        if in_type == compute_type:
+            return a @ b
 
-    # C_imag = A_real @ B_imag + A_imag @ B_real
-    term3 = real_gemm_fastest(a_real, b_imag)
-    term4 = real_gemm_fastest(a_imag, b_real)
-    c_imag = term3 + term4
-    
-    # Combine back to complex
-    result = c_real + 1j * c_imag
-    
-    if out is not None:
-        out[:] = result + accumulate
-        return out
+        a = a.astype(compute_type)
+        b = b.astype(compute_type)
+        assert out is None
+        return (a @ b).astype(in_type)
+
+    elif assembly_mask in ["tf32"]:
+
+        assert out is None
+
+        from nvmath.linalg import ComputeType
+        from nvmath.linalg.advanced import MatmulOptions, matmul
+
+        options = MatmulOptions(
+            compute_type=ComputeType.COMPUTE_32F_FAST_TF32,
+        )
+        if in_type in [xp.complex64, xp.complex128]:
+            compute_type = xp.complex64
+
+            a_real = xp.real(a).astype(xp.float32)
+            a_imag = xp.imag(a).astype(xp.float32)
+            b_real = xp.real(b).astype(xp.float32)
+            b_imag = xp.imag(b).astype(xp.float32)
+
+            term1 = matmul(a_real, b_real, options=options)
+            term2 = matmul(a_imag, b_imag, options=options)
+            c_real = term1 - term2
+
+            # C_imag = A_real @ B_imag + A_imag @ B_real
+            term3 = matmul(a_real, b_imag, options=options)
+            term4 = matmul(a_imag, b_real, options=options)
+            c_imag = term3 + term4
+
+            return (c_real + 1j * c_imag).astype(in_type)
+
+        elif in_type in [xp.float32, xp.float64]:
+            a = a.astype(xp.float32)
+            b = b.astype(xp.float32)
+            return matmul(a, b, options=options).astype(in_type)
+        else:
+            raise ValueError("Unsupported input data type")
+
     else:
-        return result
+        raise ValueError("Unsupported assembly_mask type")
 
 
 @profiler.profile(level="api")
@@ -190,8 +302,8 @@ def bd_matmul(
     in_num_diag: int = 3,
     out_num_diag: int = 5,
     spillover_correction: bool = False,
-    accumulator_dtype = None,
-    emulate: bool = False
+    accumulator_dtype=None,
+    assembly_mask: bool = False,
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -214,7 +326,7 @@ def bd_matmul(
         systems. The default is False.
     accumulator_dtype : data type, optional
         The data type of the temporary accumulator matrices. The default is None.
-    emulate : bool, optional
+    assembly_mask : bool, optional
         Whether to emulated precision. The default is None.
 
     TODO: replace @ by appropriate gemm
@@ -261,7 +373,7 @@ def bd_matmul(
                     (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
                 )
             else:
-                partsum = (out_.blocks[i, j])
+                partsum = out_.blocks[i, j]
 
             for k in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
                 if abs(j - k) > in_num_diag // 2:
@@ -277,17 +389,29 @@ def bd_matmul(
                             sum_b = xp.zeros_like(b_[0].blocks[k_b, j_b])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k_b, j_b])
-                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], sum_b, emulate = emulate)
+                            partsum += complex_gemm_to_real(
+                                a_.blocks[i_a, k_a], sum_b, assembly_mask=assembly_mask
+                            )
                         else:
-                            partsum += complex_gemm_to_real(a_.blocks[i_a, k_a], b_.blocks[k_b, j_b], emulate = emulate)
+                            partsum += complex_gemm_to_real(
+                                a_.blocks[i_a, k_a],
+                                b_.blocks[k_b, j_b],
+                                assembly_mask=assembly_mask,
+                            )
                     else:
                         if isinstance(b, list):
                             sum_b = xp.zeros_like(b_[0].blocks[k, j])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k, j])
-                            partsum += complex_gemm_to_real(a_.blocks[i, k], sum_b, emulate = emulate)
+                            partsum += complex_gemm_to_real(
+                                a_.blocks[i, k], sum_b, assembly_mask=assembly_mask
+                            )
                         else:
-                            partsum += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j], emulate = emulate)
+                            partsum += complex_gemm_to_real(
+                                a_.blocks[i, k],
+                                b_.blocks[k, j],
+                                assembly_mask=assembly_mask,
+                            )
 
             if out_block:
                 out[i, j] = partsum
@@ -305,9 +429,9 @@ def bd_sandwich(
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     spillover_correction: bool = False,
-    accumulator_dtype = None,
+    accumulator_dtype=None,
     accumulate: bool = False,
-    emulate: bool = False
+    assembly_mask: bool = False,
 ):
     """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
 
@@ -388,11 +512,15 @@ def bd_sandwich(
                     else:
                         b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = complex_gemm_to_real(a_im, b_.blocks[b_m, b_k], emulate = emulate).astype(
+                    ab_ik[k] = complex_gemm_to_real(
+                        a_im, b_.blocks[b_m, b_k], assembly_mask=assembly_mask
+                    ).astype(
                         accumulator_dtype
                     )  # cast data type
                 else:
-                    ab_ik[k] += complex_gemm_to_real(a_im, b_.blocks[b_m, b_k], emulate = emulate).astype(
+                    ab_ik[k] += complex_gemm_to_real(
+                        a_im, b_.blocks[b_m, b_k], assembly_mask=assembly_mask
+                    ).astype(
                         accumulator_dtype
                     )  # cast data type
 
@@ -424,12 +552,16 @@ def bd_sandwich(
                 if ab_ik[k] is None:
                     continue
                 if a_is_hermitian:
-                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_k, a_j], emulate = emulate).astype(
+                    partsum += complex_gemm_to_real(
+                        ab_ik[k], a_.blocks[a_k, a_j], assembly_mask=assembly_mask
+                    ).astype(
                         accumulator_dtype
                     )  # cast data type
 
                 else:
-                    partsum += complex_gemm_to_real(ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), emulate = emulate).astype(
+                    partsum += complex_gemm_to_real(
+                        ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), assembly_mask=assembly_mask
+                    ).astype(
                         accumulator_dtype
                     )  # cast data type
 
@@ -451,7 +583,7 @@ def btd_matmul(
     b: DSDBSparse,
     out: DSDBSparse,
     spillover_correction: bool = False,
-    emulate: bool = False
+    assembly_mask: bool = False,
 ):
     """Matrix multiplication of two `a @ b` BTD DSDBSparse matrices.
 
@@ -468,7 +600,7 @@ def btd_matmul(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
-    emulate : bool, optional
+    assembly_mask : bool, optional
         Whether to emulated precision. The default is False.
 
     """
@@ -490,7 +622,9 @@ def btd_matmul(
         for j in range(max(0, i - 2), min(num_blocks, i + 3)):
             out_ij = out.blocks[i, j]
             for k in range(max(0, i - 1), min(num_blocks, i + 2)):
-                out_ij += complex_gemm_to_real(a_.blocks[i, k], b_.blocks[k, j], emulate = emulate)
+                out_ij += complex_gemm_to_real(
+                    a_.blocks[i, k], b_.blocks[k, j], assembly_mask=assembly_mask
+                )
 
             out_.blocks[i, j] = out_ij
 
@@ -499,8 +633,12 @@ def btd_matmul(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    out_.blocks[0, 0] += complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
-    out_.blocks[-1, -1] += complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
+    out_.blocks[0, 0] += complex_gemm_to_real(
+        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    )
+    out_.blocks[-1, -1] += complex_gemm_to_real(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
+    )
 
 
 def btd_sandwich(
@@ -508,7 +646,7 @@ def btd_sandwich(
     b: DSDBSparse,
     out: DSDBSparse,
     spillover_correction: bool = False,
-    emulate: bool = False
+    assembly_mask: bool = False,
 ):
     """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
 
@@ -525,7 +663,7 @@ def btd_sandwich(
         Whether to apply spillover corrections to the output matrix.
         This is necessary when the matrices represent open-ended
         systems. The default is False.
-    emulate : bool, optional
+    assembly_mask : bool, optional
         Whether to emulated precision. The default is False.
 
     """
@@ -549,8 +687,12 @@ def btd_sandwich(
             for k in range(max(0, i - 2), min(num_blocks, i + 3)):
                 a_kj = a_.blocks[k, j]
                 for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    temp_result = complex_gemm_to_real(a_.blocks[i, m], b_.blocks[m, k], emulate = emulate)
-                    out_ij += complex_gemm_to_real(temp_result, a_kj, emulate = emulate)
+                    temp_result = complex_gemm_to_real(
+                        a_.blocks[i, m], b_.blocks[m, k], assembly_mask=assembly_mask
+                    )
+                    out_ij += complex_gemm_to_real(
+                        temp_result, a_kj, assembly_mask=assembly_mask
+                    )
 
             out_.blocks[i, j] = out_ij
 
@@ -559,31 +701,59 @@ def btd_sandwich(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    temp1 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
-    temp2 = complex_gemm_to_real(a_.blocks[0, 0], b_.blocks[1, 0], emulate = emulate)
-    temp3 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 0], emulate = emulate)
+    temp1 = complex_gemm_to_real(
+        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    )
+    temp2 = complex_gemm_to_real(
+        a_.blocks[0, 0], b_.blocks[1, 0], assembly_mask=assembly_mask
+    )
+    temp3 = complex_gemm_to_real(
+        a_.blocks[1, 0], b_.blocks[0, 0], assembly_mask=assembly_mask
+    )
     out_.blocks[0, 0] += (
-        complex_gemm_to_real(temp1, a_.blocks[0, 0], emulate = emulate)
-        + complex_gemm_to_real(temp2, a_.blocks[0, 1], emulate = emulate)
-        + complex_gemm_to_real(temp3, a_.blocks[0, 1], emulate = emulate)
+        complex_gemm_to_real(temp1, a_.blocks[0, 0], assembly_mask=assembly_mask)
+        + complex_gemm_to_real(temp2, a_.blocks[0, 1], assembly_mask=assembly_mask)
+        + complex_gemm_to_real(temp3, a_.blocks[0, 1], assembly_mask=assembly_mask)
     )
-    temp4 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[0, 1], emulate = emulate)
-    out_.blocks[0, 1] += complex_gemm_to_real(temp4, a_.blocks[0, 1], emulate = emulate)
-    temp5 = complex_gemm_to_real(a_.blocks[1, 0], b_.blocks[1, 0], emulate = emulate)
-    out_.blocks[1, 0] += complex_gemm_to_real(temp5, a_.blocks[0, 1], emulate = emulate)
+    temp4 = complex_gemm_to_real(
+        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    )
+    out_.blocks[0, 1] += complex_gemm_to_real(
+        temp4, a_.blocks[0, 1], assembly_mask=assembly_mask
+    )
+    temp5 = complex_gemm_to_real(
+        a_.blocks[1, 0], b_.blocks[1, 0], assembly_mask=assembly_mask
+    )
+    out_.blocks[1, 0] += complex_gemm_to_real(
+        temp5, a_.blocks[0, 1], assembly_mask=assembly_mask
+    )
 
-    temp6 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
-    temp7 = complex_gemm_to_real(a_.blocks[-1, -1], b_.blocks[-2, -1], emulate = emulate)
-    temp8 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -1], emulate = emulate)
-    out_.blocks[-1, -1] += (
-        complex_gemm_to_real(temp6, a_.blocks[-1, -1], emulate = emulate)
-        + complex_gemm_to_real(temp7, a_.blocks[-1, -2], emulate = emulate)
-        + complex_gemm_to_real(temp8, a_.blocks[-1, -2], emulate = emulate)
+    temp6 = complex_gemm_to_real(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
     )
-    temp9 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-1, -2], emulate = emulate)
-    out_.blocks[-1, -2] += complex_gemm_to_real(temp9, a_.blocks[-1, -2], emulate = emulate)
-    temp10 = complex_gemm_to_real(a_.blocks[-2, -1], b_.blocks[-2, -1], emulate = emulate)
-    out_.blocks[-2, -1] += complex_gemm_to_real(temp10, a_.blocks[-1, -2], emulate = emulate)
+    temp7 = complex_gemm_to_real(
+        a_.blocks[-1, -1], b_.blocks[-2, -1], assembly_mask=assembly_mask
+    )
+    temp8 = complex_gemm_to_real(
+        a_.blocks[-2, -1], b_.blocks[-1, -1], assembly_mask=assembly_mask
+    )
+    out_.blocks[-1, -1] += (
+        complex_gemm_to_real(temp6, a_.blocks[-1, -1], assembly_mask=assembly_mask)
+        + complex_gemm_to_real(temp7, a_.blocks[-1, -2], assembly_mask=assembly_mask)
+        + complex_gemm_to_real(temp8, a_.blocks[-1, -2], assembly_mask=assembly_mask)
+    )
+    temp9 = complex_gemm_to_real(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
+    )
+    out_.blocks[-1, -2] += complex_gemm_to_real(
+        temp9, a_.blocks[-1, -2], assembly_mask=assembly_mask
+    )
+    temp10 = complex_gemm_to_real(
+        a_.blocks[-2, -1], b_.blocks[-2, -1], assembly_mask=assembly_mask
+    )
+    out_.blocks[-2, -1] += complex_gemm_to_real(
+        temp10, a_.blocks[-1, -2], assembly_mask=assembly_mask
+    )
 
 
 class BlockMatrix(dict):
@@ -847,8 +1017,8 @@ def bd_matmul_distr(
     start_block: int = 0,
     end_block: int = None,
     spillover_correction: bool = False,
-    accumulator_dtype = None,
-    emulate: bool = False
+    accumulator_dtype=None,
+    assembly_mask: str | None = None,
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -871,7 +1041,7 @@ def bd_matmul_distr(
         systems. The default is False.
     accumulator_dtype : data type, optional
         The data type of the temporary accumulator matrices. The default is None.
-    emulate : bool, optional
+    assembly_mask : bool, optional
         Whether to emulated precision. The default is False.
 
     TODO: replace @ by appropriate gemm
@@ -977,15 +1147,18 @@ def bd_matmul_distr(
                             k_b, j_b = k, j
                         try:
                             if partsum is None:
-                                partsum = complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b], emulate = emulate)
+                                partsum = complex_gemm_to_real(
+                                    a_[i_a, k_a], b_[k_b, j_b], assembly_mask=assembly_mask
+                                )
                             else:
-                                partsum += complex_gemm_to_real(a_[i_a, k_a], b_[k_b, j_b], emulate = emulate)
+                                partsum += complex_gemm_to_real(
+                                    a_[i_a, k_a], b_[k_b, j_b], assembly_mask=assembly_mask
+                                )
                         except Exception as e:
                             rank = comm.block.rank if comm.block is not None else 0
                             print(e)
                             raise RuntimeError(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
-                            )
 
                 out_[i, j] = partsum
 
@@ -1001,8 +1174,8 @@ def bd_sandwich_distr(
     start_block: int = 0,
     end_block: int = None,
     spillover_correction: bool = False,
-    accumulator_dtype = None,
-    emulate: bool = False
+    accumulator_dtype=None,
+    assembly_mask: str | None = None,
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -1025,7 +1198,7 @@ def bd_sandwich_distr(
         systems. The default is False.
     accumulator_dtype : data type, optional
         The data type of the temporary accumulator matrices. The default is None.
-    emulate : bool, optional
+    assembly_mask : bool, optional
         Whether to emulated precision. The default is False.
 
     TODO: replace @ by appropriate gemm
@@ -1064,7 +1237,7 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
-        emulate = emulate
+        assembly_mask=assembly_mask,
     )
     out_ = bd_matmul_distr(
         tmp,
@@ -1077,7 +1250,7 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
-        emulate = emulate
+        assembly_mask=assembly_mask,
     )
 
     if spillover_correction:
@@ -1088,35 +1261,63 @@ def bd_sandwich_distr(
 
         # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
-            temp1 = complex_gemm_to_real(a_[1, 0], b_[0, 1], emulate = emulate)
-            temp2 = complex_gemm_to_real(a_[0, 0], b_[1, 0], emulate = emulate)
-            temp3 = complex_gemm_to_real(a_[1, 0], b_[0, 0], emulate = emulate)
-            out_[0, 0] += (
-                complex_gemm_to_real(temp1, a_[0, 0], emulate = emulate)
-                + complex_gemm_to_real(temp2, a_[0, 1], emulate = emulate)
-                + complex_gemm_to_real(temp3, a_[0, 1], emulate = emulate)
+            temp1 = complex_gemm_to_real(
+                a_[1, 0], b_[0, 1], assembly_mask=assembly_mask
             )
-            temp4 = complex_gemm_to_real(a_[1, 0], b_[0, 1], emulate = emulate)
-            out_[0, 1] += complex_gemm_to_real(temp4, a_[0, 1], emulate = emulate)
+            temp2 = complex_gemm_to_real(
+                a_[0, 0], b_[1, 0], assembly_mask=assembly_mask
+            )
+            temp3 = complex_gemm_to_real(
+                a_[1, 0], b_[0, 0], assembly_mask=assembly_mask
+            )
+            out_[0, 0] += (
+                complex_gemm_to_real(temp1, a_[0, 0], assembly_mask=assembly_mask)
+                + complex_gemm_to_real(temp2, a_[0, 1], assembly_mask=assembly_mask)
+                + complex_gemm_to_real(temp3, a_[0, 1], assembly_mask=assembly_mask)
+            )
+            temp4 = complex_gemm_to_real(
+                a_[1, 0], b_[0, 1], assembly_mask=assembly_mask
+            )
+            out_[0, 1] += complex_gemm_to_real(
+                temp4, a_[0, 1], assembly_mask=assembly_mask
+            )
             if not out_.dsdbsparse.symmetry:
-                temp5 = complex_gemm_to_real(a_[1, 0], b_[1, 0], emulate = emulate)
-                out_[1, 0] += complex_gemm_to_real(temp5, a_[0, 1], emulate = emulate)
+                temp5 = complex_gemm_to_real(
+                    a_[1, 0], b_[1, 0], assembly_mask=assembly_mask
+                )
+                out_[1, 0] += complex_gemm_to_real(
+                    temp5, a_[0, 1], assembly_mask=assembly_mask
+                )
 
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
             m2 = a.num_blocks - 2
-            temp6 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2], emulate = emulate)
-            temp7 = complex_gemm_to_real(a_[m1, m1], b_[m2, m1], emulate = emulate)
-            temp8 = complex_gemm_to_real(a_[m2, m1], b_[m1, m1], emulate = emulate)
-            out_[m1, m1] += (
-                complex_gemm_to_real(temp6, a_[m1, m1], emulate = emulate)
-                + complex_gemm_to_real(temp7, a_[m1, m2], emulate = emulate)
-                + complex_gemm_to_real(temp8, a_[m1, m2], emulate = emulate)
+            temp6 = complex_gemm_to_real(
+                a_[m2, m1], b_[m1, m2], assembly_mask=assembly_mask
             )
-            temp9 = complex_gemm_to_real(a_[m2, m1], b_[m1, m2], emulate = emulate)
-            out_[m1, m2] += complex_gemm_to_real(temp9, a_[m1, m2], emulate = emulate)
+            temp7 = complex_gemm_to_real(
+                a_[m1, m1], b_[m2, m1], assembly_mask=assembly_mask
+            )
+            temp8 = complex_gemm_to_real(
+                a_[m2, m1], b_[m1, m1], assembly_mask=assembly_mask
+            )
+            out_[m1, m1] += (
+                complex_gemm_to_real(temp6, a_[m1, m1], assembly_mask=assembly_mask)
+                + complex_gemm_to_real(temp7, a_[m1, m2], assembly_mask=assembly_mask)
+                + complex_gemm_to_real(temp8, a_[m1, m2], assembly_mask=assembly_mask)
+            )
+            temp9 = complex_gemm_to_real(
+                a_[m2, m1], b_[m1, m2], assembly_mask=assembly_mask
+            )
+            out_[m1, m2] += complex_gemm_to_real(
+                temp9, a_[m1, m2], assembly_mask=assembly_mask
+            )
             if not out_.dsdbsparse.symmetry:
-                temp10 = complex_gemm_to_real(a_[m2, m1], b_[m2, m1], emulate = emulate)
-                out_[m2, m1] += complex_gemm_to_real(temp10, a_[m1, m2], emulate = emulate)
+                temp10 = complex_gemm_to_real(
+                    a_[m2, m1], b_[m2, m1], assembly_mask=assembly_mask
+                )
+                out_[m2, m1] += complex_gemm_to_real(
+                    temp10, a_[m1, m2], assembly_mask=assembly_mask
+                )
 
     return out_

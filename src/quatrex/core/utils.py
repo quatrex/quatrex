@@ -3,7 +3,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import get_host, get_device
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 
@@ -30,10 +30,9 @@ def homogenize(matrix: DSDBSparse) -> None:
     # matrix.blocks[-1, -1] = matrix.blocks[0, 0]
     # matrix.blocks[-1, -2] = matrix.blocks[1, 0]
 
-
 def assemble_kpoint_dsb(
     buffer: DSDBSparse,
-    lattice_matrix: dict[tuple, sparse.csr_matrix],
+    lattice_matrix: dict[tuple, sparse.csr_matrix | xp.ndarray],
     number_of_kpoints: xp.ndarray,
     roll_index: int | xp.ndarray,
     transport_direction: str | None = None,
@@ -52,11 +51,36 @@ def assemble_kpoint_dsb(
     else:
         valid_cells = list(lattice_matrix.keys())
 
-    for i, ii in enumerate(xp.roll(xp.arange(number_of_kpoints[0]), roll_index[0])):
-        for j, jj in enumerate(xp.roll(xp.arange(number_of_kpoints[1]), roll_index[1])):
-            for k, kk in enumerate(
-                xp.roll(xp.arange(number_of_kpoints[2]), roll_index[2])
-            ):
+    if not valid_cells:
+        return buffer
+        
+    # Convert valid_cells to array for vectorization
+    cell_array = xp.array(valid_cells)
+    
+    # Pre-compute rolled indices
+    rolled_indices = [
+        np.roll(np.arange(number_of_kpoints[dim]), roll_index[dim])
+        for dim in range(3)
+    ]
+    
+    # Pre-compute k-point values
+    k_values = [
+        (rolled_indices[dim] - number_of_kpoints[dim] // 2) / number_of_kpoints[dim]
+        for dim in range(3)
+    ]
+
+    # Convert lattice matrices to a list for faster indexing
+    if isinstance(lattice_matrix[valid_cells[0]], xp.ndarray):
+        lattice_matrices_array = xp.array([lattice_matrix[cell] for cell in valid_cells])
+    elif isinstance(lattice_matrix[valid_cells[0]], sparse.csr_matrix):
+        lattice_matrices_array = np.array([lattice_matrix[cell] for cell in valid_cells])
+    else:
+        raise TypeError("Unsupported lattice matrix type.")
+    
+    # Loop over k-points
+    for i in rolled_indices[0]:
+        for j in rolled_indices[1]:
+            for k in rolled_indices[2]:
                 stack_index = tuple(
                     [i]
                     if number_of_kpoints[0] > 1
@@ -66,24 +90,27 @@ def assemble_kpoint_dsb(
                         else [] + [k] if number_of_kpoints[2] > 1 else []
                     )
                 )
-                ik = (ii - number_of_kpoints[0] // 2) / number_of_kpoints[0]
-                jk = (jj - number_of_kpoints[1] // 2) / number_of_kpoints[1]
-                kk = (kk - number_of_kpoints[2] // 2) / number_of_kpoints[2]
-                for cell_index in valid_cells:
-                    # Add the contribution of the current k-point to the buffer.
-                    buffer.stack[(...,) + stack_index] += (
-                        xp.exp(
-                            2
-                            * xp.pi
-                            * 1j
-                            * (
-                                ik * cell_index[0]
-                                + jk * cell_index[1]
-                                + kk * cell_index[2]
-                            )
-                        )
-                        * lattice_matrix[cell_index]
+                ik = k_values[0][i]
+                jk = k_values[1][j]
+                kk = k_values[2][k]
+
+                phases = xp.exp(
+                    2 * xp.pi * 1j * (
+                        ik * cell_array[:, 0] +
+                        jk * cell_array[:, 1] +
+                        kk * cell_array[:, 2]
                     )
+                )
+                if isinstance(lattice_matrices_array[0], xp.ndarray):
+                    phases = phases[:, None, None]  # Reshape for broadcasting
+                elif isinstance(lattice_matrices_array[0], sparse.csr_matrix):
+                    phases = get_host(phases)
+                
+                # This sum is extremely slow when the lattice matrices are sparse.csr_matrix
+                matrix_contribution = xp.sum(
+                    phases * lattice_matrices_array, axis=0
+                )
+                buffer.stack[(...,) + stack_index] += sparse.csr_matrix(matrix_contribution)
 
 
 def load_matrix_from_unit_cell(

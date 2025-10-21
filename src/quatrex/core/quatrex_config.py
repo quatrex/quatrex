@@ -110,7 +110,7 @@ class OBCConfig(BaseModel):
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
     x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
     two_sided: bool = False
-    treat_pairwise: bool = True
+    treat_pairwise: bool = False
     pairing_threshold: PositiveFloat = 0.25
     min_propagation: PositiveFloat = 1e-2
     residual_tolerance: PositiveFloat = 1e-3

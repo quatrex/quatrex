@@ -397,7 +397,8 @@ class BSC:
                 hamiltonian_block = get_hamiltonian_block(
                     hamiltonian_unit_cells, (1, 1, 1), periodic_shift
                 )
-                hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
+                #hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
+                hamiltonian_dict[periodic_shift] = hamiltonian_block
             del hamiltonian_block
 
         self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
@@ -496,9 +497,10 @@ class BSC:
                         (1, 1, 1),
                         periodic_shift,
                     )
-                    coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
-                        coulomb_matrix_block
-                    )
+                    #coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
+                    #    coulomb_matrix_block
+                    #)
+                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_block
                 del coulomb_matrix_block
 
             self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(

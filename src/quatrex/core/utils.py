@@ -59,7 +59,7 @@ def assemble_kpoint_dsb(
     
     # Pre-compute rolled indices
     rolled_indices = [
-        np.roll(np.arange(number_of_kpoints[dim]), roll_index[dim])
+        xp.roll(xp.arange(number_of_kpoints[dim]), roll_index[dim])
         for dim in range(3)
     ]
     

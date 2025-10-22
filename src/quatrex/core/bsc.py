@@ -1045,30 +1045,41 @@ class BSC:
                 self.data.g_retarded,
                 self.overlap,
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.electron_ldos = self.observables.electron_ldos.sum(axis=-1)
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.overlap,
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.electron_density = self.observables.electron_density.sum(axis=-1)
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.overlap,
             ) / (2 * xp.pi)
-
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.hole_density = self.observables.hole_density.sum(axis=-1)
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
                 self.overlap,
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.sigma_retarded_density = self.observables.sigma_retarded_density.sum(axis=-1)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
                 self.overlap,
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.sigma_lesser_density = self.observables.sigma_lesser_density.sum(axis=-1)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
                 self.overlap,
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.sigma_greater_density = self.observables.sigma_greater_density.sum(axis=-1)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
@@ -1077,23 +1088,35 @@ class BSC:
             self.observables.p_retarded_density = -density(
                 self.data.p_retarded, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.p_retarded_density = self.observables.p_retarded_density.sum(axis=-1)
             self.observables.p_lesser_density = -density(
                 self.data.p_lesser, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.p_lesser_density = self.observables.p_lesser_density.sum(axis=-1)
             self.observables.p_greater_density = -density(
                 self.data.p_greater, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.p_greater_density = self.observables.p_greater_density.sum(axis=-1)
 
         if self.quatrex_config.outputs.coulomb_screening_density:
             self.observables.w_retarded_density = -density(
                 self.data.w_retarded, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.w_retarded_density = self.observables.w_retarded_density.sum(axis=-1)
             self.observables.w_lesser_density = -density(
                 self.data.w_lesser, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.w_lesser_density = self.observables.w_lesser_density.sum(axis=-1)
             self.observables.w_greater_density = -density(
                 self.data.w_greater, self.overlap
             ) / (2 * xp.pi)
+            if not self.quatrex_config.outputs.spatially_resolved:
+                self.observables.w_greater_density = self.observables.w_greater_density.sum(axis=-1)
 
     @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
@@ -1108,10 +1131,7 @@ class BSC:
         outputs = {}
 
         if self.quatrex_config.outputs.electron_ldos:
-            if self.quatrex_config.outputs.spatially_resolved:
-                outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
-            else:
-                outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos.sum(axis=-1)
+            outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
         if self.quatrex_config.outputs.electron_density:
             outputs[f"electron_density_{iteration}.npy"] = (
                 self.observables.electron_density
@@ -1138,22 +1158,13 @@ class BSC:
                 )
 
         if self.quatrex_config.outputs.self_energy_density:
-            if self.quatrex_config.outputs.spatially_resolved:
-                outputs.update(
-                    {
-                        f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
-                        f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
-                        f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
-                    }
-                )
-            else:
-                outputs.update(
-                    {
-                        f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density.sum(axis=-1),
-                        f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density.sum(axis=-1),
-                        f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density.sum(axis=-1),
-                    }
-                )
+            outputs.update(
+                {
+                    f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
+                    f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
+                    f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
+                }
+            )
 
         print(f"Writing output for iteration {iteration}...", flush=True)
 

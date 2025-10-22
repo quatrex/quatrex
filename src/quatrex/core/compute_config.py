@@ -162,7 +162,7 @@ class ComputeConfig(BaseModel):
 
     dsdbsparse_type: DSDBSparse = DSDBCOO
     numba_threading_layer: Literal["workqueue", "omp", "tbb"] = "workqueue"
-    threadpool_api: Literal["blas", "openmp", "tbb"] | None = "blas"
+    threadpool_api: Literal["blas", "openmp", "tbb"] | None = None
     numba_num_threads: PositiveInt | None = None
     blas_num_threads: PositiveInt | Literal["sequential_blas_under_openmp"] | None = (
         None

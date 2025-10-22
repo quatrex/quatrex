@@ -233,9 +233,10 @@ class QTBM:
             self.quatrex_config.electron.conduction_band_edge is None
             or self.quatrex_config.electron.valence_band_edge is None
         ):
-            print(
-                "WARNING: No band edges provided, only electron charge will be computed."
-            )
+            if comm.rank == 0:
+                print(
+                    "WARNING: No band edges provided, only electron charge will be computed."
+                )
             self.neutrality_level = -np.inf
         else:
             self.neutrality_level = 0.5 * (
@@ -336,11 +337,6 @@ class QTBM:
                         )
                     )
                 )
-                if comm.rank == 0:
-                    print(
-                        f"Transmission {self.observables.electron_transmission_contacts_labels[n_t]}: {self.observables.electron_transmission_contacts[K_ind, n_t, i_en]}",
-                        flush=True,
-                    )
 
         phi_ortho = overlap_phase @ phi  # "Orthogonalize" the wavefunction
         for n, contact in enumerate(self.device.contacts):
@@ -358,7 +354,8 @@ class QTBM:
                 contact.get_10(system_matrix) @ phi_cont
                 + system_matrix[contact.orbitals_contact.squeeze(), :] @ phi
             )
-            print(f"    Spill over error for contact {contact.name[0]}: {error}")
+            if comm.rank == 0:
+                print(f"    Spill over error for contact {contact.name[0]}: {error}")
 
         # Compute the DOS for every injected wavefunction
         for n in range(self.num_contacts):
@@ -389,14 +386,11 @@ class QTBM:
         comm.Barrier()
         system_matrix = None  # Initialize the system matrix
 
-        print(self.kpoints)
-
         for k_ind in range(self.num_kpoints):
 
             if comm.rank == 0:
                 print(f"Processing k-point {k_ind+1} of {self.num_kpoints}", flush=True)
             k = self.kpoints[k_ind, :]
-            print(k)
 
             times.append(time.perf_counter())
 
@@ -611,9 +605,6 @@ class QTBM:
             comm.allgather(self.observables.electron_dos_orb), axis=-1
         )
 
-        if comm.rank == 0:
-            print(self.observables.electron_transmission_contacts.shape)
-            print(self.observables.electron_dos_orb.shape)
 
         # Compute the current from all the k dependent transmissions
         for n_t in range(self.num_transmissions):

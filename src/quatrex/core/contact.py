@@ -129,7 +129,8 @@ class Contact:
 
         # Get the hamiltonian and overlap matrices for the first contact
         # cell
-        print("    Getting matrices for contact cell in repetition=0", flush=True)
+        if comm.rank == 0:
+            print("    Getting matrices for contact cell in repetition=0", flush=True)
         self._get_matrix(0)
 
         x = 1
@@ -145,9 +146,11 @@ class Contact:
             # Get atoms, orbitals and matrices for the next contact cell
             self.atoms.append(self._get_atoms_transverse_sorted(x))
             self.orbitals.append(self._get_orbitals(self.atoms[x]))
-            print(
-                f"    Getting matrices for contact cell in repetition={x}", flush=True
-            )
+            if comm.rank == 0:
+                print(
+                    f"    Getting matrices for contact cell in repetition={x}",
+                    flush=True,
+                )
             self._get_matrix(x)
 
             x = x + 1
@@ -559,7 +562,8 @@ class Contact:
                         found = True
 
             if not found:
-                print(f"        Maximum coupling radius: {radius-1}")
+                if comm.rank == 0:
+                    print(f"        Maximum coupling radius: {radius-1}")
                 # if self.n_rep_1 == 1 and self.n_rep_2 == 1 and (radius
                 #    - 1) > 0: raise ValueError("1x1 UC but more than
                 #    1x1 coupling!")

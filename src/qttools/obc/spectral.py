@@ -502,7 +502,9 @@ class Spectral(OBCSolver):
                 dE_dK_injected = dE_dK[i, mask_injected_i]
 
                 # Flux normalization
-                vrs_injected = vrs_injected / xp.sqrt(dE_dK_injected[xp.newaxis, :])
+                vrs_injected = vrs_injected / xp.sqrt(
+                    xp.real(dE_dK_injected[xp.newaxis, :])
+                )
 
                 # Compute surface phi
                 phi_surface.append(

@@ -394,8 +394,7 @@ class Spectral(OBCSolver):
         if find_injected:
 
             mask_injected = dEk_dk.real > 0
-            # mask_injected &= xp.abs(ks.imag) < self.min_decay
-            mask_injected &= xp.abs(dEk_dk.imag) < 1e-8
+            mask_injected &= xp.abs(ks.imag) < self.min_decay
 
             return (
                 (mask_propagating | mask_decaying)
@@ -675,7 +674,9 @@ class Spectral(OBCSolver):
                 dE_dK_injected = dE_dK[i, mask_injected_i]
 
                 # Flux normalization
-                vrs_injected = vrs_injected / xp.sqrt(dE_dK_injected[xp.newaxis, :])
+                vrs_injected = vrs_injected / xp.sqrt(
+                    xp.real(dE_dK_injected[xp.newaxis, :])
+                )
 
                 # Compute surface phi
                 phi_surface.append(

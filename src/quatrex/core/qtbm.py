@@ -10,6 +10,7 @@ from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
 from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.constants import e, h
 from quatrex.core.device import Device
 from quatrex.core.energies import get_electron_energies
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
@@ -605,7 +606,6 @@ class QTBM:
             comm.allgather(self.observables.electron_dos_orb), axis=-1
         )
 
-
         # Compute the current from all the k dependent transmissions
         for n_t in range(self.num_transmissions):
             cont_1, cont_2 = self.observables.electron_transmission_indices[n_t]
@@ -627,7 +627,7 @@ class QTBM:
                     )
                 )
                 / self.num_kpoints
-                * 7.7480917310e-5
+                * (2 * e / h)
             )
 
         # Compute the orbital electron charge density per orbital

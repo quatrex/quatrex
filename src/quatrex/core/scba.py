@@ -924,7 +924,7 @@ class SCBA:
         )        
         sps.save_npz(
             self.quatrex_config.output_dir / "sparsity.npz",
-            self.data.sparsity_pattern.get(),
+            self.data.sparsity_pattern,
             )
         
     @profiler.profile(level="basic")

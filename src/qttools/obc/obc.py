@@ -203,7 +203,7 @@ class OBCMemoizer:
         if x_ii is None and self.memoizing_mode in ["auto", "force-after-first"]:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
         elif self.memoizing_mode == "force":
-            x_ii = xp.linalg.inv(a_ii) if x_ii is None else x_ii
+            x_ii = inv(a_ii) if x_ii is None else x_ii
 
         x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
 

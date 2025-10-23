@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, xp
+from qttools.kernels.linalg.inv import inv
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -179,4 +180,4 @@ def operator_inverse(
             ),
         )
 
-    return xp.linalg.inv(operator.astype(contour_type)).astype(in_type)
+    return inv(operator.astype(contour_type)).astype(in_type)

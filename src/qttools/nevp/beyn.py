@@ -199,9 +199,9 @@ class Beyn(NEVP):
             )
 
         if left:
-            a = xp.linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
+            a = linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
         else:
-            a = q.conj().swapaxes(-2, -1) @ P_1 @ xp.linalg.inv(r)
+            a = q.conj().swapaxes(-2, -1) @ P_1 @ linalg.inv(r)
 
         if left:
             return a, q.conj().swapaxes(-2, -1)

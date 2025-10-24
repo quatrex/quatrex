@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
 from qttools.comm import comm
-from qttools.kernels.linalg import inv
+from qttools.kernels import linalg
 from qttools.profiling import Profiler
 
 profiler = Profiler()
@@ -203,9 +203,9 @@ class OBCMemoizer:
         if x_ii is None and self.memoizing_mode in ["auto", "force-after-first"]:
             return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
         elif self.memoizing_mode == "force":
-            x_ii = xp.linalg.inv(a_ii) if x_ii is None else x_ii
+            x_ii = linalg.inv(a_ii) if x_ii is None else x_ii
 
-        x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
+        x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         if self.memoizing_mode == "auto":
 
@@ -229,9 +229,9 @@ class OBCMemoizer:
 
         # Do refinement iterations.
         for __ in range(self.num_ref_iterations - 2):
-            x_ii = inv(a_ii - a_ji @ x_ii @ a_ij)
+            x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
-        x_ii_ref = inv(a_ii - a_ji @ x_ii @ a_ij)
+        x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         absolute_recursion_errors = xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
         relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(

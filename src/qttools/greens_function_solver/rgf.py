@@ -3,7 +3,7 @@
 from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
-from qttools.kernels.linalg import inv
+from qttools.kernels import linalg
 from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.solvers_utils import get_batches
 
@@ -77,7 +77,7 @@ class RGF(GFSolver):
                 a_.blocks[0, 0] if obc is None else a_.blocks[0, 0] - obc[stack_slice]
             )
 
-            x_diag_blocks[0] = inv(a_00)
+            x_diag_blocks[0] = linalg.inv(a_00)
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -91,7 +91,7 @@ class RGF(GFSolver):
                     else a_.blocks[j, j] - obc[stack_slice]
                 )
 
-                x_diag_blocks[j] = inv(
+                x_diag_blocks[j] = linalg.inv(
                     a_jj - a_.blocks[j, i] @ x_diag_blocks[i] @ a_.blocks[i, j]
                 )
 
@@ -228,7 +228,7 @@ class RGF(GFSolver):
                 else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             )
 
-            xr_jj = inv(a_jj)
+            xr_jj = linalg.inv(a_jj)
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_jj
             xl_diag_blocks[0] = xr_jj @ sl_jj @ xr_jj_dagger
@@ -268,7 +268,7 @@ class RGF(GFSolver):
                 # Precompute some terms that are used multiple times.
                 a_ji_xr_ii = a_ji @ xr_ii
 
-                xr_jj = inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
+                xr_jj = linalg.inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 

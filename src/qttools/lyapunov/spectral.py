@@ -81,7 +81,7 @@ class Spectral(LyapunovSolver):
             use_pinned_memory=self.use_pinned_memory,
         )
 
-        inv_vs = xp.linalg.inv(vs)
+        inv_vs = linalg.inv(vs)
         inv_vs = xp.broadcast_to(inv_vs, q.shape)
         gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)
 

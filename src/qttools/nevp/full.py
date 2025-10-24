@@ -64,7 +64,7 @@ class Full(NEVP):
 
         """
 
-        inverse = xp.linalg.inv(sum(a_xx))
+        inverse = linalg.inv(sum(a_xx))
 
         # NOTE: CuPy does not expose a `block` function.
         row = xp.concatenate(

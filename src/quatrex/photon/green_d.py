@@ -456,6 +456,11 @@ if __name__ == "__main__":
             device = Dev()
             input_dir = Path(".")   # Path object
     qc = DummyCfg()
+
+    # Not so easy to make a dummy for that i need help
+    # class DummyComputeCfg:
+    #     dsdbsparse_type = DSDBSparse
+
     cc = object()  # not used here
 
     d_solver = PhotonSolver(

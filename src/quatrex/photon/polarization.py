@@ -1,6 +1,5 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-import numpy as np
 import opt_einsum as oe
 import time 
 import scipy
@@ -103,11 +102,11 @@ class PiPhoton(ScatteringSelfEnergy):
         #Inverse FFT: energy/frequency domain to time domain: energy -> tau
         n = self.Ne + self.Ne -1 #padding
         start_fft_timer = time.perf_counter()
-        G1_IFFT = scipy.fft.ifft(_as_dense(g_lesser),n, axis=0)  # (Np, N, N) 
-        G2_IFFT = scipy.fft.ifft(_as_dense(g_greater),n , axis=0)  # (Np, N, N)
+        G1_IFFT = xp.fft.fft(_as_dense(g_lesser),n, axis=0)  # (Np, N, N) 
+        G2_IFFT = xp.fft.fft(_as_dense(g_greater),n , axis=0)  # (Np, N, N)
         M = self.m_interaction.astype(xp.complex64,copy=False)
         end_fft_timer = time.perf_counter()
-        print(f"fft took {end_fft_timer - start_fft_timer:.3f}s")
+        print(f"fft took {end_fft_timer - start_fft_timer:.3f}s") # np : 9.933s  | scipy : 9.911s
 
         #Get the term for the polarization via multiplication
     
@@ -148,10 +147,10 @@ class PiPhoton(ScatteringSelfEnergy):
         print("Be patient, FFT back is starting...")
         #FFT back:  tau -> omega
         time_FFT_start = time.perf_counter()
-        Pi_omega_full = xp.fft.fft(SUM, axis=0)   # (n, N, N, 3, 3)
+        Pi_omega_full = xp.fft.ifft(SUM, axis=0)   # (n, N, N, 3, 3)
         Pi_omega_full = self.prefactor * Pi_omega_full
         time_FFT_end = time.perf_counter()
-        print(f"fft took {time_FFT_end - time_FFT_start:.3f}s")
+        print(f"fft took {time_FFT_end - time_FFT_start:.3f}s") # np: 0.591s | scipy : 0.595s
 
         #index array 
         idx = xp.round((self.photon_energies - self.photon_energies[0]) / self.dE).astype(int) 
@@ -186,6 +185,8 @@ if __name__ == "__main__":
     from qttools import NDArray, xp
     from quatrex.photon.utils import make_grids
     from pathlib import Path
+    from matplotlib import pyplot as plt
+    from matplotlib import colors
 
     # tiny test sizes
     input_dir = Path("/home/sem25h7/project2/quatrex/examples/carbon-nanotube/inputs/")
@@ -231,3 +232,9 @@ if __name__ == "__main__":
     t1 = time.perf_counter()
     print(f"computation of Polarization finished in {t1 - t0:.3f}s")
     print("shapes:", P_less.shape, P_grea.shape, P_ret.shape)
+    
+    fig, ax = plt.subplots()
+    im = ax.matshow(xp.abs(P_less[2, :, :, 0, 0]), norm=colors.LogNorm())
+    plt.colorbar(im, ax=ax)
+    plt.savefig("pi_less_slice.png", dpi=150)
+

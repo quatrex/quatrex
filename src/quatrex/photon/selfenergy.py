@@ -32,7 +32,7 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
     def __init__(
         self, 
         quatrex_config: QuatrexConfig,
-        compute_config:ComputeConfig, 
+        compute_config: ComputeConfig, 
         energies:NDArray,
         photon_energies:NDArray,
     ) -> None:
@@ -95,13 +95,13 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
         n = self.Nw + self.Nw -1 #padding
         start_ifft_timer = time.perf_counter()
         #FFT: energy/frequency domain to time domain: energy -> tau
-        G_IFFT = (scipy.fft.ifft(g_lesser,n, axis=0)).conj()  # (Np, N, N) #TODO: change to the fastest option
-        G_IFFT = G_IFFT[::-1, ...]  # reverse the order to get G(tau)
-        D_IFFT = scipy.fft.ifft(d_lesser,n, axis=0)  # (Np, N, N)
+        G_IFFT = scipy.fft.fft(g_lesser,n, axis=0, workers = 128)  # (Np, N, N) #TODO: change to the fastest option
+        G_IFFT = xp.conj(G_IFFT[::-1, ...])  # reverse the order to get G(tau)
+        D_IFFT = scipy.fft.fft(d_lesser,n, axis=0, workers = 128) # (Np, N, N)
         end_ifft_timer = time.perf_counter()
-        print(f"first fourier transform took {end_ifft_timer - start_ifft_timer:.3f}s")
-        #Get the term for the transverse self-energy 
+        print(f"first fourier transform took {end_ifft_timer - start_ifft_timer:.3f}s") # np : 27.7 sec | scipy : 0.989s 
 
+        #Get the term for the transverse self-energy 
         indices_list =[
             "iju,til,lkv,tikuv->tjk",
             "iju,til,lkv,tiluv->tjk", #optimized scaling at 6
@@ -110,7 +110,7 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
         ]
         SUM = None
         for i in indices_list:
-            # calcule le chemin optimal pour CETTE contraction
+
             start = time.perf_counter()
             path, path_info = oe.contract_path(
                 i, self.m_interaction, G_IFFT, self.m_interaction, D_IFFT,
@@ -119,7 +119,7 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
             end = time.perf_counter()
             print(path_info,)  # optionnel: affiche le plan de contraction
             print(end - start)
-            # exécute la contraction correspondante
+
             Term = oe.contract(
                 i, self.m_interaction, G_IFFT, self.m_interaction, D_IFFT,
                 optimize=path,
@@ -137,10 +137,10 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
         print("Be patient, FFT back is starting...")
 
         time_FFT_start = time.perf_counter()
-        Sigma_full = xp.fft.fft(SUM, axis=0)   # (n, N, N, 3, 3)
+        Sigma_full = xp.fft.ifft(SUM, axis=0)   # (n, N, N, 3, 3) 
         Sigma_full = self.prefactor * Sigma_full
         time_FFT_end = time.perf_counter()
-        print(f"back fourier transform took {time_FFT_end - time_FFT_start:.3f}s")
+        print(f"back fourier transform took {time_FFT_end - time_FFT_start:.3f}s") # in np : 0.583s | scipy : 0.149s 
         
         #index array 
         idx = xp.round((self.energies - self.energies[0]) / self.dhw).astype(int) 
@@ -153,21 +153,21 @@ class PhotonSelfEnergy(ScatteringSelfEnergy):
             )
       
 
-        # select only those frequencies and corresponding polarization values
+        # select only selected electron energies and corresponding polarization values
         sigma_selected =  Sigma_full[idx, ...] # (NE, N, N, 3, 3)
 
         s_lesser[...] = sigma_selected
-        # --- detailed balance: Π^>(ω) = iΠ^<(-hbarω) ---
-        # photon_energy est ton tableau des ħω (en eV) correspondant aux lignes sélectionnées
         s_greater[...] = xp.conj(s_lesser[::-1].transpose(0,2,1))
-        s_retarded[...] = 0.5*(s_lesser - s_greater)
+        #s_greater[...] = -xp.conj(s_lesser.transpose(0, 2, 1, 4, 3)) #fermionic nature
+        s_retarded[...] = 0.5 * (s_lesser - s_greater)
 
 if __name__ == "__main__":
     
     from qttools import NDArray, xp
     from quatrex.photon.utils import make_grids
     from pathlib import Path
-
+    from matplotlib import pyplot as plt
+    from matplotlib import colors
     # tiny test sizes
     input_dir = Path("/home/sem25h7/project2/quatrex/examples/carbon-nanotube/inputs/")
     hamiltonian = sp.load_npz(input_dir/"hamiltonian.npz").tocsr()
@@ -181,13 +181,13 @@ if __name__ == "__main__":
         class Dev:
             construct_from_unit_cell = False
         device = Dev()
-        input_dir = Path(".")   # Path object
+        input_dir = Path(".")   
 
     qc = DummyCfg()
     cc = object()  # not used here
 
     # build the object
-    si = PhotonSelfEnergy(qc, cc, energies, photon_energies)
+    si = PhotonSelfEnergy(quatrex_config=qc,compute_config=cc, energies=energies, photon_energies=photon_energies)
     
     ##### Provisorisch : creation of the G_lesser and G_greater 
     random_matrix_g = xp.random.rand(num_orbitals, num_orbitals) + 1j * xp.random.rand(
@@ -216,3 +216,8 @@ if __name__ == "__main__":
     t1 = time.perf_counter()
     print(f"computation of Transverse Self Energy finished in {t1 - t0:.3f}s")
     print("shapes:", s_less.shape, s_grea.shape, s_ret.shape)
+
+    fig, ax = plt.subplots()
+    im = ax.matshow(xp.abs(s_less[2,:,:]), norm=colors.LogNorm())
+    plt.colorbar(im, ax=ax)
+    plt.savefig("si_less_slice.png", dpi=150) #because working on remote server

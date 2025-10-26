@@ -1,73 +1,218 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib import colors
 import opt_einsum as oe
-from quatrex.photon.utils import plot_sparsity, delta_perp_sparse, exponential_decay_hamiltonian,interaction_tensor, show_tensor_cuts, D0_matrix
-import timeit
+import time
+import scipy
+from pathlib import Path
 import scipy.sparse as sp
-from scipy.interpolate import CubicSpline
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSDBSparse
+#for initialization
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from qttools.comm import comm
+from qttools.utils.gpu_utils import get_host
+from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 
-mu0 = 8.854e-12
-hbar = 1.054571817e-34             # J*s
+from quatrex.core.sse import ScatteringSelfEnergy
+from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.photon.utils import interaction_tensor
+from quatrex.photon.load import IOConfig, load_distances, load_hamiltonian_sparse   
+from quatrex.core.constants import hbar, mu_0
 
-def transver_self_energy (energy_grid:NDArray,photon_energy:NDArray, g:DSDBSparse, m_interaction, d:DSDBSparse, pad_factor = 2):
+
+class PhotonSelfEnergy(ScatteringSelfEnergy):
+    """Photon self-energy within the self-consistent Born approximation (SCBA).
+
+    Attributes:
+      compute_config:  ComputeConfig
+      qc:              QuatrexConfig
+      m_interaction:   (N, N, 3)   real/complex, energy-independent
     """
-    Compute D with g form energy via einstein sum - Toy exemple
-    g:              (N, N) complex
-    d:              (N, N) complex
-    m_interaction:  (N, N, 3)   real/complex, energy-independent
-    mu0:            vacuum permeability
 
-    Returns:
-      Σ:            (N, N, 3, 3) complex
-    """
+    def __init__(
+        self, 
+        quatrex_config: QuatrexConfig,
+        compute_config:ComputeConfig, 
+        energies:NDArray,
+        photon_energies:NDArray,
+    ) -> None:
     
-    dE = np.diff(energy_grid).mean()
-    if not np.allclose(np.diff(energy_grid), dE, rtol=1e-6, atol=1e-12):
-        raise ValueError("energy_grid should be uniformly spaced for FFT")
+        self.energies = energies
+        self.photon_energies = photon_energies
 
-    dhw = np.diff(photon_energy).mean()
-    if not np.allclose(np.diff(photon_energy),dhw,rtol=1e-6,atol=1e-12):
-        raise ValueError("photon_energy should be uniformly spaced for FFT")
+        self.Ne = energies.size
+        self.Nw = photon_energies.size
+        self.prefactor = 1j * mu_0 * (1 / (2*xp.pi))
+        self.dE = xp.diff(energies).mean()
+        self.dhw = xp.diff(photon_energies).mean()
+
+        # --- configuration extraction ---
+        io_cfg = IOConfig(
+            input_dir=quatrex_config.input_dir,
+            device = quatrex_config.device,
+            example_input_dir = Path("/home/sem25h7/project2/quatrex/examples/carbon-nanotube/inputs/"),
+        )
+
+        #LOAD distances & Hamiltonian
+        distance_unit_cells = load_distances(io_cfg)       
+        hamiltonian_sparray,_ = load_hamiltonian_sparse(io_cfg)
+                
+        self.m_interaction = interaction_tensor(
+            distance_unit_cells,
+            hamiltonian_sparray
+        ).astype(xp.complex64, copy=False)
+        del hamiltonian_sparray
+
+
+    def compute(
+        self,
+        g_lesser: DSDBSparse,
+        d_lesser: DSDBSparse,
+        out: tuple[NDArray, NDArray, NDArray],
+    ) -> None:
+        """Compute the photon self-energy Σ.
+
+        Args:
+          g:        (Ne, N, N) complex
+          d:        (N, N) complex
+          outputs:  tuple of NDArray to store results
+                    each of shape (Nw, N, N, 3, 3) complex
+        """
+
+        s_lesser, s_greater, s_retarded = out
+
+        # compute self-energy
     
-    if not np.isclose(dhw, dE):
-        raise ValueError(f"Mismatch in spacing : Δω={dhw:.3e} vs ΔEs={dE:.3e}")
+        if not xp.allclose(xp.diff(self.energies), self.dE, rtol=1e-6, atol=1e-12):
+            raise ValueError("energy_grid should be uniformly spaced for FFT")
+
+        if not xp.allclose(xp.diff(self.energies),self.dhw,rtol=1e-6,atol=1e-12):
+            raise ValueError("photon_energy should be uniformly spaced for FFT")
+        
+        if not xp.isclose(self.dhw, self.dE):
+            raise ValueError(f"Mismatch in spacing : Δω={self.dhw:.3e} vs ΔEs={self.dE:.3e}")
+
+        n = self.Nw + self.Nw -1 #padding
+        start_ifft_timer = time.perf_counter()
+        #FFT: energy/frequency domain to time domain: energy -> tau
+        G_IFFT = (scipy.fft.ifft(g_lesser,n, axis=0)).conj()  # (Np, N, N) #TODO: change to the fastest option
+        G_IFFT = G_IFFT[::-1, ...]  # reverse the order to get G(tau)
+        D_IFFT = scipy.fft.ifft(d_lesser,n, axis=0)  # (Np, N, N)
+        end_ifft_timer = time.perf_counter()
+        print(f"first fourier transform took {end_ifft_timer - start_ifft_timer:.3f}s")
+        #Get the term for the transverse self-energy 
+
+        indices_list =[
+            "iju,til,lkv,tikuv->tjk",
+            "iju,til,lkv,tiluv->tjk", #optimized scaling at 6
+            "iju,til,lkv,tjkuv->tjk", #optimized scaling at 6
+            "iju,til,lkv,tjluv->tjk",  
+        ]
+        SUM = None
+        for i in indices_list:
+            # calcule le chemin optimal pour CETTE contraction
+            start = time.perf_counter()
+            path, path_info = oe.contract_path(
+                i, self.m_interaction, G_IFFT, self.m_interaction, D_IFFT,
+                optimize="optimal", memory_limit="max_input"
+            )
+            end = time.perf_counter()
+            print(path_info,)  # optionnel: affiche le plan de contraction
+            print(end - start)
+            # exécute la contraction correspondante
+            Term = oe.contract(
+                i, self.m_interaction, G_IFFT, self.m_interaction, D_IFFT,
+                optimize=path,
+                memory_limit="max_input"
+            )
+            # later passes: mutate in place   
+            if SUM is None:
+                    # first pass: take a writable copy, do NOT add twice
+                SUM = Term + 0
+            else:
+                SUM += Term
+            
+            del Term
+
+        print("Be patient, FFT back is starting...")
+
+        time_FFT_start = time.perf_counter()
+        Sigma_full = xp.fft.fft(SUM, axis=0)   # (n, N, N, 3, 3)
+        Sigma_full = self.prefactor * Sigma_full
+        time_FFT_end = time.perf_counter()
+        print(f"back fourier transform took {time_FFT_end - time_FFT_start:.3f}s")
+        
+        #index array 
+        idx = xp.round((self.energies - self.energies[0]) / self.dhw).astype(int) 
+
+        if xp.any((idx < 0) | (idx >= Sigma_full.shape[0])):
+
+            bad = self.photon_energies[(idx < 0) | (idx >= Sigma_full.shape[0])]
+            raise ValueError(
+                f"Some requeste energies fall outside the FFT grid: {bad}"
+            )
+      
+
+        # select only those frequencies and corresponding polarization values
+        sigma_selected =  Sigma_full[idx, ...] # (NE, N, N, 3, 3)
+
+        s_lesser[...] = sigma_selected
+        # --- detailed balance: Π^>(ω) = iΠ^<(-hbarω) ---
+        # photon_energy est ton tableau des ħω (en eV) correspondant aux lignes sélectionnées
+        s_greater[...] = xp.conj(s_lesser[::-1].transpose(0,2,1))
+        s_retarded[...] = 0.5*(s_lesser - s_greater)
+
+if __name__ == "__main__":
     
-    Ne = energy_grid.size
-    Nw = photon_energy.size
-    prefactor = 1j * mu0 * (1 / (2*np.pi)) 
+    from qttools import NDArray, xp
+    from quatrex.photon.utils import make_grids
+    from pathlib import Path
 
-    pad_width = ((0, int(pad_factor * max(Nw,Ne)) - Nw), (0, 0), (0, 0))      
-    g_pad = np.pad(g, pad_width, mode='constant')
-    d_pad = np.pad(d, pad_width, mode='constant')    
+    # tiny test sizes
+    input_dir = Path("/home/sem25h7/project2/quatrex/examples/carbon-nanotube/inputs/")
+    hamiltonian = sp.load_npz(input_dir/"hamiltonian.npz").tocsr()
+    num_orbitals = 768
+ 
+    energies, photon_energies = make_grids(E_min=-0.1, E_max=0.1, n_points=21,photon_energy_min=0.1, photon_energy_max=0.3)
+    num_photon_energies = photon_energies.size
+    num_electron_energies = energies.size
 
-    #Inverse FFT: energy/frequency domain to time domain: energy -> tau
-    G_IFFT = (np.fft.fft(g_pad, axis=0)).conj()  # (Np, N, N) #TODO: change to the fastest option
-    D_IFFT = np.fft.fft(d_pad, axis=0)  # (Np, N, N)
+    class DummyCfg:
+        class Dev:
+            construct_from_unit_cell = False
+        device = Dev()
+        input_dir = Path(".")   # Path object
 
-    #Get the term for the polarization 
-    T1 = oe.contract("jiu,il,lkv,ikuv->jk",m_interaction,G_IFFT,m_interaction,D_IFFT)
-    T2 = oe.contract("iju,il,lkv,iluv->jk",m_interaction,G_IFFT,m_interaction,D_IFFT) #weird
-    T3 = oe.contract("iju,il,lkv,lkuv->jk",m_interaction,G_IFFT,m_interaction,D_IFFT) #make sense
-    T4 = oe.contract("iju,il,lkv,jluv->jk",m_interaction,G_IFFT,m_interaction,D_IFFT) #weird
-    SUM = (T1 + T2 + T3 + T4)
+    qc = DummyCfg()
+    cc = object()  # not used here
 
-    SUM_FFT = np.fft.ifft(SUM, axis=0) 
+    # build the object
+    si = PhotonSelfEnergy(qc, cc, energies, photon_energies)
+    
+    ##### Provisorisch : creation of the G_lesser and G_greater 
+    random_matrix_g = xp.random.rand(num_orbitals, num_orbitals) + 1j * xp.random.rand(
+        num_orbitals, num_orbitals
+    )
+    g_lesser = xp.zeros((num_electron_energies, num_orbitals, num_orbitals), dtype=complex)
+    nonzero_indices = xp.nonzero(hamiltonian)
+    g_lesser[:, *nonzero_indices] = random_matrix_g[nonzero_indices]
 
-    trans_self_energy = prefactor * SUM_FFT
+    ##### Provisorisch : creation of the D_lesser and D_greater 
+    rows, cols = nonzero_indices
+    d_lesser = xp.zeros((num_electron_energies, num_orbitals, num_orbitals,3,3), dtype=complex)
+    random_matrix_d = (xp.random.rand(num_electron_energies, len(rows), 3, 3) +
+                    1j*xp.random.rand(num_electron_energies, len(rows), 3, 3))
+    for idx, (i, j) in enumerate(zip(rows, cols)):
+        d_lesser[:, i, j, :, :] = random_matrix_d[:, idx, :, :]
 
-    #TODO: different : energy now
-    E_min = energy_grid[0]
-    E_max = energy_grid[-1]
-    mask = (dE >= E_min) & (dE <= E_max)
+    # outputs
+    s_less = xp.empty((num_electron_energies, num_orbitals, num_orbitals), dtype=complex)
+    s_grea = xp.empty_like(s_less)
+    s_ret  = xp.empty_like(s_less)
 
-    if not np.any(mask):
-      raise ValueError("Requested photon range is outside computed frequency grid.")
-
-    # select only those frequencies and corresponding polarization values
-    trans_self_energy_selected = trans_self_energy[mask, ...]
-
-    return trans_self_energy_selected #lent
+    print("Computation of Transverse Self Energy is starting…")
+    t0 = time.perf_counter()
+    si.compute(g_lesser, d_lesser, (s_less, s_grea, s_ret))
+    t1 = time.perf_counter()
+    print(f"computation of Transverse Self Energy finished in {t1 - t0:.3f}s")
+    print("shapes:", s_less.shape, s_grea.shape, s_ret.shape)

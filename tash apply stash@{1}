@@ -1,0 +1,77 @@
+[1mdiff --git a/src/quatrex/core/quatrex_config.py b/src/quatrex/core/quatrex_config.py[m
+[1mindex 5687629..e29b5fe 100644[m
+[1m--- a/src/quatrex/core/quatrex_config.py[m
+[1m+++ b/src/quatrex/core/quatrex_config.py[m
+[36m@@ -270,6 +270,11 @@[m [mclass PhotonConfig(BaseModel):[m
+     solver: SolverConfig = SolverConfig()[m
+     obc: OBCConfig = OBCConfig()[m
+     lyapunov: LyapunovConfig = LyapunovConfig()[m
+[32m+[m[41m    [m
+[32m+[m[32m    #TOASK: Do i need it? I think yes because of the block thing[m
+[32m+[m[32m    num_connected_blocks: Literal["auto"] | PositiveInt = "auto"[m
+[32m+[m[32m    dos_peak_limit: PositiveFloat = 100.0[m
+[32m+[m[32m    filtering_iteration_limit: PositiveInt = 1[m
+ [m
+ [m
+ class PhononConfig(BaseModel):[m
+[1mdiff --git a/src/quatrex/core/scba.py b/src/quatrex/core/scba.py[m
+[1mindex 1fa1748..38e6d67 100644[m
+[1m--- a/src/quatrex/core/scba.py[m
+[1m+++ b/src/quatrex/core/scba.py[m
+[36m@@ -199,8 +199,40 @@[m [mclass SCBAData:[m
+             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)[m
+ [m
+         # TODO: The interactions with photons and phonons are not yet[m
+[31m-        # implemented.[m
+[32m+[m[32m        # implemented. COMING SOON HEHE[m
+[32m+[m
+         if quatrex_config.scba.photon:[m
+[32m+[m[41m            [m
+[32m+[m[32m            self.d_retarded = dsdbsparse_type.zeros_like(self.g_lesser)[m
+[32m+[m[32m            self.d_lesser = dsdbsparse_type.zeros_like(self.g_lesser)[m
+[32m+[m[32m            self.d_greater = dsdbsparse_type.zeros_like(self.g_lesser)[m
+[32m+[m
+[32m+[m[32m            num_connected_blocks = quatrex_config.photon.num_connected_blocks[m
+[32m+[m[32m            if num_connected_blocks == "auto":[m
+[32m+[m[32m                num_connected_blocks = compute_num_connected_blocks([m
+[32m+[m[32m                    self.sparsity_pattern, block_sizes[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m            if comm.rank == 0:[m
+[32m+[m[32m                print(f"Number of connected blocks: {num_connected_blocks}", flush=True)[m
+[32m+[m
+[32m+[m[32m            # TODO: This only works for constant block sizes.[m
+[32m+[m[32m            photon_block_sizes = ([m
+[32m+[m[32m                block_sizes[: len(block_sizes) // num_connected_blocks][m
+[32m+[m[32m                * num_connected_blocks[m
+[32m+[m[32m            )[m
+[32m+[m[32m            #TODO: Potential big difference here no? photon energies[m
+[32m+[m[32m            self.d_lesser = dsdbsparse_type.from_sparray([m
+[32m+[m[32m                self.sparsity_pattern.astype(xp.complex128),[m
+[32m+[m[32m                block_sizes= photon_block_sizes,[m
+[32m+[m[32m                global_stack_shape = electron_energies.shape, #Attention pourrais etre photon energy check it!![m
+[32m+[m[32m                symmetry = quatrex_config.scba.symmetric,[m
+[32m+[m[32m                symmetry_op=lambda a: -a.conj(),[m
+[32m+[m[32m            )[m
+[32m+[m[32m            self.d_greater = dsdbsparse_type.zeros_like(self.d_lesser)[m
+[32m+[m
+[32m+[m
+[32m+[m
+             raise NotImplementedError[m
+ [m
+         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":[m
+[1mdiff --git a/src/quatrex/photon/pola_test.py b/src/quatrex/photon/pola_test.py[m
+[1mindex 47fede5..2f355ac 100644[m
+[1m--- a/src/quatrex/photon/pola_test.py[m
+[1m+++ b/src/quatrex/photon/pola_test.py[m
+[36m@@ -7,7 +7,6 @@[m [mimport opt_einsum as oe[m
+ from quatrex.photon.utils import plot_sparsity, delta_perp_sparse, exponential_decay_hamiltonian,interaction_tensor, show_tensor_cuts, D0_matrix[m
+ import timeit[m
+ import scipy.sparse as sp[m
+[31m-from scipy.interpolate import CubicSpline[m
+ from qttools import NDArray, sparse, xp[m
+ from qttools.datastructures import DSDBSparse[m
+ [m
+[36m@@ -224,3 +223,10 @@[m [mdef polarization_FFT(energy_grid:NDArray, photon_energy:NDArray, G1:DSDBSparse,[m
+ [m
+     return p_polarization_selected #(Np, N, N, 3, 3)[m

@@ -28,7 +28,7 @@ from quatrex.electron import (
     SigmaPhoton,
 )
 from quatrex.phonon import PhononSolver, PiPhonon
-from quatrex.photon import PhotonSolver, PiPhoton
+from quatrex.photon import PhotonSolver, PiPhoton, PhotonSelfEnergy
 
 profiler = Profiler()
 
@@ -50,6 +50,7 @@ class SCBAData:
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         electron_energies: NDArray,
+        #photon_energies: NDArray = None
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
@@ -199,9 +200,40 @@ class SCBAData:
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
         # TODO: The interactions with photons and phonons are not yet
-        # implemented.
+        # implemented. COMING SOON HEHE
+
         if quatrex_config.scba.photon:
-            raise NotImplementedError
+            
+            self.d_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.d_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.d_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+            num_connected_blocks = quatrex_config.photon.num_connected_blocks
+            if num_connected_blocks == "auto":
+                num_connected_blocks = compute_num_connected_blocks(
+                    self.sparsity_pattern, block_sizes
+                )
+
+            if comm.rank == 0:
+                print(f"Number of connected blocks: {num_connected_blocks}", flush=True)
+
+            # TODO: This only works for constant block sizes.
+            photon_block_sizes = (
+                block_sizes[: len(block_sizes) // num_connected_blocks]
+                * num_connected_blocks
+            )
+            #TODO: Potential big difference here no? photon energies
+            self.d_lesser = dsdbsparse_type.from_sparray(
+                self.sparsity_pattern.astype(xp.complex128),
+                block_sizes= photon_block_sizes,
+                global_stack_shape = electron_energies.shape, #Attention est selon moi photon energy check it!! mais changement intrusif donc avoid
+                symmetry = quatrex_config.scba.symmetric,
+                symmetry_op=lambda a: -a.conj(),
+            )
+            self.d_greater = dsdbsparse_type.zeros_like(self.d_lesser)
+
+
+            # raise NotImplementedError
 
         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
             raise NotImplementedError

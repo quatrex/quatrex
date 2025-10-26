@@ -269,6 +269,11 @@ class PhotonConfig(BaseModel):
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
+    
+    #TOASK: Do i need it? I think yes because of the block thing
+    num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
+    dos_peak_limit: PositiveFloat = 100.0
+    filtering_iteration_limit: PositiveInt = 1
 
 
 class PhononConfig(BaseModel):

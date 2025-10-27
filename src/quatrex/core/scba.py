@@ -50,6 +50,7 @@ class SCBAData:
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         electron_energies: NDArray,
+        phonon_energies: NDArray | None = None,
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
@@ -57,6 +58,7 @@ class SCBAData:
             wannier_centers = distributed_load(
                 quatrex_config.input_dir / "wannier_centers.npy"
             )
+            atoms = distributed_load(quatrex_config.input_dir / "atoms.npy")
             lattice_vectors = distributed_load(
                 quatrex_config.input_dir / "lattice_vectors.npy"
             )
@@ -68,6 +70,7 @@ class SCBAData:
             device_cell = tuple(device_cell)
 
             grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
+            atom_positions = create_coordinate_grid(atoms, device_cell, lattice_vectors)
 
             block_sizes = np.array(
                 [
@@ -79,11 +82,28 @@ class SCBAData:
                 * quatrex_config.device.number_of_supercells
             )
 
+            phonon_block_sizes = np.array(
+                [
+                    quatrex_config.device.unit_cell_per_supercell[
+                        "xyz".index(quatrex_config.device.transport_direction)
+                    ]
+                    * atoms.shape[0]
+                ]
+                * quatrex_config.device.number_of_supercells
+            )
+
         else:
             grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+            atom_positions = distributed_load(
+                quatrex_config.input_dir / "atom_positions.npy"
+            )
 
             block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+
+            phonon_block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "phonon_block_sizes.npy")
             )
 
         # Find the maximum interaction cutoff.
@@ -119,6 +139,13 @@ class SCBAData:
         end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
         self.sparsity_pattern = compute_sparsity_pattern(
             grid,
+            max_interaction_cutoff,
+            transport_direction=quatrex_config.device.transport_direction,
+            start_idx=start_idx,
+            end_idx=end_idx,
+        )
+        self.phonon_sparsity_pattern = compute_sparsity_pattern(
+            atom_positions,
             max_interaction_cutoff,
             transport_direction=quatrex_config.device.transport_direction,
             start_idx=start_idx,
@@ -204,7 +231,14 @@ class SCBAData:
             raise NotImplementedError
 
         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
-            raise NotImplementedError
+            self.d_phonon_retarded = dsdbsparse_type.from_sparray(
+                self.phonon_sparsity_pattern.astype(xp.complex128),
+                block_sizes=phonon_block_sizes,
+                global_stack_shape=phonon_energies.shape,
+            )
+            self.d_phonon_retarded.data[:] = 0.0  # Initialize to zero.
+            self.d_phonon_lesser = dsdbsparse_type.zeros_like(self.d_phonon_retarded)
+            self.d_phonon_greater = dsdbsparse_type.zeros_like(self.d_phonon_retarded)
 
 
 @dataclass
@@ -431,7 +465,14 @@ class SCBA:
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
 
         self.data = SCBAData(
-            quatrex_config, compute_config, electron_energies=self.electron_energies
+            quatrex_config,
+            compute_config,
+            electron_energies=self.electron_energies,
+            phonon_energies=(
+                self.phonon_energies
+                if self.quatrex_config.scba.phonon.model == "negf"
+                else None
+            ),
         )  # real data
 
     def _determine_electron_energy_window(self, quatrex_config: QuatrexConfig):
@@ -873,6 +914,28 @@ class SCBA:
                 )
                 print(
                     f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s",
+                    flush=True,
+                )
+
+            t_solve_start = time.perf_counter()
+            self.phonon_solver.solve(
+                out=(
+                    self.data.d_phonon_lesser,
+                    self.data.d_phonon_greater,
+                    self.data.d_phonon_retarded,
+                ),
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for phonon solver: {t_solve_end - t_solve_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for phonon solver all: {t_solve_end_all - t_solve_start:.3f} s",
                     flush=True,
                 )
 

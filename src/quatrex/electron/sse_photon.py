@@ -54,9 +54,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
             self.photon_energy = quatrex_config.photon.photon_energy
 
             self.monochromatic_injection = quatrex_config.photon.monochromatic_injection
-            self.classical_light_intensity = (
-                quatrex_config.photon.classical_light_intensity
-            )
+            self.light_intensity = quatrex_config.photon.light_intensity
 
             # Load block sizes.
             self.block_sizes = get_host(
@@ -70,7 +68,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
                 block_sizes=self.block_sizes,
                 global_stack_shape=(comm.stack.size,),
                 symmetry=quatrex_config.scba.symmetric,
-                symmetry_op=xp.conj,
+                symmetry_op=-xp.conj,
             )
             self.interaction_matrix.data = distributed_load(
                 quatrex_config.input_dir / self.photon.interaction_matrix_file
@@ -157,7 +155,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
 
         tmp = self.compute_config.dsdbsparse_type.empty_like(sigma_lesser)
 
-        prefactor = self.classical_light_intensity
+        prefactor = self.light_intensity
 
         bd_sandwich_distr(
             self.interaction_matrix,
@@ -167,7 +165,9 @@ class SigmaPhoton(ScatteringSelfEnergy):
             end_block=end_block,
             spillover_correction=True,
         )
-        sigma_lesser.data += tmp.data * prefactor
+        tmp.data *= prefactor
+        sigma_lesser.data[self.upshift :, ...] += tmp.data[: -self.upshift, ...]
+        sigma_lesser.data[: -self.downshift :, ...] += tmp.data[self.downshift :, ...]
 
         bd_sandwich_distr(
             self.interaction_matrix,
@@ -177,7 +177,9 @@ class SigmaPhoton(ScatteringSelfEnergy):
             end_block=end_block,
             spillover_correction=True,
         )
-        sigma_greater.data += tmp.data * prefactor
+        tmp.data *= prefactor
+        sigma_greater.data[self.upshift :, ...] += tmp.data[: -self.upshift, ...]
+        sigma_greater.data[: -self.downshift :, ...] += tmp.data[self.downshift :, ...]
 
         _update_sigma_retarded_from_lesser_greater(
             sigma_lesser, sigma_greater, sigma_retarded

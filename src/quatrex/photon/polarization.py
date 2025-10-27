@@ -1,21 +1,21 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
-import opt_einsum as oe
 import time
+
+import opt_einsum as oe
 import scipy
 import scipy.sparse as sp
+
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
+from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.constants import hbar, mu_0
+from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.sse import ScatteringSelfEnergy
+# from quatrex.photon.load import IOConfig, load_distances, load_hamiltonian_sparse
+from quatrex.photon.utils import interaction_tensor
 
 # for initialization
-
-from quatrex.photon.load import IOConfig, load_distances, load_hamiltonian_sparse
-
-from quatrex.core.sse import ScatteringSelfEnergy
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.photon.utils import interaction_tensor
-from quatrex.core.constants import hbar, mu_0
 
 
 class PiPhoton(ScatteringSelfEnergy):
@@ -179,11 +179,13 @@ class PiPhoton(ScatteringSelfEnergy):
 
 if __name__ == "__main__":
 
+    from pathlib import Path
+
+    from matplotlib import colors
+    from matplotlib import pyplot as plt
+
     from qttools import NDArray, xp
     from quatrex.photon.utils import make_grids
-    from pathlib import Path
-    from matplotlib import pyplot as plt
-    from matplotlib import colors
 
     # tiny test sizes
     input_dir = Path("/home/sem25h7/project2/quatrex/examples/carbon-nanotube/inputs/")

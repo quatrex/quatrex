@@ -1,25 +1,26 @@
 import time
+
 from qttools import NDArray, _DType, sparse, xp
-from qttools.datastructures import DSDBSparse
-
-# for computation of sparsity_pattern
-from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
-from qttools.utils.mpi_utils import get_section_sizes, get_local_slice, distributed_load
-from qttools.comm import (
+from qttools.comm import (  # En theory pas necessaire, peut travailler avec empty, mais par secu prefere le garder puis l enlever une fois le code marche (maybe karma here watching)
     comm,
-)  # En theory pas necessaire, peut travailler avec empty, mais par secu prefere le garder puis l enlever une fois le code marche (maybe karma here watching)
-from qttools.utils.gpu_utils import get_host, synchronize_device
-
-# Get Open Boundary Conditions
-from qttools.greens_function_solver.solver import OBCBlocks
+)
+from qttools.datastructures import DSDBSparse
 
 # Mat multi
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 
-# Import for the Class
-from quatrex.core.subsystem import SubsystemSolver
+# Get Open Boundary Conditions
+from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+
+# for computation of sparsity_pattern
+from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
+
+# Import for the Class
+from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import (
     compute_num_connected_blocks,
     get_periodic_superblocks,
@@ -523,9 +524,11 @@ class PhotonSolver(SubsystemSolver):
 
 if __name__ == "__main__":
     import time
+    from pathlib import Path
+
     import numpy as np
     import scipy.sparse as sp
-    from pathlib import Path
+
     from quatrex.photon.utils import make_grids
 
     # --- I/O & grids ------------------------------------------------------
@@ -554,7 +557,7 @@ if __name__ == "__main__":
     # class DummyComputeCfg:
     #     dsdbsparse_type = DSDBSparse
 
-    cc = object()  # not used here
+    cc = ComputeConfig()  # not used here
 
     d_solver = PhotonSolver(
         quatrex_config=qc,  # Placeholder; not used in this test harness.

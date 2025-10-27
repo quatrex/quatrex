@@ -1,9 +1,10 @@
 import time
 
 import opt_einsum as oe
-from opt_einsum import shared_intermediates
-import scipy.sparse as sp
 import scipy
+import scipy.sparse as sp
+from opt_einsum import shared_intermediates
+
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from quatrex.core.constants import hbar, mu_0
@@ -55,8 +56,8 @@ def polarization(
 
     # FFT: energy/frequency domain to time domain: energy -> tau
     start_fft_timer = time.perf_counter()
-    G1_IFFT = scipy.fft.fft(g_lesser, n, axis=0,workers=128)  # (Np, N, N)
-    G2_IFFT = scipy.fft.fft(g_greater, n, axis=0,workers=128)  # (Np, N, N)
+    G1_IFFT = scipy.fft.fft(g_lesser, n, axis=0, workers=128)  # (Np, N, N)
+    G2_IFFT = scipy.fft.fft(g_greater, n, axis=0, workers=128)  # (Np, N, N)
     end_fft_timer = time.perf_counter()
     m_interaction = m_interaction.astype(xp.complex64, copy=False)
     print(f"fft took {end_fft_timer - start_fft_timer:.3f}s")

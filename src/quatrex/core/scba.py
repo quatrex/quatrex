@@ -28,7 +28,7 @@ from quatrex.electron import (
     SigmaPhoton,
 )
 from quatrex.phonon import PhononSolver, PiPhonon
-from quatrex.photon import PhotonSolver, PiPhoton, PhotonSelfEnergy
+from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
 
@@ -50,7 +50,7 @@ class SCBAData:
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         electron_energies: NDArray,
-        #photon_energies: NDArray = None
+        photon_energies: NDArray = None,
     ) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
@@ -203,10 +203,22 @@ class SCBAData:
         # implemented. COMING SOON HEHE
 
         if quatrex_config.scba.photon:
-            
-            self.d_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.d_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.d_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+            if photon_energies is None:
+                photon_energies = electron_energies
+
+            self.pi_retarded = dsdbsparse_type.from_sparray(
+                self.sparsity_pattern.astype(xp.complex128),
+                block_sizes=block_sizes,
+                # NOTE: We cast the tensor structure of the photon
+                # Green's function into two additional stack dimensions.
+                # Hope this works out well.
+                global_stack_shape=(*photon_energies.shape, 3, 3),
+                symmetry=quatrex_config.scba.symmetric,
+                symmetry_op=lambda a: -a.conj(),
+            )
+            self.pi_lesser = dsdbsparse_type.zeros_like(self.pi_retarded)
+            self.pi_greater = dsdbsparse_type.zeros_like(self.pi_retarded)
 
             num_connected_blocks = quatrex_config.photon.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -222,18 +234,14 @@ class SCBAData:
                 block_sizes[: len(block_sizes) // num_connected_blocks]
                 * num_connected_blocks
             )
-            #TODO: Potential big difference here no? photon energies
             self.d_lesser = dsdbsparse_type.from_sparray(
                 self.sparsity_pattern.astype(xp.complex128),
-                block_sizes= photon_block_sizes,
-                global_stack_shape = electron_energies.shape, #Attention est selon moi photon energy check it!! mais changement intrusif donc avoid
-                symmetry = quatrex_config.scba.symmetric,
+                block_sizes=photon_block_sizes,
+                global_stack_shape=(*photon_energies.shape, 3, 3),
+                symmetry=quatrex_config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
             )
             self.d_greater = dsdbsparse_type.zeros_like(self.d_lesser)
-
-
-            # raise NotImplementedError
 
         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
             raise NotImplementedError
@@ -275,7 +283,6 @@ class Observables:
     pi_photon_lesser_density: NDArray = None
     pi_photon_greater_density: NDArray = None
 
-    d_photon_retarded_density: NDArray = None
     d_photon_lesser_density: NDArray = None
     d_photon_greater_density: NDArray = None
 
@@ -434,16 +441,34 @@ class SCBA:
 
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
-            energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
-            self.photon_energies = distributed_load(energies_path)
-            self.pi_photon = PiPhoton(...)
+            # TODO: Check that the photon energies are consistent with
+            # the electron energies.
+            dE = np.diff(self.electron_energies)[0]
+            self.photon_energies = np.arange(
+                self.quatrex_config.photon.energy_window_min,
+                self.quatrex_config.photon.energy_window_max,
+                dE,
+            )
+
+            # energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
+            # self.photon_energies = distributed_load(energies_path)
+            self.pi_photon = PiPhoton(
+                self.quatrex_config,
+                self.compute_config,
+                self.electron_energies,
+                self.photon_energies,
+            )
             self.photon_solver = PhotonSolver(
                 self.quatrex_config,
                 self.compute_config,
                 self.photon_energies,
-                ...,
             )
-            self.sigma_photon = SigmaPhoton(...)
+            self.sigma_photon = SigmaPhoton(
+                self.quatrex_config,
+                self.compute_config,
+                self.electron_energies,
+                self.photon_energies,
+            )
 
         # ----- Phonons ------------------------------------------------
         if self.quatrex_config.scba.phonon:
@@ -463,7 +488,10 @@ class SCBA:
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
 
         self.data = SCBAData(
-            quatrex_config, compute_config, electron_energies=self.electron_energies
+            quatrex_config,
+            compute_config,
+            electron_energies=self.electron_energies,
+            photon_energies=self.photon_energies,
         )  # real data
 
     def _determine_electron_energy_window(self, quatrex_config: QuatrexConfig):
@@ -590,7 +618,32 @@ class SCBA:
     @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
-        raise NotImplementedError
+        # TODO: Convert the Green's functions to dense arrays.
+        self.pi_photon.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            out=(self.data.pi_lesser, self.data.pi_greater, self.data.pi_retarded),
+        )
+
+        # TODO: Convert the polarization to DSDBSparse.
+        self.photon_solver.solve(
+            self.data.pi_lesser,
+            self.data.pi_greater,
+            out=(self.data.d_lesser, self.data.d_greater),
+        )
+
+        # TODO: Convert the Green's functions to dense arrays.
+        self.sigma_photon.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.d_lesser,
+            self.data.d_greater,
+            out=(
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ),
+        )
 
     @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):

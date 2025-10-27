@@ -87,7 +87,7 @@ class SCBAData:
                     quatrex_config.device.unit_cell_per_supercell[
                         "xyz".index(quatrex_config.device.transport_direction)
                     ]
-                    * atoms.shape[0]
+                    * (atoms.shape[0] * 3)
                 ]
                 * quatrex_config.device.number_of_supercells
             )
@@ -144,8 +144,9 @@ class SCBAData:
             start_idx=start_idx,
             end_idx=end_idx,
         )
+        phonon_grid = np.repeat(atom_positions, 3, axis=0)
         self.phonon_sparsity_pattern = compute_sparsity_pattern(
-            atom_positions,
+            phonon_grid,
             max_interaction_cutoff,
             transport_direction=quatrex_config.device.transport_direction,
             start_idx=start_idx,

@@ -312,7 +312,7 @@ class ElectronSolver(SubsystemSolver):
 
         self.call_count = 0
         self.filtering_iteration_limit = (
-            quatrex_config.coulomb_screening.filtering_iteration_limit
+            quatrex_config.electron.filtering_iteration_limit
         )
 
     @staticmethod

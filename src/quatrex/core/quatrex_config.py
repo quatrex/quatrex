@@ -264,13 +264,17 @@ class PhotonConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    energy_window_min: float | None = None
+    energy_window_max: float | None = None
+    energy_window_num: PositiveInt | None = None
+    energy_window_num_per_rank: PositiveInt | None = None
+
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
 
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
-    
-    #TOASK: Do i need it? I think yes because of the block thing
+
     num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
     dos_peak_limit: PositiveFloat = 100.0
     filtering_iteration_limit: PositiveInt = 1
@@ -320,6 +324,9 @@ class OutputConfig(BaseModel):
 
     polarization_density: bool = False
     coulomb_screening_density: bool = False
+
+    transverse_polarization_density: bool = False
+    photon_density: bool = False
 
     self_energy_density: bool = False
 

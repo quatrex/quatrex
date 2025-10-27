@@ -74,7 +74,8 @@ def D0_delta_product(distances, photon_energies):
             D_t= delta_transverse[(u, v)]
             Delta[:, :, u, v] = D_t.toarray() if sp.issparse(D_t) else xp.asarray(D_t)
 
-    out = oe.contract('wij,ijuv->wijuv', D0, Delta)
+    out = oe.contract('wij,jkuv->wikuv', D0, Delta)
+
     return out    # (Nw, N, N, 3, 3)
 
 def delta_perp_sparse(distances, sigma=1e-10, tol=0.0):

@@ -13,7 +13,6 @@ from pydantic import (
     NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
-    field_validator,
     model_validator,
 )
 from typing_extensions import Self
@@ -307,8 +306,15 @@ class ExcitonConfig(BaseModel):
 
     start_iteration: PositiveInt = 1
 
-    energy_window_num: PositiveInt | None = None    
+    energy_window_num: PositiveInt | None = None
     energy_window_step: PositiveInt | None = None
+
+    solver: SolverConfig = SolverConfig()
+    obc: OBCConfig = OBCConfig()
+    lyapunov: LyapunovConfig = LyapunovConfig()
+
+    eta_obc: NonNegativeFloat = 0  # eV
+    eta: NonNegativeFloat = 1e-12  # eV
 
 
 class OutputConfig(BaseModel):

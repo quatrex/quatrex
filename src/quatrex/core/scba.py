@@ -3,12 +3,12 @@
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
 from scipy import sparse as sps
-from pathlib import Path
 
 from qttools import NDArray, xp
 from qttools.comm import comm
@@ -29,7 +29,7 @@ from quatrex.electron import (
     SigmaPhonon,
     SigmaPhoton,
 )
-from quatrex.exciton import BSESolver
+from quatrex.exciton import ExcitonSolver
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
@@ -404,16 +404,17 @@ class SCBA:
                 self.electron_energies,
             )
 
-        # ----- Excitons -----------------------------------------------                
+        # ----- Excitons -----------------------------------------------
         if self.quatrex_config.scba.exciton:
-            self.exciton_energies = self._determine_exciton_energy_window(self.quatrex_config.exciton.energy_window_num)
-            self.exciton_solver = BSESolver(
+            self.exciton_energies = self._determine_exciton_energy_window(
+                self.quatrex_config.exciton.energy_window_num
+            )
+            self.exciton_solver = ExcitonSolver(
                 self.quatrex_config,
                 self.compute_config,
-                sparsity_pattern=self.data.sparsity_pattern,                
-                exciton_energies=self.exciton_energies,
+                sparsity_pattern=self.data.sparsity_pattern,
+                energies=self.exciton_energies,
                 electron_energies=self.electron_energies,
-                ordering='arrowhead'
             )
 
         # ----- Photons ------------------------------------------------
@@ -450,18 +451,18 @@ class SCBA:
             quatrex_config, compute_config, electron_energies=self.electron_energies
         )  # real data
 
-    def _determine_exciton_energy_window(self,
-                                         num_energies: int | None = None):
+    def _determine_exciton_energy_window(self, num_energies: int | None = None):
         """Determine the energy window for excitons."""
         energy_window_min = max(
             self.quatrex_config.electron.fermi_level
             - self.quatrex_config.electron.conduction_band_edge,
-            0.0
+            0.0,
         )
         energy_window_max = max(
             self.quatrex_config.electron.fermi_level
             - self.quatrex_config.electron.valence_band_edge,
-            self.quatrex_config.electron.conduction_band_edge - self.quatrex_config.electron.valence_band_edge,
+            self.quatrex_config.electron.conduction_band_edge
+            - self.quatrex_config.electron.valence_band_edge,
             self.electron_energies[-1] - self.electron_energies[0],
         )
         energy_step = self.electron_energies[1] - self.electron_energies[0]
@@ -470,10 +471,14 @@ class SCBA:
         if energy_window_max <= energy_window_min:
             raise ValueError("Invalid exciton energy window.")
         if num_energies is None:
-            energy_window_num = int((energy_window_max - energy_window_min) / energy_step) + 1
+            energy_window_num = (
+                int((energy_window_max - energy_window_min) / energy_step) + 1
+            )
         else:
-            energy_window_num = num_energies 
-            energy_window_max = energy_window_min + energy_step * (energy_window_num - 1)
+            energy_window_num = num_energies
+            energy_window_max = energy_window_min + energy_step * (
+                energy_window_num - 1
+            )
         if comm.rank == 0:
             print(
                 f"Exciton energy window from {energy_window_min} to {energy_window_max} eV with a step of {energy_step}, thus {energy_window_num} grid points!"
@@ -921,12 +926,12 @@ class SCBA:
         xp.save(
             self.quatrex_config.output_dir / "coulomb.npy",
             self.coulomb_screening_solver.coulomb_matrix.data,
-        )        
+        )
         sps.save_npz(
             self.quatrex_config.output_dir / "sparsity.npz",
             self.data.sparsity_pattern,
-            )
-        
+        )
+
     @profiler.profile(level="basic")
     def run(self) -> None:
         """Runs the SCBA to convergence."""
@@ -1030,43 +1035,66 @@ class SCBA:
                 i < self.quatrex_config.get_exciton_start_iteration()
             ):
                 self._compute_coulomb_screening_interaction()
+
             elif self.quatrex_config.scba.coulomb_screening:
                 if comm.rank == 0:
                     print(
-                        f"============== Enter BSE solver ==============",
+                        "============== Enter BSE solver ==============",
                         flush=True,
                     )
                 if i == self.quatrex_config.get_exciton_start_iteration():
-                    self.exciton_solver._calc_pair_sparsity() # determine some information about the sparsity
-                
+                    self.exciton_solver._calc_pair_sparsity()  # determine some information about the sparsity
+
                 dsdbsparse_type = self.compute_config.dsdbsparse_type
-                coo=distributed_load(Path("outputs/sparsity.npz"))
+                coo = distributed_load(Path("outputs/sparsity.npz"))
                 num_energies = self.data.g_greater.shape[0]
-                ARRAY_SHAPE = coo.shape
-                BLOCK_SIZES = np.array([coo.shape[0]])                
+
+                BLOCK_SIZES = np.array([coo.shape[0]])
                 GLOBAL_STACK_SHAPE = (num_energies,)
-                WG = dsdbsparse_type.from_sparray(coo*(-1j), BLOCK_SIZES, GLOBAL_STACK_SHAPE)  
-                WL = dsdbsparse_type.from_sparray(coo*(-1j), BLOCK_SIZES, GLOBAL_STACK_SHAPE)  
-                WL.data=distributed_load(Path("outputs/screened_coulomb_lesser.npy"))
-                WG.data=distributed_load(Path("outputs/screened_coulomb_greater.npy"))
+                WG = dsdbsparse_type.from_sparray(
+                    coo * (-1j), BLOCK_SIZES, GLOBAL_STACK_SHAPE
+                )
+                WL = dsdbsparse_type.from_sparray(
+                    coo * (-1j), BLOCK_SIZES, GLOBAL_STACK_SHAPE
+                )
+                WL.data = distributed_load(Path("outputs/screened_coulomb_lesser.npy"))
+                WG.data = distributed_load(Path("outputs/screened_coulomb_greater.npy"))
                 WR = dsdbsparse_type.zeros_like(WL)
-                WR.data = WG.data 
+                WR.data = WG.data
                 WR.data -= WL.data
                 WR.data *= 0.5
                 del WG, WL
-                self.exciton_solver.solve(self.data.g_greater,
-                                          self.data.g_lesser,
-                                          WR,
-                                          out_Sigma=(self.data.sigma_retarded,
-                                                     self.data.sigma_greater,
-                                                     self.data.sigma_lesser))
-                
+
+                self.data.w_lesser.allocate_data()
+                self.data.w_greater.allocate_data()
+
+                self.exciton_solver.solve(
+                    self.data.g_greater,
+                    self.data.g_lesser,
+                    self.data.g_retarded,
+                    WR,
+                    out=(self.data.w_lesser, self.data.w_greater),
+                )
+
+                self.sigma_coulomb_screening.compute(
+                    self.data.g_lesser,
+                    self.data.g_greater,
+                    self.data.w_lesser,
+                    self.data.w_greater,
+                    out=(
+                        self.data.sigma_lesser,
+                        self.data.sigma_greater,
+                        self.data.sigma_retarded,
+                    ),
+                )
+                self.data.w_lesser.free_data()
+                self.data.w_greater.free_data()
+
                 if comm.rank == 0:
                     print(
-                        f"============== Leave BSE solver ==============",
+                        "============== Leave BSE solver ==============",
                         flush=True,
                     )
-
 
             if self.quatrex_config.scba.photon:
                 self._compute_photon_interaction()

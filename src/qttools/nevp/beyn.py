@@ -340,7 +340,7 @@ class Beyn(NEVP):
         return self._solve_reduced_system(a, Y, p_back)
 
     @profiler.profile(level="api")
-    def __call__(self, a_xx: tuple[NDArray, NDArray]) -> tuple[NDArray, NDArray]:
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by

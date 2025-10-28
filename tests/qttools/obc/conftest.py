@@ -10,16 +10,6 @@ from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
 from quatrex.electron.solver import ElectronSolver
 from quatrex.examples import get_example_dir
 
-NEVP_SOLVERS = [
-    pytest.param(
-        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=False), id="Beyn"
-    ),
-    pytest.param(
-        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=True), id="Beyn"
-    ),
-    pytest.param(Full(), id="Full"),
-]
-
 X_II_FORMULAS = ["self-energy", "direct"]
 
 BLOCK_SIZE = [
@@ -39,15 +29,21 @@ BATCH_SIZE = [
 
 CONTACTS = ["left", "right"]
 
+NEVP_SOLVERS = [
+    pytest.param(
+        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=False), id="Beyn"
+    ),
+    pytest.param(
+        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=True), id="Beyn"
+    ),
+    pytest.param(Full(), id="Full"),
+]
+
+ENERGIES = [[-10, -5, 0]]
+
 
 @pytest.fixture(params=X_II_FORMULAS)
 def x_ii_formula(request: pytest.FixtureRequest) -> str:
-    """Returns a NEVP solver."""
-    return request.param
-
-
-@pytest.fixture(params=NEVP_SOLVERS)
-def nevp(request: pytest.FixtureRequest) -> NEVP:
     """Returns a NEVP solver."""
     return request.param
 
@@ -70,7 +66,10 @@ def batch_size(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-ENERGIES = [[-10, -5, 0]]
+@pytest.fixture(params=CONTACTS, autouse=True)
+def contact(request: pytest.FixtureRequest) -> str:
+    """Returns a contact."""
+    return request.param
 
 
 @pytest.fixture(params=ENERGIES, autouse=True, scope="session")
@@ -112,7 +111,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     return M10, M00, M01
 
 
-@pytest.fixture(params=CONTACTS, autouse=True)
-def contact(request: pytest.FixtureRequest) -> str:
-    """Returns a contact."""
+@pytest.fixture(params=NEVP_SOLVERS)
+def nevp(request: pytest.FixtureRequest) -> NEVP:
+    """Returns a NEVP solver."""
     return request.param

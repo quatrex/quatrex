@@ -69,17 +69,50 @@ class PoissonConfig(BaseModel):
 
 
 class MemoizerConfig(BaseModel):
-    """Options for memoizing wrappers."""
+    """Options for memoizing wrappers.
+
+    The memoizers store and reuse previously computed surface Green's functions
+    to speed up the SCBA iterations by doing fix point iterations on the last
+    computed surface Green's functions.
+
+    $$ g_{n+1} = [M_{0} - M_{-1} g_{n} M_{1} ]^{-1} $$
+
+    This is only useful if after the first few SCBA iterations when the
+    system changes only slightly between iterations.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
+    """The memoization mode to determine when to do fix point iterations.
+    
+    - "auto": Automatically decides whether to use memoization based on the
+        specified tolerances. Only useful if all ranks memoize.
+    - "force": Always use memoization.
+    - "force-after-first": Use memoization after the first SCBA iteration.
+    - "off": Never use memoization.
+    """
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
+    """The number of fix point iterations to perform on the surface Green's functions."""
+
     relative_tol: PositiveFloat = 2e-1
+    """The relative tolerance for the fix point iterations.
+    
+    Only used if `mode` is set to "auto".
+    """
+
     absolute_tol: PositiveFloat = 1e-6
+    """The absolute tolerance for the fix point iterations.
+
+    Only used if `mode` is set to "auto".
+    """
 
     warning_threshold: PositiveFloat = 1e-1
+    """The threshold for issuing a warning if the surface Green's functions
+        residual is above this value after the fix point iterations.
+    """
 
 
 class SolverConfig(BaseModel):
@@ -97,33 +130,150 @@ class SolverConfig(BaseModel):
 
 
 class OBCConfig(BaseModel):
-    """Options for open-boundary condition (OBC) solvers."""
+    """Options for open-boundary condition (OBC) solvers.
+
+    The OBC solvers compute the surface Green's functions of the contacts.
+    The surface Green's functions is the solution of the non-linear equation:
+
+    $$ g = [M_{0} - M_{-1} g M_{1} ]^{-1} $$
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
+    """The OBC algorithm to use.
+    
+    - "sancho-rubio": Uses the Sancho-Rubio iterative scheme to compute the
+        surface Green's functions. This method achieves exponential convergence
+        compared to the linear convergence of fix point iterations.
+    - "spectral": Uses a spectral NEVP solver to compute eigenpair and uses
+        them to construct the surface Green's functions. This is generally more
+        efficient method when combined with a contour integral NEVP solver,
+        but requires more parameter tuning.
+    """
+
     nevp_solver: Literal["beyn", "full"] = "beyn"
+    """The NEVP solver to use for the spectral OBC algorithm.
+
+    - "beyn": Uses the Beyn's contour integral method to solve the NEVP to
+        find the eigenpairs within a specified contour in the complex plane.
+
+    - "full": Uses a full dense eigensolver to solve for all eigenvalues by linearizing
+        the problem. This results in a doubled problem size which is also not reduced by
+        block sectioning / periodicity.
+
+    The following NEVP problem is solved:
+
+    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{M}_{n} v = 0 $$
+
+    where b goes from -block_sections to +block_sections and
+    $\hat{M}_{n}$ are potentially reduced coupling matrices.
+
+    Only used if `algorithm` is set to "spectral".
+    """
 
     # Parameters for spectral OBC algorithms.
-    block_sections: PositiveInt = Field(default=1, ge=1)
+    block_sections: PositiveInt = 1
+    """The periodicity of the blocks along the transport direction.
+
+    Used in the spectral method with beyn to reduce the size of the NEVP.
+    For example, if the supercell is constructed from 2 unit cells along the
+    transport direction, setting this parameter to 2 will halve the size of the NEVP.
+
+    Contact blocks need to be sorted accordingly.
+    """
+
     min_decay: PositiveFloat = 1e-3
+    """The minimum decay rate where to differentiate between propagating and evanescent modes."""
+
     max_decay: PositiveFloat | None = None
-    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
+    """The maximum decay rate for evanescent modes.
+
+    Very large modes do not contribute to the surface Green's functions and
+    can be neglected. Very large modes can also lead to numerical instabilities.
+
+    If not set, it is computed as 1.5 * log(r_o).
+    """
+
+    num_ref_iterations: PositiveInt = 2
+    """The number of fix point iterations used to refine the surface Green's functions.
+
+        $$ g_{n+1} = [M_{0} - M_{-1} g_{n} M_{1} ]^{-1} $$
+
+    This is needed to improve the accuracy of the surface Green's functions
+    if not enough eigenpairs are considered. 
+
+    Only used if `algorithm` is set to "spectral".
+    """
+
     min_propagation: PositiveFloat = 1e-2
+    """The minimum propagation speed for propagating modes.
+    
+    The propagation speed is computed as:
+    $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
+
+    """
+
     residual_tolerance: PositiveFloat = 1e-3
+    """The tolerance for the residual of the eigenpairs.
+    
+    The residuals are computed as:
+    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} M_{n} v \rvert $$
+
+    Modes above this tolerance are considered wrong and are not used.
+
+    Only used if `algorithm` is set to "spectral".
+    """
+
     residual_normalization: bool = True
+    """Whether to normalize the residuals by the norm of the eigenvalue.
+    
+    This is useful to avoid that large eigenvalues have large residuals
+    and small eigenvalues have small residuals.
+    """
 
     warning_threshold: PositiveFloat = 1e-1
+    """The threshold for issuing a warning if the surface Green's functions
+    residual is above this value.
+
+    The residual is computed as:
+    $$ \lvert g - [M_{0} - M_{-1} g M_{1} ]^{-1} \rvert / \lvert g \rvert $$
+    """
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 100
+    """The maximum number of iterations for the Sancho-Rubio method."""
+
     convergence_tol: PositiveFloat = 1e-6
+    """The convergence tolerance for the Sancho-Rubio method."""
 
     # Parameters for subspace NEVP solvers.
     r_o: PositiveFloat = 10.0
+    """The outer radius of the contour in the complex plane for the contour methods.
+    
+    This parameter should not be too large to avoid having too many eigenpairs
+    inside the contour. It should also not be too small to avoid missing important
+    eigenpairs. If a eigenpair is too close to the contour,
+    it can lead to numerical instabilities.
+    """
+
     r_i: PositiveFloat = 0.8
+    """The inner radius of the contour in the complex plane for the contour methods.
+
+    This parameter should be chosen to be <1 to capture propagating modes, but
+    not too small to avoid including too many modes.
+    """
+
     m_0: PositiveInt = 10
+    """The subspace guess in the contour methods.
+    
+    The guess has to be larger than the expected number of eigenvalues
+    inside the contour. If too small, the method will fail. If too large, the method
+    will be not/less efficient.
+    """
+
     num_quad_points: PositiveInt = 20
+    """The number of quadrature points for the contour integrals."""
 
     # Parameters for reusing surface Green's functions from previous
     # SCBA iterations.

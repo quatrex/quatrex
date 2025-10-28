@@ -583,9 +583,8 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
         return_injected: bool = False,
-    ) -> NDArray | None | tuple[NDArray, NDArray, NDArray]:
+    ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Returns the surface Green's function.
 
         Parameters
@@ -598,9 +597,6 @@ class Spectral(OBCSolver):
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
         return_injected: bool, optional
             Whether to return the injection vector
 
@@ -624,9 +620,6 @@ class Spectral(OBCSolver):
         if a_ii.ndim != 2 and return_injected:
             raise NotImplementedError
 
-        if return_injected and out is not None:
-            raise NotImplementedError
-
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
             a_ij = a_ij[xp.newaxis, :, :]
@@ -637,7 +630,7 @@ class Spectral(OBCSolver):
             wrs, vrs, wls, vls = self.nevp(blocks, left=True)
             vls = self._match_eigenmodes(wrs, vrs, wls, vls)
         else:
-            wrs, vrs = self.nevp(blocks, left=False)
+            wrs, vrs = self.nevp(blocks)
             vls = None
 
         wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
@@ -696,10 +689,5 @@ class Spectral(OBCSolver):
             )
 
             return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]
-
-        # Return the surface Green's function.
-        if out is not None:
-            out[...] = x_ii_ref
-            return
 
         return x_ii_ref

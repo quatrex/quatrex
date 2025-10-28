@@ -29,7 +29,6 @@ class OBCSolver(ABC):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Returns the surface Green's function.
 
@@ -43,9 +42,6 @@ class OBCSolver(ABC):
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -126,8 +122,7 @@ class OBCMemoizer:
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
-    ) -> NDArray | None:
+    ) -> NDArray:
         """Calls the wrapped OBC solver with cache handling.
 
         Parameters
@@ -140,9 +135,6 @@ class OBCMemoizer:
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -150,13 +142,9 @@ class OBCMemoizer:
             The system's surface Green's function.
 
         """
-        x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact, out=out)
-        if out is None:
-            self._cache[contact] = x_ii.copy()
-            return x_ii
-
-        self._cache[contact] = out.copy()
-        return None
+        x_ii = self.obc_solver(a_ii, a_ij, a_ji, contact)
+        self._cache[contact] = x_ii.copy()
+        return x_ii
 
     @profiler.profile(level="api")
     def __call__(
@@ -165,8 +153,7 @@ class OBCMemoizer:
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
-    ) -> NDArray | None:
+    ) -> NDArray:
         """Returns the surface Green's function.
 
         This is a memoized wrapper around an OBC solver.
@@ -181,9 +168,6 @@ class OBCMemoizer:
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -195,13 +179,13 @@ class OBCMemoizer:
         # since there is code duplication
 
         if self.memoizing_mode == "off":
-            return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
+            return self._call_with_cache(a_ii, a_ij, a_ji, contact)
 
         # Try to reuse the result from the cache.
         x_ii = self._cache.get(contact, None)
 
         if x_ii is None and self.memoizing_mode in ["auto", "force-after-first"]:
-            return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
+            return self._call_with_cache(a_ii, a_ij, a_ji, contact)
         elif self.memoizing_mode == "force":
             x_ii = linalg.inv(a_ii) if x_ii is None else x_ii
 
@@ -223,7 +207,7 @@ class OBCMemoizer:
             # NOTE: it would be possible to memoize even if few energies did not converge
             if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
-                return self._call_with_cache(a_ii, a_ij, a_ji, contact, out=out)
+                return self._call_with_cache(a_ii, a_ij, a_ji, contact)
 
         x_ii = x_ii_ref
 
@@ -251,7 +235,4 @@ class OBCMemoizer:
             )
 
         self._cache[contact] = x_ii.copy()
-        if out is None:
-            return x_ii
-        out[:] = x_ii
-        return None
+        return x_ii

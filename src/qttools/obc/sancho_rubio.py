@@ -40,7 +40,6 @@ class SanchoRubio(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Returns the surface Green's function.
 
@@ -54,9 +53,6 @@ class SanchoRubio(OBCSolver):
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -90,9 +86,5 @@ class SanchoRubio(OBCSolver):
             warnings.warn("Surface Green's function did not converge.", RuntimeWarning)
 
         x_ii = linalg.inv(epsilon_s)
-
-        if out is not None:
-            out[...] = x_ii
-            return
 
         return x_ii

@@ -40,10 +40,8 @@ class Spectral(OBCSolver):
         The decay threshold after which modes are considered to be
         evanescent.
     max_decay : float, optional
-        The maximum decay to consider for evanescent modes. If not
-        provided, the maximum decay is set to the logarithm of the outer
-        radius of the contour annulus if applicable. Otherwise, it is
-        set to log(10).
+        The maximum decay to consider for evanescent modes.
+        The default is 6.9 which corresponds to 1000 in the eigenvalues.
     num_ref_iterations : int, optional
         The number of refinement iterations to perform on the surface
         Green's function.
@@ -76,7 +74,7 @@ class Spectral(OBCSolver):
         nevp: NEVP,
         block_sections: int = 1,
         min_decay: float = 1e-3,
-        max_decay: float | None = None,
+        max_decay: float = 6.9,
         num_ref_iterations: int = 2,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
@@ -88,8 +86,6 @@ class Spectral(OBCSolver):
         self.nevp = nevp
 
         self.min_decay = min_decay
-        if max_decay is None:
-            max_decay = 1.5 * xp.log(getattr(nevp, "r_o", 1000.0))
         self.max_decay = max_decay
 
         self.num_ref_iterations = num_ref_iterations

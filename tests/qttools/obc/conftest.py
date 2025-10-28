@@ -3,21 +3,19 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.datastructures.dsdbsparse import _block_view
 from qttools.nevp import NEVP, Beyn, Full
+from quatrex.cli.main import fetch_example
+from quatrex.core.compute_config import CommConfig
+from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+from quatrex.electron.solver import ElectronSolver
+from quatrex.examples import get_example_dir
 
-# NOTE: The matrices we generate here generally have eigenvalues with an
-# absolute value around 130. We set the outer radius to 150 and the
-# inner radius to 0.9. The subspace dimension is chosen sufficiently
-# large to capture all the eigenvalues in that annulus. The number of
-# quadrature points is set such that non-spurious eigenvalues get
-# approximated accurately enough.
 NEVP_SOLVERS = [
     pytest.param(
-        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=False), id="Beyn"
+        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=False), id="Beyn"
     ),
     pytest.param(
-        Beyn(r_o=200, r_i=0.9, m_0=23, num_quad_points=13, use_qr=True), id="Beyn"
+        Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=True), id="Beyn"
     ),
     pytest.param(Full(), id="Full"),
 ]
@@ -40,12 +38,6 @@ BATCH_SIZE = [
 ]
 
 CONTACTS = ["left", "right"]
-
-TWO_SIDED = [True, False]
-
-TREAT_PAIRWISE = [True, False]
-
-RESIDUAL_NORMALIZATION_FORMULAS = ["operator", "eigenvalue", None]
 
 
 @pytest.fixture(params=X_II_FORMULAS)
@@ -78,45 +70,49 @@ def batch_size(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=BLOCK_SIZE, autouse=True)
-def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
-    """Returns some random complex boundary blocks."""
-    size = request.param * 2
-    # Generate a decaying random complex array.
-    arr = xp.triu(xp.arange(size, 0, -1) + xp.arange(size)[:, xp.newaxis])
-    arr = arr.astype(xp.complex128)
-    arr += arr.T
-    arr **= 2
-    # Add some noise.
-    arr += xp.random.rand(size, size) * arr + 1j * xp.random.rand(size, size) * arr
-    # Normalize.
-    arr /= size**2
-    # Make it diagonally dominant.
-    xp.fill_diagonal(arr, xp.abs(arr.sum(-1) + arr.diagonal()))
+ENERGIES = [[-10, -5, 0]]
 
-    blocks = _block_view(_block_view(arr, -1, 2), -2, 2)
-    return blocks[1, 0], blocks[0, 0], blocks[0, 1]
+
+@pytest.fixture(params=ENERGIES, autouse=True, scope="session")
+def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
+    """Returns some CNT boundary blocks."""
+
+    energies = xp.array(request.param)
+
+    try:
+        fetch_example("carbon-nanotube:")
+    except Exception as e:
+        pytest.fail(f"fetch-example failed: {e}")
+
+    _, _, example_path = get_example_dir("carbon-nanotube:")
+
+    quatrex_config_path = example_path / "quatrex_config.toml"
+    quatrex_config = parse_quatrex_config(quatrex_config_path)
+
+    # hack to configure the communicator
+    CommConfig()
+
+    hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(quatrex_config)
+    hamiltonian_sparray = hamiltonian_sparray.toarray()
+
+    block_size = block_sizes[0]
+
+    H00 = hamiltonian_sparray[:block_size, :block_size]
+    H01 = hamiltonian_sparray[:block_size, block_size : 2 * block_size]
+    H10 = H01.conj().T
+
+    # this examples does not have a overlap matrix
+    M00 = xp.eye(block_size, dtype=xp.complex128)[xp.newaxis, :, :]
+    M00 = M00 * (energies[:, xp.newaxis, xp.newaxis] + 1j * 1e-7)
+
+    M00 -= H00
+    M01 = xp.repeat(-H01[xp.newaxis, :, :], len(energies), axis=0)
+    M10 = xp.repeat(-H10[xp.newaxis, :, :], len(energies), axis=0)
+
+    return M10, M00, M01
 
 
 @pytest.fixture(params=CONTACTS, autouse=True)
 def contact(request: pytest.FixtureRequest) -> str:
     """Returns a contact."""
-    return request.param
-
-
-@pytest.fixture(params=TWO_SIDED)
-def two_sided(request: pytest.FixtureRequest) -> bool:
-    """Whether only right eigenvectors or both are used."""
-    return request.param
-
-
-@pytest.fixture(params=TREAT_PAIRWISE)
-def treat_pairwise(request: pytest.FixtureRequest) -> bool:
-    """Whether the eigenvalues are pairwise filtered."""
-    return request.param
-
-
-@pytest.fixture(params=RESIDUAL_NORMALIZATION_FORMULAS)
-def residual_normalization(request: pytest.FixtureRequest) -> str | None:
-    """Returns a residual normalization formula."""
     return request.param

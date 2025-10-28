@@ -47,9 +47,6 @@ class Spectral(OBCSolver):
     num_ref_iterations : int, optional
         The number of refinement iterations to perform on the surface
         Green's function.
-    treat_pairwise : bool, optional
-        Whether to match complex conjugate modes and treat them in pairs
-        during the determining of reflected modes.
     pairing_threshold : float, optional
         The threshold for which two modes are considered to be a mode
         pair.
@@ -81,7 +78,6 @@ class Spectral(OBCSolver):
         min_decay: float = 1e-3,
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
-        treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
@@ -99,7 +95,6 @@ class Spectral(OBCSolver):
         self.num_ref_iterations = num_ref_iterations
         self.block_sections = block_sections
 
-        self.treat_pairwise = treat_pairwise
         self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
@@ -345,17 +340,10 @@ class Spectral(OBCSolver):
         # Find eigenvalues that correspond to reflected modes. These are
         # modes that either propagate into the leads or decay away from
         # the system.
+
         # Determine (matched) modes that decay slow enough to be
         # considered propagating.
-        if self.treat_pairwise:
-            mask_propagating = self._find_pairwise_propagating(dEk_dk, ks)
-            mask_decaying = ~mask_propagating
-        else:
-            mask_propagating = xp.abs(ks.imag) < self.min_decay
-            mask_decaying = xp.ones_like(dEk_dk, dtype=bool)
-
-        # Make sure decaying modes decay fast enough.
-        mask_decaying &= ks.imag < -self.min_decay
+        mask_propagating = xp.abs(ks.imag) < self.min_decay
 
         # fast enough propagation (group velocity)
         eta = xp.finfo(dEk_dk.dtype).eps
@@ -365,8 +353,15 @@ class Spectral(OBCSolver):
         # propgation direction
         mask_propagating &= dEk_dk.real < 0
 
+        # Make sure decaying modes decay fast enough.
+        mask_decaying = ks.imag < -self.min_decay
+
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay
+
+        mask_reflected = (mask_propagating | mask_decaying) & (
+            residuals < self.residual_tolerance
+        )
 
         # Calulate injecting modes
         if find_injected:
@@ -375,11 +370,9 @@ class Spectral(OBCSolver):
             mask_injected &= xp.abs(ks.imag) < self.min_decay
             dEk_dK_injected = dEk_dk[mask_injected]
 
-            return mask_propagating | mask_decaying, mask_injected, dEk_dK_injected
+            return mask_reflected, mask_injected, dEk_dK_injected
 
-        return (mask_propagating | mask_decaying) & (
-            residuals < self.residual_tolerance
-        )
+        return mask_reflected
 
     def _upscale_eigenmodes(
         self,

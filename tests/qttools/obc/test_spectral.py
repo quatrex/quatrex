@@ -82,7 +82,6 @@ def test_correctness(
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        treat_pairwise=False,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji, a_ii, a_ij = a_ji[0], a_ii[0], a_ij[0]
@@ -111,7 +110,6 @@ def test_correctness_batch(
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        treat_pairwise=False,
         residual_tolerance=1e-1,
         max_decay=20,
     )
@@ -142,7 +140,6 @@ def test_memoizer(
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        treat_pairwise=False,
         residual_tolerance=1e-1,
         max_decay=20,
     )

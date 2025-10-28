@@ -47,12 +47,6 @@ class Spectral(OBCSolver):
     num_ref_iterations : int, optional
         The number of refinement iterations to perform on the surface
         Green's function.
-    x_ii_formula : str, optional
-        The formula to use for the calculation of the surface Green's
-        function. The default is via the boundary "self-energy". The
-        other option is "direct". The "self-energy" formula corresponds
-        to Equation (13.1) in the paper [^1] and the "direct" formula
-        corresponds to Equation (15).
     treat_pairwise : bool, optional
         Whether to match complex conjugate modes and treat them in pairs
         during the determining of reflected modes.
@@ -87,7 +81,6 @@ class Spectral(OBCSolver):
         min_decay: float = 1e-3,
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
-        x_ii_formula: str = "self-energy",
         treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
@@ -105,7 +98,6 @@ class Spectral(OBCSolver):
 
         self.num_ref_iterations = num_ref_iterations
         self.block_sections = block_sections
-        self.x_ii_formula = x_ii_formula
 
         self.treat_pairwise = treat_pairwise
         self.pairing_threshold = pairing_threshold
@@ -472,37 +464,17 @@ class Spectral(OBCSolver):
             The surface Green's function.
 
         """
+        # Equation (13.1).
+        x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
+        for i, m in enumerate(mask):
+            vr = vrs[i][:, m]
+            w = ws[i, m]
+            # Moore-Penrose pseudoinverse.
+            v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
+            x_ii_a_ij[i] = vr / w @ v_inv
 
-        if self.x_ii_formula == "self-energy":
-            # Equation (13.1).
-            x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                vr = vrs[i][:, m]
-                w = ws[i, m]
-                # Moore-Penrose pseudoinverse.
-                v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
-                x_ii_a_ij[i] = vr / w @ v_inv
-
-            # Calculate the surface Green's function.
-            return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
-
-        if self.x_ii_formula == "direct":
-            # Equation (15).
-            x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                vr = vrs[i][:, m]
-                w = ws[i, m]
-                # "More stable" computation of the surface Green's function.
-                inverse = linalg.inv(
-                    vr.conj().T @ a_ii[i] @ vr + vr.conj().T @ a_ji[i] @ vr / w
-                )
-                x_ii[i] = vr @ inverse @ vr.conj().T
-
-            return x_ii
-
-        raise ValueError(
-            f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
-        )
+        # Calculate the surface Green's function.
+        return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
     @profiler.profile(level="api")
     def __call__(

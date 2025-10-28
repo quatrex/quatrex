@@ -90,11 +90,7 @@ class Full(NEVP):
         return w, v
 
     @profiler.profile(level="api")
-    def __call__(
-        self,
-        a_xx: tuple[NDArray, ...],
-        left: bool = False,
-    ) -> tuple:
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple:
         """Solves the plynomial eigenvalue problem.
 
         This method solves the non-linear eigenvalue problem defined by
@@ -105,8 +101,6 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        left : bool, optional
-            Whether to solve additionally for the left eigenvectors.
 
         Returns
         -------
@@ -114,12 +108,6 @@ class Full(NEVP):
             The right eigenvalues.
         vs : NDArray
             The right eigenvectors.
-        wl : NDArray, optional
-            The left eigenvalues.
-            Returned only if `left` is `True`.
-        vl : NDArray, optional
-            The left eigenvectors.
-            Returned only if `left` is `True`.
 
         """
         # Allow for batched input.
@@ -127,15 +115,5 @@ class Full(NEVP):
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         wrs, vrs = self._solve(a_xx)
-
-        if left:
-            # solve for the left eigenvectors
-            # by solving the right eigenvectors of the adjoint problem
-            wls, vls = self._solve(
-                tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
-            )
-            wls = wls.conj()
-
-            return wrs, vrs, wls, vls
 
         return wrs, vrs

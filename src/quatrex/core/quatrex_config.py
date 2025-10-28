@@ -6,6 +6,7 @@ from math import isclose
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -104,17 +105,13 @@ class OBCConfig(BaseModel):
     nevp_solver: Literal["beyn", "full"] = "beyn"
 
     # Parameters for spectral OBC algorithms.
-    block_sections: PositiveInt = 1
+    block_sections: PositiveInt = Field(default=1, ge=1)
     min_decay: PositiveFloat = 1e-3
     max_decay: PositiveFloat | None = None
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
-    two_sided: bool = False
-    treat_pairwise: bool = False
-    pairing_threshold: PositiveFloat = 0.25
     min_propagation: PositiveFloat = 1e-2
     residual_tolerance: PositiveFloat = 1e-3
-    residual_normalization: Literal["eigenvalue", "operator"] | None = "eigenvalue"
+    residual_normalization: bool = True
 
     warning_threshold: PositiveFloat = 1e-1
 
@@ -131,6 +128,22 @@ class OBCConfig(BaseModel):
     # Parameters for reusing surface Green's functions from previous
     # SCBA iterations.
     memoizer: MemoizerConfig = MemoizerConfig()
+
+    @model_validator(mode="after")
+    def set_max_decay(self) -> Self:
+        """Sets the max decay if not already set."""
+        if self.max_decay is None:
+            self.max_decay = 1.5 * np.log(self.r_o)
+
+        return self
+
+    @model_validator(mode="after")
+    def scale_contour_radii(self) -> Self:
+        """Scales the contour radii based on block_sections."""
+        self.r_o **= 1 / self.block_sections
+        self.r_i **= 1 / self.block_sections
+
+        return self
 
 
 class LyapunovConfig(BaseModel):

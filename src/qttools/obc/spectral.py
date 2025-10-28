@@ -45,9 +45,6 @@ class Spectral(OBCSolver):
     num_ref_iterations : int, optional
         The number of refinement iterations to perform on the surface
         Green's function.
-    pairing_threshold : float, optional
-        The threshold for which two modes are considered to be a mode
-        pair.
     min_propagation : float, optional
         The minimum ratio between the real and imaginary part of the
         group velocity of a mode. This ratio is used to determine how
@@ -76,7 +73,6 @@ class Spectral(OBCSolver):
         min_decay: float = 1e-3,
         max_decay: float = 6.9,
         num_ref_iterations: int = 2,
-        pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
         residual_normalization: str | None = "eigenvalue",
@@ -91,7 +87,6 @@ class Spectral(OBCSolver):
         self.num_ref_iterations = num_ref_iterations
         self.block_sections = block_sections
 
-        self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
         self.residual_normalization = residual_normalization
@@ -147,55 +142,6 @@ class Spectral(OBCSolver):
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
         return tuple(block for block in blocks if xp.any(block))
-
-    def _find_pairwise_propagating(
-        self,
-        dEk_dk: NDArray,
-        ks: NDArray,
-    ):
-        """Filter propagating modes that are opposite.
-
-        Parameters
-        ----------
-        dEk_dk : NDArray
-            The group velocity of the modes.
-        ks : NDArray
-            The wavevector of the modes.
-
-        Returns
-        -------
-        mask_pairwise_propagating : NDArray
-            A boolean mask indicating which eigenvalues correspond to
-            matched modes that propagate.
-
-        """
-
-        # match modes to the most opposite ones
-        diff = xp.abs(dEk_dk[:, :, xp.newaxis] + dEk_dk[:, xp.newaxis, :])
-        match_indices = xp.argmin(diff, axis=-1)
-        ks_match = xp.array(
-            [batch[indices] for batch, indices in zip(ks, match_indices)]
-        )
-        dEk_dk_match = xp.array(
-            [batch[indices] for batch, indices in zip(dEk_dk, match_indices)]
-        )
-
-        # pair of modes decay slowly
-        mask_pairwise_propagating = (
-            xp.abs(ks_match.imag) + xp.abs(ks.imag)
-        ) / 2 < self.min_decay
-
-        # modes opposite enough (0 would be perfect opposite)
-        eta = xp.finfo(dEk_dk.dtype).eps
-        mask_pairwise_propagating &= (
-            xp.abs(dEk_dk + dEk_dk_match) / (xp.abs(dEk_dk) + eta)
-            < self.pairing_threshold
-        )
-        mask_pairwise_propagating &= (
-            xp.abs(ks + ks_match) / (xp.abs(ks) + eta) < self.pairing_threshold
-        )
-
-        return mask_pairwise_propagating
 
     def _compute_dE_dk(self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.

@@ -48,7 +48,6 @@ class Spectral(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ):
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -60,9 +59,6 @@ class Spectral(LyapunovSolver):
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -105,10 +101,6 @@ class Spectral(LyapunovSolver):
                 RuntimeWarning,
             )
 
-        if out is not None:
-            out[...] = x_ref
-            return
-
         return x_ref
 
     def __call__(
@@ -116,7 +108,6 @@ class Spectral(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -130,9 +121,6 @@ class Spectral(LyapunovSolver):
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -146,6 +134,6 @@ class Spectral(LyapunovSolver):
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:
-            return system_reduction(a, q, contact, self._solve, out=out)
+            return system_reduction(a, q, contact, self._solve)
 
-        return self._solve(a, q, contact, out=out)
+        return self._solve(a, q, contact)

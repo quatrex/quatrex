@@ -25,7 +25,6 @@ class LyapunovSolver(ABC):
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -37,9 +36,6 @@ class LyapunovSolver(ABC):
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -124,7 +120,6 @@ class LyapunovMemoizer:
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Calls the wrapped Lyapunov function with cache handling.
 
@@ -137,9 +132,6 @@ class LyapunovMemoizer:
         contact : str
             The contact to which the boundary blocks belong. Used as a
             key for the cache.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -147,20 +139,15 @@ class LyapunovMemoizer:
             The solution of the discrete-time Lyapunov equation.
 
         """
-        x = self.lyapunov_solver(a, q, contact, out=out)
-        if out is None:
-            self._cache[contact] = x.copy()
-            return x
-
-        self._cache[contact] = out.copy()
-        return None
+        x = self.lyapunov_solver(a, q, contact)
+        self._cache[contact] = x.copy()
+        return x
 
     def _solve(
         self,
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -174,9 +161,6 @@ class LyapunovMemoizer:
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -186,13 +170,13 @@ class LyapunovMemoizer:
         """
 
         if self.memoizing_mode == "off":
-            return self._call_with_cache(a, q, contact, out=out)
+            return self._call_with_cache(a, q, contact)
 
         # Try to reuse the result from the cache.
         x = self._cache.get(contact, None)
 
         if x is None and self.memoizing_mode in ["auto", "force-after-first"]:
-            return self._call_with_cache(a, q, contact, out=out)
+            return self._call_with_cache(a, q, contact)
         elif self.memoizing_mode == "force":
             x = q if x is None else x
 
@@ -213,7 +197,7 @@ class LyapunovMemoizer:
 
             if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
-                return self._call_with_cache(a, q, contact, out=out)
+                return self._call_with_cache(a, q, contact)
 
         x = x_ref
 
@@ -241,17 +225,13 @@ class LyapunovMemoizer:
             )
 
         self._cache[contact] = x.copy()
-        if out is None:
-            return x
-        out[:] = x
-        return None
+        return x
 
     def __call__(
         self,
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -267,9 +247,6 @@ class LyapunovMemoizer:
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -289,11 +266,11 @@ class LyapunovMemoizer:
                 # Not reduce sparsity twice
                 self.lyapunov_solver.reduce_sparsity = False
 
-            out = system_reduction(a, q, contact, self._solve, out=out)
+            out = system_reduction(a, q, contact, self._solve)
 
             if hasattr(self.lyapunov_solver, "reduce_sparsity"):
                 self.lyapunov_solver.reduce_sparsity = save_reduce_sparsity
 
             return out
 
-        return self._solve(a, q, contact, out=out)
+        return self._solve(a, q, contact)

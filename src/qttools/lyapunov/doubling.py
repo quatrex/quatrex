@@ -42,7 +42,6 @@ class Doubling(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -54,9 +53,6 @@ class Doubling(LyapunovSolver):
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -89,10 +85,6 @@ class Doubling(LyapunovSolver):
         else:  # Did not break, i.e. max_iterations reached.
             warnings.warn("Lyapunov equation did not converge.", RuntimeWarning)
 
-        if out is not None:
-            out[...] = x
-            return
-
         return x
 
     def __call__(
@@ -100,7 +92,6 @@ class Doubling(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
-        out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
 
@@ -114,9 +105,6 @@ class Doubling(LyapunovSolver):
             The right-hand side matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------
@@ -130,6 +118,6 @@ class Doubling(LyapunovSolver):
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:
-            return system_reduction(a, q, contact, self._solve, out=out)
+            return system_reduction(a, q, contact, self._solve)
 
-        return self._solve(a, q, contact, out=out)
+        return self._solve(a, q, contact)

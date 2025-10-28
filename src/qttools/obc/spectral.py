@@ -53,9 +53,6 @@ class Spectral(OBCSolver):
         other option is "direct". The "self-energy" formula corresponds
         to Equation (13.1) in the paper [^1] and the "direct" formula
         corresponds to Equation (15).
-    two_sided : bool, optional
-        Whether to solve the NEVP for both left and right eigenvectors,
-        and construct the surface Green's function from both.
     treat_pairwise : bool, optional
         Whether to match complex conjugate modes and treat them in pairs
         during the determining of reflected modes.
@@ -91,7 +88,6 @@ class Spectral(OBCSolver):
         max_decay: float | None = None,
         num_ref_iterations: int = 2,
         x_ii_formula: str = "self-energy",
-        two_sided: bool = False,
         treat_pairwise: bool = True,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
@@ -111,7 +107,6 @@ class Spectral(OBCSolver):
         self.block_sections = block_sections
         self.x_ii_formula = x_ii_formula
 
-        self.two_sided = two_sided
         self.treat_pairwise = treat_pairwise
         self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
@@ -219,9 +214,7 @@ class Spectral(OBCSolver):
 
         return mask_pairwise_propagating
 
-    def _compute_dE_dk(
-        self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray], vls: NDArray | None = None
-    ) -> NDArray:
+    def _compute_dE_dk(self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.
 
         Parameters
@@ -232,8 +225,6 @@ class Spectral(OBCSolver):
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
 
         Returns
         -------
@@ -248,17 +239,10 @@ class Spectral(OBCSolver):
             action="ignore", category=RuntimeWarning
         ):  # Ignore division by zero.
 
-            if self.two_sided:
-                phi_right = vrs
-                phi_left = vls
-            else:
-                phi_right = vrs
-                phi_left = vrs
-
             dEk_dk = -sum(
                 (1j * n)
                 * xp.diagonal(
-                    phi_left.conj().swapaxes(-1, -2) @ a_x @ phi_right,
+                    vrs.conj().swapaxes(-1, -2) @ a_x @ vrs,
                     axis1=-2,
                     axis2=-1,
                 )
@@ -273,7 +257,6 @@ class Spectral(OBCSolver):
         ws: NDArray,
         vrs: NDArray,
         a_xx: list[NDArray],
-        vls: NDArray | None = None,
         find_injected: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Determines which eigenvalues correspond to reflected (and injected) modes.
@@ -290,8 +273,6 @@ class Spectral(OBCSolver):
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
         find_injected: bool, optional
             Whether to find the injected eigenvector
 
@@ -307,8 +288,6 @@ class Spectral(OBCSolver):
             List of dEk_dK values corresponding to injected modes
 
         """
-        if self.two_sided and vls is None:
-            raise ValueError("Two-sided calculation requires left eigenvectors.")
 
         batchsize = a_xx[0].shape[0]
 
@@ -360,7 +339,7 @@ class Spectral(OBCSolver):
         # polynomial eigenvalue equation with respect to k.
         # NOTE: This is actually only correct if we have no overlap.
 
-        dEk_dk = self._compute_dE_dk(ws, vrs, a_xx, vls)
+        dEk_dk = self._compute_dE_dk(ws, vrs, a_xx)
 
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
@@ -468,7 +447,6 @@ class Spectral(OBCSolver):
         ws: NDArray,
         vrs: NDArray,
         mask: NDArray,
-        vls: NDArray | None = None,
     ) -> NDArray:
         """Computes the surface Green's function.
 
@@ -487,8 +465,6 @@ class Spectral(OBCSolver):
         mask : NDArray
             A boolean mask indicating which eigenvalues correspond to
             reflected modes.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
 
         Returns
         -------
@@ -496,22 +472,15 @@ class Spectral(OBCSolver):
             The surface Green's function.
 
         """
-        if self.two_sided and vls is None:
-            raise ValueError("Two-sided calculation requires left eigenvectors.")
 
         if self.x_ii_formula == "self-energy":
             # Equation (13.1).
             x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
             for i, m in enumerate(mask):
                 vr = vrs[i][:, m]
-                if self.two_sided:
-                    vl = vls[i][:, m]
                 w = ws[i, m]
                 # Moore-Penrose pseudoinverse.
-                if self.two_sided:
-                    v_inv = linalg.inv(vl.conj().T @ vr) @ vl.conj().T
-                else:
-                    v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
+                v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
                 x_ii_a_ij[i] = vr / w @ v_inv
 
             # Calculate the surface Green's function.
@@ -534,47 +503,6 @@ class Spectral(OBCSolver):
         raise ValueError(
             f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
         )
-
-    def _match_eigenmodes(
-        self,
-        wrs: NDArray,
-        vrs: NDArray,
-        wls: NDArray,
-        vls: NDArray,
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Matches the left and right eigenvalues to reorder the eigenvectors.
-
-        Parameters
-        ----------
-        wrs : NDArray
-            The right eigenvalues of the NEVP.
-        vrs : NDArray
-            The right eigenvectors of the NEVP.
-        wls : NDArray
-            The left eigenvalues of the NEVP.
-        vls : NDArray
-            The left eigenvectors of the NEVP.
-
-        Returns
-        -------
-        vls : NDArray
-            The matched left eigenvectors.
-
-        """
-
-        # the left and right eigenvalues are not sorted
-        diff = xp.abs(wrs[..., xp.newaxis] - wls[:, xp.newaxis, :])
-
-        # Find the indices to reorder the left problem
-        match_indices = xp.argmin(diff, axis=-1)
-
-        vls = xp.array(
-            [batch[:, indices] for batch, indices in zip(vls, match_indices)]
-        )
-
-        # TODO: test that the matching is correct
-
-        return vls
 
     @profiler.profile(level="api")
     def __call__(
@@ -626,31 +554,25 @@ class Spectral(OBCSolver):
             a_ji = a_ji[xp.newaxis, :, :]
 
         blocks = self._extract_subblocks(a_ji, a_ii, a_ij)
-        if self.two_sided:
-            wrs, vrs, wls, vls = self.nevp(blocks, left=True)
-            vls = self._match_eigenmodes(wrs, vrs, wls, vls)
-        else:
-            wrs, vrs = self.nevp(blocks)
-            vls = None
+        wrs, vrs = self.nevp(blocks)
 
         wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
-        if self.two_sided:
-            wls, vls = self._upscale_eigenmodes(wrs, vls)
 
         if return_injected:
             mask_reflected, mask_injected, dE_dK_injected = self._find_reflected_modes(
                 wrs,
                 vrs,
-                a_xx=(a_ji, a_ii, a_ij),
-                vls=vls,
+                a_xx=[a_ji, a_ii, a_ij],
                 find_injected=return_injected,
             )
         else:
             mask_reflected = self._find_reflected_modes(
-                wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
+                wrs,
+                vrs,
+                a_xx=[a_ji, a_ii, a_ij],
             )
 
-        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls)
+        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected)
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):

@@ -4,11 +4,10 @@ import pytest
 
 from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn, Full
-from qttools.utils.gpu_utils import get_host
-from qttools.utils.mpi_utils import distributed_load
 from quatrex.cli.main import fetch_example
 from quatrex.core.compute_config import CommConfig
 from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+from quatrex.electron.solver import ElectronSolver
 from quatrex.examples import get_example_dir
 
 NEVP_SOLVERS = [
@@ -74,7 +73,7 @@ def batch_size(request: pytest.FixtureRequest) -> int:
 ENERGIES = [[-10, -5, 0]]
 
 
-@pytest.fixture(params=ENERGIES, autouse=True)
+@pytest.fixture(params=ENERGIES, autouse=True, scope="session")
 def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     """Returns some CNT boundary blocks."""
 
@@ -93,12 +92,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     # hack to configure the communicator
     CommConfig()
 
-    hamiltonian_sparray = distributed_load(
-        quatrex_config.input_dir / "hamiltonian.npz"
-    ).astype(xp.complex128)
-    block_sizes = get_host(
-        distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-    )
+    hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(quatrex_config)
     hamiltonian_sparray = hamiltonian_sparray.toarray()
 
     block_size = block_sizes[0]

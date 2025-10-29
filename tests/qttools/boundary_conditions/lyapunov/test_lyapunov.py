@@ -3,7 +3,8 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.lyapunov import LyapunovMemoizer, LyapunovSolver
+from qttools.boundary_conditions import LyapunovSolver, LyapunovSystem
+from quatrex.core.quatrex_config import MemoizerConfig
 
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])
@@ -13,11 +14,18 @@ def test_correctness(
     reduce_sparsity: bool,
 ):
 
-    lyapunov_solver.reduce_sparsity = reduce_sparsity
+    config = MemoizerConfig()
+    config.mode = "off"
+
+    lyapunov_system = LyapunovSystem(
+        lyapunov_solver,
+        reduce_sparsity=reduce_sparsity,
+        config=config,
+    )
 
     a, q, _, _ = inputs
 
-    x = lyapunov_solver(a, q, "contact")
+    _, _, x = lyapunov_system((a, q), "contact")
 
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
@@ -29,13 +37,20 @@ def test_correctness_zeros(
     reduce_sparsity: bool,
 ):
 
-    lyapunov_solver.reduce_sparsity = reduce_sparsity
+    config = MemoizerConfig()
+    config.mode = "off"
+
+    lyapunov_system = LyapunovSystem(
+        lyapunov_solver,
+        reduce_sparsity=reduce_sparsity,
+        config=config,
+    )
 
     a, q, _, _ = inputs
 
     a[:] = 0
 
-    x = lyapunov_solver(a, q, "contact")
+    _, _, x = lyapunov_system((a, q), "contact")
 
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
@@ -49,22 +64,24 @@ def test_memoizer(
     """Tests that the Lyapunov memoizer works."""
     a, q, row_slice, col_slice = inputs
 
-    lyapunov_solver.reduce_sparsity = reduce_sparsity
+    config = MemoizerConfig()
+    config.mode = "force-after-first"
 
-    lyapunov_solver = LyapunovMemoizer(
+    lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         reduce_sparsity=reduce_sparsity,
-        memoizing_mode="force-after-first",
+        config=config,
     )
-    x = lyapunov_solver(a, q, "contact")
+    _, _, x = lyapunov_system((a, q), "contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
     # Add a little noise to the input matrices.
-    a += 1e-3 * xp.random.randn(*a.shape)
-    q += 1e-3 * xp.random.randn(*q.shape)
+    a = a + 1e-3 * a
+    q = q + 1e-3 * q
 
     a[..., row_slice, col_slice] = 0
     a[..., row_slice, col_slice] = 0
 
-    x = lyapunov_solver(a, q, "contact")
+    _, _, x = lyapunov_system((a, q), "contact")
+
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

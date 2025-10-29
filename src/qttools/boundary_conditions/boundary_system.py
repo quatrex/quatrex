@@ -65,18 +65,6 @@ class BaseBoundarySystem(ABC):
             )
             self.num_ref_iterations = 2
 
-        assert self.mode in [
-            "auto",
-            "force",
-            "force-after-first",
-            "off",
-        ], f"Invalid memoizing mode: {self.mode}"
-        if self.mode == "off":
-            warnings.warn(
-                "Memoizing mode is set to 'off'. The memoizer will not cache any results.",
-                RuntimeWarning,
-            )
-
     @abstractmethod
     def _contract_system(
         self,
@@ -245,7 +233,7 @@ class BaseBoundarySystem(ABC):
             The solution of the boundary system.
 
         """
-        solution = self.boundary_solver(boundary_system, contact)
+        solution = self.boundary_solver(*boundary_system, contact)
 
         if self.mode != "off":
             if type(solution) is not xp.ndarray:

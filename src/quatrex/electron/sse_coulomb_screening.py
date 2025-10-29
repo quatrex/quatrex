@@ -37,7 +37,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
         The convolution of the two arrays.
 
     """
-    ne = a.shape[0] + b.shape[0] - 1
+    ne = a.shape[0] + b.shape[0]
     a_fft = xp.fft.fftn(a, (ne,), axes=(0,))
     b_fft = xp.fft.fftn(b, (ne,), axes=(0,))
     return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
@@ -46,7 +46,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 @profiler.profile(level="api")
 def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
     """Computes the convolution of two arrays using the FFT."""
-    ne = a.shape[0] + b.shape[0] - 1
+    ne = a.shape[0] + b.shape[0]
     nka = a.shape[1:-1]
     nkb = b.shape[1:-1]
     a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
@@ -400,6 +400,249 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # sigma_retarded._data[
                 #     sigma_retarded._stack_padding_mask, ..., batch
                 # ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
+
+        synchronize_device()
+        t_sse_end = time.perf_counter()
+        comm.Barrier()
+        t_sse_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    SigmaCoulombScreening: SSE computation: {t_sse_end - t_sse_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
+                flush=True,
+            )
+
+        t_all2all_start = time.perf_counter()
+        # Transpose the matrices to stack distribution.
+        with profiler.profile_range("nnz->stack transpose", level="debug"):
+            for m in (w_lesser, w_greater):
+                m.dtranspose(discard=True) if m.distribution_state != "stack" else None
+            # NOTE: The electron Green's functions and self-energies must
+            # not be transposed back to stack distribution, as they are
+            # needed in nnz distribution for the other interactions.
+
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    SigmaCoulombScreening: nnz->stack transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: nnz->stack transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
+
+        t_block_reorder_start = time.perf_counter()
+        # Recover original block sizes.
+        w_lesser.block_sizes = self.big_block_sizes
+        w_greater.block_sizes = self.big_block_sizes
+        synchronize_device()
+        t_block_reorder_end = time.perf_counter()
+        comm.Barrier()
+        t_block_reorder_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    SigmaCoulombScreening: block reorder back: {t_block_reorder_end - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: block reorder back all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+
+    @profiler.profile(level="api")
+    def compute_new(
+        self,
+        g_lesser: DSDBSparse,
+        g_greater: DSDBSparse,
+        w_lesser: DSDBSparse,
+        w_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
+    ) -> None:
+        """Computes the GW self-energy.
+
+        Parameters
+        ----------
+        g_lesser : DSDBSparse
+            The lesser Green's function.
+        g_greater : DSDBSparse
+            The greater Green's function.
+        w_lesser : DSDBSparse
+            The lesser screened Coulomb interaction.
+        w_greater : DSDBSparse
+            The greater screened Coulomb interaction.
+        out : tuple[DSDBSparse, ...]
+            The output matrices for the self-energy. The order is
+            sigma_lesser, sigma_greater, sigma_retarded.
+
+        """
+
+        t_block_reorder_start = time.perf_counter()
+
+        # Save the block sizes for later.
+        if self.big_block_sizes is None:
+            self.big_block_sizes = w_lesser.block_sizes
+
+        # Enforce that the block sizes are the same. NOTE: This triggers
+        # a block-reordering in the DSDBSparse object.
+        w_lesser.block_sizes = g_lesser.block_sizes
+        w_greater.block_sizes = g_greater.block_sizes
+
+        sigma_lesser, sigma_greater, sigma_retarded = out
+
+        synchronize_device()
+        t_block_reorder_end = time.perf_counter()
+        comm.Barrier()
+        t_block_reorder_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    SigmaCoulombScreening: block reorder: {t_block_reorder_end - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: block reorder all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
+                flush=True,
+            )
+
+        t_all2all_start = time.perf_counter()
+        with profiler.profile_range("stack->nnz transpose", level="debug"):
+            # Transpose the matrices to nnz distribution.
+            for m in (
+                w_lesser,
+                w_greater,
+                g_lesser,
+                g_greater,
+                sigma_lesser,
+                sigma_greater,
+                sigma_retarded,
+            ):
+                # The electron Green's functions and self-energies should
+                # ideally already be in nnz-distribution. We cannot discard
+                # the data here, as we cannot be sure that this is the
+                # first/only interaction.
+                m.dtranspose() if m.distribution_state != "nnz" else None
+        synchronize_device()
+        t_all2all_end = time.perf_counter()
+        comm.Barrier()
+        t_all2all_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    SigmaCoulombScreening: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"    SigmaCoulombScreening: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
+                flush=True,
+            )
+
+        t_sse_start = time.perf_counter()
+        # Because of padding there could be no ij elements
+        if g_greater.data.shape[-1] != 0:
+            with profiler.profile_range("SSE computation", level="debug"):
+                ne = g_lesser.data.shape[0]
+                nk = g_lesser.data.shape[1:-1]
+                if xp.__name__ == "cupy":
+                    free_mempool()
+                    free_memory, _ = xp.cuda.Device().mem_info
+                    num_buffers = 12  # closer to 8 but overapproximating
+                    avail_buffer_size = free_memory // num_buffers
+                    no = g_lesser.data.shape[-1]
+                    batch_size = avail_buffer_size // (
+                        2 * ne * np.prod(nk) * 16
+                    )  # 16 bytes for complex128
+                    batch_size = max(min(batch_size, no), 1)
+                    batches = int(np.ceil(no / batch_size))
+                    batch_size = int(np.ceil(no / batches))  # Balance last batch
+                    if self.batch_size is not None and batch_size < self.batch_size:
+                        cache.clear()
+                    self.batch_size = batch_size
+                    if comm.rank == 0:
+                        print(
+                            f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
+                            flush=True,
+                        )
+                        print(cache.show_info(), flush=True)
+                else:
+                    if self.batch_size is None:
+                        # NOTE: This is a temporary solution. The batch size should be
+                        # calculated in the configuration.
+                        self.batch_size = g_greater.data.shape[-1]
+
+                batch_counts, _ = get_section_sizes(
+                    g_greater.data.shape[-1],
+                    int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+                )
+
+                batch_displacements = np.cumsum(
+                    np.concatenate(([0], np.array(batch_counts)))
+                )
+
+                for start, end in zip(batch_displacements, batch_displacements[1:]):
+                    batch = slice(start, end)
+
+                    # Lesser self-energy
+                    sl = self.prefactor * fft_convolve_kpoints(
+                        # reverse all dimensions except last
+                        g_lesser.data[..., batch],
+                        -xp.flip(
+                            w_greater.data[..., batch], axis=tuple(range(len(nk) + 1))).conj(),
+                    )
+                    sl[ne:] = (
+                        self.prefactor
+                        * fft_convolve_kpoints(
+                            g_lesser.data[..., batch], w_lesser.data[..., batch]
+                        )[:ne]
+                    )
+
+                    # Greater self-energy
+                    sg = self.prefactor * fft_convolve_kpoints(
+                        g_greater.data[..., batch], w_greater.data[..., batch]
+                    )
+                    sg[:ne] += (
+                        self.prefactor
+                        * fft_convolve_kpoints(
+                            # reverse all dimensions except last
+                            g_greater.data[..., batch],
+                            -xp.flip(
+                                w_lesser.data[..., batch],
+                                axis=tuple(range(len(nk) + 1)),
+                            ).conj(),
+                        )[ne:]
+                    )
+
+                    sigma_lesser.data[..., batch] += sl[:ne]
+                    sigma_greater.data[..., batch] += sg[ne:]
+
+                    # Add empty dimensions for each k-point.
+                    energy_differences = (self.energies - self.energies[0]).reshape(
+                        -1, *(len(nk) + 1) * (1,)
+                    )
+                    # eta for removing the singularity. See Cauchy principal value.
+                    eta = (self.energies[1] - self.energies[0]) / 2
+                    hilbert_kernel = 1 / (energy_differences + eta)
+
+                    sr = fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[:ne]
+                    # Correct for left edge
+                    sr += fft_convolve(-sl[:ne], hilbert_kernel)[ne:]
+                    # Next account for negative frequencies
+                    hilbert_kernel = -hilbert_kernel[::-1]
+                    sr += fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[ne:]
+                    # Correct for right edge
+                    sr += fft_convolve(sg[ne:], hilbert_kernel)[:ne]
+                    sigma_retarded.data[..., batch] += (
+                        self.prefactor
+                        * sr
+                        # Here we shouldn't divide with kpoint volume, as we are
+                        # convolving in E-space
+                        * self.kpoint_volume
+                        # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
+                        # + antihermitian / 2
+                    )
 
         synchronize_device()
         t_sse_end = time.perf_counter()

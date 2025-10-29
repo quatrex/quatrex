@@ -217,6 +217,7 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_system: tuple[NDArray, ...],
         contact: str,
+        **kwargs,
     ) -> NDArray | tuple[NDArray, ...]:
         """Solve the boundary system without memoization.
 
@@ -226,6 +227,9 @@ class BaseBoundarySystem(ABC):
             The boundary system to solve.
         contact : str
             The contact to which the boundary system belongs.
+        **kwargs
+            Additional arguments to pass to the boundary system solver.
+            Mostly for the injection vectors in case of OBCs / QTBM.
 
         Returns
         -------
@@ -233,7 +237,7 @@ class BaseBoundarySystem(ABC):
             The solution of the boundary system.
 
         """
-        solution = self.boundary_solver(*boundary_system, contact)
+        solution = self.boundary_solver(*boundary_system, contact, **kwargs)
 
         if self.mode != "off":
             if type(solution) is not xp.ndarray:
@@ -248,6 +252,7 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_system: tuple[NDArray, ...],
         contact: str,
+        **kwargs,
     ) -> NDArray | tuple[NDArray, ...]:
         """Solve the boundary system with memoization.
 
@@ -257,6 +262,9 @@ class BaseBoundarySystem(ABC):
             The boundary system to solve.
         contact : str
             The contact to which the boundary system belongs.
+        **kwargs
+            Additional arguments to pass to the boundary system solver.
+            Mostly for the injection vectors in case of OBCs / QTBM.
 
         Returns
         -------
@@ -266,14 +274,14 @@ class BaseBoundarySystem(ABC):
         """
 
         if self.mode == "off":
-            return self._solve(boundary_system, contact)
+            return self._solve(boundary_system, contact, **kwargs)
 
         # Try to reuse the result from the cache.
         solution = self.decompress(self._cache.get(contact, None))
 
         if solution is None:
             if self.mode in ["auto", "force-after-first"]:
-                return self._solve(boundary_system, contact)
+                return self._solve(boundary_system, contact, **kwargs)
 
             elif self.mode == "force":
                 solution = self._get_starting_guess(boundary_system)
@@ -301,7 +309,7 @@ class BaseBoundarySystem(ABC):
             # allow a few ranks to not converge
             if global_memoizing > self.agreement_threshold:
                 # If the result did not converge, recompute it from scratch.
-                return self._solve(boundary_system, contact)
+                return self._solve(boundary_system, contact, **kwargs)
 
         for __ in range(self.num_ref_iterations - 2):
             solution = self._fix_point_step(boundary_system, solution)
@@ -312,6 +320,7 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_system: tuple[NDArray, ...],
         contact: str,
+        **kwargs,
     ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
         """Solve the boundary system with memoization and system reduction.
 
@@ -323,6 +332,9 @@ class BaseBoundarySystem(ABC):
             The boundary system to solve.
         contact : str
             The contact to which the boundary system belongs.
+        **kwargs
+            Additional arguments to pass to the boundary system solver.
+            Mostly for the injection vectors in case of OBCs / QTBM.
 
         Returns
         -------
@@ -339,7 +351,7 @@ class BaseBoundarySystem(ABC):
         reduced_system = self._contract_system(boundary_system)
 
         # memoize and cache on the reduced system
-        reduced_solution = self._memoized_solve(reduced_system, contact)
+        reduced_solution = self._memoized_solve(reduced_system, contact, **kwargs)
 
         rel_residuals, abs_residuals, reduced_solution = self._get_residuals(
             reduced_system, reduced_solution

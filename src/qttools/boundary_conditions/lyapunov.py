@@ -58,8 +58,8 @@ class LyapunovSystem(BaseBoundarySystem):
 
     Parameters
     ----------
-    boundary_solver : callable
-        The boundary system solver to be memoized.
+    boundary_solver : LyapunovSolver
+        The lyapunov solver to be memoized.
     cache_compressor : object, optional
         An object with 'compress' and 'decompress' methods to handle
         cache compression. If None, no compression is applied.

@@ -9,6 +9,19 @@ from quatrex.core.quatrex_config import MemoizerConfig
 
 
 class BoundaryMethod(ABC):
+    """Abstract base class for boundary method with memoization and system reduction.
+
+    Parameters
+    ----------
+    boundary_solver : callable
+        The boundary system solver to be memoized.
+    cache_compressor : object, optional
+        An object with 'compress' and 'decompress' methods to handle
+        cache compression. If None, no compression is applied.
+    config : MemoizerConfig, optional
+        Configuration for the memoizer.
+
+    """
 
     def __init__(
         self,
@@ -16,6 +29,7 @@ class BoundaryMethod(ABC):
         cache_compressor: None = None,
         config: MemoizerConfig = MemoizerConfig(),
     ) -> None:
+        """Initializes the boundary method."""
 
         self.boundary_solver = boundary_solver
         self.num_ref_iterations = config.num_ref_iterations
@@ -65,8 +79,23 @@ class BoundaryMethod(ABC):
 
     @abstractmethod
     def _contract_system(
-        self, boundary_system: tuple[NDArray, ...]
-    ) -> tuple[NDArray, ...]: ...
+        self,
+        boundary_system: tuple[NDArray, ...],
+    ) -> tuple[NDArray, ...]:
+        """Contract the boundary system to a reduced system.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system.
+
+        Returns
+        -------
+        reduced_system : tuple[NDArray, ...]
+            The reduced boundary system.
+
+        """
+        ...
 
     @abstractmethod
     def _expand_solution(
@@ -74,7 +103,25 @@ class BoundaryMethod(ABC):
         boundary_system: tuple[NDArray, ...],
         reduced_system: tuple[NDArray, ...],
         reduced_solution: NDArray | tuple[NDArray, ...],
-    ) -> NDArray | tuple[NDArray, ...]: ...
+    ) -> NDArray | tuple[NDArray, ...]:
+        """Expand the solution from the reduced system to the full system.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system.
+        reduced_system : tuple[NDArray, ...]
+            The reduced boundary system.
+        reduced_solution : NDArray | tuple[NDArray, ...]
+            The solution of the reduced system.
+
+        Returns
+        -------
+        full_solution : NDArray | tuple[NDArray, ...]
+            The solution of the full system.
+
+        """
+        ...
 
     @abstractmethod
     def _expand_residuals(
@@ -83,27 +130,121 @@ class BoundaryMethod(ABC):
         reduced_system: tuple[NDArray, ...],
         rel_residuals: NDArray,
         abs_residuals: NDArray,
-    ) -> tuple[NDArray, NDArray]: ...
+    ) -> tuple[NDArray, NDArray]:
+        """Expand the residuals from the reduced system to the full system.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system.
+        reduced_system : tuple[NDArray, ...]
+            The reduced boundary system.
+        rel_residuals : NDArray
+            The relative residuals of the reduced system.
+        abs_residuals : NDArray
+            The absolute residuals of the reduced system.
+
+        Returns
+        -------
+        full_rel_residuals : NDArray
+            The relative residuals of the full system.
+        full_abs_residuals : NDArray
+            The absolute residuals of the full system.
+
+        """
+        ...
 
     @abstractmethod
     def _fix_point_step(
-        self, boundary_system: tuple[NDArray, ...], solution: NDArray
-    ): ...
+        self,
+        boundary_system: tuple[NDArray, ...],
+        solution: NDArray,
+    ) -> NDArray:
+        """Perform a fixed-point iteration step to refine the solution.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+        solution : NDArray
+            The current solution to refine.
+
+        Returns
+        -------
+        refined_solution : NDArray
+            The refined solution after one fixed-point iteration step.
+
+        """
+        ...
 
     @abstractmethod
-    def _get_starting_guess(self, boundary_system: tuple[NDArray, ...]): ...
+    def _get_starting_guess(
+        self,
+        boundary_system: tuple[NDArray, ...],
+    ) -> NDArray:
+        """Get a starting guess for the boundary system.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+
+        Returns
+        -------
+        starting_guess : NDArray
+            The starting guess for the boundary system.
+
+        """
+        ...
 
     @abstractmethod
     def _get_residuals(
-        self, boundary_system: tuple[NDArray, ...], test_solution: NDArray
-    ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]: ...
+        self,
+        boundary_system: tuple[NDArray, ...],
+        test_solution: NDArray,
+    ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
+        """Compute the residuals of a test solution.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+        test_solution : NDArray
+            The test solution to evaluate.
+
+        Returns
+        -------
+        rel_residuals : NDArray
+            The relative residuals of the test solution.
+        abs_residuals : NDArray
+            The absolute residuals of the test solution.
+        solution : NDArray | tuple[NDArray, ...]
+            The (possibly refined) solution of the boundary system.
+
+        """
+
+        ...
 
     def _solve(
         self,
         boundary_system: tuple[NDArray, ...],
         contact: str,
     ) -> NDArray | tuple[NDArray, ...]:
+        """Solve the boundary system without memoization.
 
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+        contact : str
+            The contact to which the boundary system belongs.
+
+        Returns
+        -------
+        solution : NDArray | tuple[NDArray, ...]
+            The solution of the boundary system.
+
+        """
         solution = self.boundary_solver(boundary_system, contact)
 
         if self.mode != "off":
@@ -115,7 +256,27 @@ class BoundaryMethod(ABC):
 
         return solution
 
-    def _memoized_solve(self, boundary_system: tuple[NDArray, ...], contact: str):
+    def _memoized_solve(
+        self,
+        boundary_system: tuple[NDArray, ...],
+        contact: str,
+    ) -> NDArray | tuple[NDArray, ...]:
+        """Solve the boundary system with memoization.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+        contact : str
+            The contact to which the boundary system belongs.
+
+        Returns
+        -------
+        solution : NDArray | tuple[NDArray, ...]
+            The solution of the boundary system.
+
+        """
+
         if self.mode == "off":
             return self._solve(boundary_system, contact)
 
@@ -159,7 +320,32 @@ class BoundaryMethod(ABC):
 
         return solution
 
-    def __call__(self, boundary_system: tuple[NDArray, ...], contact: str) -> NDArray:
+    def __call__(
+        self,
+        boundary_system: tuple[NDArray, ...],
+        contact: str,
+    ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
+        """Solve the boundary system with memoization and system reduction.
+
+        This is a wrapper around the boundary system solver
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+        contact : str
+            The contact to which the boundary system belongs.
+
+        Returns
+        -------
+        rel_residuals : NDArray
+            The relative residuals of the solution.
+        abs_residuals : NDArray
+            The absolute residuals of the solution.
+        solution : NDArray | tuple[NDArray, ...]
+            The solution of the boundary system.
+
+        """
 
         # First, deflate the system
         reduced_system = self._contract_system(boundary_system)
@@ -176,8 +362,9 @@ class BoundaryMethod(ABC):
             & (abs_residuals > self.absolute_tol)
         ):
             warnings.warn(
-                f"High relative recursion error: {xp.max(rel_residuals):.3e} "
-                + f"at rank {comm.stack.rank} for {contact} of {self.boundary_solver.__class__.__name__}",
+                f"High error at rank {comm.stack.rank} for {contact} of {self.boundary_solver.__class__.__name__}:\n"
+                + f"  Relative recursion error: {xp.max(rel_residuals):.3e}\n"
+                + f"  Absolute recursion error: {xp.max(abs_residuals):.3e}\n",
                 RuntimeWarning,
             )
 
@@ -192,8 +379,10 @@ class BoundaryMethod(ABC):
         solution = self._expand_solution(
             boundary_system, reduced_system, reduced_solution
         )
+        # Residual need to be expanded as well
+        # since the reduced system can be on a different space
         rel_residuals, abs_residuals = self._expand_residuals(
             boundary_system, reduced_system, rel_residuals, abs_residuals
         )
 
-        return solution, rel_residuals, abs_residuals
+        return rel_residuals, abs_residuals, solution

@@ -8,8 +8,8 @@ from qttools.comm import comm
 from quatrex.core.quatrex_config import MemoizerConfig
 
 
-class BoundaryMethod(ABC):
-    """Abstract base class for boundary method with memoization and system reduction.
+class BaseBoundarySystem(ABC):
+    """Abstract base class to solve boundary systems with memoization and system reduction.
 
     Parameters
     ----------

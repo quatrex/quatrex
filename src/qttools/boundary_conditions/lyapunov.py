@@ -1,12 +1,55 @@
 # Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
 
+from abc import ABC, abstractmethod
+
 from qttools import NDArray, xp
 from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
-from qttools.lyapunov.lyapunov import LyapunovSolver
 from quatrex.core.quatrex_config import MemoizerConfig
 
 
-class LyapunovMethod(BaseBoundarySystem):
+class LyapunovSolver(ABC):
+    r"""Solver interface for the discrete-time Lyapunov equation.
+
+    The discrete-time Lyapunov equation is defined as:
+
+    \[
+        X - A X A^H = Q
+    \]
+
+    """
+
+    @abstractmethod
+    def __call__(
+        self,
+        a: NDArray,
+        q: NDArray,
+        contact: str,
+    ) -> NDArray | None:
+        """Computes the solution of the discrete-time Lyapunov equation.
+
+            The equation is give by:
+
+            $$\mathbf{x} = \mathbf{q} + \mathbf{a} \mathbf{x}  \mathbf{a}^H$$
+
+        Parameters
+        ----------
+        a : NDArray
+            The system matrix.
+        q : NDArray
+            The right-hand side matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+
+        Returns
+        -------
+        x : NDArray | None
+            The solution of the discrete-time Lyapunov equation.
+
+        """
+        ...
+
+
+class LyapunovSystem(BaseBoundarySystem):
     """A lyapunov system solver with memoization and system reduction.
 
         The lyapyunov equation to be solved is given by:

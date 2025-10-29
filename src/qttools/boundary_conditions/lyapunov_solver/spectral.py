@@ -3,9 +3,8 @@
 import warnings
 
 from qttools import NDArray, xp
+from qttools.boundary_conditions.lyapunov import LyapunovSolver
 from qttools.kernels import linalg
-from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.lyapunov.utils import system_reduction
 
 
 class Spectral(LyapunovSolver):
@@ -15,13 +14,9 @@ class Spectral(LyapunovSolver):
     ----------
     num_ref_iterations : int, optional
         The number of refinement iterations to perform.
-    warning_threshold : float, optional
-        The threshold for the relative recursion error to issue a warning.
     eig_compute_location : str, optional
         The location where to compute the eigenvalues and eigenvectors.
         Can be either "numpy" or "cupy" or "nvmath".
-    reduce_sparsity : bool, optional
-        Whether to reduce the sparsity of the system matrix.
     use_pinned_memory : bool, optional
         Whether to use pinnend memory if cupy is used.
         Default is `True`.
@@ -30,78 +25,14 @@ class Spectral(LyapunovSolver):
 
     def __init__(
         self,
-        num_ref_iterations: int = 3,
-        warning_threshold: float = 1e-1,
+        num_ref_iterations: int = 2,
         eig_compute_location: str = "numpy",
-        reduce_sparsity: bool = True,
         use_pinned_memory: bool = True,
     ) -> None:
         """Initializes the spectral Lyapunov solver."""
         self.num_ref_iterations = num_ref_iterations
-        self.warning_threshold = warning_threshold
         self.eig_compute_location = eig_compute_location
-        self.reduce_sparsity = reduce_sparsity
         self.use_pinned_memory = use_pinned_memory
-
-    def _solve(
-        self,
-        a: NDArray,
-        q: NDArray,
-        contact: str,
-    ):
-        """Computes the solution of the discrete-time Lyapunov equation.
-
-        Parameters
-        ----------
-        a : NDArray
-            The system matrix.
-        q : NDArray
-            The right-hand side matrix.
-        contact : str
-            The contact to which the boundary blocks belong.
-
-        Returns
-        -------
-        x : NDArray | None
-            The solution of the discrete-time Lyapunov equation.
-
-        """
-
-        ws, vs = linalg.eig(
-            a,
-            compute_module=self.eig_compute_location,
-            use_pinned_memory=self.use_pinned_memory,
-        )
-
-        inv_vs = linalg.inv(vs)
-        inv_vs = xp.broadcast_to(inv_vs, q.shape)
-        gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)
-
-        phi = xp.ones_like(a) - xp.einsum("...i, ...j -> ...ij", ws, ws.conj())
-        phi = xp.broadcast_to(phi, q.shape)
-        x_tilde = 1 / phi * gamma
-
-        x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
-
-        a = xp.broadcast_to(a, q.shape)
-        # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations - 1):
-            x = q + a @ x @ a.conj().swapaxes(-2, -1)
-
-        x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
-
-        # Check the batch average recursion error.
-        recursion_error = xp.max(
-            xp.linalg.norm(x_ref - x, axis=(-2, -1))
-            / xp.linalg.norm(x_ref, axis=(-2, -1))
-        )
-        if recursion_error > self.warning_threshold:
-            warnings.warn(
-                f"High relative recursion error: {recursion_error:.2e}",
-                RuntimeWarning,
-            )
-
-        return x_ref
 
     def __call__(
         self,
@@ -132,8 +63,26 @@ class Spectral(LyapunovSolver):
         assert q.shape[-2:] == a.shape[-2:]
         assert q.ndim >= a.ndim
 
-        # NOTE: possible to cache the sparsity reduction
-        if self.reduce_sparsity:
-            return system_reduction(a, q, contact, self._solve)
+        ws, vs = linalg.eig(
+            a,
+            compute_module=self.eig_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
-        return self._solve(a, q, contact)
+        inv_vs = linalg.inv(vs)
+        inv_vs = xp.broadcast_to(inv_vs, q.shape)
+        gamma = inv_vs @ q @ inv_vs.conj().swapaxes(-1, -2)
+
+        phi = xp.ones_like(a) - xp.einsum("...i, ...j -> ...ij", ws, ws.conj())
+        phi = xp.broadcast_to(phi, q.shape)
+        x_tilde = 1 / phi * gamma
+
+        x = vs @ x_tilde @ vs.conj().swapaxes(-1, -2)
+
+        a = xp.broadcast_to(a, q.shape)
+
+        # Perform a number of refinement iterations.
+        for __ in range(self.num_ref_iterations):
+            x = q + a @ x @ a.conj().swapaxes(-2, -1)
+
+        return x

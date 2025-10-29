@@ -3,8 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.lyapunov.lyapunov import LyapunovSolver
-from qttools.lyapunov.utils import system_reduction
+from qttools.boundary_conditions.lyapunov import LyapunovSolver
 
 
 class Doubling(LyapunovSolver):
@@ -19,8 +18,6 @@ class Doubling(LyapunovSolver):
     convergence_abs_tol : float, optional
         The required absolute accuracy for convergence.
         Either convergence_rel_tol or convergence_abs_tol must be satisfied.
-    reduce_sparsity : bool, optional
-        Whether to reduce the sparsity of the system matrix
 
     """
 
@@ -29,63 +26,11 @@ class Doubling(LyapunovSolver):
         max_iterations: int = 10,
         convergence_rel_tol: float = 1e-5,
         convergence_abs_tol: float = 1e-8,
-        reduce_sparsity: bool = True,
     ) -> None:
         """Initializes the solver."""
         self.max_iterations = max_iterations
         self.convergence_rel_tol = convergence_rel_tol
         self.convergence_abs_tol = convergence_abs_tol
-        self.reduce_sparsity = reduce_sparsity
-
-    def _solve(
-        self,
-        a: NDArray,
-        q: NDArray,
-        contact: str,
-    ) -> NDArray | None:
-        """Computes the solution of the discrete-time Lyapunov equation.
-
-        Parameters
-        ----------
-        a : NDArray
-            The system matrix.
-        q : NDArray
-            The right-hand side matrix.
-        contact : str
-            The contact to which the boundary blocks belong.
-
-        Returns
-        -------
-        x : NDArray | None
-            The solution of the discrete-time Lyapunov equation.
-
-        """
-
-        a = xp.broadcast_to(a, q.shape)
-        a_i = a.copy()
-        x = q.copy()
-
-        for __ in range(self.max_iterations):
-            x_i = x + a_i @ x @ a_i.conj().swapaxes(-1, -2)
-
-            absolute_recursion_errors = xp.linalg.norm(x_i - x, axis=(-2, -1))
-            relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
-                x_i, axis=(-2, -1)
-            )
-            x = x_i
-
-            if xp.all(
-                (relative_recursion_errors < self.convergence_rel_tol)
-                | (absolute_recursion_errors < self.convergence_abs_tol)
-            ):
-                break
-
-            a_i = a_i @ a_i
-
-        else:  # Did not break, i.e. max_iterations reached.
-            warnings.warn("Lyapunov equation did not converge.", RuntimeWarning)
-
-        return x
 
     def __call__(
         self,
@@ -116,8 +61,31 @@ class Doubling(LyapunovSolver):
         assert q.shape[-2:] == a.shape[-2:]
         assert q.ndim >= a.ndim
 
-        # NOTE: possible to cache the sparsity reduction
-        if self.reduce_sparsity:
-            return system_reduction(a, q, contact, self._solve)
+        a = xp.broadcast_to(a, q.shape)
+        a_i = a.copy()
+        x = q.copy()
 
-        return self._solve(a, q, contact)
+        for __ in range(self.max_iterations):
+            x_i = x + a_i @ x @ a_i.conj().swapaxes(-1, -2)
+
+            absolute_recursion_errors = xp.linalg.norm(x_i - x, axis=(-2, -1))
+            relative_recursion_errors = absolute_recursion_errors / xp.linalg.norm(
+                x_i, axis=(-2, -1)
+            )
+            x = x_i
+
+            if xp.all(
+                (relative_recursion_errors < self.convergence_rel_tol)
+                | (absolute_recursion_errors < self.convergence_abs_tol)
+            ):
+                break
+
+            a_i = a_i @ a_i
+
+        else:  # Did not break, i.e. max_iterations reached.
+            warnings.warn(
+                "The doubling method for the Lyapunov equation did not converge.",
+                RuntimeWarning,
+            )
+
+        return x

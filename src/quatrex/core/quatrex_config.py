@@ -72,7 +72,7 @@ class MemoizerConfig(BaseModel):
     """Options for memoizing wrappers.
 
     The memoizers store and reuse previously computed surface Green's functions
-    to speed up the SCBA iterations by doing fix point iterations on the last
+    to speed up the SCBA iterations by doing fixed-point iterations on the last
     computed surface Green's functions.
 
     $$ g_{n+1} = [M_{0} - M_{-1} g_{n} M_{1} ]^{-1} $$
@@ -85,7 +85,7 @@ class MemoizerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
-    """The memoization mode to determine when to do fix point iterations.
+    """The memoization mode to determine when to do fixed-point iterations.
     
     - "auto": Automatically decides whether to use memoization based on the
         specified tolerances. Only useful if all ranks memoize.
@@ -95,23 +95,23 @@ class MemoizerConfig(BaseModel):
     """
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
-    """The number of fix point iterations to perform on the surface Green's functions."""
+    """The number of fixed-point iterations to perform on the surface Green's functions."""
 
     relative_tol: PositiveFloat = 2e-1
-    """The relative tolerance for the fix point iterations.
+    """The relative tolerance for the fixed-point iterations.
     
     Only used if `mode` is set to "auto".
     """
 
     absolute_tol: PositiveFloat = 1e-6
-    """The absolute tolerance for the fix point iterations.
+    """The absolute tolerance for the fixed-point iterations.
 
     Only used if `mode` is set to "auto".
     """
 
     warning_threshold: PositiveFloat = 1e-1
     """The threshold for issuing a warning if the surface Green's functions
-        residual is above this value after the fix point iterations.
+        residual is above this value after the fixed-point iterations.
     """
 
 
@@ -145,7 +145,7 @@ class OBCConfig(BaseModel):
     
     - "sancho-rubio": Uses the Sancho-Rubio iterative scheme to compute the
         surface Green's functions. This method achieves exponential convergence
-        compared to the linear convergence of fix point iterations.
+        compared to the linear convergence of fixed-point iterations.
     - "spectral": Uses a spectral NEVP solver to compute eigenpair and uses
         them to construct the surface Green's functions. This is generally more
         efficient method when combined with a contour integral NEVP solver,
@@ -196,7 +196,7 @@ class OBCConfig(BaseModel):
     """
 
     num_ref_iterations: PositiveInt = 2
-    r"""The number of fix point iterations used to refine the surface Green's functions.
+    r"""The number of fixed-point iterations used to refine the surface Green's functions.
 
         $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
 

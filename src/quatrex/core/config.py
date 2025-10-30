@@ -336,6 +336,7 @@ class LyapunovConfig(BaseModel):
 
     algorithm: Literal["spectral", "doubling"] = "spectral"
     reduce_sparsity: bool = True
+    assume_constant_sparsity: bool = False
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 100
@@ -344,7 +345,6 @@ class LyapunovConfig(BaseModel):
 
     # Parameter for spectral Lyapunov solver.
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    warning_threshold: PositiveFloat = 1e-1
 
     memoizer: MemoizerConfig = MemoizerConfig()
 

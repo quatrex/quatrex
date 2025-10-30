@@ -194,7 +194,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                     block_sections=self.block_sections,
                 )
 
-                x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
+                _, _, x_00 = self.obc((m_00, m_01, m_10), contact="left")
 
                 m_10_x_00 = m_10 @ x_00
                 self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
@@ -228,7 +228,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 b_00 = x_00 @ m_10
                 q_00 = xp.stack((q_00_lesser, q_00_greater))
 
-                w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+                _, _, w_00 = self.lyapunov((b_00, q_00), "left")
+                w_00_lesser, w_00_greater = w_00
 
                 self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
                     -1, -2
@@ -245,10 +246,6 @@ class CoulombScreeningSolver(SubsystemSolver):
                 level="default",
                 comm=comm.stack,
             ):
-
-                n = self.system_matrix.num_local_blocks - 1
-                m = n - 1
-
                 m_mn, m_nn, m_nm = get_periodic_superblocks(
                     # Twist it, flip it, ...
                     a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
@@ -260,15 +257,20 @@ class CoulombScreeningSolver(SubsystemSolver):
                 m_nn = xp.flip(m_nn, axis=(-2, -1))
                 m_nm = xp.flip(m_nm, axis=(-2, -1))
                 m_mn = xp.flip(m_mn, axis=(-2, -1))
-                x_nn = self.obc(
+                _, _, x_nn = self.obc(
                     # Twist it, flip it, ...
-                    a_ii=xp.flip(m_nn, axis=(-2, -1)),
-                    a_ij=xp.flip(m_nm, axis=(-2, -1)),
-                    a_ji=xp.flip(m_mn, axis=(-2, -1)),
+                    (
+                        xp.flip(m_nn, axis=(-2, -1)),
+                        xp.flip(m_nm, axis=(-2, -1)),
+                        xp.flip(m_mn, axis=(-2, -1)),
+                    ),
                     contact="right",
                 )
                 # ... bop it.
                 x_nn = xp.flip(x_nn, axis=(-2, -1))
+
+                n = self.system_matrix.num_local_blocks - 1
+                m = n - 1
 
                 m_mn_x_nn = m_mn @ x_nn
 
@@ -304,7 +306,8 @@ class CoulombScreeningSolver(SubsystemSolver):
 
                 q_nn = xp.stack((q_nn_lesser, q_nn_greater))
 
-                w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+                _, _, w_nn = self.lyapunov((b_nn, q_nn), "right")
+                w_nn_lesser, w_nn_greater = w_nn
 
                 self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
                     -1, -2

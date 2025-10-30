@@ -172,7 +172,7 @@ class OBCSystem(BaseBoundarySystem):
         boundary_system: tuple[NDArray, NDArray, NDArray],
         solution: NDArray,
     ) -> NDArray:
-        """Perform a fixed-point iteration step to refine the solution.
+        r"""Perform a fixed-point iteration step to refine the solution.
 
         The fix-point iteration is given by:
         $$\mathbf{x}_{n+1} = [\mathbf{a}_{ii} - \mathbf{a}_{ji} \mathbf{x}_{n} \mathbf{a}_{ij}]^{-1}$$

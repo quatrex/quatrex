@@ -28,8 +28,6 @@ BATCH_SIZE = [
     pytest.param(3, id="three-batches"),
 ]
 
-CONTACTS = ["left", "right"]
-
 NEVP_SOLVERS = [
     pytest.param(
         Beyn(r_o=10, r_i=0.99, m_0=32, num_quad_points=15, use_qr=False), id="Beyn"
@@ -58,12 +56,6 @@ def block_sections(request: pytest.FixtureRequest) -> int:
 @pytest.fixture(params=BATCH_SIZE)
 def batch_size(request: pytest.FixtureRequest) -> int:
     """Returns the block size."""
-    return request.param
-
-
-@pytest.fixture(params=CONTACTS, autouse=True)
-def contact(request: pytest.FixtureRequest) -> str:
-    """Returns a contact."""
     return request.param
 
 

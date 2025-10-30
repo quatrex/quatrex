@@ -5,8 +5,7 @@ from itertools import product
 import pytest
 
 from qttools import NDArray, xp
-from qttools.boundary_conditions import LyapunovSolver
-from qttools.boundary_conditions.lyapunov_solver import Doubling, Spectral
+from qttools.boundary_conditions.lyapunov import Doubling, LyapunovSolver, Spectral
 
 BLOCK_SIZE = [
     pytest.param(11, id="11x11"),

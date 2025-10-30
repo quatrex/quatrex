@@ -71,14 +71,8 @@ class PoissonConfig(BaseModel):
 class MemoizerConfig(BaseModel):
     """Options for memoizing wrappers.
 
-    The memoizers store and reuse previously computed surface Green's functions
-    to speed up the SCBA iterations by doing fixed-point iterations on the last
-    computed surface Green's functions.
-
-    $$ g_{n+1} = [M_{0} - M_{-1} g_{n} M_{1} ]^{-1} $$
-
-    This is only useful if after the first few SCBA iterations when the
-    system changes only slightly between iterations.
+    The memoizers store and reuse previously computed results
+    to speed up the fixed-point iterations in OBC and Lyapunov solvers.
 
     """
 
@@ -95,7 +89,7 @@ class MemoizerConfig(BaseModel):
     """
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
-    """The number of fixed-point iterations to perform on the surface Green's functions."""
+    """The number of fixed-point iterations to perform."""
 
     relative_tol: PositiveFloat = 2e-1
     """The relative tolerance for the fixed-point iterations.
@@ -164,7 +158,7 @@ class OBCConfig(BaseModel):
 
     The following NEVP problem is solved:
 
-    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{\mathbf{M}}_{n} v = 0 $$
+    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{\mathbf{M}}_{n} \vec{v} = 0 $$
 
     where b goes from -block_sections to +block_sections and
     $\hat{\mathbf{M}}_{n}$ are potentially reduced coupling matrices.
@@ -218,7 +212,7 @@ class OBCConfig(BaseModel):
     r"""The tolerance for the residual of the eigenpairs.
     
     The residuals are computed as:
-    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} v \rvert $$
+    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} \vec{v} \rvert $$
 
     Modes above this tolerance are considered wrong and are not used.
 

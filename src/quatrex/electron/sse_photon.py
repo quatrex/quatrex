@@ -45,16 +45,18 @@ class SigmaPhoton(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the self-energy."""
         self.compute_config = compute_config
+        self.model = quatrex_config.photon.model
         if quatrex_config.photon.model == "negf":
             raise NotImplementedError
 
         if quatrex_config.photon.model == "pseudo-scattering":
-            if electron_energies is None:
-                raise ValueError("Electron energies must be provided.")
-            self.photon_energy = quatrex_config.photon.photon_energy
 
-            self.monochromatic_injection = quatrex_config.photon.monochromatic_injection
-            self.light_intensity = quatrex_config.photon.light_intensity
+            if electron_energies is None:
+                raise ValueError(
+                    "Electron energies must be provided for deformation potential model."
+                )
+
+            self.electron_energies = electron_energies
 
             # Load block sizes.
             self.block_sizes = get_host(
@@ -74,41 +76,20 @@ class SigmaPhoton(ScatteringSelfEnergy):
                 quatrex_config.input_dir / self.photon.interaction_matrix_file
             )
 
-            # energy + hbar * omega
-            # <=> xp.roll(self.electron_energies, -upshift)[:-upshift]
-            self.upshift = xp.argmin(
-                xp.abs(electron_energies - (electron_energies[0] + self.photon_energy))
-            )
-            # energy - hbar * omega
-            # <=> xp.roll(self.electron_energies, downshift)[downshift:]
-            self.downshift = (
-                electron_energies.size
-                - xp.argmin(
-                    xp.abs(
-                        electron_energies - (electron_energies[-1] - self.photon_energy)
-                    )
-                )
-                - 1
-            )
-
-            self.valid_slice = (
-                slice(self.downshift, -self.upshift)
-                if self.upshift != 0
-                else slice(None)
-            )
-
-            totalshift = self.upshift + self.downshift
-
-            self.upslice = slice(None) if totalshift == 0 else slice(-totalshift)
-            self.downslice = slice(totalshift, None)
-
             return
 
         raise ValueError(f"Unknown photon model: {quatrex_config.photon.model}")
 
     @profiler.profile(level="basic")
     def compute(
-        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
+        self,
+        g_lesser: DSDBSparse,
+        g_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
+        d_lesser: NDArray | DSDBSparse | None = None,
+        d_greater: NDArray | DSDBSparse | None = None,
+        photon_energies: NDArray | None = None,
+        light_intensity: NDArray | None = None,
     ) -> None:
         """Computes the electron-photon self-energy.
 
@@ -123,11 +104,22 @@ class SigmaPhoton(ScatteringSelfEnergy):
             sigma_lesser, sigma_greater, sigma_retarded.
 
         """
-        if self.monochromatic_injection:
-            return self._compute_monochrome(g_lesser, g_greater, out)
+        if self.model == "pseudo-scattering":
+            if photon_energies is None:
+                raise ValueError("Photon energies must be provided.")
+            if light_intensity is None:
+                raise ValueError("Light intensity must be provided.")
+            return self._compute_pseudo_scattering(
+                g_lesser, g_greater, photon_energies, light_intensity, out
+            )
 
-    def _compute_monochrome(
-        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
+    def _compute_pseudo_scattering(
+        self,
+        g_lesser: DSDBSparse,
+        g_greater: DSDBSparse,
+        photon_energies: NDArray,
+        light_intensity: NDArray,
+        out: tuple[DSDBSparse, ...],
     ) -> None:
         """Computes the photon self-energy of a coherent and monochromatic light beam.
 
@@ -145,7 +137,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
         # Transpose the matrices to nnz distribution.
         for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):
             # These should ideally already be in nnz-distribution.
-            m.dtranspose() if m.distribution_state != "nnz" else None
+            m.dtranspose() if m.distribution_state != "stack" else None
 
         local_blocks, _ = get_section_sizes(
             len(self.interaction_matrix.block_sizes), comm.block.size
@@ -153,33 +145,87 @@ class SigmaPhoton(ScatteringSelfEnergy):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
-        tmp = self.compute_config.dsdbsparse_type.empty_like(sigma_lesser)
+        lesser = self.compute_config.dsdbsparse_type.empty_like(sigma_lesser)
+        greater = self.compute_config.dsdbsparse_type.empty_like(sigma_greater)
 
-        prefactor = self.light_intensity
+        prefactor = 1
+
+        # locally compute the sigma^<> = M G^<> M for local energies
 
         bd_sandwich_distr(
             self.interaction_matrix,
             g_lesser,
-            out=tmp,
+            out=lesser,
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
         )
-        tmp.data *= prefactor
-        sigma_lesser.data[self.upshift :, ...] += tmp.data[: -self.upshift, ...]
-        sigma_lesser.data[: -self.downshift :, ...] += tmp.data[self.downshift :, ...]
+        lesser.data *= prefactor  # M@G^<@M
 
         bd_sandwich_distr(
             self.interaction_matrix,
             g_greater,
-            out=tmp,
+            out=greater,
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
         )
-        tmp.data *= prefactor
-        sigma_greater.data[self.upshift :, ...] += tmp.data[: -self.upshift, ...]
-        sigma_greater.data[: -self.downshift :, ...] += tmp.data[self.downshift :, ...]
+        greater.data *= prefactor  # M@G^>@M
+
+        for m in (sigma_lesser, sigma_greater, sigma_retarded, lesser, greater):
+            m.dtranspose() if m.distribution_state != "nnz" else None
+
+        if photon_energies.shape > 0:
+            n = g_lesser.data.shape[0] + photon_energies.shape[0] - 1
+            ne = g_lesser.data.shape[0]
+
+            lesser_fft = xp.fft.fft(lesser.data.T, n, axis=1)
+            greater_fft = xp.fft.fft(greater.data.T, n, axis=1)
+
+            d_greater_fft = xp.zeros(photon_energies.shape[0], dtype=lesser_fft.dtype)
+
+            d_greater_fft[:, int(photon_energies / self.energy_resolution)] = (
+                light_intensity / photon_energies * (-1j)
+            )
+
+            tmp = xp.fft.ifft(lesser_fft * d_greater_fft.conj(), axis=1)[:, :ne]
+            sigma_lesser.data = tmp.T
+
+            tmp = xp.fft.ifft(greater_fft * d_greater_fft, axis=1)[:, :ne]
+            sigma_greater.data = tmp.T
+        else:
+            # energy + hbar * omega
+            # <=> xp.roll(self.electron_energies, -upshift)[:-upshift]
+            self.upshift = xp.argmin(
+                xp.abs(
+                    self.electron_energies
+                    - (self.electron_energies[0] + photon_energies)
+                )
+            )
+            # energy - hbar * omega
+            # <=> xp.roll(self.electron_energies, downshift)[downshift:]
+            self.downshift = (
+                self.electron_energies.size
+                - xp.argmin(
+                    xp.abs(
+                        self.electron_energies
+                        - (self.electron_energies[-1] - photon_energies)
+                    )
+                )
+                - 1
+            )
+
+            sigma_greater.data[self.upshift :, ...] += greater.data[
+                : -self.upshift, ...
+            ]
+            sigma_greater.data[: -self.downshift :, ...] += greater.data[
+                self.downshift :, ...
+            ]
+
+            sigma_lesser.data[self.upshift :, ...] += lesser.data[: -self.upshift, ...]
+            sigma_lesser.data[: -self.downshift :, ...] += lesser.data[
+                self.downshift :, ...
+            ]
 
         _update_sigma_retarded_from_lesser_greater(
             sigma_lesser, sigma_greater, sigma_retarded

@@ -362,7 +362,8 @@ class BaseBoundarySystem(ABC):
             & (abs_residuals > self.absolute_tol)
         ):
             warnings.warn(
-                f"High error at rank {comm.stack.rank} for {contact} of {self.boundary_solver.__class__.__name__}:\n"
+                f"High error at rank {comm.stack.rank} for {contact} of "
+                + f"{self.boundary_solver.__class__.__bases__[0].__name__} {self.boundary_solver.__class__.__name__}:\n"
                 + f"  Relative recursion error: {xp.max(rel_residuals):.3e}\n"
                 + f"  Absolute recursion error: {xp.max(abs_residuals):.3e}\n",
                 RuntimeWarning,

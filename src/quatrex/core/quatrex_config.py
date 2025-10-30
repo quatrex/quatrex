@@ -130,12 +130,12 @@ class SolverConfig(BaseModel):
 
 
 class OBCConfig(BaseModel):
-    """Options for open-boundary condition (OBC) solvers.
+    r"""Options for open-boundary condition (OBC) solvers.
 
     The OBC solvers compute the surface Green's functions of the contacts.
     The surface Green's functions is the solution of the non-linear equation:
 
-    $$ g = [M_{0} - M_{-1} g M_{1} ]^{-1} $$
+    $$ \mathbf{g} = [\mathbf{M}_{0} - \mathbf{M}_{-1} g \mathbf{M}_{1} ]^{-1} $$
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -153,7 +153,7 @@ class OBCConfig(BaseModel):
     """
 
     nevp_solver: Literal["beyn", "full"] = "beyn"
-    """The NEVP solver to use for the spectral OBC algorithm.
+    r"""The NEVP solver to use for the spectral OBC algorithm.
 
     - "beyn": Uses the Beyn's contour integral method to solve the NEVP to
         find the eigenpairs within a specified contour in the complex plane.
@@ -164,10 +164,10 @@ class OBCConfig(BaseModel):
 
     The following NEVP problem is solved:
 
-    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{M}_{n} v = 0 $$
+    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{\mathbf{M}}_{n} v = 0 $$
 
     where b goes from -block_sections to +block_sections and
-    $\hat{M}_{n}$ are potentially reduced coupling matrices.
+    $\hat{\mathbf{M}}_{n}$ are potentially reduced coupling matrices.
 
     Only used if `algorithm` is set to "spectral".
     """
@@ -196,9 +196,9 @@ class OBCConfig(BaseModel):
     """
 
     num_ref_iterations: PositiveInt = 2
-    """The number of fix point iterations used to refine the surface Green's functions.
+    r"""The number of fix point iterations used to refine the surface Green's functions.
 
-        $$ g_{n+1} = [M_{0} - M_{-1} g_{n} M_{1} ]^{-1} $$
+        $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
 
     This is needed to improve the accuracy of the surface Green's functions
     if not enough eigenpairs are considered. 
@@ -207,7 +207,7 @@ class OBCConfig(BaseModel):
     """
 
     min_propagation: PositiveFloat = 1e-2
-    """The minimum propagation speed for propagating modes.
+    r"""The minimum propagation speed for propagating modes.
     
     The propagation speed is computed as:
     $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
@@ -215,10 +215,10 @@ class OBCConfig(BaseModel):
     """
 
     residual_tolerance: PositiveFloat = 1e-3
-    """The tolerance for the residual of the eigenpairs.
+    r"""The tolerance for the residual of the eigenpairs.
     
     The residuals are computed as:
-    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} M_{n} v \rvert $$
+    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} v \rvert $$
 
     Modes above this tolerance are considered wrong and are not used.
 
@@ -233,11 +233,11 @@ class OBCConfig(BaseModel):
     """
 
     warning_threshold: PositiveFloat = 1e-1
-    """The threshold for issuing a warning if the surface Green's functions
+    r"""The threshold for issuing a warning if the surface Green's functions
     residual is above this value.
 
     The residual is computed as:
-    $$ \lvert g - [M_{0} - M_{-1} g M_{1} ]^{-1} \rvert / \lvert g \rvert $$
+    $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
     """
 
     # Parameters for iterative OBC algorithms.

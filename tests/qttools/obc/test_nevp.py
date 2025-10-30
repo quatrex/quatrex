@@ -10,14 +10,14 @@ from qttools.nevp import NEVP
 @pytest.mark.usefixtures("nevp")
 def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
     """Tests that the subspace NEVP solver returns the correct result."""
-    wrs, vrs = nevp(a_xx)
+    ws, vs = nevp(a_xx)
 
     a_ji, a_ii, a_ij = a_xx
     residuals = []
-    for e in range(wrs.shape[0]):
-        for k in range(wrs.shape[1]):
-            w = wrs[e, k]
-            v = vrs[e, :, k] / xp.linalg.norm(vrs[0, :, k])
+    for e in range(ws.shape[0]):
+        for k in range(ws.shape[1]):
+            w = ws[e, k]
+            v = vs[e, :, k] / xp.linalg.norm(vs[0, :, k])
             with np.errstate(divide="ignore", invalid="ignore"):
                 residuals.append(
                     xp.linalg.norm((a_ji[e] / w + a_ii[e] + a_ij[e] * w) @ v)

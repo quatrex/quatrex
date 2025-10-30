@@ -296,7 +296,7 @@ class Beyn(NEVP):
         return ws, vs
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
+        """Solves the polynomial eigenvalue problem through contour integration.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
@@ -341,7 +341,7 @@ class Beyn(NEVP):
 
     @profiler.profile(level="api")
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
+        """Solves the polynomial eigenvalue problem through contour integration.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
@@ -355,7 +355,7 @@ class Beyn(NEVP):
         Returns
         -------
         ws : NDArray
-            The right eigenvalues.
+            The eigenvalues.
         vs : NDArray
             The right eigenvectors.
 

@@ -137,14 +137,14 @@ class Spectral(OBCSolver):
         blocks = view[0, : -self.block_sections + 1]
         return tuple(block for block in blocks if xp.any(block))
 
-    def _compute_dE_dk(self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray]) -> NDArray:
+    def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.
 
         Parameters
         ----------
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
@@ -165,7 +165,7 @@ class Spectral(OBCSolver):
             dEk_dk = -sum(
                 (1j * n)
                 * xp.diagonal(
-                    vrs.conj().swapaxes(-1, -2) @ a_x @ vrs,
+                    vs.conj().swapaxes(-1, -2) @ a_x @ vs,
                     axis1=-2,
                     axis2=-1,
                 )
@@ -178,7 +178,7 @@ class Spectral(OBCSolver):
     def _find_reflected_modes(
         self,
         ws: NDArray,
-        vrs: NDArray,
+        vs: NDArray,
         a_xx: list[NDArray],
         find_injected: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
@@ -192,7 +192,7 @@ class Spectral(OBCSolver):
         ----------
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
@@ -223,14 +223,14 @@ class Spectral(OBCSolver):
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
 
             products = sum(
-                a_x @ vrs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
+                a_x @ vs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
                 for i, a_x in enumerate(a_xx)
             )
 
             residuals = xp.linalg.norm(products, axis=-2)
 
             # eigenvectors are not necessarily normalized
-            eigenvector_norm = xp.linalg.norm(vrs, axis=-2)
+            eigenvector_norm = xp.linalg.norm(vs, axis=-2)
             residuals /= eigenvector_norm
 
             if self.residual_normalization:
@@ -241,7 +241,7 @@ class Spectral(OBCSolver):
         # polynomial eigenvalue equation with respect to k.
         # NOTE: This is actually only correct if we have no overlap.
 
-        dEk_dk = self._compute_dE_dk(ws, vrs, a_xx)
+        dEk_dk = self._compute_dE_dk(ws, vs, a_xx)
 
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
@@ -345,7 +345,7 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         ws: NDArray,
-        vrs: NDArray,
+        vs: NDArray,
         mask: NDArray,
     ) -> NDArray:
         """Computes the surface Green's function.
@@ -360,7 +360,7 @@ class Spectral(OBCSolver):
             The subdiagonal block of the periodic matrix.
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         mask : NDArray
             A boolean mask indicating which eigenvalues correspond to
@@ -375,7 +375,7 @@ class Spectral(OBCSolver):
         # Equation (13.1).
         x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
         for i, m in enumerate(mask):
-            vr = vrs[i][:, m]
+            vr = vs[i][:, m]
             w = ws[i, m]
             # Moore-Penrose pseudoinverse.
             v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
@@ -434,25 +434,25 @@ class Spectral(OBCSolver):
             a_ji = a_ji[xp.newaxis, :, :]
 
         blocks = self._extract_subblocks(a_ji, a_ii, a_ij)
-        wrs, vrs = self.nevp(blocks)
+        ws, vs = self.nevp(blocks)
 
-        wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
+        ws, vs = self._upscale_eigenmodes(ws, vs)
 
         if return_injected:
             mask_reflected, mask_injected, dE_dK_injected = self._find_reflected_modes(
-                wrs,
-                vrs,
+                ws,
+                vs,
                 a_xx=[a_ji, a_ii, a_ij],
                 find_injected=return_injected,
             )
         else:
             mask_reflected = self._find_reflected_modes(
-                wrs,
-                vrs,
+                ws,
+                vs,
                 a_xx=[a_ji, a_ii, a_ij],
             )
 
-        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected)
+        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
@@ -475,8 +475,8 @@ class Spectral(OBCSolver):
         if return_injected:
 
             mask_injected = mask_injected[0, :]
-            vrs_inj = vrs[0][:, mask_injected]
-            wrs_inj = xp.diag(wrs[0, mask_injected])
+            vrs_inj = vs[0][:, mask_injected]
+            wrs_inj = xp.diag(ws[0, mask_injected])
 
             # Flux normalization
             vrs_inj = vrs_inj / xp.sqrt(dE_dK_injected[None, :])
@@ -490,6 +490,6 @@ class Spectral(OBCSolver):
                 - sigma_retarded @ vrs_inj
             )
 
-            return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]
+            return x_ii_ref, sigma_retarded, injection, ws[0, mask_injected]
 
         return x_ii_ref

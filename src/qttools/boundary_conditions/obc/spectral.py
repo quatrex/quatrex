@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.boundary_conditions.obc import OBCSolver
+from qttools.boundary_conditions.obc.obc import OBCSolver
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP

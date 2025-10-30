@@ -3,7 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.boundary_conditions.lyapunov import LyapunovSolver
+from qttools.boundary_conditions.lyapunov.lyapunov import LyapunovSolver
 
 
 class Doubling(LyapunovSolver):

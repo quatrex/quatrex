@@ -3,7 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
-from qttools.boundary_conditions.obc import OBCSolver
+from qttools.boundary_conditions.obc.obc import OBCSolver
 from qttools.kernels import linalg
 
 

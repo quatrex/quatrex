@@ -1,4 +1,4 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from abc import ABC, abstractmethod
 
@@ -198,7 +198,7 @@ class OBCSystem(BaseBoundarySystem):
         self,
         boundary_system: tuple[NDArray, NDArray, NDArray],
     ) -> NDArray:
-        """Get a starting guess for the obc system.
+        r"""Get a starting guess for the obc system.
 
         For the obc, a good starting guess is the inverse of the
         diagonal block $\mathbf{a}_{ii}$.
@@ -223,7 +223,7 @@ class OBCSystem(BaseBoundarySystem):
         boundary_system: tuple[NDArray, NDArray, NDArray],
         test_solution: NDArray,
     ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
-        """Compute the residuals of a test solution.
+        r"""Compute the residuals of a test solution.
 
             They are computed as follows:
             $$\mathbf{x}_{ref} = [\mathbf{a}_{ii} - \mathbf{a}_{ji} \mathbf{x}_{test} \mathbf{a}_{ij}]^{-1}$$

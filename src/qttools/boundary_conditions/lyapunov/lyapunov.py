@@ -1,4 +1,4 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from abc import ABC, abstractmethod
 
@@ -364,7 +364,7 @@ class LyapunovSystem(BaseBoundarySystem):
         boundary_system: tuple[NDArray, NDArray],
         solution: NDArray,
     ) -> NDArray:
-        """Perform a fixed-point iteration step to refine the solution.
+        r"""Perform a fixed-point iteration step to refine the solution.
 
             The fix-point iteration is given by:
             $$\mathbf{x}_{n+1} = \mathbf{q} + \mathbf{a} \mathbf{x}_{n}  \mathbf{a}^H$$
@@ -416,7 +416,7 @@ class LyapunovSystem(BaseBoundarySystem):
         boundary_system: tuple[NDArray, NDArray],
         test_solution: NDArray,
     ) -> tuple[NDArray, NDArray, NDArray]:
-        """Compute the residuals of a test solution.
+        r"""Compute the residuals of a test solution.
 
             They are computed as follows:
             $$\mathbf{x}_{ref} = \mathbf{q} + \mathbf{a} \mathbf{x}_{test}  \mathbf{a}^H$$

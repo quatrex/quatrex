@@ -71,7 +71,7 @@ def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
         The cross-correlation of the two arrays.
 
     """
-    ne = a.shape[0] + b.shape[0] - 1
+    ne = a.shape[0] + b.shape[0]
     nka = a.shape[1:-1]
     nkb = b.shape[1:-1]
     a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
@@ -586,13 +586,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     batch = slice(start, end)
 
                     # Lesser self-energy
-                    sl = self.prefactor * fft_convolve_kpoints(
-                        # reverse all dimensions except last
+                    sl = self.prefactor * fft_correlate_kpoints(
                         g_lesser.data[..., batch],
-                        -xp.flip(
-                            w_greater.data[..., batch], axis=tuple(range(len(nk) + 1))).conj(),
+                        -w_greater.data[..., batch].conj(),
                     )
-                    sl[ne:] = (
+                    sl[ne:] += (
                         self.prefactor
                         * fft_convolve_kpoints(
                             g_lesser.data[..., batch], w_lesser.data[..., batch]
@@ -605,18 +603,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     )
                     sg[:ne] += (
                         self.prefactor
-                        * fft_convolve_kpoints(
-                            # reverse all dimensions except last
+                        * fft_correlate_kpoints(
                             g_greater.data[..., batch],
-                            -xp.flip(
-                                w_lesser.data[..., batch],
-                                axis=tuple(range(len(nk) + 1)),
-                            ).conj(),
+                            -w_lesser.data[..., batch].conj(),
                         )[ne:]
                     )
 
-                    sigma_lesser.data[..., batch] += sl[:ne]
-                    sigma_greater.data[..., batch] += sg[ne:]
+                    sigma_lesser.data[..., batch] += sl[ne:]
+                    sigma_greater.data[..., batch] += sg[:ne]
 
                     # Add empty dimensions for each k-point.
                     energy_differences = (self.energies - self.energies[0]).reshape(

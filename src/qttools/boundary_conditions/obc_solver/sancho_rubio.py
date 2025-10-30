@@ -3,8 +3,8 @@
 import warnings
 
 from qttools import NDArray, xp
+from qttools.boundary_conditions.obc import OBCSolver
 from qttools.kernels import linalg
-from qttools.obc.obc import OBCSolver
 
 
 class SanchoRubio(OBCSolver):
@@ -36,7 +36,7 @@ class SanchoRubio(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-    ) -> NDArray | None:
+    ) -> NDArray:
         """Returns the surface Green's function.
 
         Parameters

@@ -5,10 +5,10 @@ import warnings
 import numpy as np
 
 from qttools import NDArray, xp
+from qttools.boundary_conditions.obc import OBCSolver
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
-from qttools.obc.obc import OBCSolver
 from qttools.utils.gpu_utils import get_host
 
 
@@ -69,7 +69,6 @@ class Spectral(OBCSolver):
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
         residual_normalization: bool = True,
-        warning_threshold: float = 1e-1,
         eta_decay: float = 1e-14,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -84,7 +83,6 @@ class Spectral(OBCSolver):
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
         self.residual_normalization = residual_normalization
-        self.warning_threshold = warning_threshold
         self.eta_decay = eta_decay
 
     def _extract_subblocks(
@@ -474,28 +472,15 @@ class Spectral(OBCSolver):
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
 
         # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations - 1):
+        for __ in range(self.num_ref_iterations):
             x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
-
-        x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
-
-        # Check the batch average recursion error.
-        recursion_error = xp.max(
-            xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
-            / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
-        )
-        if recursion_error > self.warning_threshold:
-            warnings.warn(
-                f"High relative recursion error: {recursion_error:.2e}",
-                RuntimeWarning,
-            )
 
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_injected:
 
             phi_surface = []
 
-            x_ii_a_ij = x_ii_ref @ a_ij
+            x_ii_a_ij = x_ii @ a_ij
 
             for i in range(a_ii.shape[0]):
                 mask_injected_i = mask_injected[i, :]
@@ -515,6 +500,6 @@ class Spectral(OBCSolver):
                     + x_ii_a_ij[i] @ vrs_injected
                 )
 
-            return x_ii_ref, phi_surface
+            return x_ii, phi_surface
 
-        return x_ii_ref
+        return x_ii

@@ -39,7 +39,7 @@ class Spectral(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
-    ) -> NDArray | None:
+    ) -> NDArray:
         """Computes the solution of the discrete-time Lyapunov equation.
 
         The matrices a and q can have different ndims with q.ndim >= a.ndim (will broadcast)
@@ -55,7 +55,7 @@ class Spectral(LyapunovSolver):
 
         Returns
         -------
-        x : NDArray | None
+        x : NDArray
             The solution of the discrete-time Lyapunov equation.
 
         """

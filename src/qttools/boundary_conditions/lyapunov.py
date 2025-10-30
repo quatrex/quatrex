@@ -24,8 +24,8 @@ class LyapunovSolver(ABC):
         a: NDArray,
         q: NDArray,
         contact: str,
-    ) -> NDArray | None:
-        """Computes the solution of the discrete-time Lyapunov equation.
+    ) -> NDArray:
+        r"""Computes the solution of the discrete-time Lyapunov equation.
 
             The equation is give by:
 
@@ -42,7 +42,7 @@ class LyapunovSolver(ABC):
 
         Returns
         -------
-        x : NDArray | None
+        x : NDArray
             The solution of the discrete-time Lyapunov equation.
 
         """
@@ -50,7 +50,7 @@ class LyapunovSolver(ABC):
 
 
 class LyapunovSystem(BaseBoundarySystem):
-    """A lyapunov system solver with memoization and system reduction.
+    r"""A lyapunov system solver with memoization and system reduction.
 
         The lyapyunov equation to be solved is given by:
 

@@ -26,8 +26,7 @@ class OBCSolver(ABC):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
-    ) -> NDArray | None:
+    ) -> NDArray:
         """Returns the surface Green's function.
 
         Parameters
@@ -40,9 +39,6 @@ class OBCSolver(ABC):
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
 
         Returns
         -------

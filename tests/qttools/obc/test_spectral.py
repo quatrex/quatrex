@@ -71,21 +71,17 @@ def _make_periodic(
 
 @pytest.mark.usefixtures(
     "nevp",
-    "x_ii_formula",
     "block_sections",
 )
 def test_correctness(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
-    x_ii_formula: str,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        x_ii_formula=x_ii_formula,
-        treat_pairwise=False,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji, a_ii, a_ij = a_ji[0], a_ii[0], a_ij[0]
@@ -103,21 +99,17 @@ def test_correctness(
 
 @pytest.mark.usefixtures(
     "nevp",
-    "x_ii_formula",
     "block_sections",
 )
 def test_correctness_batch(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
-    x_ii_formula: str,
 ):
     """Tests that the OBC return the correct result."""
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        x_ii_formula=x_ii_formula,
-        treat_pairwise=False,
         residual_tolerance=1e-1,
         max_decay=20,
     )
@@ -136,22 +128,18 @@ def test_correctness_batch(
 
 @pytest.mark.usefixtures(
     "nevp",
-    "x_ii_formula",
     "block_sections",
 )
 def test_memoizer(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
-    x_ii_formula: str,
     contact: str,
 ):
     """Tests that the Memoization works."""
     spectral = Spectral(
         nevp=nevp,
         block_sections=block_sections,
-        x_ii_formula=x_ii_formula,
-        treat_pairwise=False,
         residual_tolerance=1e-1,
         max_decay=20,
     )

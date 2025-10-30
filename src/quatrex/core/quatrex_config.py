@@ -6,6 +6,7 @@ from math import isclose
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -68,17 +69,44 @@ class PoissonConfig(BaseModel):
 
 
 class MemoizerConfig(BaseModel):
-    """Options for memoizing wrappers."""
+    """Options for memoizing wrappers.
+
+    The memoizers store and reuse previously computed results
+    to speed up the fixed-point iterations in OBC and Lyapunov solvers.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
+    """The memoization mode to determine when to do fixed-point iterations.
+    
+    - "auto": Automatically decides whether to use memoization based on the
+        specified tolerances. Only useful if all ranks memoize.
+    - "force": Always use memoization.
+    - "force-after-first": Use memoization after the first SCBA iteration.
+    - "off": Never use memoization.
+    """
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
+    """The number of fixed-point iterations to perform."""
+
     relative_tol: PositiveFloat = 2e-1
+    """The relative tolerance for the fixed-point iterations.
+    
+    Only used if `mode` is set to "auto".
+    """
+
     absolute_tol: PositiveFloat = 1e-6
+    """The absolute tolerance for the fixed-point iterations.
+
+    Only used if `mode` is set to "auto".
+    """
 
     warning_threshold: PositiveFloat = 1e-1
+    """The threshold for issuing a warning if the surface Green's functions
+        residual is above this value after the fixed-point iterations.
+    """
 
 
 class SolverConfig(BaseModel):
@@ -96,41 +124,170 @@ class SolverConfig(BaseModel):
 
 
 class OBCConfig(BaseModel):
-    """Options for open-boundary condition (OBC) solvers."""
+    r"""Options for open-boundary condition (OBC) solvers.
+
+    The OBC solvers compute the surface Green's functions of the contacts.
+    The surface Green's functions is the solution of the non-linear equation:
+
+    $$ \mathbf{g} = [\mathbf{M}_{0} - \mathbf{M}_{-1} g \mathbf{M}_{1} ]^{-1} $$
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
+    """The OBC algorithm to use.
+    
+    - "sancho-rubio": Uses the Sancho-Rubio iterative scheme to compute the
+        surface Green's functions. This method achieves exponential convergence
+        compared to the linear convergence of fixed-point iterations.
+    - "spectral": Uses a spectral NEVP solver to compute eigenpair and uses
+        them to construct the surface Green's functions. This is generally more
+        efficient method when combined with a contour integral NEVP solver,
+        but requires more parameter tuning.
+    """
+
     nevp_solver: Literal["beyn", "full"] = "beyn"
+    r"""The NEVP solver to use for the spectral OBC algorithm.
+
+    - "beyn": Uses the Beyn's contour integral method to solve the NEVP to
+        find the eigenpairs within a specified contour in the complex plane.
+
+    - "full": Uses a full dense eigensolver to solve for all eigenvalues by linearizing
+        the problem. This results in a doubled problem size which is also not reduced by
+        block sectioning / periodicity.
+
+    The following NEVP problem is solved:
+
+    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{\mathbf{M}}_{n} \vec{v} = 0 $$
+
+    where b goes from -block_sections to +block_sections and
+    $\hat{\mathbf{M}}_{n}$ are potentially reduced coupling matrices.
+
+    Only used if `algorithm` is set to "spectral".
+    """
 
     # Parameters for spectral OBC algorithms.
     block_sections: PositiveInt = 1
+    """The periodicity of the blocks along the transport direction.
+
+    Used in the spectral method with beyn to reduce the size of the NEVP.
+    For example, if the supercell is constructed from 2 unit cells along the
+    transport direction, setting this parameter to 2 will halve the size of the NEVP.
+
+    Contact blocks need to be sorted accordingly.
+    """
+
     min_decay: PositiveFloat = 1e-3
+    """The minimum decay rate where to differentiate between propagating and evanescent modes."""
+
     max_decay: PositiveFloat | None = None
-    num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    x_ii_formula: Literal["self-energy", "direct"] = "self-energy"
-    two_sided: bool = False
-    treat_pairwise: bool = False
-    pairing_threshold: PositiveFloat = 0.25
+    """The maximum decay rate for evanescent modes.
+
+    Very large modes do not contribute to the surface Green's functions and
+    can be neglected. Very large modes can also lead to numerical instabilities.
+
+    If not set, it is computed as 1.5 * log(r_o).
+    """
+
+    num_ref_iterations: PositiveInt = 2
+    r"""The number of fixed-point iterations used to refine the surface Green's functions.
+
+        $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
+
+    This is needed to improve the accuracy of the surface Green's functions
+    if not enough eigenpairs are considered. 
+
+    Only used if `algorithm` is set to "spectral".
+    """
+
     min_propagation: PositiveFloat = 1e-2
+    r"""The minimum propagation speed for propagating modes.
+    
+    The propagation speed is computed as:
+    $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
+
+    """
+
     residual_tolerance: PositiveFloat = 1e-3
-    residual_normalization: Literal["eigenvalue", "operator"] | None = "eigenvalue"
+    r"""The tolerance for the residual of the eigenpairs.
+    
+    The residuals are computed as:
+    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} \vec{v} \rvert $$
+
+    Modes above this tolerance are considered wrong and are not used.
+
+    Only used if `algorithm` is set to "spectral".
+    """
+
+    residual_normalization: bool = True
+    """Whether to normalize the residuals by the norm of the eigenvalue.
+    
+    This is useful to avoid that large eigenvalues have large residuals
+    and small eigenvalues have small residuals.
+    """
 
     warning_threshold: PositiveFloat = 1e-1
+    r"""The threshold for issuing a warning if the surface Green's functions
+    residual is above this value.
+
+    The residual is computed as:
+    $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
+    """
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 100
+    """The maximum number of iterations for the Sancho-Rubio method."""
+
     convergence_tol: PositiveFloat = 1e-6
+    """The convergence tolerance for the Sancho-Rubio method."""
 
     # Parameters for subspace NEVP solvers.
     r_o: PositiveFloat = 10.0
+    """The outer radius of the contour in the complex plane for the contour methods.
+    
+    This parameter should not be too large to avoid having too many eigenpairs
+    inside the contour. It should also not be too small to avoid missing important
+    eigenpairs. If a eigenpair is too close to the contour,
+    it can lead to numerical instabilities.
+    """
+
     r_i: PositiveFloat = 0.8
+    """The inner radius of the contour in the complex plane for the contour methods.
+
+    This parameter should be chosen to be <1 to capture propagating modes, but
+    not too small to avoid including too many modes.
+    """
+
     m_0: PositiveInt = 10
+    """The subspace guess in the contour methods.
+    
+    The guess has to be larger than the expected number of eigenvalues
+    inside the contour. If too small, the method will fail. If too large, the method
+    will be not/less efficient.
+    """
+
     num_quad_points: PositiveInt = 20
+    """The number of quadrature points for the contour integrals."""
 
     # Parameters for reusing surface Green's functions from previous
     # SCBA iterations.
     memoizer: MemoizerConfig = MemoizerConfig()
+
+    @model_validator(mode="after")
+    def set_max_decay(self) -> Self:
+        """Sets the max decay if not already set."""
+        if self.max_decay is None:
+            self.max_decay = 1.5 * np.log(self.r_o)
+
+        return self
+
+    @model_validator(mode="after")
+    def scale_contour_radii(self) -> Self:
+        """Scales the contour radii based on block_sections."""
+        self.r_o **= 1 / self.block_sections
+        self.r_i **= 1 / self.block_sections
+
+        return self
 
 
 class LyapunovConfig(BaseModel):

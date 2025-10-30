@@ -11,12 +11,6 @@ profiler = Profiler()
 class Full(NEVP):
     """An NEVP solver based on linearization.
 
-    Warning
-    -------
-    This solver will create very large matrices and should only be used
-    for very small problems. It is intended as a reference
-    implementation and should probably not be used in production code.
-
     Implemented along the lines of what is described in [^1].
 
     [^1]: S. Brück, Ab-initio Quantum Transport Simulations for
@@ -42,9 +36,9 @@ class Full(NEVP):
         self.eig_compute_location = eig_compute_location
         self.use_pinned_memory = use_pinned_memory
 
-    @profiler.profile(level="debug")
-    def _solve(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
+    @profiler.profile(level="api")
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+        """Solves the polynomial eigenvalue problem through linearization.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
@@ -63,6 +57,9 @@ class Full(NEVP):
             The right eigenvectors.
 
         """
+        # Allow for batched input.
+        if a_xx[0].ndim == 2:
+            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
 
         inverse = linalg.inv(sum(a_xx))
 
@@ -88,54 +85,3 @@ class Full(NEVP):
         v = v[:, : a_xx[0].shape[-1]]
 
         return w, v
-
-    @profiler.profile(level="api")
-    def __call__(
-        self,
-        a_xx: tuple[NDArray, ...],
-        left: bool = False,
-    ) -> tuple:
-        """Solves the plynomial eigenvalue problem.
-
-        This method solves the non-linear eigenvalue problem defined by
-        the coefficient blocks `a_xx` from lowest to highest order.
-
-        Parameters
-        ----------
-        a_xx : tuple[NDArray, ...]
-            The coefficient blocks of the non-linear eigenvalue problem
-            from lowest to highest order.
-        left : bool, optional
-            Whether to solve additionally for the left eigenvectors.
-
-        Returns
-        -------
-        ws : NDArray
-            The right eigenvalues.
-        vs : NDArray
-            The right eigenvectors.
-        wl : NDArray, optional
-            The left eigenvalues.
-            Returned only if `left` is `True`.
-        vl : NDArray, optional
-            The left eigenvectors.
-            Returned only if `left` is `True`.
-
-        """
-        # Allow for batched input.
-        if a_xx[0].ndim == 2:
-            a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
-
-        wrs, vrs = self._solve(a_xx)
-
-        if left:
-            # solve for the left eigenvectors
-            # by solving the right eigenvectors of the adjoint problem
-            wls, vls = self._solve(
-                tuple(a_x.conj().swapaxes(-2, -1) for a_x in a_xx),
-            )
-            wls = wls.conj()
-
-            return wrs, vrs, wls, vls
-
-        return wrs, vrs

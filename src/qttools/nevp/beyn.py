@@ -103,7 +103,7 @@ class Beyn(NEVP):
         self.use_pinned_memory = use_pinned_memory
 
     def _project_svd(
-        self, P_0: NDArray, P_1: NDArray, left: bool = False
+        self, P_0: NDArray, P_1: NDArray
     ) -> tuple[list[NDArray], list[NDArray]]:
         """Projects the systems onto the linear subspace with an SVD.
 
@@ -113,8 +113,6 @@ class Beyn(NEVP):
             The first moment of the system.
         P_1 : NDArray
             The second moment of the system.
-        left : bool, optional
-            Whether to project the system from the left.
 
         Returns
         -------
@@ -151,19 +149,11 @@ class Beyn(NEVP):
             v_out.append(vhi)
 
             # Probe second moment.
-            if left:
-                a.append(xp.diag(1 / si) @ ui.conj().T @ P_1[i] @ vhi.conj().T)
-            else:
-                a.append(ui.conj().T @ P_1[i] @ vhi.conj().T / si)
+            a.append(ui.conj().T @ P_1[i] @ vhi.conj().T / si)
 
-        if left:
-            return a, v_out
-        else:
-            return a, u_out
+        return a, u_out
 
-    def _project_qr(
-        self, P_0: NDArray, P_1: NDArray, left: bool = False
-    ) -> tuple[NDArray, NDArray]:
+    def _project_qr(self, P_0: NDArray, P_1: NDArray) -> tuple[NDArray, NDArray]:
         """Projects the systems onto the linear subspace with a QR.
 
         Parameters
@@ -172,8 +162,6 @@ class Beyn(NEVP):
             The first moment of the system.
         P_1 : NDArray
             The second moment of the system.
-        left : bool, optional
-            Whether to project the system from the left.
 
         Returns
         -------
@@ -185,28 +173,15 @@ class Beyn(NEVP):
         """
 
         # Perform an QR on the linear subspace projector.
-        if left:
-            q, r = linalg.qr(
-                P_0.conj().swapaxes(-2, -1),
-                compute_module=self.project_compute_location,
-                use_pinned_memory=self.use_pinned_memory,
-            )
-        else:
-            q, r = linalg.qr(
-                P_0,
-                compute_module=self.project_compute_location,
-                use_pinned_memory=self.use_pinned_memory,
-            )
+        q, r = linalg.qr(
+            P_0,
+            compute_module=self.project_compute_location,
+            use_pinned_memory=self.use_pinned_memory,
+        )
 
-        if left:
-            a = linalg.inv(r.conj().swapaxes(-2, -1)) @ P_1 @ q
-        else:
-            a = q.conj().swapaxes(-2, -1) @ P_1 @ linalg.inv(r)
+        a = q.conj().swapaxes(-2, -1) @ P_1 @ linalg.inv(r)
 
-        if left:
-            return a, q.conj().swapaxes(-2, -1)
-        else:
-            return a, q
+        return a, q
 
     def _contour_integrate(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Computes the contour integral of the operator inverse.
@@ -269,13 +244,27 @@ class Beyn(NEVP):
         return q0, q1
 
     def _solve_reduced_system(
-        self,
-        a: list[NDArray] | NDArray,
-        Y: NDArray,
-        p_back: list[NDArray] | NDArray,
-        left: bool = False,
+        self, a: list[NDArray] | NDArray, Y: NDArray, p_back: list[NDArray] | NDArray
     ) -> tuple[NDArray, NDArray]:
-        """Solve the reduced system"""
+        """Solve the reduced system
+
+        Parameters
+        ----------
+        a : list[NDArray] | NDArray
+            The projected system.
+        Y : NDArray
+            The initial subspace guess.
+        p_back : list[NDArray] | NDArray
+            The projectors.
+
+        Returns
+        -------
+        ws : NDArray
+            The eigenvalues.
+        vs : NDArray
+            The eigenvectors.
+
+        """
 
         in_type = a[0].dtype
         if isinstance(a, list):
@@ -299,23 +288,15 @@ class Beyn(NEVP):
                 len_w = len(w[i])
                 # Recover the full eigenvectors from the subspace.
                 ws[i, :len_w] = w[i]
-                if left:
-                    vs[i, :, :len_w] = (
-                        xp.linalg.solve(v[i], p_back[i]).conj().swapaxes(-2, -1)
-                    )
-                else:
-                    vs[i, :, :len_w] = p_back[i] @ v[i]
+                vs[i, :, :len_w] = p_back[i] @ v[i]
         else:
             ws = w
-            if left:
-                vs = xp.linalg.solve(v, p_back).conj().swapaxes(-2, -1)
-            else:
-                vs = p_back @ v
+            vs = p_back @ v
 
         return ws, vs
 
     def _one_sided(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
+        """Solves the polynomial eigenvalue problem through contour integration.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
@@ -358,72 +339,9 @@ class Beyn(NEVP):
 
         return self._solve_reduced_system(a, Y, p_back)
 
-    def _two_sided(
-        self, a_xx: tuple[NDArray, ...]
-    ) -> tuple[NDArray, NDArray, NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
-
-        This method solves the non-linear eigenvalue problem defined by
-        the coefficient blocks `a_xx` from lowest to highest order.
-
-        Parameters
-        ----------
-        a_xx : tuple[NDArray, ...]
-            The coefficient blocks of the non-linear eigenvalue problem
-            from lowest to highest order.
-
-        Returns
-        -------
-        ws : NDArray
-            The right eigenvalues.
-        vs : NDArray
-            The right eigenvectors.
-        wl : NDArray
-            The left eigenvalues.
-        vl : NDArray
-            The left eigenvectors.
-
-        """
-        d = a_xx[0].shape[-1]
-
-        batchsize = a_xx[0].shape[0]
-
-        # NOTE: Here we could also use a good initial guess.
-        Y = rng.random((batchsize, d, self.m_0)) + 1j * rng.random(
-            (batchsize, d, self.m_0)
-        )
-        Y_hat = rng.random((batchsize, d, self.m_0)) + 1j * rng.random(
-            (batchsize, d, self.m_0)
-        )
-
-        # Compute the contour integral.
-        q0, q1 = self._contour_integrate(a_xx)
-
-        # Compute first and second moment.
-        P_0 = q0 @ Y
-        P_1 = q1 @ Y
-
-        P_0_hat = Y_hat.conj().swapaxes(-2, -1) @ q0
-        P_1_hat = Y_hat.conj().swapaxes(-2, -1) @ q1
-
-        # project the system
-        if self.use_qr:
-            a, p_back = self._project_qr(P_0, P_1)
-            a_hat, p_back_hat = self._project_qr(P_0_hat, P_1_hat, left=True)
-        else:
-            a, p_back = self._project_svd(P_0, P_1)
-            a_hat, p_back_hat = self._project_svd(P_0_hat, P_1_hat, left=True)
-
-        wrs, vrs = self._solve_reduced_system(a, Y, p_back)
-        wls, vls = self._solve_reduced_system(a_hat, Y_hat, p_back_hat, left=True)
-
-        return wrs, vrs, wls, vls
-
     @profiler.profile(level="api")
-    def __call__(
-        self, a_xx: tuple[NDArray, ...], left: bool = False
-    ) -> tuple[NDArray, NDArray]:
-        """Solves the plynomial eigenvalue problem.
+    def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
+        """Solves the polynomial eigenvalue problem through contour integration.
 
         This method solves the non-linear eigenvalue problem defined by
         the coefficient blocks `a_xx` from lowest to highest order.
@@ -433,21 +351,13 @@ class Beyn(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        left : bool, optional
-            Whether to solve additionally for the left eigenvectors.
 
         Returns
         -------
         ws : NDArray
-            The right eigenvalues.
+            The eigenvalues.
         vs : NDArray
             The right eigenvectors.
-        wl : NDArray, optional
-            The left eigenvalues.
-            Returned only if `left` is `True`.
-        vl : NDArray, optional
-            The left eigenvectors.
-            Returned only if `left` is `True`.
 
         """
         # Allow for batched input.
@@ -469,21 +379,11 @@ class Beyn(NEVP):
             self.old_m_0 = self.m_0
             self.m_0 = a_xx[0].shape[-1]
 
-        if left:
-            wrs, vrs, wls, vls = self._two_sided(a_xx)
-            wrs = wrs.reshape(*batch_shape, self.m_0)
-            vrs = vrs.reshape(*batch_shape, d, self.m_0)
-            wls = wls.reshape(*batch_shape, self.m_0)
-            vls = vls.reshape(*batch_shape, d, self.m_0)
-            out = (wrs, vrs, wls, vls)
-
-        else:
-            ws, vs = self._one_sided(a_xx)
-            ws = ws.reshape(*batch_shape, self.m_0)
-            vs = vs.reshape(*batch_shape, d, self.m_0)
-            out = (ws, vs)
+        ws, vs = self._one_sided(a_xx)
+        ws = ws.reshape(*batch_shape, self.m_0)
+        vs = vs.reshape(*batch_shape, d, self.m_0)
 
         # reset subspace guess
         if hasattr(self, "old_m_0"):
             self.m_0 = self.old_m_0
-        return out
+        return ws, vs

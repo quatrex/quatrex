@@ -40,42 +40,19 @@ class Spectral(OBCSolver):
         The decay threshold after which modes are considered to be
         evanescent.
     max_decay : float, optional
-        The maximum decay to consider for evanescent modes. If not
-        provided, the maximum decay is set to the logarithm of the outer
-        radius of the contour annulus if applicable. Otherwise, it is
-        set to log(10).
+        The maximum decay to consider for evanescent modes.
+        The default is 6.9 which corresponds to 1000 in the eigenvalues.
     num_ref_iterations : int, optional
         The number of refinement iterations to perform on the surface
         Green's function.
-    x_ii_formula : str, optional
-        The formula to use for the calculation of the surface Green's
-        function. The default is via the boundary "self-energy". The
-        other option is "direct". The "self-energy" formula corresponds
-        to Equation (13.1) in the paper [^1] and the "direct" formula
-        corresponds to Equation (15).
-    two_sided : bool, optional
-        Whether to solve the NEVP for both left and right eigenvectors,
-        and construct the surface Green's function from both.
-    treat_pairwise : bool, optional
-        Whether to match complex conjugate modes and treat them in pairs
-        during the determining of reflected modes.
-    pairing_threshold : float, optional
-        The threshold for which two modes are considered to be a mode
-        pair.
     min_propagation : float, optional
         The minimum ratio between the real and imaginary part of the
         group velocity of a mode. This ratio is used to determine how
         clearly a mode propagates.
     residual_tolerance : float, optional
         The tolerance for the residual of the NEVP.
-    residual_normalization : str | None, optional
-        The formula to use for the normalization of the residual. The
-        default is the "operator" formula. The other options are
-        "eigenvalue" and None. The "operator" formula corresponds to
-        normalization by the Frobenius norm of the operator, the
-        "eigenvalue" formula corresponds to normalization by the
-        absolute of the eigenvalues, and None results in no
-        normalization.
+    residual_normalization : bool
+        If the residual should be normalized by the eigenvalue.
 
         [^1]: S. Brück, et al., Efficient algorithms for large-scale
         quantum transport calculations, The Journal of Chemical Physics,
@@ -88,32 +65,22 @@ class Spectral(OBCSolver):
         nevp: NEVP,
         block_sections: int = 1,
         min_decay: float = 1e-3,
-        max_decay: float | None = None,
+        max_decay: float = 6.9,
         num_ref_iterations: int = 2,
-        x_ii_formula: str = "self-energy",
-        two_sided: bool = False,
-        treat_pairwise: bool = True,
-        pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
-        residual_normalization: str | None = "eigenvalue",
+        residual_normalization: bool = True,
         warning_threshold: float = 1e-1,
     ) -> None:
         """Initializes the spectral OBC solver."""
         self.nevp = nevp
 
         self.min_decay = min_decay
-        if max_decay is None:
-            max_decay = 1.5 * xp.log(getattr(nevp, "r_o", 1000.0))
         self.max_decay = max_decay
 
         self.num_ref_iterations = num_ref_iterations
         self.block_sections = block_sections
-        self.x_ii_formula = x_ii_formula
 
-        self.two_sided = two_sided
-        self.treat_pairwise = treat_pairwise
-        self.pairing_threshold = pairing_threshold
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
         self.residual_normalization = residual_normalization
@@ -170,70 +137,17 @@ class Spectral(OBCSolver):
         blocks = view[0, : -self.block_sections + 1]
         return tuple(block for block in blocks if xp.any(block))
 
-    def _find_pairwise_propagating(
-        self,
-        dEk_dk: NDArray,
-        ks: NDArray,
-    ):
-        """Filter propagating modes that are opposite.
-
-        Parameters
-        ----------
-        dEk_dk : NDArray
-            The group velocity of the modes.
-        ks : NDArray
-            The wavevector of the modes.
-
-        Returns
-        -------
-        mask_pairwise_propagating : NDArray
-            A boolean mask indicating which eigenvalues correspond to
-            matched modes that propagate.
-
-        """
-
-        # match modes to the most opposite ones
-        diff = xp.abs(dEk_dk[:, :, xp.newaxis] + dEk_dk[:, xp.newaxis, :])
-        match_indices = xp.argmin(diff, axis=-1)
-        ks_match = xp.array(
-            [batch[indices] for batch, indices in zip(ks, match_indices)]
-        )
-        dEk_dk_match = xp.array(
-            [batch[indices] for batch, indices in zip(dEk_dk, match_indices)]
-        )
-
-        # pair of modes decay slowly
-        mask_pairwise_propagating = (
-            xp.abs(ks_match.imag) + xp.abs(ks.imag)
-        ) / 2 < self.min_decay
-
-        # modes opposite enough (0 would be perfect opposite)
-        eta = xp.finfo(dEk_dk.dtype).eps
-        mask_pairwise_propagating &= (
-            xp.abs(dEk_dk + dEk_dk_match) / (xp.abs(dEk_dk) + eta)
-            < self.pairing_threshold
-        )
-        mask_pairwise_propagating &= (
-            xp.abs(ks + ks_match) / (xp.abs(ks) + eta) < self.pairing_threshold
-        )
-
-        return mask_pairwise_propagating
-
-    def _compute_dE_dk(
-        self, ws: NDArray, vrs: NDArray, a_xx: list[NDArray], vls: NDArray | None = None
-    ) -> NDArray:
+    def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.
 
         Parameters
         ----------
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
 
         Returns
         -------
@@ -248,17 +162,10 @@ class Spectral(OBCSolver):
             action="ignore", category=RuntimeWarning
         ):  # Ignore division by zero.
 
-            if self.two_sided:
-                phi_right = vrs
-                phi_left = vls
-            else:
-                phi_right = vrs
-                phi_left = vrs
-
             dEk_dk = -sum(
                 (1j * n)
                 * xp.diagonal(
-                    phi_left.conj().swapaxes(-1, -2) @ a_x @ phi_right,
+                    vs.conj().swapaxes(-1, -2) @ a_x @ vs,
                     axis1=-2,
                     axis2=-1,
                 )
@@ -271,9 +178,8 @@ class Spectral(OBCSolver):
     def _find_reflected_modes(
         self,
         ws: NDArray,
-        vrs: NDArray,
+        vs: NDArray,
         a_xx: list[NDArray],
-        vls: NDArray | None = None,
         find_injected: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Determines which eigenvalues correspond to reflected (and injected) modes.
@@ -286,12 +192,10 @@ class Spectral(OBCSolver):
         ----------
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         a_xx : tuple[NDArray, ...]
             The blocks of the periodic matrix.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
         find_injected: bool, optional
             Whether to find the injected eigenvector
 
@@ -307,60 +211,37 @@ class Spectral(OBCSolver):
             List of dEk_dK values corresponding to injected modes
 
         """
-        if self.two_sided and vls is None:
-            raise ValueError("Two-sided calculation requires left eigenvectors.")
 
         batchsize = a_xx[0].shape[0]
-
-        # Calculate the residual
-        with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
-            if self.residual_normalization == "operator":
-                # NOTE: This consumes a lot of memory since
-                # the operators are explicitly calculated.
-                operators = sum(
-                    a_x[:, xp.newaxis, :, :]
-                    * ws[..., xp.newaxis, xp.newaxis] ** (i - len(a_xx) // 2)
-                    for i, a_x in enumerate(a_xx)
-                )
-                products = operators @ vrs.swapaxes(-1, -2)[..., xp.newaxis]
-            elif (
-                self.residual_normalization == "eigenvalue"
-                or self.residual_normalization is None
-            ):
-                products = sum(
-                    a_x @ vrs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
-                    for i, a_x in enumerate(a_xx)
-                ).swapaxes(-1, -2)[..., xp.newaxis]
-            else:
-                raise ValueError(
-                    f"Unknown normalization: {self.residual_normalization}"
-                    "Choose 'operator', 'eigenvalue', or 'None'."
-                )
-
-            residuals = xp.linalg.norm(products, axis=(-1, -2))
-
-            # eigenvectors are not necessarily normalized
-            eigenvector_norm = xp.linalg.norm(vrs, axis=-2)
-            residuals /= eigenvector_norm
-
-            if self.residual_normalization == "operator":
-                operator = xp.linalg.norm(operators, axis=(-1, -2))
-                residuals /= operator
-
-            if self.residual_normalization == "eigenvalue":
-                residuals /= xp.abs(ws)
 
         if batchsize != 1 and find_injected:
             raise ValueError(
                 "The injection vector can only be calculated with batchsize = 1"
             )
 
+        # Calculate the residual
+        with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
+
+            products = sum(
+                a_x @ vs * ws[:, xp.newaxis, :] ** (i - len(a_xx) // 2)
+                for i, a_x in enumerate(a_xx)
+            )
+
+            residuals = xp.linalg.norm(products, axis=-2)
+
+            # eigenvectors are not necessarily normalized
+            eigenvector_norm = xp.linalg.norm(vs, axis=-2)
+            residuals /= eigenvector_norm
+
+            if self.residual_normalization:
+                residuals /= xp.abs(ws)
+
         # Calculate the group velocity to select propagation direction.
         # The formula can be derived by taking the derivative of the
         # polynomial eigenvalue equation with respect to k.
         # NOTE: This is actually only correct if we have no overlap.
 
-        dEk_dk = self._compute_dE_dk(ws, vrs, a_xx, vls)
+        dEk_dk = self._compute_dE_dk(ws, vs, a_xx)
 
         with warnings.catch_warnings(
             action="ignore", category=RuntimeWarning
@@ -374,17 +255,10 @@ class Spectral(OBCSolver):
         # Find eigenvalues that correspond to reflected modes. These are
         # modes that either propagate into the leads or decay away from
         # the system.
+
         # Determine (matched) modes that decay slow enough to be
         # considered propagating.
-        if self.treat_pairwise:
-            mask_propagating = self._find_pairwise_propagating(dEk_dk, ks)
-            mask_decaying = ~mask_propagating
-        else:
-            mask_propagating = xp.abs(ks.imag) < self.min_decay
-            mask_decaying = xp.ones_like(dEk_dk, dtype=bool)
-
-        # Make sure decaying modes decay fast enough.
-        mask_decaying &= ks.imag < -self.min_decay
+        mask_propagating = xp.abs(ks.imag) < self.min_decay
 
         # fast enough propagation (group velocity)
         eta = xp.finfo(dEk_dk.dtype).eps
@@ -394,8 +268,15 @@ class Spectral(OBCSolver):
         # propgation direction
         mask_propagating &= dEk_dk.real < 0
 
+        # Make sure decaying modes decay fast enough.
+        mask_decaying = ks.imag < -self.min_decay
+
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay
+
+        mask_reflected = (mask_propagating | mask_decaying) & (
+            residuals < self.residual_tolerance
+        )
 
         # Calulate injecting modes
         if find_injected:
@@ -404,11 +285,9 @@ class Spectral(OBCSolver):
             mask_injected &= xp.abs(ks.imag) < self.min_decay
             dEk_dK_injected = dEk_dk[mask_injected]
 
-            return mask_propagating | mask_decaying, mask_injected, dEk_dK_injected
+            return mask_reflected, mask_injected, dEk_dK_injected
 
-        return (mask_propagating | mask_decaying) & (
-            residuals < self.residual_tolerance
-        )
+        return mask_reflected
 
     def _upscale_eigenmodes(
         self,
@@ -466,9 +345,8 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         ws: NDArray,
-        vrs: NDArray,
+        vs: NDArray,
         mask: NDArray,
-        vls: NDArray | None = None,
     ) -> NDArray:
         """Computes the surface Green's function.
 
@@ -482,13 +360,11 @@ class Spectral(OBCSolver):
             The subdiagonal block of the periodic matrix.
         ws : NDArray
             The eigenvalues of the NEVP.
-        vrs : NDArray
+        vs : NDArray
             The right eigenvectors of the NEVP.
         mask : NDArray
             A boolean mask indicating which eigenvalues correspond to
             reflected modes.
-        vls : NDArray, optional
-            The left eigenvectors of the NEVP. Required for two-sided
 
         Returns
         -------
@@ -496,85 +372,17 @@ class Spectral(OBCSolver):
             The surface Green's function.
 
         """
-        if self.two_sided and vls is None:
-            raise ValueError("Two-sided calculation requires left eigenvectors.")
+        # Equation (13.1).
+        x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
+        for i, m in enumerate(mask):
+            vr = vs[i][:, m]
+            w = ws[i, m]
+            # Moore-Penrose pseudoinverse.
+            v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
+            x_ii_a_ij[i] = vr / w @ v_inv
 
-        if self.x_ii_formula == "self-energy":
-            # Equation (13.1).
-            x_ii_a_ij = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                vr = vrs[i][:, m]
-                if self.two_sided:
-                    vl = vls[i][:, m]
-                w = ws[i, m]
-                # Moore-Penrose pseudoinverse.
-                if self.two_sided:
-                    v_inv = linalg.inv(vl.conj().T @ vr) @ vl.conj().T
-                else:
-                    v_inv = linalg.inv(vr.conj().T @ vr) @ vr.conj().T
-                x_ii_a_ij[i] = vr / w @ v_inv
-
-            # Calculate the surface Green's function.
-            return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
-
-        if self.x_ii_formula == "direct":
-            # Equation (15).
-            x_ii = xp.zeros((mask.shape[0], *a_ij.shape[-2:]), dtype=a_ij.dtype)
-            for i, m in enumerate(mask):
-                vr = vrs[i][:, m]
-                w = ws[i, m]
-                # "More stable" computation of the surface Green's function.
-                inverse = linalg.inv(
-                    vr.conj().T @ a_ii[i] @ vr + vr.conj().T @ a_ji[i] @ vr / w
-                )
-                x_ii[i] = vr @ inverse @ vr.conj().T
-
-            return x_ii
-
-        raise ValueError(
-            f"Unknown formula: {self.x_ii_formula}" "Choose 'self-energy' or 'direct'."
-        )
-
-    def _match_eigenmodes(
-        self,
-        wrs: NDArray,
-        vrs: NDArray,
-        wls: NDArray,
-        vls: NDArray,
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Matches the left and right eigenvalues to reorder the eigenvectors.
-
-        Parameters
-        ----------
-        wrs : NDArray
-            The right eigenvalues of the NEVP.
-        vrs : NDArray
-            The right eigenvectors of the NEVP.
-        wls : NDArray
-            The left eigenvalues of the NEVP.
-        vls : NDArray
-            The left eigenvectors of the NEVP.
-
-        Returns
-        -------
-        vls : NDArray
-            The matched left eigenvectors.
-
-        """
-
-        # the left and right eigenvalues are not sorted
-        diff = xp.abs(wrs[..., xp.newaxis] - wls[:, xp.newaxis, :])
-
-        # Find the indices to reorder the left problem
-        match_indices = xp.argmin(diff, axis=-1)
-
-        vls = xp.array(
-            [batch[:, indices] for batch, indices in zip(vls, match_indices)]
-        )
-
-        # TODO: test that the matching is correct
-
-        return vls
+        # Calculate the surface Green's function.
+        return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
     @profiler.profile(level="api")
     def __call__(
@@ -583,9 +391,8 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
-        out: None | NDArray = None,
         return_injected: bool = False,
-    ) -> NDArray | None | tuple[NDArray, NDArray, NDArray]:
+    ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Returns the surface Green's function.
 
         Parameters
@@ -598,9 +405,6 @@ class Spectral(OBCSolver):
             Subdiagonal boundary block of a system matrix.
         contact : str
             The contact to which the boundary blocks belong.
-        out : NDArray, optional
-            The array to store the result in. If not provided, a new
-            array is returned.
         return_injected: bool, optional
             Whether to return the injection vector
 
@@ -624,40 +428,31 @@ class Spectral(OBCSolver):
         if a_ii.ndim != 2 and return_injected:
             raise NotImplementedError
 
-        if return_injected and out is not None:
-            raise NotImplementedError
-
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
             a_ij = a_ij[xp.newaxis, :, :]
             a_ji = a_ji[xp.newaxis, :, :]
 
         blocks = self._extract_subblocks(a_ji, a_ii, a_ij)
-        if self.two_sided:
-            wrs, vrs, wls, vls = self.nevp(blocks, left=True)
-            vls = self._match_eigenmodes(wrs, vrs, wls, vls)
-        else:
-            wrs, vrs = self.nevp(blocks, left=False)
-            vls = None
+        ws, vs = self.nevp(blocks)
 
-        wrs, vrs = self._upscale_eigenmodes(wrs, vrs)
-        if self.two_sided:
-            wls, vls = self._upscale_eigenmodes(wrs, vls)
+        ws, vs = self._upscale_eigenmodes(ws, vs)
 
         if return_injected:
             mask_reflected, mask_injected, dE_dK_injected = self._find_reflected_modes(
-                wrs,
-                vrs,
-                a_xx=(a_ji, a_ii, a_ij),
-                vls=vls,
+                ws,
+                vs,
+                a_xx=[a_ji, a_ii, a_ij],
                 find_injected=return_injected,
             )
         else:
             mask_reflected = self._find_reflected_modes(
-                wrs, vrs, a_xx=(a_ji, a_ii, a_ij), vls=vls
+                ws,
+                vs,
+                a_xx=[a_ji, a_ii, a_ij],
             )
 
-        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, wrs, vrs, mask_reflected, vls=vls)
+        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
 
         # Perform a number of refinement iterations.
         for __ in range(self.num_ref_iterations - 1):
@@ -680,8 +475,8 @@ class Spectral(OBCSolver):
         if return_injected:
 
             mask_injected = mask_injected[0, :]
-            vrs_inj = vrs[0][:, mask_injected]
-            wrs_inj = xp.diag(wrs[0, mask_injected])
+            vrs_inj = vs[0][:, mask_injected]
+            wrs_inj = xp.diag(ws[0, mask_injected])
 
             # Flux normalization
             vrs_inj = vrs_inj / xp.sqrt(dE_dK_injected[None, :])
@@ -695,11 +490,6 @@ class Spectral(OBCSolver):
                 - sigma_retarded @ vrs_inj
             )
 
-            return x_ii_ref, sigma_retarded, injection, wrs[0, mask_injected]
-
-        # Return the surface Green's function.
-        if out is not None:
-            out[...] = x_ii_ref
-            return
+            return x_ii_ref, sigma_retarded, injection, ws[0, mask_injected]
 
         return x_ii_ref

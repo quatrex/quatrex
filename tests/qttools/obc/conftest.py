@@ -10,8 +10,6 @@ from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
 from quatrex.electron.solver import ElectronSolver
 from quatrex.examples import get_example_dir
 
-X_II_FORMULAS = ["self-energy", "direct"]
-
 BLOCK_SIZE = [
     pytest.param(21, id="21x21"),
     pytest.param(18, id="18x18"),
@@ -40,12 +38,6 @@ NEVP_SOLVERS = [
 ]
 
 ENERGIES = [[-10, -5, 0]]
-
-
-@pytest.fixture(params=X_II_FORMULAS)
-def x_ii_formula(request: pytest.FixtureRequest) -> str:
-    """Returns a NEVP solver."""
-    return request.param
 
 
 @pytest.fixture(params=BLOCK_SIZE)

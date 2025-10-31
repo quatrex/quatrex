@@ -4,11 +4,12 @@ simulation_dir = "."
 transport_direction = 'x'
 
 [scba] # ===============================================================
-max_iterations = 2
+max_iterations = 20
 mixing_factor = 0.5
 
-coulomb_screening = true 
-phonon = true
+coulomb_screening = false
+phonon = false
+photon = true
 
 symmetric = true
 
@@ -29,22 +30,23 @@ self_energy_density = true
 profiling_stats = false
 
 
+
 [electron] # ===========================================================
 # 0.2 V Potential difference.
-left_fermi_level = -3.6  # eV
-right_fermi_level = -3.8 # eV
+left_fermi_level = -3.8  # eV
+right_fermi_level = -4.0 # eV
 
-fermi_level = -3.6                        # eV
+fermi_level = -3.9                        # eV
 conduction_band_edge = -3.566382123573606 # eV
 valence_band_edge = -4.174109778287768    # eV
 
 band_edge_tracking = "eigenvalues"
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 8
+energy_window_min = -5
+energy_window_max = 0
 # # energy_window_num = 256
-energy_window_num_per_rank = 4
+energy_window_num_per_rank = 1000
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
@@ -103,6 +105,11 @@ lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6
 
+[photon]
+model = "pseudo-scattering"
+photon_energy = 0.80
+polarization = [1.0, 0.0, 0.0]
+light_intensity = 2e8
 
 [phonon]
 interaction_cutoff = 5.5     # Å

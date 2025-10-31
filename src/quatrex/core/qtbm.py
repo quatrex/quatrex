@@ -541,10 +541,10 @@ class QTBM:
                         ).data
 
                     t_solve = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(
-                            f"Time to set up system of eq.: {t_solve:.2f} s", flush=True
-                        )
+                    # if comm.rank == 0:
+                    #     print(
+                    #         f"Time to set up system of eq.: {t_solve:.2f} s", flush=True
+                    #     )
 
                     times.append(time.perf_counter())
 
@@ -553,8 +553,8 @@ class QTBM:
                         phi = self.solver.solve(system_matrix, inj_V)
 
                     t_solve = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
+                    # if comm.rank == 0:
+                    #     print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
                     times.append(time.perf_counter())
                     # Get the bare system matrix back, needed for
                     # transmission calculation
@@ -583,11 +583,11 @@ class QTBM:
                         )
 
                     t_iteration = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(
-                            f"Time for computing observables: {t_iteration:.2f} s",
-                            flush=True,
-                        )
+                    # if comm.rank == 0:
+                    #     print(
+                    #         f"Time for computing observables: {t_iteration:.2f} s",
+                    #         flush=True,
+                    #     )
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:

@@ -92,7 +92,7 @@ class Spectral(OBCSolver):
         num_ref_iterations: int = 2,
         x_ii_formula: str = "self-energy",
         two_sided: bool = False,
-        treat_pairwise: bool = True,
+        treat_pairwise: bool = False,
         pairing_threshold: float = 0.25,
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,

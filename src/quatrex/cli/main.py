@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+import os
+
 import typer
 from click import BadArgumentUsage
 from mpi4py.MPI import COMM_WORLD as comm
@@ -75,6 +78,25 @@ def _run_qtbm(quatrex_config, compute_config):
 
         if comm.rank == 0:
             typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
+        
+        if comm.rank == 0:
+            # Save all the results to the output directory.
+
+            output_dir = quatrex_config.output_dir
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            for n in range(qtbm.num_transmissions):
+                np.save(
+                    f"{output_dir}/transmission_{qtbm.observables.electron_transmission_contacts_labels[n]}.npy",
+                    qtbm.observables.electron_transmission_contacts[:, n, :],
+                )
+
+            for n in range(qtbm.num_contacts):
+                np.save(
+                    f"{output_dir}/electron_ldos_{device.contacts[n].name[0]}.npy",
+                    qtbm.observables.electron_dos_orb[:, n, :, :],
+                )
 
 
 def _run_negf(quatrex_config, compute_config):

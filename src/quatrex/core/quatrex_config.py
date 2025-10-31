@@ -429,9 +429,10 @@ class PhotonConfig(BaseModel):
 
     model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
     photon_energy: NonNegativeFloat | None = None
+    polarization: list | None = None
     interaction_matrix_file: str | None = None
     monochromatic_injection: bool = False
-    classical_light_intensity: NonNegativeFloat = 0.0  # intensity in W/m^2
+    light_intensity: NonNegativeFloat = 0.0  # intensity in W/m^2
 
 
 class PhononConfig(BaseModel):

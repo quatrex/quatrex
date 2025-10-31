@@ -66,28 +66,8 @@ class SigmaPhoton(ScatteringSelfEnergy):
                     "Electron energies must be provided for pseudo-scattering model."
                 )
 
-            self.upshift = xp.argmin(
-                xp.abs(electron_energies - (electron_energies[0] + self.photon_energy))
-            )
-            self.downshift = (
-                electron_energies.size
-                - xp.argmin(
-                    xp.abs(
-                        electron_energies - (electron_energies[-1] - self.photon_energy)
-                    )
-                )
-                - 1
-            )
-            self.valid_slice = (
-                slice(self.downshift, -self.upshift)
-                if self.upshift != 0
-                else slice(None)
-            )
-
-            totalshift = self.upshift + self.downshift
-
-            self.upslice = slice(None) if totalshift == 0 else slice(-totalshift)
-            self.downslice = slice(totalshift, None)
+            self.upshift = int(self.photon_energy / (electron_energies[1]-electron_energies[0]))
+            self.downshift = self.upshift
 
             hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(
                 quatrex_config
@@ -98,7 +78,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
             intensity = quatrex_config.photon.light_intensity
 
             self.interaction_matrix = compute_config.dsdbsparse_type.from_sparray(
-                sparsity_pattern.astype(xp.complex128),
+                hamiltonian_sparray,
                 block_sizes=block_sizes,
                 global_stack_shape=(comm.stack.size,),
             )
@@ -132,6 +112,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
         self.interaction_matrix.data *= prefactor
         print("***************** intensity=", intensity)
         print("***************** max M=", self.interaction_matrix.data.max())
+        print("***************** shifts", self.upshift, self.downshift)
 
     @profiler.profile(level="basic")
     def compute(
@@ -204,7 +185,7 @@ class SigmaPhoton(ScatteringSelfEnergy):
             end_block=end_block,
             spillover_correction=True,
         )
-        lesser.data *= prefactor  # M@G^<@M
+        # lesser.data *= prefactor  # M@G^<@M
 
         bd_sandwich_distr(
             self.interaction_matrix,
@@ -214,14 +195,16 @@ class SigmaPhoton(ScatteringSelfEnergy):
             end_block=end_block,
             spillover_correction=True,
         )
-        greater.data *= prefactor  # M@G^>@M
+        # greater.data *= prefactor  # M@G^>@M
 
         for m in (sigma_lesser, sigma_greater, sigma_retarded, lesser, greater):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
-        local_num_energies = sigma_greater.data.shape[0]
+        num_energies = sigma_greater.data.shape[0]
 
-        if self.upshift > local_num_energies or self.downshift > local_num_energies:
+        print("************ ne=" , num_energies)
+
+        if self.upshift > num_energies or self.downshift > num_energies:
             raise RuntimeError
 
         sigma_greater.data[self.upshift :, ...] += greater.data[: -self.upshift, ...]

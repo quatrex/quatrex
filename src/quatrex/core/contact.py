@@ -9,6 +9,27 @@ from quatrex.core.compute_config import NEVPConfig
 from quatrex.core.quatrex_config import OBCConfig
 
 
+# TODO move to some kid of utils
+def monkhorst_pack(size: tuple[int]) -> NDArray:
+    """Constructs a Monkhorst-Pack grid of k-points.
+
+    Parameters
+    ----------
+    size : tuple[int]
+        Grid dimensions as (nx, ny, nz) specifying the number of
+        k-points along each reciprocal lattice direction.
+
+    Returns
+    -------
+    kpts : NDArray
+        Array of k-points with shape (nx*ny*nz, 3). Each row contains
+        the (kx, ky, kz) coordinates of a k-point in reduced units.
+
+    """
+    kpts = np.indices(size).transpose((1, 2, 3, 0)).reshape((-1, 3))
+    return (kpts + 0.5) / size - 0.5
+
+
 class Contact:
     """Class representing a contact for QTBM calculations.
 
@@ -58,6 +79,8 @@ class Contact:
     transverse_rep : int
         Number of repetitions needed in transport direction for
         convergence.
+    band_structure: NDArray
+        Cached band structure data for the contact.
 
     """
 
@@ -193,6 +216,8 @@ class Contact:
         self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
         )
+
+        self._compute_band_structure(device)
 
     def _get_atoms_inside_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -1046,3 +1071,84 @@ class Contact:
                 num_inj[i_E] += value[i_E]
 
         return sigma_obc, inj, num_inj, T, K
+
+    def _compute_band_structure(self, device):
+
+        if comm.rank == 0:
+            print(
+                f"    Computing band structure for contact {self.name}...", flush=True
+            )
+        kpoints = monkhorst_pack(device.quatrex_config.device.kpoint_grid)
+        kpoints += np.array(device.quatrex_config.device.kpoint_shift)
+        num_kpoints = kpoints.shape[0]
+
+        if (
+            device.quatrex_config.device.kpoint_grid[self.direction] != 1
+            or device.quatrex_config.device.kpoint_shift[self.direction] != 0
+        ):
+            raise ValueError(
+                f"Error in contact {self.name}: "
+                f"Band structure calculation requires k-point grid of 1 and shift of 0 in transport direction ({self.direction}). "
+            )
+
+        n_points_BAND = 51
+
+        k_transport = xp.linspace(
+            -xp.pi,
+            xp.pi,
+            n_points_BAND,
+        )
+
+        self.band_structure = xp.zeros(
+            (num_kpoints, n_points_BAND, self.n_orb_origin_cell), dtype=xp.float64
+        )
+        for i, k_perp in enumerate(kpoints):
+            for j, k_par in enumerate(k_transport):
+
+                k_vec = list(k_perp)
+                k_vec.pop(self.direction)
+                k_vec.insert(0, k_par)
+
+                H_tot = sparse.csr_matrix(
+                    (self.n_orb_origin_cell, self.n_orb_origin_cell),
+                    dtype=xp.complex128,
+                )
+                S_tot = sparse.csr_matrix(
+                    (self.n_orb_origin_cell, self.n_orb_origin_cell),
+                    dtype=xp.complex128,
+                )
+                for index, ham in self.UC_hamiltonian.items():
+                    phase = xp.exp(
+                        1j
+                        * (
+                            k_vec[0] * index[0]
+                            + k_vec[1] * index[1]
+                            + k_vec[2] * index[2]
+                        )
+                    )
+                    H_tot += ham * phase
+                    if index[0] > 0:
+                        H_tot += ham.T.conj() * phase.conj()
+                for index, overlap in self.UC_overlap.items():
+                    phase = xp.exp(
+                        1j
+                        * (
+                            k_vec[0] * index[0]
+                            + k_vec[1] * index[1]
+                            + k_vec[2] * index[2]
+                        )
+                    )
+                    S_tot += overlap * phase
+                    if index[0] > 0:
+                        S_tot += overlap.T.conj() * phase.conj()
+
+                # DENSIFY (for now)
+                H_tot = xp.array(H_tot.todense())
+                S_tot = xp.array(S_tot.todense())
+
+                chol = xp.linalg.cholesky(S_tot)
+                chol_inv = xp.linalg.inv(chol)
+
+                H_ortho = chol_inv @ H_tot @ chol_inv.conj().T
+
+                self.band_structure[i, j, :] = xp.linalg.eigvalsh(H_ortho)

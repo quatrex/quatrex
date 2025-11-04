@@ -828,12 +828,12 @@ class DSDBCOO(DSDBSparse):
 
             # Cache the necessary objects.
             self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
-        self.data = 0.5 * op(self.data, self.data[..., self._inds_bcoo2bcoo_t].conj())
-        #data = self.data.reshape(-1, self.data.shape[-1])
-        #for stack_idx in range(self.data.shape[0]):
-            #data[stack_idx] = 0.5 * op(
-            #    data[stack_idx], data[stack_idx, self._inds_bcoo2bcoo_t].conj()
-            #)
+
+        data = self.data.reshape(-1, self.data.shape[-1])
+        for stack_idx in range(data.shape[0]):
+            data[stack_idx] = 0.5 * op(
+                data[stack_idx], data[stack_idx, self._inds_bcoo2bcoo_t].conj()
+            )
 
     @classmethod
     @profiler.profile(level="api")

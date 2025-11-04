@@ -234,6 +234,17 @@ class OBCConfig(BaseModel):
     $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
     """
 
+    eta_decay: PositiveFloat = 1e-12
+    """Small value to separate very slow decaying modes from
+        non-decaying ones in the spectral OBC solver.
+
+    Modes that are very close to the unit contour could be misclassified
+    with 'min_decay' and 'min_propagation' conditions i.e. 
+    when their decay is smaller than 'min_decay' but they are not propagating fast enough.
+    The not fast enough propagating ones with decay smaller than 'eta_decay' are 
+    considered as well decaying modes.
+    """
+
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 100
     """The maximum number of iterations for the Sancho-Rubio method."""

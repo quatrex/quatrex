@@ -53,6 +53,9 @@ class Spectral(OBCSolver):
         The tolerance for the residual of the NEVP.
     residual_normalization : bool
         If the residual should be normalized by the eigenvalue.
+    eta_decay : float, optional
+        Small value to separate very slow decaying modes from
+        non-decaying ones.
 
         [^1]: S. Brück, et al., Efficient algorithms for large-scale
         quantum transport calculations, The Journal of Chemical Physics,
@@ -71,6 +74,7 @@ class Spectral(OBCSolver):
         residual_tolerance: float = 1e-3,
         residual_normalization: bool = True,
         warning_threshold: float = 1e-1,
+        eta_decay: float = 1e-14,
     ) -> None:
         """Initializes the spectral OBC solver."""
         self.nevp = nevp
@@ -85,6 +89,7 @@ class Spectral(OBCSolver):
         self.residual_tolerance = residual_tolerance
         self.residual_normalization = residual_normalization
         self.warning_threshold = warning_threshold
+        self.eta_decay = eta_decay
 
     def _extract_subblocks(
         self,
@@ -270,6 +275,12 @@ class Spectral(OBCSolver):
 
         # Make sure decaying modes decay fast enough.
         mask_decaying = ks.imag < -self.min_decay
+
+        # capture slow decaying modes
+        # modes that arent clearly propagating
+        mask_decaying |= (
+            self.min_propagation >= abs(dEk_dk.real) / (abs(dEk_dk.imag) + eta)
+        ) & (ks.imag < -self.eta_decay)
 
         # ingore modes that decay incredibly fast
         mask_decaying &= ks.imag > -self.max_decay

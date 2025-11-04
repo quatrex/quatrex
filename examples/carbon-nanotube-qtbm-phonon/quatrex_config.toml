@@ -6,23 +6,24 @@ formalism = "qtbm" # "negf" or "qtbm"
 transport_direction = "x"
 kpoint_grid = [1, 1, 1]
 num_orbitals_per_atom = { "C" = 3 }
+particle_type='boson'
 
     [[device.contacts]]
     name = "left"
     origin = [0.012479, 0.0, 0.0]
     size = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"
-    fermi_level = 0.0
+    temperature=301
 
     [[device.contacts]]
     name = "right"
     origin = [102.55062666, 0.0, 0.0]
     size = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
     direction = "a"
-    fermi_level = 0.0
+    temperature=300
 
 [qtbm] # ===============================================================
-max_batch_size = 100
+max_batch_size = 2000
 
 
 [outputs] # Select which outputs to write.
@@ -39,11 +40,11 @@ left_fermi_level = 0.0  # eV
 right_fermi_level = 0.0 # eV
 
 # Energy grid.
-energy_window_min = 0.0
-energy_window_max = 0.04
-energy_window_num = 100
+energy_window_min = 4e-5
+energy_window_max = 0.2018
+energy_window_num = 1010
 
-solver.direct_solver = "superlu"
+solver.direct_solver = "cudss"
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "beyn"
@@ -51,10 +52,10 @@ obc.nevp_solver = "beyn"
 # Parameters for Beyn's method.
 obc.num_ref_iterations = 3
 obc.max_decay = 15
-obc.min_decay = 1e-3
-obc.r_o = 10
-obc.r_i = 0.8
+obc.min_decay = 1e-8
+obc.r_o = 1.1
+obc.r_i = 0.9
 obc.m_0 = 93
-obc.num_quad_points = 31
+obc.num_quad_points = 64
 
 obc.residual_tolerance = 1e-4

@@ -154,6 +154,7 @@ class Device:
         """Initializes a Device object from configuration."""
 
         self.quatrex_config = quatrex_config
+        self.particle_type = quatrex_config.device.particle_type
 
         if compute_config is None:
             compute_config = ComputeConfig()
@@ -370,6 +371,7 @@ class Device:
                     vectors=contact_config.size,
                     direction=contact_config.direction,
                     fermi_level=contact_config.fermi_level,
+                    temperature=contact_config.temperature,
                 )
             )
         return contacts

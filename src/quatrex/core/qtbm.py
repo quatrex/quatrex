@@ -14,7 +14,7 @@ from quatrex.core.constants import e, h
 from quatrex.core.device import Device
 from quatrex.core.energies import get_electron_energies
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
-from quatrex.core.statistics import fermi_dirac
+from quatrex.core.statistics import bose_einstein, fermi_dirac
 
 _preferred_matrix_type = {
     "mumps": sparse.coo_matrix,
@@ -180,6 +180,9 @@ class QTBM:
 
         # Get the electron energies.
         self.electron_energies = get_electron_energies(quatrex_config)
+        if self.device.particle_type == "boson":
+            self.electron_energies = self.electron_energies**2
+            self.electron_energies[self.electron_energies <= 0] = 4e-5
 
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
@@ -609,18 +612,29 @@ class QTBM:
         # Compute the current from all the k dependent transmissions
         for n_t in range(self.num_transmissions):
             cont_1, cont_2 = self.observables.electron_transmission_indices[n_t]
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[cont_1].fermi_level,
-                self.quatrex_config.electron.temperature,
-            ) - fermi_dirac(
-                self.electron_energies - self.device.contacts[cont_2].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
+            if self.device.particle_type == "fermion":
+                Occupation_factor = fermi_dirac(
+                    self.electron_energies - self.device.contacts[cont_1].fermi_level,
+                    self.device.contacts[cont_1].temperature,
+                ) - fermi_dirac(
+                    self.electron_energies - self.device.contacts[cont_2].fermi_level,
+                    self.device.contacts[cont_2].temperature,
+                )
+            elif self.device.particle_type == "boson":
+                Occupation_factor = bose_einstein(
+                    self.electron_energies,
+                    self.device.contacts[cont_1].temperature,
+                ) - bose_einstein(
+                    self.electron_energies,
+                    self.device.contacts[cont_2].temperature,
+                )
+            else:
+                raise ValueError(f"Unknown particle type: {self.device.particle_type}")
 
             self.observables.electron_current["contact_current"][n_t] = -(
                 xp.sum(
                     xp.trapz(
-                        Fermi_factor
+                        Occupation_factor
                         * self.observables.electron_transmission_contacts[:, n_t, :],
                         self.electron_energies,
                         axis=1,
@@ -630,46 +644,71 @@ class QTBM:
                 * (2 * e / h)
             )
 
+        print("*********** contact currents=", self.observables.electron_current)
+
         # Compute the orbital electron charge density per orbital
         for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
-            self.observables.electron_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :] * Fermi_factor,
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
+            if self.device.particle_type == "fermion":
+                Fermi_factor = fermi_dirac(
+                    self.electron_energies - self.device.contacts[n].fermi_level,
+                    self.quatrex_config.electron.temperature,
                 )
-                / self.num_kpoints
-            )
+                Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
+                self.observables.electron_charge_orb += (
+                    2
+                    * xp.sum(
+                        xp.trapz(
+                            self.observables.electron_dos_orb[:, n, :, :]
+                            * Fermi_factor,
+                            self.electron_energies,
+                            axis=2,
+                        ),
+                        axis=0,
+                    )
+                    / self.num_kpoints
+                )
+            elif self.device.particle_type == "boson":
+                Bose_factor = bose_einstein(
+                    self.electron_energies,
+                    self.quatrex_config.electron.temperature,
+                )
+                self.observables.electron_charge_orb += (
+                    2
+                    * xp.sum(
+                        xp.trapz(
+                            self.observables.electron_dos_orb[:, n, :, :] * Bose_factor,
+                            self.electron_energies,
+                            axis=2,
+                        ),
+                        axis=0,
+                    )
+                    / self.num_kpoints
+                )
 
         # Compute the orbital hole charge density per orbital
         for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies > self.neutrality_level] = 1
-            self.observables.hole_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :]
-                        * (1 - Fermi_factor),
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
+            if self.device.particle_type == "fermion":
+                Fermi_factor = fermi_dirac(
+                    self.electron_energies - self.device.contacts[n].fermi_level,
+                    self.quatrex_config.electron.temperature,
                 )
-                / self.num_kpoints
-            )
+                Fermi_factor[self.electron_energies > self.neutrality_level] = 1
+                self.observables.hole_charge_orb += (
+                    2
+                    * xp.sum(
+                        xp.trapz(
+                            self.observables.electron_dos_orb[:, n, :, :]
+                            * (1 - Fermi_factor),
+                            self.electron_energies,
+                            axis=2,
+                        ),
+                        axis=0,
+                    )
+                    / self.num_kpoints
+                )
+            elif self.device.particle_type == "boson":
+                # Holes are not defined for bosons
+                pass
 
         self.observables.electron_charge_at = xp.zeros(
             self.device.orbital_offsets.shape[0] - 1

@@ -92,6 +92,7 @@ class Contact:
         vectors: NDArray,
         direction: str,
         fermi_level: float,
+        temperature: float,
     ):
         """Initializes the contact object."""
 
@@ -99,6 +100,7 @@ class Contact:
         self.device = device
 
         self.fermi_level = fermi_level
+        self.temperature = temperature
 
         self.vectors = vectors
         self.origin = origin

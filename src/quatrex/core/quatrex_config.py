@@ -364,7 +364,8 @@ class OutputConfig(BaseModel):
 class ContactConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fermi_level: float
+    fermi_level: float = 0.0
+    temperature: PositiveFloat = 300.0  # K
     name: str
     type: Literal["ohmic"] = "ohmic"
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -387,7 +388,7 @@ class ContactConfig(BaseModel):
 
 class DeviceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    particle_type: Literal["fermion", "boson"] = "fermion"
     construct_from_unit_cell: bool = False
 
     # --- Device geometry ---------------------------------------------

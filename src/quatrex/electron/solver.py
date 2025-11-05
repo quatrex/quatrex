@@ -98,6 +98,11 @@ class ElectronSolver(SubsystemSolver):
         hamiltonian_sparray, hamiltonian_dict, self.block_sizes = (
             self._load_hamiltonian_matrix(quatrex_config)
         )
+        # Symmetrize the Hamiltonian sparse array. (Noticed that sparsity pattern
+        # was not always symmetric).
+        hamiltonian_sparray = (
+            0.5 * (hamiltonian_sparray + hamiltonian_sparray.conj().T)
+        )
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
 
         # Make sure that the the system matrix sparsity is a superset of
@@ -221,7 +226,6 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the Hamiltonian and overlap matrices are
         # Hermitian.
-        # TODO: Not implemented for k-points yet.
         if not self.hamiltonian.symmetry:
             self.hamiltonian.symmetrize()
 

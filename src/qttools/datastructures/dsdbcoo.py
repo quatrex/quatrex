@@ -760,6 +760,26 @@ class DSDBCOO(DSDBSparse):
             cols[i] += rank_offset[i]
         return xp.hstack(rows), xp.hstack(cols)
 
+    def _check_sparsity_pattern_symmetric(self) -> bool:
+        """Checks if the sparsity pattern is symmetric.
+
+        Returns
+        -------
+        is_symmetric : bool
+            Whether the sparsity pattern is symmetric.
+
+        """
+        # Gather rows and cols.
+        rows, cols = self.spy()
+
+        # Create a set of (row, col) tuples.
+        sparsity_set = set(zip(rows.tolist(), cols.tolist()))
+        for r, c in sparsity_set.copy():
+            if (c, r) not in sparsity_set:
+                return False
+        return True
+    
+    @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
 
@@ -784,6 +804,9 @@ class DSDBCOO(DSDBSparse):
 
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
+
+        if not self._check_sparsity_pattern_symmetric():
+            raise ValueError("Sparsity pattern is not symmetric. This will lead to incorrect results.")
 
         if not hasattr(self, "_inds_bcoo2bcoo_t"):
             # Transpose.

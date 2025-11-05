@@ -73,8 +73,11 @@ def assemble_kpoint_dsb(
     # Convert lattice matrices to a list for faster indexing
     if isinstance(lattice_matrix[valid_cells[0]], xp.ndarray):
         lattice_matrices_array = xp.array([lattice_matrix[cell] for cell in valid_cells])
+    # Check if it is sparse.csr_matrix or sparse.coo_matrix
     elif isinstance(lattice_matrix[valid_cells[0]], sparse.csr_matrix):
         lattice_matrices_array = np.array([lattice_matrix[cell] for cell in valid_cells])
+    elif isinstance(lattice_matrix[valid_cells[0]], sparse.coo_matrix):
+        lattice_matrices_array = np.array([lattice_matrix[cell].tocsr() for cell in valid_cells])
     else:
         raise TypeError("Unsupported lattice matrix type.")
     
@@ -106,7 +109,6 @@ def assemble_kpoint_dsb(
                     phases = phases[:, None, None]  # Reshape for broadcasting
                 elif isinstance(lattice_matrices_array[0], sparse.csr_matrix):
                     phases = get_host(phases)
-                
                 # This sum is extremely slow when the lattice matrices are sparse.csr_matrix
                 matrix_contribution = xp.sum(
                     phases * lattice_matrices_array, axis=0

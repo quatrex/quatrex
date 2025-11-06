@@ -77,15 +77,17 @@ class SigmaPhoton(ScatteringSelfEnergy):
             polarization = xp.array(quatrex_config.photon.polarization, dtype=float)
             intensity = quatrex_config.photon.light_intensity
 
-            self.interaction_matrix = compute_config.dsdbsparse_type.from_sparray(
-                hamiltonian_sparray,
-                block_sizes=block_sizes,
-                global_stack_shape=(comm.stack.size,),
+            polarization = polarization / xp.linalg.norm(polarization)
+            m_sparray = self.compute_interaction_matrix(
+                polarization, hamiltonian_sparray, orbital_positions, intensity
             )
 
-            polarization = polarization / xp.linalg.norm(polarization)
-            self.compute_interaction_matrix(
-                polarization, hamiltonian_sparray, orbital_positions, intensity
+            self.interaction_matrix = compute_config.dsdbsparse_type.from_sparray(
+                m_sparray,
+                block_sizes=block_sizes,
+                global_stack_shape=(comm.stack.size,),
+                symmetry=quatrex_config.scba.symmetric,
+                symmetry_op=lambda a: -a.conj()
             )
 
             return
@@ -102,17 +104,19 @@ class SigmaPhoton(ScatteringSelfEnergy):
             / (2.0e0 * epsilon_0 * speed_of_light)
         )
         prefactor *= intensity / elementary_charge / self.photon_energy**2
+        interaction_matrix = sparse.coo_matrix(hamiltonian_sparray)        
         for s, (i, j) in enumerate(
             zip(hamiltonian_sparray.row, hamiltonian_sparray.col)
         ):
-            self.interaction_matrix.data[:, s] = (
+            interaction_matrix.data[s] = (
                 xp.dot((orbital_positions[i] - orbital_positions[j]), polarization)
                 * hamiltonian_sparray.data[s]
             )
-        self.interaction_matrix.data *= prefactor
+        interaction_matrix.data *= prefactor
         print("***************** intensity=", intensity)
-        print("***************** max M=", self.interaction_matrix.data.max())
+        print("***************** max M=", interaction_matrix.data.max())
         print("***************** shifts", self.upshift, self.downshift)
+        return interaction_matrix
 
     @profiler.profile(level="basic")
     def compute(
@@ -174,6 +178,10 @@ class SigmaPhoton(ScatteringSelfEnergy):
         greater = self.compute_config.dsdbsparse_type.zeros_like(sigma_greater)
 
         prefactor = 1
+
+        # Enforce that the block sizes are the same. NOTE: This triggers
+        # a block-reordering in the DSDBSparse object.
+        self.interaction_matrix.block_sizes = g_lesser.block_sizes
 
         # locally compute the sigma^<> = M G^<> M for local energies
 

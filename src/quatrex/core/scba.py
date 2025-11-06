@@ -555,7 +555,10 @@ class SCBA:
                 flush=True,
             )
 
-        if relative_current_diff < 1e-3 and max_diff < 1e-7:
+        if (
+            relative_current_diff < self.quatrex_config.scba.convergence_tol
+            and max_diff < self.quatrex_config.scba.convergence_tol
+        ):
             return True
         return False  # TODO: :-)
 

@@ -544,9 +544,7 @@ class SCBA:
         denom = max(
             min(xp.abs(xp.sum(i_left) * dE), xp.abs(xp.sum(i_right) * dE)), epsilon
         )
-        relative_current_diff = (
-            xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE) / denom
-        )
+        relative_current_diff = current_diff / denom
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)

@@ -540,9 +540,13 @@ class SCBA:
 
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
-        relative_current_diff = xp.abs(
-            xp.sum(i_left) * dE + xp.sum(i_right) * dE
-        ) / min(xp.abs(xp.sum(i_left) * dE), xp.abs(xp.sum(i_right) * dE))
+        epsilon = 1e-16
+        denom = max(
+            min(xp.abs(xp.sum(i_left) * dE), xp.abs(xp.sum(i_right) * dE)), epsilon
+        )
+        relative_current_diff = (
+            xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE) / denom
+        )
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)

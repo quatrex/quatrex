@@ -579,10 +579,10 @@ class SCBA:
     @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
-        if self.quatrex_config.phonon.model == "negf":
+        if self.quatrex_config.photon.model == "negf":
             raise NotImplementedError
 
-        elif self.quatrex_config.phonon.model == "pseudo-scattering":
+        elif self.quatrex_config.photon.model == "pseudo-scattering":
             self.sigma_photon.compute(
                 self.data.g_lesser,
                 self.data.g_greater,

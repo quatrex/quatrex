@@ -93,25 +93,36 @@ def complex_gemm_to_real_with_mask(a, b, out=None, mask=None):
         options = MatmulOptions(
             compute_type=ComputeType.COMPUTE_32F_FAST_TF32,
         )
+
+        # assert a.shape[-1] != b.shape[-1]
+        # assert a.shape[-2] != b.shape[-2]
+        # assert a.ndim == b.ndim
+
+        if a.ndim == 3 and b.ndim == 3:
+            if a.shape[0] != b.shape[0]:
+                batch_size = max(a.shape[0], b.shape[0])
+
+                # broadcast a and b to the same batch size
+                a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2]))
+                b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2]))
+        elif a.ndim == 3 or b.ndim == 3:
+            if a.ndim == 3:
+                b = xp.broadcast_to(b, (a.shape[0], b.shape[1], b.shape[2]))
+            else:
+                a = xp.broadcast_to(a, (b.shape[0], a.shape[1], a.shape[2]))
+
         if in_type in [xp.complex64, xp.complex128]:
             compute_type = xp.complex64
-
-            assert a.shape[-1] != b.shape[-1]
-            assert a.shape[-2] != b.shape[-2]
-            assert a.ndim == b.ndim
-
-            if a.ndim == 3 and b.ndim == 3:
-                if a.shape[0] != b.shape[0]:
-                    batch_size = max(a.shape[0], b.shape[0])
-
-                    # broadcast a and b to the same batch size
-                    a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2]))
-                    b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2]))
 
             a_real = xp.real(a).astype(xp.float32)
             a_imag = xp.imag(a).astype(xp.float32)
             b_real = xp.real(b).astype(xp.float32)
             b_imag = xp.imag(b).astype(xp.float32)
+
+            a_real = xp.ascontiguousarray(xp.real(a).astype(xp.float32))
+            a_imag = xp.ascontiguousarray(xp.imag(a).astype(xp.float32))
+            b_real = xp.ascontiguousarray(xp.real(b).astype(xp.float32))
+            b_imag = xp.ascontiguousarray(xp.imag(b).astype(xp.float32))
 
             term1 = matmul(a_real, b_real, options=options)
             term2 = matmul(a_imag, b_imag, options=options)
@@ -125,6 +136,10 @@ def complex_gemm_to_real_with_mask(a, b, out=None, mask=None):
             return (c_real + 1j * c_imag).astype(in_type)
 
         elif in_type in [xp.float32, xp.float64]:
+
+            a = xp.ascontiguousarray(a)
+            b = xp.ascontiguousarray(b)
+
             a = a.astype(xp.float32)
             b = b.astype(xp.float32)
             return matmul(a, b, options=options).astype(in_type)
@@ -252,6 +267,24 @@ def complex_gemm_to_real(a, b, out=None, assembly_mask=None):
         options = MatmulOptions(
             compute_type=ComputeType.COMPUTE_32F_FAST_TF32,
         )
+
+        # assert a.shape[-1] != b.shape[-1]
+        # assert a.shape[-2] != b.shape[-2]
+        # assert a.ndim == b.ndim
+
+        if a.ndim == 3 and b.ndim == 3:
+            if a.shape[0] != b.shape[0]:
+                batch_size = max(a.shape[0], b.shape[0])
+
+                # broadcast a and b to the same batch size
+                a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2]))
+                b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2]))
+        elif a.ndim == 3 or b.ndim == 3:
+            if a.ndim == 3:
+                b = xp.broadcast_to(b, (a.shape[0], b.shape[1], b.shape[2]))
+            else:
+                a = xp.broadcast_to(a, (b.shape[0], a.shape[1], a.shape[2]))
+
         if in_type in [xp.complex64, xp.complex128]:
             compute_type = xp.complex64
 
@@ -259,6 +292,11 @@ def complex_gemm_to_real(a, b, out=None, assembly_mask=None):
             a_imag = xp.imag(a).astype(xp.float32)
             b_real = xp.real(b).astype(xp.float32)
             b_imag = xp.imag(b).astype(xp.float32)
+
+            a_real = xp.ascontiguousarray(xp.real(a).astype(xp.float32))
+            a_imag = xp.ascontiguousarray(xp.imag(a).astype(xp.float32))
+            b_real = xp.ascontiguousarray(xp.real(b).astype(xp.float32))
+            b_imag = xp.ascontiguousarray(xp.imag(b).astype(xp.float32))
 
             term1 = matmul(a_real, b_real, options=options)
             term2 = matmul(a_imag, b_imag, options=options)
@@ -274,6 +312,9 @@ def complex_gemm_to_real(a, b, out=None, assembly_mask=None):
         elif in_type in [xp.float32, xp.float64]:
             a = a.astype(xp.float32)
             b = b.astype(xp.float32)
+
+            a = xp.ascontiguousarray(a)
+            b = xp.ascontiguousarray(b)
             return matmul(a, b, options=options).astype(in_type)
         else:
             raise ValueError("Unsupported input data type")

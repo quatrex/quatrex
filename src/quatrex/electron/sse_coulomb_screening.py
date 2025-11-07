@@ -37,7 +37,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
         The convolution of the two arrays.
 
     """
-    ne = a.shape[0] + b.shape[0]
+    ne = a.shape[0] + b.shape[0] # Should not have -1 here (otherwise hilbert transform fails)
     a_fft = xp.fft.fftn(a, (ne,), axes=(0,))
     b_fft = xp.fft.fftn(b, (ne,), axes=(0,))
     return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
@@ -46,7 +46,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 @profiler.profile(level="api")
 def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
     """Computes the convolution of two arrays using the FFT."""
-    ne = a.shape[0] + b.shape[0]
+    ne = a.shape[0] + b.shape[0] - 1
     nka = a.shape[1:-1]
     nkb = b.shape[1:-1]
     a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
@@ -71,7 +71,7 @@ def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
         The cross-correlation of the two arrays.
 
     """
-    ne = a.shape[0] + b.shape[0]
+    ne = a.shape[0] + b.shape[0] - 1
     nka = a.shape[1:-1]
     nkb = b.shape[1:-1]
     a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
@@ -590,7 +590,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         g_lesser.data[..., batch],
                         -w_greater.data[..., batch].conj(),
                     )
-                    sl[ne:] += (
+                    sl[-ne:] += (
                         self.prefactor
                         * fft_convolve_kpoints(
                             g_lesser.data[..., batch], w_lesser.data[..., batch]
@@ -606,10 +606,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         * fft_correlate_kpoints(
                             g_greater.data[..., batch],
                             -w_lesser.data[..., batch].conj(),
-                        )[ne:]
+                        )[-ne:]
                     )
 
-                    sigma_lesser.data[..., batch] += sl[ne:]
+                    sigma_lesser.data[..., batch] += sl[-ne:]
                     sigma_greater.data[..., batch] += sg[:ne]
 
                     # Add empty dimensions for each k-point.
@@ -620,14 +620,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     eta = (self.energies[1] - self.energies[0]) / 2
                     hilbert_kernel = 1 / (energy_differences + eta)
 
-                    sr = fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[:ne]
+                    sr = fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[:ne]
                     # Correct for left edge
-                    sr += fft_convolve(-sl[:ne], hilbert_kernel)[ne:]
+                    sr += fft_convolve(-sl[:ne], hilbert_kernel)[-ne:]
                     # Next account for negative frequencies
                     hilbert_kernel = -hilbert_kernel[::-1]
-                    sr += fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[ne:]
+                    sr += fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[-ne:]
                     # Correct for right edge
-                    sr += fft_convolve(sg[ne:], hilbert_kernel)[:ne]
+                    sr += fft_convolve(sg[-ne:], hilbert_kernel)[:ne]
                     sigma_retarded.data[..., batch] += (
                         self.prefactor
                         * sr

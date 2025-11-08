@@ -3,6 +3,7 @@
 import warnings
 
 from qttools import NDArray, xp
+from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
@@ -471,9 +472,10 @@ class Spectral(OBCSolver):
         )
         if recursion_error > self.warning_threshold:
             warnings.warn(
-                f"High relative recursion error: {recursion_error:.2e}",
+                f"High relative recursion error: {recursion_error:.2e} at rank {comm.rank}",
                 RuntimeWarning,
             )
+        # print(recursion_error, flush=True)
 
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_injected:

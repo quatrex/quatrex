@@ -96,7 +96,7 @@ class RGF(GFSolver):
                 temp_result = complex_gemm_to_real_with_mask(
                     temp_mult, a_.blocks[i, j], mask=self.mm_mask
                 )
-                x_diag_blocks[j] = inv(a_jj - temp_result)
+                x_diag_blocks[j] = linalg.inv(a_jj - temp_result)
 
             # We need to write the last diagonal block to the output.
             x_.blocks[a.num_blocks - 1, a.num_blocks - 1] = x_diag_blocks[-1]
@@ -268,7 +268,7 @@ class RGF(GFSolver):
                 else sigma_greater_.blocks[0, 0] + obc_g[stack_slice]
             ).astype(tmp_type)
 
-            xr_jj = inv(a_jj.astype(inv_type)).astype(tmp_type)
+            xr_jj = linalg.inv(a_jj.astype(inv_type)).astype(tmp_type)
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_jj
             temp_mult_l0 = complex_gemm_to_real_with_mask(
@@ -323,7 +323,9 @@ class RGF(GFSolver):
                 temp_inv_arg = complex_gemm_to_real_with_mask(
                     a_ji_xr_ii, (a_.blocks[i, j]).astype(tmp_type), mask=self.mm_mask
                 )
-                xr_jj = inv((a_jj - temp_inv_arg).astype(inv_type)).astype(tmp_type)
+                xr_jj = linalg.inv((a_jj - temp_inv_arg).astype(inv_type)).astype(
+                    tmp_type
+                )
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 

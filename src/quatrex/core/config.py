@@ -882,7 +882,7 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    precision: Literal["single", "double"] | None = None
+    precision: Literal["single", "double"] = "double"
 
     polarization_precision: Literal["fp32", "fp64"] = "fp64"
     sigma_fock_precision: Literal["fp32", "fp64"] = "fp64"

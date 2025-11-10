@@ -225,104 +225,6 @@ def real_gemm_fastest(a, b):
     return result
 
 
-def complex_gemm_to_real(a, b, out=None, assembly_mask=None):
-    """
-    Complex GEMM using 3 BF16 operations to assembly_mask each FP32 matrix multiplication.
-
-    Computes: out = alpha * (a @ b) + beta * out
-
-    Each real matrix multiplication uses 3 BF16 operations for the fastest performance.
-    """
-
-    in_type = a.dtype
-    assert in_type == b.dtype
-
-    if assembly_mask is None:
-        assert out is None
-        return a @ b
-
-    elif assembly_mask in ["fp32", "fp64"]:
-        if in_type in [xp.complex64, xp.complex128]:
-            compute_type = xp.complex64 if assembly_mask == "fp32" else xp.complex128
-        elif in_type in [xp.float32, xp.float64]:
-            compute_type = xp.float32 if assembly_mask == "fp32" else xp.float64
-        else:
-            raise ValueError("Unsupported input data type")
-
-        if in_type == compute_type:
-            return a @ b
-
-        a = a.astype(compute_type)
-        b = b.astype(compute_type)
-        assert out is None
-        return (a @ b).astype(in_type)
-
-    elif assembly_mask in ["tf32"]:
-
-        assert out is None
-
-        from nvmath.linalg import ComputeType
-        from nvmath.linalg.advanced import MatmulOptions, matmul
-
-        options = MatmulOptions(
-            compute_type=ComputeType.COMPUTE_32F_FAST_TF32,
-        )
-
-        # assert a.shape[-1] != b.shape[-1]
-        # assert a.shape[-2] != b.shape[-2]
-        # assert a.ndim == b.ndim
-
-        if a.ndim == 3 and b.ndim == 3:
-            if a.shape[0] != b.shape[0]:
-                batch_size = max(a.shape[0], b.shape[0])
-
-                # broadcast a and b to the same batch size
-                a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2]))
-                b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2]))
-        elif a.ndim == 3 or b.ndim == 3:
-            if a.ndim == 3:
-                b = xp.broadcast_to(b, (a.shape[0], b.shape[1], b.shape[2]))
-            else:
-                a = xp.broadcast_to(a, (b.shape[0], a.shape[1], a.shape[2]))
-
-        if in_type in [xp.complex64, xp.complex128]:
-            compute_type = xp.complex64
-
-            a_real = xp.real(a).astype(xp.float32)
-            a_imag = xp.imag(a).astype(xp.float32)
-            b_real = xp.real(b).astype(xp.float32)
-            b_imag = xp.imag(b).astype(xp.float32)
-
-            a_real = xp.ascontiguousarray(xp.real(a).astype(xp.float32))
-            a_imag = xp.ascontiguousarray(xp.imag(a).astype(xp.float32))
-            b_real = xp.ascontiguousarray(xp.real(b).astype(xp.float32))
-            b_imag = xp.ascontiguousarray(xp.imag(b).astype(xp.float32))
-
-            term1 = matmul(a_real, b_real, options=options)
-            term2 = matmul(a_imag, b_imag, options=options)
-            c_real = term1 - term2
-
-            # C_imag = A_real @ B_imag + A_imag @ B_real
-            term3 = matmul(a_real, b_imag, options=options)
-            term4 = matmul(a_imag, b_real, options=options)
-            c_imag = term3 + term4
-
-            return (c_real + 1j * c_imag).astype(in_type)
-
-        elif in_type in [xp.float32, xp.float64]:
-            a = a.astype(xp.float32)
-            b = b.astype(xp.float32)
-
-            a = xp.ascontiguousarray(a)
-            b = xp.ascontiguousarray(b)
-            return matmul(a, b, options=options).astype(in_type)
-        else:
-            raise ValueError("Unsupported input data type")
-
-    else:
-        raise ValueError("Unsupported assembly_mask type")
-
-
 @profiler.profile(level="api")
 def correct_out_range_index(i: int, k: int, num_blocks: int):
     # find the index of block in the matrix being repeated into open-end
@@ -430,28 +332,28 @@ def bd_matmul(
                             sum_b = xp.zeros_like(b_[0].blocks[k_b, j_b])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k_b, j_b])
-                            partsum += complex_gemm_to_real(
-                                a_.blocks[i_a, k_a], sum_b, assembly_mask=assembly_mask
+                            partsum += complex_gemm_to_real_with_mask(
+                                a_.blocks[i_a, k_a], sum_b, mask=assembly_mask
                             )
                         else:
-                            partsum += complex_gemm_to_real(
+                            partsum += complex_gemm_to_real_with_mask(
                                 a_.blocks[i_a, k_a],
                                 b_.blocks[k_b, j_b],
-                                assembly_mask=assembly_mask,
+                                mask=assembly_mask,
                             )
                     else:
                         if isinstance(b, list):
                             sum_b = xp.zeros_like(b_[0].blocks[k, j])
                             for bi_ in b_:
                                 sum_b = b_op(sum_b, bi_.blocks[k, j])
-                            partsum += complex_gemm_to_real(
-                                a_.blocks[i, k], sum_b, assembly_mask=assembly_mask
+                            partsum += complex_gemm_to_real_with_mask(
+                                a_.blocks[i, k], sum_b, mask=assembly_mask
                             )
                         else:
-                            partsum += complex_gemm_to_real(
+                            partsum += complex_gemm_to_real_with_mask(
                                 a_.blocks[i, k],
                                 b_.blocks[k, j],
-                                assembly_mask=assembly_mask,
+                                mask=assembly_mask,
                             )
 
             if out_block:
@@ -553,14 +455,14 @@ def bd_sandwich(
                     else:
                         b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = complex_gemm_to_real(
-                        a_im, b_.blocks[b_m, b_k], assembly_mask=assembly_mask
+                    ab_ik[k] = complex_gemm_to_real_with_mask(
+                        a_im, b_.blocks[b_m, b_k], mask=assembly_mask
                     ).astype(
                         accumulator_dtype
                     )  # cast data type
                 else:
-                    ab_ik[k] += complex_gemm_to_real(
-                        a_im, b_.blocks[b_m, b_k], assembly_mask=assembly_mask
+                    ab_ik[k] += complex_gemm_to_real_with_mask(
+                        a_im, b_.blocks[b_m, b_k], mask=assembly_mask
                     ).astype(
                         accumulator_dtype
                     )  # cast data type
@@ -593,15 +495,16 @@ def bd_sandwich(
                 if ab_ik[k] is None:
                     continue
                 if a_is_hermitian:
-                    partsum += complex_gemm_to_real(
-                        ab_ik[k], a_.blocks[a_k, a_j], assembly_mask=assembly_mask
+                    partsum += complex_gemm_to_real_with_mask(
+                        ab_ik[k], a_.blocks[a_k, a_j], mask=assembly_mask
                     ).astype(
                         accumulator_dtype
                     )  # cast data type
 
+
                 else:
-                    partsum += complex_gemm_to_real(
-                        ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), assembly_mask=assembly_mask
+                    partsum += complex_gemm_to_real_with_mask(
+                        ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), mask=assembly_mask
                     ).astype(
                         accumulator_dtype
                     )  # cast data type
@@ -663,8 +566,8 @@ def btd_matmul(
         for j in range(max(0, i - 2), min(num_blocks, i + 3)):
             out_ij = out.blocks[i, j]
             for k in range(max(0, i - 1), min(num_blocks, i + 2)):
-                out_ij += complex_gemm_to_real(
-                    a_.blocks[i, k], b_.blocks[k, j], assembly_mask=assembly_mask
+                out_ij += complex_gemm_to_real_with_mask(
+                    a_.blocks[i, k], b_.blocks[k, j], mask=assembly_mask
                 )
 
             out_.blocks[i, j] = out_ij
@@ -674,11 +577,11 @@ def btd_matmul(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    out_.blocks[0, 0] += complex_gemm_to_real(
-        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    out_.blocks[0, 0] += complex_gemm_to_real_with_mask(
+        a_.blocks[1, 0], b_.blocks[0, 1], mask=assembly_mask
     )
-    out_.blocks[-1, -1] += complex_gemm_to_real(
-        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
+    out_.blocks[-1, -1] += complex_gemm_to_real_with_mask(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], mask=assembly_mask
     )
 
 
@@ -728,11 +631,11 @@ def btd_sandwich(
             for k in range(max(0, i - 2), min(num_blocks, i + 3)):
                 a_kj = a_.blocks[k, j]
                 for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    temp_result = complex_gemm_to_real(
-                        a_.blocks[i, m], b_.blocks[m, k], assembly_mask=assembly_mask
+                    temp_result = complex_gemm_to_real_with_mask(
+                        a_.blocks[i, m], b_.blocks[m, k], mask=assembly_mask
                     )
-                    out_ij += complex_gemm_to_real(
-                        temp_result, a_kj, assembly_mask=assembly_mask
+                    out_ij += complex_gemm_to_real_with_mask(
+                        temp_result, a_kj, mask=assembly_mask
                     )
 
             out_.blocks[i, j] = out_ij
@@ -742,58 +645,58 @@ def btd_sandwich(
 
     # Corrections accounting for the fact that the matrices should have
     # open ends.
-    temp1 = complex_gemm_to_real(
-        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    temp1 = complex_gemm_to_real_with_mask(
+        a_.blocks[1, 0], b_.blocks[0, 1], mask=assembly_mask
     )
-    temp2 = complex_gemm_to_real(
-        a_.blocks[0, 0], b_.blocks[1, 0], assembly_mask=assembly_mask
+    temp2 = complex_gemm_to_real_with_mask(
+        a_.blocks[0, 0], b_.blocks[1, 0], mask=assembly_mask
     )
-    temp3 = complex_gemm_to_real(
-        a_.blocks[1, 0], b_.blocks[0, 0], assembly_mask=assembly_mask
+    temp3 = complex_gemm_to_real_with_mask(
+        a_.blocks[1, 0], b_.blocks[0, 0], mask=assembly_mask
     )
     out_.blocks[0, 0] += (
-        complex_gemm_to_real(temp1, a_.blocks[0, 0], assembly_mask=assembly_mask)
-        + complex_gemm_to_real(temp2, a_.blocks[0, 1], assembly_mask=assembly_mask)
-        + complex_gemm_to_real(temp3, a_.blocks[0, 1], assembly_mask=assembly_mask)
+        complex_gemm_to_real_with_mask(temp1, a_.blocks[0, 0], mask=assembly_mask)
+        + complex_gemm_to_real_with_mask(temp2, a_.blocks[0, 1], mask=assembly_mask)
+        + complex_gemm_to_real_with_mask(temp3, a_.blocks[0, 1], mask=assembly_mask)
     )
-    temp4 = complex_gemm_to_real(
-        a_.blocks[1, 0], b_.blocks[0, 1], assembly_mask=assembly_mask
+    temp4 = complex_gemm_to_real_with_mask(
+        a_.blocks[1, 0], b_.blocks[0, 1], mask=assembly_mask
     )
-    out_.blocks[0, 1] += complex_gemm_to_real(
-        temp4, a_.blocks[0, 1], assembly_mask=assembly_mask
+    out_.blocks[0, 1] += complex_gemm_to_real_with_mask(
+        temp4, a_.blocks[0, 1], mask=assembly_mask
     )
-    temp5 = complex_gemm_to_real(
-        a_.blocks[1, 0], b_.blocks[1, 0], assembly_mask=assembly_mask
+    temp5 = complex_gemm_to_real_with_mask(
+        a_.blocks[1, 0], b_.blocks[1, 0], mask=assembly_mask
     )
-    out_.blocks[1, 0] += complex_gemm_to_real(
-        temp5, a_.blocks[0, 1], assembly_mask=assembly_mask
+    out_.blocks[1, 0] += complex_gemm_to_real_with_mask(
+        temp5, a_.blocks[0, 1], mask=assembly_mask
     )
 
-    temp6 = complex_gemm_to_real(
-        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
+    temp6 = complex_gemm_to_real_with_mask(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], mask=assembly_mask
     )
-    temp7 = complex_gemm_to_real(
-        a_.blocks[-1, -1], b_.blocks[-2, -1], assembly_mask=assembly_mask
+    temp7 = complex_gemm_to_real_with_mask(
+        a_.blocks[-1, -1], b_.blocks[-2, -1], mask=assembly_mask
     )
-    temp8 = complex_gemm_to_real(
-        a_.blocks[-2, -1], b_.blocks[-1, -1], assembly_mask=assembly_mask
+    temp8 = complex_gemm_to_real_with_mask(
+        a_.blocks[-2, -1], b_.blocks[-1, -1], mask=assembly_mask
     )
     out_.blocks[-1, -1] += (
-        complex_gemm_to_real(temp6, a_.blocks[-1, -1], assembly_mask=assembly_mask)
-        + complex_gemm_to_real(temp7, a_.blocks[-1, -2], assembly_mask=assembly_mask)
-        + complex_gemm_to_real(temp8, a_.blocks[-1, -2], assembly_mask=assembly_mask)
+        complex_gemm_to_real_with_mask(temp6, a_.blocks[-1, -1], mask=assembly_mask)
+        + complex_gemm_to_real_with_mask(temp7, a_.blocks[-1, -2], mask=assembly_mask)
+        + complex_gemm_to_real_with_mask(temp8, a_.blocks[-1, -2], mask=assembly_mask)
     )
-    temp9 = complex_gemm_to_real(
-        a_.blocks[-2, -1], b_.blocks[-1, -2], assembly_mask=assembly_mask
+    temp9 = complex_gemm_to_real_with_mask(
+        a_.blocks[-2, -1], b_.blocks[-1, -2], mask=assembly_mask
     )
-    out_.blocks[-1, -2] += complex_gemm_to_real(
-        temp9, a_.blocks[-1, -2], assembly_mask=assembly_mask
+    out_.blocks[-1, -2] += complex_gemm_to_real_with_mask(
+        temp9, a_.blocks[-1, -2], mask=assembly_mask
     )
-    temp10 = complex_gemm_to_real(
-        a_.blocks[-2, -1], b_.blocks[-2, -1], assembly_mask=assembly_mask
+    temp10 = complex_gemm_to_real_with_mask(
+        a_.blocks[-2, -1], b_.blocks[-2, -1], mask=assembly_mask
     )
-    out_.blocks[-2, -1] += complex_gemm_to_real(
-        temp10, a_.blocks[-1, -2], assembly_mask=assembly_mask
+    out_.blocks[-2, -1] += complex_gemm_to_real_with_mask(
+        temp10, a_.blocks[-1, -2], mask=assembly_mask
     )
 
 
@@ -1188,11 +1091,11 @@ def bd_matmul_distr(
                             k_b, j_b = k, j
                         try:
                             if partsum is None:
-                                partsum = complex_gemm_to_real(
+                                partsum = complex_gemm_to_real_with_mask(
                                     a_[i_a, k_a], b_[k_b, j_b], assembly_mask=assembly_mask
                                 )
                             else:
-                                partsum += complex_gemm_to_real(
+                                partsum += complex_gemm_to_real_with_mask(
                                     a_[i_a, k_a], b_[k_b, j_b], assembly_mask=assembly_mask
                                 )
                         except Exception as e:
@@ -1302,63 +1205,63 @@ def bd_sandwich_distr(
 
         # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
-            temp1 = complex_gemm_to_real(
-                a_[1, 0], b_[0, 1], assembly_mask=assembly_mask
+            temp1 = complex_gemm_to_real_with_mask(
+                a_[1, 0], b_[0, 1], mask=assembly_mask
             )
-            temp2 = complex_gemm_to_real(
-                a_[0, 0], b_[1, 0], assembly_mask=assembly_mask
+            temp2 = complex_gemm_to_real_with_mask(
+                a_[0, 0], b_[1, 0], mask=assembly_mask
             )
-            temp3 = complex_gemm_to_real(
-                a_[1, 0], b_[0, 0], assembly_mask=assembly_mask
+            temp3 = complex_gemm_to_real_with_mask(
+                a_[1, 0], b_[0, 0], mask=assembly_mask
             )
             out_[0, 0] += (
-                complex_gemm_to_real(temp1, a_[0, 0], assembly_mask=assembly_mask)
-                + complex_gemm_to_real(temp2, a_[0, 1], assembly_mask=assembly_mask)
-                + complex_gemm_to_real(temp3, a_[0, 1], assembly_mask=assembly_mask)
+                complex_gemm_to_real_with_mask(temp1, a_[0, 0], mask=assembly_mask)
+                + complex_gemm_to_real_with_mask(temp2, a_[0, 1], mask=assembly_mask)
+                + complex_gemm_to_real_with_mask(temp3, a_[0, 1], mask=assembly_mask)
             )
-            temp4 = complex_gemm_to_real(
-                a_[1, 0], b_[0, 1], assembly_mask=assembly_mask
+            temp4 = complex_gemm_to_real_with_mask(
+                a_[1, 0], b_[0, 1], mask=assembly_mask
             )
-            out_[0, 1] += complex_gemm_to_real(
-                temp4, a_[0, 1], assembly_mask=assembly_mask
+            out_[0, 1] += complex_gemm_to_real_with_mask(
+                temp4, a_[0, 1], mask=assembly_mask
             )
             if not out_.dsdbsparse.symmetry:
-                temp5 = complex_gemm_to_real(
-                    a_[1, 0], b_[1, 0], assembly_mask=assembly_mask
+                temp5 = complex_gemm_to_real_with_mask(
+                    a_[1, 0], b_[1, 0], mask=assembly_mask
                 )
-                out_[1, 0] += complex_gemm_to_real(
-                    temp5, a_[0, 1], assembly_mask=assembly_mask
+                out_[1, 0] += complex_gemm_to_real_with_mask(
+                    temp5, a_[0, 1], mask=assembly_mask
                 )
 
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
             m2 = a.num_blocks - 2
-            temp6 = complex_gemm_to_real(
-                a_[m2, m1], b_[m1, m2], assembly_mask=assembly_mask
+            temp6 = complex_gemm_to_real_with_mask(
+                a_[m2, m1], b_[m1, m2], mask=assembly_mask
             )
-            temp7 = complex_gemm_to_real(
-                a_[m1, m1], b_[m2, m1], assembly_mask=assembly_mask
+            temp7 = complex_gemm_to_real_with_mask(
+                a_[m1, m1], b_[m2, m1], mask=assembly_mask
             )
-            temp8 = complex_gemm_to_real(
-                a_[m2, m1], b_[m1, m1], assembly_mask=assembly_mask
+            temp8 = complex_gemm_to_real_with_mask(
+                a_[m2, m1], b_[m1, m1], mask=assembly_mask
             )
             out_[m1, m1] += (
-                complex_gemm_to_real(temp6, a_[m1, m1], assembly_mask=assembly_mask)
-                + complex_gemm_to_real(temp7, a_[m1, m2], assembly_mask=assembly_mask)
-                + complex_gemm_to_real(temp8, a_[m1, m2], assembly_mask=assembly_mask)
+                complex_gemm_to_real_with_mask(temp6, a_[m1, m1], mask=assembly_mask)
+                + complex_gemm_to_real_with_mask(temp7, a_[m1, m2], mask=assembly_mask)
+                + complex_gemm_to_real_with_mask(temp8, a_[m1, m2], mask=assembly_mask)
             )
-            temp9 = complex_gemm_to_real(
-                a_[m2, m1], b_[m1, m2], assembly_mask=assembly_mask
+            temp9 = complex_gemm_to_real_with_mask(
+                a_[m2, m1], b_[m1, m2], mask=assembly_mask
             )
-            out_[m1, m2] += complex_gemm_to_real(
-                temp9, a_[m1, m2], assembly_mask=assembly_mask
+            out_[m1, m2] += complex_gemm_to_real_with_mask(
+                temp9, a_[m1, m2], mask=assembly_mask
             )
             if not out_.dsdbsparse.symmetry:
-                temp10 = complex_gemm_to_real(
-                    a_[m2, m1], b_[m2, m1], assembly_mask=assembly_mask
+                temp10 = complex_gemm_to_real_with_mask(
+                    a_[m2, m1], b_[m2, m1], mask=assembly_mask
                 )
-                out_[m2, m1] += complex_gemm_to_real(
-                    temp10, a_[m1, m2], assembly_mask=assembly_mask
+                out_[m2, m1] += complex_gemm_to_real_with_mask(
+                    temp10, a_[m1, m2], mask=assembly_mask
                 )
 
     return out_

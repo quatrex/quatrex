@@ -897,7 +897,7 @@ class MixedPrecisionConfig(BaseModel):
     rgf_tmp_g_mask: Literal["fp32", "fp64"] = "fp64"
     rgf_tmp_w_mask: Literal["fp32", "fp64"] = "fp64"
 
-    assembly_mask: Literal["fp32", "fp64", "tf32"] | None = "fp64"
+    assembly_mask: str | None = "fp64"
     obc_precision_g: Literal["single", "double"] = "double"
     obc_precision_w: Literal["single", "double"] = "double"
     bandedge_precision: Literal["single", "double"] = "double"

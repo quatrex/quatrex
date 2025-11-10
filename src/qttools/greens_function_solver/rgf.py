@@ -235,6 +235,9 @@ class RGF(GFSolver):
             if return_retarded:
                 xr = a.__class__.zeros_like(a)
 
+        xl.data[:] = 0
+        xg.data[:] = 0
+
         # Perform the selected solve by batches.
         for i in range(len(batches_sizes)):
             stack_slice = slice(int(batches_slices[i]), int(batches_slices[i + 1]), 1)
@@ -380,12 +383,15 @@ class RGF(GFSolver):
                 )
 
             # We need to write the last diagonal blocks to the output.
-            xl_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
+
+            tmp1 = 0.5 * (
                 xl_diag_blocks[-1] - xl_diag_blocks[-1].conj().swapaxes(-2, -1)
-            ).astype(in_type)
-            xg_.blocks[a.num_blocks - 1, a.num_blocks - 1] = 0.5 * (
+            )
+            tmp2 = 0.5 * (
                 xg_diag_blocks[-1] - xg_diag_blocks[-1].conj().swapaxes(-2, -1)
-            ).astype(in_type)
+            )
+            xl_.blocks[a.num_blocks - 1, a.num_blocks - 1] = tmp1.astype(in_type)
+            xg_.blocks[a.num_blocks - 1, a.num_blocks - 1] = tmp2.astype(in_type)
             if return_retarded:
                 xr_.blocks[a.num_blocks - 1, a.num_blocks - 1] = (
                     xr_diag_blocks[-1]
@@ -457,6 +463,13 @@ class RGF(GFSolver):
                 )
                 xl_ij = -temp_2x - xl_ij_part1 + xl_ij_part2
 
+                tmp1 = 0.5 * (
+                    xl_diag_blocks[-1] - xl_diag_blocks[-1].conj().swapaxes(-2, -1)
+                )
+                tmp2 = 0.5 * (
+                    xg_diag_blocks[-1] - xg_diag_blocks[-1].conj().swapaxes(-2, -1)
+                )
+
                 xl_.blocks[i, j] = (xl_ij).astype(in_type)
                 if not xl_.symmetry:
                     xl_.blocks[j, i] = (-xl_ij.conj().swapaxes(-2, -1)).astype(in_type)
@@ -465,9 +478,11 @@ class RGF(GFSolver):
                     temp_2x, a_ij_dagger_xr_ii_dagger, mask=self.mm_mask
                 )
                 xl_diag_blocks[i] = xl_ii + xl_diag_part + temp_1x
-                xl_.blocks[i, i] = 0.5 * (
+
+                tmp3 = 0.5 * (
                     xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
-                ).astype(in_type)
+                )
+                xl_.blocks[i, i] = tmp3.astype(in_type)
 
                 temp_1x_part1_g = complex_gemm_to_real_with_mask(
                     xr_ii_a_ij_xr_jj_a_ji, xg_ii, mask=self.mm_mask
@@ -505,9 +520,11 @@ class RGF(GFSolver):
                     temp_2x, a_ij_dagger_xr_ii_dagger, mask=self.mm_mask
                 )
                 xg_diag_blocks[i] = xg_ii + xg_diag_part + temp_1x
-                xg_.blocks[i, i] = 0.5 * (
+
+                tmp4 = 0.5 * (
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
-                ).astype(in_type)
+                )
+                xg_.blocks[i, i] = tmp4.astype(in_type)
 
                 if return_current:
                     a_ji_xr_ii_curr = complex_gemm_to_real_with_mask(

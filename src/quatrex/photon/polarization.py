@@ -618,7 +618,7 @@ class PiPhoton(ScatteringSelfEnergy):
             pi_lesser.symmetrize(xp.subtract)
 
         # Discard the real part (polarization should be purely imaginary)
-        pi_lesser.data.real = 0
+        pi_lesser.data.real *= 0
 
         # Derive π^> from energy symmetry: π^>(E) = -π^<(-E)†
         # This automatically enforces the bosonic energy symmetry relation

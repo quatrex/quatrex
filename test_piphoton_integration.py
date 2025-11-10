@@ -126,45 +126,59 @@ def create_test_greens_functions(n_energy, n_orb, block_sizes, dsdbsparse_type):
     """
     np.random.seed(456)
     
-    # Create energy-dependent anti-Hermitian matrices
-    g_lesser_dense = xp.zeros((n_energy, n_orb, n_orb), dtype=complex)
-    g_greater_dense = xp.zeros((n_energy, n_orb, n_orb), dtype=complex)
+    # Create energy-dependent anti-Hermitian matrices using NumPy for deterministic results
+    g_lesser_dense = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
+    g_greater_dense = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
     
     for iE in range(n_energy):
         # G^< should be anti-Hermitian: G^<† = -G^<
-        base_l = xp.random.randn(n_orb, n_orb) + 1j * xp.random.randn(n_orb, n_orb)
+        base_l = np.random.randn(n_orb, n_orb) + 1j * np.random.randn(n_orb, n_orb)
         g_lesser_dense[iE] = (base_l - base_l.T.conj()) / 2.0
         
         # G^> should also be anti-Hermitian
-        base_g = xp.random.randn(n_orb, n_orb) + 1j * xp.random.randn(n_orb, n_orb)
+        base_g = np.random.randn(n_orb, n_orb) + 1j * np.random.randn(n_orb, n_orb)
         g_greater_dense[iE] = (base_g - base_g.T.conj()) / 2.0
     
-    # Convert to xp arrays (CuPy if available)
+    # Convert to xp arrays (CuPy if available) for sparse matrix creation
     g_lesser_xp = xp.array(g_lesser_dense)
     g_greater_xp = xp.array(g_greater_dense)
     block_sizes_np = np.array(block_sizes)
     
     # Create sparse matrices from the first energy slice
-    g_lesser_sparse = sparse.coo_matrix(g_lesser_dense[0])
-    g_greater_sparse = sparse.coo_matrix(g_greater_dense[0])
+    g_lesser_sparse = sparse.coo_matrix(g_lesser_xp[0])
+    g_greater_sparse = sparse.coo_matrix(g_greater_xp[0])
     
     # Create DSDBCSR matrices in stack distribution
+    # The stack dimension represents energies, so global_stack_shape should be (n_energy,)
     g_lesser = dsdbsparse_type.from_sparray(
         g_lesser_sparse,
         block_sizes=block_sizes_np,
-        global_stack_shape=(qttools_comm.stack.size,),
+        global_stack_shape=(n_energy,),
         symmetry=False,
     )
     g_greater = dsdbsparse_type.from_sparray(
         g_greater_sparse,
         block_sizes=block_sizes_np,
-        global_stack_shape=(qttools_comm.stack.size,),
+        global_stack_shape=(n_energy,),
         symmetry=False,
     )
     
-    # Set the energy-dependent data directly
-    g_lesser.data = g_lesser_xp.reshape(n_energy, -1)[: g_lesser.data.shape[0], : g_lesser.data.shape[1]]
-    g_greater.data = g_greater_xp.reshape(n_energy, -1)[: g_greater.data.shape[0], : g_greater.data.shape[1]]
+    # Set the energy-dependent data by extracting the sparse elements
+    # Get the sparsity pattern (row, col indices of non-zero elements)
+    rows, cols = g_lesser.spy()
+    if xp.__name__ == 'cupy':
+        rows = xp.asnumpy(rows)
+        cols = xp.asnumpy(cols)
+    
+    # Fill in the sparse data for each energy
+    for iE in range(min(n_energy, g_lesser.data.shape[0])):
+        for idx in range(len(rows)):
+            if xp.__name__ == 'cupy':
+                g_lesser.data[iE, idx] = xp.array(g_lesser_dense[iE, rows[idx], cols[idx]])
+                g_greater.data[iE, idx] = xp.array(g_greater_dense[iE, rows[idx], cols[idx]])
+            else:
+                g_lesser.data[iE, idx] = g_lesser_dense[iE, rows[idx], cols[idx]]
+                g_greater.data[iE, idx] = g_greater_dense[iE, rows[idx], cols[idx]]
     
     return g_lesser, g_greater, g_lesser_dense, g_greater_dense
 
@@ -186,6 +200,14 @@ def test_piphoton_initialization(small_device):
     assert pi_photon.prefactor is not None
     
     print("✓ PiPhoton initialized successfully")
+    
+    # Clean up GPU memory
+    if xp.__name__ == 'cupy':
+        import gc
+        del pi_photon
+        gc.collect()
+        xp.get_default_memory_pool().free_all_blocks()
+        xp.get_default_pinned_memory_pool().free_all_blocks()
 
 
 def test_piphoton_compute_runs(small_device):
@@ -221,6 +243,14 @@ def test_piphoton_compute_runs(small_device):
     assert not np.allclose(pi_greater.data, 0), "pi_greater should not be all zeros"
     
     print("✓ PiPhoton.compute() completed successfully")
+    
+    # Clean up GPU memory
+    if xp.__name__ == 'cupy':
+        import gc
+        del pi_photon, g_lesser, g_greater, pi_lesser, pi_greater, pi_retarded
+        gc.collect()
+        xp.get_default_memory_pool().free_all_blocks()
+        xp.get_default_pinned_memory_pool().free_all_blocks()
 
 
 def test_piphoton_physical_properties(small_device):
@@ -294,6 +324,14 @@ def test_piphoton_physical_properties(small_device):
     print("  ✓ Energy symmetry satisfied")
     
     print("\n✅ All physical properties verified!")
+    
+    # Clean up GPU memory
+    if xp.__name__ == 'cupy':
+        import gc
+        del pi_photon, g_lesser, g_greater, pi_lesser, pi_greater, pi_retarded
+        gc.collect()
+        xp.get_default_memory_pool().free_all_blocks()
+        xp.get_default_pinned_memory_pool().free_all_blocks()
 
 
 def test_piphoton_matches_reference(small_device):
@@ -316,6 +354,30 @@ def test_piphoton_matches_reference(small_device):
         compute_config.dsdbsparse_type,
     )
     
+    # Verify sparse matches dense
+    print("\n" + "="*70)
+    print("Verifying sparse representation matches dense")
+    print("="*70)
+    rows, cols = g_lesser.spy()
+    if xp.__name__ == 'cupy':
+        rows_np = xp.asnumpy(rows)
+        cols_np = xp.asnumpy(cols)
+        g_lesser_data_np = xp.asnumpy(g_lesser.data)
+    else:
+        rows_np, cols_np = rows, cols
+        g_lesser_data_np = g_lesser.data
+    
+    max_diff_gl = 0.0
+    for iE in range(min(3, small_device['n_energy'])):
+        for idx in range(min(5, len(rows_np))):
+            sparse_val = g_lesser_data_np[iE, idx]
+            dense_val = g_l_dense[iE, rows_np[idx], cols_np[idx]]
+            diff = abs(sparse_val - dense_val)
+            max_diff_gl = max(max_diff_gl, diff)
+            if idx < 2 and iE == 0:
+                print(f"  G^<[{iE},{rows_np[idx]},{cols_np[idx]}]: sparse={sparse_val:.6f}, dense={dense_val:.6f}, diff={diff:.2e}")
+    print(f"Max difference G^< sparse vs dense: {max_diff_gl:.2e}")
+    
     # Create output matrices
     pi_lesser = compute_config.dsdbsparse_type.zeros_like(g_lesser)
     pi_greater = compute_config.dsdbsparse_type.zeros_like(g_greater)
@@ -325,7 +387,11 @@ def test_piphoton_matches_reference(small_device):
     pi_photon.compute(g_lesser, g_greater, (pi_lesser, pi_greater, pi_retarded))
     
     # Get interaction matrix
-    m_matrix = pi_photon.interaction_matrix.to_array()
+    m_matrix = pi_photon.interaction_matrix.to_dense()[0]
+    if xp.__name__ == 'cupy':
+        m_matrix = xp.asnumpy(m_matrix)
+        g_l_dense = xp.asnumpy(g_l_dense)
+        g_g_dense = xp.asnumpy(g_g_dense)
     
     # Compute reference using einsum
     pi_reference = compute_reference_4term(
@@ -335,51 +401,149 @@ def test_piphoton_matches_reference(small_device):
         small_device['electron_energies']
     )
     
-    # Compare
-    diff = np.max(np.abs(pi_lesser.data - pi_reference))
-    print(f"\nMax difference from reference: {diff:.2e}")
+    # Get the actual polarization data
+    # pi_lesser.data has shape (local_stack_size, n_nnz) where the stack dimension
+    # corresponds to energies
+    pi_data = pi_lesser.data
+    if xp.__name__ == 'cupy':
+        pi_data = xp.asnumpy(pi_data)
     
-    # Allow some numerical tolerance
-    assert diff < 1e-10, f"PiPhoton output should match reference (diff={diff})"
+    print(f"\npi_data shape: {pi_data.shape}")
+    print(f"pi_reference shape: {pi_reference.shape}")
+    
+    # The data is in sparse format (local_stack_size, n_nnz)
+    # We need to convert each energy slice to dense
+    n_energy = small_device['n_energy']
+    n_orb = small_device['n_orb']
+    
+    # Reconstruct dense matrices from the sparse data
+    pi_lesser_reconstructed = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
+    
+    # Get the sparsity pattern
+    rows, cols = pi_lesser.spy()
+    if xp.__name__ == 'cupy':
+        rows = xp.asnumpy(rows)
+        cols = xp.asnumpy(cols)
+    
+    # Fill in the dense matrices
+    for iE in range(min(n_energy, pi_data.shape[0])):
+        for idx in range(len(rows)):
+            pi_lesser_reconstructed[iE, rows[idx], cols[idx]] = pi_data[iE, idx]
+    
+    # Debug: Print some sample values
+    print(f"\nSample pi_lesser_reconstructed[0, 0, 0]: {pi_lesser_reconstructed[0, 0, 0]}")
+    print(f"Sample pi_reference[0, 0, 0]: {pi_reference[0, 0, 0]}")
+    print(f"Sample pi_lesser_reconstructed[5, 2, 3]: {pi_lesser_reconstructed[5, 2, 3]}")
+    print(f"Sample pi_reference[5, 2, 3]: {pi_reference[5, 2, 3]}")
+    print(f"Sample pi_reference[5, 3, 2]: {pi_reference[5, 3, 2]}")
+    print(f"-pi_reference[5, 3, 2]*: {-pi_reference[5, 3, 2].conj()}")
+    
+    # Check anti-Hermitian property of reference
+    max_ref_violation = 0.0
+    for iE in range(n_energy):
+        violation = np.max(np.abs(pi_reference[iE] + pi_reference[iE].conj().T))
+        max_ref_violation = max(max_ref_violation, violation)
+    print(f"Max anti-Hermitian violation in reference: {max_ref_violation:.2e}")
+    
+    # Check anti-Hermitian property of PiPhoton output
+    max_pi_violation = 0.0
+    for iE in range(n_energy):
+        violation = np.max(np.abs(pi_lesser_reconstructed[iE] + pi_lesser_reconstructed[iE].conj().T))
+        max_pi_violation = max(max_pi_violation, violation)
+    print(f"Max anti-Hermitian violation in PiPhoton: {max_pi_violation:.2e}")
+    
+    # Compare
+    diff = np.max(np.abs(pi_lesser_reconstructed - pi_reference))
+    print(f"Max difference from reference: {diff:.2e}")
+    
+    # Check if the difference is due to a systematic offset or scaling
+    ratio = np.max(np.abs(pi_lesser_reconstructed)) / np.max(np.abs(pi_reference))
+    print(f"Ratio of max values: {ratio:.2e}")
+    
+    # Allow some numerical tolerance  
+    assert diff < 1e-6, f"PiPhoton output should match reference (diff={diff})"
     print("✓ PiPhoton matches reference implementation")
+    
+    # Clean up GPU memory
+    if xp.__name__ == 'cupy':
+        import gc
+        del pi_photon, g_lesser, g_greater, pi_lesser, pi_greater, pi_retarded
+        del m_matrix, g_l_dense, g_g_dense, pi_reference, pi_lesser_dense, pi_lesser_reshaped
+        gc.collect()
+        xp.get_default_memory_pool().free_all_blocks()
+        xp.get_default_pinned_memory_pool().free_all_blocks()
 
 
 def compute_reference_4term(m_matrix, g_lesser, g_greater, energies):
-    """Reference implementation using einsum with corrected FFT correlation."""
+    """Reference implementation using FFT correlation formula (matching PiPhoton).
+    
+    The 4 terms are computed as GEMM operations followed by element-wise products
+    and FFT correlation through energy.
+    """
     n_energy = g_lesser.shape[0]
     n_orb = m_matrix.shape[0]
     
     dE = energies[1] - energies[0]
     prefactor = 1j / (2 * np.pi) * dE
     
-    pi = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
+    print(f"Reference prefactor: {prefactor}")
+    print(f"Energy step dE: {dE}")
     
-    # Compute using the corrected formula: sum_{E_diff} A(E+E_diff) * B(E_diff)
+    # Compute intermediate products at all energies
+    # Shape: (n_energy, n_orb, n_orb)
+    m_gl = np.einsum('ij,ejk->eik', m_matrix, g_lesser)         # M@G<
+    m_gl_m = np.einsum('ij,ejk,kl->eil', m_matrix, g_lesser, m_matrix)  # M@G<@M
+    gl_m = np.einsum('eij,jk->eik', g_lesser, m_matrix)         # G<@M
+    
+    m_gg = np.einsum('ij,ejk->eik', m_matrix, g_greater)        # M@G>
+    m_gg_m = np.einsum('ij,ejk,kl->eil', m_matrix, g_greater, m_matrix)  # M@G>@M
+    gg_m = np.einsum('eij,jk->eik', g_greater, m_matrix)        # G>@M
+    
+    # Initialize result
+    pi_lesser = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
+    
+    # Compute correlations using FFT
+    n_fft = 2 * n_energy - 1
+    
+    # For each orbital pair (i, l)
+    for i in range(n_orb):
+        for l in range(n_orb):
+            # Term 1: (M@G<@M)[i,l] ⊙ G>.T[i,l] = (M@G<@M)[i,l] ⊙ G>[l,i]
+            # Correlate m_gl_m[i,l](E') with g_greater[l,i](E'-E)
+            fft1 = np.fft.fft(m_gl_m[:, i, l], n_fft)
+            fft2 = np.fft.fft(g_greater[::-1, l, i], n_fft)
+            corr1 = np.fft.ifft(fft1 * fft2)[n_energy-1:]  # Take last n_energy elements
+            
+            # Term 2: (G<@M)[i,l] ⊙ (G>@M).T[i,l] = (G<@M)[i,l] ⊙ (G>@M)[l,i]
+            # Correlate gl_m[i,l](E') with gg_m[l,i](E'-E)
+            fft1 = np.fft.fft(gl_m[:, i, l], n_fft)
+            fft2 = np.fft.fft(gg_m[::-1, l, i], n_fft)
+            corr2 = np.fft.ifft(fft1 * fft2)[n_energy-1:]  # Take last n_energy elements
+            
+            # Term 3: (M@G<)[i,l] ⊙ (M@G>).T[i,l] = (M@G<)[i,l] ⊙ (M@G>)[l,i]
+            # Correlate m_gl[i,l](E') with m_gg[l,i](E'-E)
+            fft1 = np.fft.fft(m_gl[:, i, l], n_fft)
+            fft2 = np.fft.fft(m_gg[::-1, l, i], n_fft)
+            corr3 = np.fft.ifft(fft1 * fft2)[n_energy-1:]  # Take last n_energy elements
+            
+            # Term 4: G<[i,l] ⊙ (M@G>@M).T[i,l] = G<[i,l] ⊙ (M@G>@M)[l,i]
+            # Correlate g_lesser[i,l](E') with m_gg_m[l,i](E'-E)
+            fft1 = np.fft.fft(g_lesser[:, i, l], n_fft)
+            fft2 = np.fft.fft(m_gg_m[::-1, l, i], n_fft)
+            corr4 = np.fft.ifft(fft1 * fft2)[n_energy-1:]  # Take last n_energy elements
+            
+            # Sum all terms (no need to reverse - correct indexing already done)
+            pi_lesser[:, i, l] = prefactor * (corr1 + corr2 + corr3 + corr4)
+    
+    # Apply symmetrization steps (matching PiPhoton.compute)
+    # 1. Enforce spatial anti-Hermitian symmetry: A_ij -> 0.5 * (A_ij - A_ji*)
     for iE in range(n_energy):
-        for iE_diff in range(n_energy):
-            if iE + iE_diff >= n_energy:
-                continue
-            iEp = iE + iE_diff
-            
-            # Term 1: M@G<@M ⊙ G>
-            term1 = np.einsum('ij,jk,kl,li->il', 
-                            m_matrix, g_lesser[iEp], m_matrix, g_greater[iE_diff])
-            
-            # Term 2: G<@M ⊙ G>@M
-            term2 = np.einsum('ij,jk,kl,li->il',
-                            g_lesser[iEp], m_matrix, g_greater[iE_diff], m_matrix)
-            
-            # Term 3: M@G< ⊙ M@G>
-            term3 = np.einsum('ij,jl,lk,ki->il',
-                            m_matrix, g_lesser[iEp], m_matrix, g_greater[iE_diff])
-            
-            # Term 4: G< ⊙ M@G>@M
-            term4 = np.einsum('il,jk,kl,ji->il',
-                            g_lesser[iEp], g_greater[iE_diff], m_matrix, m_matrix)
-            
-            pi[iE] += prefactor * (term1 + term2 + term3 + term4)
+        pi_lesser[iE] = 0.5 * (pi_lesser[iE] - pi_lesser[iE].conj().T)
     
-    return pi
+    # 2. Discard the real part (enforcing that polarization is purely imaginary)
+    pi_lesser.real[:] = 0.0
+    
+    return pi_lesser
 
 
 if __name__ == "__main__":

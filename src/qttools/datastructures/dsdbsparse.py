@@ -785,6 +785,24 @@ class DSDBSparse(ABC):
         ...
 
     @abstractmethod
+    def transpose(self, out: "DSDBSparse | None" = None) -> "DSDBSparse | None":
+        """Performs a spatial transpose of the matrix (swaps rows and columns).
+
+        Parameters
+        ----------
+        out : DSDBSparse, optional
+            The output matrix to store the transpose. If None, the
+            transpose is performed in-place. Default is None.
+
+        Returns
+        -------
+        DSDBSparse | None
+            The transposed matrix if out is provided, None otherwise.
+
+        """
+        ...
+
+    @abstractmethod
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
 

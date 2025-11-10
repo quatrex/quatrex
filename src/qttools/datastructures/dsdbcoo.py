@@ -750,6 +750,114 @@ class DSDBCOO(DSDBSparse):
             cols[i] += rank_offset[i]
         return xp.hstack(rows), xp.hstack(cols)
 
+    @profiler.profile(level="api")
+    def transpose(self, out: "DSDBCOO | None" = None) -> "DSDBCOO | None":
+        """Performs a spatial transpose of the matrix (swaps rows and columns).
+
+        Parameters
+        ----------
+        out : DSDBCOO, optional
+            The output matrix to store the transpose. If provided, the
+            transpose is written to this matrix. Must be a properly initialized
+            DSDBCOO matrix with the correct transposed sparsity pattern.
+            If None, raises ValueError. Default is None.
+
+        Returns
+        -------
+        DSDBCOO | None
+            The transposed matrix if out is provided, otherwise None.
+
+        """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError("Cannot transpose when distributed through nnz.")
+
+        if self.symmetry:
+            # For symmetric matrices, transpose is just conjugation
+            if out is None:
+                raise ValueError("out parameter required for transpose of symmetric matrix")
+            out.data[:] = self.symmetry_op(self.data)
+            return out
+
+        # Compute transpose indices if not cached
+        if not hasattr(self, "_inds_bcoo2bcoo_t"):
+            # Transpose.
+            rows_t, cols_t = self.cols, self.rows
+
+            # Canonical ordering of the transpose.
+            inds_bcoo2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcoo2canonical_t]
+            canonical_cols_t = cols_t[inds_bcoo2canonical_t]
+
+            # Compute index for sorting the transpose by block.
+            inds_canonical2bcoo_t = dsdbcoo_kernels.compute_block_sort_index(
+                canonical_rows_t, canonical_cols_t, self.local_block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcoo2bcoo_t = inds_bcoo2canonical_t[inds_canonical2bcoo_t]
+
+            # Cache the necessary objects.
+            self._inds_bcoo2bcoo_t = inds_bcoo2bcoo_t
+            # Also cache the transposed rows/cols
+            self._rows_t = rows_t[inds_bcoo2bcoo_t]
+            self._cols_t = cols_t[inds_bcoo2bcoo_t]
+
+        if out is None:
+            raise ValueError("out parameter is required for transpose operation")
+        
+        # Verify out has the correct structure
+        if not isinstance(out, DSDBCOO):
+            raise TypeError("out must be a DSDBCOO matrix")
+        
+        # Update the sparsity structure of the output matrix
+        # Need to reinitialize to update internal caches
+        out.rows = self._rows_t.copy()
+        out.cols = self._cols_t.copy()
+        
+        # Recompute diagonal indices for the transposed matrix
+        out._diag_inds = xp.where(out.rows == out.cols)[0]
+        out._diag_value_inds = out.rows[out._diag_inds]
+        ranks = dsdbsparse_kernels.find_ranks(out.nnz_section_offsets, out._diag_inds)
+        
+        if not any(ranks == comm.stack.rank):
+            out._diag_inds_nnz = None
+            out._diag_value_inds_nnz = None
+        else:
+            out._diag_inds_nnz = (
+                out._diag_inds[ranks == comm.stack.rank]
+                - out.nnz_section_offsets[comm.stack.rank]
+            )
+            out._diag_value_inds_nnz = (
+                out._diag_value_inds[ranks == comm.stack.rank]
+                - out._diag_value_inds[ranks == comm.stack.rank][0]
+            )
+        
+        out.rows_nnz = (
+            out.rows[
+                out.nnz_section_offsets[comm.stack.rank] : out.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + out.global_block_offset
+        )
+        out.cols_nnz = (
+            out.cols[
+                out.nnz_section_offsets[comm.stack.rank] : out.nnz_section_offsets[
+                    comm.stack.rank + 1
+                ]
+            ]
+            + out.global_block_offset
+        )
+        
+        # Transpose the data values
+        data_in = self.data.reshape(-1, self.data.shape[-1])
+        data_out = out.data.reshape(-1, out.data.shape[-1])
+        for stack_idx in range(data_in.shape[0]):
+            data_out[stack_idx] = data_in[stack_idx, self._inds_bcoo2bcoo_t]
+        
+        return out
+
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
 

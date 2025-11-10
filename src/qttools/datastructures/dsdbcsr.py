@@ -669,6 +669,86 @@ class DSDBCSR(DSDBSparse):
         return self if copy else None
 
     @profiler.profile(level="api")
+    def transpose(self, out: "DSDBCSR | None" = None) -> "DSDBCSR | None":
+        """Performs a spatial transpose of the matrix (swaps rows and columns).
+
+        Parameters
+        ----------
+        out : DSDBCSR, optional
+            The output matrix to store the transpose. If provided, the
+            transpose is written to this matrix. If None, a new matrix
+            is returned. Default is None.
+
+        Returns
+        -------
+        DSDBCSR | None
+            The transposed matrix if out is provided, otherwise None.
+
+        """
+        if self.distribution_state == "nnz":
+            raise NotImplementedError("Cannot transpose when distributed through nnz.")
+
+        if self.symmetry:
+            # For symmetric matrices, transpose is just conjugation
+            if out is None:
+                raise ValueError("out parameter required for transpose of symmetric matrix")
+            out.data[:] = self.symmetry_op(self.data)
+            return out
+
+        # Compute transpose indices if not cached
+        if not (
+            hasattr(self, "_inds_bcsr2bcsr_t")
+            and hasattr(self, "_rowptr_map_t")
+            and hasattr(self, "_cols_t")
+        ):
+            # These indices are sorted by block-row and -column.
+            rows, cols = self.spy()
+
+            # Transpose.
+            rows_t, cols_t = cols, rows
+
+            # Canonical ordering of the transpose.
+            inds_bcsr2canonical_t = xp.lexsort(xp.vstack((cols_t, rows_t)))
+            canonical_rows_t = rows_t[inds_bcsr2canonical_t]
+            canonical_cols_t = cols_t[inds_bcsr2canonical_t]
+
+            # Compute index for sorting the transpose by block and the
+            # transpose rowptr map.
+            inds_canonical2bcsr_t, rowptr_map_t = dsdbcsr_kernels.compute_rowptr_map(
+                canonical_rows_t, canonical_cols_t, self.block_sizes
+            )
+
+            # Mapping directly from original ordering to transpose
+            # block-ordering is achieved by chaining the two mappings.
+            inds_bcsr2bcsr_t = inds_bcsr2canonical_t[inds_canonical2bcsr_t]
+
+            # Cache the necessary objects.
+            self._inds_bcsr2bcsr_t = inds_bcsr2bcsr_t
+            self._rowptr_map_t = rowptr_map_t
+            self._cols_t = cols_t[self._inds_bcsr2bcsr_t]
+
+        # Transpose the data
+        data_in = self.data.reshape(-1, self.data.shape[-1])
+        
+        if out is None:
+            raise ValueError("out parameter is required for transpose operation")
+        
+        # Verify out has the correct structure
+        if not isinstance(out, DSDBCSR):
+            raise TypeError("out must be a DSDBCSR matrix")
+        
+        # Update the sparsity structure of the output matrix
+        out.cols = self._cols_t.copy()
+        out.rowptr_map = self._rowptr_map_t.copy()
+        
+        # Transpose the data values
+        data_out = out.data.reshape(-1, out.data.shape[-1])
+        for stack_idx in range(data_in.shape[0]):
+            data_out[stack_idx] = data_in[stack_idx, self._inds_bcsr2bcsr_t]
+        
+        return out
+
+    @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix.
 

@@ -59,12 +59,19 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 
+    Computes: c[E] = ∫ a(E') b(E'-E) dE' = sum_{E_diff} a(E+E_diff) * b(E_diff)
+    
+    This is implemented as:
+    1. Reverse b in the first dimension (energy)
+    2. Compute FFT convolution with zero-padding to size 2*ne-1
+    3. Take the last ne elements of the result
+
     Parameters
     ----------
     a : NDArray
-        First array.
+        First array (energy dimension is axis 0).
     b : NDArray
-        Second array.
+        Second array (energy dimension is axis 0).
 
     Returns
     -------
@@ -73,9 +80,11 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
 
     """
     n = a.shape[0] + b.shape[0] - 1
+    ne = a.shape[0]
     a_fft = xp.fft.fft(a, n, axis=0)
     b_fft = xp.fft.fft(b[::-1], n, axis=0)
-    return xp.fft.ifft(a_fft * b_fft, axis=0)
+    corr_full = xp.fft.ifft(a_fft * b_fft, axis=0)
+    return corr_full[ne-1:]  # Take last ne elements
 
 
 class PiPhoton(ScatteringSelfEnergy):
@@ -519,6 +528,10 @@ class PiPhoton(ScatteringSelfEnergy):
                 ne = g_lesser.data.shape[0]
 
                 # Compute all 4 terms using GEMM + spatial transpose:
+                # Correlation formula: c[E] = ∫ f(E') g(E'-E) dE' = sum_{E_diff} f(E+E_diff) * g(E_diff)
+                # FFT implementation: ifft(fft(f) * fft(g[::-1]))[ne-1:]
+                # where g is reversed in energy and we take the last ne elements
+                #
                 # Term 1: (M@G<@M)[i,l](E') ⊙ G>.T[i,l](E'-E) = (M@G<@M)[i,l](E') ⊙ G>[l,i](E'-E)
                 # Term 2: (G<@M)[i,l](E') ⊙ (G>@M).T[i,l](E'-E) = (G<@M)[i,l](E') ⊙ (G>@M)[l,i](E'-E)
                 # Term 3: (M@G<)[i,l](E') ⊙ (M@G>).T[i,l](E'-E) = (M@G<)[i,l](E') ⊙ (M@G>)[l,i](E'-E)
@@ -526,32 +539,37 @@ class PiPhoton(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    # Term 1: correlate (M@G<@M)[i,l] with G>.T[i,l] = G>[l,i]
+                    # Term 1: correlate (M@G<@M)[i,l] with G>[l,i]
+                    # Note: g_greater_T already reversed in energy ([::-1]) for correlation
                     term1_fft = xp.fft.fft(m_gl_m.data[:, batch].T, n, axis=1)
                     g_T_fft = xp.fft.fft(g_greater_T.data[::-1, batch].T, n, axis=1)
                     corr1 = xp.multiply(term1_fft, g_T_fft)
-                    result1 = self.prefactor * xp.fft.ifft(corr1, axis=1)[:, :ne]
+                    result1_full = xp.fft.ifft(corr1, axis=1)
+                    result1 = self.prefactor * result1_full[:, ne-1:]  # Take last ne elements
                     
-                    # Term 2: correlate (G<@M)[i,l] with (G>@M).T[i,l] = (G>@M)[l,i]
+                    # Term 2: correlate (G<@M)[i,l] with (G>@M)[l,i]
                     term2_fft = xp.fft.fft(gl_m.data[:, batch].T, n, axis=1)
                     gg_m_T_fft = xp.fft.fft(gg_m_T.data[::-1, batch].T, n, axis=1)
                     corr2 = xp.multiply(term2_fft, gg_m_T_fft)
-                    result2 = self.prefactor * xp.fft.ifft(corr2, axis=1)[:, :ne]
+                    result2_full = xp.fft.ifft(corr2, axis=1)
+                    result2 = self.prefactor * result2_full[:, ne-1:]  # Take last ne elements
                     
-                    # Term 3: correlate (M@G<)[i,l] with (M@G>).T[i,l] = (M@G>)[l,i]
+                    # Term 3: correlate (M@G<)[i,l] with (M@G>)[l,i]
                     term3_fft = xp.fft.fft(m_gl.data[:, batch].T, n, axis=1)
                     m_gg_T_fft = xp.fft.fft(m_gg_T.data[::-1, batch].T, n, axis=1)
                     corr3 = xp.multiply(term3_fft, m_gg_T_fft)
-                    result3 = self.prefactor * xp.fft.ifft(corr3, axis=1)[:, :ne]
+                    result3_full = xp.fft.ifft(corr3, axis=1)
+                    result3 = self.prefactor * result3_full[:, ne-1:]  # Take last ne elements
                     
-                    # Term 4: correlate G<[i,l] with (M@G>@M).T[i,l] = (M@G>@M)[l,i]
+                    # Term 4: correlate G<[i,l] with (M@G>@M)[l,i]
                     term4_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
                     m_gg_m_T_fft = xp.fft.fft(m_gg_m_T.data[::-1, batch].T, n, axis=1)
                     corr4 = xp.multiply(term4_fft, m_gg_m_T_fft)
-                    result4 = self.prefactor * xp.fft.ifft(corr4, axis=1)[:, :ne]
+                    result4_full = xp.fft.ifft(corr4, axis=1)
+                    result4 = self.prefactor * result4_full[:, ne-1:]  # Take last ne elements
                     
-                    # Sum all 4 terms and reverse energy axis (FFT correlation gives reversed order)
-                    pi_lesser.data[..., batch] += (result1 + result2 + result3 + result4)[:, ::-1].T
+                    # Sum all 4 terms (no need to reverse - extraction from [ne-1:] gives correct order)
+                    pi_lesser.data[..., batch] += (result1 + result2 + result3 + result4).T
 
         synchronize_device()
         t_polarization_end = time.perf_counter()

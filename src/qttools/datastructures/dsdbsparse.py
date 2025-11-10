@@ -1166,10 +1166,16 @@ class _DStackView:
         shape = self._dsdbsparse.shape
         stack_size = []
         for i, s in enumerate(stack_index):
-            assert isinstance(s, slice)
-            start = s.start if s.start is not None else 0
-            stop = s.stop if s.stop is not None else shape[i]
-            stack_size.append(stop - start)
+            if isinstance(s, slice):
+                start = s.start if s.start is not None else 0
+                stop = s.stop if s.stop is not None else shape[i]
+                stack_size.append(stop - start)
+            elif isinstance(s, int):
+                stack_size.append(1)
+            else:
+                raise IndexError(
+                    f"Expected slice or int in stack index but got {type(s)} ({s=})."
+                )
         self.shape = tuple(stack_size) + shape[-2:]
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:

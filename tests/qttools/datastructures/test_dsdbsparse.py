@@ -493,6 +493,197 @@ class TestArithmetic:
         assert xp.allclose(-dense, (-dsdbsparse).to_dense())
 
 
+class TestTranspose:
+    """Tests for the transpose operation of DSDBSparse."""
+
+    def test_transpose_basic(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+    ):
+        """Tests that transpose produces the correct result."""
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,  # Need symmetric sparsity for transpose
+        )
+        dense = dsdbsparse.to_dense()
+
+        # Create output matrix with transposed sparsity (same as original for symmetric sparsity)
+        dsdbsparse_t = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+        
+        # Compute transpose using the method
+        dsdbsparse.transpose(out=dsdbsparse_t)
+
+        # Reference: dense transpose (swap last two axes)
+        dense_t = xp.swapaxes(dense, -2, -1)
+
+        assert xp.allclose(dense_t, dsdbsparse_t.to_dense())
+
+    def test_transpose_double(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+    ):
+        """Tests that double transpose returns to original matrix."""
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,  # Need symmetric sparsity for transpose
+        )
+        dense = dsdbsparse.to_dense()
+
+        # Create intermediate and final output matrices
+        dsdbsparse_t = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+        dsdbsparse_tt = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+        
+        # Double transpose should give back the original
+        dsdbsparse.transpose(out=dsdbsparse_t)
+        dsdbsparse_t.transpose(out=dsdbsparse_tt)
+
+        assert xp.allclose(dense, dsdbsparse_tt.to_dense())
+
+    def test_transpose_symmetric(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+    ):
+        """Tests that transpose of symmetric matrix with conjugate preserves symmetry."""
+        symmetry_type = (True, xp.conj)
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,  # Symmetric matrices have symmetric sparsity
+        )
+        dense = dsdbsparse.to_dense()
+
+        # Create output matrix
+        dsdbsparse_t = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+
+        # For symmetric matrices with conj symmetry: A = conj(A^T)
+        # So A^T = conj(A)
+        dsdbsparse.transpose(out=dsdbsparse_t)
+        dense_t = xp.swapaxes(dense, -2, -1)
+
+        assert xp.allclose(dense_t, dsdbsparse_t.to_dense())
+
+    def test_transpose_preserves_sparsity(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+    ):
+        """Tests that transpose preserves the sparsity pattern for non-symmetric matrices."""
+        symmetry, symmetry_op = symmetry_type
+        
+        # Skip symmetric matrices - they don't swap sparsity pattern
+        if symmetry:
+            pytest.skip("Symmetric matrices preserve sparsity pattern without swapping")
+        
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,  # Need symmetric sparsity for transpose
+        )
+
+        # Get original sparsity pattern
+        orig_rows, orig_cols = dsdbsparse.spy()
+
+        # Create output matrix and transpose
+        dsdbsparse_t = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+        dsdbsparse.transpose(out=dsdbsparse_t)
+
+        # Get transposed sparsity pattern
+        trans_rows, trans_cols = dsdbsparse_t.spy()
+
+        # The sparsity pattern should be swapped: (i,j) -> (j,i)
+        # Sort both to compare
+        orig_pairs = sorted(zip(orig_rows.tolist(), orig_cols.tolist()))
+        trans_pairs = sorted(zip(trans_cols.tolist(), trans_rows.tolist()))
+
+        assert orig_pairs == trans_pairs
+
+    def test_transpose_stack_shape(
+        self,
+        dsdbsparse_type: DSDBSparse,
+        block_sizes: NDArray,
+        global_stack_shape: tuple,
+        symmetry_type: tuple[bool, Callable],
+    ):
+        """Tests that transpose preserves stack dimensions."""
+        symmetry, symmetry_op = symmetry_type
+        coo, dsdbsparse = _create_coo_dsdbsparse(
+            dsdbsparse_type,
+            block_sizes,
+            global_stack_shape,
+            symmetry_type,
+            symmetric_sparsity=True,  # Need symmetric sparsity for transpose
+        )
+
+        # Create output matrix
+        dsdbsparse_t = dsdbsparse_type.from_sparray(
+            coo,
+            block_sizes,
+            global_stack_shape,
+            symmetry=symmetry,
+            symmetry_op=symmetry_op,
+        )
+        dsdbsparse.transpose(out=dsdbsparse_t)
+
+        # Stack shape should be preserved
+        assert dsdbsparse.stack_shape == dsdbsparse_t.stack_shape
+        # Only last two dimensions should swap
+        assert dsdbsparse.shape[:-2] == dsdbsparse_t.shape[:-2]
+        assert dsdbsparse.shape[-2:] == dsdbsparse_t.shape[-1:-3:-1]
+
+
 # Shape of the dense array.
 ARRAY_SHAPE = (12, 10, 30)
 

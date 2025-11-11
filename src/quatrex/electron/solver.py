@@ -96,13 +96,13 @@ class ElectronSolver(SubsystemSolver):
         t_ham_load_start = time.perf_counter()
 
         hamiltonian_sparray, hamiltonian_dict, self.block_sizes = (
-            self._load_hamiltonian_matrix(quatrex_config)
+            load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
+            if quatrex_config.device.construct_from_unit_cell
+            else load_matrix_from_files(quatrex_config, "hamiltonian")
         )
         # Symmetrize the Hamiltonian sparse array. (Noticed that sparsity pattern
         # was not always symmetric).
-        hamiltonian_sparray = (
-            0.5 * (hamiltonian_sparray + hamiltonian_sparray.conj().T)
-        )
+        hamiltonian_sparray = 0.5 * (hamiltonian_sparray + hamiltonian_sparray.conj().T)
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
 
         # Make sure that the the system matrix sparsity is a superset of
@@ -118,11 +118,11 @@ class ElectronSolver(SubsystemSolver):
         t_ham_load_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
-                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
+                f"    Load Hamiltonian: {t_ham_load_end - t_ham_load_start}",
                 flush=True,
             )
             print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
+                f"    Load Hamiltonian all: {t_ham_load_end_all - t_ham_load_start}",
                 flush=True,
             )
 
@@ -157,11 +157,11 @@ class ElectronSolver(SubsystemSolver):
         t_ham_create_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
-                f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
+                f"    Create Hamiltonian: {t_ham_create_end - t_ham_load_end_all}",
                 flush=True,
             )
             print(
-                f"    Create Hamiltonian all: {t_ham_create_end_all-t_ham_load_end_all}",
+                f"    Create Hamiltonian all: {t_ham_create_end_all - t_ham_load_end_all}",
                 flush=True,
             )
 
@@ -253,9 +253,9 @@ class ElectronSolver(SubsystemSolver):
                 )
 
                 device_cell = list(quatrex_config.device.unit_cell_per_supercell)
-                device_cell[
-                    "xyz".index(quatrex_config.device.transport_direction)
-                ] *= quatrex_config.device.number_of_supercells
+                device_cell["xyz".index(quatrex_config.device.transport_direction)] *= (
+                    quatrex_config.device.number_of_supercells
+                )
                 device_cell = tuple(device_cell)
 
                 grid = create_coordinate_grid(
@@ -341,73 +341,6 @@ class ElectronSolver(SubsystemSolver):
         )
 
     @staticmethod
-    def load_hamiltonian(
-        quatrex_config: QuatrexConfig,
-    ) -> tuple[sparse.coo_matrix, NDArray]:
-
-        # Load the device Hamiltonian.
-        synchronize_device()
-        comm.barrier()
-        t_ham_load_start = time.perf_counter()
-        if quatrex_config.device.construct_from_unit_cell:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
-
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, comm.block.size
-            )
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            start_block = section_offsets[comm.block.rank]
-            end_block = section_offsets[comm.block.rank + 1]
-
-            hamiltonian_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
-            hamiltonian_sparray.sum_duplicates()
-            block_sizes = get_host(block_sizes)
-            block_sizes = np.asarray(
-                [block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-
-        else:
-            hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
-            ).astype(xp.complex128)
-            block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
-
-        synchronize_device()
-        t_ham_load_end = time.perf_counter()
-        comm.barrier()
-        t_ham_load_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
-                flush=True,
-            )
-            print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
-                flush=True,
-            )
-
-        return hamiltonian_sparray, block_sizes
-
-    @staticmethod
     def get_block(
         coo: sparse.coo_matrix, block_sizes: NDArray, index: tuple
     ) -> NDArray:
@@ -431,20 +364,6 @@ class ElectronSolver(SubsystemSolver):
         ] = coo.data[mask]
 
         return block
-
-    def _create_identity_overlap(self) -> sparse.coo_matrix:
-        """Create an identity matrix for orthonormal basis assumption.
-
-        Returns
-        -------
-        sparse.coo_matrix
-            Identity matrix with appropriate shape and dtype.
-        """
-        return sparse.eye(
-            self.hamiltonian.shape[-2],
-            format="coo",
-            dtype=self.hamiltonian.dtype,
-        )
 
     def _load_overlap_matrix(
         self, quatrex_config
@@ -473,27 +392,11 @@ class ElectronSolver(SubsystemSolver):
             return matrix_sparray, matrix_dict
         except FileNotFoundError:
             # Fallback to identity matrix for overlap
-            return self._create_identity_overlap(), None
-
-    def _load_hamiltonian_matrix(
-        self, quatrex_config
-    ) -> tuple[sparse.coo_matrix, dict | None, NDArray]:
-        """Load Hamiltonian matrix from various sources.
-
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The quatrex simulation configuration.
-
-        Returns
-        -------
-        tuple[sparse.coo_matrix, dict | None, NDArray]
-            The Hamiltonian matrix, optional k-point dictionary, and block sizes.
-        """
-        if quatrex_config.device.construct_from_unit_cell:
-            return load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
-        else:
-            return load_matrix_from_files(quatrex_config, "hamiltonian")
+            return sparse.eye(
+                self.hamiltonian.shape[-2],
+                format="coo",
+                dtype=self.hamiltonian.dtype,
+            ), None
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -538,8 +441,7 @@ class ElectronSolver(SubsystemSolver):
             left_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
         self.right_fermi_level = (
-            self.left_fermi_level
-            - self.bias
+            self.left_fermi_level - self.bias
             # right_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
 
@@ -754,11 +656,11 @@ class ElectronSolver(SubsystemSolver):
             time_homogenize_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
+                    f"    Homogenize: {time_homogenize_end - time_homogenize_start}",
                     flush=True,
                 )
                 print(
-                    f"    Homogenize all: {time_homogenize_end_all-time_homogenize_start}",
+                    f"    Homogenize all: {time_homogenize_end_all - time_homogenize_start}",
                     flush=True,
                 )
 
@@ -771,9 +673,9 @@ class ElectronSolver(SubsystemSolver):
         comm.barrier()
         t_assemble_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
+            print(f"    Assemble: {t_assemble_end - t_assemble_start}", flush=True)
             print(
-                f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
+                f"    Assemble all: {t_assemble_end_all - t_assemble_start}", flush=True
             )
 
         if self.band_edge_tracking == "eigenvalues":
@@ -799,10 +701,11 @@ class ElectronSolver(SubsystemSolver):
             t_band_edges_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
+                    f"    Band edges: {t_band_edges_end - t_band_edges_start}",
+                    flush=True,
                 )
                 print(
-                    f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+                    f"    Band edges all: {t_band_edges_end_all - t_band_edges_start}",
                     flush=True,
                 )
 
@@ -813,8 +716,8 @@ class ElectronSolver(SubsystemSolver):
         comm.barrier()
         t_obc_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
-            print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
+            print(f"    OBC: {t_obc_end - t_obc_start}", flush=True)
+            print(f"    OBC all: {t_obc_end_all - t_obc_start}", flush=True)
 
         if comm.block.size > 1:
             t_solve_start = time.perf_counter()
@@ -831,8 +734,8 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
 
         else:
             t_solve_start = time.perf_counter()
@@ -850,8 +753,8 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
         self.system_matrix.free_data()
@@ -863,16 +766,15 @@ class ElectronSolver(SubsystemSolver):
         t_filter_peaks_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
-                f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
+                f"    Filter peaks: {t_filter_peaks_end - t_filter_peaks_start}",
                 flush=True,
             )
             print(
-                f"    Filter peaks all: {t_filter_peaks_end_all-t_filter_peaks_start}",
+                f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
                 flush=True,
             )
 
         if self.band_edge_tracking == "dos-peaks":
-
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
@@ -928,9 +830,11 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_dos_peaks_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
                 print(
-                    f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
+                    f"    DOS peaks: {t_dos_peaks_end - t_dos_peaks_start}", flush=True
+                )
+                print(
+                    f"    DOS peaks all: {t_dos_peaks_end_all - t_dos_peaks_start}",
                     flush=True,
                 )
 

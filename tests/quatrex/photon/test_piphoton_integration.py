@@ -335,13 +335,8 @@ def test_piphoton_physical_properties(small_device):
         cols = xp.asnumpy(cols)
     
     # Convert sparse data to dense matrices per energy
-    pi_l_dense = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
-    pi_g_dense = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
-    
-    for iE in range(n_energy):
-        for idx in range(len(rows)):
-            pi_l_dense[iE, rows[idx], cols[idx]] = pi_l_data[iE, idx]
-            pi_g_dense[iE, rows[idx], cols[idx]] = pi_g_data[iE, idx]
+    pi_l_dense = pi_lesser.to_dense()
+    pi_g_dense = pi_greater.to_dense()
     
     # Test 1: Anti-Hermitian property (π^<)† = -π^<
     print("\nTesting anti-Hermitian property...")
@@ -450,10 +445,10 @@ def test_piphoton_matches_reference(small_device):
     
     # Get interaction matrix
     m_matrix = pi_photon.interaction_matrix.to_dense()[0]
-    if xp.__name__ == 'cupy':
-        m_matrix = xp.asnumpy(m_matrix)
-        g_l_dense = xp.asnumpy(g_l_dense)
-        g_g_dense = xp.asnumpy(g_g_dense)
+    # if xp.__name__ == 'cupy':
+    #     m_matrix = xp.asnumpy(m_matrix)
+    #     g_l_dense = xp.asnumpy(g_l_dense)
+    #     g_g_dense = xp.asnumpy(g_g_dense)
     
     # Debug: Print M matrix properties
     print(f"\nM matrix shape: {m_matrix.shape}")
@@ -469,11 +464,11 @@ def test_piphoton_matches_reference(small_device):
     print(f"G> matrix (first energy) max abs: {np.max(np.abs(g_g_dense[0])):.6e}")
     
     # Get sparsity pattern from the Green's functions  
-    g_sparsity_mask = np.abs(g_l_dense[0]) > 1e-12  # Boolean mask of non-zero elements in G
+    g_sparsity_mask = np.abs(g_l_dense[0]) > 0  # Boolean mask of non-zero elements in G
     print(f"\nG sparsity pattern: {np.sum(g_sparsity_mask)} / {g_sparsity_mask.size} elements non-zero")
     
     # Get sparsity from M matrix (which is sparse)
-    m_sparsity_mask = np.abs(m_matrix) > 1e-12
+    m_sparsity_mask = np.abs(m_matrix) > 0
     print(f"M sparsity pattern: {np.sum(m_sparsity_mask)} / {m_sparsity_mask.size} elements non-zero")
     
     # Use direct summation approach (validated in test_piphoton_dense.py)
@@ -486,6 +481,7 @@ def test_piphoton_matches_reference(small_device):
         g_l_dense,
         g_g_dense,
         small_device['electron_energies'],
+        sparsity_mask=g_sparsity_mask,
         output_mask=g_sparsity_mask  # Only compute elements in G's sparsity pattern
     )
     
@@ -509,21 +505,7 @@ def test_piphoton_matches_reference(small_device):
     n_orb = small_device['n_orb']
     
     # Reconstruct dense matrices from the sparse data
-    pi_lesser_reconstructed = np.zeros((n_energy, n_orb, n_orb), dtype=complex)
-    
-    # Get the sparsity pattern
-    rows, cols = pi_lesser.spy()
-    if xp.__name__ == 'cupy':
-        rows = xp.asnumpy(rows)
-        cols = xp.asnumpy(cols)
-    
-    print(f"\nPiPhoton output sparsity: {len(rows)} non-zero elements")
-    print(f"Sparsity pattern (first 10): rows={rows[:10]}, cols={cols[:10]}")
-    
-    # Fill in the dense matrices
-    for iE in range(min(n_energy, pi_data.shape[0])):
-        for idx in range(len(rows)):
-            pi_lesser_reconstructed[iE, rows[idx], cols[idx]] = pi_data[iE, idx]
+    pi_lesser_reconstructed = pi_lesser.to_dense()
     
     # Debug: Print some sample values
     print(f"\nSample pi_lesser_reconstructed[0, 0, 0]: {pi_lesser_reconstructed[0, 0, 0]}")
@@ -531,17 +513,8 @@ def test_piphoton_matches_reference(small_device):
     
     # Only compare elements that are in PiPhoton's output sparsity pattern
     print(f"\nComparing only elements in PiPhoton's sparsity pattern ({len(rows)} elements)...")
-    max_diff_sparse = 0.0
-    for iE in range(min(n_energy, pi_data.shape[0])):
-        for idx in range(len(rows)):
-            i, j = rows[idx], cols[idx]
-            piphoton_val = pi_lesser_reconstructed[iE, i, j]
-            ref_val = pi_reference[iE, i, j]
-            diff_val = abs(piphoton_val - ref_val)
-            if diff_val > max_diff_sparse:
-                max_diff_sparse = diff_val
-                if diff_val > 1e-3:  # Print large differences
-                    print(f"  Large diff at [{iE},{i},{j}]: PiPhoton={piphoton_val:.6f}, Ref={ref_val:.6f}, diff={diff_val:.2e}")
+    pi_reference[:, g_sparsity_mask == False] = 0.0  # Zero out elements not in sparsity pattern
+    max_diff_sparse = np.max(np.abs(xp.asnumpy(pi_lesser_reconstructed) - xp.asnumpy(pi_reference)))
     
     print(f"Max difference on sparse elements: {max_diff_sparse:.2e}")
     
@@ -586,7 +559,7 @@ def test_piphoton_matches_reference(small_device):
         xp.get_default_pinned_memory_pool().free_all_blocks()
 
 
-def compute_reference_4term(m_matrix, g_lesser, g_greater, energies, sparsity_mask=None, output_mask=None):
+def compute_reference_4term(m_matrix, g_lesser, g_greater, energies, sparsity_mask, output_mask=None):
     """Reference implementation using direct summation (validated approach).
     
     Computes polarization using the formula:
@@ -634,12 +607,18 @@ def compute_reference_4term(m_matrix, g_lesser, g_greater, energies, sparsity_ma
     print(f"Energy step dE: {dE}")
     
     # Pre-compute intermediate products at all energies
-    m_gl_m = np.einsum('ij,ejk,kl->eil', m_matrix, g_lesser, m_matrix)  # M@G<@M
     gl_m = np.einsum('eij,jk->eik', g_lesser, m_matrix)                  # G<@M
+    gl_m[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
     m_gl = np.einsum('ij,ejk->eik', m_matrix, g_lesser)                  # M@G<
-    m_gg_m = np.einsum('ij,ejk,kl->eil', m_matrix, g_greater, m_matrix)  # M@G>@M
+    m_gl[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
+    m_gl_m = np.einsum('eik,kl->eil', m_gl, m_matrix)  # M@G<@M
+    m_gl_m[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
     gg_m = np.einsum('eij,jk->eik', g_greater, m_matrix)                 # G>@M
+    gg_m[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
     m_gg = np.einsum('ij,ejk->eik', m_matrix, g_greater)                 # M@G>
+    m_gg[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
+    m_gg_m = np.einsum('eik,kl->eil', m_gg, m_matrix)  # M@G>@M
+    m_gg_m[:, sparsity_mask == False] = 0.0  # Zero out non-sparse elements if mask provided
     
     print(f"\nIntermediate products:")
     print(f"  M@G< max abs: {np.max(np.abs(m_gl)):.6e}")

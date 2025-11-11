@@ -16,6 +16,7 @@ from scipy.constants import (
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm as qttools_comm
 from qttools.datastructures import DSDBSparse
+from qttools.datastructures.dsdbcoo import DSDBCOO
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
@@ -314,13 +315,15 @@ class PiPhoton(ScatteringSelfEnergy):
         start_block = sum(local_blocks[: qttools_comm.block.rank])
         end_block = start_block + local_blocks[qttools_comm.block.rank]
 
-        # Allocate matrices for intermediate products
+        # Allocate matrices for intermediate products                
         m_gl = self.compute_config.dsdbsparse_type.zeros_like(g_lesser)    # M @ G^<
-        m_gl_m = self.compute_config.dsdbsparse_type.zeros_like(g_lesser)  # M @ G^< @ M
-        gl_m = self.compute_config.dsdbsparse_type.zeros_like(g_lesser)    # G^< @ M
-        m_gg = self.compute_config.dsdbsparse_type.zeros_like(g_greater)   # M @ G^>
-        m_gg_m = self.compute_config.dsdbsparse_type.zeros_like(g_greater) # M @ G^> @ M
-        gg_m = self.compute_config.dsdbsparse_type.zeros_like(g_greater)   # G^> @ M
+        m_gl_m = self.compute_config.dsdbsparse_type.zeros_like(m_gl)  # M @ G^< @ M
+        gl_m = self.compute_config.dsdbsparse_type.zeros_like(m_gl)    # G^< @ M
+        m_gg = self.compute_config.dsdbsparse_type.zeros_like(m_gl)   # M @ G^>
+        m_gg_m = self.compute_config.dsdbsparse_type.zeros_like(m_gl) # M @ G^> @ M
+        gg_m = self.compute_config.dsdbsparse_type.zeros_like(m_gl)   # G^> @ M
+
+        spillover_correction = False
 
         with profiler.profile_range("Intermediate products computation", level="debug"):
             # Compute M @ G^<
@@ -330,7 +333,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=m_gl,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
             
             # Compute M @ G^< @ M (for Term 1)
@@ -340,7 +343,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=m_gl_m,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
             
             # Compute G^< @ M (for Term 2)
@@ -350,7 +353,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=gl_m,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
             
             # Compute M @ G^> (for Terms 3)
@@ -360,7 +363,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=m_gg,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
             
             # Compute M @ G^> @ M (for Term 4)
@@ -370,7 +373,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=m_gg_m,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
             
             # Compute G^> @ M (for Term 2)
@@ -380,7 +383,7 @@ class PiPhoton(ScatteringSelfEnergy):
                 out=gg_m,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
+                spillover_correction=spillover_correction,
             )
 
         synchronize_device()
@@ -399,42 +402,38 @@ class PiPhoton(ScatteringSelfEnergy):
 
         # Step 2.5: Create spatial transposes while in stack distribution
         # We need transposes for: G<, G>, M@G<, M@G>, G>@M, M@G>@M
-        t_transpose_start = time.perf_counter()
-        with profiler.profile_range("Spatial transpose matrices", level="debug"):
-            g_lesser_T = self.compute_config.dsdbsparse_type.zeros_like(g_lesser)
-            g_greater_T = self.compute_config.dsdbsparse_type.zeros_like(g_greater)
-            m_gl_T = self.compute_config.dsdbsparse_type.zeros_like(m_gl)
-            m_gg_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg)
-            gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(gg_m)
-            m_gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg_m)
+        # t_transpose_start = time.perf_counter()
+        # with profiler.profile_range("Spatial transpose matrices", level="debug"):            
+        #     g_greater_T = self.compute_config.dsdbsparse_type.zeros_like(g_greater)            
+        #     m_gg_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg)
+        #     gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(gg_m)
+        #     m_gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg_m)
             
-            # Transpose G^< and G^>
-            g_lesser.transpose(out=g_lesser_T)
-            g_greater.transpose(out=g_greater_T)
+        #     # Transpose G^< and G^>
+        #     g_greater.transpose(out=g_greater_T)
             
-            # Transpose M@G^< and M@G^>
-            m_gl.transpose(out=m_gl_T)
-            m_gg.transpose(out=m_gg_T)
+        #     # Transpose M@G^< and M@G^>
+        #     m_gg.transpose(out=m_gg_T)
             
-            # Transpose G^>@M
-            gg_m.transpose(out=gg_m_T)
+        #     # Transpose G^>@M
+        #     gg_m.transpose(out=gg_m_T)
             
-            # Transpose M@G>@M
-            m_gg_m.transpose(out=m_gg_m_T)
+        #     # Transpose M@G>@M
+        #     m_gg_m.transpose(out=m_gg_m_T)
 
-        synchronize_device()
-        t_transpose_end = time.perf_counter()
-        comm.Barrier()
-        t_transpose_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    PiPhoton: Spatial transpose: {t_transpose_end - t_transpose_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    PiPhoton: Spatial transpose all: {t_transpose_end_all - t_transpose_start:.3f} s",
-                flush=True,
-            )
+        # synchronize_device()
+        # t_transpose_end = time.perf_counter()
+        # comm.Barrier()
+        # t_transpose_end_all = time.perf_counter()
+        # if comm.rank == 0:
+        #     print(
+        #         f"    PiPhoton: Spatial transpose: {t_transpose_end - t_transpose_start:.3f} s",
+        #         flush=True,
+        #     )
+        #     print(
+        #         f"    PiPhoton: Spatial transpose all: {t_transpose_end_all - t_transpose_start:.3f} s",
+        #         flush=True,
+        #     )
 
         # Step 3: Transpose to nnz distribution for energy correlation
         t_all2all2_start = time.perf_counter()
@@ -448,12 +447,10 @@ class PiPhoton(ScatteringSelfEnergy):
                 gg_m,
                 g_lesser,
                 g_greater,
-                g_lesser_T,
-                g_greater_T,
-                m_gl_T,
-                m_gg_T,
-                gg_m_T,
-                m_gg_m_T,
+                # g_greater_T,
+                # m_gg_T,
+                # gg_m_T,
+                # m_gg_m_T,
                 pi_lesser,
                 pi_greater,
                 pi_retarded,
@@ -542,31 +539,31 @@ class PiPhoton(ScatteringSelfEnergy):
                     # Term 1: correlate (M@G<@M)[i,l] with G>[l,i]
                     # Note: g_greater_T already reversed in energy ([::-1]) for correlation
                     term1_fft = xp.fft.fft(m_gl_m.data[:, batch].T, n, axis=1)
-                    g_T_fft = xp.fft.fft(g_greater_T.data[::-1, batch].T, n, axis=1)
+                    g_T_fft = xp.fft.fft(g_greater.data[::-1, batch].T, n, axis=1)
                     corr1 = xp.multiply(term1_fft, g_T_fft)
                     result1_full = xp.fft.ifft(corr1, axis=1)
-                    result1 = self.prefactor * result1_full[:, ne-1:]  # Take last ne elements
+                    result1 = -self.prefactor * result1_full[:, ne-1:]  # Take last ne elements
                     
                     # Term 2: correlate (G<@M)[i,l] with (G>@M)[l,i]
                     term2_fft = xp.fft.fft(gl_m.data[:, batch].T, n, axis=1)
-                    gg_m_T_fft = xp.fft.fft(gg_m_T.data[::-1, batch].T, n, axis=1)
+                    gg_m_T_fft = xp.fft.fft(m_gg.data[::-1, batch].T, n, axis=1)
                     corr2 = xp.multiply(term2_fft, gg_m_T_fft)
                     result2_full = xp.fft.ifft(corr2, axis=1)
                     result2 = self.prefactor * result2_full[:, ne-1:]  # Take last ne elements
                     
                     # Term 3: correlate (M@G<)[i,l] with (M@G>)[l,i]
                     term3_fft = xp.fft.fft(m_gl.data[:, batch].T, n, axis=1)
-                    m_gg_T_fft = xp.fft.fft(m_gg_T.data[::-1, batch].T, n, axis=1)
+                    m_gg_T_fft = xp.fft.fft(gg_m.data[::-1, batch].T, n, axis=1)
                     corr3 = xp.multiply(term3_fft, m_gg_T_fft)
                     result3_full = xp.fft.ifft(corr3, axis=1)
                     result3 = self.prefactor * result3_full[:, ne-1:]  # Take last ne elements
                     
                     # Term 4: correlate G<[i,l] with (M@G>@M)[l,i]
                     term4_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
-                    m_gg_m_T_fft = xp.fft.fft(m_gg_m_T.data[::-1, batch].T, n, axis=1)
+                    m_gg_m_T_fft = xp.fft.fft(m_gg_m.data[::-1, batch].T, n, axis=1)
                     corr4 = xp.multiply(term4_fft, m_gg_m_T_fft)
                     result4_full = xp.fft.ifft(corr4, axis=1)
-                    result4 = self.prefactor * result4_full[:, ne-1:]  # Take last ne elements
+                    result4 = -self.prefactor * result4_full[:, ne-1:]  # Take last ne elements
                     
                     # Sum all 4 terms (no need to reverse - extraction from [ne-1:] gives correct order)
                     pi_lesser.data[..., batch] += (result1 + result2 + result3 + result4).T
@@ -590,10 +587,7 @@ class PiPhoton(ScatteringSelfEnergy):
         # Transpose the matrices to stack distribution
         with profiler.profile_range("nnz->stack transpose", level="debug"):
             for m in (pi_lesser, pi_greater, pi_retarded):
-                m.dtranspose() if m.distribution_state != "stack" else None
-            # Clean up intermediate matrices by discarding their data
-            for m in (m_gl, m_gl_m, m_gg, m_gg_m, g_lesser_T, g_greater_T, m_gl_T, m_gg_T, m_gg_m_T):
-                m.dtranspose(discard=True) if m.distribution_state != "stack" else None
+                m.dtranspose() if m.distribution_state != "stack" else None            
             # Don't transpose electron Green's functions back - they may be needed
             # by other interactions in nnz distribution
 

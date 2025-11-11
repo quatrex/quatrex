@@ -546,14 +546,14 @@ def test_piphoton_matches_reference(small_device):
     # Allow numerical tolerance for sparse vs dense comparison
     # Sparse block-distributed operations may have different rounding than dense einsum
     # A relative error of ~5% is acceptable for comparing different numerical implementations
-    assert diff < 0.1, f"PiPhoton output should match reference (diff={diff}, rel_err={rel_error})"
+    assert diff < 1e-15, f"PiPhoton output should match reference (diff={diff}, rel_err={rel_error})"
     print("✓ PiPhoton matches reference implementation (within numerical tolerance)")
     
     # Clean up GPU memory
     if xp.__name__ == 'cupy':
         import gc
         del pi_photon, g_lesser, g_greater, pi_lesser, pi_greater, pi_retarded
-        del m_matrix, g_l_dense, g_g_dense, pi_reference, pi_lesser_dense, pi_lesser_reshaped
+        del m_matrix, g_l_dense, g_g_dense, pi_reference
         gc.collect()
         xp.get_default_memory_pool().free_all_blocks()
         xp.get_default_pinned_memory_pool().free_all_blocks()

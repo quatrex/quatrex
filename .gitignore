@@ -163,6 +163,7 @@ cython_debug/
 gmon.out
 dev/
 notebooks/
+local_dev/
 
 # Examples directory and outputs
 **/outputs

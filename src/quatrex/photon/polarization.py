@@ -404,13 +404,13 @@ class PiPhoton(ScatteringSelfEnergy):
         # We need transposes for: G<, G>, M@G<, M@G>, G>@M, M@G>@M
         t_transpose_start = time.perf_counter()
         with profiler.profile_range("Spatial transpose matrices", level="debug"):            
-            g_greater_T = self.compute_config.dsdbsparse_type.zeros_like(g_greater)            
+            # g_greater_T = self.compute_config.dsdbsparse_type.zeros_like(g_greater)            
             m_gg_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg)
             gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(gg_m)
-            m_gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg_m)
+            # m_gg_m_T = self.compute_config.dsdbsparse_type.zeros_like(m_gg_m)
             
             # Transpose G^< and G^>
-            g_greater.transpose(out=g_greater_T)
+            # g_greater.transpose(out=g_greater_T)
             
             # Transpose M@G^< and M@G^>
             m_gg.transpose(out=m_gg_T)
@@ -419,7 +419,7 @@ class PiPhoton(ScatteringSelfEnergy):
             gg_m.transpose(out=gg_m_T)
             
             # Transpose M@G>@M
-            m_gg_m.transpose(out=m_gg_m_T)
+            # m_gg_m.transpose(out=m_gg_m_T)
 
         synchronize_device()
         t_transpose_end = time.perf_counter()
@@ -447,10 +447,10 @@ class PiPhoton(ScatteringSelfEnergy):
                 gg_m,
                 g_lesser,
                 g_greater,
-                g_greater_T,
+                # g_greater_T,
                 m_gg_T,
                 gg_m_T,
-                m_gg_m_T,
+                # m_gg_m_T,
                 pi_lesser,
                 pi_greater,
                 pi_retarded,
@@ -539,7 +539,8 @@ class PiPhoton(ScatteringSelfEnergy):
                     # Term 1: correlate (M@G<@M)[i,l] with G>[l,i]
                     # Note: g_greater_T already reversed in energy ([::-1]) for correlation
                     term1_fft = xp.fft.fft(m_gl_m.data[:, batch].T, n, axis=1)
-                    g_T_fft = xp.fft.fft(g_greater_T.data[::-1, batch].T, n, axis=1)
+                    # g_T_fft = xp.fft.fft(g_greater_T.data[::-1, batch].T, n, axis=1)
+                    g_T_fft = xp.fft.fft(-g_greater.data[::-1, batch].T.conj(), n, axis=1)
                     corr1 = xp.multiply(term1_fft, g_T_fft)
                     result1_full = xp.fft.ifft(corr1, axis=1)
                     result1 = self.prefactor * result1_full[:, ne-1:]  # Take last ne elements
@@ -547,6 +548,7 @@ class PiPhoton(ScatteringSelfEnergy):
                     # Term 2: correlate (G<@M)[i,l] with (G>@M)[l,i]
                     term2_fft = xp.fft.fft(gl_m.data[:, batch].T, n, axis=1)
                     gg_m_T_fft = xp.fft.fft(gg_m_T.data[::-1, batch].T, n, axis=1)
+                    # gg_m_T_fft = xp.fft.fft(m_gg.data[::-1, batch].T.conj(), n, axis=1)                    
                     corr2 = xp.multiply(term2_fft, gg_m_T_fft)
                     result2_full = xp.fft.ifft(corr2, axis=1)
                     result2 = self.prefactor * result2_full[:, ne-1:]  # Take last ne elements
@@ -554,13 +556,15 @@ class PiPhoton(ScatteringSelfEnergy):
                     # Term 3: correlate (M@G<)[i,l] with (M@G>)[l,i]
                     term3_fft = xp.fft.fft(m_gl.data[:, batch].T, n, axis=1)
                     m_gg_T_fft = xp.fft.fft(m_gg_T.data[::-1, batch].T, n, axis=1)
+                    # m_gg_T_fft = xp.fft.fft(gg_m.data[::-1, batch].T.conj(), n, axis=1)
                     corr3 = xp.multiply(term3_fft, m_gg_T_fft)
                     result3_full = xp.fft.ifft(corr3, axis=1)
                     result3 = self.prefactor * result3_full[:, ne-1:]  # Take last ne elements
                     
                     # Term 4: correlate G<[i,l] with (M@G>@M)[l,i]
                     term4_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
-                    m_gg_m_T_fft = xp.fft.fft(m_gg_m_T.data[::-1, batch].T, n, axis=1)
+                    # m_gg_m_T_fft = xp.fft.fft(m_gg_m_T.data[::-1, batch].T, n, axis=1)
+                    m_gg_m_T_fft = xp.fft.fft(-m_gg_m.data[::-1, batch].T.conj(), n, axis=1)
                     corr4 = xp.multiply(term4_fft, m_gg_m_T_fft)
                     result4_full = xp.fft.ifft(corr4, axis=1)
                     result4 = self.prefactor * result4_full[:, ne-1:]  # Take last ne elements

@@ -494,6 +494,7 @@ class SCBA:
 
         # self.data.sigma_lesser._data.real = 0
         # self.data.sigma_greater._data.real = 0
+        self.data.sigma_retarded._data.imag = 0
 
         # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded.data += 0.5 * (

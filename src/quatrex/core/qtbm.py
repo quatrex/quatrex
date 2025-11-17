@@ -22,6 +22,247 @@ _preferred_matrix_type = {
     "cudss": sparse.csr_matrix,
 }
 
+if xp.__name__ == "cupy":
+    mempool = xp.get_default_memory_pool()
+    pinned_mempool = xp.get_default_pinned_memory_pool()
+
+
+def allocate_sys_mat(
+    ham: dict, ovl: dict, boundary_SE_indexes: list[NDArray]
+) -> list[sparse.csr_matrix]:
+    """Allocates the system matrix with the correct sparsity pattern.
+
+    Parameters
+    ----------
+    ham : dict
+        Hopping hamiltonian sparse matrices.
+    ovl : dict
+        Hopping hamiltonian sparse matrices.
+    boundary_SE_indexes : list[NDArray]
+        List of destination indices for each boundary self-energy.
+
+    Returns
+    -------
+    system_matrix : sparse.csr_matrix
+        The allocated system matrix with the correct sparsity pattern.
+    """
+
+    ham_cpu = {}
+    ovl_cpu = {}
+
+    for key, value in ham.items():
+        ham_cpu[key] = value.get() if hasattr(value, "get") else value
+    for key, value in ovl.items():
+        ovl_cpu[key] = value.get() if hasattr(value, "get") else value
+
+    # System matrix size
+    mat_size = ham_cpu[(0, 0, 0)].shape[0]
+
+    # Given a row i for the system matrix, check if it is affected by each boundary self-energy
+    boundary_SE_mask = []
+    for indexes in boundary_SE_indexes:
+        boundary_SE_mask.append(np.zeros(mat_size, dtype=np.bool))
+        boundary_SE_mask[-1][:] = False
+        boundary_SE_mask[-1][indexes] = True
+
+    # List containing all System Matrix col indices for each row
+    SM_indices_list = []
+
+    # CSR System-matrix indptr array
+    SM_indptr = np.zeros(mat_size + 1, dtype=np.int64)
+
+    for i_row in range(mat_size):
+
+        # Compute the union of all column indices affecting this row
+        row_union = np.array([], dtype=np.int64)
+
+        # Add Hamiltonian contributions
+        for r, h_r in ham_cpu.items():
+            row_start = h_r.indptr[i_row]
+            row_end = h_r.indptr[i_row + 1]
+            row_union = np.union1d(row_union, h_r.indices[row_start:row_end])
+
+        # Add Overlap contributions
+        for r, s_r in ovl_cpu.items():
+            row_start = s_r.indptr[i_row]
+            row_end = s_r.indptr[i_row + 1]
+            row_union = np.union1d(row_union, s_r.indices[row_start:row_end])
+
+        # Add Boundary self-energy contributions
+        for i, s_ind in enumerate(boundary_SE_mask):
+            if s_ind[i_row]:
+                row_union = np.union1d(row_union, boundary_SE_indexes[i])
+
+        # Store the column indices for this row
+        SM_indices_list.append(row_union)
+        SM_indptr[i_row + 1] = SM_indptr[i_row] + len(row_union)
+
+    total_SM_nnz = SM_indptr[-1]
+
+    # Allocate data and indices arrays
+    SM_data = np.zeros(total_SM_nnz, dtype=xp.complex128)
+    SM_indices = np.concatenate(SM_indices_list)
+
+    SM_data_gpu = xp.asarray(SM_data)
+    SM_indices_gpu = xp.asarray(SM_indices)
+    SM_indptr_gpu = xp.asarray(SM_indptr)
+
+    system_matrix = sparse.csr_matrix(
+        (SM_data_gpu, SM_indices_gpu, SM_indptr_gpu),
+        shape=(mat_size, mat_size),
+        dtype=xp.complex128,
+    )
+
+    # Check if SM has canonical format
+    if not system_matrix.has_canonical_format:
+        raise ValueError("System matrix is not in canonical format after allocation.")
+
+    return system_matrix
+
+
+def compute_update_indeces_sparse(
+    M: sparse.csr_matrix, U: sparse.csr_matrix, destination_indexes: NDArray = None
+) -> NDArray:
+    """Computes the indices for updating the system matrix.
+
+    Parameters
+    ----------
+    M : sparse.csr_matrix
+        The original system matrix.
+    U : sparse.csr_matrix
+        The update matrix to be applied.
+    destination_indexes : NDArray
+        The indices in the system matrix where the update should be applied.
+
+    Returns
+    -------
+    target_indices : NDArray
+        The indices in the flattened system matrix corresponding to the
+        update positions.
+
+    """
+
+    # Get the CPU versions of M and U
+    M = M.get() if hasattr(M, "get") else M
+    U = U.get() if hasattr(U, "get") else U
+
+    # Default destination indexes to identity mapping
+    if destination_indexes is None:
+        destination_indexes = np.arange(M.shape[0], dtype=xp.int64)
+
+    if np.unique(destination_indexes).size != destination_indexes.size:
+        raise ValueError(
+            "The destination indexes have duplicate entries, cannot compute update indices."
+        )
+
+    update_indices = np.zeros_like(U.data, dtype=xp.int64)
+
+    # Iterate over rows of U
+    for U_row in range(U.shape[0]):
+
+        # Get the column indices for the current row of U
+        row_start = U.indptr[U_row]
+        row_end = U.indptr[U_row + 1]
+        U_cols = U.indices[row_start:row_end]
+
+        # Get the corresponding row in M
+        M_row = destination_indexes[U_row]
+
+        # Get the column indices for the current row of M
+        M_row_start = M.indptr[M_row]
+        M_row_end = M.indptr[M_row + 1]
+        M_cols = M.indices[M_row_start:M_row_end]
+
+        # Check for duplicate column indices in the system matrix row
+        if np.unique(M_cols).size != M_cols.size:
+            raise ValueError(
+                "The system matrix has duplicate column indices in a row, cannot compute update indices."
+            )
+
+        # Map U column indices to destination indexes in M
+        U_cols_dest = destination_indexes[U_cols]
+
+        # Map U column indices to M column indices
+        M_ind_map = np.searchsorted(M_cols, U_cols_dest)
+        if (M_cols[M_ind_map] != U_cols_dest).any():
+            raise ValueError(
+                "Some destination indexes do not exist in the system matrix row, cannot compute update indices."
+            )
+        if np.unique(M_ind_map).size != U_cols_dest.size:
+            raise ValueError(
+                "Some destination indexes do not exist in the system matrix row, cannot compute update indices."
+            )
+
+        update_indices[row_start:row_end] = M_ind_map + M_row_start
+
+    return xp.array(update_indices)
+
+
+def compute_update_indeces_dense(
+    M: sparse.csr_matrix, destination_indexes: NDArray = None
+) -> NDArray:
+    """Computes the indices for updating the system matrix.
+
+    Parameters
+    ----------
+    M : sparse.csr_matrix
+        The original system matrix.
+    U : NDArray
+        The update matrix to be applied.
+    destination_indexes : NDArray
+        The indices in the system matrix where the update should be applied.
+
+    Returns
+    -------
+    target_indices : NDArray
+        The indices in the flattened system matrix corresponding to the
+        update positions.
+
+    """
+
+    # Get the CPU version of M
+    M = M.get() if hasattr(M, "get") else M
+
+    # Default destination indexes to identity mapping
+    if destination_indexes is None:
+        destination_indexes = np.arange(M.shape[0], dtype=xp.int64)
+
+    if np.unique(destination_indexes).size != destination_indexes.size:
+        raise ValueError(
+            "The destination indexes have duplicate entries, cannot compute update indices."
+        )
+
+    U_size = destination_indexes.shape[0]
+
+    update_indices = np.zeros((U_size**2,), dtype=xp.int64)
+
+    for U_row in range(U_size):
+
+        # Get the corresponding row in M
+        M_row = destination_indexes[U_row]
+        M_row_start = M.indptr[M_row]
+        M_row_end = M.indptr[M_row + 1]
+        M_cols = M.indices[M_row_start:M_row_end]
+
+        if np.unique(M_cols).size != M_cols.size:
+            raise ValueError(
+                "The system matrix has duplicate column indices in a row, cannot compute update indices."
+            )
+
+        M_ind_map = np.searchsorted(M_cols, destination_indexes)
+        if np.unique(M_ind_map).size != destination_indexes.size:
+            raise ValueError(
+                "Some destination indexes do not exist in the system matrix row, cannot compute update indices."
+            )
+        if (M_cols[M_ind_map] != destination_indexes).any():
+            raise ValueError(
+                "Some destination indexes do not exist in the system matrix row, cannot compute update indices."
+            )
+
+        update_indices[U_row * U_size : (U_row + 1) * U_size] = M_ind_map + M_row_start
+
+    return xp.array(update_indices)
+
 
 def monkhorst_pack(size: tuple[int]) -> NDArray:
     """Constructs a Monkhorst-Pack grid of k-points.
@@ -278,7 +519,7 @@ class QTBM:
         K,
         T,
         system_matrix,
-        overlap_phase,
+        overlap,
         K_ind,
     ):
         """Computes transport observables.
@@ -328,18 +569,16 @@ class QTBM:
                 self.observables.electron_transmission_contacts[K_ind, n_t, i_en] = (
                     xp.trace(
                         xp.real(
-                            1j
-                            * phi_n.T.conj()
-                            @ (
-                                S[cont_2][i_batch, :, :]
-                                - S[cont_2][i_batch, :, :].T.conj()
-                            )
-                            @ phi_n
+                            -2
+                            * xp.imag(phi_n.T.conj() @ S[cont_2][i_batch, :, :] @ phi_n)
                         )
                     )
                 )
 
-        phi_ortho = overlap_phase @ phi  # "Orthogonalize" the wavefunction
+        phi_ortho = xp.zeros_like(phi)
+        for k in overlap.keys():
+            phi_ortho += overlap[k] @ phi
+
         for n, contact in enumerate(self.device.contacts):
 
             phi_cont = (
@@ -347,9 +586,10 @@ class QTBM:
                 + T[n][i_batch] @ phi[contact.orbitals_contact.squeeze(), :]
             )
             # TODO Add the spill over contribution
-            phi_ortho[contact.orbitals_contact.squeeze(), :] += (
-                contact.get_10(overlap_phase) @ phi_cont
-            )
+            for o_r in overlap.values():
+                phi_ortho[contact.orbitals_contact.squeeze(), :] += (
+                    contact.get_10(o_r) @ phi_cont
+                )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = xp.linalg.norm(
                 contact.get_10(system_matrix) @ phi_cont
@@ -385,7 +625,28 @@ class QTBM:
 
         times = []
         comm.Barrier()
-        system_matrix = None  # Initialize the system matrix
+
+        cont_ind_list = []
+        for contact in self.device.contacts:
+            cont_ind_list.append(contact.orbitals_contact.squeeze())
+
+        system_matrix = allocate_sys_mat(
+            self.device.hamiltonian, self.device.overlap, cont_ind_list
+        )  # Initialize the system matrix
+
+        ham_update_ind = []
+        for r, h_r in self.device.hamiltonian.items():
+            ham_update_ind.append(compute_update_indeces_sparse(system_matrix, h_r))
+        overlap_update_ind = []
+        for r, s_r in self.device.overlap.items():
+            overlap_update_ind.append(compute_update_indeces_sparse(system_matrix, s_r))
+        sigma_SM_indexes = []
+        for contact in self.device.contacts:
+            sigma_SM_indexes.append(
+                compute_update_indeces_dense(
+                    system_matrix, contact.orbitals_contact.squeeze()
+                )
+            )
 
         for k_ind in range(self.num_kpoints):
 
@@ -395,21 +656,17 @@ class QTBM:
 
             times.append(time.perf_counter())
 
-            # Precompute the Hamiltonian and overlap with k-point
-            # phase factors applied.
-            hamiltonian_phase = self.matrix_type(
-                self.device.hamiltonian[0, 0, 0].shape, dtype=xp.complex128
-            )
             for r, h_r in self.device.hamiltonian.items():
-                hamiltonian_phase += h_r * xp.exp(
+                if r == (0, 0, 0):
+                    continue
+                h_r.data *= xp.exp(
                     1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
                 )
 
-            overlap_phase = self.matrix_type(
-                self.device.overlap[0, 0, 0].shape, dtype=xp.complex128
-            )
             for r, s_r in self.device.overlap.items():
-                overlap_phase += s_r * xp.exp(
+                if r == (0, 0, 0):
+                    continue
+                s_r.data *= xp.exp(
                     1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
                 )
 
@@ -480,6 +737,9 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
+                    for r in self.device.overlap.keys():
+                        self.device.overlap[r].data *= energy
+
                     # Set up sytem matrix and rhs for electron solver.
                     i0 = (
                         ind_0[i].get().item()
@@ -493,26 +753,10 @@ class QTBM:
                         (self.num_orbitals, i0), dtype=xp.complex128, order="F"
                     )  # Set the K vector as a zero matrix
 
-                    ind1 = []
-                    ind2 = []
-                    sig_flat = []
                     # Iterate over contacts
                     for contact, sigma_obc, inj, inj_ind, K in zip(
                         self.device.contacts, sigma_obcs, injs, inj_inds, Ks
                     ):
-                        ind1.append(
-                            np.repeat(
-                                contact.orbitals_contact.squeeze(),
-                                contact.orbitals_contact.shape[1],
-                            )
-                        )
-                        ind2.append(
-                            np.tile(
-                                contact.orbitals_contact.squeeze(),
-                                contact.orbitals_contact.shape[1],
-                            )
-                        )
-                        sig_flat.append(sigma_obc[i, :, :].flatten())
                         # Add the injection vector in the contact elements
                         # of the rhs
                         inj_V[contact.orbitals_contact.T, inj_ind[i]] = inj[i]
@@ -520,25 +764,145 @@ class QTBM:
                         # rhs
                         K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
-                    # Concatenate the indices and the self-energies
-                    ind1 = xp.array(np.concatenate(ind1))
-                    ind2 = xp.array(np.concatenate(ind2))
+                    sub_kernel = xp.RawKernel(
+                        r"""
+                                                    #include <cupy/complex.cuh>
+                                                    extern "C" __global__
+                                                    void my_func(complex<double>* M, const complex<double>* U,
+                                                                const long long* ind, const int N) {
+                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
+                                                        if (i < N) {
+                                                        M[ind[i]] -= U[i];
+                                                        }
+                                                    }
+                                                    """,
+                        "my_func",
+                    )
 
-                    sig_flat = xp.concatenate(sig_flat)
+                    add_kernel = xp.RawKernel(
+                        r"""
+                                                    #include <cupy/complex.cuh>
+                                                    extern "C" __global__
+                                                    void my_func_2(complex<double>* M, const complex<double>* U,
+                                                                const long long* ind, const int N) {
+                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
+                                                        if (i < N) {
+                                                        M[ind[i]] += U[i];
+                                                        }
+                                                    }
+                                                    """,
+                        "my_func_2",
+                    )
 
-                    upd_0 = sparse.coo_matrix(
-                        (sig_flat, (ind1, ind2)), shape=hamiltonian_phase.shape
-                    ).tocsr()
-                    upd_0.eliminate_zeros()  # Remove zeros from the self-energy matrix
+                    sub_kernel_real = xp.RawKernel(
+                        r"""
+                                                    #include <cupy/complex.cuh>
+                                                    extern "C" __global__
+                                                    void sub_real_func(complex<double>* M, const double* U,
+                                                                const long long* ind, const int N) {
+                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
+                                                        if (i < N) {
+                                                        M[ind[i]] -= U[i];
+                                                        }
+                                                    }
+                                                    """,
+                        "sub_real_func",
+                    )
 
-                    if i == 0 and batch_start == 0 and k_ind == 0:
-                        system_matrix = (
-                            (energy) * overlap_phase - hamiltonian_phase - upd_0
+                    add_kernel_real = xp.RawKernel(
+                        r"""
+                                                    #include <cupy/complex.cuh>
+                                                    extern "C" __global__
+                                                    void add_real_func(complex<double>* M, const double* U,
+                                                                const long long* ind, const int N) {
+                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
+                                                        if (i < N) {
+                                                        M[ind[i]] += U[i];
+                                                        }
+                                                    }
+                                                    """,
+                        "add_real_func",
+                    )
+
+                    system_matrix.data[:] = 0
+
+                    threads_per_block = 128
+
+                    # Add the Hamiltonian and overlap contributions
+                    for r_idx, (r_key, h_r) in enumerate(
+                        self.device.hamiltonian.items()
+                    ):
+                        N = h_r.data.size
+                        blocks = (N + threads_per_block - 1) // threads_per_block
+
+                        if r_key == (0, 0, 0):
+                            # Use the specialized kernel for float64 (real) data
+                            sub_kernel_real(
+                                (blocks,),
+                                (threads_per_block,),
+                                (
+                                    system_matrix.data,
+                                    h_r.data,
+                                    ham_update_ind[r_idx],
+                                    N,
+                                ),
+                            )
+                        else:
+                            # Use the original kernel for complex128 data
+                            sub_kernel(
+                                (blocks,),
+                                (threads_per_block,),
+                                (
+                                    system_matrix.data,
+                                    h_r.data,
+                                    ham_update_ind[r_idx],
+                                    N,
+                                ),
+                            )
+
+                    for r_idx, (r_key, s_r) in enumerate(self.device.overlap.items()):
+                        N = s_r.data.size
+                        blocks = (N + threads_per_block - 1) // threads_per_block
+
+                        if r_key == (0, 0, 0):
+                            # Use the specialized kernel for float64 (real) data
+                            add_kernel_real(
+                                (blocks,),
+                                (threads_per_block,),
+                                (
+                                    system_matrix.data,
+                                    s_r.data,
+                                    overlap_update_ind[r_idx],
+                                    N,
+                                ),
+                            )
+                        else:
+                            # Use the original kernel for complex128 data
+                            add_kernel(
+                                (blocks,),
+                                (threads_per_block,),
+                                (
+                                    system_matrix.data,
+                                    s_r.data,
+                                    overlap_update_ind[r_idx],
+                                    N,
+                                ),
+                            )
+
+                    # Subtract the open boundary conditions
+                    for c, sigma_obc in enumerate(sigma_obcs):
+                        N = sigma_obc[i, :, :].ravel().size
+                        blocks = (N + threads_per_block - 1) // threads_per_block
+                        sub_kernel(
+                            (blocks,),
+                            (threads_per_block,),
+                            (
+                                system_matrix.data,
+                                sigma_obc[i, :, :].ravel(),
+                                sigma_SM_indexes[c],
+                                N,
+                            ),
                         )
-                    else:
-                        system_matrix.data[:] = (
-                            (energy) * overlap_phase - hamiltonian_phase - upd_0
-                        ).data
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -551,6 +915,7 @@ class QTBM:
                     # Solve for the wavefunction
                     if inj_V.size != 0:
                         phi = self.solver.solve(system_matrix, inj_V)
+                    # phi = xp.zeros((self.num_orbitals, inj_V.shape[1]), dtype=xp.complex128)
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -558,15 +923,13 @@ class QTBM:
                     times.append(time.perf_counter())
                     # Get the bare system matrix back, needed for
                     # transmission calculation
-                    upd_0.data[:] = (
-                        1e-15  # Set a small value to the self-energy matrix to avoid numerical issues
-                    )
-                    system_matrix.data[:] = (
-                        (energy) * overlap_phase - hamiltonian_phase - upd_0
-                    ).data
-                    # LL = upd_0.tocsr()[rows, cols] if hasattr(LL, 'A'):
-                    # self.system_matrix.data[:] += LL.A.ravel() else:
-                    #    self.system_matrix.data[:] += LL.ravel()
+                    for c, sigma_obc in enumerate(sigma_obcs):
+                        system_matrix.data[sigma_SM_indexes[c]] += sigma_obc[
+                            i, :, :
+                        ].ravel()
+
+                    for r in self.device.overlap.keys():
+                        self.device.overlap[r].data *= 1 / energy
 
                     if inj_V.size != 0:
                         self.compute_observables(
@@ -578,7 +941,7 @@ class QTBM:
                             K_V,
                             Ts,
                             system_matrix,
-                            overlap_phase,
+                            self.device.overlap,
                             k_ind,
                         )
 
@@ -589,9 +952,33 @@ class QTBM:
                             flush=True,
                         )
 
+                del sigma_obcs
+                del injs
+                del Ks
+                del Ts
+
+                del sigma_obc
+                del inj
+                del K
+                del T
+
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
+
+            for r, h_r in self.device.hamiltonian.items():
+                if r == (0, 0, 0):
+                    continue
+                h_r.data /= xp.exp(
+                    1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
+                )
+
+            for r, s_r in self.device.overlap.items():
+                if r == (0, 0, 0):
+                    continue
+                s_r.data /= xp.exp(
+                    1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
+                )
 
         t_iteration = time.perf_counter() - times.pop()
         if comm.rank == 0:

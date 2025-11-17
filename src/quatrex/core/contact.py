@@ -208,9 +208,11 @@ class Contact:
         # Concatenate the atoms_2 list and get the orbitals order for
         # the unsorted cell self.atoms_2 = xp.concatenate(self.atoms_2,
         # dtype=int) self.orbitals_2 = self._get_orbitals(self.atoms_2)
-        self.orbitals_2 = np.concatenate(self.orbitals_2, dtype=int)
+        self.orbitals_2 = np.concatenate(self.orbitals_2, dtype=int)[None, :]
 
         self.orbitals_contact = np.concatenate(self.orbitals[:-1])[None, :]
+        orb_temp = self.orbitals_contact.squeeze()[self.orbitals_2.squeeze()][None, :]
+        self.orbitals_contact = orb_temp.copy()
 
         self.transverse_rep = x - 1
         self.obc_solver = self._configure_obc(
@@ -760,13 +762,19 @@ class Contact:
             hamiltonian_list.append(M[self.orbitals[0], :][:, self.orbitals[i]])
         for i in range(self.transverse_rep - 1):
             hamiltonian_list.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
-        h10_temp = sparse.hstack(hamiltonian_list[-self.transverse_rep :])
+        h10_temp = sparse.hstack(hamiltonian_list[-self.transverse_rep :], format="csr")
         for i in range(self.transverse_rep - 1):
             hamiltonian_list.pop()
             h10_temp = sparse.vstack(
-                [h10_temp, sparse.hstack(hamiltonian_list[-self.transverse_rep :])]
+                [
+                    h10_temp,
+                    sparse.hstack(
+                        hamiltonian_list[-self.transverse_rep :], format="csr"
+                    ),
+                ]
             )
-        return h10_temp.T.conj().todense()
+
+        return h10_temp[self.orbitals_2.T, self.orbitals_2].T.conj()
 
     def _get_list_mat_phase(self, k1: float, k2: float) -> NDArray:
         """Gets the list of hopping matrices in transport direction with
@@ -840,12 +848,18 @@ class Contact:
         """
         # Number of matrices in the list
         n = len(list_mat)
+        size_mat_batch = list_mat[0].shape[0]
+        size_mat_orb = list_mat[0].shape[1]
         # Initialize the circulant matrix (first row)
-        mat = xp.concatenate(list_mat, axis=2)
+        mat = xp.zeros(
+            (size_mat_batch, size_mat_orb * n, size_mat_orb * n), dtype=xp.complex128
+        )
         # Iterate over the number of matrices and apply the phase factor
-        for i in range(n - 1):
+        for i in range(n):
+            mat[:, size_mat_orb * i : size_mat_orb * (i + 1), :] = xp.concatenate(
+                list_mat, axis=2
+            )
             list_mat.insert(0, list_mat.pop() * phase)
-            mat = xp.concatenate([mat, xp.concatenate(list_mat, axis=2)], axis=1)
 
         return mat
 
@@ -892,13 +906,8 @@ class Contact:
         SE_1 = self._construct_circulant_matrix(SE_1, xp.exp(1j * k1)) / (
             self.n_rep_1 * self.n_rep_2
         )
-        # Reorder the self-energy matrix to match the orbitals of the
-        # contact SE_1[:, self.orbitals_2[None,:].T,
-        # self.orbitals_2[None,:]] = SE_1
-        SE_temp = xp.zeros_like(SE_1)
-        SE_temp[:, self.orbitals_2[None, :].T, self.orbitals_2[None, :]] = SE_1
 
-        return SE_temp
+        return SE_1
 
     def _upscale_injection_modes(self, modes_k: dict, E: NDArray) -> NDArray:
         """Upscales injection vectors.
@@ -946,9 +955,7 @@ class Contact:
             modes_E = xp.concatenate(modes_E, axis=1) / xp.sqrt(
                 self.n_rep_1 * self.n_rep_2
             )
-            modes_temp = xp.zeros_like(modes_E)
-            modes_temp[self.orbitals_2, :] = modes_E
-            modes.append(modes_temp)
+            modes.append(modes_E)
 
             # SORTING AND NORMALIZATION IS ONLY FOR DEBUG (IT IS NOT
             # REALLY NEEDED) modes[-1] /=
@@ -1078,6 +1085,8 @@ class Contact:
             print(
                 f"    Computing band structure for contact {self.name}...", flush=True
             )
+
+        # Generate k-points in the transverse directions
         kpoints = monkhorst_pack(device.quatrex_config.device.kpoint_grid)
         kpoints += np.array(device.quatrex_config.device.kpoint_shift)
         num_kpoints = kpoints.shape[0]
@@ -1091,24 +1100,30 @@ class Contact:
                 f"Band structure calculation requires k-point grid of 1 and shift of 0 in transport direction ({self.direction}). "
             )
 
+        # TODO move to CONFIG
         n_points_BAND = 51
 
+        # Generate k-points in the transport direction
         k_transport = xp.linspace(
             -xp.pi,
             xp.pi,
             n_points_BAND,
         )
 
+        # Initialize band structure array
         self.band_structure = xp.zeros(
             (num_kpoints, n_points_BAND, self.n_orb_origin_cell), dtype=xp.float64
         )
+
         for i, k_perp in enumerate(kpoints):
             for j, k_par in enumerate(k_transport):
 
+                # Reconstruct full k-vector
                 k_vec = list(k_perp)
                 k_vec.pop(self.direction)
                 k_vec.insert(0, k_par)
 
+                # Construct Hamiltonian and Overlap at k-point
                 H_tot = sparse.csr_matrix(
                     (self.n_orb_origin_cell, self.n_orb_origin_cell),
                     dtype=xp.complex128,
@@ -1117,6 +1132,8 @@ class Contact:
                     (self.n_orb_origin_cell, self.n_orb_origin_cell),
                     dtype=xp.complex128,
                 )
+                # Sum over all the hoppings in the UC with the
+                # corresponding phase factors
                 for index, ham in self.UC_hamiltonian.items():
                     phase = xp.exp(
                         1j
@@ -1145,10 +1162,9 @@ class Contact:
                 # DENSIFY (for now)
                 H_tot = xp.array(H_tot.todense())
                 S_tot = xp.array(S_tot.todense())
-
+                # Solve generalized eigenvalue problem
                 chol = xp.linalg.cholesky(S_tot)
                 chol_inv = xp.linalg.inv(chol)
-
                 H_ortho = chol_inv @ H_tot @ chol_inv.conj().T
 
                 self.band_structure[i, j, :] = xp.linalg.eigvalsh(H_ortho)

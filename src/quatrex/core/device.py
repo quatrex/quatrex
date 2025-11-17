@@ -193,9 +193,18 @@ class Device:
         for hamiltonian_path in hamiltonian_paths:
             x_index, y_index, z_index = map(int, hamiltonian_path.stem.split("_")[1:])
             try:
-                self.hamiltonian[x_index, y_index, z_index] = (
-                    distributed_load(hamiltonian_path).astype(xp.complex128).tocsr()
+                self.hamiltonian[x_index, y_index, z_index] = distributed_load(
+                    hamiltonian_path, format="csr"
                 )
+                if x_index != 0 or y_index != 0 or z_index != 0:
+                    self.hamiltonian[x_index, y_index, z_index] = self.hamiltonian[
+                        x_index, y_index, z_index
+                    ].astype(xp.complex128)
+                if (
+                    self.hamiltonian[x_index, y_index, z_index].has_canonical_format
+                    is not True
+                ):
+                    raise ValueError("Loaded sparse matrix is not in canonical format.")
                 if comm.rank == 0:
                     print(
                         f"Loaded Hamiltonian ({x_index} {y_index} {z_index})",
@@ -212,9 +221,13 @@ class Device:
             )
             # TODO: Mechanism to handle orthogonal basis sets.
             try:
-                self.overlap[x_index, y_index, z_index] = (
-                    distributed_load(overlap_path).astype(xp.complex128).tocsr()
+                self.overlap[x_index, y_index, z_index] = distributed_load(
+                    overlap_path, format="csr"
                 )
+                if x_index != 0 or y_index != 0 or z_index != 0:
+                    self.overlap[x_index, y_index, z_index] = self.overlap[
+                        x_index, y_index, z_index
+                    ].astype(xp.complex128)
                 if comm.rank == 0:
                     print(f"Loaded Overlap ({x_index} {y_index} {z_index})", flush=True)
             except Exception as e:
@@ -326,23 +339,9 @@ class Device:
                 )
             return
 
+        V_s = sparse.diags(self.orbital_potential + 1e-10, format="csr")
         for r, s_r in self.overlap.items():
-            # SV1 = s_r.multiply(self.orbital_potential).tocsr()
-            # SV2 = s_r.multiply(self.orbital_potential.T).tocsr()
-            # self.hamiltonian[r] += (SV1 + SV2) / 2
-            # self.hamiltonian[r].eliminate_zeros()
-
-            V_s = sparse.diags(self.orbital_potential + 1e-10, format="csr")
             self.hamiltonian[r] += (V_s @ s_r + s_r @ V_s) / 2
-            self.hamiltonian[r].eliminate_zeros()
-
-            # from scipy import sparse as sparse_s
-            # sparse_s.save_npz(
-            ##    self.quatrex_config.output_dir
-            #   / f"hamiltonian_{r[0]}_{r[1]}_{r[2]}.npz",
-            #   self.hamiltonian[r].get(),
-            # )
-            # raise Exception("Debug: Exiting after potential application.")
 
     def _add_contacts(self) -> list[Contact]:
         """Initializes and attaches contacts to the device.

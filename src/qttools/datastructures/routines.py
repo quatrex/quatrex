@@ -150,7 +150,7 @@ def bd_sandwich(
     spillover_correction: bool = False,
     accumulator_dtype=None,
     accumulate: bool = False,
-    symmetric: bool = False,
+    symmetric: bool = True,
 ):
     """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
 

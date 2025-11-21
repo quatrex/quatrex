@@ -9,7 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import synchronize_device
+from qttools.utils.gpu_utils import synchronize_device, get_host
 from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
@@ -364,6 +364,73 @@ class ElectronSolver(SubsystemSolver):
         ] = coo.data[mask]
 
         return block
+
+    @staticmethod
+    def load_hamiltonian(
+        quatrex_config: QuatrexConfig,
+    ) -> tuple[sparse.coo_matrix, NDArray]:
+
+        # Load the device Hamiltonian.
+        synchronize_device()
+        comm.barrier()
+        t_ham_load_start = time.perf_counter()
+        if quatrex_config.device.construct_from_unit_cell:
+            hamiltonian_unit_cells = distributed_load(
+                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
+            ).astype(xp.complex128)
+
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(
+                quatrex_config.device.number_of_supercells, comm.block.size
+            )
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            start_block = section_offsets[comm.block.rank]
+            end_block = section_offsets[comm.block.rank + 1]
+
+            hamiltonian_sparray, block_sizes = create_hamiltonian(
+                cutoff_hr(
+                    hamiltonian_unit_cells,
+                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
+                ),
+                quatrex_config.device.number_of_supercells,
+                quatrex_config.device.transport_direction,
+                quatrex_config.device.unit_cell_per_supercell,
+                block_start=start_block,
+                block_end=end_block,
+                return_sparse=True,
+            )
+            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
+            hamiltonian_sparray.sum_duplicates()
+            block_sizes = get_host(block_sizes)
+            block_sizes = np.asarray(
+                [block_sizes[0]] * quatrex_config.device.number_of_supercells
+            )
+
+        else:
+            hamiltonian_sparray = distributed_load(
+                quatrex_config.input_dir / "hamiltonian.npz"
+            ).astype(xp.complex128)
+            block_sizes = get_host(
+                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+            )
+
+        synchronize_device()
+        t_ham_load_end = time.perf_counter()
+        comm.barrier()
+        t_ham_load_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
+                flush=True,
+            )
+            print(
+                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
+                flush=True,
+            )
+
+        return hamiltonian_sparray, block_sizes
 
     def _load_overlap_matrix(
         self, quatrex_config

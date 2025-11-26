@@ -8,22 +8,12 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
+from qttools.convolutions.ffts import fft_circular_convolve
 
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
-
-
-@profiler.profile(level="api")
-def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
-    """Computes the circular convolution of two arrays using the FFT."""
-    # Extract the shapes of the arrays along the axes as tuples.
-    nka = tuple(a.shape[i] for i in axes)
-    nkb = tuple(b.shape[i] for i in axes)
-    a_fft = xp.fft.fftn(a, nka, axes=axes)
-    b_fft = xp.fft.fftn(b, nkb, axes=axes)
-    return xp.fft.ifftn(a_fft * b_fft, axes=axes)
 
 
 class SigmaFock(ScatteringSelfEnergy):
@@ -49,6 +39,8 @@ class SigmaFock(ScatteringSelfEnergy):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
         self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
+        num_kp_dims = sum(1 for k in quatrex_config.electron.number_of_kpoints if k != 1)
+        self.kpoint_volume *= (2 * xp.pi) ** num_kp_dims
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
         (
             coulomb_matrix.dtranspose()

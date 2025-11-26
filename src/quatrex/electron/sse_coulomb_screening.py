@@ -10,6 +10,8 @@ from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
+from qttools.convolutions.ffts import fft_convolve_kpoints, fft_correlate_kpoints, hilbert_transform_selfenergy
+
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -18,107 +20,6 @@ profiler = Profiler()
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
-
-
-@profiler.profile(level="api")
-def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
-    """Computes the convolution of two arrays using FFT.
-
-    Parameters
-    ----------
-    a : NDArray
-        First array.
-    b : NDArray
-        Second array.
-
-    Returns
-    -------
-    NDArray
-        The convolution of the two arrays.
-
-    """
-    ne = a.shape[0] + b.shape[0] # Should not have -1 here (otherwise hilbert transform fails)
-    a_fft = xp.fft.fftn(a, (ne,), axes=(0,))
-    b_fft = xp.fft.fftn(b, (ne,), axes=(0,))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
-
-
-@profiler.profile(level="api")
-def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
-    """Computes the convolution of two arrays using the FFT."""
-    ne = a.shape[0] + b.shape[0] - 1
-    nka = a.shape[1:-1]
-    nkb = b.shape[1:-1]
-    a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
-    b_fft = xp.fft.fftn(b, (ne,) + nkb, axes=(0,) + tuple(range(1, len(nkb) + 1)))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,) + tuple(range(1, len(nka) + 1)))
-
-
-@profiler.profile(level="api")
-def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
-    """Computes the correlation of two arrays using FFT.
-
-    Parameters
-    ----------
-    a : NDArray
-        First array.
-    b : NDArray
-        Second array.
-
-    Returns
-    -------
-    NDArray
-        The cross-correlation of the two arrays.
-
-    """
-    ne = a.shape[0] + b.shape[0] - 1
-    nka = a.shape[1:-1]
-    nkb = b.shape[1:-1]
-    a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
-    b_fft = xp.fft.fftn(
-        xp.flip(b, axis=(0,) + tuple(range(1, len(nkb) + 1))),
-        (ne,) + nkb,
-        axes=(0,) + tuple(range(1, len(nkb) + 1)),
-    )
-    # Don't really know why I have to roll the result, but it works.
-    return xp.roll(
-        xp.fft.ifftn(a_fft * b_fft, axes=(0,) + tuple(range(1, len(nka) + 1))),
-        shift=1,
-        axis=tuple(range(1, len(nka) + 1)),
-    )
-
-
-@profiler.profile(level="api")
-def hilbert_transform(a: NDArray, energies: NDArray, eta=1e-8) -> NDArray:
-    """Computes the Hilbert transform of the array a.
-
-    Assumes that the first axis corresponds to the energy axis.
-
-    Parameters
-    ----------
-    a : NDArray
-        The array to transform.
-    energies : NDArray
-        The energy values corresponding to the first axis of a.
-    eta : float, optional
-        For the principle part. Small part to avoid singularity, by
-        default 1e-8.
-
-    Returns
-    -------
-    NDArray
-         The Hilbert transform of a.
-
-    """
-    energy_differences = xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim)))
-    ne = energies.size
-    # eta for removing the singularity. See Cauchy principal value.
-    b = (
-        fft_convolve(a, 1 / (energy_differences + eta))[:ne]
-        + fft_convolve(a, 1 / (-energy_differences[::-1] - eta))[ne - 1 :]
-    )
-    # Not sure about the prefactor. Currently gives the same value as the old code.
-    return b / (2 * xp.pi) * (energies[1] - energies[0])
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
@@ -144,6 +45,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         """Initializes the scattering self-energy."""
         self.energies = electron_energies
         self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
+        num_kp_dims = sum(1 for k in quatrex_config.electron.number_of_kpoints if k != 1)
+        self.kpoint_volume *= (2 * xp.pi) ** num_kp_dims
         self.num_energies = self.energies.size
         self.prefactor = (
             1j
@@ -612,25 +515,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     sigma_lesser.data[..., batch] += sl[-ne:]
                     sigma_greater.data[..., batch] += sg[:ne]
 
-                    # Add empty dimensions for each k-point.
-                    energy_differences = (self.energies - self.energies[0]).reshape(
-                        -1, *(len(nk) + 1) * (1,)
-                    )
-                    # eta for removing the singularity. See Cauchy principal value.
-                    eta = (self.energies[1] - self.energies[0]) / 2
-                    hilbert_kernel = 1 / (energy_differences + eta)
-
-                    sr = fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[:ne]
-                    # Correct for left edge
-                    sr += fft_convolve(-sl[:ne], hilbert_kernel)[-ne:]
-                    # Next account for negative frequencies
-                    hilbert_kernel = -hilbert_kernel[::-1]
-                    sr += fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[-ne:]
-                    # Correct for right edge
-                    sr += fft_convolve(sg[-ne:], hilbert_kernel)[:ne]
                     sigma_retarded.data[..., batch] += (
                         self.prefactor
-                        * sr
+                        #* sr
+                        * hilbert_transform_selfenergy(
+                            sl, sg, self.energies
+                        )
                         # Here we shouldn't divide with kpoint volume, as we are
                         # convolving in E-space
                         * self.kpoint_volume

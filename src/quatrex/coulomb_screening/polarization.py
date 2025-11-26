@@ -10,6 +10,8 @@ from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
+from qttools.convolutions.ffts import fft_correlate_kpoints, hilbert_transform_polarization
+
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -18,86 +20,6 @@ profiler = Profiler()
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
-
-
-@profiler.profile(level="api")
-def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
-    """Computes the correlation of two arrays using FFT.
-
-    Parameters
-    ----------
-    a : NDArray
-        First array.
-    b : NDArray
-        Second array.
-
-    Returns
-    -------
-    NDArray
-        The cross-correlation of the two arrays.
-
-    """
-    ne = a.shape[0] + b.shape[0] - 1
-    nka = a.shape[1:-1]
-    nkb = b.shape[1:-1]
-    a_fft = xp.fft.fftn(a, (ne,) + nka, axes=(0,) + tuple(range(1, len(nka) + 1)))
-    b_fft = xp.fft.fftn(
-        xp.flip(b, axis=(0,) + tuple(range(1, len(nkb) + 1))),
-        (ne,) + nkb,
-        axes=(0,) + tuple(range(1, len(nkb) + 1)),
-    )
-    # Don't really know why I have to roll the result, but it works.
-    return xp.roll(
-        xp.fft.ifftn(a_fft * b_fft, axes=(0,) + tuple(range(1, len(nka) + 1))),
-        shift=1,
-        axis=tuple(range(1, len(nka) + 1)),
-    )
-
-
-@profiler.profile(level="api")
-def hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
-    """Computes the Hilbert transform of the array a, assuming the symmetries of the
-    polarization.
-
-    Assumes that the first axis corresponds to the energy axis.
-
-    Parameters
-    ----------
-    a : NDArray
-        The array to transform.
-    energies : NDArray
-        The energy values corresponding to the first axis of a.
-    eta : float, optional
-        For the principle part. Small part to avoid singularity, by
-        default 1e-8.
-
-    Returns
-    -------
-    NDArray
-         The Hilbert transform of a.
-
-    """
-    # eta for removing the singularity. See Cauchy principal value.
-    de = energies[1] - energies[0]
-    eta = de / 2
-    energy_differences = (
-        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
-    )
-    ne = energies.size
-    hilbert_kernel_fft = xp.fft.fft(
-        # 1 / energy_differences * xp.tanh(energy_differences * 10), 2 * ne - 1, axis=0
-        1 / energy_differences,
-        2 * ne - 1,
-        axis=0,
-    )
-    a_t = xp.fft.fft(a, 2 * ne - 1, axis=0)
-    b = xp.fft.ifft(
-        a_t * hilbert_kernel_fft
-        - a_t * hilbert_kernel_fft.conj()
-        - a_t.conj() * hilbert_kernel_fft,
-        axis=0,
-    )[:ne]
-    return b / (2 * xp.pi) * (energies[1] - energies[0])
 
 
 class PCoulombScreening(ScatteringSelfEnergy):
@@ -121,10 +43,12 @@ class PCoulombScreening(ScatteringSelfEnergy):
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
         self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
+        num_kp_dims = sum(1 for k in quatrex_config.electron.number_of_kpoints if k != 1)
+        self.kpoint_volume *= (2 * xp.pi) ** num_kp_dims
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
-            / xp.pi
+            / (2 * xp.pi)
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )
@@ -227,6 +151,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # energy convolution.
                     p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                    # Note that only the hermitian part is computed here.
                     p_retarded.data[..., batch] = (
                         -self.prefactor
                         * (

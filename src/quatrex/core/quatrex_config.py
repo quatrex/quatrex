@@ -365,7 +365,7 @@ class ElectronConfig(BaseModel):
     energy_window_num: PositiveInt | None = None
     energy_window_num_per_rank: PositiveInt | None = None
 
-    flatband: bool | None = None
+    flatband: bool | None = False
 
     dos_peak_limit: PositiveFloat = 100.0
 
@@ -539,6 +539,8 @@ class QuatrexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # --- Simulation parameters ---------------------------------------
+    method: Literal["BSC", "SCBA"] = "SCBA"
+
     device: DeviceConfig
     bsc: BSCConfig = BSCConfig()
     scsp: SCSPConfig = SCSPConfig()

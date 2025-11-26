@@ -66,6 +66,7 @@ def run_quatrex(
     from quatrex.core.compute_config import parse_config as parse_compute_config
     from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
     from quatrex.core.scba import SCBA
+    from quatrex.core.bsc import BSC
 
     if compute_config_path is not None:
         compute_config = parse_compute_config(compute_config_path)
@@ -80,15 +81,22 @@ def run_quatrex(
         pprint(threadpool_info()) if comm.rank == 0 else None
 
         # TODO: decide SCBA or QTBM based on config
-        scba = SCBA(quatrex_config, compute_config)
+        if quatrex_config.method == "BSC":
+            method = BSC(quatrex_config, compute_config)
+        elif quatrex_config.method == "SCBA":
+            method = SCBA(quatrex_config, compute_config)
+        else:
+            raise ValueError(
+                f"Unknown method: {quatrex_config.method}. "
+                "Allowed methods are: 'BSC', 'SCBA'."
+            )
 
         tic = time.perf_counter()
-        scba.run()
+        method.run()
         toc = time.perf_counter()
 
         if comm.rank == 0:
-            print(f"Leaving SCBA after: {(toc - tic):.2f} s")
-
+            print(f"Leaving {quatrex_config.method} after: {(toc - tic):.2f} s")
 
 @quatrex_cli.command()
 def run(

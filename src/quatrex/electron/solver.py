@@ -398,69 +398,6 @@ class ElectronSolver(SubsystemSolver):
                 dtype=self.hamiltonian.dtype,
             ), None
 
-    def _create_identity_overlap(self) -> sparse.coo_matrix:
-        """Create an identity matrix for orthonormal basis assumption.
-
-        Returns
-        -------
-        sparse.coo_matrix
-            Identity matrix with appropriate shape and dtype.
-        """
-        return sparse.eye(
-            self.hamiltonian.shape[-2],
-            format="coo",
-            dtype=self.hamiltonian.dtype,
-        )
-
-    def _load_overlap_matrix(
-        self, quatrex_config
-    ) -> tuple[sparse.coo_matrix, dict | None]:
-        """Load overlap matrix from various sources.
-
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The quatrex simulation configuration.
-
-        Returns
-        -------
-        tuple[sparse.coo_matrix, dict | None]
-            The overlap matrix and optional dictionary for k-point assembly.
-        """
-        try:
-            if quatrex_config.device.construct_from_unit_cell:
-                matrix_sparray, matrix_dict, _ = load_matrix_from_unit_cell(
-                    quatrex_config, "overlap", use_r_cutoff=False
-                )
-            else:
-                matrix_sparray, matrix_dict, _ = load_matrix_from_files(
-                    quatrex_config, "overlap"
-                )
-            return matrix_sparray, matrix_dict
-        except FileNotFoundError:
-            # Fallback to identity matrix for overlap
-            return self._create_identity_overlap(), None
-
-    def _load_hamiltonian_matrix(
-        self, quatrex_config
-    ) -> tuple[sparse.coo_matrix, dict | None, NDArray]:
-        """Load Hamiltonian matrix from various sources.
-
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The quatrex simulation configuration.
-
-        Returns
-        -------
-        tuple[sparse.coo_matrix, dict | None, NDArray]
-            The Hamiltonian matrix, optional k-point dictionary, and block sizes.
-        """
-        if quatrex_config.device.construct_from_unit_cell:
-            return load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
-        else:
-            return load_matrix_from_files(quatrex_config, "hamiltonian")
-
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 

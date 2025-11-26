@@ -1007,7 +1007,7 @@ class BSC:
             )
 
         t_sigma_start = time.perf_counter()
-        self.sigma_coulomb_screening.compute(
+        self.sigma_coulomb_screening.compute_new(
             self.data.g_lesser,
             self.data.g_greater,
             self.data.w_lesser,

@@ -44,9 +44,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         """Initializes the scattering self-energy."""
         self.energies = electron_energies
         self.kpoint_volume = np.prod(quatrex_config.electron.number_of_kpoints)
-        num_kp_dims = sum(1 for k in quatrex_config.electron.number_of_kpoints if k != 1)
-        self.kpoint_volume *= (2 * xp.pi) ** num_kp_dims
-        self.num_energies = self.energies.size
+        #self.num_energies = self.energies.size
         self.prefactor = (
             1j
             / (2 * xp.pi)
@@ -516,7 +514,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
                     sigma_retarded.data[..., batch] += (
                         self.prefactor
-                        #* sr
                         * hilbert_transform_selfenergy(
                             sl, sg, self.energies
                         )
@@ -524,7 +521,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         # convolving in E-space
                         * self.kpoint_volume
                         # NOTE: Only hermitian part is added. The antihermitian part is added when sigma is updated.
-                        # + antihermitian / 2
                     )
 
         synchronize_device()

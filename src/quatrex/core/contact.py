@@ -147,8 +147,22 @@ class Contact:
         # Get the atoms (and orbtals) in the first contact cell
         self.atoms = []
         self.orbitals = []
-        self.atoms.append(self._get_atoms_transverse_sorted(0))
-        self.orbitals.append(self._get_orbitals(self.atoms[0]))
+
+        for i in range(self.n_rep_1):
+            row = []
+            for j in range(self.n_rep_2):
+                row.append([])
+            self.orbitals.append(row)
+
+        for i in range(self.n_rep_1):
+            row = []
+            for j in range(self.n_rep_2):
+                row.append([])
+            self.atoms.append(row)
+
+        self.residual_orbitals = np.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
+
+        self._get_atoms_transverse_sorted(0)
 
         # Get the hamiltonian and overlap matrices for the first contact
         # cell
@@ -159,16 +173,16 @@ class Contact:
         x = 1
         # Iterate over the transport direction until there is no more
         # residual coupling in the contact cell
-        while self._residual_coupling(self.orbitals) > 0:
+        while self._residual_coupling() > 0:
             if comm.rank == 0:
                 print(
-                    f"        Residual coupling={self._residual_coupling(self.orbitals)}",
+                    f"        Residual coupling={self._residual_coupling()}",
                     flush=True,
                 )
 
             # Get atoms, orbitals and matrices for the next contact cell
-            self.atoms.append(self._get_atoms_transverse_sorted(x))
-            self.orbitals.append(self._get_orbitals(self.atoms[x]))
+            self._get_atoms_transverse_sorted(x)
+
             if comm.rank == 0:
                 print(
                     f"    Getting matrices for contact cell in repetition={x}",
@@ -184,37 +198,41 @@ class Contact:
                 flush=True,
             )
 
-        # In case of multiple contact cells in the transport direction,
-        # and in case of multiple unit cells in the transverse
-        # direction, we will obtain a the self energy sorted in
-        # different way. atoms_2 will be used to sort the atoms in a
-        # consistent way (sorted over the transport direction).
-        self.atoms_2 = []
-        self.orbitals_2 = []
-
+        # Orbitals for contact (where to apply the OBC)
+        # Sorted first in transport direction, then in transverse directions
+        self.orbitals_contact = []
         for i in range(self.n_rep_1):
             for j in range(self.n_rep_2):
-                for k in range(x - 1):
-                    # start = i*self.n_at_origin_cell*self.n_rep_2 +
-                    # j*self.n_at_origin_cell end = start +
-                    # self.n_at_origin_cell
-                    # self.atoms_2.append(self.atoms[k][start:end])
-                    start = self.n_orb_origin_cell * (
-                        k * self.n_rep_1 * self.n_rep_2 + i * self.n_rep_2 + j
-                    )
-                    end = start + self.n_orb_origin_cell
-                    self.orbitals_2.append(np.arange(start, end))
+                # The last contact cell is not included
+                self.orbitals_contact.extend(self.orbitals[i][j][:-1])
 
-        # Concatenate the atoms_2 list and get the orbitals order for
-        # the unsorted cell self.atoms_2 = xp.concatenate(self.atoms_2,
-        # dtype=int) self.orbitals_2 = self._get_orbitals(self.atoms_2)
-        self.orbitals_2 = np.concatenate(self.orbitals_2, dtype=int)[None, :]
+        self.orbitals_contact = np.concatenate(self.orbitals_contact)[None, :]
 
-        self.orbitals_contact = np.concatenate(self.orbitals[:-1])[None, :]
-        orb_temp = self.orbitals_contact.squeeze()[self.orbitals_2.squeeze()][None, :]
-        self.orbitals_contact = orb_temp.copy()
+        # When getting the 10 matrix (for spill over), it is more efficient to have it sorted first in transverse, then in transport
+        # The orbital list is then different. We keep it separated over slice over transport direction.
+        self.orbitals_get_10 = []
+        for i in range(0, x):
+            orbitals_slice_x = []
+            for j in range(self.n_rep_1):
+                for k in range(self.n_rep_2):
+                    orbitals_slice_x.append(self.orbitals[j][k][i])
+            self.orbitals_get_10.append(np.concatenate(orbitals_slice_x))
+
+        # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
+        self.sort_orbitals_get_10 = []
+        for i in range(self.n_rep_1 * self.n_rep_2):
+            for k in range(0, x - 1):
+                self.sort_orbitals_get_10.append(
+                    np.arange(self.n_orb_origin_cell)
+                    + i * self.n_orb_origin_cell
+                    + k * self.n_orb_origin_cell * self.n_rep_1 * self.n_rep_2
+                )
+        self.sort_orbitals_get_10 = np.concatenate(
+            self.sort_orbitals_get_10, dtype=int
+        )[None, :]
 
         self.transverse_rep = x - 1
+
         self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
         )
@@ -405,8 +423,6 @@ class Contact:
 
         """
 
-        atom_list = []
-
         # Start from the (0,0) cell and look for periodic repetitions in
         # the transverse directions The origin cell is defined by the
         # user, so we start from -origin_cell (that is a tuple! (x,y))
@@ -425,16 +441,26 @@ class Contact:
                 # cell
                 c_list = [curr_cell[0], curr_cell[1]]
                 c_list.insert(self.direction, x)
+
                 at_inside_rep = self._reorder_atoms(
                     at_inside_rep, c_list[0], c_list[1], c_list[2]
                 )
-                atom_list.append(at_inside_rep)
+                orb_inside_rep = self._get_orbitals(at_inside_rep)
+
+                self.atoms[curr_cell[0] + self.origin_cell[0]][
+                    curr_cell[1] + self.origin_cell[1]
+                ].append(at_inside_rep)
+                self.orbitals[curr_cell[0] + self.origin_cell[0]][
+                    curr_cell[1] + self.origin_cell[1]
+                ].append(orb_inside_rep)
+
+                self.residual_orbitals = self.residual_orbitals[
+                    ~np.isin(self.residual_orbitals, orb_inside_rep)
+                ]
                 curr_cell[1] += 1
 
             curr_cell[0] += 1
             curr_cell[1] = -self.origin_cell[1]
-
-        return np.concatenate(atom_list, dtype=int)
 
     def _get_orbitals(self, atom_inds: NDArray) -> NDArray:
         """Gets the orbital indices corresponding to the atoms
@@ -551,12 +577,7 @@ class Contact:
                 # These are the orbitals where to look for the coupling
                 o_1 = a % self.n_rep_1
                 o_2 = b % self.n_rep_2
-                d1 = (
-                    self.n_orb_origin_cell * self.n_rep_2 * o_1
-                    + self.n_orb_origin_cell * o_2
-                )
-                d2 = d1 + self.n_orb_origin_cell
-                orb_coup = self.orbitals[x][d1:d2]
+                orb_coup = self.orbitals[o_1][o_2][x]
 
                 ham_tu = [H_1, H_2]
                 ham_tu.insert(self.direction, 0)
@@ -598,7 +619,7 @@ class Contact:
 
             radius += 1
 
-    def _residual_coupling(self, orbitals: list) -> bool:
+    def _residual_coupling(self) -> bool:
         """Checks if there is residual coupling between the orbitals in
         the contact and the full device.
 
@@ -615,10 +636,9 @@ class Contact:
 
         """
 
-        tot_orb = np.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
-        tot_orb = tot_orb[~np.isin(tot_orb, np.concatenate(orbitals))]
-
-        return self.device.hamiltonian[0, 0, 0][orbitals[0], :][:, tot_orb].nnz
+        return self.device.hamiltonian[0, 0, 0][self.orb_origin_cell, :][
+            :, self.residual_orbitals
+        ].nnz
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig
@@ -755,26 +775,24 @@ class Contact:
 
         """
 
-        hamiltonian_list = []
-        n = self.orbitals[0].shape[0]
-        for i in range(self.transverse_rep + 1):
+        mat_list = []
+        n = self.orbitals_get_10[0].shape[0]
+        for i in range(1, self.transverse_rep + 1):
             # Get the hamiltonian matrix for the current key and index
-            hamiltonian_list.append(M[self.orbitals[0], :][:, self.orbitals[i]])
+            mat_list.append(M[self.orbitals_get_10[i], :][:, self.orbitals_get_10[0]])
+        h10_temp = sparse.vstack(mat_list, format="csr")
         for i in range(self.transverse_rep - 1):
-            hamiltonian_list.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
-        h10_temp = sparse.hstack(hamiltonian_list[-self.transverse_rep :], format="csr")
-        for i in range(self.transverse_rep - 1):
-            hamiltonian_list.pop()
-            h10_temp = sparse.vstack(
+            mat_list.pop(0)
+            mat_list.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
+            h10_temp = sparse.hstack(
                 [
+                    sparse.vstack(mat_list, format="csr"),
                     h10_temp,
-                    sparse.hstack(
-                        hamiltonian_list[-self.transverse_rep :], format="csr"
-                    ),
-                ]
+                ],
+                format="csr",
             )
 
-        return h10_temp[self.orbitals_2.T, self.orbitals_2].T.conj()
+        return h10_temp[self.sort_orbitals_get_10.T, self.sort_orbitals_get_10]
 
     def _get_list_mat_phase(self, k1: float, k2: float) -> NDArray:
         """Gets the list of hopping matrices in transport direction with
@@ -1043,7 +1061,9 @@ class Contact:
             x_ii, phi_surface = self.obc_solver(
                 A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True
             )
-            sigma_obc_k[k_i, k_j] = A_tot[0] @ x_ii @ A_tot[2]
+            sigma_obc_k[k_i, k_j] = (
+                A_tot[0] @ x_ii @ A_tot[2] / (self.n_rep_2 * self.n_rep_1)
+            )
             inj_k[k_i, k_j] = []
 
             for i, phi in enumerate(phi_surface):
@@ -1054,18 +1074,18 @@ class Contact:
                 num_inj_k[k_i, k_j].append(phi.shape[1])
 
             K_k[k_i, k_j] = phi_surface
-            T_k[k_i, k_j] = -x_ii @ A_tot[2]
+            T_k[k_i, k_j] = -x_ii @ A_tot[2] / (self.n_rep_2 * self.n_rep_1)
 
             if comm.rank == 0:
                 print(f"    Computed OBC for k1={k_i}, k2={k_j}", flush=True)
 
         # Upscale self-energy and Bloch matrices
-        sigma_obc = self._upscale_self_energy(
-            sigma_obc_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
-        )
-        T = self._upscale_self_energy(
-            T_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
-        )
+        # sigma_obc = self._upscale_self_energy(
+        #    sigma_obc_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
+        # )
+        # T = self._upscale_self_energy(
+        #    T_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
+        # )
 
         # Upscale injection and Bloch injection matrices
         inj = self._upscale_injection_modes(inj_k, E)
@@ -1077,7 +1097,7 @@ class Contact:
             for value in num_inj_k.values():
                 num_inj[i_E] += value[i_E]
 
-        return sigma_obc, inj, num_inj, T, K
+        return inj, num_inj, K, sigma_obc_k, T_k
 
     def _compute_band_structure(self, device):
 

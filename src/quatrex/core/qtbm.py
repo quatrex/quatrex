@@ -7,6 +7,12 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.utils.inplace_utils import (
+    add_inplace,
+    add_inplace_OBC,
+    sub_inplace,
+    sub_inplace_OBC,
+)
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
 from quatrex.core.compute_config import ComputeConfig
@@ -25,6 +31,42 @@ _preferred_matrix_type = {
 if xp.__name__ == "cupy":
     mempool = xp.get_default_memory_pool()
     pinned_mempool = xp.get_default_pinned_memory_pool()
+
+
+def kr_mat_mul(m: NDArray, a: NDArray, vect: NDArray) -> NDArray:
+    """Performs Kronecker matrix multiplication.
+
+    Computes the product of a Kronecker product of matrices with a vector:
+    (m ⊗ a) @ vect.
+
+    Parameters
+    ----------
+    a : NDArray
+        First matrix in the Kronecker product.
+    m : NDArray
+        Second matrix in the Kronecker product.
+    vect : NDArray
+        Vector to be multiplied.
+
+    Returns
+    -------
+    result : NDArray
+        Resulting vector from the multiplication.
+
+    """
+    vect_3d = vect.reshape(a.shape[0], m.shape[0], -1, order="F")
+
+    # 2. Apply 'a' to the first dimension (axis 0)
+    # tensordot(a, phi, axes=1) is like a @ phi along the first axis
+    temp = np.tensordot(a, vect_3d, axes=1)
+
+    # 3. Apply 'm' to the second dimension (axis 1 of temp)
+    # We contract axis 1 of m with axis 1 of temp
+    res_simple = np.tensordot(temp, m, axes=(1, 1))
+
+    res_simple = res_simple.transpose(0, 2, 1).reshape(-1, vect.shape[1], order="F")
+
+    return res_simple
 
 
 def allocate_sys_mat(
@@ -566,13 +608,43 @@ class QTBM:
             ]
             # Compute the transmission
             if phi_n.size != 0:
-                self.observables.electron_transmission_contacts[K_ind, n_t, i_en] = (
-                    xp.trace(
-                        xp.real(
-                            -2
-                            * xp.imag(phi_n.T.conj() @ S[cont_2][i_batch, :, :] @ phi_n)
+
+                S_P = xp.zeros_like(phi_n)
+                index1 = (
+                    -xp.arange(self.device.contacts[cont_2].n_rep_1)[:, None]
+                    + xp.arange(self.device.contacts[cont_2].n_rep_1)[None, :]
+                )
+                index2 = (
+                    -xp.arange(self.device.contacts[cont_2].n_rep_2)[:, None]
+                    + xp.arange(self.device.contacts[cont_2].n_rep_2)[None, :]
+                )
+
+                index1 = xp.kron(
+                    index1,
+                    xp.ones(
+                        (
+                            self.device.contacts[cont_2].n_rep_2,
+                            self.device.contacts[cont_2].n_rep_2,
                         )
+                    ),
+                )
+                index2 = xp.tile(
+                    index2,
+                    (
+                        self.device.contacts[cont_2].n_rep_1,
+                        self.device.contacts[cont_2].n_rep_1,
+                    ),
+                )
+
+                for key, value in S[cont_2].items():
+                    S_P += kr_mat_mul(
+                        xp.exp(-1j * key[0] * index1 - 1j * key[1] * index2),
+                        value[i_batch, :, :],
+                        phi_n,
                     )
+
+                self.observables.electron_transmission_contacts[K_ind, n_t, i_en] = (
+                    xp.trace(-2 * xp.imag(phi_n.T.conj() @ S_P))
                 )
 
         phi_ortho = xp.zeros_like(phi)
@@ -581,11 +653,27 @@ class QTBM:
 
         for n, contact in enumerate(self.device.contacts):
 
-            phi_cont = (
-                K[contact.orbitals_contact.squeeze(), :]
-                + T[n][i_batch] @ phi[contact.orbitals_contact.squeeze(), :]
+            phi_cont = K[contact.orbitals_contact.squeeze(), :]
+            index1 = (
+                -xp.arange(contact.n_rep_1)[:, None]
+                + xp.arange(contact.n_rep_1)[None, :]
             )
-            # TODO Add the spill over contribution
+            index2 = (
+                -xp.arange(contact.n_rep_2)[:, None]
+                + xp.arange(contact.n_rep_2)[None, :]
+            )
+
+            index1 = xp.kron(index1, xp.ones((contact.n_rep_2, contact.n_rep_2)))
+            index2 = xp.tile(index2, (contact.n_rep_1, contact.n_rep_1))
+
+            for key, value in T[n].items():
+                phi_cont += kr_mat_mul(
+                    xp.exp(-1j * key[0] * index1 - 1j * key[1] * index2),
+                    value[i_batch, :, :],
+                    phi[contact.orbitals_contact.squeeze(), :],
+                )
+
+            # Add the spill over from the overlap
             for o_r in overlap.values():
                 phi_ortho[contact.orbitals_contact.squeeze(), :] += (
                     contact.get_10(o_r) @ phi_cont
@@ -630,6 +718,7 @@ class QTBM:
         for contact in self.device.contacts:
             cont_ind_list.append(contact.orbitals_contact.squeeze())
 
+        # Allocate indices to update the system matrix in-place
         system_matrix = allocate_sys_mat(
             self.device.hamiltonian, self.device.overlap, cont_ind_list
         )  # Initialize the system matrix
@@ -656,6 +745,7 @@ class QTBM:
 
             times.append(time.perf_counter())
 
+            # Apply the k-point phase factors to the Hamiltonian and Overlap
             for r, h_r in self.device.hamiltonian.items():
                 if r == (0, 0, 0):
                     continue
@@ -689,24 +779,25 @@ class QTBM:
 
                 times.append(time.perf_counter())
 
-                sigma_obcs = []
+                sigma_obcs_K = []
                 injs = []
                 inj_inds = []
                 Ks = []
                 Ts = []
+                Ts_K = []
                 # Compute the boundary self-energy and the injection vector.
                 ind_0 = np.zeros(len(energy_batch), dtype=np.int32)
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
-                    sigma_obc, inj, num_inj, T, K = contact.compute_boundary(
+                    inj, num_inj, K, sigma_obc_K, T_K = contact.compute_boundary(
                         k * 2 * np.pi, energy_batch
                     )
-
-                    sigma_obcs.append(sigma_obc)
                     injs.append(inj)
                     Ks.append(K)
-                    Ts.append(T)
+
+                    Ts_K.append(T_K)
+                    sigma_obcs_K.append(sigma_obc_K)
 
                     # For every energy in batch, compute a list with the
                     # indices of every injected vector.
@@ -754,8 +845,8 @@ class QTBM:
                     )  # Set the K vector as a zero matrix
 
                     # Iterate over contacts
-                    for contact, sigma_obc, inj, inj_ind, K in zip(
-                        self.device.contacts, sigma_obcs, injs, inj_inds, Ks
+                    for contact, inj, inj_ind, K in zip(
+                        self.device.contacts, injs, inj_inds, Ks
                     ):
                         # Add the injection vector in the contact elements
                         # of the rhs
@@ -764,145 +855,41 @@ class QTBM:
                         # rhs
                         K_V[contact.orbitals_contact.T, inj_ind[i]] = K[i]
 
-                    sub_kernel = xp.RawKernel(
-                        r"""
-                                                    #include <cupy/complex.cuh>
-                                                    extern "C" __global__
-                                                    void my_func(complex<double>* M, const complex<double>* U,
-                                                                const long long* ind, const int N) {
-                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
-                                                        if (i < N) {
-                                                        M[ind[i]] -= U[i];
-                                                        }
-                                                    }
-                                                    """,
-                        "my_func",
-                    )
-
-                    add_kernel = xp.RawKernel(
-                        r"""
-                                                    #include <cupy/complex.cuh>
-                                                    extern "C" __global__
-                                                    void my_func_2(complex<double>* M, const complex<double>* U,
-                                                                const long long* ind, const int N) {
-                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
-                                                        if (i < N) {
-                                                        M[ind[i]] += U[i];
-                                                        }
-                                                    }
-                                                    """,
-                        "my_func_2",
-                    )
-
-                    sub_kernel_real = xp.RawKernel(
-                        r"""
-                                                    #include <cupy/complex.cuh>
-                                                    extern "C" __global__
-                                                    void sub_real_func(complex<double>* M, const double* U,
-                                                                const long long* ind, const int N) {
-                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
-                                                        if (i < N) {
-                                                        M[ind[i]] -= U[i];
-                                                        }
-                                                    }
-                                                    """,
-                        "sub_real_func",
-                    )
-
-                    add_kernel_real = xp.RawKernel(
-                        r"""
-                                                    #include <cupy/complex.cuh>
-                                                    extern "C" __global__
-                                                    void add_real_func(complex<double>* M, const double* U,
-                                                                const long long* ind, const int N) {
-                                                        int i = blockDim.x * blockIdx.x + threadIdx.x;
-                                                        if (i < N) {
-                                                        M[ind[i]] += U[i];
-                                                        }
-                                                    }
-                                                    """,
-                        "add_real_func",
-                    )
-
                     system_matrix.data[:] = 0
-
-                    threads_per_block = 128
 
                     # Add the Hamiltonian and overlap contributions
                     for r_idx, (r_key, h_r) in enumerate(
                         self.device.hamiltonian.items()
                     ):
-                        N = h_r.data.size
-                        blocks = (N + threads_per_block - 1) // threads_per_block
 
-                        if r_key == (0, 0, 0):
-                            # Use the specialized kernel for float64 (real) data
-                            sub_kernel_real(
-                                (blocks,),
-                                (threads_per_block,),
-                                (
-                                    system_matrix.data,
-                                    h_r.data,
-                                    ham_update_ind[r_idx],
-                                    N,
-                                ),
-                            )
-                        else:
-                            # Use the original kernel for complex128 data
-                            sub_kernel(
-                                (blocks,),
-                                (threads_per_block,),
-                                (
-                                    system_matrix.data,
-                                    h_r.data,
-                                    ham_update_ind[r_idx],
-                                    N,
-                                ),
-                            )
+                        sub_inplace(
+                            system_matrix.data,
+                            h_r.data,
+                            ham_update_ind[r_idx],
+                        )
 
                     for r_idx, (r_key, s_r) in enumerate(self.device.overlap.items()):
-                        N = s_r.data.size
-                        blocks = (N + threads_per_block - 1) // threads_per_block
 
-                        if r_key == (0, 0, 0):
-                            # Use the specialized kernel for float64 (real) data
-                            add_kernel_real(
-                                (blocks,),
-                                (threads_per_block,),
-                                (
-                                    system_matrix.data,
-                                    s_r.data,
-                                    overlap_update_ind[r_idx],
-                                    N,
-                                ),
-                            )
-                        else:
-                            # Use the original kernel for complex128 data
-                            add_kernel(
-                                (blocks,),
-                                (threads_per_block,),
-                                (
-                                    system_matrix.data,
-                                    s_r.data,
-                                    overlap_update_ind[r_idx],
-                                    N,
-                                ),
-                            )
-
-                    # Subtract the open boundary conditions
-                    for c, sigma_obc in enumerate(sigma_obcs):
-                        N = sigma_obc[i, :, :].ravel().size
-                        blocks = (N + threads_per_block - 1) // threads_per_block
-                        sub_kernel(
-                            (blocks,),
-                            (threads_per_block,),
-                            (
-                                system_matrix.data,
-                                sigma_obc[i, :, :].ravel(),
-                                sigma_SM_indexes[c],
-                                N,
-                            ),
+                        add_inplace(
+                            system_matrix.data,
+                            s_r.data,
+                            overlap_update_ind[r_idx],
                         )
+
+                    # Add the boundary self-energy contributions
+                    for c, s_K in enumerate(sigma_obcs_K):
+
+                        for key, value in s_K.items():
+
+                            sub_inplace_OBC(
+                                system_matrix.data,
+                                value[i, :, :],
+                                sigma_SM_indexes[c],
+                                key[0],
+                                key[1],
+                                self.device.contacts[c].n_rep_1,
+                                self.device.contacts[c].n_rep_2,
+                            )
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -921,12 +908,24 @@ class QTBM:
                     if comm.rank == 0:
                         print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
                     times.append(time.perf_counter())
+
                     # Get the bare system matrix back, needed for
                     # transmission calculation
-                    for c, sigma_obc in enumerate(sigma_obcs):
-                        system_matrix.data[sigma_SM_indexes[c]] += sigma_obc[
-                            i, :, :
-                        ].ravel()
+
+                    # Subtract the open boundary conditions
+                    for c, s_K in enumerate(sigma_obcs_K):
+
+                        for key, value in s_K.items():
+
+                            add_inplace_OBC(
+                                system_matrix.data,
+                                value[i, :, :],
+                                sigma_SM_indexes[c],
+                                key[0],
+                                key[1],
+                                self.device.contacts[c].n_rep_1,
+                                self.device.contacts[c].n_rep_2,
+                            )
 
                     for r in self.device.overlap.keys():
                         self.device.overlap[r].data *= 1 / energy
@@ -937,9 +936,9 @@ class QTBM:
                             inj_inds,
                             i,
                             batch_start + i,
-                            sigma_obcs,
+                            sigma_obcs_K,
                             K_V,
-                            Ts,
+                            Ts_K,
                             system_matrix,
                             self.device.overlap,
                             k_ind,
@@ -952,15 +951,12 @@ class QTBM:
                             flush=True,
                         )
 
-                del sigma_obcs
                 del injs
                 del Ks
                 del Ts
 
-                del sigma_obc
                 del inj
                 del K
-                del T
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:

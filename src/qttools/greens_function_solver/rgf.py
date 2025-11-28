@@ -147,6 +147,8 @@ class RGF(GFSolver):
         mm_mask: str | None = None,
         inv_mask: str = "fp64",
         tmp_mask: str = "fp64",
+        leaf_mask: str = "fp64",
+        current_mask: str = "fp64",
     ) -> None | tuple | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -194,6 +196,8 @@ class RGF(GFSolver):
         assert tmp_mask in ["fp32", "fp64"], f"Invalid temporary mask: {tmp_mask}"
 
         self.mm_mask = mm_mask
+        self.current_mask = current_mask
+        self.leaf_mask = leaf_mask
 
         if inv_mask == "fp32":
             inv_type = xp.complex64
@@ -453,13 +457,13 @@ class RGF(GFSolver):
                 )
 
                 xl_ij_part1 = complex_gemm_to_real_with_mask(
-                    xl_ii, a_ji_dagger_xr_jj_dagger, mask=self.mm_mask
+                    xl_ii, a_ji_dagger_xr_jj_dagger, mask=self.leaf_mask
                 )
                 xl_ij_part2_1 = complex_gemm_to_real_with_mask(
-                    xr_ii, sigma_lesser_ij, mask=self.mm_mask
+                    xr_ii, sigma_lesser_ij, mask=self.leaf_mask
                 )
                 xl_ij_part2 = complex_gemm_to_real_with_mask(
-                    xl_ij_part2_1, xr_jj_dagger, mask=self.mm_mask
+                    xl_ij_part2_1, xr_jj_dagger, mask=self.leaf_mask
                 )
                 xl_ij = -temp_2x - xl_ij_part1 + xl_ij_part2
 
@@ -502,13 +506,13 @@ class RGF(GFSolver):
                 )
 
                 xg_ij_part1 = complex_gemm_to_real_with_mask(
-                    xg_ii, a_ji_dagger_xr_jj_dagger, mask=self.mm_mask
+                    xg_ii, a_ji_dagger_xr_jj_dagger, mask=self.leaf_mask
                 )
                 xg_ij_part2_1 = complex_gemm_to_real_with_mask(
-                    xr_ii, sigma_greater_ij, mask=self.mm_mask
+                    xr_ii, sigma_greater_ij, mask=self.leaf_mask
                 )
                 xg_ij_part2 = complex_gemm_to_real_with_mask(
-                    xg_ij_part2_1, xr_jj_dagger, mask=self.mm_mask
+                    xg_ij_part2_1, xr_jj_dagger, mask=self.leaf_mask
                 )
                 xg_ij = -temp_2x - xg_ij_part1 + xg_ij_part2
 
@@ -528,16 +532,16 @@ class RGF(GFSolver):
 
                 if return_current:
                     a_ji_xr_ii_curr = complex_gemm_to_real_with_mask(
-                        a_ji, xr_ii, mask=self.mm_mask
+                        a_ji, xr_ii, mask=self.current_mask
                     )
                     a_ji_xr_ii_sx_ij_curr = complex_gemm_to_real_with_mask(
-                        a_ji_xr_ii_curr, sigma_lesser_ij, mask=self.mm_mask
+                        a_ji_xr_ii_curr, sigma_lesser_ij, mask=self.current_mask
                     )
                     temp_curr_l1 = complex_gemm_to_real_with_mask(
-                        a_ji, xl_ii, mask=self.mm_mask
+                        a_ji, xl_ii, mask=self.current_mask
                     )
                     temp_curr_l2 = complex_gemm_to_real_with_mask(
-                        temp_curr_l1, a_ji_dagger, mask=self.mm_mask
+                        temp_curr_l1, a_ji_dagger, mask=self.current_mask
                     )
                     sigma_lesser_tilde = (
                         temp_curr_l2
@@ -545,21 +549,21 @@ class RGF(GFSolver):
                         - a_ji_xr_ii_sx_ij_curr
                     )
                     a_ji_xr_ii_sx_ij_curr = complex_gemm_to_real_with_mask(
-                        a_ji_xr_ii_curr, sigma_greater_ij, mask=self.mm_mask
+                        a_ji_xr_ii_curr, sigma_greater_ij, mask=self.current_mask
                     )
                     temp_curr_g1 = complex_gemm_to_real_with_mask(
-                        a_ji, xg_ii, mask=self.mm_mask
+                        a_ji, xg_ii, mask=self.current_mask
                     )
                     temp_curr_g2 = complex_gemm_to_real_with_mask(
-                        temp_curr_g1, a_ji_dagger, mask=self.mm_mask
+                        temp_curr_g1, a_ji_dagger, mask=self.current_mask
                     )
                     sigma_greater_tilde = (
                         temp_curr_g2
                         + a_ji_xr_ii_sx_ij_curr.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij_curr
                     )
-                    temp_trace1 = complex_gemm_to_real_with_mask(sigma_greater_tilde, xl_diag_blocks[j], mask=self.mm_mask)
-                    temp_trace2 = complex_gemm_to_real_with_mask(xg_diag_blocks[j], sigma_lesser_tilde, mask=self.mm_mask)
+                    temp_trace1 = complex_gemm_to_real_with_mask(sigma_greater_tilde, xl_diag_blocks[j], mask=self.current_mask)
+                    temp_trace2 = complex_gemm_to_real_with_mask(xg_diag_blocks[j], sigma_lesser_tilde, mask=self.current_mask)
                     current[stack_slice, ..., i] = xp.trace(
                         temp_trace1 - temp_trace2,
                     )

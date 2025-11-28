@@ -330,7 +330,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     nk = np.prod(g_lesser.data.shape[1:-1])
                     no = g_lesser.data.shape[-1]
                     batch_size = avail_buffer_size // (
-                        2 * ne * nk * 16
+                        2 * ne * nk * 50
                     )  # 16 bytes for complex128
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))

@@ -23,7 +23,7 @@ from quatrex.device.inputs import load_matrix
 profiler = Profiler()
 
 
-def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
+def _btd_subtract(a: DSDBSparse, b: DSDBSparse, comp_type) -> None:
     """Subtracts b from a on the block-tridiagonal.
 
     This is an in-place operation, i.e. a is modified.
@@ -46,8 +46,8 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
             # The last rank does not have these blocks.
             continue
 
-        a_.blocks[i, j] -= b_.blocks[i, j]
-        a_.blocks[j, i] -= b_.blocks[j, i]
+        a_.blocks[i, j] -= b_.blocks[i, j].astype(comp_type)
+        a_.blocks[j, i] -= b_.blocks[j, i].astype(comp_type)
 
 
 class ElectronSolver(SubsystemSolver):
@@ -74,16 +74,27 @@ class ElectronSolver(SubsystemSolver):
         """Initializes the electron solver."""
         super().__init__(config, energies)
 
-        if compute_config.mixed_precision.precision == "single":
+        if config.compute.mixed_precision.electron_precision == "fp32":
             self.dtype = xp.complex64
-        elif compute_config.mixed_precision.precision == "double":
+        elif config.compute.mixed_precision.electron_precision == "fp64":
             self.dtype = xp.complex128
         else:
             raise ValueError(
-                f"Invalid precision: {compute_config.mixed_precision.precision}"
+                f"Invalid precision: {config.compute.mixed_precision.electron_precision}"
             )
 
         self.local_energies = get_local_slice(energies, comm.stack)
+
+
+        hamiltonian_type = config.compute.mixed_precision.hamiltonian_precision
+        if hamiltonian_type == "fp32":
+            self.hamiltonian_dtype = xp.complex64
+        elif hamiltonian_type == "fp64":
+            self.hamiltonian_dtype = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid Hamiltonian precision: {config.compute.mixed_precision.hamiltonian_precision}"
+            )
 
         # Load the device Hamiltonian.
         self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
@@ -156,7 +167,7 @@ class ElectronSolver(SubsystemSolver):
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
-                self.hamiltonian.shape[-2], dtype=self.dtype
+                self.hamiltonian.shape[-2], dtype=self.hamiltonian_dtype
             )
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
@@ -213,27 +224,37 @@ class ElectronSolver(SubsystemSolver):
             config.electron.filtering_iteration_limit
         )
 
-        if self.config.compute.mixed_precision.obc_precision_g == "single":
+        if self.config.compute.mixed_precision.obc_precision_g == "fp32":
             self.obc_type = xp.complex64
-        elif self.config.compute.mixed_precision.obc_precision_g == "double":
+        elif self.config.compute.mixed_precision.obc_precision_g == "fp64":
             self.obc_type = xp.complex128
         else:
             raise ValueError(
                 f"Invalid OBC precision: {self.config.compute.mixed_precision.obc_precision_g}"
             )
 
-        if self.config.compute.mixed_precision.bandedge_precision == "single":
+        if self.config.compute.mixed_precision.bandedge_precision == "fp32":
             self.bandedge_type = xp.complex64
-        elif self.config.compute.mixed_precision.bandedge_precision == "double":
+        elif self.config.compute.mixed_precision.bandedge_precision == "fp64":
             self.bandedge_type = xp.complex128
         else:
             raise ValueError(
                 f"Invalid band edge precision: {self.config.compute.mixed_precision.bandedge_precision}"
             )
-        self.rgf_mm_mask = config.compute.mixed_precision.rgf_mm_g_mask
-        self.rgf_inv_mask = config.compute.mixed_precision.rgf_inv_g_mask
-        self.rgf_tmp_mask = config.compute.mixed_precision.rgf_tmp_g_mask
+        self.rgf_mm_mask = self.config.compute.mixed_precision.rgf_mm_g_mask
+        self.rgf_leaf_mask = self.config.compute.mixed_precision.rgf_leaf_g_mask
+        self.rgf_current_mask = self.config.compute.mixed_precision.rgf_current_g_mask
+        self.rgf_inv_mask = self.config.compute.mixed_precision.rgf_inv_g_mask
+        self.rgf_tmp_mask = self.config.compute.mixed_precision.rgf_tmp_g_mask
 
+        if self.config.compute.mixed_precision.assembly_g_mask == "fp32":
+            self.assembly_type = xp.complex64
+        elif self.config.compute.mixed_precision.assembly_g_mask == "fp64":
+            self.assembly_type = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid assembly precision: {self.config.compute.mixed_precision.assembly_g_mask}"
+            )
 
     @staticmethod
     def get_block(
@@ -450,6 +471,11 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
+        old_type = self.system_matrix._data.dtype
+
+        self.system_matrix._data = self.system_matrix._data.astype(self.assembly_type)
+        self.system_matrix.dtype = self.assembly_type
+
         self.system_matrix.data = 0.0
         if self.orthogonal_basis:
             self.system_matrix.fill_diagonal(1.0)
@@ -459,11 +485,17 @@ class ElectronSolver(SubsystemSolver):
 
         scale_stack(
             self.system_matrix.data,
-            self.local_energies + 1j * self.eta,
+            self.local_energies.astype(self.assembly_type) + 1j * self.eta,
         )
-        self.system_matrix -= sparse.diags(self.potential, format="csr")
-        _btd_subtract(self.system_matrix, sse_retarded)
-        _btd_subtract(self.system_matrix, self.hamiltonian)
+
+        self.system_matrix -= sparse.diags(
+            self.potential.astype(self.assembly_type), format="csr"
+        )
+        _btd_subtract(self.system_matrix, sse_retarded, self.assembly_type)
+        _btd_subtract(self.system_matrix, self.hamiltonian, self.assembly_type)
+
+        self.system_matrix._data = self.system_matrix._data.astype(old_type)
+        self.system_matrix.dtype = old_type
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -596,6 +628,8 @@ class ElectronSolver(SubsystemSolver):
                     return_retarded=True,
                     return_current=self.compute_meir_wingreen_current,
                     mm_mask=self.rgf_mm_mask,
+                    leaf_mask=self.rgf_leaf_mask,
+                    current_mask=self.rgf_current_mask,
                     inv_mask=self.rgf_inv_mask,
                     tmp_mask=self.rgf_tmp_mask,
                 )

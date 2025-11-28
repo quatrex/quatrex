@@ -87,7 +87,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.discard_real_parts = config.coulomb_screening.discard_real_parts
         self.compute_retarded = config.coulomb_screening.compute_retarded_polarization
 
-    @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
+        if config.compute.mixed_precision.polarization_precision == "fp32":
+            self.polarization_precision = xp.complex64
+        elif config.compute.mixed_precision.polarization_precision == "fp64":
+            self.polarization_precision = xp.complex128
+        else:
+            raise ValueError(
+            )
+
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
@@ -140,7 +147,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     ne = g_lesser.data.shape[0]
                     no = g_greater.data.shape[-1]
                     batch_size = avail_buffer_size // (
-                        2 * ne * 16
+                        2 * ne * 120
                     )  # 16 bytes for complex128
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
@@ -173,15 +180,15 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     batch = slice(start, end)
 
                     p_g_full = self.prefactor * fft_correlate_kpoints(
-                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
+                        g_greater.data[..., batch].astype(self.polarization_precision), -g_lesser.data[..., batch].astype(self.polarization_precision).conj()
                     )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the
                     # data. This is a workaround.
                     # Fill the matrices with the data. Take second part of the
                     # energy convolution.
-                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
-                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :].astype(p_lesser.dtype)
+                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :].astype(p_greater.dtype)
                     # Note that only the hermitian part is computed here.
 
                     if self.compute_retarded:

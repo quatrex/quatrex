@@ -65,17 +65,24 @@ class CoulombScreeningSolver(SubsystemSolver):
         """Initializes the solver."""
         super().__init__(config, energies)
 
-        if config.compute.mixed_precision.precision == "single":
+        if config.compute.mixed_precision.screening_precision == "fp32":
             self.dtype = xp.complex64
-        elif config.compute.mixed_precision.precision == "double":
+        elif config.compute.mixed_precision.screening_precision == "fp64":
             self.dtype = xp.complex128
         else:
             raise ValueError(
-                f"Invalid precision: {config.compute.mixed_precision.precision}"
+            )
+
+        if config.compute.mixed_precision.coulomb_precision == "fp32":
+            self.coulomb_dtype = xp.complex64
+        elif config.compute.mixed_precision.coulomb_precision == "fp64":
+            self.coulomb_dtype = xp.complex128
+        else:
+            raise ValueError(
             )
 
         self.scalar_type = xp.float64 if self.dtype == xp.complex128 else xp.float32
-        self.assembly_mask = config.compute.mixed_precision.assembly_mask
+        self.assembly_w_mask = config.compute.mixed_precision.assembly_w_mask
 
         self.coulomb_matrix = coulomb_matrix
         self.small_block_sizes = self.coulomb_matrix.block_sizes
@@ -179,16 +186,18 @@ class CoulombScreeningSolver(SubsystemSolver):
             config.coulomb_screening.filtering_iteration_limit
         )
 
-        if self.config.compute.mixed_precision.obc_precision_w == "single":
+        if self.config.compute.mixed_precision.obc_precision_w == "fp32":
             self.obc_type = xp.complex64
-        elif self.config.compute.mixed_precision.obc_precision_w == "double":
+        elif self.config.compute.mixed_precision.obc_precision_w == "fp64":
             self.obc_type = xp.complex128
         else:
             raise ValueError(
                 f"Invalid OBC precision: {self.config.compute.mixed_precision.obc_precision_w}"
             )
-        self.rgf_mm_mask = config.compute.mixed_precision.rgf_mm_g_mask
-        self.rgf_inv_mask = config.compute.mixed_precision.rgf_inv_g_mask
+        self.rgf_mm_mask = config.compute.mixed_precision.rgf_mm_w_mask
+        self.rgf_leaf_mask = config.compute.mixed_precision.rgf_leaf_w_mask
+        self.rgf_current_mask = config.compute.mixed_precision.rgf_current_w_mask
+        self.rgf_inv_mask = config.compute.mixed_precision.rgf_inv_w_mask
         self.rgf_tmp_mask = config.compute.mixed_precision.rgf_tmp_w_mask
 
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
@@ -373,7 +382,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
-            assembly_mask=self.assembly_mask,
+            assembly_w_mask=self.assembly_w_mask,
         )
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
@@ -471,7 +480,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 start_block=start_block,
                 end_block=end_block,
                 spillover_correction=True,
-                emulate=self.assembly_mask
+                assembly_w_mask=self.assembly_w_mask,
             )
             bd_sandwich_distr(
                 self.coulomb_matrix,
@@ -480,7 +489,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 start_block=start_block,
                 end_block=end_block,
                 spillover_correction=True,
-                emulate=self.assembly_mask
+                assembly_w_mask=self.assembly_w_mask,
             )
 
         if self.flatband:
@@ -525,6 +534,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     out=out,
                     return_retarded=False,
                     mm_mask=self.rgf_mm_mask,
+                    leaf_mask=self.rgf_leaf_mask,
+                    current_mask=self.rgf_current_mask,
                     inv_mask=self.rgf_inv_mask,
                     tmp_mask=self.rgf_tmp_mask,
                 )

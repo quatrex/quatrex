@@ -22,9 +22,15 @@ class SigmaPhonon(ScatteringSelfEnergy):
     def __init__(
         self,
         config: QuatrexConfig,
+        compute_config,
         electron_energies: NDArray | None = None,
     ) -> None:
         """Initializes the self-energy."""
+
+        if compute_config.mixed_precision.sigma_phonon_precision == "fp32":
+            self.dtype = xp.complex64
+        else:
+            self.dtype = xp.complex128
 
         if config.phonon.model == "negf":
             raise NotImplementedError
@@ -112,25 +118,39 @@ class SigmaPhonon(ScatteringSelfEnergy):
             m.dtranspose() if m.distribution_state != "nnz" else None
 
         # ==== Using diagonal() ========================================
-        sl_diag = sigma_lesser.diagonal(stack_index=self.valid_slice)
+        sl_diag = sigma_lesser.diagonal(stack_index=self.valid_slice).astype(self.dtype)
 
         sl_diag += self.deformation_potential**2 * (
             self.occupancy
-            * xp.roll(g_lesser.diagonal(), self.downshift, axis=0)[self.downslice]
+            * xp.roll(g_lesser.diagonal().astype(self.dtype), self.downshift, axis=0)[
+                self.downslice
+            ]
             + (self.occupancy + 1)
-            * xp.roll(g_lesser.diagonal(), -self.upshift, axis=0)[self.upslice]
+            * xp.roll(g_lesser.diagonal().astype(self.dtype), -self.upshift, axis=0)[
+                self.upslice
+            ]
         )
-        sigma_lesser.fill_diagonal(sl_diag, stack_index=self.valid_slice)
+        sigma_lesser.fill_diagonal(
+            sl_diag.astype(sigma_lesser.dtype), stack_index=self.valid_slice
+        )
 
-        sg_diag = sigma_greater.diagonal(stack_index=self.valid_slice)
+        sg_diag = sigma_greater.diagonal(stack_index=self.valid_slice).astype(
+            self.dtype
+        )
 
         sg_diag += self.deformation_potential**2 * (
             self.occupancy
-            * xp.roll(g_greater.diagonal(), -self.upshift, axis=0)[self.upslice]
+            * xp.roll(g_greater.diagonal().astype(self.dtype), -self.upshift, axis=0)[
+                self.upslice
+            ]
             + (self.occupancy + 1)
-            * xp.roll(g_greater.diagonal(), self.downshift, axis=0)[self.downslice]
+            * xp.roll(g_greater.diagonal().astype(self.dtype), self.downshift, axis=0)[
+                self.downslice
+            ]
         )
-        sigma_greater.fill_diagonal(sg_diag, stack_index=self.valid_slice)
+        sigma_greater.fill_diagonal(
+            sg_diag.astype(sigma_greater.dtype), stack_index=self.valid_slice
+        )
 
         # ==== Diagonal only ===========================================
         # inds = xp.diag_indices(sigma_lesser.shape[-1])

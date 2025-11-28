@@ -482,6 +482,8 @@ class DSDBCOO(DSDBSparse):
             Whether the argument is an index or a view. Default is True.
 
         """
+        block = block.astype(self.dtype)
+
         if self.symmetry and (col < row):
             # TODO: Probably worth testing if the block is symmetric.
             self._set_block(

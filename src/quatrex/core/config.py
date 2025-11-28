@@ -882,14 +882,30 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    precision: Literal["single", "double"] = "double"
+    g_precision: Literal["fp32", "fp64"] = "fp64"
+    w_precision: Literal["fp32", "fp64"] = "fp64"
+    p_precision: Literal["fp32", "fp64"] = "fp64"
+    s_precision: Literal["fp32", "fp64"] = "fp64"
 
     polarization_precision: Literal["fp32", "fp64"] = "fp64"
     sigma_fock_precision: Literal["fp32", "fp64"] = "fp64"
     sigma_gw_precision: Literal["fp32", "fp64"] = "fp64"
+    sigma_phonon_precision: Literal["fp32", "fp64"] = "fp64"
+
+    electron_precision: Literal["fp32", "fp64"] = "fp64"
+    screening_precision: Literal["fp32", "fp64"] = "fp64"
+
+    hamiltonian_precision: Literal["fp32", "fp64"] = "fp64"
+    coulomb_precision: Literal["fp32", "fp64"] = "fp64"
 
     rgf_mm_g_mask: str | None = None
     rgf_mm_w_mask: str | None = None
+
+    rgf_leaf_g_mask: str | None = None
+    rgf_leaf_w_mask: str | None = None
+
+    rgf_current_g_mask: str | None = None
+    rgf_current_w_mask: str | None = None
 
     rgf_inv_g_mask: Literal["fp32", "fp64"] = "fp64"
     rgf_inv_w_mask: Literal["fp32", "fp64"] = "fp64"
@@ -897,10 +913,11 @@ class MixedPrecisionConfig(BaseModel):
     rgf_tmp_g_mask: Literal["fp32", "fp64"] = "fp64"
     rgf_tmp_w_mask: Literal["fp32", "fp64"] = "fp64"
 
-    assembly_mask: str | None = "fp64"
-    obc_precision_g: Literal["single", "double"] = "double"
-    obc_precision_w: Literal["single", "double"] = "double"
-    bandedge_precision: Literal["single", "double"] = "double"
+    assembly_g_mask: str | None = "fp64"
+    assembly_w_mask: str | None = "fp64"
+    obc_precision_g: Literal["fp32", "fp64"] = "fp64"
+    obc_precision_w: Literal["fp32", "fp64"] = "fp64"
+    bandedge_precision: Literal["fp32", "fp64"] = "fp64"
 
 
 class ComputeConfig(BaseModel):

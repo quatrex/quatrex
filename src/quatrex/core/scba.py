@@ -108,7 +108,26 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        self.dtype = xp.complex64 if config.compute.mixed_precision.precision == "single" else xp.complex128
+        self.g_dtype = (
+            xp.complex64
+            if config.compute.mixed_precision.g_precision == "fp32"
+            else xp.complex128
+        )
+        self.w_dtype = (
+            xp.complex64
+            if config.compute.mixed_precision.w_precision == "fp32"
+            else xp.complex128
+        )
+        self.p_dtype = (
+            xp.complex64
+            if config.compute.mixed_precision.p_precision == "fp32"
+            else xp.complex128
+        )
+        self.s_dtype = (
+            xp.complex64
+            if config.compute.mixed_precision.s_precision == "fp32"
+            else xp.complex128
+        )
 
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm
@@ -133,22 +152,22 @@ class SCBAData:
         dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(self.dtype),
+            self.sparsity_pattern.astype(self.g_dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
-            dtype=self.dtype,
+            dtype=self.g_dtype,
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(self.dtype),
+            self.sparsity_pattern.astype(self.g_dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
-            dtype=self.dtype,
+            dtype=self.g_dtype,
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
@@ -157,11 +176,28 @@ class SCBAData:
         self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
+        self.sigma_lesser_prev._data = self.sigma_lesser_prev._data.astype(self.s_dtype)
+        self.sigma_lesser._data = self.sigma_lesser._data.astype(self.s_dtype)
+        self.sigma_greater_prev._data = self.sigma_greater_prev._data.astype(
+            self.s_dtype
+        )
+        self.sigma_greater._data = self.sigma_greater._data.astype(self.s_dtype)
+        self.sigma_lesser_prev.dtype = self.s_dtype
+        self.sigma_lesser.dtype = self.s_dtype
+        self.sigma_greater_prev.dtype = self.s_dtype
+        self.sigma_greater.dtype = self.s_dtype
+
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
+        self.sigma_retarded_prev._data = self.sigma_retarded_prev._data.astype(
+            self.s_dtype
+        )
+        self.sigma_retarded._data = self.sigma_retarded._data.astype(self.s_dtype)
+        self.sigma_retarded_prev.dtype = self.s_dtype
+        self.sigma_retarded.dtype = self.s_dtype
 
         if config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
@@ -173,6 +209,13 @@ class SCBAData:
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
+            self.p_retarded._data = self.p_retarded._data.astype(self.p_dtype)
+            self.p_lesser._data = self.p_lesser._data.astype(self.p_dtype)
+            self.p_greater._data = self.p_greater._data.astype(self.p_dtype)
+            self.p_retarded.dtype = self.p_dtype
+            self.p_lesser.dtype = self.p_dtype
+            self.p_greater.dtype = self.p_dtype
+
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
                     self.sparsity_pattern, block_sizes
@@ -188,15 +231,20 @@ class SCBAData:
             )
 
             self.w_lesser = dsdbsparse_type.from_sparray(
-                self.sparsity_pattern.astype(self.dtype),
+                self.sparsity_pattern.astype(self.w_dtype),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
-                dtype=self.dtype,
+                dtype=self.w_dtype,
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
+
+            self.w_lesser._data = self.w_lesser._data.astype(self.w_dtype)
+            self.w_greater._data = self.w_greater._data.astype(self.w_dtype)
+            self.w_lesser.dtype = self.w_dtype
+            self.w_greater.dtype = self.w_dtype
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.

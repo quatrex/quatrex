@@ -193,7 +193,6 @@ class cuDSS(WFSolver):
             stream_holder,
         )
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse linear system a @ x = b using cuDSS.
 

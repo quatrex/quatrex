@@ -446,7 +446,6 @@ class SCBA:
         self.data.sigma_lesser.data[:] = 0.0
         self.data.sigma_greater.data[:] = 0.0
 
-    @profiler.profile(level="api")
     def _symmetrize_sigma(self) -> None:
         # Symmetrization.
         if not self.quatrex_config.scba.symmetric:
@@ -467,7 +466,6 @@ class SCBA:
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
 
-    @profiler.profile(level="api")
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
         self.data.sigma_lesser.data[:] = (
@@ -483,7 +481,6 @@ class SCBA:
             + self.mixing_factor * self.data.sigma_retarded.data
         )
 
-    @profiler.profile(level="api")
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
@@ -513,7 +510,6 @@ class SCBA:
 
         return False  # TODO: :-)
 
-    @profiler.profile(level="api")
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
         if self.quatrex_config.phonon.model == "negf":
@@ -530,12 +526,10 @@ class SCBA:
                 ),
             )
 
-    @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
         raise NotImplementedError
 
-    @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
 
@@ -655,7 +649,6 @@ class SCBA:
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
-    @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
         overlap = (
@@ -725,7 +718,6 @@ class SCBA:
                 overlap,
             ) / (2 * xp.pi)
 
-    @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
 
         # NOTE: The overlap is maybe missing here (it is not used)
@@ -748,7 +740,6 @@ class SCBA:
                 2 * xp.pi
             )
 
-    @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
 
@@ -824,7 +815,6 @@ class SCBA:
         for filename, data in outputs.items():
             xp.save(self.quatrex_config.output_dir / filename, data)
 
-    @profiler.profile(level="basic")
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None

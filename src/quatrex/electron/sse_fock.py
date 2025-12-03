@@ -47,7 +47,6 @@ class SigmaFock(ScatteringSelfEnergy):
         )
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
-    @profiler.profile(level="api")
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 

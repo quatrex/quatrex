@@ -14,7 +14,6 @@ from qttools.utils.gpu_utils import synchronize_device
 profiler = Profiler()
 
 
-@profiler.profile(level="api")
 def correct_out_range_index(i: int, k: int, num_blocks: int):
     # find the index of block in the matrix being repeated into open-end
     # based on the difference of row and col, ie diagonal
@@ -26,7 +25,6 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
     return (i_2, k_2)
 
 
-@profiler.profile(level="api")
 def bd_matmul(
     a: DSDBSparse,
     b: DSDBSparse | list[DSDBSparse],
@@ -140,7 +138,6 @@ def bd_matmul(
         return out
 
 
-@profiler.profile(level="api")
 def bd_sandwich(
     a: DSDBSparse,
     b: DSDBSparse,
@@ -288,7 +285,6 @@ def bd_sandwich(
         return out
 
 
-@profiler.profile(level="api")
 def btd_matmul(
     a: DSDBSparse,
     b: DSDBSparse,
@@ -343,7 +339,6 @@ def btd_matmul(
     out_.blocks[-1, -1] += a_.blocks[-2, -1] @ b_.blocks[-1, -2]
 
 
-@profiler.profile(level="api")
 def btd_sandwich(
     a: DSDBSparse,
     b: DSDBSparse,

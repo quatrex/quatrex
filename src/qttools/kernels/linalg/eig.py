@@ -25,7 +25,6 @@ library_to_location = {
 }
 
 
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def _eig_numba(
     A: NDArray | List[NDArray],
@@ -56,7 +55,6 @@ def _eig_numba(
         vs[i][:] = v
 
 
-@profiler.profile(level="debug")
 def _eig_numpy(
     A: NDArray | List[NDArray],
 ) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
@@ -103,7 +101,6 @@ def _eig_numpy(
     return w, v
 
 
-@profiler.profile(level="debug")
 def _eig_cupy(
     A: NDArray | List[NDArray],
 ) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
@@ -137,7 +134,6 @@ def _eig_cupy(
     return w, v
 
 
-@profiler.profile(level="debug")
 def _eig_nvmath(
     A: NDArray | List[NDArray],
 ) -> tuple[NDArray, NDArray] | tuple[List[NDArray], List[NDArray]]:
@@ -186,7 +182,6 @@ def _eig_nvmath(
     return w, v
 
 
-@profiler.profile(level="debug")
 def _eig_nvmath_kernel(
     A: NDArray,
 ) -> tuple[NDArray, NDArray]:
@@ -273,7 +268,6 @@ def _eig_nvmath_kernel(
     return w_complex, xp.ascontiguousarray(vr)
 
 
-@profiler.profile(level="api")
 def eig(
     A: NDArray | list[NDArray],
     compute_module: str = "numpy",

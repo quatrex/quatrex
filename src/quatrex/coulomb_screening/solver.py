@@ -26,7 +26,6 @@ from quatrex.core.utils import (
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def _compute_sparsity_pattern(
     *matrices: DSDBSparse, dtype: _DType = None
 ) -> sparse.coo_matrix:
@@ -404,7 +403,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         w_lesser.data[local_mask] = 0.0
         w_greater.data[local_mask] = 0.0
 
-    @profiler.profile(level="basic")
     def solve(
         self,
         p_lesser: DSDBSparse,

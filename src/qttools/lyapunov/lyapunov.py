@@ -122,7 +122,6 @@ class LyapunovMemoizer:
                 RuntimeWarning,
             )
 
-    @profiler.profile(level="debug")
     def _call_with_cache(
         self,
         a: NDArray,
@@ -159,7 +158,6 @@ class LyapunovMemoizer:
         self._cache[contact] = out.copy()
         return None
 
-    @profiler.profile(level="api")
     def _solve(
         self,
         a: NDArray,
@@ -251,7 +249,6 @@ class LyapunovMemoizer:
         out[:] = x
         return None
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

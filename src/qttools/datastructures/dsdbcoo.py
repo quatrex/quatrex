@@ -123,7 +123,6 @@ class DSDBCOO(DSDBSparse):
             - self._diag_value_inds[ranks == comm.stack.rank][0]
         )
 
-    @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
@@ -209,7 +208,6 @@ class DSDBCOO(DSDBSparse):
             arr[..., value_inds] = data_stack[..., inds]
         return xp.squeeze(arr)
 
-    @profiler.profile(level="debug")
     def _set_items(
         self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
@@ -287,7 +285,6 @@ class DSDBCOO(DSDBSparse):
 
         return
 
-    @profiler.profile(level="debug")
     def _get_block_slice(self, row: int, col: int) -> slice:
         """Gets the slice of data corresponding to a given block.
 
@@ -324,7 +321,6 @@ class DSDBCOO(DSDBSparse):
 
         return block_slice
 
-    @profiler.profile(level="debug")
     def _get_block(
         self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> NDArray | tuple:
@@ -458,7 +454,6 @@ class DSDBCOO(DSDBSparse):
         cols = self.cols[block_slice] - self.local_block_offsets[col]
         return data_stack[..., block_slice], (rows, cols)
 
-    @profiler.profile(level="debug")
     def _set_block(
         self,
         arg: tuple | NDArray,
@@ -516,7 +511,6 @@ class DSDBCOO(DSDBSparse):
             data_stack[..., block_slice],
         )
 
-    @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSDBCOO") -> None:
         """Checks if the other matrix is commensurate."""
         if not isinstance(other, DSDBCOO):
@@ -735,7 +729,6 @@ class DSDBCOO(DSDBSparse):
         self._add_block_config(num_blocks, block_sizes, block_offsets)
         self._block_config[num_blocks].inds_canonical2block = inds_canonical2bcoo
 
-    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
@@ -786,7 +779,6 @@ class DSDBCOO(DSDBSparse):
 
         return xp.all(idx_original == idx_swapped)
 
-    @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
 
@@ -845,7 +837,6 @@ class DSDBCOO(DSDBSparse):
             )
 
     @classmethod
-    @profiler.profile(level="api")
     def zeros_like(cls, dsdbsparse: "DSDBCOO") -> "DSDBCOO":
         """Creates a new DSDBCOO matrix with the same shape and dtype.
 
@@ -882,7 +873,6 @@ class DSDBCOO(DSDBSparse):
         return out
 
     @classmethod
-    @profiler.profile(level="api")
     def from_sparray(
         cls,
         sparray: sparse.spmatrix,

@@ -334,7 +334,6 @@ class Beyn(NEVP):
 
         return self._solve_reduced_system(a, Y, p_back)
 
-    @profiler.profile(level="api")
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the polynomial eigenvalue problem through contour integration.
 

@@ -115,7 +115,6 @@ class OBCMemoizer:
                 RuntimeWarning,
             )
 
-    @profiler.profile(level="debug")
     def _call_with_cache(
         self,
         a_ii: NDArray,
@@ -146,7 +145,6 @@ class OBCMemoizer:
         self._cache[contact] = x_ii.copy()
         return x_ii
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

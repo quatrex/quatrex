@@ -5,9 +5,6 @@ import warnings
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class Full(NEVP):
@@ -111,7 +108,6 @@ class Full(NEVP):
 
         self.reduce = reduce
 
-    @profiler.profile(level="api")
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the polynomial eigenvalue problem through linearization.
 

@@ -9,7 +9,7 @@ from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_convolve, fft_convolve_kpoints, fft_correlate_kpoints
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -246,7 +246,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             * self.kpoint_volume
         )
 
-    @profiler.profile(level="api")
     def compute(
         self,
         g_lesser: DSDBSparse,
@@ -273,35 +272,27 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         """
 
-        t_block_reorder_start = time.perf_counter()
+        with profiler.profile_range(
+            label="SigmaCoulombScreening: block reorder", level="default", comm=comm
+        ):
 
-        # Save the block sizes for later.
-        if self.big_block_sizes is None:
-            self.big_block_sizes = w_lesser.block_sizes
+            # Save the block sizes for later.
+            if self.big_block_sizes is None:
+                self.big_block_sizes = w_lesser.block_sizes
 
-        # Enforce that the block sizes are the same. NOTE: This triggers
-        # a block-reordering in the DSDBSparse object.
-        w_lesser.block_sizes = g_lesser.block_sizes
-        w_greater.block_sizes = g_greater.block_sizes
+            # Enforce that the block sizes are the same. NOTE: This triggers
+            # a block-reordering in the DSDBSparse object.
+            w_lesser.block_sizes = g_lesser.block_sizes
+            w_greater.block_sizes = g_greater.block_sizes
 
-        sigma_lesser, sigma_greater, sigma_retarded = out
+            sigma_lesser, sigma_greater, sigma_retarded = out
 
-        synchronize_device()
-        t_block_reorder_end = time.perf_counter()
-        comm.Barrier()
-        t_block_reorder_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaCoulombScreening: block reorder: {t_block_reorder_end - t_block_reorder_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaCoulombScreening: block reorder all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
-                flush=True,
-            )
+        with profiler.profile_range(
+            label="SigmaCoulombScreening: stack->nnz transpose",
+            level="default",
+            comm=comm,
+        ):
 
-        t_all2all_start = time.perf_counter()
-        with profiler.profile_range("stack->nnz transpose", level="debug"):
             # Transpose the matrices to nnz distribution.
             for m in (
                 w_lesser,
@@ -317,26 +308,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 # the data here, as we cannot be sure that this is the
                 # first/only interaction.
                 m.dtranspose() if m.distribution_state != "nnz" else None
-        synchronize_device()
-        t_all2all_end = time.perf_counter()
-        comm.Barrier()
-        t_all2all_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaCoulombScreening: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaCoulombScreening: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
-                flush=True,
-            )
 
-        t_sse_start = time.perf_counter()
-        # Because of padding there could be no ij elements
-        if g_greater.data.shape[-1] != 0:
+        with profiler.profile_range(
+            label="SigmaCoulombScreening: SSE computation", level="default", comm=comm
+        ):
 
-            with profiler.profile_range("SSE computation", level="debug"):
-
+            # Because of padding there could be no ij elements
+            if g_greater.data.shape[-1] != 0:
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
@@ -411,56 +389,24 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         hilbert_kernel_fft,
                     )
 
-        synchronize_device()
-        t_sse_end = time.perf_counter()
-        comm.Barrier()
-        t_sse_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaCoulombScreening: SSE computation: {t_sse_end - t_sse_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaCoulombScreening: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
-                flush=True,
-            )
 
-        t_all2all_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
-        with profiler.profile_range("nnz->stack transpose", level="debug"):
+        with profiler.profile_range(
+            label="SigmaCoulombScreening: nnz->stack transpose",
+            level="default",
+            comm=comm,
+        ):
             for m in (w_lesser, w_greater):
                 m.dtranspose(discard=True) if m.distribution_state != "stack" else None
             # NOTE: The electron Green's functions and self-energies must
             # not be transposed back to stack distribution, as they are
             # needed in nnz distribution for the other interactions.
 
-        t_all2all_end = time.perf_counter()
-        comm.Barrier()
-        t_all2all_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaCoulombScreening: nnz->stack transpose: {t_all2all_end - t_all2all_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaCoulombScreening: nnz->stack transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
-                flush=True,
-            )
-
-        t_block_reorder_start = time.perf_counter()
-        # Recover original block sizes.
-        w_lesser.block_sizes = self.big_block_sizes
-        w_greater.block_sizes = self.big_block_sizes
-        synchronize_device()
-        t_block_reorder_end = time.perf_counter()
-        comm.Barrier()
-        t_block_reorder_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaCoulombScreening: block reorder back: {t_block_reorder_end - t_block_reorder_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaCoulombScreening: block reorder back all: {t_block_reorder_end_all - t_block_reorder_start:.3f} s",
-                flush=True,
-            )
+        with profiler.profile_range(
+            label="SigmaCoulombScreening: block reorder back",
+            level="default",
+            comm=comm,
+        ):
+            # Recover original block sizes.
+            w_lesser.block_sizes = self.big_block_sizes
+            w_greater.block_sizes = self.big_block_sizes

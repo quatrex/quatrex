@@ -9,7 +9,6 @@ from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def _eigvalsh(
     A: NDArray,
     B: NDArray,
@@ -47,7 +46,6 @@ def _eigvalsh(
     return w
 
 
-@profiler.profile(level="api")
 def eigvalsh(
     A: NDArray,
     B: NDArray | None = None,

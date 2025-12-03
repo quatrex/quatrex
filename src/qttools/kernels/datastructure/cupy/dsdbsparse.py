@@ -17,7 +17,6 @@ else:
 profiler = Profiler()
 
 
-@profiler.profile(level="api")
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Finds the ranks of the indices in the offsets.
 

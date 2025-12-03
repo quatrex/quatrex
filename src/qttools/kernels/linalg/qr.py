@@ -10,7 +10,6 @@ from qttools.utils.gpu_utils import get_any_location, get_array_module_name
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True, no_rewrites=True)
 def _qr_numba(
     A: NDArray,
@@ -50,7 +49,6 @@ def _qr_numba(
     return q, r
 
 
-@profiler.profile(level="api")
 def qr(
     A: NDArray,
     compute_module: str = "numpy",

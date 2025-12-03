@@ -7,7 +7,6 @@ from qttools.utils.mpi_utils import get_section_sizes
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def get_batches(num_sections: int, max_batch_size: int) -> tuple[list, NDArray]:
     """Computes the number of batches and their sizes.
 

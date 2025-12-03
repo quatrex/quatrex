@@ -71,7 +71,6 @@ def get_block(
     return block
 
 
-@profiler.profile(level="api")
 def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
     """Computes the band edges from the density of states.
 
@@ -92,7 +91,6 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
     return energies[peaks]
 
 
-@profiler.profile(level="debug")
 def _compute_eigenvalues(
     hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
@@ -180,7 +178,6 @@ def _compute_eigenvalues(
     )
 
 
-@profiler.profile(level="api")
 def find_renormalized_eigenvalues(
     hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
@@ -328,7 +325,6 @@ def find_renormalized_eigenvalues(
     return left_band_edges, right_band_edges
 
 
-@profiler.profile(level="api")
 def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
     """Partitions the band edges into valence and conduction bands.
 
@@ -353,7 +349,6 @@ def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
     return xp.array([valence_band_edge, conduction_band_edge])
 
 
-@profiler.profile(level="api")
 def local_band_edges(
     electron_ldos: NDArray, energies: NDArray, mid_gap_energies: NDArray
 ) -> tuple[NDArray, NDArray]:

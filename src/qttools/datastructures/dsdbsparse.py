@@ -35,7 +35,6 @@ def _flatten_list(nested_lists: list[list]) -> list:
     return list(itertools.chain.from_iterable(nested_lists))
 
 
-@profiler.profile(level="debug")
 def _block_view(arr: NDArray, axis: int, num_blocks: int = comm.size) -> NDArray:
     """Gets a block view of an array along a given axis.
 
@@ -294,7 +293,6 @@ class DSDBSparse(ABC):
         """Returns the block sizes."""
         return self._block_config[self.num_blocks].block_offsets
 
-    @profiler.profile(level="debug")
     def _normalize_index(self, index: tuple) -> tuple:
         """Adjusts the sign to allow negative indices and checks bounds."""
         if not isinstance(index, tuple):
@@ -556,7 +554,6 @@ class DSDBSparse(ABC):
         """Negation of the data."""
         ...
 
-    @profiler.profile(level="api")
     def block_diagonal(self, offset: int = 0) -> list[NDArray]:
         """Returns the block diagonal of the matrix.
 
@@ -597,7 +594,6 @@ class DSDBSparse(ABC):
 
         return _flatten_list(comm.block._mpi_comm.allgather(local_blocks))
 
-    @profiler.profile(level="api")
     def diagonal(self, stack_index: tuple = (Ellipsis,)) -> NDArray:
         """Returns or sets the diagonal elements of the matrix.
 
@@ -637,7 +633,6 @@ class DSDBSparse(ABC):
                 return data_stack[..., self._diag_inds_nnz]
             return xp.empty((data_stack.shape[:-1] + (0,)))
 
-    @profiler.profile(level="api")
     def fill_diagonal(self, val: NDArray, stack_index: tuple = (Ellipsis,)) -> NDArray:
         """Returns or sets the diagonal elements of the matrix.
 
@@ -676,7 +671,6 @@ class DSDBSparse(ABC):
                 ]
         return
 
-    @profiler.profile(level="debug")
     def _dtranspose(
         self, block_axis: int, concatenate_axis: int, discard: bool = False
     ) -> None:
@@ -726,7 +720,6 @@ class DSDBSparse(ABC):
 
         # self._data = np.moveaxis(self._data, concatenate_axis, -2).reshape(new_shape)
 
-    @profiler.profile(level="api")
     def dtranspose(self, discard: bool = False) -> None:
         """Performs a distributed transposition of the datastructure.
 

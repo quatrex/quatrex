@@ -75,7 +75,6 @@ class SigmaPhonon(ScatteringSelfEnergy):
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
 
-    @profiler.profile(level="basic")
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:

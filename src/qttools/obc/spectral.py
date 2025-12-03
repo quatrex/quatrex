@@ -403,7 +403,6 @@ class Spectral(OBCSolver):
         # Calculate the surface Green's function.
         return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

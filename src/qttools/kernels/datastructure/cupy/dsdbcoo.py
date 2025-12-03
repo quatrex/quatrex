@@ -22,7 +22,6 @@ profiler = Profiler()
 QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK"), False)
 
 
-@profiler.profile(level="api")
 def find_inds(
     self_rows: NDArray, self_cols: NDArray, rows: NDArray, cols: NDArray
 ) -> tuple[NDArray, NDArray, int]:
@@ -81,7 +80,6 @@ def find_inds(
     return inds, value_inds, int(cp.max(counts))
 
 
-@profiler.profile(level="api")
 def compute_block_slice(
     rows: NDArray, cols: NDArray, block_offsets: NDArray, row: int, col: int
 ) -> slice:
@@ -142,7 +140,6 @@ def compute_block_slice(
     return int(inds[0]), int(inds[-1] + 1)
 
 
-@profiler.profile(level="api")
 def densify_block(
     block: NDArray,
     rows: NDArray,
@@ -213,7 +210,6 @@ def densify_block(
         )
 
 
-@profiler.profile(level="api")
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     """Fills the data with the given dense block.
 
@@ -238,7 +234,6 @@ def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):
     data[:] = block[..., rows, cols]
 
 
-@profiler.profile(level="api")
 def compute_block_sort_index(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> NDArray:

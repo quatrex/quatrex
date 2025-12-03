@@ -14,7 +14,6 @@ profiler = Profiler()
 comm = pkl5.Intracomm(comm)
 
 
-@profiler.profile(level="debug")
 def get_section_sizes(
     num_elements: int,
     num_sections: int = comm.size,
@@ -69,7 +68,6 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-@profiler.profile(level="debug")
 def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """Loads an array from disk and broadcasts it to all ranks.
 
@@ -109,7 +107,6 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     return arr
 
 
-@profiler.profile(level="debug")
 def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     """Returns the local slice of a distributed array.
 

@@ -21,7 +21,6 @@ class SuperLU(WFSolver):
 
     """
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse system a @ x = b using LU decomposition.
 

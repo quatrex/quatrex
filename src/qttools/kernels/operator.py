@@ -113,7 +113,6 @@ if xp.__name__ == "cupy":
         )
 
 
-@profiler.profile(level="debug")
 def operator_inverse(
     a_xx: tuple[NDArray, ...],
     z: NDArray,

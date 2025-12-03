@@ -62,7 +62,6 @@ class MUMPS(WFSolver):
         self.ordering = ordering
         self.context = mumps.Context(verbose=verbose)
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse linear system a @ x = b using MUMPS.
 

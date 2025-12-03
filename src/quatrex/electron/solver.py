@@ -27,7 +27,6 @@ from quatrex.device.inputs import load_matrix
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
     """Subtracts b from a on the block-tridiagonal.
 
@@ -469,7 +468,6 @@ class ElectronSolver(SubsystemSolver):
         g_greater.data[local_mask] = 0.0
         g_retarded.data[local_mask] = 0.0
 
-    @profiler.profile(level="basic")
     def solve(
         self,
         sse_lesser: DSDBSparse,

@@ -24,7 +24,6 @@ if xp.__name__ == "cupy":
         _inv = _solve
 
 
-@profiler.profile(level="debug")
 def inv(
     a: NDArray,
 ) -> NDArray:

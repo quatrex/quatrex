@@ -33,7 +33,6 @@ class SanchoRubio(OBCSolver):
         self.max_iterations = max_iterations
         self.convergence_tol = convergence_tol
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

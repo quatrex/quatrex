@@ -40,7 +40,6 @@ class Doubling(LyapunovSolver):
         self.convergence_abs_tol = convergence_abs_tol
         self.reduce_sparsity = reduce_sparsity
 
-    @profiler.profile(level="debug")
     def _solve(
         self,
         a: NDArray,
@@ -99,7 +98,6 @@ class Doubling(LyapunovSolver):
 
         return x
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

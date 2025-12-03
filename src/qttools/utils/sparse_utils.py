@@ -10,7 +10,6 @@ from qttools.profiling import Profiler
 profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def product_sparsity_pattern(
     *matrices: sparse.spmatrix,
 ) -> tuple[NDArray, NDArray]:

@@ -15,7 +15,6 @@ from typing import Literal
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import strtobool, xp
-from qttools.profiling.utils import get_cuda_devices
 
 NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
 
@@ -42,6 +41,28 @@ if QTX_PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
 
 # Define the mapping of profiling levels to numbers.
 _level_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
+
+
+def _get_cuda_devices(return_names: bool = False):
+    """Returns the list of available CUDA devices.
+
+    Parameters
+    ----------
+    return_names
+        If the device names should be written out.
+
+    Returns
+    ----------
+    list
+        List of available devices
+    """
+    if xp.__name__ != "cupy":
+        return []
+    num_devices = xp.cuda.runtime.getDeviceCount()
+    if return_names:
+        return [f"cuda:{i}" for i in range(num_devices)]
+
+    return list(range(num_devices))
 
 
 class _ProfilingEvent:
@@ -197,7 +218,7 @@ class Profiler:
             cls._instance = super(Profiler, cls).__new__(cls)
 
             cls._instance.eventlog = []
-            cls._instance.devices = get_cuda_devices()
+            cls._instance.devices = _get_cuda_devices()
 
         return cls._instance
 

@@ -7,15 +7,11 @@ from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
-from qttools.profiling import Profiler, decorate_methods
+from qttools.profiling import Profiler
 
 profiler = Profiler()
 
 
-@decorate_methods(
-    profiler.profile(level="debug"),
-    exclude=["__call__", "__init__"],
-)
 class Spectral(OBCSolver):
     """Spectral open-boundary condition solver.
 

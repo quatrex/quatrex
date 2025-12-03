@@ -8,7 +8,7 @@ import numpy as np
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.profiling import Profiler, decorate_methods
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -1071,7 +1071,6 @@ class _DStackView:
         return self._sparse_block_indexer
 
 
-@decorate_methods(profiler.profile(level="debug"))
 class _DSDBlockIndexer:
     """A utility class to locate blocks in the distributed stack.
 

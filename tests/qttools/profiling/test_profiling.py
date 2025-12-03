@@ -5,7 +5,6 @@ from math import isclose
 import pytest
 
 from qttools.profiling.profiler import Profiler, _ProfilingEvent, _ProfilingRun
-from qttools.profiling.utils import decorate_methods
 
 
 @pytest.fixture
@@ -90,31 +89,3 @@ def test_profiler_dump(profiler, tmp_path):
     filepath = tmp_path / "test.json"
     profiler.dump_stats(filepath, format="json")
     assert filepath.exists()
-
-
-def test_decorate_methods(profiler):
-    """Tests that the decorate_methods function works."""
-
-    @decorate_methods(profiler.profile(level="basic"), exclude=["__init__"])
-    class TestClass:
-        def __init__(self):
-            self.value = 0
-
-        def test_method(self):
-            self.value += 1
-
-        def other_method(self):
-            with profiler.profile_range("test_range", level="basic"):
-                pass
-
-    test_instance = TestClass()
-    test_instance.test_method()
-    assert test_instance.value == 1
-
-    test_instance.other_method()
-
-    # Check that "test_method" can be found in the eventlog.
-    assert any("test_method" in event[1] for event in profiler.eventlog)
-    assert any("test_range" in event[1] for event in profiler.eventlog)
-    assert any("other_method" in event[1] for event in profiler.eventlog)
-    assert not any("__init__" in event[1] for event in profiler.eventlog)

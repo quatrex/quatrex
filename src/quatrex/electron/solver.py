@@ -8,7 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
-from qttools.profiling import Profiler, decorate_methods
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
@@ -55,7 +55,6 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
         a_.blocks[j, i] -= b_.blocks[j, i]
 
 
-@decorate_methods(profiler.profile(level="api"), exclude=["solve"])
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 

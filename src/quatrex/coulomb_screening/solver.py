@@ -9,7 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
-from qttools.profiling import Profiler, decorate_methods
+from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -45,7 +45,6 @@ def _compute_sparsity_pattern(
     )
 
 
-@decorate_methods(profiler.profile(level="api"), exclude=["solve"])
 class CoulombScreeningSolver(SubsystemSolver):
     """Solves the dynamics of the screened Coulomb interaction.
 

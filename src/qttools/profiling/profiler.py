@@ -3,7 +3,6 @@
 import json
 import os
 import pickle
-import sys
 import time
 import warnings
 from collections import defaultdict
@@ -18,29 +17,18 @@ from qttools import strtobool, xp
 
 NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
 
-
-# Set the whether to profile the GPU.
-QTX_PROFILE_GPU = strtobool(os.getenv("QTX_PROFILE_GPU"), False)
-if QTX_PROFILE_GPU:
-    if xp.__name__ != "cupy":
-        warnings.warn("CUDA is not available. Defaulting to no GPU profiling.")
-        QTX_PROFILE_GPU = False
-    else:
-        warnings.warn(
-            "GPU profiling is enabled. This will cause device "
-            "synchronization for every profiled event."
-        )
-
 # Set the profiling level.
-QTX_PROFILE_LEVEL = os.getenv("QTX_PROFILE_LEVEL", "basic").lower()
-if QTX_PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
+QTX_PROFILE_LEVEL = os.getenv("QTX_PROFILE_LEVEL", "default").lower()
+if QTX_PROFILE_LEVEL not in ("off", "default", "debug"):
     warnings.warn(
-        f"Invalid profiling level {QTX_PROFILE_LEVEL=}. Defaulting to 'basic'."
+        f"Invalid profiling level {QTX_PROFILE_LEVEL=}. Defaulting to 'default'."
     )
-    QTX_PROFILE_LEVEL = "basic"
+    QTX_PROFILE_LEVEL = "default"
 
 # Define the mapping of profiling levels to numbers.
-_level_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
+_level_to_num = {"off": 0, "default": 1, "debug": 2}
+
+QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
 def _get_cuda_devices(return_names: bool = False):
@@ -83,16 +71,14 @@ class _ProfilingEvent:
     ----------
     datetime : datetime
         The timestamp of the event.
-    prof_type : str
-        The type of the profiling event.
-    qualname : str
-        The qualified name of the profiled function.
-    prof_id : str
-        The ID of the profiling event.
-    host_time : float
-        The time spent on the host.
-    device_times : list
-        The time spent on each device.
+    depth: int
+        The depth of the profiled function.
+    label : str
+        The label of the profiled function.
+    call_time : float
+        The time spent on the call.
+    after_barrier_time : float
+        The time spent including the barrier
     rank : int
         The MPI rank on which the event occurred.
 
@@ -100,19 +86,15 @@ class _ProfilingEvent:
 
     def __init__(self, event: list, rank: int):
         """Initializes the profiling event object."""
-        timestamp, name, host_time, device_times = event
+        timestamp, depth, label, call_time, after_barrier_time = event
         # TODO: Here we parse the timestamp as a datetime object. It
         # would be very nice to have a trace plot of the profiling
         # data, but this would require a bit more work.
         self.datetime = datetime.fromtimestamp(timestamp)
-
-        # Names will look like "<function Class.do_something at 0x...>".
-        prof_type, qualname, *__ = name.strip("<>").split()
-        self.prof_type = prof_type
-        self.qualname = qualname
-
-        self.host_time = host_time
-        self.device_times = device_times
+        self.depth = depth
+        self.label = label
+        self.call_time = call_time
+        self.after_barrier_time = after_barrier_time
         self.rank = rank
 
 
@@ -151,48 +133,50 @@ class _ProfilingRun:
             A dictionary containing the profiling statistics.
 
         """
-        host_stats = defaultdict(list)
-        device_stats = defaultdict(list)
+        call_stats = defaultdict(list)
+        after_barrier_stats = defaultdict(list)
         ranks = defaultdict(set)
+        depths = defaultdict(set)
         for event in self.profiling_events:
-            host_stats[event.qualname].append(event.host_time)
-            device_stats[event.qualname].append(event.device_times)
-            ranks[event.qualname].add(event.rank)
+            call_stats[event.label].append(event.call_time)
+            after_barrier_stats[event.label].append(event.after_barrier_time)
+            ranks[event.label].add(event.rank)
+            depths[event.label].add(event.depth)
 
         stats = {}
-        for key in host_stats:
-            host_times = xp.array(host_stats[key])
+        for key in call_stats:
+            call_times = xp.array(call_stats[key])
 
-            num_calls = len(host_times)
+            num_calls = len(call_times)
             num_ranks = len(ranks[key])
-            total_host_time = float(xp.sum(host_times))
+            print(ranks[key])
+            total_call_time = float(xp.sum(call_times))
 
             stats[key] = {
                 "num_calls": num_calls,
                 "num_participating_ranks": num_ranks,
                 "num_calls_per_rank": num_calls / num_ranks,
-                "total_host_time": total_host_time,
-                "total_host_time_per_rank": total_host_time / num_ranks,
-                "average_host_time": float(xp.mean(host_times)),
-                "median_host_time": float(xp.median(host_times)),
-                "std_host_time": float(xp.std(host_times)),
-                "min_host_time": float(xp.min(host_times)),
-                "max_host_time": float(xp.max(host_times)),
+                "total_call_time": total_call_time,
+                "total_call_time_per_rank": total_call_time / num_ranks,
+                "average_call_time": float(xp.mean(call_times)),
+                "median_call_time": float(xp.median(call_times)),
+                "std_call_time": float(xp.std(call_times)),
+                "min_call_time": float(xp.min(call_times)),
+                "max_call_time": float(xp.max(call_times)),
             }
-            device_times = xp.array(device_stats[key])
-            if not xp.any(device_times):
-                continue
 
-            total_device_time = float(xp.sum(device_times))
+            after_barrier_times = xp.array(after_barrier_stats[key])
+            total_after_barrier_time = float(xp.sum(after_barrier_times))
             stats[key].update(
                 {
-                    "total_device_time": total_device_time,
-                    "total_device_time_per_rank": total_device_time / num_ranks,
-                    "average_device_time": float(xp.mean(device_times)),
-                    "median_device_time": float(xp.median(device_times)),
-                    "std_device_time": float(xp.std(device_times)),
-                    "min_device_time": float(xp.min(device_times)),
-                    "max_device_time": float(xp.max(device_times)),
+                    "total_after_barrier_time": total_after_barrier_time,
+                    "total_after_barrier_time_per_rank": total_after_barrier_time
+                    / num_ranks,
+                    "average_after_barrier_time": float(xp.mean(after_barrier_times)),
+                    "median_after_barrier_time": float(xp.median(after_barrier_times)),
+                    "std_after_barrier_time": float(xp.std(after_barrier_times)),
+                    "min_after_barrier_time": float(xp.min(after_barrier_times)),
+                    "max_after_barrier_time": float(xp.max(after_barrier_times)),
                 }
             )
 
@@ -219,6 +203,14 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.devices = _get_cuda_devices()
+            cls._instance.depth = 0
+
+            if xp.__name__ == "cupy":
+                # NOTE: this consumes some resources
+                # could be moved to the __init__ of the Profiler class
+                cls._instance.start_event = xp.cuda.stream.Event()
+                cls._instance.end_event = xp.cuda.stream.Event()
+                cls._instance.after_barrier_event = xp.cuda.stream.Event()
 
         return cls._instance
 
@@ -280,102 +272,38 @@ class Profiler:
             with open(filepath, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 
-    def _setup_events(self) -> tuple[list, list]:
-        """Sets up CUDA events for each device.
-
-        Returns
-        -------
-        tuple[list, list]
-            A tuple of lists of start and end events for each device.
-
-        """
-        start_events = []
-        end_events = []
-
-        for device in self.devices:
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                start_events.append(xp.cuda.stream.Event())
-                end_events.append(xp.cuda.stream.Event())
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-        return start_events, end_events
-
-    def _record_events(self, events: list):
-        """Records events for each device.
-
-        Parameters
-        ----------
-        events : list
-            A list of events to record.
-
-        """
-        for device, event in zip(self.devices, events):
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                event.record(xp.cuda.stream.Stream(device))
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-    def _synchronize_events(self, events: list):
-        """Synchronizes events for each device.
-
-        Parameters
-        ----------
-        events : list
-            A list of events to synchronize.
-
-        """
-        for device, event in zip(self.devices, events):
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                event.synchronize()
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-    def profile(self, level: str = QTX_PROFILE_LEVEL):
+    def profile(self, label: str, level: str, comm=None):
         """Profiles a function and adds profiling data to the event log.
 
         Notes
         -----
         Two environment variables control the profiling behavior:
-        - `PROFILE_GPU`: Whether to separately measure the time spent on
-          the GPU. If turned on, this will cause device synchronization
-          for every profiled event.
         - `PROFILE_LEVEL`: The profiling level for functions. The
             following levels are implemented:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled for
-              debugging purposes unless the user explicitly requests it.
-
+        - `PROFILE_COMM_SYNC`: If set to `True`, a communicator barrier
+            is called after the profiled function to ensure that all
+            processes are synchronized before recording the end time.
+            Through this, differences in between processes can be
+            better captured.
 
         Parameters
         ----------
-        level : str, optional
+        label : str
+            A label for the profiled range. This is used to identify
+            the profiled range in the profiling data.
+        level : str
             The profiling level controls whether the function is
-            profiled or not. By default, the level is set to the
-            PROFILE_LEVEL environment variable. The function is thus
-            always profiled. The following levels are implemented:
+            profiled or not. The following levels are implemented:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled
-              for debugging purposes unless the user explicitly requests
-              it to be profiled.
+        comm : optional
+            An optional communicator to use for synchronization
 
         Returns
         -------
@@ -384,60 +312,71 @@ class Profiler:
             specified level.
 
         """
-        if level not in ("off", "basic", "api", "debug", "full"):
+        if level not in ("off", "default", "debug"):
             raise ValueError(f"Invalid profiling level {level}.")
+
+        if comm is not None:
+            assert hasattr(
+                comm, "barrier"
+            ), "The communicator must have a barrier attribute."
 
         def decorator(func):
             if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
                 return func
 
-            name = func.__str__()
-
             @wraps(func)
             def wrapper(*args, **kwargs):
 
+                self.depth += 1
                 timestamp = time.time()
 
-                if QTX_PROFILE_GPU:
-                    start_events, end_events = self._setup_events()
+                # NOTE: We maybe need to barrier before starting the timer
 
-                    # Record and sync start events for each device.
-                    self._record_events(start_events)
-                    self._synchronize_events(start_events)
+                if xp.__name__ == "cupy":
+                    if NVTX_AVAILABLE:
+                        xp.cuda.nvtx.RangePush(label)
 
-                    # Record start events for each device.
-                    self._record_events(start_events)
+                    self.start_event.record(xp.cuda.get_current_stream())
 
-                # Push a range to NVTX if available.
-                if NVTX_AVAILABLE:
-                    xp.cuda.nvtx.RangePush(name)
-
-                host_time = -time.perf_counter()
+                else:
+                    start_time = time.perf_counter()
 
                 # Call the function.
                 result = func(*args, **kwargs)
 
-                host_time += time.perf_counter()
+                if xp.__name__ == "cupy":
+                    if NVTX_AVAILABLE:
+                        xp.cuda.nvtx.RangePop()
 
-                if NVTX_AVAILABLE:
-                    xp.cuda.nvtx.RangePop()
+                    self.end_event.record(xp.cuda.get_current_stream())
+                    self.end_event.synchronize()
+                    call_time = (
+                        xp.cuda.get_elapsed_time(self.start_event, self.end_event)
+                        * 1e-3
+                    )  # Convert to seconds.
+                else:
+                    call_time = time.perf_counter() - start_time
 
-                device_times = []
-                if QTX_PROFILE_GPU:
-                    # Record end events for each device.
-                    self._record_events(end_events)
-
-                    # Sync to ensure all devices are done.
-                    self._synchronize_events(end_events)
-
-                    # Calculate the time spent on each device.
-                    for start_event, end_event in zip(start_events, end_events):
-                        device_times.append(
-                            xp.cuda.get_elapsed_time(start_event, end_event)
-                            * 1e-3  # Convert to seconds.
+                if comm is not None and QTX_PROFILE_COMM_SYNC:
+                    comm.barrier()
+                    if xp.__name__ == "cupy":
+                        self.after_barrier_event.record(xp.cuda.get_current_stream())
+                        self.after_barrier_event.synchronize()
+                        after_barrier_time = (
+                            xp.cuda.get_elapsed_time(
+                                self.start_event, self.after_barrier_event
+                            )
+                            * 1e-3
                         )
+                    else:
+                        after_barrier_time = time.perf_counter() - start_time
+                else:
+                    after_barrier_time = call_time
 
-                self.eventlog.append((timestamp, name, host_time, device_times))
+                self.eventlog.append(
+                    (timestamp, self.depth, label, call_time, after_barrier_time)
+                )
+                self.depth -= 1
 
                 return result
 
@@ -446,31 +385,23 @@ class Profiler:
         return decorator
 
     @contextmanager
-    def profile_range(self, label: str = "range", level: str = QTX_PROFILE_LEVEL):
+    def profile_range(self, label: str, level: str):
         """Profiles a range of code.
 
         This is a context manager that profiles a range of code.
 
         Parameters
         ----------
-        label : str, optional
+        label : str
             A label for the profiled range. This is used to identify
             the profiled range in the profiling data.
-        level : str, optional
+        level : str
             The profiling level controls whether the function is
-            profiled or not. By default, the function is always
-            profiled, irrespective of the PROFILE_LEVEL environment
-            variable. The following levels are implemented:
+            profiled or not:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled
-              for debugging purposes unless the user explicitly requests
-              it to be profiled.
 
         Yields
         ------
@@ -478,63 +409,61 @@ class Profiler:
             The context manager does not return anything.
 
         """
-        if level not in ("off", "basic", "api", "debug", "full"):
+        if level not in ("off", "default", "debug"):
             raise ValueError(f"Invalid profiling level {level}.")
 
         if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
             yield
             return
 
-        # This is quite a bit of a hack to get the qualified name of the
-        # function in which the context manager is called.
-        qualname = "no_qualname"
-        if hasattr(sys, "_getframe"):
-            qualname = sys._getframe(2).f_code.co_qualname
-
-        label = "." + label.replace(" ", "_")
-        name = "<range " + qualname + label + ">"
-
         try:
+            self.depth += 1
             timestamp = time.time()
 
-            if QTX_PROFILE_GPU:
-                start_events, end_events = self._setup_events()
+            # NOTE: We maybe need to barrier before starting the timer
 
-                # Record and sync start events for each device.
-                self._record_events(start_events)
-                self._synchronize_events(start_events)
+            if xp.__name__ == "cupy":
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePush(label)
 
-                # Record start events for each device.
-                self._record_events(start_events)
+                self.start_event.record(xp.cuda.get_current_stream())
 
-            # Push a range to NVTX if available.
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePush(name)
-
-            host_time = -time.perf_counter()
+            else:
+                start_time = time.perf_counter()
 
             yield
 
         finally:
 
-            host_time += time.perf_counter()
+            if xp.__name__ == "cupy":
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePop()
 
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePop()
+                self.end_event.record(xp.cuda.get_current_stream())
+                self.end_event.synchronize()
+                call_time = (
+                    xp.cuda.get_elapsed_time(self.start_event, self.end_event) * 1e-3
+                )  # Convert to seconds.
+            else:
+                call_time = time.perf_counter() - start_time
 
-            device_times = []
-            if QTX_PROFILE_GPU:
-                # Record end events for each device.
-                self._record_events(end_events)
-
-                # Sync to ensure all devices are done.
-                self._synchronize_events(end_events)
-
-                # Calculate the time spent on each device.
-                for start_event, end_event in zip(start_events, end_events):
-                    device_times.append(
-                        xp.cuda.get_elapsed_time(start_event, end_event)
-                        * 1e-3  # Convert to seconds.
+            if comm is not None and QTX_PROFILE_COMM_SYNC:
+                comm.barrier()
+                if xp.__name__ == "cupy":
+                    self.after_barrier_event.record(xp.cuda.get_current_stream())
+                    self.after_barrier_event.synchronize()
+                    after_barrier_time = (
+                        xp.cuda.get_elapsed_time(
+                            self.start_event, self.after_barrier_event
+                        )
+                        * 1e-3
                     )
+                else:
+                    after_barrier_time = time.perf_counter() - start_time
+            else:
+                after_barrier_time = call_time
 
-            self.eventlog.append((timestamp, name, host_time, device_times))
+            self.eventlog.append(
+                (timestamp, self.depth, label, call_time, after_barrier_time)
+            )
+            self.depth -= 1

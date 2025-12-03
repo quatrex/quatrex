@@ -1,7 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
-
 import numpy as np
 
 from qttools import NDArray, _DType, sparse, xp
@@ -10,7 +8,6 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 from quatrex.core.compute_config import ComputeConfig
@@ -185,150 +182,149 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
+    @profiler.profile(label="CoulombScreeningSolver: OBC", level="default", comm=comm)
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
 
-            t_obc_r_start = time.perf_counter()
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: OBCR left",
+                level="default",
+                comm=comm.stack,
+            ):
 
-            m_10, m_00, m_01 = get_periodic_superblocks(
-                a_ii=self.system_matrix.blocks[0, 0],
-                a_ji=self.system_matrix.blocks[1, 0],
-                a_ij=self.system_matrix.blocks[0, 1],
-                block_sections=self.block_sections,
-            )
-
-            x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
-
-            m_10_x_00 = m_10 @ x_00
-            self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
-
-            synchronize_device()
-            t_obc_r_end = time.perf_counter()
-            comm.stack.barrier()
-            t_obc_r_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True
-                )
-                print(
-                    f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
-                    flush=True,
+                m_10, m_00, m_01 = get_periodic_superblocks(
+                    a_ii=self.system_matrix.blocks[0, 0],
+                    a_ji=self.system_matrix.blocks[1, 0],
+                    a_ij=self.system_matrix.blocks[0, 1],
+                    block_sections=self.block_sections,
                 )
 
-            t_lyapunov_start = time.perf_counter()
-            # Compute and apply the left lesser/greater boundary self-energy.
-            a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
-            a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+                x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
 
-            q_00_lesser = (
-                x_00
-                @ (
-                    self.l_lesser.blocks[0, 0]
-                    - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+                m_10_x_00 = m_10 @ x_00
+                self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
+
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: Lyapunov left",
+                level="default",
+                comm=comm.stack,
+            ):
+                # Compute and apply the left lesser/greater boundary self-energy.
+                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
+                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+
+                q_00_lesser = (
+                    x_00
+                    @ (
+                        self.l_lesser.blocks[0, 0]
+                        - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+                    )
+                    @ x_00.conj().swapaxes(-1, -2)
                 )
-                @ x_00.conj().swapaxes(-1, -2)
-            )
-            q_00_greater = (
-                x_00
-                @ (
-                    self.l_greater.blocks[0, 0]
-                    - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+                q_00_greater = (
+                    x_00
+                    @ (
+                        self.l_greater.blocks[0, 0]
+                        - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+                    )
+                    @ x_00.conj().swapaxes(-1, -2)
                 )
-                @ x_00.conj().swapaxes(-1, -2)
-            )
 
-            b_00 = x_00 @ m_10
-            q_00 = xp.stack((q_00_lesser, q_00_greater))
+                b_00 = x_00 @ m_10
+                q_00 = xp.stack((q_00_lesser, q_00_greater))
 
-            w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+                w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
 
-            self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
-                -1, -2
-            ) - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+                self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
+                    -1, -2
+                ) - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
 
-            self.obc_blocks.greater[0] = m_10 @ w_00_greater @ m_10.conj().swapaxes(
-                -1, -2
-            ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
-
-            synchronize_device()
-            t_lyapunov_end = time.perf_counter()
-            comm.stack.barrier()
-            t_lyapunov_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
-                print(
-                    f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
+                self.obc_blocks.greater[0] = m_10 @ w_00_greater @ m_10.conj().swapaxes(
+                    -1, -2
+                ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
 
         if comm.block.rank == comm.block.size - 1:
-            n = self.system_matrix.num_local_blocks - 1
-            m = n - 1
 
-            m_mn, m_nn, m_nm = get_periodic_superblocks(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
-                block_sections=self.block_sections,
-            )
-            # ... bop it.
-            m_nn = xp.flip(m_nn, axis=(-2, -1))
-            m_nm = xp.flip(m_nm, axis=(-2, -1))
-            m_mn = xp.flip(m_mn, axis=(-2, -1))
-            x_nn = self.obc(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(m_nn, axis=(-2, -1)),
-                a_ij=xp.flip(m_nm, axis=(-2, -1)),
-                a_ji=xp.flip(m_mn, axis=(-2, -1)),
-                contact="right",
-            )
-            # ... bop it.
-            x_nn = xp.flip(x_nn, axis=(-2, -1))
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: OBCR right",
+                level="default",
+                comm=comm.stack,
+            ):
 
-            m_mn_x_nn = m_mn @ x_nn
+                n = self.system_matrix.num_local_blocks - 1
+                m = n - 1
 
-            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
-
-            # Compute and apply the right lesser/greater boundary self-energy.
-            a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
-            a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
-
-            q_nn_lesser = (
-                x_nn
-                @ (
-                    self.l_lesser.blocks[n, n]
-                    - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+                m_mn, m_nn, m_nm = get_periodic_superblocks(
+                    # Twist it, flip it, ...
+                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
+                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
+                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
+                    block_sections=self.block_sections,
                 )
-                @ x_nn.conj().swapaxes(-1, -2)
-            )
-            q_nn_greater = (
-                x_nn
-                @ (
-                    self.l_greater.blocks[n, n]
-                    - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+                # ... bop it.
+                m_nn = xp.flip(m_nn, axis=(-2, -1))
+                m_nm = xp.flip(m_nm, axis=(-2, -1))
+                m_mn = xp.flip(m_mn, axis=(-2, -1))
+                x_nn = self.obc(
+                    # Twist it, flip it, ...
+                    a_ii=xp.flip(m_nn, axis=(-2, -1)),
+                    a_ij=xp.flip(m_nm, axis=(-2, -1)),
+                    a_ji=xp.flip(m_mn, axis=(-2, -1)),
+                    contact="right",
                 )
-                @ x_nn.conj().swapaxes(-1, -2)
-            )
+                # ... bop it.
+                x_nn = xp.flip(x_nn, axis=(-2, -1))
 
-            b_nn = x_nn @ m_mn
+                m_mn_x_nn = m_mn @ x_nn
 
-            q_nn = xp.stack((q_nn_lesser, q_nn_greater))
+                self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
 
-            w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: Lyapunov right",
+                level="default",
+                comm=comm.stack,
+            ):
+                # Compute and apply the right lesser/greater boundary self-energy.
+                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
+                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
 
-            self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
-                -1, -2
-            ) - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+                q_nn_lesser = (
+                    x_nn
+                    @ (
+                        self.l_lesser.blocks[n, n]
+                        - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+                    )
+                    @ x_nn.conj().swapaxes(-1, -2)
+                )
+                q_nn_greater = (
+                    x_nn
+                    @ (
+                        self.l_greater.blocks[n, n]
+                        - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+                    )
+                    @ x_nn.conj().swapaxes(-1, -2)
+                )
 
-            self.obc_blocks.greater[-1] = m_mn @ w_nn_greater @ m_mn.conj().swapaxes(
-                -1, -2
-            ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+                b_nn = x_nn @ m_mn
 
+                q_nn = xp.stack((q_nn_lesser, q_nn_greater))
+
+                w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+
+                self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
+                    -1, -2
+                ) - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+
+                self.obc_blocks.greater[
+                    -1
+                ] = m_mn @ w_nn_greater @ m_mn.conj().swapaxes(-1, -2) - (
+                    a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2)
+                )
+
+    @profiler.profile(
+        label="CoulombScreeningSolver: Assembly", level="default", comm=comm
+    )
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
@@ -363,17 +359,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         w_lesser, w_greater, *__ = out
         local_dos = []
 
-        # for w_lesser_block, w_greater_block in zip(
-        #     w_lesser.block_diagonal(), w_greater.block_diagonal()
-        # ):
-        #     w_lesser_density = xp.diagonal(
-        #         w_lesser_block, axis1=-2, axis2=-1
-        #     ).imag.mean(-1)
-        #     w_greater_density = (
-        #         -xp.diagonal(w_greater_block, axis1=-2, axis2=-1).imag
-        #     ).mean(-1)
-        #     local_dos.append(0.5 * (w_greater_density - w_lesser_density))
-
         w_lesser_diag = w_lesser.diagonal()
         w_greater_diag = w_greater.diagonal()
 
@@ -403,6 +388,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         w_lesser.data[local_mask] = 0.0
         w_greater.data[local_mask] = 0.0
 
+    @profiler.profile(label="CoulombScreeningSolver", level="default", comm=comm)
     def solve(
         self,
         p_lesser: DSDBSparse,
@@ -425,178 +411,100 @@ class CoulombScreeningSolver(SubsystemSolver):
             retarded).
 
         """
-        t_set_blocksize_start = time.perf_counter()
-
-        self.system_matrix.allocate_data()
-        self.l_lesser.allocate_data()
-        self.l_greater.allocate_data()
-        # Change the block sizes to match the Coulomb matrix.
-        self._set_block_sizes(self.small_block_sizes)
-        synchronize_device()
-        t_set_blocksize_end = time.perf_counter()
-        comm.barrier()
-        t_set_blocksize_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-            print(
-                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-
-        # Compute the product of the Coulomb matrix with the polarization.
+        with profiler.profile_range(
+            label="CoulombScreeningSolver: Set block sizes", level="default", comm=comm
+        ):
+            self.system_matrix.allocate_data()
+            self.l_lesser.allocate_data()
+            self.l_greater.allocate_data()
+            # Change the block sizes to match the Coulomb matrix.
+            self._set_block_sizes(self.small_block_sizes)
 
         # Assemble the system matrix (Includes matrix multiplication).
-        t_assembly_start = time.perf_counter()
         self._assemble_system_matrix(p_retarded)
-        synchronize_device()
-        t_assembly_end = time.perf_counter()
-        comm.barrier()
-        t_assembly_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Assembly: {t_assembly_end-t_assembly_start:.3f}", flush=True)
-            print(
-                f"    Assembly all: {t_assembly_end_all-t_assembly_start:.3f}",
-                flush=True,
-            )
 
-        t_sandwich_start = time.perf_counter()
-        local_blocks, _ = get_section_sizes(
-            len(self.coulomb_matrix.block_sizes), comm.block.size
-        )
-        start_block = sum(local_blocks[: comm.block.rank])
-        end_block = start_block + local_blocks[comm.block.rank]
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_lesser,
-            out=self.l_lesser,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_greater,
-            out=self.l_greater,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        synchronize_device()
-        t_sandwich_end = time.perf_counter()
-        comm.barrier()
-        t_sandwich_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Sandwich: {t_sandwich_end-t_sandwich_start:.3f}", flush=True)
-            print(
-                f"    Sandwich all: {t_sandwich_end_all-t_sandwich_start:.3f}",
-                flush=True,
+        with profiler.profile_range(
+            label="CoulombScreeningSolver: Sandwich", level="default", comm=comm
+        ):
+            local_blocks, _ = get_section_sizes(
+                len(self.coulomb_matrix.block_sizes), comm.block.size
+            )
+            start_block = sum(local_blocks[: comm.block.rank])
+            end_block = start_block + local_blocks[comm.block.rank]
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_lesser,
+                out=self.l_lesser,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+            bd_sandwich_distr(
+                self.coulomb_matrix,
+                p_greater,
+                out=self.l_greater,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
             )
 
         if self.flatband:
-            t_homogenize_start = time.perf_counter()
-            homogenize(self.system_matrix)
-            homogenize(self.l_lesser)
-            homogenize(self.l_greater)
-            t_homogenize_end = time.perf_counter()
-            comm.barrier()
-            t_homogenize_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"    Homogenize: {t_homogenize_end-t_homogenize_start:.3f}",
-                    flush=True,
-                )
-                print(
-                    f"    Homogenize all: {t_homogenize_end_all-t_homogenize_start:.3f}",
-                    flush=True,
-                )
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: Homogenize", level="default", comm=comm
+            ):
+                homogenize(self.system_matrix)
+                homogenize(self.l_lesser)
+                homogenize(self.l_greater)
 
-        # Go back to normal block sizes.
-        t_set_blocksize_start = time.perf_counter()
-        self._set_block_sizes(self.block_sizes)
-        t_set_blocksize_end = time.perf_counter()
-        comm.barrier()
-        t_set_blocksize_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-            print(
-                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
+        with profiler.profile_range(
+            label="CoulombScreeningSolver: Set block sizes back",
+            level="default",
+            comm=comm,
+        ):
+            # Go back to normal block sizes.
+            self._set_block_sizes(self.block_sizes)
 
         # Apply the OBC algorithm.
-        t_obc_start = time.perf_counter()
         self._compute_obc()
-        synchronize_device()
-        t_obc_end = time.perf_counter()
-        comm.barrier()
-        t_obc_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    OBC: {t_obc_end-t_obc_start:.3f}", flush=True)
-            print(f"    OBC all: {t_obc_end_all-t_obc_start:.3f}", flush=True)
 
-        # Solve the system
-        if comm.block.size > 1:
-            t_solve_start = time.perf_counter()
-            self.solver_dist.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=self.l_lesser,
-                sigma_greater=self.l_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=False,
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
+        with profiler.profile_range(
+            label="CoulombScreeningSolver: Solve", level="default", comm=comm
+        ):
+            # Solve the system
+            if comm.block.size > 1:
+                self.solver_dist.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=self.l_lesser,
+                    sigma_greater=self.l_greater,
+                    obc_blocks=self.obc_blocks,
+                    out=out,
+                    return_retarded=False,
+                )
 
-        else:
-            t_solve_start = time.perf_counter()
-            self.solver.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=self.l_lesser,
-                sigma_greater=self.l_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=False,
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
+            else:
+                self.solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=self.l_lesser,
+                    sigma_greater=self.l_greater,
+                    obc_blocks=self.obc_blocks,
+                    out=out,
+                    return_retarded=False,
+                )
 
-        t_filter_start = time.perf_counter()
-        # Only filter the peaks for the first few iterations.
-        if self.solve_call_count < self.filtering_iteration_limit:
-            self._filter_peaks(out)
+        with profiler.profile_range(
+            label="CoulombScreeningSolver: Filter", level="default", comm=comm
+        ):
+            # Only filter the peaks for the first few iterations.
+            if self.solve_call_count < self.filtering_iteration_limit:
+                self._filter_peaks(out)
 
-        self.system_matrix.free_data()
-        self.l_lesser.free_data()
-        self.l_greater.free_data()
+            self.system_matrix.free_data()
+            self.l_lesser.free_data()
+            self.l_greater.free_data()
 
-        w_lesser, w_greater, *__ = out
-        if comm.stack.rank == 0:
-            w_greater.data[0, :] = 0.0
-            w_lesser.data[0, :] = 0.0
-
-        synchronize_device()
-        t_filter_end = time.perf_counter()
-        comm.barrier()
-        t_filter_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Filter: {t_filter_end-t_filter_start:.3f}", flush=True)
-            print(f"    Filter all: {t_filter_end_all-t_filter_start:.3f}", flush=True)
+            w_lesser, w_greater, *__ = out
+            if comm.stack.rank == 0:
+                w_greater.data[0, :] = 0.0
+                w_lesser.data[0, :] = 0.0
 
         self.solve_call_count += 1

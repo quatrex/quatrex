@@ -1,7 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
-
 import numpy as np
 
 from qttools import NDArray, xp
@@ -47,6 +45,7 @@ class SigmaFock(ScatteringSelfEnergy):
         )
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
+    @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 
@@ -61,50 +60,28 @@ class SigmaFock(ScatteringSelfEnergy):
         """
         # TODO: Check again if we really need to transpose the matrices
         # here.
-        t_all2all_start = time.perf_counter()
-        (sigma_retarded,) = out
-        for m in (g_lesser, sigma_retarded):
-            # These should both already be in nnz-distribution.
-            m.dtranspose() if m.distribution_state != "nnz" else None
-        synchronize_device()
-        t_all2all_end = time.perf_counter()
-        comm.barrier()
-        t_all2all_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaFock: stack->nnz transpose: {t_all2all_end - t_all2all_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaFock: stack->nnz transpose all: {t_all2all_end_all - t_all2all_start:.3f} s",
-                flush=True,
-            )
+        with profiler.profile_range(
+            label="SigmaFock: stack->nnz transpose", level="default", comm=comm
+        ):
+            (sigma_retarded,) = out
+            for m in (g_lesser, sigma_retarded):
+                # These should both already be in nnz-distribution.
+                m.dtranspose() if m.distribution_state != "nnz" else None
 
         # Compute the electron density by summing over energies.
-        t_sse_start = time.perf_counter()
-        if g_lesser.data.shape[-1] != 0:
-            gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-            sigma_retarded.data += (
-                fft_circular_convolve(
-                    gl_density,
-                    self.coulomb_matrix_data,
-                    axes=tuple(range(gl_density.ndim - 1)),
+        with profiler.profile_range(
+            label="SigmaFock: SSE computation", level="default", comm=comm
+        ):
+            if g_lesser.data.shape[-1] != 0:
+                gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+                sigma_retarded.data += (
+                    fft_circular_convolve(
+                        gl_density,
+                        self.coulomb_matrix_data,
+                        axes=tuple(range(gl_density.ndim - 1)),
+                    )
+                    / self.kpoint_volume
                 )
-                / self.kpoint_volume
-            )
-        synchronize_device()
-        t_sse_end = time.perf_counter()
-        comm.barrier()
-        t_sse_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    SigmaFock: SSE computation: {t_sse_end - t_sse_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"    SigmaFock: SSE computation all: {t_sse_end_all - t_sse_start:.3f} s",
-                flush=True,
-            )
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

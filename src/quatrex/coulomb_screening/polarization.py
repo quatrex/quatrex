@@ -95,6 +95,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             quatrex_config.coulomb_screening.compute_retarded_polarization
         )
 
+    @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:

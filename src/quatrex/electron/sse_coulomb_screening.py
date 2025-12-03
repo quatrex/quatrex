@@ -246,6 +246,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             * self.kpoint_volume
         )
 
+    @profiler.profile(label="SigmaCoulombScreening", level="default", comm=comm)
     def compute(
         self,
         g_lesser: DSDBSparse,

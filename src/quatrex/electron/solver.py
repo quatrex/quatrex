@@ -1,7 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
-
 import numpy as np
 
 from qttools import NDArray, sparse, xp
@@ -318,6 +316,7 @@ class ElectronSolver(SubsystemSolver):
 
         return block
 
+    @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
@@ -468,6 +467,7 @@ class ElectronSolver(SubsystemSolver):
         g_greater.data[local_mask] = 0.0
         g_retarded.data[local_mask] = 0.0
 
+    @profiler.profile(label="ElectronSolver", level="default", comm=comm)
     def solve(
         self,
         sse_lesser: DSDBSparse,
@@ -492,196 +492,127 @@ class ElectronSolver(SubsystemSolver):
         """
 
         if self.flatband:
-            time_homogenize_start = time.perf_counter()
-            homogenize(sse_greater)
-            homogenize(sse_lesser)
-            homogenize(sse_retarded)
-            synchronize_device()
-            time_homogenize_end = time.perf_counter()
-            comm.barrier()
-            time_homogenize_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"    Homogenize: {time_homogenize_end - time_homogenize_start}",
-                    flush=True,
-                )
-                print(
-                    f"    Homogenize all: {time_homogenize_end_all - time_homogenize_start}",
-                    flush=True,
-                )
+            with profiler.profile_range(
+                label="ElectronSolver: Homogenize", level="default", comm=comm
+            ):
+                homogenize(sse_greater)
+                homogenize(sse_lesser)
+                homogenize(sse_retarded)
 
-        t_assemble_start = time.perf_counter()
-        self.system_matrix.allocate_data()
+        with profiler.profile_range(
+            label="ElectronSolver: Assemble", level="default", comm=comm
+        ):
+            self.system_matrix.allocate_data()
 
-        self._assemble_system_matrix(sse_retarded)
-        synchronize_device()
-        t_assemble_end = time.perf_counter()
-        comm.barrier()
-        t_assemble_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Assemble: {t_assemble_end - t_assemble_start}", flush=True)
-            print(
-                f"    Assemble all: {t_assemble_end_all - t_assemble_start}", flush=True
-            )
+            self._assemble_system_matrix(sse_retarded)
 
         if self.band_edge_tracking == "eigenvalues":
-            t_band_edges_start = time.perf_counter()
-            left_band_edges, right_band_edges = find_renormalized_eigenvalues(
-                hamiltonian=self.hamiltonian,
-                overlap=self.overlap_sparray,
-                potential=self.potential,
-                sigma_retarded=sse_retarded,
-                energies=self.energies,
-                conduction_band_guesses=(
-                    self.left_fermi_level + self.delta_fermi_level_conduction_band,
-                    self.right_fermi_level + self.delta_fermi_level_conduction_band,
-                ),
-                mid_gap_energies=(self.left_mid_gap_energy, self.right_mid_gap_energy),
-                band_edge_config=self.compute_config.band_edge,
-            )
-            self._update_fermi_levels(left_band_edges, right_band_edges)
-
-            synchronize_device()
-            t_band_edges_end = time.perf_counter()
-            comm.barrier()
-            t_band_edges_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"    Band edges: {t_band_edges_end - t_band_edges_start}",
-                    flush=True,
+            with profiler.profile_range(
+                label="ElectronSolver: Band edges", level="default", comm=comm
+            ):
+                left_band_edges, right_band_edges = find_renormalized_eigenvalues(
+                    hamiltonian=self.hamiltonian,
+                    overlap=self.overlap_sparray,
+                    potential=self.potential,
+                    sigma_retarded=sse_retarded,
+                    energies=self.energies,
+                    conduction_band_guesses=(
+                        self.left_fermi_level + self.delta_fermi_level_conduction_band,
+                        self.right_fermi_level + self.delta_fermi_level_conduction_band,
+                    ),
+                    mid_gap_energies=(
+                        self.left_mid_gap_energy,
+                        self.right_mid_gap_energy,
+                    ),
+                    band_edge_config=self.compute_config.band_edge,
                 )
-                print(
-                    f"    Band edges all: {t_band_edges_end_all - t_band_edges_start}",
-                    flush=True,
-                )
+                self._update_fermi_levels(left_band_edges, right_band_edges)
 
-        t_obc_start = time.perf_counter()
         self._compute_obc()
-        synchronize_device()
-        t_obc_end = time.perf_counter()
-        comm.barrier()
-        t_obc_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    OBC: {t_obc_end - t_obc_start}", flush=True)
-            print(f"    OBC all: {t_obc_end_all - t_obc_start}", flush=True)
 
-        if comm.block.size > 1:
-            t_solve_start = time.perf_counter()
-            self.solver_dist.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=sse_lesser,
-                sigma_greater=sse_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=True,
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
+        with profiler.profile_range(
+            label="ElectronSolver: Solve", level="default", comm=comm
+        ):
+            if comm.block.size > 1:
+                self.solver_dist.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser,
+                    sigma_greater=sse_greater,
+                    obc_blocks=self.obc_blocks,
+                    out=out,
+                    return_retarded=True,
+                )
 
-        else:
-            t_solve_start = time.perf_counter()
-            self.meir_wingreen_current = self.solver.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=sse_lesser,
-                sigma_greater=sse_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=True,
-                return_current=self.compute_meir_wingreen_current,
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
+            else:
+                self.meir_wingreen_current = self.solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=sse_lesser,
+                    sigma_greater=sse_greater,
+                    obc_blocks=self.obc_blocks,
+                    out=out,
+                    return_retarded=True,
+                    return_current=self.compute_meir_wingreen_current,
+                )
 
-        t_filter_peaks_start = time.perf_counter()
-        self.system_matrix.free_data()
-        if self.call_count < self.filtering_iteration_limit:
-            self._filter_peaks(out)
-        synchronize_device()
-        t_filter_peaks_end = time.perf_counter()
-        comm.barrier()
-        t_filter_peaks_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Filter peaks: {t_filter_peaks_end - t_filter_peaks_start}",
-                flush=True,
-            )
-            print(
-                f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
-                flush=True,
-            )
+        with profiler.profile_range(
+            label="ElectronSolver: Filter", level="default", comm=comm
+        ):
+            self.system_matrix.free_data()
+            if self.call_count < self.filtering_iteration_limit:
+                self._filter_peaks(out)
 
         if self.band_edge_tracking == "dos-peaks":
-            t_dos_peaks_start = time.perf_counter()
 
-            _, _, g_retarded = out
-            left_band_edges = np.empty((2,), dtype=float)
-            right_band_edges = np.empty((2,), dtype=float)
+            with profiler.profile_range(
+                label="ElectronSolver: DOS peaks", level="default", comm=comm
+            ):
+                _, _, g_retarded = out
+                left_band_edges = np.empty((2,), dtype=float)
+                right_band_edges = np.empty((2,), dtype=float)
 
-            if comm.block.rank == 0:
-                s_00 = self._get_block(self.overlap_sparray, (0, 0))
-                g_00 = g_retarded.blocks[0, 0]
+                if comm.block.rank == 0:
+                    s_00 = self._get_block(self.overlap_sparray, (0, 0))
+                    g_00 = g_retarded.blocks[0, 0]
 
-                local_left_dos = -xp.mean(
-                    xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
+                    local_left_dos = -xp.mean(
+                        xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
+                    )
+
+                    left_dos = comm.stack.all_gather_v(
+                        local_left_dos,
+                        axis=0,
+                        mask=g_retarded._stack_padding_mask,
+                    )
+
+                    e_0_left = find_dos_peaks(left_dos, self.energies)
+                    left_band_edges = np.array(
+                        find_band_edges(e_0_left, self.left_mid_gap_energy)
+                    )
+
+                if comm.block.rank == comm.block.size - 1:
+                    s_nn = self._get_block(self.overlap_sparray, (-1, -1))
+                    n = g_retarded.num_local_blocks - 1
+                    g_nn = g_retarded.blocks[n, n]
+                    local_right_dos = -xp.mean(
+                        xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
+                    )
+
+                    right_dos = comm.stack.all_gather_v(
+                        local_right_dos,
+                        axis=0,
+                        mask=g_retarded._stack_padding_mask,
+                    )
+
+                    e_0_right = find_dos_peaks(right_dos, self.energies)
+                    right_band_edges = np.array(
+                        find_band_edges(e_0_right, self.right_mid_gap_energy)
+                    )
+
+                comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
+                comm.block.bcast(
+                    right_band_edges, root=comm.block.size - 1, backend="device_mpi"
                 )
 
-                left_dos = comm.stack.all_gather_v(
-                    local_left_dos,
-                    axis=0,
-                    mask=g_retarded._stack_padding_mask,
-                )
-
-                e_0_left = find_dos_peaks(left_dos, self.energies)
-                left_band_edges = np.array(
-                    find_band_edges(e_0_left, self.left_mid_gap_energy)
-                )
-
-            if comm.block.rank == comm.block.size - 1:
-                s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-                n = g_retarded.num_local_blocks - 1
-                g_nn = g_retarded.blocks[n, n]
-                local_right_dos = -xp.mean(
-                    xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
-                )
-
-                right_dos = comm.stack.all_gather_v(
-                    local_right_dos,
-                    axis=0,
-                    mask=g_retarded._stack_padding_mask,
-                )
-
-                e_0_right = find_dos_peaks(right_dos, self.energies)
-                right_band_edges = np.array(
-                    find_band_edges(e_0_right, self.right_mid_gap_energy)
-                )
-
-            comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
-            comm.block.bcast(
-                right_band_edges, root=comm.block.size - 1, backend="device_mpi"
-            )
-
-            self._update_fermi_levels(left_band_edges, right_band_edges)
-            synchronize_device()
-            t_dos_peaks_end = time.perf_counter()
-            comm.barrier()
-            t_dos_peaks_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"    DOS peaks: {t_dos_peaks_end - t_dos_peaks_start}", flush=True
-                )
-                print(
-                    f"    DOS peaks all: {t_dos_peaks_end_all - t_dos_peaks_start}",
-                    flush=True,
-                )
+                self._update_fermi_levels(left_band_edges, right_band_edges)
 
         self.call_count += 1

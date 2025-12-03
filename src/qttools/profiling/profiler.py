@@ -381,8 +381,12 @@ class Profiler:
 
                 if comm_world.rank == 0:
                     offset = "  " * (self.depth)
-                    print(offset + label + " : ", call_time, flush=True)
-                    print(offset + label + " all : ", after_barrier_time, flush=True)
+                    print(f"{offset}{label} : {call_time:.4f}s", flush=True)
+                    if comm is not None and QTX_PROFILE_COMM_SYNC:
+                        print(
+                            f"{offset}{label} all : {after_barrier_time:.4f}s",
+                            flush=True,
+                        )
 
                 self.depth -= 1
 
@@ -482,7 +486,10 @@ class Profiler:
 
             if comm_world.rank == 0:
                 offset = "  " * (self.depth)
-                print(offset + label + " : ", call_time, flush=True)
-                print(offset + label + " all : ", after_barrier_time, flush=True)
+                print(f"{offset}{label} : {call_time:.4f}s", flush=True)
+                if comm is not None and QTX_PROFILE_COMM_SYNC:
+                    print(
+                        f"{offset}{label} all : {after_barrier_time:.4f}s", flush=True
+                    )
 
             self.depth -= 1

@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import wraps
 from typing import Literal
 
-from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import strtobool, xp
 
@@ -223,8 +223,8 @@ class Profiler:
             A list of profiling events or an empty list.
 
         """
-        all_events = comm.gather(self.eventlog, root=root)
-        if comm.rank == root:
+        all_events = comm_world.gather(self.eventlog, root=root)
+        if comm_world.rank == root:
             return all_events
         return [[]]
 
@@ -255,7 +255,7 @@ class Profiler:
             raise ValueError(f"Invalid format {format}.")
 
         stats = self.get_stats()
-        if comm.rank != 0:
+        if comm_world.rank != 0:
             # Only the root rank dumps the stats.
             return
 
@@ -378,6 +378,12 @@ class Profiler:
                 self.eventlog.append(
                     (timestamp, self.depth, label, call_time, after_barrier_time)
                 )
+
+                if comm_world.rank == 0:
+                    offset = "  " * (self.depth)
+                    print(offset + label + " : ", call_time, flush=True)
+                    print(offset + label + " all : ", after_barrier_time, flush=True)
+
                 self.depth -= 1
 
                 return result
@@ -405,7 +411,8 @@ class Profiler:
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
         comm : optional
-            An optional communicator to use for synchronization
+            An optional communicator to use for synchronization.
+            comm_world is not used to not potentially deadlock.
 
         Yields
         ------
@@ -472,4 +479,10 @@ class Profiler:
             self.eventlog.append(
                 (timestamp, self.depth, label, call_time, after_barrier_time)
             )
+
+            if comm_world.rank == 0:
+                offset = "  " * (self.depth)
+                print(offset + label + " : ", call_time, flush=True)
+                print(offset + label + " all : ", after_barrier_time, flush=True)
+
             self.depth -= 1

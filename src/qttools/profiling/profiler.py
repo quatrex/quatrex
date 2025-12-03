@@ -337,6 +337,8 @@ class Profiler:
                         xp.cuda.nvtx.RangePush(label)
 
                     self.start_event.record(xp.cuda.get_current_stream())
+                    self.start_event.synchronize()
+                    self.start_event.record(xp.cuda.get_current_stream())
 
                 else:
                     start_time = time.perf_counter()
@@ -385,7 +387,7 @@ class Profiler:
         return decorator
 
     @contextmanager
-    def profile_range(self, label: str, level: str):
+    def profile_range(self, label: str, level: str, comm=None):
         """Profiles a range of code.
 
         This is a context manager that profiles a range of code.
@@ -402,6 +404,8 @@ class Profiler:
             - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
+        comm : optional
+            An optional communicator to use for synchronization
 
         Yields
         ------
@@ -426,6 +430,8 @@ class Profiler:
                 if NVTX_AVAILABLE:
                     xp.cuda.nvtx.RangePush(label)
 
+                self.start_event.record(xp.cuda.get_current_stream())
+                self.start_event.synchronize()
                 self.start_event.record(xp.cuda.get_current_stream())
 
             else:

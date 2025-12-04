@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2025 ETH Zurich and the authors of the qttools package.
 
 import warnings
 
@@ -48,6 +48,68 @@ class Full(NEVP):
         self.eig_compute_location = eig_compute_location
         self.use_pinned_memory = use_pinned_memory
 
+        self.zero_indices = None
+        self.nonzero_indices = None
+        self.all_indices = None
+
+        if reduce and a_sparsity is None:
+            raise ValueError(
+                "If reduce is True, a_sparsity must be provided.",
+            )
+
+        if a_sparsity is not None:
+            for a in a_sparsity:
+                if a.ndim != 2:
+                    raise ValueError(
+                        "a_sparsity must be a tuple of 2D arrays.",
+                    )
+                if a.shape[0] != a.shape[1]:
+                    raise ValueError(
+                        "a_sparsity must be a tuple of square arrays.",
+                    )
+
+            assert all(a.shape[0] == a_sparsity[0].shape[0] for a in a_sparsity), (
+                "All arrays in a_sparsity must have the same shape.",
+            )
+
+        if reduce and a_sparsity is not None:
+
+            sum_columns_first = xp.count_nonzero(a_sparsity[0], axis=0)
+            sum_columns_last = xp.count_nonzero(a_sparsity[-1], axis=0)
+            row_indices_first = xp.where(sum_columns_first == 0)[0]
+            row_indices_last = xp.where(sum_columns_last == 0)[0]
+
+            # offset last indices by the size of all previous blocks
+            offset = sum(a.shape[1] for a in a_sparsity[:-2])
+
+            self.zero_indices = xp.concatenate(
+                (row_indices_first, row_indices_last + offset)
+            )
+
+            self.nonzero_indices = xp.setdiff1d(
+                xp.arange(offset + a_sparsity[-1].shape[1]),
+                self.zero_indices,
+            )
+
+            self.all_indices = xp.concatenate((self.nonzero_indices, self.zero_indices))
+            if len(self.nonzero_indices) == 0 or len(self.nonzero_indices) == 0:
+                raise ValueError(
+                    "All columns are zero in the first or last blocks. "
+                    "This problem is ill-posed.",
+                )
+
+            if len(self.zero_indices) == 0:
+                warnings.warn(
+                    "No columns are zero in the first and last blocks. "
+                    "Reduction has no effect.",
+                )
+                reduce = False
+                self.zero_indices = None
+                self.nonzero_indices = None
+                self.all_indices = None
+
+        self.reduce = reduce
+
     @profiler.profile(level="api")
     def __call__(self, a_xx: tuple[NDArray, ...]) -> tuple[NDArray, NDArray]:
         """Solves the polynomial eigenvalue problem through linearization.
@@ -60,9 +122,6 @@ class Full(NEVP):
         a_xx : tuple[NDArray, ...]
             The coefficient blocks of the non-linear eigenvalue problem
             from lowest to highest order.
-        side : str, optional
-            Whether for the left or right eigenvectors should be solved.
-            Relevant only for the sparsity reduction.
 
         Returns
         -------
@@ -90,9 +149,9 @@ class Full(NEVP):
 
         # Concatenate and delete
         if self.reduce:
-            A_b = A[:, self.zero_indices[side], :][:, :, self.nonzero_indices[side]]
-            A_c = A[:, self.zero_indices[side], :][:, :, self.zero_indices[side]]
-            A = A[:, self.nonzero_indices[side], :][:, :, self.nonzero_indices[side]]
+            A_b = A[:, self.zero_indices, :][:, :, self.nonzero_indices]
+            A_c = A[:, self.zero_indices, :][:, :, self.zero_indices]
+            A = A[:, self.nonzero_indices, :][:, :, self.nonzero_indices]
 
         w, v = linalg.eig(
             A,
@@ -109,7 +168,7 @@ class Full(NEVP):
 
             tmp = xp.concatenate([v, v_zero], axis=1)
             v = xp.empty_like(tmp)
-            v[:, self.all_indices[side], :] = tmp
+            v[:, self.all_indices, :] = tmp
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

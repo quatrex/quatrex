@@ -131,6 +131,7 @@ class SubsystemSolver(ABC):
                 residual_tolerance=obc_config.residual_tolerance,
                 residual_normalization=obc_config.residual_normalization,
                 warning_threshold=obc_config.warning_threshold,
+                eta_decay=obc_config.eta_decay,
             )
 
         else:

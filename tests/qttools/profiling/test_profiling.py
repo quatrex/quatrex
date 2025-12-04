@@ -65,12 +65,12 @@ def test_profiler_decorator(profiler):
     assert result == "test"
 
     # Check that "test_func" can be found in the eventlog.
-    print(profiler.eventlog)
     assert any("test function" in event[2] for event in profiler.eventlog)
 
 
 def test_profiler_profile_range(profiler):
     """Tests that the profiler can be used to profile a code block."""
+
     with profiler.profile_range(label="test range", level="default"):
         pass
 

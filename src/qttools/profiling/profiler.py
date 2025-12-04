@@ -287,6 +287,8 @@ class Profiler:
         save_path = self.save_path
         save_format = self.save_format
 
+        save_path, _ = os.path.splitext(save_path)
+
         if save_format not in ("pickle", "json"):
             raise ValueError(f"Invalid save_format {save_format}.")
 

@@ -95,6 +95,15 @@ class PCoulombScreening(ScatteringSelfEnergy):
             raise ValueError(
             )
 
+        if config.compute.mixed_precision.polarization_tmp_precision == "fp32":
+            self.polarization_tmp_precision = xp.complex64
+        elif config.compute.mixed_precision.polarization_tmp_precision == "fp64":
+            self.polarization_tmp_precision = xp.complex128
+        else:
+            raise ValueError(
+                f"Invalid assembly precision: {config.compute.mixed_precision.polarization_tmp_precision}"
+            )
+
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
     ) -> None:
@@ -180,7 +189,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     batch = slice(start, end)
 
                     p_g_full = self.prefactor * fft_correlate_kpoints(
-                        g_greater.data[..., batch].astype(self.polarization_precision), -g_lesser.data[..., batch].astype(self.polarization_precision).conj()
+                        g_greater.data[..., batch].astype(self.polarization_precision), -g_lesser.data[..., batch].astype(self.polarization_precision).conj(),
                     )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the

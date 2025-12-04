@@ -882,12 +882,14 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    g_precision: Literal["fp32", "fp64"] = "fp64"
-    w_precision: Literal["fp32", "fp64"] = "fp64"
-    p_precision: Literal["fp32", "fp64"] = "fp64"
-    s_precision: Literal["fp32", "fp64"] = "fp64"
+    g_precision: str = "fp64"
+    w_precision: str = "fp64"
+    p_precision: str = "fp64"
+    s_precision: str = "fp64"
 
     polarization_precision: Literal["fp32", "fp64"] = "fp64"
+    polarization_tmp_precision: Literal["fp32", "fp64"] = "fp64"
+
     sigma_fock_precision: Literal["fp32", "fp64"] = "fp64"
     sigma_gw_precision: Literal["fp32", "fp64"] = "fp64"
     sigma_phonon_precision: Literal["fp32", "fp64"] = "fp64"

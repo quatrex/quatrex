@@ -36,6 +36,28 @@ from quatrex.photon import PhotonSolver, PiPhoton
 profiler = Profiler()
 
 
+def _mask_precision(x, mask):
+    # Use bit manipulation to simulate BF16 precision.
+    x_int = x.view(xp.uint64)
+    # mask is a str, convert it to uint64
+    mask_int = xp.uint64(int(mask, 16))
+    return (x_int & mask_int).view(xp.float64)
+
+
+def mask_precision(x, mask):
+    in_type = x.dtype
+    assert in_type == xp.complex128
+
+    if mask == "fp64":
+        pass
+    elif mask == "fp32":
+        x = x.astype(xp.complex64)
+        x = x.astype(in_type)
+    else:
+        x = _mask_precision(xp.real(x), mask) + 1j * _mask_precision(xp.imag(x), mask)
+    return x
+
+
 class SCBAData:
     """Data container class for the SCBA.
 
@@ -108,26 +130,10 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        self.g_dtype = (
-            xp.complex64
-            if config.compute.mixed_precision.g_precision == "fp32"
-            else xp.complex128
-        )
-        self.w_dtype = (
-            xp.complex64
-            if config.compute.mixed_precision.w_precision == "fp32"
-            else xp.complex128
-        )
-        self.p_dtype = (
-            xp.complex64
-            if config.compute.mixed_precision.p_precision == "fp32"
-            else xp.complex128
-        )
-        self.s_dtype = (
-            xp.complex64
-            if config.compute.mixed_precision.s_precision == "fp32"
-            else xp.complex128
-        )
+        self.g_dtype = config.compute.mixed_precision.g_precision
+        self.w_dtype = config.compute.mixed_precision.w_precision
+        self.p_dtype = config.compute.mixed_precision.p_precision
+        self.s_dtype = config.compute.mixed_precision.s_precision
 
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm
@@ -151,23 +157,25 @@ class SCBAData:
 
         dsdbsparse_type = config.compute.dsdbsparse_type
 
+        _dtype = xp.complex128
+
         self.g_retarded = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(self.g_dtype),
+            self.sparsity_pattern.astype(_dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
-            dtype=self.g_dtype,
+            dtype=_dtype,
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(self.g_dtype),
+            self.sparsity_pattern.astype(_dtype),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
-            dtype=self.g_dtype,
+            dtype=_dtype,
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
@@ -176,28 +184,24 @@ class SCBAData:
         self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
-        self.sigma_lesser_prev._data = self.sigma_lesser_prev._data.astype(self.s_dtype)
-        self.sigma_lesser._data = self.sigma_lesser._data.astype(self.s_dtype)
-        self.sigma_greater_prev._data = self.sigma_greater_prev._data.astype(
-            self.s_dtype
-        )
-        self.sigma_greater._data = self.sigma_greater._data.astype(self.s_dtype)
-        self.sigma_lesser_prev.dtype = self.s_dtype
-        self.sigma_lesser.dtype = self.s_dtype
-        self.sigma_greater_prev.dtype = self.s_dtype
-        self.sigma_greater.dtype = self.s_dtype
+        self.sigma_lesser_prev._data = self.sigma_lesser_prev._data.astype(_dtype)
+        self.sigma_lesser._data = self.sigma_lesser._data.astype(_dtype)
+        self.sigma_greater_prev._data = self.sigma_greater_prev._data.astype(_dtype)
+        self.sigma_greater._data = self.sigma_greater._data.astype(_dtype)
+        self.sigma_lesser_prev.dtype = _dtype
+        self.sigma_lesser.dtype = _dtype
+        self.sigma_greater_prev.dtype = _dtype
+        self.sigma_greater.dtype = _dtype
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
-        self.sigma_retarded_prev._data = self.sigma_retarded_prev._data.astype(
-            self.s_dtype
-        )
-        self.sigma_retarded._data = self.sigma_retarded._data.astype(self.s_dtype)
-        self.sigma_retarded_prev.dtype = self.s_dtype
-        self.sigma_retarded.dtype = self.s_dtype
+        self.sigma_retarded_prev._data = self.sigma_retarded_prev._data.astype(_dtype)
+        self.sigma_retarded._data = self.sigma_retarded._data.astype(_dtype)
+        self.sigma_retarded_prev.dtype = _dtype
+        self.sigma_retarded.dtype = _dtype
 
         if config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
@@ -209,12 +213,12 @@ class SCBAData:
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
-            self.p_retarded._data = self.p_retarded._data.astype(self.p_dtype)
-            self.p_lesser._data = self.p_lesser._data.astype(self.p_dtype)
-            self.p_greater._data = self.p_greater._data.astype(self.p_dtype)
-            self.p_retarded.dtype = self.p_dtype
-            self.p_lesser.dtype = self.p_dtype
-            self.p_greater.dtype = self.p_dtype
+            self.p_retarded._data = self.p_retarded._data.astype(_dtype)
+            self.p_lesser._data = self.p_lesser._data.astype(_dtype)
+            self.p_greater._data = self.p_greater._data.astype(_dtype)
+            self.p_retarded.dtype = _dtype
+            self.p_lesser.dtype = _dtype
+            self.p_greater.dtype = _dtype
 
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
@@ -231,20 +235,20 @@ class SCBAData:
             )
 
             self.w_lesser = dsdbsparse_type.from_sparray(
-                self.sparsity_pattern.astype(self.w_dtype),
+                self.sparsity_pattern.astype(_dtype),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
-                dtype=self.w_dtype,
+                dtype=_dtype,
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
-            self.w_lesser._data = self.w_lesser._data.astype(self.w_dtype)
-            self.w_greater._data = self.w_greater._data.astype(self.w_dtype)
-            self.w_lesser.dtype = self.w_dtype
-            self.w_greater.dtype = self.w_dtype
+            self.w_lesser._data = self.w_lesser._data.astype(_dtype)
+            self.w_greater._data = self.w_greater._data.astype(_dtype)
+            self.w_lesser.dtype = _dtype
+            self.w_greater.dtype = _dtype
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -555,6 +559,16 @@ class SCBA:
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
 
+        self.data.p_lesser._data = mask_precision(
+            self.data.p_lesser._data, self.data.p_dtype
+        )
+        self.data.p_greater._data = mask_precision(
+            self.data.p_greater._data, self.data.p_dtype
+        )
+        self.data.p_retarded._data = mask_precision(
+            self.data.p_retarded._data, self.data.p_dtype
+        )
+
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
@@ -565,15 +579,38 @@ class SCBA:
             out=(self.data.w_lesser, self.data.w_greater),
         )
 
+        self.data.w_lesser._data = mask_precision(
+            self.data.w_lesser._data, self.data.w_dtype
+        )
+        self.data.w_greater._data = mask_precision(
+            self.data.w_greater._data, self.data.w_dtype
+        )
+
+
         self._compute_coulomb_screening_observables()
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
 
+        self.data.sigma_retarded._data = mask_precision(
+            self.data.sigma_retarded._data, self.data.s_dtype
+        )
+
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
+        )
+
+
+        self.data.sigma_lesser._data = mask_precision(
+            self.data.sigma_lesser._data, self.data.s_dtype
+        )
+        self.data.sigma_greater._data = mask_precision(
+            self.data.sigma_greater._data, self.data.s_dtype
+        )
+        self.data.sigma_retarded._data = mask_precision(
+            self.data.sigma_retarded._data, self.data.s_dtype
         )
 
         self.sigma_coulomb_screening.compute(
@@ -586,6 +623,16 @@ class SCBA:
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
             ),
+        )
+
+        self.data.sigma_lesser._data = mask_precision(
+            self.data.sigma_lesser._data, self.data.s_dtype
+        )
+        self.data.sigma_greater._data = mask_precision(
+            self.data.sigma_greater._data, self.data.s_dtype
+        )
+        self.data.sigma_retarded._data = mask_precision(
+            self.data.sigma_retarded._data, self.data.s_dtype
         )
 
         self.data.w_greater.free_data()
@@ -768,12 +815,37 @@ class SCBA:
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+
+                self.data.sigma_lesser._data = mask_precision(
+                    self.data.sigma_lesser._data, self.data.s_dtype
+                )
+                self.data.sigma_greater._data = mask_precision(
+                    self.data.sigma_greater._data, self.data.s_dtype
+                )
+                self.data.sigma_retarded._data = mask_precision(
+                    self.data.sigma_retarded._data, self.data.s_dtype
+                )
+
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
                     self.data.sigma_retarded,
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
+
+
+                # downcast
+                self.data.g_lesser._data = mask_precision(
+                    self.data.g_lesser._data, self.data.g_dtype
+                )
+                self.data.g_greater._data = mask_precision(
+                    self.data.g_greater._data, self.data.g_dtype
+                )
+                self.data.g_retarded._data = mask_precision(
+                    self.data.g_retarded._data, self.data.g_dtype
+                )
+
+
                 self._compute_electron_observables()
 
                 # Stash current into previous self-energy buffer.

@@ -682,9 +682,6 @@ class SCBA:
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
 
-        if self.quatrex_config.outputs.profiling_stats:
-            profiler.dump_stats(self.quatrex_config.output_dir / "profiling_stats")
-
         if comm.rank != 0:
             return
 

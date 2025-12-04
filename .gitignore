@@ -173,3 +173,6 @@ hostfile
 # Nsight Systems output
 *.nsys-rep
 *.sqlite
+
+# quatrex output files
+*qtx_times*

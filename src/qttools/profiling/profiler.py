@@ -3,6 +3,7 @@
 import json
 import os
 import pickle
+import sys
 import time
 import warnings
 from collections import defaultdict
@@ -51,6 +52,26 @@ def _get_cuda_devices(return_names: bool = False):
         return [f"cuda:{i}" for i in range(num_devices)]
 
     return list(range(num_devices))
+
+
+class _OutputFile:
+    def __init__(self, name: str = "qtx_times"):
+        new_name = f"{name}.out"
+        try:
+            self.file_handle = open(new_name, "a")
+            self.is_custom_file = True
+        except Exception:
+            self.file_handle = sys.stdout
+            self.is_custom_file = False
+
+    def write(self, message):
+        print(message, flush=True, file=self.file_handle)
+
+    def __delete__(self):
+        """Explicitly close the file if a new one was opened."""
+        if self.is_custom_file:
+            self.file_handle.close()
+            self.is_custom_file = False
 
 
 class _ProfilingEvent:
@@ -149,7 +170,6 @@ class _ProfilingRun:
 
             num_calls = len(call_times)
             num_ranks = len(ranks[key])
-            print(ranks[key])
             total_call_time = float(xp.sum(call_times))
 
             stats[key] = {
@@ -203,7 +223,10 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.devices = _get_cuda_devices()
-            cls._instance.depth = 0
+            cls._instance.depth = -1
+            cls._instance.print_file = _OutputFile("qtx_times")
+            cls._instance.save_path = "qtx_times"
+            cls._instance.save_format = "json"
 
             if xp.__name__ == "cupy":
                 # NOTE: this consumes some resources
@@ -239,37 +262,50 @@ class Profiler:
         """
         return _ProfilingRun(self._gather_events()).get_stats()
 
-    def dump_stats(self, filepath: str, format: Literal["pickle", "json"] = "pickle"):
-        """Dumps the profiling statistics to a file.
+    def set_parameters(
+        self,
+        save_path: str = "qtx_times",
+        save_format: Literal["pickle", "json"] = "json",
+        print_path: str = "qtx_times",
+    ):
 
-        Parameters
-        ----------
-        filepath : str
-            The path to the output file. The correct file extension
-            will be appended based on the format.
-        format : {"pickle", "json"}, optional
-            The format in which to save the profiling data.
+        if save_format not in ("pickle", "json"):
+            raise ValueError(f"Invalid save_format {save_format}.")
 
-        """
-        if format not in ("pickle", "json"):
-            raise ValueError(f"Invalid format {format}.")
+        self.save_format = save_format
+        self.print_file = _OutputFile(print_path)
+        self.save_path = save_path
+
+    def dump_stats(self):
+        """Dumps the profiling statistics to a file."""
+
+        if self.save_path is None:
+            raise ValueError(
+                "No save_path specified for dumping profiling data. Call set method before dumping."
+            )
+
+        save_path = self.save_path
+        save_format = self.save_format
+
+        if save_format not in ("pickle", "json"):
+            raise ValueError(f"Invalid save_format {save_format}.")
 
         stats = self.get_stats()
         if comm_world.rank != 0:
             # Only the root rank dumps the stats.
             return
 
-        filepath = os.fspath(filepath)
-        os.path.isdir(os.path.dirname(filepath))
-        if format == "pickle":
-            if not filepath.endswith(".pkl"):
-                filepath += ".pkl"
-            with open(filepath, "wb") as pickle_file:
+        save_path = os.fspath(save_path)
+        os.path.isdir(os.path.dirname(save_path))
+        if save_format == "pickle":
+            if not save_path.endswith(".pkl"):
+                save_path += ".pkl"
+            with open(save_path, "wb") as pickle_file:
                 pickle.dump(stats, pickle_file)
         else:
-            if not filepath.endswith(".json"):
-                filepath += ".json"
-            with open(filepath, "w") as json_file:
+            if not save_path.endswith(".json"):
+                save_path += ".json"
+            with open(save_path, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 
     def profile(self, label: str, level: str, comm=None):
@@ -381,11 +417,10 @@ class Profiler:
 
                 if comm_world.rank == 0:
                     offset = "  " * (self.depth)
-                    print(f"{offset}{label} : {call_time:.4f}s", flush=True)
+                    self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
                     if comm is not None and QTX_PROFILE_COMM_SYNC:
-                        print(
-                            f"{offset}{label} all : {after_barrier_time:.4f}s",
-                            flush=True,
+                        self.print_file.write(
+                            f"{offset}{label} all : {after_barrier_time:.4f}s"
                         )
 
                 self.depth -= 1
@@ -486,10 +521,10 @@ class Profiler:
 
             if comm_world.rank == 0:
                 offset = "  " * (self.depth)
-                print(f"{offset}{label} : {call_time:.4f}s", flush=True)
+                self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
                 if comm is not None and QTX_PROFILE_COMM_SYNC:
-                    print(
-                        f"{offset}{label} all : {after_barrier_time:.4f}s", flush=True
+                    self.print_file.write(
+                        f"{offset}{label} all : {after_barrier_time:.4f}s"
                     )
 
             self.depth -= 1

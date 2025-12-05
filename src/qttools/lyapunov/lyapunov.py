@@ -196,6 +196,9 @@ class LyapunovMemoizer:
         elif self.memoizing_mode == "force":
             x = q if x is None else x
 
+        if x.shape[-2:] != a.shape[-2:]:
+            return self._call_with_cache(a, q, contact, out=out)
+
         x_ref = q + a @ x @ a.conj().swapaxes(-2, -1)
 
         if self.memoizing_mode == "auto":

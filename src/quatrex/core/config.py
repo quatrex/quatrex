@@ -882,10 +882,49 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    g_precision: str = "fp64"
-    w_precision: str = "fp64"
-    p_precision: str = "fp64"
-    s_precision: str = "fp64"
+    g_real_precision: str = "fp64"
+    w_real_precision: str = "fp64"
+    p_real_precision: str = "fp64"
+    s_real_precision: str = "fp64"
+    s_old_real_precision: str = "fp64"
+    h_real_precision: str = "fp64"
+    v_real_precision: str = "fp64"
+    l_real_precision: str = "fp64"
+    system_g_real_precision: str = "fp64"
+    system_w_real_precision: str = "fp64"
+
+    g_imag_precision: str = "fp64"
+    w_imag_precision: str = "fp64"
+    p_imag_precision: str = "fp64"
+    s_imag_precision: str = "fp64"
+    s_old_imag_precision: str = "fp64"
+    h_imag_precision: str = "fp64"
+    v_imag_precision: str = "fp64"
+    l_imag_precision: str = "fp64"
+    system_g_imag_precision: str = "fp64"
+    system_w_imag_precision: str = "fp64"
+
+    g_real_cutoff: float = 0
+    w_real_cutoff: float = 0
+    p_real_cutoff: float = 0
+    s_real_cutoff: float = 0
+    s_old_real_cutoff: float = 0
+    h_real_cutoff: float = 0
+    v_real_cutoff: float = 0
+    l_real_cutoff: float = 0
+    system_g_real_cutoff: float = 0
+    system_w_real_cutoff: float = 0
+
+    g_imag_cutoff: float = 0
+    w_imag_cutoff: float = 0
+    p_imag_cutoff: float = 0
+    s_imag_cutoff: float = 0
+    s_old_imag_cutoff: float = 0
+    h_imag_cutoff: float = 0
+    v_imag_cutoff: float = 0
+    l_imag_cutoff: float = 0
+    system_g_imag_cutoff: float = 0
+    system_w_imag_cutoff: float = 0
 
     polarization_precision: Literal["fp32", "fp64"] = "fp64"
     polarization_tmp_precision: Literal["fp32", "fp64"] = "fp64"

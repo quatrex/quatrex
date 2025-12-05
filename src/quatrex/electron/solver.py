@@ -5,6 +5,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
+from qttools.datastructures.routines import cutoff_complex_data, mask_complex_precision
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
@@ -141,6 +142,18 @@ class ElectronSolver(SubsystemSolver):
                 format="coo",
                 dtype=self.hamiltonian.dtype,
             )
+
+        self.hamiltonian.data[:] = mask_complex_precision(
+            self.hamiltonian.data,
+            self.config.compute.mixed_precision.h_real_precision,
+            self.config.compute.mixed_precision.h_imag_precision,
+        )
+        self.hamiltonian.data[:] = cutoff_complex_data(
+            self.hamiltonian.data,
+            self.config.compute.mixed_precision.h_real_cutoff,
+            self.config.compute.mixed_precision.h_imag_cutoff,
+        )
+
 
         # Allocate memory for the system matrix.
         self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
@@ -496,6 +509,18 @@ class ElectronSolver(SubsystemSolver):
 
         self.system_matrix._data = self.system_matrix._data.astype(old_type)
         self.system_matrix.dtype = old_type
+
+        profiler.add_stats("system_g", self.system_matrix.data)
+        self.system_matrix.data[:] = mask_complex_precision(
+            self.system_matrix.data,
+            self.compute_config.mixed_precision.system_g_real_precision,
+            self.compute_config.mixed_precision.system_g_imag_precision,
+        )
+        self.system_matrix.data[:] = cutoff_complex_data(
+            self.system_matrix.data,
+            self.compute_config.mixed_precision.system_g_real_cutoff,
+            self.compute_config.mixed_precision.system_g_imag_cutoff,
+        )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

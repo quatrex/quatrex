@@ -239,6 +239,93 @@ class Profiler:
 
         return cls._instance
 
+    def save_stats(self):
+        pass
+        # np.save(f"data_stats_{comm.rank}.npy", self.data_stats, allow_pickle=True)
+
+    def add_stats(self, name, x):
+        pass
+        # # 1. Separate the real and imaginary parts
+        # real_part = x.real
+        # imag_part = x.imag
+        # x_abs = cp.abs(x)
+        # real_part_abs = cp.abs(real_part)
+        # imag_part_abs = cp.abs(imag_part)
+
+        # # 2. Calculate all necessary statistics using CuPy
+        # # --- Max/Min ---
+        # max_real = cp.max(real_part).get()
+        # max_imag = cp.max(imag_part).get()
+        # min_real = cp.min(real_part).get()
+        # min_imag = cp.min(imag_part).get()
+
+        # max_abs_real = cp.max(real_part_abs).get()
+        # max_abs_imag = cp.max(imag_part_abs).get()
+        # min_abs_real = cp.min(real_part_abs).get()
+        # min_abs_imag = cp.min(imag_part_abs).get()
+
+        # max_abs = cp.max(x_abs).get()
+        # min_abs = cp.min(x_abs).get()
+
+        # # --- Average (Mean) ---
+        # average_real = cp.mean(real_part).get()
+        # average_imag = cp.mean(imag_part).get()
+
+        # average_abs_real = cp.mean(real_part_abs).get()
+        # average_abs_imag = cp.mean(imag_part_abs).get()
+
+        # average_abs = cp.mean(x_abs).get()
+
+        # # --- Median and Quartiles (Q1, Q3) ---
+        # # Note: CuPy doesn't have a direct 'percentile' or 'quantile' function that
+        # # strictly mimics numpy.percentile(a, q) with arbitrary q, especially on older
+        # # versions. A common approach is to use CuPy's sorting and then NumPy on the host,
+        # # or use cp.percentile if the version supports it.
+        # # Here we use cp.percentile/cp.quantile which is standard in modern CuPy.
+
+        # # Calculate percentiles (25th=Q1, 50th=Median, 75th=Q3)
+        # # The result of cp.percentile/quantile is a CuPy array, so we use .get()
+        # q1_real, median_real, q3_real = cp.percentile(real_part, [25, 50, 75]).get()
+        # q1_imag, median_imag, q3_imag = cp.percentile(imag_part, [25, 50, 75]).get()
+        # q1_abs_real, median_abs_real, q3_abs_real = cp.percentile(real_part_abs, [25, 50, 75]).get()
+        # q1_abs_imag, median_abs_imag, q3_abs_imag = cp.percentile(imag_part_abs, [25, 50, 75]).get()
+
+        # q1_abs, median_abs, q3_abs = cp.percentile(x_abs, [25, 50, 75]).get()
+
+        # self.data_stats[(name, "max_real")].append(max_real)
+        # self.data_stats[(name, "max_imag")].append(max_imag)
+        # self.data_stats[(name, "min_real")].append(min_real)
+        # self.data_stats[(name, "min_imag")].append(min_imag)
+        # self.data_stats[(name, "max_abs_real")].append(max_abs_real)
+        # self.data_stats[(name, "max_abs_imag")].append(max_abs_imag)
+        # self.data_stats[(name, "min_abs_real")].append(min_abs_real)
+        # self.data_stats[(name, "min_abs_imag")].append(min_abs_imag)
+        # self.data_stats[(name, "max_abs")].append(max_abs)
+        # self.data_stats[(name, "min_abs")].append(min_abs)
+
+        # self.data_stats[(name, "median_real")].append(median_real)
+        # self.data_stats[(name, "median_imag")].append(median_imag)
+        # self.data_stats[(name, "average_real")].append(average_real)
+        # self.data_stats[(name, "average_imag")].append(average_imag)
+        # self.data_stats[(name, "q1_real")].append(q1_real)
+        # self.data_stats[(name, "q1_imag")].append(q1_imag)
+        # self.data_stats[(name, "q3_real")].append(q3_real)
+        # self.data_stats[(name, "q3_imag")].append(q3_imag)
+
+        # self.data_stats[(name, "median_abs_real")].append(median_abs_real)
+        # self.data_stats[(name, "median_abs_imag")].append(median_abs_imag)
+        # self.data_stats[(name, "average_abs_real")].append(average_abs_real)
+        # self.data_stats[(name, "average_abs_imag")].append(average_abs_imag)
+        # self.data_stats[(name, "q1_abs_real")].append(q1_abs_real)
+        # self.data_stats[(name, "q1_abs_imag")].append(q1_abs_imag)
+        # self.data_stats[(name, "q3_abs_real")].append(q3_abs_real)
+        # self.data_stats[(name, "q3_abs_imag")].append(q3_abs_imag)
+
+        # self.data_stats[(name, "median_abs")].append(median_abs)
+        # self.data_stats[(name, "average_abs")].append(average_abs)
+        # self.data_stats[(name, "q1_abs")].append(q1_abs)
+        # self.data_stats[(name, "q3_abs")].append(q3_abs)
+
     def _gather_events(self, root: int = 0) -> list:
         """Gathers profiling events.
 

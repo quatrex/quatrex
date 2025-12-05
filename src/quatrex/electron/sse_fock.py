@@ -6,6 +6,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_circular_convolve
+from qttools.datastructures.routines import cutoff_complex_data, mask_complex_precision
 from qttools.profiling import Profiler
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -47,6 +48,16 @@ class SigmaFock(ScatteringSelfEnergy):
             else None
         )
         self.coulomb_matrix_data = coulomb_matrix.data[0].astype(self.dtype)
+        coulomb_matrix.data[:] = mask_complex_precision(
+            coulomb_matrix.data,
+            config.compute.mixed_precision.v_real_precision,
+            config.compute.mixed_precision.v_imag_precision,
+        )
+        coulomb_matrix.data[:] = cutoff_complex_data(
+            coulomb_matrix.data,
+            config.compute.mixed_precision.v_real_cutoff,
+            config.compute.mixed_precision.v_imag_cutoff,
+        )
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:

@@ -12,6 +12,44 @@ from qttools.utils.gpu_utils import synchronize_device
 
 
 
+def _mask_precision(x, mask):
+    x_int = x.view(xp.uint64)
+    # mask is a str, convert it to uint64
+    mask_int = xp.uint64(int(mask, 16))
+    x_mask = (x_int & mask_int).view(xp.float64)
+    return x_mask
+
+
+def mask_real_precision(x, mask):
+    in_type = x.dtype
+    assert in_type == xp.float64
+
+    if mask == "fp64":
+        pass
+    elif mask == "fp32":
+        x = x.astype(xp.complex64)
+        x = x.astype(in_type)
+    else:
+        x = _mask_precision(xp.real(x), mask) + 1j * _mask_precision(xp.imag(x), mask)
+    return x
+
+
+def mask_complex_precision(x, mask_real, mask_imag):
+    x = x.copy()
+    x = mask_real_precision(xp.real(x), mask_real) + 1j * mask_real_precision(
+        xp.imag(x), mask_imag
+    )
+    return x
+
+
+def cutoff_complex_data(x, real_cutoff, imag_cutoff):
+    x = x.copy()
+    x = xp.where(xp.abs(xp.real(x)) < real_cutoff, 0.0, xp.real(x)) + 1j * xp.where(
+        xp.abs(xp.imag(x)) < imag_cutoff, 0.0, xp.imag(x)
+    )
+    return x
+
+
 def mask_precision(x, mask):
     """
     Convert FP32 to BF16 precision by truncating mantissa.

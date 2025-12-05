@@ -5,7 +5,12 @@ import numpy as np
 from qttools import NDArray, _DType, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import (
+    bd_matmul_distr,
+    bd_sandwich_distr,
+    cutoff_complex_data,
+    mask_complex_precision,
+)
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
@@ -163,6 +168,18 @@ class CoulombScreeningSolver(SubsystemSolver):
         del l_sparsity_pattern
         self.l_lesser.free_data()
         self.l_greater.free_data()
+
+        self.coulomb_matrix.data[:] = mask_complex_precision(
+            self.coulomb_matrix.data,
+            self.config.compute.mixed_precision.v_real_precision,
+            self.config.compute.mixed_precision.v_imag_precision,
+        )
+        self.coulomb_matrix.data[:] = cutoff_complex_data(
+            self.coulomb_matrix.data,
+            self.config.compute.mixed_precision.v_real_cutoff,
+            self.config.compute.mixed_precision.v_imag_cutoff,
+        )
+
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
@@ -387,6 +404,18 @@ class CoulombScreeningSolver(SubsystemSolver):
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
+        profiler.add_stats("system_w", self.system_matrix.data)
+        self.system_matrix.data[:] = mask_complex_precision(
+            self.system_matrix.data,
+            self.compute_config.mixed_precision.system_w_real_precision,
+            self.compute_config.mixed_precision.system_w_imag_precision,
+        )
+        self.system_matrix.data[:] = cutoff_complex_data(
+            self.system_matrix.data,
+            self.compute_config.mixed_precision.system_w_real_cutoff,
+            self.compute_config.mixed_precision.system_w_imag_cutoff,
+        )
+
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
 
@@ -491,6 +520,31 @@ class CoulombScreeningSolver(SubsystemSolver):
                 spillover_correction=True,
                 assembly_w_mask=self.assembly_w_mask,
             )
+
+        profiler.add_stats("l_lesser", self.l_lesser.data)
+        profiler.add_stats("l_greater", self.l_greater.data)
+        self.l_lesser.data[:] = mask_complex_precision(
+            self.l_lesser.data,
+            self.config.compute.mixed_precision.l_real_precision,
+            self.config.compute.mixed_precision.l_imag_precision,
+        )
+        self.l_lesser.data[:] = cutoff_complex_data(
+            self.l_lesser.data,
+            self.config.compute.mixed_precision.l_real_cutoff,
+            self.config.compute.mixed_precision.l_imag_cutoff,
+        )
+
+        self.l_greater.data[:] = mask_complex_precision(
+            self.l_greater.data,
+            self.config.compute.mixed_precision.l_real_precision,
+            self.config.compute.mixed_precision.l_imag_precision,
+        )
+        self.l_greater.data[:] = cutoff_complex_data(
+            self.l_greater.data,
+            self.config.compute.mixed_precision.l_real_cutoff,
+            self.config.compute.mixed_precision.l_imag_cutoff,
+        )
+
 
         if self.flatband:
             with profiler.profile_range(

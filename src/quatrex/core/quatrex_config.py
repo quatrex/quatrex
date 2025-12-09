@@ -356,7 +356,8 @@ class ElectronConfig(BaseModel):
     left_fermi_level: float | None = None
     right_fermi_level: float | None = None
 
-    band_edge_tracking: Literal["dos-peaks", "eigenvalues"] | None = None
+    doping: float = 0.0  # Charge per unit volume
+    band_edge_tracking: Literal["dos-peaks", "eigenvalues", "charge-neutrality"] | None = None
 
     temperature: PositiveFloat = 300.0  # K
 

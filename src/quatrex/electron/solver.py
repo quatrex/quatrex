@@ -17,6 +17,7 @@ from quatrex.bandstructure.band_edges import (
     find_dos_peaks,
     find_renormalized_eigenvalues,
 )
+from quatrex.bandstructure.contact import find_charge_neutral_fermi_level
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
@@ -213,6 +214,9 @@ class ElectronSolver(SubsystemSolver):
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
         self.block_sections = quatrex_config.electron.obc.block_sections
+        self.block_sections_contact_gf = quatrex_config.device.unit_cell_per_supercell[
+            "xyz".index(quatrex_config.device.transport_direction)
+        ]
 
         self.call_count = 0
         self.filtering_iteration_limit = (
@@ -557,6 +561,80 @@ class ElectronSolver(SubsystemSolver):
                     f"    Band edges all: {t_band_edges_end_all - t_band_edges_start}",
                     flush=True,
                 )
+
+        elif self.band_edge_tracking == "charge-neutrality":
+            t_cn_start = time.perf_counter()
+            # Charge per unit volume
+            left_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
+                # So far this only works for 2D systems.
+                self.lattice_vectors[:2, :2]
+            ) * 1e-16 # A^2 to cm^2 
+            left_fermi_level, left_mid_gap_energy = find_charge_neutral_fermi_level(
+                hamiltonian=self.hamiltonian,
+                overlap=self.overlap_sparray,
+                potential=self.potential,
+                sigma_retarded=sse_retarded,
+                local_energies=self.local_energies,
+                energies=self.energies,
+                temperature=self.temperature,
+                target_charge=left_target_charge,
+                mid_gap_energy=self.left_mid_gap_energy,
+                block_sections=self.block_sections_contact_gf,
+                side="left",
+            )
+            self.left_fermi_level = left_fermi_level
+            self.left_mid_gap_energy = left_mid_gap_energy
+
+            # Charge per unit volume
+            #right_target_charge = self.quatrex_config.electron.doping / xp.linalg.det(
+            #    # So far this only works for 2D systems.
+            #    self.lattice_vectors[:2, :2]
+            #) * 1e-16 # cm^2 to A^2 
+            #right_fermi_level, right_mid_gap_energy = find_charge_neutral_fermi_level(
+            #    hamiltonian=self.hamiltonian,
+            #    overlap=self.overlap_sparray,
+            #    potential=self.potential,
+            #    sigma_retarded=sse_retarded,
+            #    local_energies=self.local_energies,
+            #    energies=self.energies,
+            #    temperature=self.temperature,
+            #    target_charge=right_target_charge,
+            #    mid_gap_energy=self.right_mid_gap_energy,
+            #    block_sections=self.block_sections_contact_gf,
+            #    side="right",
+            #)
+            #self.right_fermi_level = right_fermi_level
+            #self.right_mid_gap_energy = right_mid_gap_energy
+            self.right_fermi_level = (
+                self.left_fermi_level - self.bias
+            )
+
+            self.left_occupancies = fermi_dirac(
+                self.local_energies - self.left_fermi_level,
+                self.temperature,
+            )
+            self.right_occupancies = fermi_dirac(
+                self.local_energies - self.right_fermi_level,
+                self.temperature,
+            )
+
+            synchronize_device()
+            t_cn_end = time.perf_counter()
+            comm.barrier()
+            t_cn_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    CN: {t_cn_end - t_cn_start}", flush=True)
+                print(f"    CN all: {t_cn_end_all - t_cn_start}", flush=True)
+
+        # Print the updated Fermi levels.
+        (
+            print(
+                f"Updated Fermi levels: left={self.left_fermi_level}, right={self.right_fermi_level}\nLeft mid-gap={self.left_mid_gap_energy}",
+                flush=True,
+            )
+            if comm.rank == 0
+            else None
+        )
 
         t_obc_start = time.perf_counter()
         self._compute_obc()

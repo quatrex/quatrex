@@ -25,7 +25,7 @@ kpoint_shift = [0,0,0]
 
 
 [electron]
-	solver.direct_solver = "mumps"
+	solver.direct_solver = "superlu"
 	conduction_band_edge = -2.4
 	valence_band_edge = -2.5
 

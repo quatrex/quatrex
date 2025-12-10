@@ -27,6 +27,12 @@ ALLOWED_EXAMPLES = {
         "grid",
         "block-sizes",
     ],
+    "cp2k-atomic-chain:qtbm": [
+        "hamiltonian_0_0_0",
+        "potential",
+        "lattice",
+        "overlap_0_0_0",
+    ],
 }
 
 assert len(ALLOWED_EXAMPLES) == len(set(ALLOWED_EXAMPLES.keys()))

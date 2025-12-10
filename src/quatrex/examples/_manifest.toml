@@ -45,3 +45,20 @@ sha256 = "a863ca38cdde927a424bde78342cd8805f85cf2d2a7147131a0223b06a2bd488"
 [silicon-nanowire]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/sinw_w90/sinw_w90.npz"
 sha256 = "7e9608d54b3ae97b6629a7bb8e1728db0bf455b8002a854efff34b9a2507cdc5"
+
+[cp2k-atomic-chain-hamiltonian_0_0_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/hamiltonian_0_0_0.npz"
+sha256 = "0f9589074442b31cce681d877c2df54cefe348416673513263ccaf1e0feea9f6"
+
+# TODO: remove ref to PR branch once merged in huggingface
+[cp2k-atomic-chain-lattice]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/lattice.xyz"
+sha256 = "d120dc1500f1ab6be61e5aff424f3f31fa2ffc4326b904cf81608f7ff0eab4ec"
+
+[cp2k-atomic-chain-potential]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/potential.npy"
+sha256 = "7915aced6d1611d860fd5b2a8853f8ec7499b446f458baa34970876404936e7c"
+
+[cp2k-atomic-chain-overlap_0_0_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/overlap_0_0_0.npz"
+sha256 = "f84400d6bd7958f03ffce8d4966dba56e3b1745984d83573f3118dd86168c37f"

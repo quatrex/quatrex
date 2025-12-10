@@ -1,5 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -706,6 +707,56 @@ class QTBM:
                     xp.sum(xp.multiply(phi_D.conj(), phi_D_ortho), axis=1) / (2 * xp.pi)
                 )  # Compute the DOS
 
+    def _write_outputs(self):
+        if comm.rank == 0:
+
+            output_dir = self.quatrex_config.output_dir
+            if not os.path.exists(self.quatrex_config.output_dir):
+                os.mkdir(self.quatrex_config.output_dir)
+
+            for n in range(self.num_transmissions):
+                np.save(
+                    f"{output_dir}/transmission_{self.observables.electron_transmission_contacts_labels[n]}.npy",
+                    self.observables.electron_transmission_contacts[:, n, :],
+                )
+
+                np.save(
+                    f"{output_dir}/current_{self.observables.electron_transmission_contacts_labels[n]}.npy",
+                    self.observables.electron_current["contact_current"][n],
+                )
+
+            for n in range(self.num_contacts):
+                np.save(
+                    f"{output_dir}/band_{self.device.contacts[n].name[0]}.npy",
+                    self.device.contacts[n].band_structure,
+                )
+                np.save(
+                    f"{output_dir}/dos_{self.device.contacts[n].name[0]}.npy",
+                    self.observables.electron_dos_orb[:, n, :, :],
+                )
+
+            np.save(
+                f"{output_dir}/el_charge_orb.npy",
+                self.observables.electron_charge_orb,
+            )
+
+            np.save(
+                f"{output_dir}/el_charge_at.npy",
+                self.observables.electron_charge_at,
+            )
+
+            np.save(f"{output_dir}/orb.npy", self.device.orbital_offsets)
+
+            np.save(
+                f"{output_dir}/ho_charge_orb.npy",
+                self.observables.hole_charge_orb,
+            )
+
+            np.save(
+                f"{output_dir}/ho_charge_at.npy",
+                self.observables.hole_charge_at,
+            )
+
     def run(self) -> None:
         """Runs the complete QTBM transport calculation."""
         if comm.rank == 0:
@@ -1067,3 +1118,5 @@ class QTBM:
         self.observables.hole_charge_at = xp.add.reduceat(
             self.observables.hole_charge_orb, self.device.orbital_offsets[:-1]
         )
+
+        self._write_outputs()

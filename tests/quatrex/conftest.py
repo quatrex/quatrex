@@ -7,6 +7,7 @@ from quatrex.examples import ALLOWED_EXAMPLES
 # only small examples for testing
 TEST_EXAMPLES = [
     "carbon-nanotube:",
+    "cp2k-atomic-chain:qtbm",
 ]
 
 DIST_TEST_EXAMPLES = [

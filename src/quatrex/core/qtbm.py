@@ -475,7 +475,7 @@ class QTBM:
             for cont_2 in range(self.num_contacts):
                 if cont_2 != cont_1:
                     self.observables.electron_transmission_contacts_labels.append(
-                        f"{self.device.contacts[cont_1].name[0]}->{self.device.contacts[cont_2].name[0]}"
+                        f"{self.device.contacts[cont_1].name[0]}{self.device.contacts[cont_2].name[0]}"
                     )
                     self.observables.electron_transmission_indices.append(
                         (cont_1, cont_2)

@@ -50,7 +50,6 @@ sha256 = "7e9608d54b3ae97b6629a7bb8e1728db0bf455b8002a854efff34b9a2507cdc5"
 url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/hamiltonian_0_0_0.npz"
 sha256 = "0f9589074442b31cce681d877c2df54cefe348416673513263ccaf1e0feea9f6"
 
-# TODO: remove ref to PR branch once merged in huggingface
 [cp2k-atomic-chain-lattice]
 url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/lattice.xyz"
 sha256 = "d120dc1500f1ab6be61e5aff424f3f31fa2ffc4326b904cf81608f7ff0eab4ec"
@@ -62,3 +61,15 @@ sha256 = "7915aced6d1611d860fd5b2a8853f8ec7499b446f458baa34970876404936e7c"
 [cp2k-atomic-chain-overlap_0_0_0]
 url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/overlap_0_0_0.npz"
 sha256 = "f84400d6bd7958f03ffce8d4966dba56e3b1745984d83573f3118dd86168c37f"
+
+[cp2k-atomic-chain-dos_l-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/dos_l_qtbm.npy"
+sha256 = "b5e5a7dd01e8c8c84ed984e5bfe87b0e6b8e6949b272d3dbbc8f8e1fbdba9dcd"
+
+[cp2k-atomic-chain-dos_r-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/dos_r_qtbm.npy"
+sha256 = "2d70e45e07a2affab0efb978ff0a10cb11e8a6a4124009616f4a495bf9b97ccf"
+
+[cp2k-atomic-chain-transmission_lr-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/transmission_lr_qtbm.npy"
+sha256 = "2a8603969b2e4611803bc31c493abb4efeaea5f7695da1fd4f550ac9998082d0"

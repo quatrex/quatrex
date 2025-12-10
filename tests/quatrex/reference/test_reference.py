@@ -19,6 +19,11 @@ REFERENCE_OBSERVABLES = {
         "electron_density_1",
         "i_device_1",
     ],
+    "cp2k-atomic-chain:qtbm": [
+        "dos_l",
+        "dos_r",
+        "transmission_lr",
+    ],
 }
 
 assert len(REFERENCE_OBSERVABLES) == len(set(REFERENCE_OBSERVABLES.keys()))

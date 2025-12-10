@@ -18,7 +18,7 @@ from quatrex.bandstructure.band_edges import (
     find_dos_peaks,
     find_renormalized_eigenvalues,
 )
-from quatrex.bandstructure.contact import find_charge_neutral_fermi_level
+from quatrex.bandstructure.contact import find_charge_neutral_fermi_level, contact_fermi_level, local_band_edges
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
@@ -781,7 +781,7 @@ class ElectronSolver(SubsystemSolver):
                     flush=True,
                 )
 
-        elif self.band_edge_tracking == "charge-neutrality":
+        elif self.band_edge_tracking == "charge-neutrality" and self.call_count <= 1:
             t_cn_start = time.perf_counter()
             # Charge per unit volume
             left_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
@@ -920,7 +920,7 @@ class ElectronSolver(SubsystemSolver):
                 flush=True,
             )
 
-        if self.band_edge_tracking == "dos-peaks":
+        if self.band_edge_tracking == "dos-peaks" or (self.call_count >= 1 and self.band_edge_tracking == "charge-neutrality"):
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
@@ -931,28 +931,48 @@ class ElectronSolver(SubsystemSolver):
                 s_00 = self._get_block(self.overlap_sparray, (0, 0))
                 g_00 = g_retarded.blocks[0, 0]
 
+                kp_dims = len(g_retarded.shape[1:-2])
                 local_left_dos = -xp.mean(
-                    xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
-                )
+                    xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
+                ) / xp.pi
+                # Normalize by the number of unit cells in the supercell
+                local_left_dos /= xp.prod(self.quatrex_config.device.unit_cell_per_supercell)
 
                 left_dos = comm.stack.all_gather_v(
                     local_left_dos,
                     axis=0,
                     mask=g_retarded._stack_padding_mask,
                 )
-
-                e_0_left = find_dos_peaks(left_dos, self.energies)
-                left_band_edges = np.array(
-                    find_band_edges(e_0_left, self.left_mid_gap_energy)
-                )
+                if self.band_edge_tracking == "dos-peaks":
+                    e_0_left = find_dos_peaks(left_dos, self.energies)
+                    left_band_edges = np.array(
+                        find_band_edges(e_0_left, self.left_mid_gap_energy)
+                    )
+                else:  # charge-neutrality
+                    # Update the mid band gap from the dos
+                    vb_edge, cb_edge = local_band_edges(left_dos[:, None], self.energies, xp.array([self.left_mid_gap_energy,]))
+                    self.left_mid_gap_energy = float(0.5 * (vb_edge + cb_edge))
+                    left_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
+                        # So far this only works for 2D systems.
+                        self.lattice_vectors[:2, :2]
+                    ) * 1e-16 # A^2 to cm^2 
+                    left_fermi_level = contact_fermi_level(
+                        temperature=self.temperature,
+                        dos=left_dos,
+                        energies=self.energies,
+                        doping_density=left_target_charge,
+                        midgap_energy=self.left_mid_gap_energy,
+                    )
 
             if comm.block.rank == comm.block.size - 1:
                 s_nn = self._get_block(self.overlap_sparray, (-1, -1))
                 n = g_retarded.num_local_blocks - 1
                 g_nn = g_retarded.blocks[n, n]
                 local_right_dos = -xp.mean(
-                    xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
-                )
+                    xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
+                ) / xp.pi
+                # Normalize by the number of unit cells in the supercell
+                local_right_dos /= xp.prod(self.quatrex_config.device.unit_cell_per_supercell)
 
                 right_dos = comm.stack.all_gather_v(
                     local_right_dos,
@@ -960,17 +980,52 @@ class ElectronSolver(SubsystemSolver):
                     mask=g_retarded._stack_padding_mask,
                 )
 
-                e_0_right = find_dos_peaks(right_dos, self.energies)
-                right_band_edges = np.array(
-                    find_band_edges(e_0_right, self.right_mid_gap_energy)
+                if self.band_edge_tracking == "dos-peaks":
+                    e_0_right = find_dos_peaks(right_dos, self.energies)
+                    right_band_edges = np.array(
+                        find_band_edges(e_0_right, self.right_mid_gap_energy)
+                    )
+                else:  # charge-neutrality
+                    # Update the mid band gap from the dos
+                    vb_edge, cb_edge = local_band_edges(right_dos[:, None], self.energies, xp.array([self.right_mid_gap_energy,]))
+                    self.right_mid_gap_energy = float(0.5 * (vb_edge + cb_edge))
+                    right_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
+                        # So far this only works for 2D systems.
+                        self.lattice_vectors[:2, :2]
+                    ) * 1e-16 # A^2 to cm^2 
+                    right_fermi_level = contact_fermi_level(
+                        temperature=self.temperature,
+                        dos=right_dos,
+                        energies=self.energies,
+                        doping_density=right_target_charge,
+                        midgap_energy=self.right_mid_gap_energy,
+                    )
+
+            if self.band_edge_tracking == "dos-peaks":
+                comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
+                comm.block.bcast(
+                    right_band_edges, root=comm.block.size - 1, backend="device_mpi"
+                )
+                self._update_fermi_levels(left_band_edges, right_band_edges)
+            else:  # charge-neutrality
+                comm.block.bcast(left_fermi_level, root=0, backend="device_mpi")
+                comm.block.bcast(
+                    right_fermi_level,
+                    root=comm.block.size - 1,
+                    backend="device_mpi",
+                )
+                self.left_fermi_level = left_fermi_level
+                #self.right_fermi_level = right_fermi_level
+                self.right_fermi_level = left_fermi_level - self.bias
+                self.left_occupancies = fermi_dirac(
+                    self.local_energies - self.left_fermi_level,
+                    self.temperature,
+                )
+                self.right_occupancies = fermi_dirac(
+                    self.local_energies - self.right_fermi_level,
+                    self.temperature,
                 )
 
-            comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
-            comm.block.bcast(
-                right_band_edges, root=comm.block.size - 1, backend="device_mpi"
-            )
-
-            self._update_fermi_levels(left_band_edges, right_band_edges)
             synchronize_device()
             t_dos_peaks_end = time.perf_counter()
             comm.barrier()

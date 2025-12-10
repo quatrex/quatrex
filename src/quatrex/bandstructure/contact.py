@@ -219,7 +219,7 @@ def assemble_kpoint_matrix(tiled_blocks):
     """
     leading_shape = tiled_blocks.shape[:-3]
     total_small_blocks = tiled_blocks.shape[-3]
-    num_kpoints = 2*total_small_blocks
+    num_kpoints = 16*total_small_blocks
 
     kpoint_matrix = xp.zeros(leading_shape + (num_kpoints, tiled_blocks.shape[-2], tiled_blocks.shape[-1]), dtype=tiled_blocks.dtype)
 
@@ -244,7 +244,7 @@ def contact_greens_function(
     potential: NDArray,
     sigma_retarded: NDArray,
     energies: NDArray,
-    eta: float = 1e-5,
+    eta: float = 1e-3,
 ) -> NDArray:
     """Computes the retarded Green's function of a device contact.
 
@@ -433,10 +433,6 @@ def find_charge_neutral_fermi_level(
 
     # Allgather dos from all ranks
     dos = comm.stack.all_gather_v(dos, axis=0)
-
-    ## Save the dos for debugging
-    #if comm.rank == 0:
-    #    xp.save(f"contact_dos_{side}.npy", dos)
 
     # Update the mid band gap from the dos
     vb_edge, cb_edge = local_band_edges(dos[:, None], energies, xp.array([mid_gap_energy,]))

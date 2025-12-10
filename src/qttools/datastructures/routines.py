@@ -35,7 +35,7 @@ def mask_real_precision(x, mask):
 
 
 def mask_complex_precision(x, mask_real, mask_imag):
-    x = x.copy()
+    # x = x.copy()
     x = mask_real_precision(xp.real(x), mask_real) + 1j * mask_real_precision(
         xp.imag(x), mask_imag
     )
@@ -43,7 +43,7 @@ def mask_complex_precision(x, mask_real, mask_imag):
 
 
 def cutoff_complex_data(x, real_cutoff, imag_cutoff):
-    x = x.copy()
+    # x = x.copy()
     x = xp.where(xp.abs(xp.real(x)) < real_cutoff, 0.0, xp.real(x)) + 1j * xp.where(
         xp.abs(xp.imag(x)) < imag_cutoff, 0.0, xp.imag(x)
     )

@@ -525,24 +525,24 @@ class CoulombScreeningSolver(SubsystemSolver):
         profiler.add_stats("l_greater", self.l_greater.data)
         self.l_lesser.data[:] = mask_complex_precision(
             self.l_lesser.data,
-            self.config.compute.mixed_precision.l_real_precision,
-            self.config.compute.mixed_precision.l_imag_precision,
+            self.config.compute.mixed_precision.ll_real_precision,
+            self.config.compute.mixed_precision.ll_imag_precision,
         )
         self.l_lesser.data[:] = cutoff_complex_data(
             self.l_lesser.data,
-            self.config.compute.mixed_precision.l_real_cutoff,
-            self.config.compute.mixed_precision.l_imag_cutoff,
+            self.config.compute.mixed_precision.lg_real_cutoff,
+            self.config.compute.mixed_precision.lg_imag_cutoff,
         )
 
         self.l_greater.data[:] = mask_complex_precision(
             self.l_greater.data,
-            self.config.compute.mixed_precision.l_real_precision,
-            self.config.compute.mixed_precision.l_imag_precision,
+            self.config.compute.mixed_precision.ll_real_precision,
+            self.config.compute.mixed_precision.ll_imag_precision,
         )
         self.l_greater.data[:] = cutoff_complex_data(
             self.l_greater.data,
-            self.config.compute.mixed_precision.l_real_cutoff,
-            self.config.compute.mixed_precision.l_imag_cutoff,
+            self.config.compute.mixed_precision.lg_real_cutoff,
+            self.config.compute.mixed_precision.lg_imag_cutoff,
         )
 
 

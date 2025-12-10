@@ -109,16 +109,6 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        self.g_real_dtype = config.compute.mixed_precision.g_real_precision
-        self.w_real_dtype = config.compute.mixed_precision.w_real_precision
-        self.p_real_dtype = config.compute.mixed_precision.p_real_precision
-        self.s_real_dtype = config.compute.mixed_precision.s_real_precision
-        self.s_old_real_dtype = config.compute.mixed_precision.s_old_real_precision
-        self.g_imag_dtype = config.compute.mixed_precision.g_imag_precision
-        self.w_imag_dtype = config.compute.mixed_precision.w_imag_precision
-        self.p_imag_dtype = config.compute.mixed_precision.p_imag_precision
-        self.s_imag_dtype = config.compute.mixed_precision.s_imag_precision
-        self.s_old_imag_dtype = config.compute.mixed_precision.s_old_imag_precision
 
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm
@@ -439,33 +429,33 @@ class SCBA:
 
         self.data.sigma_lesser_prev._data = mask_complex_precision(
             self.data.sigma_lesser_prev._data,
-            self.data.s_old_real_dtype,
-            self.data.s_old_imag_dtype,
+            self.config.compute.mixed_precision.sl_old_real_precision,
+            self.config.compute.mixed_precision.sl_old_imag_precision,
         )
         self.data.sigma_greater_prev._data = mask_complex_precision(
             self.data.sigma_greater_prev._data,
-            self.data.s_old_real_dtype,
-            self.data.s_old_imag_dtype,
+            self.config.compute.mixed_precision.sg_old_real_precision,
+            self.config.compute.mixed_precision.sg_old_imag_precision,
         )
         self.data.sigma_retarded_prev._data = mask_complex_precision(
             self.data.sigma_retarded_prev._data,
-            self.data.s_old_real_dtype,
-            self.data.s_old_imag_dtype,
+            self.config.compute.mixed_precision.sr_old_real_precision,
+            self.config.compute.mixed_precision.sr_old_imag_precision,
         )
         self.data.sigma_lesser_prev._data = cutoff_complex_data(
             self.data.sigma_lesser_prev._data,
-            self.compute_config.mixed_precision.s_old_real_cutoff,
-            self.compute_config.mixed_precision.s_old_imag_cutoff,
+            self.config.compute.mixed_precision.sl_old_real_cutoff,
+            self.config.compute.mixed_precision.sl_old_imag_cutoff,
         )
         self.data.sigma_greater_prev._data = cutoff_complex_data(
             self.data.sigma_greater_prev._data,
-            self.compute_config.mixed_precision.s_old_real_cutoff,
-            self.compute_config.mixed_precision.s_old_imag_cutoff,
+            self.config.compute.mixed_precision.sg_old_real_cutoff,
+            self.config.compute.mixed_precision.sg_old_imag_cutoff,
         )
         self.data.sigma_retarded_prev._data = cutoff_complex_data(
             self.data.sigma_retarded_prev._data,
-            self.compute_config.mixed_precision.s_old_real_cutoff,
-            self.compute_config.mixed_precision.s_old_imag_cutoff,
+            self.config.compute.mixed_precision.sr_old_real_cutoff,
+            self.config.compute.mixed_precision.sr_old_imag_cutoff,
         )
 
         self.data.sigma_retarded.data[:] = 0.0
@@ -579,28 +569,34 @@ class SCBA:
         profiler.add_stats("p_greater", self.data.p_greater.data)
         profiler.add_stats("p_retarded", self.data.p_retarded.data)
         self.data.p_lesser._data = mask_complex_precision(
-            self.data.p_lesser._data, self.data.p_real_dtype, self.data.p_imag_dtype
+            self.data.p_lesser._data,
+            self.config.compute.mixed_precision.pl_real_precision,
+            self.config.compute.mixed_precision.pl_imag_precision,
         )
         self.data.p_greater._data = mask_complex_precision(
-            self.data.p_greater._data, self.data.p_real_dtype, self.data.p_imag_dtype
+            self.data.p_greater._data,
+            self.config.compute.mixed_precision.pg_real_precision,
+            self.config.compute.mixed_precision.pg_imag_precision,
         )
         self.data.p_retarded._data = mask_complex_precision(
-            self.data.p_retarded._data, self.data.p_real_dtype, self.data.p_imag_dtype
+            self.data.p_retarded._data,
+            self.config.compute.mixed_precision.pr_real_precision,
+            self.config.compute.mixed_precision.pr_imag_precision,
         )
         self.data.p_lesser._data = cutoff_complex_data(
             self.data.p_lesser._data,
-            self.compute_config.mixed_precision.p_real_cutoff,
-            self.compute_config.mixed_precision.p_imag_cutoff,
+            self.config.compute.mixed_precision.pl_real_cutoff,
+            self.config.compute.mixed_precision.pl_imag_cutoff,
         )
         self.data.p_greater._data = cutoff_complex_data(
             self.data.p_greater._data,
-            self.compute_config.mixed_precision.p_real_cutoff,
-            self.compute_config.mixed_precision.p_imag_cutoff,
+            self.config.compute.mixed_precision.pg_real_cutoff,
+            self.config.compute.mixed_precision.pg_imag_cutoff,
         )
         self.data.p_retarded._data = cutoff_complex_data(
             self.data.p_retarded._data,
-            self.compute_config.mixed_precision.p_real_cutoff,
-            self.compute_config.mixed_precision.p_imag_cutoff,
+            self.config.compute.mixed_precision.pr_real_cutoff,
+            self.config.compute.mixed_precision.pr_imag_cutoff,
         )
 
         self.data.w_greater.allocate_data()
@@ -616,20 +612,24 @@ class SCBA:
         profiler.add_stats("w_lesser", self.data.w_lesser.data)
         profiler.add_stats("w_greater", self.data.w_greater.data)
         self.data.w_lesser._data = mask_complex_precision(
-            self.data.w_lesser._data, self.data.w_real_dtype, self.data.w_imag_dtype
+            self.data.w_lesser._data,
+            self.config.compute.mixed_precision.wl_real_precision,
+            self.config.compute.mixed_precision.wl_imag_precision,
         )
         self.data.w_greater._data = mask_complex_precision(
-            self.data.w_greater._data, self.data.w_real_dtype, self.data.w_imag_dtype
+            self.data.w_greater._data,
+            self.config.compute.mixed_precision.wg_real_precision,
+            self.config.compute.mixed_precision.wg_imag_precision,
         )
         self.data.w_lesser._data = cutoff_complex_data(
             self.data.w_lesser._data,
-            self.compute_config.mixed_precision.w_real_cutoff,
-            self.compute_config.mixed_precision.w_imag_cutoff,
+            self.config.compute.mixed_precision.wl_real_cutoff,
+            self.config.compute.mixed_precision.wl_imag_cutoff,
         )
         self.data.w_greater._data = cutoff_complex_data(
             self.data.w_greater._data,
-            self.compute_config.mixed_precision.w_real_cutoff,
-            self.compute_config.mixed_precision.w_imag_cutoff,
+            self.config.compute.mixed_precision.wg_real_cutoff,
+            self.config.compute.mixed_precision.wg_imag_cutoff,
         )
 
 
@@ -641,13 +641,13 @@ class SCBA:
 
         self.data.sigma_retarded._data = mask_complex_precision(
             self.data.sigma_retarded._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sr_real_precision,
+            self.config.compute.mixed_precision.sr_imag_precision,
         )
         self.data.sigma_retarded._data = cutoff_complex_data(
             self.data.sigma_retarded._data,
-            self.compute_config.mixed_precision.s_real_cutoff,
-            self.compute_config.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sr_real_cutoff,
+            self.config.compute.mixed_precision.sr_imag_cutoff,
         )
 
         self.sigma_fock.compute(
@@ -657,41 +657,43 @@ class SCBA:
 
         self.data.sigma_retarded._data = mask_complex_precision(
             self.data.sigma_retarded._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sr_real_precision,
+            self.config.compute.mixed_precision.sr_imag_precision,
         )
         self.data.sigma_retarded._data = cutoff_complex_data(
             self.data.sigma_retarded._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sr_real_cutoff,
+            self.config.compute.mixed_precision.sr_imag_cutoff,
         )
         self.data.sigma_lesser._data = mask_complex_precision(
-            self.data.sigma_lesser._data, self.data.s_real_dtype, self.data.s_imag_dtype
+            self.data.sigma_lesser._data,
+            self.config.compute.mixed_precision.sl_real_precision,
+            self.config.compute.mixed_precision.sl_imag_precision,
         )
         self.data.sigma_greater._data = mask_complex_precision(
             self.data.sigma_greater._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sg_real_precision,
+            self.config.compute.mixed_precision.sg_imag_precision,
         )
         self.data.sigma_retarded._data = mask_complex_precision(
             self.data.sigma_retarded._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sr_real_precision,
+            self.config.compute.mixed_precision.sr_imag_precision,
         )
         self.data.sigma_lesser._data = cutoff_complex_data(
             self.data.sigma_lesser._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sl_real_cutoff,
+            self.config.compute.mixed_precision.sl_imag_cutoff,
         )
         self.data.sigma_greater._data = cutoff_complex_data(
             self.data.sigma_greater._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sg_real_cutoff,
+            self.config.compute.mixed_precision.sg_imag_cutoff,
         )
         self.data.sigma_retarded._data = cutoff_complex_data(
             self.data.sigma_retarded._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sr_real_cutoff,
+            self.config.compute.mixed_precision.sr_imag_cutoff,
         )
 
         self.sigma_coulomb_screening.compute(
@@ -707,32 +709,34 @@ class SCBA:
         )
 
         self.data.sigma_lesser._data = mask_complex_precision(
-            self.data.sigma_lesser._data, self.data.s_real_dtype, self.data.s_imag_dtype
+            self.data.sigma_lesser._data,
+            self.config.compute.mixed_precision.sl_real_precision,
+            self.config.compute.mixed_precision.sl_imag_precision,
         )
         self.data.sigma_greater._data = mask_complex_precision(
             self.data.sigma_greater._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sg_real_precision,
+            self.config.compute.mixed_precision.sg_imag_precision,
         )
         self.data.sigma_retarded._data = mask_complex_precision(
             self.data.sigma_retarded._data,
-            self.data.s_real_dtype,
-            self.data.s_imag_dtype,
+            self.config.compute.mixed_precision.sr_real_precision,
+            self.config.compute.mixed_precision.sr_imag_precision,
         )
         self.data.sigma_lesser._data = cutoff_complex_data(
             self.data.sigma_lesser._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sl_real_cutoff,
+            self.config.compute.mixed_precision.sl_imag_cutoff,
         )
         self.data.sigma_greater._data = cutoff_complex_data(
             self.data.sigma_greater._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sg_real_cutoff,
+            self.config.compute.mixed_precision.sg_imag_cutoff,
         )
         self.data.sigma_retarded._data = cutoff_complex_data(
             self.data.sigma_retarded._data,
-            self.config.compute.mixed_precision.s_real_cutoff,
-            self.config.compute.mixed_precision.s_imag_cutoff,
+            self.config.compute.mixed_precision.sr_real_cutoff,
+            self.config.compute.mixed_precision.sr_imag_cutoff,
         )
 
         self.data.w_greater.free_data()
@@ -915,39 +919,38 @@ class SCBA:
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
-
                 profiler.add_stats("sigma_lesser", self.data.sigma_lesser.data)
                 profiler.add_stats("sigma_greater", self.data.sigma_greater.data)
                 profiler.add_stats("sigma_retarded", self.data.sigma_retarded.data)
                 self.data.sigma_lesser._data = mask_complex_precision(
                     self.data.sigma_lesser._data,
-                    self.data.s_real_dtype,
-                    self.data.s_imag_dtype,
+                    self.config.compute.mixed_precision.sl_real_precision,
+                    self.config.compute.mixed_precision.sl_imag_precision,
                 )
                 self.data.sigma_greater._data = mask_complex_precision(
                     self.data.sigma_greater._data,
-                    self.data.s_real_dtype,
-                    self.data.s_imag_dtype,
+                    self.config.compute.mixed_precision.sg_real_precision,
+                    self.config.compute.mixed_precision.sg_imag_precision,
                 )
                 self.data.sigma_retarded._data = mask_complex_precision(
                     self.data.sigma_retarded._data,
-                    self.data.s_real_dtype,
-                    self.data.s_imag_dtype,
+                    self.config.compute.mixed_precision.sr_real_precision,
+                    self.config.compute.mixed_precision.sr_imag_precision,
                 )
                 self.data.sigma_lesser._data = cutoff_complex_data(
                     self.data.sigma_lesser._data,
-                    self.config.compute.mixed_precision.s_real_cutoff,
-                    self.config.compute.mixed_precision.s_imag_cutoff,
+                    self.config.compute.mixed_precision.sl_real_cutoff,
+                    self.config.compute.mixed_precision.sl_imag_cutoff,
                 )
                 self.data.sigma_greater._data = cutoff_complex_data(
                     self.data.sigma_greater._data,
-                    self.config.compute.mixed_precision.s_real_cutoff,
-                    self.config.compute.mixed_precision.s_imag_cutoff,
+                    self.config.compute.mixed_precision.sg_real_cutoff,
+                    self.config.compute.mixed_precision.sg_imag_cutoff,
                 )
                 self.data.sigma_retarded._data = cutoff_complex_data(
                     self.data.sigma_retarded._data,
-                    self.config.compute.mixed_precision.s_real_cutoff,
-                    self.config.compute.mixed_precision.s_imag_cutoff,
+                    self.config.compute.mixed_precision.sr_real_cutoff,
+                    self.config.compute.mixed_precision.sr_imag_cutoff,
                 )
 
                 self.electron_solver.solve(
@@ -962,32 +965,34 @@ class SCBA:
                 profiler.add_stats("g_retarded", self.data.g_retarded.data)
                 # downcast
                 self.data.g_lesser._data = mask_complex_precision(
-                    self.data.g_lesser._data, self.data.g_real_dtype, self.data.g_imag_dtype
+                    self.data.g_lesser._data,
+                    self.config.compute.mixed_precision.gl_real_precision,
+                    self.config.compute.mixed_precision.gl_imag_precision,
                 )
                 self.data.g_greater._data = mask_complex_precision(
                     self.data.g_greater._data,
-                    self.data.g_real_dtype,
-                    self.data.g_imag_dtype,
+                    self.config.compute.mixed_precision.gg_real_precision,
+                    self.config.compute.mixed_precision.gg_imag_precision,
                 )
                 self.data.g_retarded._data = mask_complex_precision(
                     self.data.g_retarded._data,
-                    self.data.g_real_dtype,
-                    self.data.g_imag_dtype,
+                    self.config.compute.mixed_precision.gr_real_precision,
+                    self.config.compute.mixed_precision.gr_imag_precision,
                 )
                 self.data.g_lesser._data = cutoff_complex_data(
                     self.data.g_lesser._data,
-                    self.compute_config.mixed_precision.g_real_cutoff,
-                    self.compute_config.mixed_precision.g_imag_cutoff,
+                    self.config.compute.mixed_precision.gl_real_cutoff,
+                    self.config.compute.mixed_precision.gl_imag_cutoff,
                 )
                 self.data.g_greater._data = cutoff_complex_data(
                     self.data.g_greater._data,
-                    self.compute_config.mixed_precision.g_real_cutoff,
-                    self.compute_config.mixed_precision.g_imag_cutoff,
+                    self.config.compute.mixed_precision.gg_real_cutoff,
+                    self.config.compute.mixed_precision.gg_imag_cutoff,
                 )
                 self.data.g_retarded._data = cutoff_complex_data(
                     self.data.g_retarded._data,
-                    self.compute_config.mixed_precision.g_real_cutoff,
-                    self.compute_config.mixed_precision.g_imag_cutoff,
+                    self.config.compute.mixed_precision.gr_real_cutoff,
+                    self.config.compute.mixed_precision.gr_imag_cutoff,
                 )
 
                 self._compute_electron_observables()

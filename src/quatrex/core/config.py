@@ -882,47 +882,99 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    g_real_precision: str = "fp64"
-    w_real_precision: str = "fp64"
-    p_real_precision: str = "fp64"
-    s_real_precision: str = "fp64"
-    s_old_real_precision: str = "fp64"
+    gl_real_precision: str = "fp64"
+    wl_real_precision: str = "fp64"
+    pl_real_precision: str = "fp64"
+    sl_real_precision: str = "fp64"
+    sl_old_real_precision: str = "fp64"
+    ll_real_precision: str = "fp64"
+
+    gg_real_precision: str = "fp64"
+    wg_real_precision: str = "fp64"
+    pg_real_precision: str = "fp64"
+    sg_real_precision: str = "fp64"
+    sg_old_real_precision: str = "fp64"
+    lg_real_precision: str = "fp64"
+
+    gr_real_precision: str = "fp64"
+    pr_real_precision: str = "fp64"
+    sr_real_precision: str = "fp64"
+    sr_old_real_precision: str = "fp64"
+
+    gl_imag_precision: str = "fp64"
+    wl_imag_precision: str = "fp64"
+    pl_imag_precision: str = "fp64"
+    sl_imag_precision: str = "fp64"
+    sl_old_imag_precision: str = "fp64"
+    ll_imag_precision: str = "fp64"
+
+    gg_imag_precision: str = "fp64"
+    wg_imag_precision: str = "fp64"
+    pg_imag_precision: str = "fp64"
+    sg_imag_precision: str = "fp64"
+    sg_old_imag_precision: str = "fp64"
+    lg_imag_precision: str = "fp64"
+
+    gr_imag_precision: str = "fp64"
+    pr_imag_precision: str = "fp64"
+    sr_imag_precision: str = "fp64"
+    sr_old_imag_precision: str = "fp64"
+
     h_real_precision: str = "fp64"
     v_real_precision: str = "fp64"
-    l_real_precision: str = "fp64"
     system_g_real_precision: str = "fp64"
     system_w_real_precision: str = "fp64"
 
-    g_imag_precision: str = "fp64"
-    w_imag_precision: str = "fp64"
-    p_imag_precision: str = "fp64"
-    s_imag_precision: str = "fp64"
-    s_old_imag_precision: str = "fp64"
     h_imag_precision: str = "fp64"
     v_imag_precision: str = "fp64"
-    l_imag_precision: str = "fp64"
     system_g_imag_precision: str = "fp64"
     system_w_imag_precision: str = "fp64"
 
-    g_real_cutoff: float = 0
-    w_real_cutoff: float = 0
-    p_real_cutoff: float = 0
-    s_real_cutoff: float = 0
-    s_old_real_cutoff: float = 0
+    gl_real_cutoff: float = 0
+    wl_real_cutoff: float = 0
+    pl_real_cutoff: float = 0
+    sl_real_cutoff: float = 0
+    sl_old_real_cutoff: float = 0
+    ll_real_cutoff: float = 0
+
+    gg_real_cutoff: float = 0
+    wg_real_cutoff: float = 0
+    pg_real_cutoff: float = 0
+    sg_real_cutoff: float = 0
+    sg_old_real_cutoff: float = 0
+    lg_real_cutoff: float = 0
+
+    gr_real_cutoff: float = 0
+    pr_real_cutoff: float = 0
+    sr_real_cutoff: float = 0
+    sr_old_real_cutoff: float = 0
+
+    gl_imag_cutoff: float = 0
+    wl_imag_cutoff: float = 0
+    pl_imag_cutoff: float = 0
+    sl_imag_cutoff: float = 0
+    sl_old_imag_cutoff: float = 0
+    ll_imag_cutoff: float = 0
+
+    gg_imag_cutoff: float = 0
+    wg_imag_cutoff: float = 0
+    pg_imag_cutoff: float = 0
+    sg_imag_cutoff: float = 0
+    sg_old_imag_cutoff: float = 0
+    lg_imag_cutoff: float = 0
+
+    gr_imag_cutoff: float = 0
+    pr_imag_cutoff: float = 0
+    sr_imag_cutoff: float = 0
+    sr_old_imag_cutoff: float = 0
+
     h_real_cutoff: float = 0
     v_real_cutoff: float = 0
-    l_real_cutoff: float = 0
     system_g_real_cutoff: float = 0
     system_w_real_cutoff: float = 0
 
-    g_imag_cutoff: float = 0
-    w_imag_cutoff: float = 0
-    p_imag_cutoff: float = 0
-    s_imag_cutoff: float = 0
-    s_old_imag_cutoff: float = 0
     h_imag_cutoff: float = 0
     v_imag_cutoff: float = 0
-    l_imag_cutoff: float = 0
     system_g_imag_cutoff: float = 0
     system_w_imag_cutoff: float = 0
 

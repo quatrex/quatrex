@@ -383,10 +383,10 @@ def find_charge_neutral_fermi_level(
     )
 
     if side == "left":
-        blocks = [(1, 0), (0, 0), (0, 1)]  # , (1, 0)]
+        blocks = [(1, 0), (0, 0), (0, 1)]
         potential = xp.diag(potential[:small_blocksize])
     elif side == "right":
-        blocks = [(-1, -2), (-1, -1), (-2, -1)]  # , (n-2, n-1)]
+        blocks = [(-1, -2), (-1, -1), (-2, -1)]
         potential = xp.diag(potential[-small_blocksize:])
     else:
         raise ValueError(f"Unknown side '{side}'.")

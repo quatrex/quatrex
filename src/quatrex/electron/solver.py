@@ -586,28 +586,28 @@ class ElectronSolver(SubsystemSolver):
             self.left_mid_gap_energy = left_mid_gap_energy
 
             # Charge per unit volume
-            #right_target_charge = self.quatrex_config.electron.doping / xp.linalg.det(
-            #    # So far this only works for 2D systems.
-            #    self.lattice_vectors[:2, :2]
-            #) * 1e-16 # cm^2 to A^2 
-            #right_fermi_level, right_mid_gap_energy = find_charge_neutral_fermi_level(
-            #    hamiltonian=self.hamiltonian,
-            #    overlap=self.overlap_sparray,
-            #    potential=self.potential,
-            #    sigma_retarded=sse_retarded,
-            #    local_energies=self.local_energies,
-            #    energies=self.energies,
-            #    temperature=self.temperature,
-            #    target_charge=right_target_charge,
-            #    mid_gap_energy=self.right_mid_gap_energy,
-            #    block_sections=self.block_sections_contact_gf,
-            #    side="right",
-            #)
-            #self.right_fermi_level = right_fermi_level
-            #self.right_mid_gap_energy = right_mid_gap_energy
-            self.right_fermi_level = (
-                self.left_fermi_level - self.bias
+            right_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
+                # So far this only works for 2D systems.
+                self.lattice_vectors[:2, :2]
+            ) * 1e-16 # cm^2 to A^2 
+            right_fermi_level, right_mid_gap_energy = find_charge_neutral_fermi_level(
+                hamiltonian=self.hamiltonian,
+                overlap=self.overlap_sparray,
+                potential=self.potential,
+                sigma_retarded=sse_retarded,
+                local_energies=self.local_energies,
+                energies=self.energies,
+                temperature=self.temperature,
+                target_charge=right_target_charge,
+                mid_gap_energy=self.right_mid_gap_energy,
+                block_sections=self.block_sections_contact_gf,
+                side="right",
             )
+            self.right_fermi_level = right_fermi_level
+            self.right_mid_gap_energy = right_mid_gap_energy
+            #self.right_fermi_level = (
+            #    self.left_fermi_level - self.bias
+            #)
 
             self.left_occupancies = fermi_dirac(
                 self.local_energies - self.left_fermi_level,
@@ -629,7 +629,7 @@ class ElectronSolver(SubsystemSolver):
         # Print the updated Fermi levels.
         (
             print(
-                f"Updated Fermi levels: left={self.left_fermi_level}, right={self.right_fermi_level}\nLeft mid-gap={self.left_mid_gap_energy}",
+                f"Updated Fermi levels: left={self.left_fermi_level}, right={self.right_fermi_level}\nLeft mid-gap={self.left_mid_gap_energy}, right mid-gap={self.right_mid_gap_energy}",
                 flush=True,
             )
             if comm.rank == 0
@@ -717,22 +717,20 @@ class ElectronSolver(SubsystemSolver):
                     xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
                 ) / xp.pi
                 # Normalize by the number of unit cells in the supercell
-                local_left_dos /= xp.prod(self.quatrex_config.device.unit_cell_per_supercell)
+                local_left_dos /= np.prod(self.quatrex_config.device.unit_cell_per_supercell)
 
                 left_dos = comm.stack.all_gather_v(
                     local_left_dos,
                     axis=0,
                     mask=g_retarded._stack_padding_mask,
                 )
-                if self.band_edge_tracking == "dos-peaks":
-                    e_0_left = find_dos_peaks(left_dos, self.energies)
-                    left_band_edges = np.array(
-                        find_band_edges(e_0_left, self.left_mid_gap_energy)
-                    )
-                else:  # charge-neutrality
-                    # Update the mid band gap from the dos
-                    vb_edge, cb_edge = local_band_edges(left_dos[:, None], self.energies, xp.array([self.left_mid_gap_energy,]))
-                    self.left_mid_gap_energy = float(0.5 * (vb_edge + cb_edge))
+                e_0_left = find_dos_peaks(left_dos, self.energies)
+                left_band_edges = xp.array(
+                    find_band_edges(e_0_left, self.left_mid_gap_energy)
+                )
+                if self.band_edge_tracking == "charge-neutrality":
+                    # Update the mid band gap
+                    self.left_mid_gap_energy = xp.mean(left_band_edges)
                     left_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
                         # So far this only works for 2D systems.
                         self.lattice_vectors[:2, :2]
@@ -753,23 +751,20 @@ class ElectronSolver(SubsystemSolver):
                     xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
                 ) / xp.pi
                 # Normalize by the number of unit cells in the supercell
-                local_right_dos /= xp.prod(self.quatrex_config.device.unit_cell_per_supercell)
+                local_right_dos /= np.prod(self.quatrex_config.device.unit_cell_per_supercell)
 
                 right_dos = comm.stack.all_gather_v(
                     local_right_dos,
                     axis=0,
                     mask=g_retarded._stack_padding_mask,
                 )
-
-                if self.band_edge_tracking == "dos-peaks":
-                    e_0_right = find_dos_peaks(right_dos, self.energies)
-                    right_band_edges = np.array(
-                        find_band_edges(e_0_right, self.right_mid_gap_energy)
-                    )
-                else:  # charge-neutrality
+                e_0_right = find_dos_peaks(right_dos, self.energies)
+                right_band_edges = xp.array(
+                    find_band_edges(e_0_right, self.right_mid_gap_energy)
+                )
+                if self.band_edge_tracking == "charge-neutrality":
                     # Update the mid band gap from the dos
-                    vb_edge, cb_edge = local_band_edges(right_dos[:, None], self.energies, xp.array([self.right_mid_gap_energy,]))
-                    self.right_mid_gap_energy = float(0.5 * (vb_edge + cb_edge))
+                    self.right_mid_gap_energy = xp.mean(right_band_edges)
                     right_target_charge = self.quatrex_config.electron.doping * xp.linalg.det(
                         # So far this only works for 2D systems.
                         self.lattice_vectors[:2, :2]
@@ -796,8 +791,8 @@ class ElectronSolver(SubsystemSolver):
                     backend="device_mpi",
                 )
                 self.left_fermi_level = left_fermi_level
-                #self.right_fermi_level = right_fermi_level
-                self.right_fermi_level = left_fermi_level - self.bias
+                self.right_fermi_level = right_fermi_level
+                #self.right_fermi_level = left_fermi_level - self.bias
                 self.left_occupancies = fermi_dirac(
                     self.local_energies - self.left_fermi_level,
                     self.temperature,

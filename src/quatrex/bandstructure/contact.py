@@ -271,7 +271,7 @@ def contact_greens_function(
     g_retarded = np.zeros_like(sigma_retarded)
 
     for i in range(num_energies):
-        energy_matrix = (energies[i]+1j * eta) * overlap + potential
+        energy_matrix = (energies[i]+1j * eta) * overlap - potential
         g_retarded[i] = np.linalg.inv(energy_matrix - hamiltonian - sigma_retarded[i])
 
     return g_retarded

@@ -24,6 +24,11 @@ REFERENCE_OBSERVABLES = {
         "dos_r",
         "transmission_lr",
     ],
+    "wann-si-bulk:qtbm": [
+        "dos_l",
+        "dos_r",
+        "transmission_lr",
+    ],
 }
 
 assert len(REFERENCE_OBSERVABLES) == len(set(REFERENCE_OBSERVABLES.keys()))

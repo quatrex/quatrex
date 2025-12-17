@@ -37,7 +37,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
         The convolution of the two arrays.
 
     """
-    n = a.shape[0] + b.shape[0] - 1
+    n = a.shape[0] + b.shape[0]  # - 1
     a_fft = xp.fft.fft(a, n, axis=0)
     b_fft = xp.fft.fft(b, n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
@@ -60,7 +60,7 @@ def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
         The cross-correlation of the two arrays.
 
     """
-    n = a.shape[0] + b.shape[0] - 1
+    n = a.shape[0] + b.shape[0]  # - 1
     a_fft = xp.fft.fft(a, n, axis=0)
     b_fft = xp.fft.fft(b[::-1], n, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)
@@ -216,9 +216,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         t_sse_start = time.perf_counter()
         # Because of padding there could be no ij elements
         if g_greater.data.shape[-1] != 0:
-
             with profiler.profile_range("SSE computation", level="debug"):
-
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
@@ -237,7 +235,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     self.batch_size = batch_size
                     if comm.rank == 0:
                         print(
-                            f"Free GiB: {free_memory/(1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
+                            f"Free GiB: {free_memory / (1024**3):.3f}, Batches: {batches}, Batch size: {batch_size}",
                             flush=True,
                         )
                         print(cache.show_info(), flush=True)
@@ -257,95 +255,102 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 )
 
                 energy_differences = (self.energies - self.energies[0]).reshape(-1, 1)
-                eta = 1e-8
+                # eta = 1e-8
+                eta = (self.energies[1] - self.energies[0]) / 2
                 # Add a small imaginary part to avoid singularity.
                 # eta for removing the singularity. See Cauchy principal value.
                 n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
                 ne = g_lesser.data.shape[0]
 
-                hilbert_kernel_fft = xp.fft.fft(
-                    1 / (energy_differences + eta), n, axis=0
-                ).T
+                # hilbert_kernel_fft = xp.fft.fft(
+                #    1 / (energy_differences + eta), n, axis=0
+                # ).T
+                hilbert_kernel = 1 / (energy_differences + eta)
 
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    g_x_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
-                    w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch].T, n, axis=1)
-                    w_greater_fft = xp.fft.fft(w_greater.data[:, batch].T, n, axis=1)
+                    # g_x_fft = xp.fft.fft(g_lesser.data[:, batch].T, n, axis=1)
+                    # w_lesser_fft = xp.fft.fft(w_lesser.data[:, batch].T, n, axis=1)
+                    # w_greater_fft = xp.fft.fft(w_greater.data[:, batch].T, n, axis=1)
 
-                    sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
-                    sigma_x_fft -= xp.multiply(
-                        g_x_fft, w_greater_fft.conj()
-                    )  # negative energy part
-                    lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
-                    sigma_lesser.data[..., batch] += lesser.T
+                    # sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
+                    # sigma_x_fft -= xp.multiply(
+                    #     g_x_fft, w_greater_fft.conj()
+                    # )  # negative energy part
+                    # lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                    # sigma_lesser.data[..., batch] += lesser.T
 
-                    # antihermitian_fft = -sigma_x_fft
+                    # # antihermitian_fft = -sigma_x_fft
 
-                    g_x_fft = xp.fft.fft(g_greater.data[:, batch].T, n, axis=1)
-                    sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
-                    sigma_x_fft -= xp.multiply(
-                        g_x_fft, w_lesser_fft.conj()
-                    )  # negative energy part
-                    greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
-                    sigma_greater.data[..., batch] += greater.T
+                    # g_x_fft = xp.fft.fft(g_greater.data[:, batch].T, n, axis=1)
+                    # sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
+                    # sigma_x_fft -= xp.multiply(
+                    #     g_x_fft, w_lesser_fft.conj()
+                    # )  # negative energy part
+                    # greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                    # sigma_greater.data[..., batch] += greater.T
 
-                    # antihermitian_fft += sigma_x_fft
+                    # # antihermitian_fft += sigma_x_fft
 
-                    # Compute retarded self-energy with a Hilbert transform.
-                    antihermitian = 1j * xp.imag(greater - lesser)
-                    antihermitian_fft = xp.fft.fft(antihermitian, n, axis=1)
-                    # TODO check this: impose the causality in the FFT domain instead of taking the
-                    # imaginary part in the real domain, we have one less fft to do
-                    # antihermitian_fft *= self.prefactor * 0.5
-                    # antihermitian_fft -=  xp.flip(antihermitian_fft.conj(), axis=0) # remove the hermitian part X(-t) = X(t).conj()
+                    # # Compute retarded self-energy with a Hilbert transform.
+                    # antihermitian = 1j * xp.imag(greater - lesser)
+                    # antihermitian_fft = xp.fft.fft(antihermitian, n, axis=1)
+                    # # TODO check this: impose the causality in the FFT domain instead of taking the
+                    # # imaginary part in the real domain, we have one less fft to do
+                    # # antihermitian_fft *= self.prefactor * 0.5
+                    # # antihermitian_fft -=  xp.flip(antihermitian_fft.conj(), axis=0) # remove the hermitian part X(-t) = X(t).conj()
 
-                    sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-                    sigma_x_fft -= xp.multiply(
-                        antihermitian_fft, hilbert_kernel_fft.conj()
-                    )  # negative energy part
-                    sigma_retarded.data[..., batch] += (
-                        xp.real(
-                            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
-                        )
-                        + antihermitian / 2
-                    ).T
+                    # sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+                    # sigma_x_fft -= xp.multiply(
+                    #     antihermitian_fft, hilbert_kernel_fft.conj()
+                    # )  # negative energy part
+                    # sigma_retarded.data[..., batch] += (
+                    #     xp.real(
+                    #         self.prefactor * xp.fft.ifft(sigma_x_fft, axis=1)[:, :ne]
+                    #     )
+                    #     + antihermitian / 2
+                    # ).T
 
-                    # Compute the full self-energy using the convolution theorem.
-                    # Second term are corrections for negative frequencies that
-                    # where cut off by the polarization calculation.
-                    # TODO: the datastructures does not allow for easy slicing of the
-                    # data. This is a workaround.
-                    # sigma_lesser._data[
-                    #     sigma_lesser._stack_padding_mask, ..., batch
-                    # ] += self.prefactor * (
-                    #     fft_convolve(g_lesser.data[:, batch], w_lesser.data[:, batch])[
-                    #         : self.num_energies
-                    #     ]
-                    #     - fft_correlate(
-                    #         g_lesser.data[:, batch], w_greater.data[:, batch].conj()
-                    #     )[self.num_energies - 1 :]
-                    # )
-                    # sigma_greater._data[
-                    #     sigma_greater._stack_padding_mask, ..., batch
-                    # ] += self.prefactor * (
-                    #     fft_convolve(g_greater.data[:, batch], w_greater.data[:, batch])[
-                    #         : self.num_energies
-                    #     ]
-                    #     - fft_correlate(
-                    #         g_greater.data[:, batch], w_lesser.data[:, batch].conj()
-                    #     )[self.num_energies - 1 :]
-                    # )
+                    # Lesser self-energy
+                    # NOTE: The whole self-energy is kept for the grid-edge-corrections.
+                    sl = self.prefactor * fft_correlate(
+                        g_lesser.data[:, batch], -w_greater.data[:, batch].conj()
+                    )
+                    sl[ne:] += (
+                        self.prefactor
+                        * fft_convolve(
+                            g_lesser.data[:, batch], w_lesser.data[:, batch]
+                        )[:ne]
+                    )
 
-                    # Compute retarded self-energy with a Hilbert transform.
-                    # sigma_antihermitian = 1j * xp.imag(
-                    #     sigma_greater.data[:, batch] - sigma_lesser.data[:, batch]
-                    # )
-                    # sigma_hermitian = hilbert_transform(sigma_antihermitian, self.energies)
-                    # sigma_retarded._data[
-                    #     sigma_retarded._stack_padding_mask, ..., batch
-                    # ] += (1j * sigma_hermitian + sigma_antihermitian / 2)
+                    # Greater self-energy
+                    # NOTE: The whole self-energy is kept for the grid-edge-corrections.
+                    sg = self.prefactor * fft_convolve(
+                        g_greater.data[:, batch], w_greater.data[:, batch]
+                    )
+                    sg[:ne] += (
+                        self.prefactor
+                        * fft_correlate(
+                            g_greater.data[:, batch], -w_lesser.data[:, batch].conj()
+                        )[ne:]
+                    )
+
+                    sigma_lesser.data[..., batch] += sl[ne:]
+                    sigma_greater.data[..., batch] += sg[:ne]
+
+                    # Retarded self-energy
+                    sr = fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[:ne]
+                    # Correct for left edge
+                    sr += fft_convolve(-sl[:ne], hilbert_kernel)[ne:]
+                    # Next account for negative frequencies
+                    hilbert_kernel = -hilbert_kernel[::-1]
+                    sr += fft_convolve(sg[:ne] - sl[ne:], hilbert_kernel)[ne:]
+                    # Correct for right edge
+                    sr += fft_convolve(sg[ne:], hilbert_kernel)[:ne]
+                    sigma_retarded.data[..., batch] += xp.real(
+                        self.prefactor * sr
+                    ) + 0.5j * xp.imag(sg[:ne] - sl[ne:])
 
         synchronize_device()
         t_sse_end = time.perf_counter()

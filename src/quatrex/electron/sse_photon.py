@@ -215,14 +215,12 @@ class SigmaPhoton(ScatteringSelfEnergy):
             raise RuntimeError
 
         sigma_greater.data[self.upshift :, ...] += greater.data[: -self.upshift, ...]
-        sigma_greater.data[: -self.downshift :, ...] += greater.data[
+        sigma_greater.data[: -self.downshift, ...] += greater.data[
             self.downshift :, ...
         ]
 
         sigma_lesser.data[self.upshift :, ...] += lesser.data[: -self.upshift, ...]
-        sigma_lesser.data[: -self.downshift :, ...] += lesser.data[
-            self.downshift :, ...
-        ]
+        sigma_lesser.data[: -self.downshift, ...] += lesser.data[self.downshift :, ...]
 
         _update_sigma_retarded_from_lesser_greater(
             sigma_lesser, sigma_greater, sigma_retarded

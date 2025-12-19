@@ -200,7 +200,7 @@ class SCBAData:
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
-        if quatrex_config.scba.photon:
+        if quatrex_config.scba.photon and quatrex_config.photon.model == "negf":
             raise NotImplementedError
 
         if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
@@ -402,16 +402,25 @@ class SCBA:
 
         # ----- Photons ------------------------------------------------
         if self.quatrex_config.scba.photon:
-            energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
-            self.photon_energies = distributed_load(energies_path)
-            self.pi_photon = PiPhoton(...)
-            self.photon_solver = PhotonSolver(
-                self.quatrex_config,
-                self.compute_config,
-                self.photon_energies,
-                ...,
-            )
-            self.sigma_photon = SigmaPhoton(...)
+            if self.quatrex_config.photon.model == "negf":
+                energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
+                self.photon_energies = distributed_load(energies_path)
+                self.pi_photon = PiPhoton(...)
+                self.photon_solver = PhotonSolver(
+                    self.quatrex_config,
+                    self.compute_config,
+                    self.photon_energies,
+                    ...,
+                )
+                self.sigma_photon = SigmaPhoton(...)
+
+            elif self.quatrex_config.photon.model == "pseudo-scattering":
+                self.sigma_photon = SigmaPhoton(
+                    quatrex_config,
+                    compute_config,
+                    sparsity_pattern=self.data.sparsity_pattern,
+                    electron_energies=self.electron_energies,
+                )
 
         # ----- Phonons ------------------------------------------------
         if self.quatrex_config.scba.phonon:
@@ -531,11 +540,28 @@ class SCBA:
 
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
+        epsilon = 1e-16
+        denom = max(
+            min(xp.abs(xp.sum(i_left) * dE), xp.abs(xp.sum(i_right) * dE)), epsilon
+        )
+        relative_current_diff = current_diff / denom
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
+            print(
+                f"Contact Currents: {sum(i_left) * dE}, {sum(i_right) * dE}", flush=True
+            )
+            print(
+                f"Relative Contact Current Difference: {relative_current_diff}",
+                flush=True,
+            )
 
+        if (
+            relative_current_diff < self.quatrex_config.scba.convergence_tol
+            and max_diff < self.quatrex_config.scba.convergence_tol
+        ):
+            return True
         return False  # TODO: :-)
 
     @profiler.profile(level="api")
@@ -558,7 +584,19 @@ class SCBA:
     @profiler.profile(level="api")
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
-        raise NotImplementedError
+        if self.quatrex_config.photon.model == "negf":
+            raise NotImplementedError
+
+        elif self.quatrex_config.photon.model == "pseudo-scattering":
+            self.sigma_photon.compute(
+                self.data.g_lesser,
+                self.data.g_greater,
+                out=(
+                    self.data.sigma_lesser,
+                    self.data.sigma_greater,
+                    self.data.sigma_retarded,
+                ),
+            )
 
     @profiler.profile(level="api")
     def _compute_coulomb_screening_interaction(self):
@@ -957,7 +995,21 @@ class SCBA:
                     )
 
             if self.quatrex_config.scba.photon:
+                t_start_photon = time.perf_counter()
                 self._compute_photon_interaction()
+                synchronize_device()
+                t_end_photon = time.perf_counter()
+                comm.barrier()
+                t_end_photon_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(
+                        f"Time for photon interaction: {t_end_photon - t_start_photon:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for photon interaction all: {t_end_photon_all - t_start_photon:.3f} s",
+                        flush=True,
+                    )
 
             if self.quatrex_config.scba.phonon:
                 t_start_phonon = time.perf_counter()
@@ -979,14 +1031,22 @@ class SCBA:
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
-                m.dtranspose(discard=True)  # These can be safely discarded.
+                (
+                    m.dtranspose(discard=True)
+                    if m.distribution_state != "stack"
+                    else None
+                )  # These can be safely discarded.
                 assert m.distribution_state == "stack"
             for m in (
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
             ):
-                m.dtranspose(discard=False)  # This must not be discarded.
+                (
+                    m.dtranspose(discard=False)
+                    if m.distribution_state != "stack"
+                    else None
+                )  # This must not be discarded.
                 assert m.distribution_state == "stack"
             synchronize_device()
             t_transpose_sigma_end = time.perf_counter()

@@ -220,7 +220,7 @@ class RGFDist(GFSolver):
 
             synchronize_device()
             t_init_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_init_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(f"        Init: {t_init_end-t_init_start}", flush=True)
@@ -287,7 +287,7 @@ class RGFDist(GFSolver):
 
             synchronize_device()
             t_schur_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_schur_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(f"        Schur: {t_schur_end-t_schur_start}", flush=True)
@@ -303,7 +303,7 @@ class RGFDist(GFSolver):
                 gather_reduced_system = reduced_system.gather
 
             synchronize_device()
-            comm.barrier()
+            comm.block.barrier()
             gather_reduced_system(
                 a=a_,
                 xr_diag_blocks=xr_diag_blocks,
@@ -322,7 +322,7 @@ class RGFDist(GFSolver):
             )
             synchronize_device()
             t_reduce_gather_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_reduce_gather_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
@@ -341,7 +341,7 @@ class RGFDist(GFSolver):
 
             synchronize_device()
             t_reduce_solve_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_reduce_solve_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
@@ -376,7 +376,7 @@ class RGFDist(GFSolver):
 
             synchronize_device()
             t_reduce_scatter_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_reduce_scatter_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
@@ -450,7 +450,7 @@ class RGFDist(GFSolver):
 
             synchronize_device()
             t_selinv_end = time.perf_counter()
-            comm.barrier()
+            comm.block.barrier()
             t_selinv_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(f"        Selinv: {t_selinv_end-t_selinv_start}", flush=True)

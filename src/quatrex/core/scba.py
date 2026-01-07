@@ -659,9 +659,9 @@ class SCBA:
         )
         # synchronize_device()
         synchronize_stream(None)
-        self.data.p_lesser.free_data()
-        self.data.p_greater.free_data()
-        self.data.p_retarded.free_data()
+        # self.data.p_lesser.free_data()
+        # self.data.p_greater.free_data()
+        # self.data.p_retarded.free_data()
         self.data.g_lesser.to_device(
             delete_host=False, stream=self._copy_stream, sync=False
         )
@@ -699,9 +699,9 @@ class SCBA:
             )
 
         t_sigma_fock_start = time.perf_counter()
-        # self.data.p_lesser.free_data()
-        # self.data.p_greater.free_data()
-        # self.data.p_retarded.free_data()
+        self.data.p_lesser.free_data()
+        self.data.p_greater.free_data()
+        self.data.p_retarded.free_data()
         # self.data.g_lesser.to_device(
         #     delete_host=False, stream=self._copy_stream, sync=False
         # )

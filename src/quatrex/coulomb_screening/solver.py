@@ -654,7 +654,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 )
                 # if i == len(batch_sizes) - 1:
                 #     p_greater.free_data()
-            self.coulomb_matrix.free_data()
+            if xp.__name__ == "cupy":
+                self.coulomb_matrix.free_data()
             # free_mempool()
             synchronize_stream(None)
             t_sandwich_end = time.perf_counter()

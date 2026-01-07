@@ -29,11 +29,11 @@ class Full(NEVP):
     a_sparsity : tuple[NDArray, ...] | None, optional
         The sparsity patterns of the coefficient blocks of the NEVP.
         Every array is a 2D matrix with entries 0 or 1 indicating
-        the sparsity pattern of the corresponding coefficient block.
+        if the entry is zero or non-zero, respectively.
     reduce : bool, optional
         Whether to reduce the problem size by eliminating columns
         that are zero in the first and last coefficient blocks.
-        These corresponding eigenvalues are infinity or zero.
+        These columns correspond to eigenvalues that are infinity or zero.
 
     """
 
@@ -73,17 +73,18 @@ class Full(NEVP):
             )
 
         if reduce and a_sparsity is not None:
-
-            sum_columns_first = xp.count_nonzero(a_sparsity[0], axis=0)
-            sum_columns_last = xp.count_nonzero(a_sparsity[-1], axis=0)
-            row_indices_first = xp.where(sum_columns_first == 0)[0]
-            row_indices_last = xp.where(sum_columns_last == 0)[0]
+            # Identify zero columns in the first and last blocks.
+            # by summing along the rows and checking for zeros.
+            column_sum_first = xp.count_nonzero(a_sparsity[0], axis=0)
+            column_sum_last = xp.count_nonzero(a_sparsity[-1], axis=0)
+            zero_indices_first = xp.where(column_sum_first == 0)[0]
+            zero_indices_last = xp.where(column_sum_last == 0)[0]
 
             # offset last indices by the size of all previous blocks
             offset = sum(a.shape[1] for a in a_sparsity[:-2])
 
             self.zero_indices = xp.concatenate(
-                (row_indices_first, row_indices_last + offset)
+                (zero_indices_first, zero_indices_last + offset)
             )
 
             self.nonzero_indices = xp.setdiff1d(

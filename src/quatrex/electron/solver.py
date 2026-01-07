@@ -34,6 +34,34 @@ from quatrex.core.utils import (
 profiler = Profiler()
 
 
+def one_sided_gradient(y, x=None, axis=0, direction='forward'):
+    if x is None:
+        x = np.arange(y.shape[axis])
+    if not len(x) == y.shape[axis]:
+        raise ValueError("Length of x must match the size of y along the specified axis.")
+
+    if direction == 'forward':
+        append_value = np.take(y, -1, axis=axis)
+        append_value = append_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        y_diff = np.diff(y, append=append_value, axis=axis)
+    elif direction == 'backward':
+        prepend_value = np.take(y, 0, axis=axis)
+        prepend_value = prepend_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        y_diff = np.diff(y, prepend=prepend_value, axis=axis)
+
+    dx = x[1] - x[0]
+    if direction == 'forward':
+        x_diff = np.diff(x, append=x[-1]+dx)
+    elif direction == 'backward':
+        x_diff = np.diff(x, prepend=x[0]-dx)
+    # Reshape x_diff to broadcast correctly along the specified axis
+    shape = [1] * y.ndim
+    shape[axis] = len(x_diff)
+    x_diff = x_diff.reshape(shape)
+    gradient = y_diff / x_diff
+    return gradient
+
+
 @profiler.profile(level="debug")
 def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
     """Subtracts b from a on the block-tridiagonal.
@@ -678,10 +706,15 @@ class ElectronSolver(SubsystemSolver):
             local_dos, axis=1, mask=g_lesser._stack_padding_mask
         )
 
-        dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
-        mask = (xp.max(dos_gradient, axis=0) > self.dos_peak_limit) | (
-            xp.max(dos, axis=0) > 10
-        )
+        #dos_gradient = xp.abs(xp.gradient(dos, self.energies, axis=1))
+        #mask = (xp.max(dos_gradient, axis=0) > self.dos_peak_limit) | (
+        #    xp.max(dos, axis=0) > 10
+        #)
+        forward_gradient = one_sided_gradient(xp.abs(dos), x=self.energies, axis=1, direction='forward')
+        backward_gradient = one_sided_gradient(xp.abs(dos), x=self.energies, axis=1, direction='backward')
+        mask = (xp.min(forward_gradient, axis=0) < -self.dos_peak_limit) | (
+            xp.max(backward_gradient, axis=0) > self.dos_peak_limit
+        ) | (xp.max(dos, axis=0) > 10)
 
         section_sizes, __ = get_section_sizes(self.energies.size, comm.stack.size)
         section_offsets = np.hstack(([0], np.cumsum(section_sizes)))

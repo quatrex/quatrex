@@ -595,8 +595,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             # Assemble the system matrix (Includes matrix multiplication).
             t_assembly_start = time.perf_counter()
             self._assemble_system_matrix(p_retarded_tmp)
-            if i == len(batch_sizes) - 1:
-                p_retarded.free_data()
+            # if i == len(batch_sizes) - 1:
+            #     p_retarded.free_data()
             synchronize_stream(None)
             t_assembly_end = time.perf_counter()
             comm.barrier()
@@ -625,8 +625,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     end_block=end_block,
                     spillover_correction=True,
                 )
-                if i == len(batch_sizes) - 1:
-                    p_lesser.free_data()
+                # if i == len(batch_sizes) - 1:
+                #     p_lesser.free_data()
                 bd_sandwich_distr(
                     self.coulomb_matrix,
                     p_greater_tmp,
@@ -635,8 +635,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     end_block=end_block,
                     spillover_correction=True,
                 )
-                if i == len(batch_sizes) - 1:
-                    p_greater.free_data()
+                # if i == len(batch_sizes) - 1:
+                #     p_greater.free_data()
             else:
                 bd_sandwich(
                     self.coulomb_matrix,
@@ -644,16 +644,16 @@ class CoulombScreeningSolver(SubsystemSolver):
                     out=l_lesser_tmp,
                     spillover_correction=True,
                 )
-                if i == len(batch_sizes) - 1:
-                    p_lesser.free_data()
+                # if i == len(batch_sizes) - 1:
+                #     p_lesser.free_data()
                 bd_sandwich(
                     self.coulomb_matrix,
                     p_greater_tmp,
                     out=l_greater_tmp,
                     spillover_correction=True,
                 )
-                if i == len(batch_sizes) - 1:
-                    p_greater.free_data()
+                # if i == len(batch_sizes) - 1:
+                #     p_greater.free_data()
             self.coulomb_matrix.free_data()
             # free_mempool()
             synchronize_stream(None)

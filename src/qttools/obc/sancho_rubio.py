@@ -40,6 +40,7 @@ class SanchoRubio(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
     ) -> NDArray | None:
         """Returns the surface Green's function.
 

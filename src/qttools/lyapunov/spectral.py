@@ -52,6 +52,7 @@ class Spectral(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
     ):
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -121,6 +122,7 @@ class Spectral(LyapunovSolver):
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -151,6 +153,6 @@ class Spectral(LyapunovSolver):
 
         # NOTE: possible to cache the sparsity reduction
         if self.reduce_sparsity:
-            return system_reduction(a, q, contact, self._solve, out=out)
+            return system_reduction(a, q, contact, stack_slice, self._solve, out=out)
 
-        return self._solve(a, q, contact, out=out)
+        return self._solve(a, q, contact, stack_slice, out=out)

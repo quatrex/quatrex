@@ -28,6 +28,7 @@ class LyapunovSolver(ABC):
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -128,6 +129,7 @@ class LyapunovMemoizer:
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice,
         out: None | NDArray = None,
     ) -> NDArray | None:
         """Calls the wrapped Lyapunov function with cache handling.
@@ -151,12 +153,12 @@ class LyapunovMemoizer:
             The solution of the discrete-time Lyapunov equation.
 
         """
-        x = self.lyapunov_solver(a, q, contact, out=out)
+        x = self.lyapunov_solver(a, q, contact, stack_slice, out=out)
         if out is None:
-            self._cache[contact] = x.copy()
+            self._cache[(contact, stack_slice)] = x.copy()
             return x
 
-        self._cache[contact] = out.copy()
+        self._cache[(contact, stack_slice)] = out.copy()
         return None
 
     @profiler.profile(level="api")
@@ -165,6 +167,7 @@ class LyapunovMemoizer:
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -194,10 +197,12 @@ class LyapunovMemoizer:
             return self._call_with_cache(a, q, contact, out=out)
 
         # Try to reuse the result from the cache.
-        x = self._cache.get(contact, None)
+        x = self._cache.get((contact, stack_slice), None)
 
         if x is None and self.memoizing_mode in ["auto", "force-after-first"]:
-            return self._call_with_cache(a, q, contact, out=out)
+            return self._call_with_cache(
+                a, q, contact, stack_slice=stack_slice, out=out
+            )
         elif self.memoizing_mode == "force":
             x = q if x is None else x
 
@@ -218,7 +223,9 @@ class LyapunovMemoizer:
 
             if not local_memoizing:
                 # If the result did not converge, recompute it from scratch.
-                return self._call_with_cache(a, q, contact, out=out)
+                return self._call_with_cache(
+                    a, q, contact, stack_slice=stack_slice, out=out
+                )
 
         x = x_ref
 
@@ -241,11 +248,11 @@ class LyapunovMemoizer:
         ):
             warnings.warn(
                 f"High relative recursion error: {xp.max(relative_recursion_errors):.2e} "
-                + f"at rank {comm.stack.rank} for {contact} Lyapunov",
+                + f"at rank {comm.stack.rank} for {contact} ({stack_slice}) Lyapunov",
                 RuntimeWarning,
             )
 
-        self._cache[contact] = x.copy()
+        self._cache[(contact, stack_slice)] = x.copy()
         if out is None:
             return x
         out[:] = x
@@ -257,6 +264,7 @@ class LyapunovMemoizer:
         a: NDArray,
         q: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         out: None | NDArray = None,
     ) -> NDArray | None:
         """Computes the solution of the discrete-time Lyapunov equation.
@@ -295,11 +303,11 @@ class LyapunovMemoizer:
                 # Not reduce sparsity twice
                 self.lyapunov_solver.reduce_sparsity = False
 
-            out = system_reduction(a, q, contact, self._solve, out=out)
+            out = system_reduction(a, q, contact, stack_slice, self._solve, out=out)
 
             if hasattr(self.lyapunov_solver, "reduce_sparsity"):
                 self.lyapunov_solver.reduce_sparsity = save_reduce_sparsity
 
             return out
 
-        return self._solve(a, q, contact, out=out)
+        return self._solve(a, q, contact, stack_slice, out=out)

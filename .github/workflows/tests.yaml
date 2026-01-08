@@ -9,6 +9,9 @@ jobs:
     defaults:
       run:
         shell: bash -l {0}
+    env:
+      OMP_NUM_THREADS: 1
+      QTX_ARRAY_MODULE: "numpy"
 
     steps:
       - name: Checkout Repository

@@ -3,15 +3,27 @@
 import time
 
 import numpy as np
-from qttools import NDArray, _DType, sparse, xp
+from qttools import FloatType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import (
+    bd_matmul_distr,
+    bd_sandwich,
+    bd_sandwich_distr,
+)
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import (
+    create_stream,
+    debug_gpu_memory_usage,
+    free_mempool,
+    get_host,
+    synchronize_device,
+    synchronize_stream,
+)
 from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+from qttools.utils.solvers_utils import get_batches
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
 from quatrex.core.compute_config import ComputeConfig
@@ -29,7 +41,7 @@ profiler = Profiler()
 
 @profiler.profile(level="debug")
 def _compute_sparsity_pattern(
-    *matrices: DSDBSparse, dtype: _DType = None
+    *matrices: DSDBSparse, dtype: xp.dtype[FloatType] = None
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern of the product of several DSDBSparse matrices."""
     num_blocks = matrices[0].num_blocks
@@ -144,9 +156,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape,
+            allocate=False,
         )
-        self.system_matrix.free_data()
-        # Explicitely try to free the memory for the sparsity pattern.
+        # Explicitly try to free the memory for the sparsity pattern.
         del v_times_p_sparsity_pattern
 
         l_sparsity_pattern = _compute_sparsity_pattern(
@@ -163,12 +175,14 @@ class CoulombScreeningSolver(SubsystemSolver):
             global_stack_shape=self.energies.shape,
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            allocate=False,
         )
-        self.l_greater = compute_config.dsdbsparse_type.zeros_like(self.l_lesser)
+        self.l_greater = compute_config.dsdbsparse_type.empty_like(
+            self.l_lesser, allocate=False
+        )
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
-        self.l_lesser.free_data()
-        self.l_greater.free_data()
+
         # Load the Coulomb matrix.
         if quatrex_config.device.construct_from_unit_cell:
 
@@ -193,6 +207,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 block_start=start_block,
                 block_end=end_block,
                 return_sparse=True,
+                format="csr",
             )
             coulomb_matrix_sparray = coulomb_matrix_sparray.astype(xp.complex128)
             coulomb_matrix_sparray.sum_duplicates()
@@ -207,6 +222,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         self.coulomb_matrix.dtype = xp.complex128
 
+        # self.coulomb_matrix = None
+        debug_gpu_memory_usage("Before loading Coulomb matrix")
+        free_mempool()
+        debug_gpu_memory_usage("After freeing memory pool")
+
         self.coulomb_matrix += coulomb_matrix_sparray
         # Explicitely try to free the memory for the sparsity pattern.
         del coulomb_matrix_sparray
@@ -214,6 +234,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Make sure that the Coulomb matrix is Hermitian.
         self.coulomb_matrix.symmetrize()
         self.coulomb_matrix.data /= quatrex_config.coulomb_screening.epsilon_r
+        self.coulomb_matrix.to_host()
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
@@ -237,6 +258,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             quatrex_config.coulomb_screening.filtering_iteration_limit
         )
 
+        self._system_stream = create_stream()
+
+        # Batching.
+        self.max_batch_size = quatrex_config.coulomb_screening.max_batch_size
+
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
 
@@ -250,12 +276,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
-    def _compute_obc(self) -> None:
+    def _compute_obc(self, stack_slice: slice) -> None:
         """Computes open boundary conditions."""
+        t_obc_r_start = time.perf_counter()
+
         if comm.block.rank == 0:
-
-            t_obc_r_start = time.perf_counter()
-
             m_10, m_00, m_01 = get_periodic_superblocks(
                 a_ii=self.system_matrix.blocks[0, 0],
                 a_ji=self.system_matrix.blocks[1, 0],
@@ -263,25 +288,57 @@ class CoulombScreeningSolver(SubsystemSolver):
                 block_sections=self.block_sections,
             )
 
-            x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
+            x_00 = self.obc(
+                a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left", stack_slice=stack_slice
+            )
 
             m_10_x_00 = m_10 @ x_00
             self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
 
-            synchronize_device()
-            t_obc_r_end = time.perf_counter()
-            comm.stack.barrier()
-            t_obc_r_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True
-                )
-                print(
-                    f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
-                    flush=True,
-                )
+        if comm.block.rank == comm.block.size - 1:
+            n = self.system_matrix.num_local_blocks - 1
+            m = n - 1
 
-            t_lyapunov_start = time.perf_counter()
+            m_mn, m_nn, m_nm = get_periodic_superblocks(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
+                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
+                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
+                block_sections=self.block_sections,
+            )
+            # ... bop it.
+            m_nn = xp.flip(m_nn, axis=(-2, -1))
+            m_nm = xp.flip(m_nm, axis=(-2, -1))
+            m_mn = xp.flip(m_mn, axis=(-2, -1))
+            x_nn = self.obc(
+                # Twist it, flip it, ...
+                a_ii=xp.flip(m_nn, axis=(-2, -1)),
+                a_ij=xp.flip(m_nm, axis=(-2, -1)),
+                a_ji=xp.flip(m_mn, axis=(-2, -1)),
+                contact="right",
+                stack_slice=stack_slice,
+            )
+            # ... bop it.
+            x_nn = xp.flip(x_nn, axis=(-2, -1))
+
+            m_mn_x_nn = m_mn @ x_nn
+
+            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
+
+        synchronize_device()
+        t_obc_r_end = time.perf_counter()
+        comm.stack.barrier()
+        t_obc_r_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"        OBC retarded: {t_obc_r_end-t_obc_r_start:.3f}", flush=True)
+            print(
+                f"        OBC retarded all: {t_obc_r_end_all-t_obc_r_start:.3f}",
+                flush=True,
+            )
+
+        t_lyapunov_start = time.perf_counter()
+
+        if comm.block.rank == 0:
             # Compute and apply the left lesser/greater boundary self-energy.
             a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
             a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
@@ -306,7 +363,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             b_00 = x_00 @ m_10
             q_00 = xp.stack((q_00_lesser, q_00_greater))
 
-            w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+            w_00_lesser, w_00_greater = self.lyapunov(
+                b_00, q_00, "left", stack_slice=stack_slice
+            )
 
             self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
                 -1, -2
@@ -316,48 +375,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                 -1, -2
             ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
 
-            synchronize_device()
-            t_lyapunov_end = time.perf_counter()
-            comm.stack.barrier()
-            t_lyapunov_end_all = time.perf_counter()
-            if comm.stack.rank == 0:
-                print(
-                    f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
-                print(
-                    f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
-                    flush=True,
-                )
-
         if comm.block.rank == comm.block.size - 1:
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
-
-            m_mn, m_nn, m_nm = get_periodic_superblocks(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
-                block_sections=self.block_sections,
-            )
-            # ... bop it.
-            m_nn = xp.flip(m_nn, axis=(-2, -1))
-            m_nm = xp.flip(m_nm, axis=(-2, -1))
-            m_mn = xp.flip(m_mn, axis=(-2, -1))
-            x_nn = self.obc(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(m_nn, axis=(-2, -1)),
-                a_ij=xp.flip(m_nm, axis=(-2, -1)),
-                a_ji=xp.flip(m_mn, axis=(-2, -1)),
-                contact="right",
-            )
-            # ... bop it.
-            x_nn = xp.flip(x_nn, axis=(-2, -1))
-
-            m_mn_x_nn = m_mn @ x_nn
-
-            self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
 
             # Compute and apply the right lesser/greater boundary self-energy.
             a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
@@ -384,7 +404,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             q_nn = xp.stack((q_nn_lesser, q_nn_greater))
 
-            w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+            w_nn_lesser, w_nn_greater = self.lyapunov(
+                b_nn, q_nn, "right", stack_slice=stack_slice
+            )
 
             self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
                 -1, -2
@@ -394,8 +416,25 @@ class CoulombScreeningSolver(SubsystemSolver):
                 -1, -2
             ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
 
+        synchronize_device()
+        t_lyapunov_end = time.perf_counter()
+        comm.stack.barrier()
+        t_lyapunov_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"        Lyapunov: {t_lyapunov_end-t_lyapunov_start:.3f}",
+                flush=True,
+            )
+            print(
+                f"        Lyapunov all: {t_lyapunov_end_all-t_lyapunov_start:.3f}",
+                flush=True,
+            )
+
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""
+        self.coulomb_matrix.to_device(
+            delete_host=False, stream=self._system_stream, sync=False
+        )
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
             len(self.system_matrix.block_sizes), comm.block.size
@@ -403,6 +442,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
+        synchronize_stream(self._system_stream)
         bd_matmul_distr(
             self.coulomb_matrix,
             p_retarded,
@@ -491,157 +531,227 @@ class CoulombScreeningSolver(SubsystemSolver):
             retarded).
 
         """
-        t_set_blocksize_start = time.perf_counter()
 
-        self.system_matrix.allocate_data()
-        self.l_lesser.allocate_data()
-        self.l_greater.allocate_data()
-        # Change the block sizes to match the Coulomb matrix.
-        self._set_block_sizes(self.small_block_sizes)
-        synchronize_device()
-        t_set_blocksize_end = time.perf_counter()
-        comm.barrier()
-        t_set_blocksize_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-            print(
-                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-
-        # Compute the product of the Coulomb matrix with the polarization.
-
-        # Assemble the system matrix (Includes matrix multiplication).
-        t_assembly_start = time.perf_counter()
-        self._assemble_system_matrix(p_retarded)
-        synchronize_device()
-        t_assembly_end = time.perf_counter()
-        comm.barrier()
-        t_assembly_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Assembly: {t_assembly_end-t_assembly_start:.3f}", flush=True)
-            print(
-                f"    Assembly all: {t_assembly_end_all-t_assembly_start:.3f}",
-                flush=True,
-            )
-
-        t_sandwich_start = time.perf_counter()
-        local_blocks, _ = get_section_sizes(
-            len(self.coulomb_matrix.block_sizes), comm.block.size
+        batch_sizes, batch_offsets = get_batches(
+            p_retarded.shape[0], self.max_batch_size
         )
-        start_block = sum(local_blocks[: comm.block.rank])
-        end_block = start_block + local_blocks[comm.block.rank]
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_lesser,
-            out=self.l_lesser,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        bd_sandwich_distr(
-            self.coulomb_matrix,
-            p_greater,
-            out=self.l_greater,
-            start_block=start_block,
-            end_block=end_block,
-            spillover_correction=True,
-        )
-        synchronize_device()
-        t_sandwich_end = time.perf_counter()
-        comm.barrier()
-        t_sandwich_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    Sandwich: {t_sandwich_end-t_sandwich_start:.3f}", flush=True)
-            print(
-                f"    Sandwich all: {t_sandwich_end_all-t_sandwich_start:.3f}",
-                flush=True,
-            )
 
-        if self.flatband:
-            t_homogenize_start = time.perf_counter()
-            homogenize(self.system_matrix)
-            homogenize(self.l_lesser)
-            homogenize(self.l_greater)
-            t_homogenize_end = time.perf_counter()
-            comm.barrier()
-            t_homogenize_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"Max batch size: {self.max_batch_size}", flush=True)
+            print(f"Total size: {p_retarded.shape[0]}", flush=True)
+            print(f"Batch sizes: {batch_sizes}", flush=True)
+            print(f"Batch offsets: {batch_offsets}", flush=True)
+
+        for i in range(len(batch_sizes)):
+
+            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            off_slice = slice(0, int(batch_offsets[i + 1] - batch_offsets[i]))
+
+            reallocate = False
+            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                reallocate = True
+
             if comm.rank == 0:
                 print(
-                    f"    Homogenize: {t_homogenize_end-t_homogenize_start:.3f}",
+                    f"Processing slice {stack_slice} of {p_retarded.shape[0]}, batch size {batch_sizes[i]}",
+                    flush=True,
+                )
+
+            t_set_blocksize_start = time.perf_counter()
+
+            if reallocate:
+                self.system_matrix.free_data()
+                self.l_lesser.free_data()
+                self.l_greater.free_data()
+                # free_mempool()
+            self.system_matrix.allocate_data(stack_size=batch_sizes[i])
+            self.l_lesser.allocate_data(stack_size=batch_sizes[i])
+            self.l_greater.allocate_data(stack_size=batch_sizes[i])
+
+            p_lesser_tmp = p_lesser.stack[stack_slice]
+            p_greater_tmp = p_greater.stack[stack_slice]
+            p_retarded_tmp = p_retarded.stack[stack_slice]
+            l_lesser_tmp = self.l_lesser.stack[off_slice]
+            l_greater_tmp = self.l_greater.stack[off_slice]
+
+            # Change the block sizes to match the Coulomb matrix.
+            self._set_block_sizes(self.small_block_sizes)
+            synchronize_device()
+            t_set_blocksize_end = time.perf_counter()
+            comm.barrier()
+            t_set_blocksize_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
                     flush=True,
                 )
                 print(
-                    f"    Homogenize all: {t_homogenize_end_all-t_homogenize_start:.3f}",
+                    f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
                     flush=True,
                 )
 
-        # Go back to normal block sizes.
-        t_set_blocksize_start = time.perf_counter()
-        self._set_block_sizes(self.block_sizes)
-        t_set_blocksize_end = time.perf_counter()
-        comm.barrier()
-        t_set_blocksize_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
-                flush=True,
-            )
-            print(
-                f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
-                flush=True,
+            # Compute the product of the Coulomb matrix with the polarization.
+
+            # Assemble the system matrix (Includes matrix multiplication).
+            t_assembly_start = time.perf_counter()
+            self._assemble_system_matrix(p_retarded_tmp)
+            # if i == len(batch_sizes) - 1:
+            #     p_retarded.free_data()
+            synchronize_stream(None)
+            t_assembly_end = time.perf_counter()
+            comm.barrier()
+            t_assembly_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"    Assembly: {t_assembly_end-t_assembly_start:.3f}", flush=True
+                )
+                print(
+                    f"    Assembly all: {t_assembly_end_all-t_assembly_start:.3f}",
+                    flush=True,
+                )
+
+            t_sandwich_start = time.perf_counter()
+            if comm.block.size > 1:
+                local_blocks, _ = get_section_sizes(
+                    len(self.coulomb_matrix.block_sizes), comm.block.size
+                )
+                start_block = sum(local_blocks[: comm.block.rank])
+                end_block = start_block + local_blocks[comm.block.rank]
+                bd_sandwich_distr(
+                    self.coulomb_matrix,
+                    p_lesser_tmp,
+                    out=l_lesser_tmp,
+                    start_block=start_block,
+                    end_block=end_block,
+                    spillover_correction=True,
+                )
+                # if i == len(batch_sizes) - 1:
+                #     p_lesser.free_data()
+                bd_sandwich_distr(
+                    self.coulomb_matrix,
+                    p_greater_tmp,
+                    out=l_greater_tmp,
+                    start_block=start_block,
+                    end_block=end_block,
+                    spillover_correction=True,
+                )
+                # if i == len(batch_sizes) - 1:
+                #     p_greater.free_data()
+            else:
+                bd_sandwich(
+                    self.coulomb_matrix,
+                    p_lesser_tmp,
+                    out=l_lesser_tmp,
+                    spillover_correction=True,
+                )
+                # if i == len(batch_sizes) - 1:
+                #     p_lesser.free_data()
+                bd_sandwich(
+                    self.coulomb_matrix,
+                    p_greater_tmp,
+                    out=l_greater_tmp,
+                    spillover_correction=True,
+                )
+                # if i == len(batch_sizes) - 1:
+                #     p_greater.free_data()
+            if xp.__name__ == "cupy":
+                self.coulomb_matrix.free_data()
+            # free_mempool()
+            synchronize_stream(None)
+            t_sandwich_end = time.perf_counter()
+            comm.barrier()
+            t_sandwich_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"    Sandwich: {t_sandwich_end-t_sandwich_start:.3f}", flush=True
+                )
+                print(
+                    f"    Sandwich all: {t_sandwich_end_all-t_sandwich_start:.3f}",
+                    flush=True,
+                )
+
+            if self.flatband:
+                t_homogenize_start = time.perf_counter()
+                homogenize(self.system_matrix)
+                homogenize(self.l_lesser)
+                homogenize(self.l_greater)
+                t_homogenize_end = time.perf_counter()
+                comm.barrier()
+                t_homogenize_end_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(
+                        f"    Homogenize: {t_homogenize_end-t_homogenize_start:.3f}",
+                        flush=True,
+                    )
+                    print(
+                        f"    Homogenize all: {t_homogenize_end_all-t_homogenize_start:.3f}",
+                        flush=True,
+                    )
+
+            # Go back to normal block sizes.
+            t_set_blocksize_start = time.perf_counter()
+            self._set_block_sizes(self.block_sizes)
+            t_set_blocksize_end = time.perf_counter()
+            comm.barrier()
+            t_set_blocksize_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"    Set block sizes: {t_set_blocksize_end-t_set_blocksize_start:.3f}",
+                    flush=True,
+                )
+                print(
+                    f"    Set block sizes all: {t_set_blocksize_end_all-t_set_blocksize_start:.3f}",
+                    flush=True,
+                )
+
+            # Apply the OBC algorithm.
+            t_obc_start = time.perf_counter()
+            self._compute_obc(stack_slice)
+            synchronize_stream(None)
+            t_obc_end = time.perf_counter()
+            comm.barrier()
+            t_obc_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    OBC: {t_obc_end-t_obc_start:.3f}", flush=True)
+                print(f"    OBC all: {t_obc_end_all-t_obc_start:.3f}", flush=True)
+
+            out_l, out_g = out
+            out_slice = (
+                out_l.stack[stack_slice],
+                out_g.stack[stack_slice],
+                # out_r.stack[stack_slice],
             )
 
-        # Apply the OBC algorithm.
-        t_obc_start = time.perf_counter()
-        self._compute_obc()
-        synchronize_device()
-        t_obc_end = time.perf_counter()
-        comm.barrier()
-        t_obc_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(f"    OBC: {t_obc_end-t_obc_start:.3f}", flush=True)
-            print(f"    OBC all: {t_obc_end_all-t_obc_start:.3f}", flush=True)
-
-        # Solve the system
-        if comm.block.size > 1:
+            # Solve the system
             t_solve_start = time.perf_counter()
-            self.solver_dist.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=self.l_lesser,
-                sigma_greater=self.l_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=False,
-            )
+            if comm.block.size > 1:
+                self.solver_dist.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=l_lesser_tmp,
+                    sigma_greater=l_greater_tmp,
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=False,
+                )
+            else:
+                self.solver.selected_solve(
+                    a=self.system_matrix,
+                    sigma_lesser=l_lesser_tmp,
+                    sigma_greater=l_greater_tmp,
+                    obc_blocks=self.obc_blocks,
+                    out=out_slice,
+                    return_retarded=False,
+                )
             synchronize_device()
             t_solve_end = time.perf_counter()
             comm.barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
-
-        else:
-            t_solve_start = time.perf_counter()
-            self.solver.selected_solve(
-                a=self.system_matrix,
-                sigma_lesser=self.l_lesser,
-                sigma_greater=self.l_greater,
-                obc_blocks=self.obc_blocks,
-                out=out,
-                return_retarded=False,
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start:.3f}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start:.3f}", flush=True)
+                print(
+                    f"    Solve all: {t_solve_end_all-t_solve_start:.3f}",
+                    flush=True,
+                )
 
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.

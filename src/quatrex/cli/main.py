@@ -14,6 +14,8 @@ from rich import print as pprint
 from typing_extensions import Annotated
 
 import quatrex
+from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.examples import ALLOWED_EXAMPLES, get_example_dir
 from quatrex.examples import load as load_example
 
@@ -48,31 +50,32 @@ def version_callback(value: bool):
 
 
 def run_quatrex(
-    quatrex_config_path: Path,
-    compute_config_path: Path | None = None,
+    quatrex_config: Path | QuatrexConfig,
+    compute_config: Path | ComputeConfig | None = None,
 ):
     """Runs quatrex with the given configuration files.
 
     Parameters
     ----------
-    quatrex_config_path : Path
-        Path to the quatrex configuration file.
-    compute_config_path : Path | None, optional
-        Path to the compute configuration file, by default None.
+    quatrex_config : Path | QuatrexConfig
+        Path to the quatrex configuration file or a QuatrexConfig object.
+    compute_config : Path | ComputeConfig | None, optional
+        Path to the compute configuration file or a ComputeConfig object, by default None.
 
     """
     # remove import overhead from cli startup time
-    from quatrex.core.compute_config import ComputeConfig
+    # from quatrex.core.compute_config import ComputeConfig
     from quatrex.core.compute_config import parse_config as parse_compute_config
     from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
     from quatrex.core.scba import SCBA
 
-    if compute_config_path is not None:
-        compute_config = parse_compute_config(compute_config_path)
-    else:
+    if compute_config is not None and not isinstance(compute_config, ComputeConfig):
+        compute_config = parse_compute_config(compute_config)
+    elif compute_config is None:
         compute_config = ComputeConfig()
 
-    quatrex_config = parse_quatrex_config(quatrex_config_path)
+    if not isinstance(quatrex_config, QuatrexConfig):
+        quatrex_config = parse_quatrex_config(quatrex_config)
 
     with threadpool_limits(
         limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api

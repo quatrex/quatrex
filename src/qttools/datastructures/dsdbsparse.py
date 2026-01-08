@@ -2,14 +2,18 @@
 
 import itertools
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
-from qttools import ArrayLike, NDArray, sparse, xp
+from qttools import ArrayLike, FloatType, IntType, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.gpu_utils import (
+    empty_like_pinned,
+    synchronize_device,
+    synchronize_stream,
+)
 from qttools.utils.mpi_utils import get_section_sizes
 
 profiler = Profiler()
@@ -133,14 +137,43 @@ class DSDBSparse(ABC):
 
     def __init__(
         self,
-        data: NDArray,
-        block_sizes: NDArray,
-        global_stack_shape: tuple | int,
+        arg: NDArray[FloatType] | tuple[Sequence[int], xp.dtype[FloatType]],
+        block_sizes: NDArray[IntType],
+        global_stack_shape: Sequence[int] | int,
         return_dense: bool = True,
         symmetry: bool | None = False,
-        symmetry_op: Callable = xp.conj,
+        symmetry_op: Callable[[NDArray[FloatType]], NDArray[FloatType]] = xp.conj,
+        allocate: bool = True,
+        copy: bool = True,
     ):
         """Initializes a DSBDSparse matrix."""
+
+        # Determine the stack distribution.
+        stack_section_sizes, total_stack_size = get_section_sizes(
+            global_stack_shape[0], comm.stack.size, strategy="balanced"
+        )
+        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
+        self.stack_section_sizes = stack_section_sizes
+        self.total_stack_size = total_stack_size
+
+        if isinstance(arg, (list, tuple)):
+            if len(arg) != 2 or not isinstance(arg[0], (list, tuple)):
+                raise ValueError(
+                    "Argument must be a tuple of (shape, dtype) or an array."
+                )
+            data = None
+            data_shape, data_dtype = arg
+        else:
+            data = arg
+            if len(data.shape) > 1:
+                data_shape = data.shape
+            else:
+                data_shape = (
+                    self.stack_section_sizes_offset,
+                    *global_stack_shape[1:],
+                    data.shape[-1],
+                )
+            data_dtype = data.dtype
 
         # --- Things concerning stack distribution ---------------------
 
@@ -158,22 +191,15 @@ class DSDBSparse(ABC):
         self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
-        if comm.block is None or comm.stack is None:
+        if not comm.is_configured:
             raise ValueError(
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."
             )
 
-        # Determine how the data is distributed across the stack.
-        stack_section_sizes, total_stack_size = get_section_sizes(
-            global_stack_shape[0], comm.stack.size, strategy="balanced"
-        )
-        self.stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
-        self.stack_section_sizes = stack_section_sizes
-        self.total_stack_size = total_stack_size
-
+        # Determine the nnz distribution.
         nnz_section_sizes, total_nnz_size = get_section_sizes(
-            data.shape[-1], comm.stack.size, strategy="greedy"
+            data_shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes = nnz_section_sizes
         self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
@@ -195,11 +221,24 @@ class DSDBSparse(ABC):
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
-        self._data = xp.zeros(
-            (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=data.dtype,
+        padded_shape = (
+            max(stack_section_sizes),
+            *global_stack_shape[1:],
+            total_nnz_size,
         )
-        self._data[: data.shape[0], ..., : data.shape[-1]] = data
+
+        if not copy and data is not None and data.shape == padded_shape:
+            # If we are not copying the data and the data is already
+            # in the correct shape, we can just use it as is.
+            self._data = data
+        else:
+            # Otherwise, we need to create a new array.
+            if allocate:
+                self._data = xp.zeros(padded_shape, dtype=data_dtype)
+                if data is not None:
+                    self._data[: data_shape[0], ..., : data_shape[-1]] = data
+            else:
+                self._data = None
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -210,8 +249,8 @@ class DSDBSparse(ABC):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
 
-        self.stack_shape = data.shape[:-1]
-        self.local_nnz = data.shape[-1]
+        self.stack_shape = data_shape[:-1]
+        self.local_nnz = data_shape[-1]
         # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
@@ -239,7 +278,7 @@ class DSDBSparse(ABC):
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = data.dtype
+        self.dtype = data_dtype
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)
@@ -753,15 +792,21 @@ class DSDBSparse(ABC):
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
             # Shuffle data to make it contiguous in memory
-            _data = xp.zeros_like(self._data)
-            _data[: self.global_stack_shape[0]] = self._data[self._stack_padding_mask]
-            self._data = _data
+            if not discard:
+                _data = xp.zeros_like(self._data)
+                _data[: self.global_stack_shape[0]] = self._data[
+                    self._stack_padding_mask
+                ]
+                self._data = _data
 
         else:
             # Undo the shuffle
-            _data = xp.zeros_like(self._data)
-            _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
-            self._data = _data
+            if not discard:
+                _data = xp.zeros_like(self._data)
+                _data[self._stack_padding_mask] = self._data[
+                    : self.global_stack_shape[0]
+                ]
+                self._data = _data
 
             self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
@@ -822,20 +867,93 @@ class DSDBSparse(ABC):
     def free_data(self) -> None:
         """Frees the local data."""
         self._data = None
-        free_mempool()
+        # free_mempool()
 
-    def allocate_data(self) -> None:
+    def allocate_data(self, stack_size: int = 0) -> None:
         """Allocates the local data."""
-        free_mempool()
         if self._data is None:
+            # free_mempool()
+            if stack_size == 0:
+                stack_size = int(max(self.stack_section_sizes))
             self._data = xp.empty(
                 (
-                    int(max(self.stack_section_sizes)),
+                    stack_size,
                     *self.global_stack_shape[1:],
                     self.total_nnz_size,
                 ),
                 dtype=self.dtype,
             )
+
+    def to_host(
+        self,
+        delete_device: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
+        """Transfers the data to the host memory."""
+        if xp.__name__ == "cupy":
+            if self._data is not None:
+                # NOTE: It is expected that we always copy in the same distribution (stack or nnz).
+                if not (hasattr(self, "_host_data") and self._host_data is not None):
+                    self._host_data = empty_like_pinned(self._data)
+                self._data.get(out=self._host_data, stream=stream, blocking=False)
+                if sync:
+                    synchronize_stream(stream)
+                if delete_device:
+                    # TODO: Is this safe if we are not synchronizing?
+                    # Probably yes; setting to None does not delete,
+                    # but just removes the reference to the data.
+                    # The data will be freed when the garbage collector runs.
+                    self._data = None
+                    # free_mempool()
+            else:
+                raise ValueError(
+                    "Cannot transfer data to host, no device data available. "
+                    "Call `to_device()` first."
+                )
+
+    def to_device(
+        self,
+        delete_host: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
+        """Transfers the data to the device memory."""
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot transfer data to device, no host data available. "
+                    "Call `to_host()` first."
+                )
+            if self._data is None:
+                # Allocate the data on the device if it is not already allocated.
+                self._data = xp.empty_like(self._host_data)
+            self._data.set(self._host_data, stream=stream)
+            if sync:
+                synchronize_stream(stream)
+            if delete_host:
+                self._host_data = None
+
+    def set_to_host(self) -> None:
+        """Sets the data to the host memory."""
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot set data to host, no host data available. "
+                    "Call `to_host()` first."
+                )
+            self._tmp_data = self._data
+            self._data = self._host_data
+
+    def set_to_device(self) -> None:
+        """Sets the data to the device memory."""
+        if xp.__name__ == "cupy":
+            if not hasattr(self, "_tmp_data"):
+                raise ValueError(
+                    "Cannot set data to device, no tmp data available. "
+                    "Call `set_to_host()` first."
+                )
+            self._data = self._tmp_data
 
     @classmethod
     @abstractmethod
@@ -846,6 +964,7 @@ class DSDBSparse(ABC):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        allocate: bool = True,
     ) -> "DSDBSparse":
         """Creates a new DSDBSparse matrix from a scipy.sparse array.
 
@@ -868,7 +987,43 @@ class DSDBSparse(ABC):
         ...
 
     @classmethod
-    @abstractmethod
+    def empty_like(
+        cls, dsdbsparse: "DSDBSparse", allocate: bool = True
+    ) -> "DSDBSparse":
+        """Creates a new DSDBSparse matrix with the same shape and dtype.
+
+        All non-zero elements are set to zero, but the sparsity pattern
+        is preserved.
+
+        Parameters
+        ----------
+        dsdbsparse : DSDBSparse
+            The matrix to copy the shape and dtype from.
+        allocate : bool, optional
+            Whether to allocate memory for the data. Default is True.
+
+        Returns
+        -------
+        DSDBSparse
+            The new DSDBSparse matrix.
+
+        """
+        shape = dsdbsparse.stack_shape + (dsdbsparse.local_nnz,)
+        dtype = dsdbsparse.dtype
+
+        return cls(
+            arg=(shape, dtype),
+            rows=dsdbsparse.rows,
+            cols=dsdbsparse.cols,
+            block_sizes=dsdbsparse.block_sizes,
+            global_stack_shape=dsdbsparse.global_stack_shape,
+            return_dense=dsdbsparse.return_dense,
+            symmetry=dsdbsparse.symmetry,
+            symmetry_op=dsdbsparse.symmetry_op,
+            allocate=allocate,
+        )
+
+    @classmethod
     def zeros_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
         """Creates a new DSDBSparse matrix with the same shape and dtype.
 
@@ -886,7 +1041,79 @@ class DSDBSparse(ABC):
             The new DSDBSparse matrix.
 
         """
-        ...
+        out = cls.empty_like(dsdbsparse, allocate=True)
+        out._data[:] = 0
+        return out
+
+
+def _compose_single(lhs: int | slice, rhs: int | slice, length: int) -> int | slice:
+    """Composes two unidimensional indices or slices.
+
+    Example:
+        length = 30  # dimension of length 30
+        lhs = slice(2, 27, 2)  # selects indices [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
+        rhs = slice(1, 11, 3)  # selects indices [1, 4, 7, 10] from the previous selection,
+                               # i.e., [4, 10, 16, 22] from the original dimension
+        result = _compose_single(lhs, rhs, 30)
+        # result is slice(4, 22, 6), which selects indices [4, 10, 16, 22] from the original dimension.
+
+    Parameters
+    ----------
+    lhs : int | slice
+        The first index or slice.
+    rhs : int | slice
+        The second index or slice.
+    length : int
+        The length of the dimension being indexed.
+
+    Returns
+    -------
+    int | slice
+        The composed index or slice.
+    """
+    out = range(length)[lhs][rhs]
+    return out if isinstance(out, int) else slice(out.start, out.stop, out.step)
+
+
+def _compose(
+    shape: tuple[int, ...],
+    first: tuple[int, ...] | int | slice,
+    second: tuple[int, ...] | int | slice,
+) -> tuple[int | slice, ...]:
+    """Composes two multidimensional indices or slices.
+
+    Parameters
+    ----------
+    shape : tuple
+        The shape of the array being indexed.
+    first : tuple | int | slice
+        The first index or slice.
+    second : tuple | int | slice
+        The second index or slice.
+
+    Returns
+    -------
+    tuple
+        The composed index or slice.
+    """
+
+    def ensure_tuple(ndslice):
+        return ndslice if isinstance(ndslice, tuple) else (ndslice,)
+
+    # Ensure both are tuples for easier processing
+    first = ensure_tuple(first)
+    second = ensure_tuple(second)
+
+    # Initialize output with first index/slice and fill the rest with full slices
+    out = list(first) + [slice(None)] * (len(shape) - len(first))
+
+    # We only need to compose the slice dimensions (not the indices).
+    # NOTE: It is implied that for any dimensions excluded here, the corresponding index in `second` is 0.
+    remaining_dims = [i for i, s in enumerate(out) if isinstance(s, slice)]
+
+    for i, rhs in zip(remaining_dims, second):
+        out[i] = _compose_single(out[i], rhs, length=shape[i])
+    return tuple(out)
 
 
 class _DStackIndexer:
@@ -899,13 +1126,66 @@ class _DStackIndexer:
 
     """
 
-    def __init__(self, dsdbsparse: DSDBSparse) -> None:
+    def __init__(self, dsdbsparse: "DSDBSparse | _DStackView") -> None:
         """Initializes the stack indexer."""
-        self._dsdbsparse = dsdbsparse
+        if isinstance(dsdbsparse, _DStackView):
+            self._dsdbsparse = dsdbsparse._dsdbsparse
+            self._base_index = dsdbsparse._stack_index
+        else:
+            self._dsdbsparse = dsdbsparse
+            self._base_index = None
+
+    def _replace_ellipsis(self, stack_index: tuple) -> tuple:
+        """Replaces ellipsis with the correct number of slices.
+
+        Note
+        ----
+        This replacement of ellipsis is nicked from
+        https://github.com/dask/dask/blob/main/dask/array/slicing.py
+
+        See the license at
+        https://github.com/dask/dask/blob/main/LICENSE.txt
+
+        Parameters
+        ----------
+        stack_index : tuple
+            The stack index to replace the ellipsis in.
+
+        Returns
+        -------
+        stack_index : tuple
+            The stack index with the ellipsis replaced.
+
+        """
+        stack_index = stack_index if isinstance(stack_index, tuple) else (stack_index,)
+        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+        if is_ellipsis:
+            if len(is_ellipsis) > 1:
+                raise IndexError("an index can only have a single ellipsis ('...')")
+
+            loc = is_ellipsis[0]
+            extra_dimensions = (
+                len(self._base_index)
+                - 1
+                - (len(stack_index) - sum(i is None for i in stack_index) - 1)
+            )
+            stack_index = (
+                stack_index[:loc]
+                + (slice(None, None, None),) * extra_dimensions
+                + stack_index[loc + 1 :]
+            )
+        return stack_index
 
     def __getitem__(self, index: tuple) -> "_DStackView":
         """Gets a substack view."""
-        return _DStackView(self._dsdbsparse, index)
+        if self._base_index is not None:
+            index = self._replace_ellipsis(index)
+            composition = _compose(
+                self._dsdbsparse.stack_shape, self._base_index, index
+            )
+        else:
+            composition = index
+        return _DStackView(self._dsdbsparse, composition)
 
 
 class _DStackView:
@@ -934,6 +1214,20 @@ class _DStackView:
         self._sparse_block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, return_dense=False, cache_stack=True
         )
+        shape = self._dsdbsparse.shape
+        stack_size = []
+        for i, s in enumerate(stack_index):
+            if isinstance(s, slice):
+                start = s.start if s.start is not None else 0
+                stop = s.stop if s.stop is not None else shape[i]
+                stack_size.append(stop - start)
+            elif isinstance(s, int):
+                stack_size.append(1)
+            else:
+                raise IndexError(
+                    f"Expected slice or int in stack index but got {type(s)} ({s=})."
+                )
+        self.shape = tuple(stack_size) + shape[-2:]
 
     def _replace_ellipsis(self, stack_index: tuple) -> tuple:
         """Replaces ellipsis with the correct number of slices.
@@ -984,9 +1278,34 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
+    def dtype(self):
+        """Returns the dtype."""
+        return self._dsdbsparse.dtype
+
+    @property
+    def stack(self) -> "_DStackIndexer":
+        """Returns the stack indexer on the substack."""
+        return _DStackIndexer(self)
+
+    @property
+    def num_blocks(self) -> int:
+        """Returns the number of global (?) blocks."""
+        return self._dsdbsparse.num_blocks
+
+    @property
     def num_local_blocks(self) -> int:
         """Returns the number of local blocks."""
         return self._dsdbsparse.num_local_blocks
+
+    @property
+    def block_sizes(self) -> list[int]:
+        """Returns the global block sizes."""
+        return self._dsdbsparse.block_sizes
+
+    @property
+    def local_block_sizes(self) -> list[int]:
+        """Returns the local block sizes."""
+        return self._dsdbsparse.local_block_sizes
 
     @property
     def local_blocks(self) -> "_DSDBlockIndexer":
@@ -1007,6 +1326,21 @@ class _DStackView:
     def sparse_blocks(self) -> "_DSDBlockIndexer":
         """Returns a sparse block indexer on the substack."""
         return self._sparse_block_indexer
+
+    @property
+    def data(self) -> NDArray:
+        """Returns the local slice of the data, masking the padding."""
+        return self._dsdbsparse.data[self._stack_index]
+
+    @data.setter
+    def data(self, value: NDArray) -> None:
+        """Sets the local slice of the data."""
+        self._dsdbsparse.data[self._stack_index] = value
+
+    @property
+    def distribution_state(self) -> str:
+        """Returns the distribution state of the underlying DSDBSparse."""
+        return self._dsdbsparse.distribution_state
 
 
 @decorate_methods(profiler.profile(level="debug"))

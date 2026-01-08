@@ -406,6 +406,7 @@ class Spectral(OBCSolver):
         a_ij: NDArray,
         a_ji: NDArray,
         contact: str,
+        stack_slice: slice | None = None,
         return_injected: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Returns the surface Green's function.

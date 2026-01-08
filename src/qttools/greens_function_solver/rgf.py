@@ -1,6 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
+from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels import linalg
@@ -177,10 +178,19 @@ class RGF(GFSolver):
 
         if return_current:
             # Allocate a buffer for the current.
-            current = xp.zeros((a.shape[0], a.num_blocks - 1), dtype=a.dtype)
+            current = xp.zeros((sigma_lesser.shape[0], a.num_blocks - 1), dtype=a.dtype)
+
+        if comm.rank == 0:
+            print(f"a.shape: {sigma_lesser.shape}", flush=True)
 
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+        batches_sizes, batches_slices = get_batches(
+            sigma_lesser.shape[0], self.max_batch_size
+        )
+
+        if comm.rank == 0:
+            print(f"Batch sizes: {batches_sizes}", flush=True)
+            print(f"Batch offsets: {batches_slices}", flush=True)
 
         # If out is not none, xr will be the third element of the tuple.
         if out is not None:

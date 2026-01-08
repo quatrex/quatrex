@@ -552,6 +552,11 @@ class QuatrexCommunicator:
 
         self._is_configured = True
 
+    @property
+    def is_configured(self) -> bool:
+        """Checks if the communicator is configured."""
+        return self._is_configured
+
     def barrier(self):
         """Perform barrier synchronization."""
         global_comm.Barrier()

@@ -1,13 +1,17 @@
 # Copyright (c) 2025 ETH Zurich and the authors of the quatrex package.
 
 import subprocess
+import tempfile
 import tomllib
 from importlib.resources import files
 
 import numpy as np
 import pytest
+import tomli_w
 
 from quatrex.cli.main import fetch_example, run_quatrex
+from quatrex.core.compute_config import parse_config as parse_compute_config
+from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
 from quatrex.examples import get_example_dir, load
 
 REFERENCE_OBSERVABLES = {
@@ -38,7 +42,11 @@ for key, subnames in REFERENCE_OBSERVABLES.items():
 
 
 @pytest.mark.usefixtures("non_distributed_example")
-def test_non_distributed(non_distributed_example: str):
+@pytest.mark.usefixtures("batch_size_solver")
+@pytest.mark.usefixtures("batch_size_rgf")
+def test_non_distributed(
+    non_distributed_example: str, batch_size_solver: int, batch_size_rgf: int
+):
 
     if len(REFERENCE_OBSERVABLES[non_distributed_example]) == 0:
         pytest.skip(
@@ -55,12 +63,21 @@ def test_non_distributed(non_distributed_example: str):
     quatrex_config_path = example_path / "quatrex_config.toml"
     compute_config_path = example_path / "compute_config.toml"
 
+    quatrex_config = parse_quatrex_config(quatrex_config_path)
     if not compute_config_path.exists():
-        compute_config_path = None
+        compute_config = None
+    else:
+        compute_config = parse_compute_config(compute_config_path)
+
+    # modify batch sizes
+    quatrex_config.electron.max_batch_size = batch_size_solver
+    quatrex_config.electron.solver.max_batch_size = batch_size_rgf
+    quatrex_config.coulomb_screening.max_batch_size = batch_size_solver
+    quatrex_config.coulomb_screening.solver.max_batch_size = batch_size_rgf
 
     run_quatrex(
-        quatrex_config_path,
-        compute_config_path,
+        quatrex_config,
+        compute_config,
     )
 
     for observable in REFERENCE_OBSERVABLES[non_distributed_example]:
@@ -93,7 +110,11 @@ def test_non_distributed(non_distributed_example: str):
 
 
 @pytest.mark.usefixtures("domain_distributed_example")
-def test_distributed(domain_distributed_example: str):
+@pytest.mark.usefixtures("batch_size_solver")
+@pytest.mark.usefixtures("batch_size_rgf")
+def test_distributed(
+    domain_distributed_example: str, batch_size_solver: int, batch_size_rgf: int
+):
 
     if len(REFERENCE_OBSERVABLES[domain_distributed_example]) == 0:
         pytest.skip(
@@ -109,6 +130,24 @@ def test_distributed(domain_distributed_example: str):
 
     quatrex_config_path = example_path / "quatrex_config.toml"
     compute_config_path = example_path / "compute_config.toml"
+
+    quatrex_config = parse_quatrex_config(quatrex_config_path)
+
+    # modify batch sizes
+    quatrex_config.electron.max_batch_size = batch_size_solver
+    quatrex_config.electron.solver.max_batch_size = batch_size_rgf
+    quatrex_config.coulomb_screening.max_batch_size = batch_size_solver
+    quatrex_config.coulomb_screening.solver.max_batch_size = batch_size_rgf
+
+    # save to temporary file
+
+    toml_dict = quatrex_config.model_dump(
+        mode="json", exclude_unset=True, exclude_defaults=True, exclude_none=True
+    )
+    with tempfile.NamedTemporaryFile("wb", delete=False) as f:
+        toml_bytes = tomli_w.dumps(toml_dict).encode("utf-8")
+        f.write(toml_bytes)
+        quatrex_config_path = f.name
 
     if not compute_config_path.exists():
         subprocess.run(

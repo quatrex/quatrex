@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
+
 from qttools import NDArray, xp
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
@@ -29,7 +31,7 @@ def get_batches(num_sections: int, max_batch_size: int) -> tuple[list, NDArray]:
     # Get list of batches to perform
     batches_sizes, _ = get_section_sizes(
         num_elements=num_sections,
-        num_sections=num_sections // min(max_batch_size, num_sections),
+        num_sections=int(np.ceil(num_sections / min(max_batch_size, num_sections))),
     )
     batches_slices = xp.hstack(([0], xp.cumsum(xp.array(batches_sizes))))
 

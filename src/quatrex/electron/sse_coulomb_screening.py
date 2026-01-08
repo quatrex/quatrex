@@ -231,6 +231,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     )  # 16 bytes for complex128
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
+                    # QUICKFIX for persistent OOM in SSE issue.
+                    batches += 1
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
                     if self.batch_size is not None and batch_size < self.batch_size:
                         cache.clear()

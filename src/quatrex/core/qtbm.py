@@ -432,7 +432,7 @@ class QTBM:
         """Initializes the QTBM solver."""
 
         self.device = device
-        self.num_orbitals = device.hamiltonian[0, 0, 0].shape[0]
+        self.num_orbitals = device.hamiltonians[0, 0, 0].shape[0]
         self.num_contacts = len(device.contacts)
 
         self.quatrex_config = quatrex_config
@@ -771,14 +771,14 @@ class QTBM:
 
         # Allocate indices to update the system matrix in-place
         system_matrix = allocate_sys_mat(
-            self.device.hamiltonian, self.device.overlap, cont_ind_list
+            self.device.hamiltonians, self.device.overlap_matrices, cont_ind_list
         )  # Initialize the system matrix
 
         ham_update_ind = []
-        for r, h_r in self.device.hamiltonian.items():
+        for r, h_r in self.device.hamiltonians.items():
             ham_update_ind.append(compute_update_indeces_sparse(system_matrix, h_r))
         overlap_update_ind = []
-        for r, s_r in self.device.overlap.items():
+        for r, s_r in self.device.overlap_matrices.items():
             overlap_update_ind.append(compute_update_indeces_sparse(system_matrix, s_r))
         sigma_SM_indexes = []
         for contact in self.device.contacts:
@@ -797,14 +797,14 @@ class QTBM:
             times.append(time.perf_counter())
 
             # Apply the k-point phase factors to the Hamiltonian and Overlap
-            for r, h_r in self.device.hamiltonian.items():
+            for r, h_r in self.device.hamiltonians.items():
                 if r == (0, 0, 0):
                     continue
                 h_r.data *= xp.exp(
                     1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
                 )
 
-            for r, s_r in self.device.overlap.items():
+            for r, s_r in self.device.overlap_matrices.items():
                 if r == (0, 0, 0):
                     continue
                 s_r.data *= xp.exp(
@@ -879,8 +879,8 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    for r in self.device.overlap.keys():
-                        self.device.overlap[r].data *= energy
+                    for r in self.device.overlap_matrices.keys():
+                        self.device.overlap_matrices[r].data *= energy
 
                     # Set up sytem matrix and rhs for electron solver.
                     i0 = (
@@ -910,7 +910,7 @@ class QTBM:
 
                     # Add the Hamiltonian and overlap contributions
                     for r_idx, (r_key, h_r) in enumerate(
-                        self.device.hamiltonian.items()
+                        self.device.hamiltonians.items()
                     ):
 
                         sub_inplace(
@@ -919,7 +919,9 @@ class QTBM:
                             ham_update_ind[r_idx],
                         )
 
-                    for r_idx, (r_key, s_r) in enumerate(self.device.overlap.items()):
+                    for r_idx, (r_key, s_r) in enumerate(
+                        self.device.overlap_matrices.items()
+                    ):
 
                         add_inplace(
                             system_matrix.data,
@@ -978,8 +980,8 @@ class QTBM:
                                 self.device.contacts[c].n_rep_2,
                             )
 
-                    for r in self.device.overlap.keys():
-                        self.device.overlap[r].data *= 1 / energy
+                    for r in self.device.overlap_matrices.keys():
+                        self.device.overlap_matrices[r].data *= 1 / energy
 
                     if inj_V.size != 0:
                         self.compute_observables(
@@ -991,7 +993,7 @@ class QTBM:
                             K_V,
                             Ts_K,
                             system_matrix,
-                            self.device.overlap,
+                            self.device.overlap_matrices,
                             k_ind,
                         )
 
@@ -1013,14 +1015,14 @@ class QTBM:
                 if comm.rank == 0:
                     print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
-            for r, h_r in self.device.hamiltonian.items():
+            for r, h_r in self.device.hamiltonians.items():
                 if r == (0, 0, 0):
                     continue
                 h_r.data /= xp.exp(
                     1j * 2 * np.pi * (k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
                 )
 
-            for r, s_r in self.device.overlap.items():
+            for r, s_r in self.device.overlap_matrices.items():
                 if r == (0, 0, 0):
                     continue
                 s_r.data /= xp.exp(

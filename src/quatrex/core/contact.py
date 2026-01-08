@@ -116,7 +116,7 @@ class Contact:
         if len(self.transverse_axis) != 2:
             raise ValueError("Direction must be one of the three axes (0, 1, or 2).")
 
-        relative_coords = self.device.coords - self.origin
+        relative_coords = self.device.atom_coordinates - self.origin
         self.coeffs = relative_coords @ np.linalg.inv(self.vectors)
 
         # Get the atoms inside the origin cell (defined by the user)
@@ -160,7 +160,7 @@ class Contact:
                 row.append([])
             self.atoms.append(row)
 
-        self.residual_orbitals = np.arange(self.device.hamiltonian[(0, 0, 0)].shape[0])
+        self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
 
         self._get_atoms_transverse_sorted(0)
 
@@ -264,7 +264,7 @@ class Contact:
 
         # Shift the coordinates of the device atoms to the origin of the
         # contact
-        relative_coords = self.device.coords - self.origin
+        relative_coords = self.device.atom_coordinates - self.origin
 
         # Compute the coefficients relative to the contact cell
         coeffs = relative_coords @ np.linalg.inv(self.vectors)
@@ -320,12 +320,14 @@ class Contact:
         # Shift the coordinates of the atoms inside the periodic
         # repetition to match the origin cell
         list_vec = np.array([a, b, c], dtype=np.float64)
-        coords_rep = self.device.coords[at_inside_rep, :] - self.vectors @ list_vec
+        coords_rep = (
+            self.device.atom_coordinates[at_inside_rep, :] - self.vectors @ list_vec
+        )
         element_rep = self.device.atom_type[at_inside_rep]
         for at in self.at_origin_cell:
             # Find the atoms in the periodic repetition that are close
             # to the atom in the origin cell and have the same element
-            delta = coords_rep - self.device.coords[at, :]
+            delta = coords_rep - self.device.atom_coordinates[at, :]
             found = np.nonzero(
                 (np.linalg.norm(delta, axis=1) < tol)
                 & (self.device.atom_type[at] == element_rep)
@@ -538,14 +540,14 @@ class Contact:
             found = False
             # Get the coordinates on the circumference of the grid
             coords_list = self._get_circumference_coordinates(radius)
-            for coords in coords_list:
+            for atom_coordinates in coords_list:
                 # Add the coordinates to the origin cell
-                a = coords[0] + self.origin_cell[0]
-                b = coords[1] + self.origin_cell[1]
+                a = atom_coordinates[0] + self.origin_cell[0]
+                b = atom_coordinates[1] + self.origin_cell[1]
 
                 if self.device.gamma_only and (
-                    (self.n_rep_1 == 1 and coords[0] != 0)
-                    or (self.n_rep_2 == 1 and coords[1] != 0)
+                    (self.n_rep_1 == 1 and atom_coordinates[0] != 0)
+                    or (self.n_rep_2 == 1 and atom_coordinates[1] != 0)
                 ):
                     continue
                 # The coupling is defined in the in the device
@@ -584,29 +586,33 @@ class Contact:
                 ham_tu = tuple(ham_tu)
                 # Now get the hamiltonian and overlap matrices for the
                 # current coordinates
-                if ham_tu in self.device.hamiltonian:
-                    ham_read = self.device.hamiltonian[ham_tu][self.orb_origin_cell, :][
-                        :, orb_coup
-                    ]
+                if ham_tu in self.device.hamiltonians:
+                    ham_read = self.device.hamiltonians[ham_tu][
+                        self.orb_origin_cell, :
+                    ][:, orb_coup]
                     if ham_read.nnz != 0:
-                        self.UC_hamiltonian[(x, coords[0], coords[1])] = ham_read
+                        self.UC_hamiltonian[
+                            (x, atom_coordinates[0], atom_coordinates[1])
+                        ] = ham_read
                         if x == 0:
                             # FORCE THE HAMILTONIAN TO BE HERMITIAN
-                            self.UC_hamiltonian[(x, -coords[0], -coords[1])] = (
-                                ham_read.T.conj()
-                            )
+                            self.UC_hamiltonian[
+                                (x, -atom_coordinates[0], -atom_coordinates[1])
+                            ] = ham_read.T.conj()
                         found = True
-                if ham_tu in self.device.overlap:
-                    overlap_read = self.device.overlap[ham_tu][self.orb_origin_cell, :][
-                        :, orb_coup
-                    ]
+                if ham_tu in self.device.overlap_matrices:
+                    overlap_read = self.device.overlap_matrices[ham_tu][
+                        self.orb_origin_cell, :
+                    ][:, orb_coup]
                     if overlap_read.nnz != 0:
-                        self.UC_overlap[(x, coords[0], coords[1])] = overlap_read
+                        self.UC_overlap[
+                            (x, atom_coordinates[0], atom_coordinates[1])
+                        ] = overlap_read
                         if x == 0:
                             # FORCE THE OVERLAP TO BE HERMITIAN
-                            self.UC_overlap[(x, -coords[0], -coords[1])] = (
-                                overlap_read.T.conj()
-                            )
+                            self.UC_overlap[
+                                (x, -atom_coordinates[0], -atom_coordinates[1])
+                            ] = overlap_read.T.conj()
                         found = True
 
             if not found:
@@ -636,7 +642,7 @@ class Contact:
 
         """
 
-        return self.device.hamiltonian[0, 0, 0][self.orb_origin_cell, :][
+        return self.device.hamiltonians[0, 0, 0][self.orb_origin_cell, :][
             :, self.residual_orbitals
         ].nnz
 

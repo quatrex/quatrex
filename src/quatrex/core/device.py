@@ -34,7 +34,7 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
     return orbital_potential
 
 
-def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArray]:
+def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
     """Reads atomic structure data from an XYZ file.
 
     Parameters
@@ -48,9 +48,7 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
     -------
     lattice : NDArray
         3x3 array containing the lattice vectors (in rows).
-    unique_kinds : list
-        List of unique atom symbols/types present in the structure.
-    coords : NDArray
+    atom_coordinates : NDArray
         (N_atoms, 3) array containing atomic coordinates.
     atom_types : NDArray
         (N_atoms,) array containing atom symbol for each atom.
@@ -58,8 +56,8 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
     """
 
     lattice = None
-    coords = None
-    kinds = None
+    atom_coordinates = None
+    atom_types = None
 
     if comm.rank == 0:
         # Read only the second line of the file (this contains the
@@ -75,15 +73,15 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, list, NDArray, NDArra
 
         lattice = lattice_line.split("=")[1].strip().split('"')[1]
         lattice = np.fromstring(lattice, dtype=np.float64, sep=" ").reshape(3, 3)
-        coords = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
-        kinds = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
+        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
+        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
 
     # Broadcast the data to all the ranks
     lattice = comm.bcast(lattice, root=0)
-    coords = comm.bcast(coords, root=0)
-    kinds = comm.bcast(kinds, root=0)
+    atom_coordinates = comm.bcast(atom_coordinates, root=0)
+    atom_types = comm.bcast(atom_types, root=0)
 
-    return lattice, np.unique(kinds), coords, kinds
+    return lattice, atom_coordinates, atom_types
 
 
 class Device:
@@ -104,13 +102,13 @@ class Device:
         Reference to the configuration object.
     compute_config : ComputeConfig
         Reference to the compute configuration object.
-    hamiltonian : dict
+    hamiltonians : dict
         Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
         vectors. Keys are tuples representing the lattice vector
         indices, values are sparse CSR matrices.
-    overlap : dict
+    overlap_matrices : dict
         Dictionary of overlap matrices with the same indexing as
-        hamiltonian. For orthogonal basis sets, defaults to identity
+        hamiltonians. For orthogonal basis sets, defaults to identity
         matrices.
     gamma_only : bool
         True if only the Gamma point (0,0,0) Hamiltonian is available,
@@ -118,9 +116,7 @@ class Device:
     lattice_vector : NDArray
         3x3 array containing the lattice vectors of the device unit
         cell.
-    atoms_list : list
-        List of unique atom symbols present in the device.
-    coords : NDArray
+    atom_coordinates : NDArray
         Array of atomic coordinates.
     atom_type : NDArray
         Array of atom symbols for each atom.
@@ -128,12 +124,11 @@ class Device:
         Array of cumulative orbital counts, used to map from atoms to
         orbitals. orbital_offsets[i] gives the starting orbital index
         for atom i.
-    atom_potential : NDArray, optional
-        Array of electrostatic potential at each atom site. None if no
-        external potential is provided.
     orbital_potential : NDArray, optional
-        Array of electrostatic potential for each orbital. Derived from
-        atom_potential by replication according to orbitals per atom.
+        Array of electrostatic potential for each orbital.
+        Can be either None if no potential is provided or a 1D array
+        where the 1D index corresponds to the orbital index or the
+        atom index depending on the shape of the provided potential.
     contacts : list[Contact]
         List of Contact objects representing the semi-infinite leads
         connected to this device.
@@ -146,14 +141,11 @@ class Device:
     """
 
     def __init__(
-        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig = None
+        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
     ) -> None:
         """Initializes a Device object from configuration."""
 
         self.quatrex_config = quatrex_config
-
-        if compute_config is None:
-            compute_config = ComputeConfig()
         self.compute_config = compute_config
 
         self._init_hamiltonian()
@@ -161,7 +153,13 @@ class Device:
         self._init_orbitals()
         self._load_potential()
         self.apply_potential()
-        self.contacts = self._add_contacts()
+        self._add_contacts()
+
+        if comm.rank == 0:
+            print(
+                f"Device initialized with {len(self.contacts)} contacts.",
+                flush=True,
+            )
 
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.
@@ -178,8 +176,8 @@ class Device:
 
         """
 
-        self.hamiltonian = {}
-        self.overlap = {}
+        self.hamiltonians = {}
+        self.overlap_matrices = {}
         self.gamma_only = False
 
         if not (self.quatrex_config.input_dir / "hamiltonian_0_0_0.npz").exists():
@@ -194,21 +192,22 @@ class Device:
 
             indices = tuple(map(int, hamiltonian_path.stem.split("_")[1:]))
 
-            self.hamiltonian[indices] = distributed_load(hamiltonian_path).tocsr()
+            self.hamiltonians[indices] = distributed_load(hamiltonian_path).tocsr()
             assert (
-                self.hamiltonian[indices].shape[0] == self.hamiltonian[indices].shape[1]
+                self.hamiltonians[indices].shape[0]
+                == self.hamiltonians[indices].shape[1]
             ), f"Hamiltonian matrix at {hamiltonian_path} is not square."
 
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
             if not all(index == 0 for index in indices):
-                self.hamiltonian[indices] = self.hamiltonian[indices].astype(
+                self.hamiltonians[indices] = self.hamiltonians[indices].astype(
                     xp.complex128
                 )
 
-            if not self.hamiltonian[indices].has_canonical_format:
-                self.hamiltonian[indices].sum_duplicates()
-                self.hamiltonian[indices].sort_indices()
+            if not self.hamiltonians[indices].has_canonical_format:
+                self.hamiltonians[indices].sum_duplicates()
+                self.hamiltonians[indices].sort_indices()
 
             overlap_path = (
                 self.quatrex_config.input_dir
@@ -216,39 +215,44 @@ class Device:
             )
 
             if overlap_path.exists():
-                self.overlap[indices] = distributed_load(overlap_path).tocsr()
+                self.overlap_matrices[indices] = distributed_load(overlap_path).tocsr()
                 assert (
-                    self.overlap[indices].shape[0] == self.overlap[indices].shape[1]
+                    self.overlap_matrices[indices].shape[0]
+                    == self.overlap_matrices[indices].shape[1]
                 ), f"Overlap matrix at {overlap_path} is not square."
 
                 if not all(index == 0 for index in indices):
-                    self.overlap[indices] = self.overlap[indices].astype(xp.complex128)
+                    self.overlap_matrices[indices] = self.overlap_matrices[
+                        indices
+                    ].astype(xp.complex128)
 
-                if not self.overlap[indices].has_canonical_format:
-                    self.overlap[indices].sum_duplicates()
-                    self.overlap[indices].sort_indices()
+                if not self.overlap_matrices[indices].has_canonical_format:
+                    self.overlap_matrices[indices].sum_duplicates()
+                    self.overlap_matrices[indices].sort_indices()
 
         # TODO: Mechanism to handle orthogonal basis sets.
-        if len(self.overlap) == 0:
+        if len(self.overlap_matrices) == 0:
             # NOTE: Dangerous to automatically assume identity matrix.
             # Better to add a config option to specify orthogonal basis.
             if comm.rank == 0:
                 warnings.warn(
                     "No overlap matrices found. Assuming identity matrix.",
                 )
-            size = self.hamiltonian[0, 0, 0].shape[0]
-            self.overlap[0, 0, 0] = sparse.eye(size, dtype=xp.complex128, format="csr")
+            size = self.hamiltonians[0, 0, 0].shape[0]
+            self.overlap_matrices[0, 0, 0] = sparse.eye(
+                size, dtype=xp.complex128, format="csr"
+            )
 
-        elif len(self.overlap) < len(self.hamiltonian):
+        elif len(self.overlap_matrices) < len(self.hamiltonians):
             raise ValueError(
                 "Some overlap matrices are missing while others are present. All or none must be provided."
             )
 
         if comm.rank == 0:
-            print(f"Loaded {len(self.hamiltonian)} Hamiltonian matrices", flush=True)
-            print(f"Loaded {len(self.overlap)} overlap matrices", flush=True)
+            print(f"Loaded {len(self.hamiltonians)} Hamiltonian matrices", flush=True)
+            print(f"Loaded {len(self.overlap_matrices)} overlap matrices", flush=True)
 
-        if len(self.hamiltonian) == 1:
+        if len(self.hamiltonians) == 1:
             self.gamma_only = True
 
     def _init_lattice(self) -> None:
@@ -259,11 +263,9 @@ class Device:
         lattice_file = self.quatrex_config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
-        self.lattice_vector, self.atoms_list, self.coords, self.atom_type = (
+        self.lattice_vector, self.atom_coordinates, self.atom_type = (
             distributed_read_xyz(lattice_file)
         )
-        if comm.rank == 0:
-            print("Lattice structure loaded successfully.", flush=True)
 
     def _init_orbitals(self) -> None:
         """Initializes the orbital indexing system for the device.
@@ -293,21 +295,29 @@ class Device:
         """Loads electrostatic potential data from input files.
 
         Attempts to load the electrostatic potential from potential.npy
-        in the input directory. If found, the atom-resolved potential is
-        converted to orbital-resolved potential.
+        in the input directory. The potential can be provided either
+        at the atomic level or at the orbital level.
 
         """
 
         self.orbital_potential = None
 
         try:
-            self.atom_potential = distributed_load(
+            potential = distributed_load(
                 self.quatrex_config.input_dir / "potential.npy"
             )
-            # Upscale the potential to the number of orbitals
-            self.orbital_potential = get_orbital_potential(
-                self.atom_potential, self.orbital_offsets
-            )
+
+            if potential.shape[0] == self.atom_coordinates.shape[0]:
+                # Upscale the potential to the number of orbitals
+                self.orbital_potential = get_orbital_potential(
+                    potential, self.orbital_offsets
+                )
+            elif potential.shape[0] == self.orbital_offsets[-1]:
+                self.orbital_potential = potential
+            else:
+                raise ValueError(
+                    "Potential shape does not match number of atoms or orbitals."
+                )
 
         except FileNotFoundError:
             if comm.rank == 0:
@@ -325,23 +335,20 @@ class Device:
                 )
             return
 
-        V_s = sparse.diags(self.orbital_potential + 1e-10, format="csr")
-        for r, s_r in self.overlap.items():
-            self.hamiltonian[r] += (V_s @ s_r + s_r @ V_s) / 2
+        potential = self.orbital_potential + 1e-10
 
-    def _add_contacts(self) -> list[Contact]:
+        for lattice_index, overlap in self.overlap_matrices.items():
+            self.hamiltonians[lattice_index] += (
+                overlap.multiply(potential[:, np.newaxis]) + overlap.multiply(potential)
+            ) / 2
+
+    def _add_contacts(self):
         """Initializes and attaches contacts to the device.
 
         Creates Contact objects for each contact defined in the device
         configuration. Each contact represents a semi-infinite lead
         connected to the finite device region, providing boundary
         conditions for transport calculations.
-
-        Returns
-        -------
-        list[Contact]
-            List of initialized Contact objects, one for each contact
-            specified in the device configuration.
 
         """
 
@@ -357,4 +364,5 @@ class Device:
                     fermi_level=contact_config.fermi_level,
                 )
             )
-        return contacts
+
+        self.contacts = contacts

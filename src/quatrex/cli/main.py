@@ -66,7 +66,7 @@ def _run_qtbm(quatrex_config, compute_config):
     ):
         pprint(threadpool_info()) if comm.rank == 0 else None
 
-        device = Device(quatrex_config)
+        device = Device(quatrex_config, compute_config)
         qtbm = QTBM(device, quatrex_config, compute_config)
 
         tic = time.perf_counter()

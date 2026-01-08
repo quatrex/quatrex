@@ -1,7 +1,6 @@
 # Copyright (c) 2025-2026 ETH Zurich and the authors of the quatrex package.
 
 import itertools
-from itertools import count
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
@@ -55,11 +54,9 @@ class Contact:
         Unit cell Hamiltonian matrices indexed by (i, j, k) tuples.
     UC_overlap : dict
         Unit cell overlap matrices indexed by (i, j, k) tuples.
-    atoms : list[NDArray]
-        List of atom indices for each contact cell repetition.
-    orbitals : list[NDArray]
+    orbitals_per_repetition : list[NDArray]
         List of orbital indices for each contact cell repetition.
-    repetition_grid: NDArray
+    transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
     transverse_rep : int
         Number of repetitions needed in transport direction for
@@ -130,28 +127,17 @@ class Contact:
         self._init_periodic_transverse_repetitions()
         if comm.rank == 0:
             print(
-                f"    Number of periodic repetitions in the transverse directions: {self.repetition_grid[0]} x {self.repetition_grid[1]}",
+                f"    Number of periodic repetitions in the transverse directions: {self.transverse_repetition_grid[0]} x {self.transverse_repetition_grid[1]}",
                 flush=True,
             )
 
         # TODO Check if the contact transverse UC vectors are in the
         # same direction as the device vectors
 
-        # Get the atoms (and orbtals) in the first contact cell
-        self.atoms = []
-        self.orbitals = []
-
-        for i in range(self.repetition_grid[0]):
-            row = []
-            for j in range(self.repetition_grid[1]):
-                row.append([])
-            self.orbitals.append(row)
-
-        for i in range(self.repetition_grid[0]):
-            row = []
-            for j in range(self.repetition_grid[1]):
-                row.append([])
-            self.atoms.append(row)
+        # Initialize the orbitals
+        # for each periodic repetition in transverse directions
+        ny, nz = self.transverse_repetition_grid
+        self.orbitals_per_repetition = [[[] for _ in range(nz)] for _ in range(ny)]
 
         self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
 
@@ -194,10 +180,10 @@ class Contact:
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
         self.orbitals_contact = []
-        for i in range(self.repetition_grid[0]):
-            for j in range(self.repetition_grid[1]):
+        for i in range(self.transverse_repetition_grid[0]):
+            for j in range(self.transverse_repetition_grid[1]):
                 # The last contact cell is not included
-                self.orbitals_contact.extend(self.orbitals[i][j][:-1])
+                self.orbitals_contact.extend(self.orbitals_per_repetition[i][j][:-1])
 
         self.orbitals_contact = np.concatenate(self.orbitals_contact)[None, :]
 
@@ -206,22 +192,24 @@ class Contact:
         self.orbitals_get_10 = []
         for i in range(0, x):
             orbitals_slice_x = []
-            for j in range(self.repetition_grid[0]):
-                for k in range(self.repetition_grid[1]):
-                    orbitals_slice_x.append(self.orbitals[j][k][i])
+            for j in range(self.transverse_repetition_grid[0]):
+                for k in range(self.transverse_repetition_grid[1]):
+                    orbitals_slice_x.append(self.orbitals_per_repetition[j][k][i])
             self.orbitals_get_10.append(np.concatenate(orbitals_slice_x))
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
         self.sort_orbitals_get_10 = []
-        for i in range(self.repetition_grid[0] * self.repetition_grid[1]):
+        for i in range(
+            self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
+        ):
             for k in range(0, x - 1):
                 self.sort_orbitals_get_10.append(
                     np.arange(self.origin_number_of_orbitals)
                     + i * self.origin_number_of_orbitals
                     + k
                     * self.origin_number_of_orbitals
-                    * self.repetition_grid[0]
-                    * self.repetition_grid[1]
+                    * self.transverse_repetition_grid[0]
+                    * self.transverse_repetition_grid[1]
                 )
         self.sort_orbitals_get_10 = np.concatenate(
             self.sort_orbitals_get_10, dtype=int
@@ -280,7 +268,7 @@ class Contact:
         return indices_inside
 
     def _reorder_atoms(
-        self, at_inside_rep: NDArray, a: int, b: int, c: int, tol: float = 0.3
+        self, atom_indices: NDArray, idx: tuple[int, int, int], tol: float = 0.3
     ) -> NDArray:
         """Reorders atoms to match the ordering in the origin cell.
 
@@ -289,17 +277,13 @@ class Contact:
 
         Parameters
         ----------
-        at_inside_rep : NDArray
+        atom_indices : NDArray
             Indices of atoms inside the periodic repetition to be
             reordered.
-        a : int
-            The x-coordinate of the periodic repetition.
-        b : int
-            The y-coordinate of the periodic repetition.
-        c : int
-            The z-coordinate of the periodic repetition.
+        idx : tuple[int, int, int]
+            The coordinates of the periodic repetition.
         tol : float, optional
-            Distance tolerance for atom matching, by default 0.1.
+            Distance tolerance for atom matching, by default 0.3.
 
         Returns
         -------
@@ -309,44 +293,45 @@ class Contact:
 
         """
 
-        sorted = []
+        sorted_atom_indices = []
         # Tolerance for the distance check
 
-        a = int(a)  # Ensure a, b, c are integers
-        b = int(b)
-        c = int(c)
         # Shift the coordinates of the atoms inside the periodic
         # repetition to match the origin cell
-        list_vec = np.array([a, b, c], dtype=np.float64)
-        coords_rep = (
-            self.device.atom_coordinates[at_inside_rep, :]
-            - self.lattice_vectors @ list_vec
-        )
-        element_rep = self.device.atom_type[at_inside_rep]
-        for at in self.origin_atom_indices:
+        shifted_atom_coordinates = self.device.atom_coordinates[
+            atom_indices, :
+        ] - self.lattice_vectors @ np.array(idx)
+
+        atoms_type = self.device.atoms_type[atom_indices]
+
+        for origin_atom_index in self.origin_atom_indices:
+
+            delta = (
+                shifted_atom_coordinates
+                - self.device.atom_coordinates[origin_atom_index, :]
+            )
+
             # Find the atoms in the periodic repetition that are close
             # to the atom in the origin cell and have the same element
-            delta = coords_rep - self.device.atom_coordinates[at, :]
-            found = np.nonzero(
+            found_atoms = np.nonzero(
                 (np.linalg.norm(delta, axis=1) < tol)
-                & (self.device.atom_type[at] == element_rep)
+                & (self.device.atoms_type[origin_atom_index] == atoms_type)
             )[0]
-            if found.size == 0:
+            if found_atoms.size == 0:
                 raise ValueError(
                     f"Error in contact {self.name}: "
-                    f"Atom {at} not found in the periodic repetition at ({a}, {b}, {c})."
-                    f"Min distance found: {np.min(np.linalg.norm(delta, axis=1))}"
+                    f"Atom {origin_atom_index} not found in the periodic repetition at ({idx})."
                 )
-            if found.size > 1:
+            elif found_atoms.size > 1:
                 raise ValueError(
                     f"Error in contact {self.name}: "
-                    f"Multiple atoms found in the periodic repetition at ({a}, {b}, {c}) "
-                    f"matching atom {at} from the origin cell."
+                    f"Multiple atoms found in the periodic repetition at ({idx}) "
+                    f"matching atom {origin_atom_index} from the origin cell."
                 )
-            # Append the index of the found atom to the sorted list
-            sorted.append(at_inside_rep[found[0]])
 
-        return np.array(sorted, dtype=int)
+            sorted_atom_indices.append(atom_indices[found_atoms[0]])
+
+        return np.array(sorted_atom_indices, dtype=int)
 
     def _count_repetitions(self, axis: int, sign: int) -> int:
         """Counts periodic repetitions in a given direction.
@@ -371,7 +356,7 @@ class Contact:
         assert axis in [0, 1, 2], "Axis must be 0, 1, or 2."
         assert sign in [1, -1], "Sign must be 1 or -1."
 
-        for repetition in count(start=1):
+        for repetition in itertools.count(start=1):
             idx = [0, 0, 0]
             idx[axis] = sign * repetition
 
@@ -404,17 +389,19 @@ class Contact:
         # Store the number of periodic repetitions in the contact object
         # and the coordinates of the origin cell
         self.origin_cell_offset = np.array((repetitions_y_neg, repetitions_z_neg))
-        self.repetition_grid = [
-            repetitions_y_pos + repetitions_y_neg + 1,
-            repetitions_z_pos + repetitions_z_neg + 1,
-        ]
+        self.transverse_repetition_grid = np.array(
+            [
+                repetitions_y_pos + repetitions_y_neg + 1,
+                repetitions_z_pos + repetitions_z_neg + 1,
+            ]
+        )
 
-    def _get_atoms_transverse_sorted(self, x: int) -> NDArray:
+    def _get_atoms_transverse_sorted(self, transport_index: int) -> NDArray:
         """Gets the indices of the atoms inside the periodic repetition.
 
         Parameters
         ----------
-        x : int
+        transport_index : int
             The index of the periodic repetition in the transport
             direction.
 
@@ -425,46 +412,28 @@ class Contact:
 
         """
 
-        # Start from the (0,0) cell and look for periodic repetitions in
-        # the transverse directions The origin cell is defined by the
-        # user, so we start from -origin_cell (that is a tuple! (x,y))
-        # and go up to (repetition_grid[0], repetition_grid[1])
-        curr_cell = -self.origin_cell_offset
-        max_cell = curr_cell + np.array(
-            [self.repetition_grid[0], self.repetition_grid[1]]
-        )
+        # Start from the (0,0) cell
+        # and go up to transverse_repetition_grid
 
-        while curr_cell[0] < max_cell[0]:
-            while curr_cell[1] < max_cell[1]:
-                # Get the indices of the atoms inside the periodic
-                # repetition
-                idx = [curr_cell[0], curr_cell[1]]
-                idx.insert(self.direction, x)
-                at_inside_rep = self._get_atom_indices_in_cell(*idx)
-                # Reorder the atoms to match the order in the origin
-                # cell
-                c_list = [curr_cell[0], curr_cell[1]]
-                c_list.insert(self.direction, x)
+        # Use product to iterate over all (x, y) combinations
+        for idx, idy in itertools.product(
+            range(self.transverse_repetition_grid[0]),
+            range(self.transverse_repetition_grid[1]),
+        ):
+            index = [idx - self.origin_cell_offset[0], idy - self.origin_cell_offset[0]]
+            index.insert(self.direction, transport_index)
+            atom_indices = self._get_atom_indices_in_cell(*index)
 
-                at_inside_rep = self._reorder_atoms(
-                    at_inside_rep, c_list[0], c_list[1], c_list[2]
-                )
-                orb_inside_rep = self._atom_to_orbital_indices(at_inside_rep)
+            # Process atom and orbital indices
+            atom_indices = self._get_atom_indices_in_cell(*index)
+            atom_indices = self._reorder_atoms(atom_indices, index)
+            orbital_indices = self._atom_to_orbital_indices(atom_indices)
 
-                self.atoms[curr_cell[0] + self.origin_cell_offset[0]][
-                    curr_cell[1] + self.origin_cell_offset[1]
-                ].append(at_inside_rep)
-                self.orbitals[curr_cell[0] + self.origin_cell_offset[0]][
-                    curr_cell[1] + self.origin_cell_offset[1]
-                ].append(orb_inside_rep)
+            self.orbitals_per_repetition[idx][idy].append(orbital_indices)
 
-                self.residual_orbitals = self.residual_orbitals[
-                    ~np.isin(self.residual_orbitals, orb_inside_rep)
-                ]
-                curr_cell[1] += 1
-
-            curr_cell[0] += 1
-            curr_cell[1] = -self.origin_cell_offset[1]
+            self.residual_orbitals = self.residual_orbitals[
+                ~np.isin(self.residual_orbitals, orbital_indices)
+            ]
 
     def _atom_to_orbital_indices(self, atom_indices: NDArray) -> NDArray:
         """Gets the orbital indices corresponding to the atoms
@@ -548,32 +517,39 @@ class Contact:
                 b = atom_coordinates[1] + self.origin_cell_offset[1]
 
                 if self.device.gamma_only and (
-                    (self.repetition_grid[0] == 1 and atom_coordinates[0] != 0)
-                    or (self.repetition_grid[1] == 1 and atom_coordinates[1] != 0)
+                    (
+                        self.transverse_repetition_grid[0] == 1
+                        and atom_coordinates[0] != 0
+                    )
+                    or (
+                        self.transverse_repetition_grid[1] == 1
+                        and atom_coordinates[1] != 0
+                    )
                 ):
                     continue
                 # The coupling is defined in the in the device
                 # hamiltonian at (H_1, H_2) (it can be in any hopping
                 # hamiltonian). Here we compute in which hopping
                 # hamiltonian it is.
-                H_1 = int((a + 0.0001) / self.repetition_grid[0])
+                H_1 = int((a + 0.0001) / self.transverse_repetition_grid[0])
                 if a < 0:
                     H_1 -= 1
-                H_2 = int((b + 0.0001) / self.repetition_grid[1])
+                H_2 = int((b + 0.0001) / self.transverse_repetition_grid[1])
                 if b < 0:
                     H_2 -= 1
 
                 if self.device.gamma_only and (
-                    self.repetition_grid[0] > 1 or self.repetition_grid[1] > 1
+                    self.transverse_repetition_grid[0] > 1
+                    or self.transverse_repetition_grid[1] > 1
                 ):
                     H_1 = 0
                     H_2 = 0
                     if (
-                        (2 * radius + 1) > self.repetition_grid[0]
-                        and self.repetition_grid[0] > 1
+                        (2 * radius + 1) > self.transverse_repetition_grid[0]
+                        and self.transverse_repetition_grid[0] > 1
                     ) or (
-                        (2 * radius + 1) > self.repetition_grid[1]
-                        and self.repetition_grid[1] > 1
+                        (2 * radius + 1) > self.transverse_repetition_grid[1]
+                        and self.transverse_repetition_grid[1] > 1
                     ):
                         raise ValueError(
                             f"Error in contact {self.name}: \n"
@@ -585,9 +561,9 @@ class Contact:
                         )
 
                 # These are the orbitals where to look for the coupling
-                o_1 = a % self.repetition_grid[0]
-                o_2 = b % self.repetition_grid[1]
-                orb_coup = self.orbitals[o_1][o_2][x]
+                o_1 = a % self.transverse_repetition_grid[0]
+                o_2 = b % self.transverse_repetition_grid[1]
+                orb_coup = self.orbitals_per_repetition[o_1][o_2][x]
 
                 ham_tu = [H_1, H_2]
                 ham_tu.insert(self.direction, 0)
@@ -626,7 +602,7 @@ class Contact:
             if not found:
                 if comm.rank == 0:
                     print(f"        Maximum coupling radius: {radius-1}")
-                # if self.repetition_grid[0] == 1 and self.repetition_grid[1] == 1 and (radius
+                # if self.transverse_repetition_grid[0] == 1 and self.transverse_repetition_grid[1] == 1 and (radius
                 #    - 1) > 0: raise ValueError("1x1 UC but more than
                 #    1x1 coupling!")
                 break
@@ -636,12 +612,6 @@ class Contact:
     def _residual_coupling(self) -> bool:
         """Checks if there is residual coupling between the orbitals in
         the contact and the full device.
-
-        Parameters
-        ----------
-        orbitals : list
-            A list of orbital indices for which to check the residual
-            coupling.
 
         Returns
         -------
@@ -921,9 +891,9 @@ class Contact:
 
         """
         SE_1 = []
-        for i in range(self.repetition_grid[0]):
+        for i in range(self.transverse_repetition_grid[0]):
             SE_2 = []
-            for j in range(self.repetition_grid[1]):
+            for j in range(self.transverse_repetition_grid[1]):
                 # Initialize the self-energy matrix sub block
                 SE_2.append(
                     xp.zeros_like(SE_k[(k_1_list[0].item(), k_2_list[0].item())])
@@ -936,7 +906,7 @@ class Contact:
 
         # Construct the final self-energy matrix
         SE_1 = self._construct_circulant_matrix(SE_1, xp.exp(1j * k1)) / (
-            self.repetition_grid[0] * self.repetition_grid[1]
+            self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
         )
 
         return SE_1
@@ -966,11 +936,11 @@ class Contact:
                 I_1 = []
                 I_2 = []
                 # Upscale in 2nd direction first
-                for j in range(self.repetition_grid[1]):
+                for j in range(self.transverse_repetition_grid[1]):
                     I_2.append(modes_k[key][i_E] * xp.exp(1j * (key[1] * j)))
                 I_2 = xp.concatenate(I_2, axis=0)
                 # Upscale in 1st direction
-                for i in range(self.repetition_grid[0]):
+                for i in range(self.transverse_repetition_grid[0]):
                     I_1.append(I_2 * xp.exp(1j * (key[0] * i)))
                 I_1 = xp.concatenate(I_1, axis=0)
                 # Store the upscaled modes
@@ -985,7 +955,7 @@ class Contact:
             for key, value in modes_k.items():
                 modes_E.append(value[i_E])
             modes_E = xp.concatenate(modes_E, axis=1) / xp.sqrt(
-                self.repetition_grid[0] * self.repetition_grid[1]
+                self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
             )
             modes.append(modes_E)
 
@@ -1034,7 +1004,7 @@ class Contact:
         # injection modes in the transverse directions
         k_inner = [
             np.linspace(0, np.pi * 2, n_rep, endpoint=False) + k_outer[i] / n_rep
-            for i, n_rep in enumerate(self.repetition_grid)
+            for i, n_rep in enumerate(self.transverse_repetition_grid)
         ]
 
         sigma_obc_k = {}
@@ -1079,7 +1049,10 @@ class Contact:
                 A_tot[0]
                 @ x_ii
                 @ A_tot[2]
-                / (self.repetition_grid[1] * self.repetition_grid[0])
+                / (
+                    self.transverse_repetition_grid[1]
+                    * self.transverse_repetition_grid[0]
+                )
             )
             inj_k[k_i, k_j] = []
 
@@ -1092,7 +1065,12 @@ class Contact:
 
             K_k[k_i, k_j] = phi_surface
             T_k[k_i, k_j] = (
-                -x_ii @ A_tot[2] / (self.repetition_grid[1] * self.repetition_grid[0])
+                -x_ii
+                @ A_tot[2]
+                / (
+                    self.transverse_repetition_grid[1]
+                    * self.transverse_repetition_grid[0]
+                )
             )
 
             if comm.rank == 0:

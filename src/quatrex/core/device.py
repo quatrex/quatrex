@@ -118,7 +118,7 @@ class Device:
         cell.
     atom_coordinates : NDArray
         Array of atomic coordinates.
-    atom_type : NDArray
+    atoms_type : NDArray
         Array of atom symbols for each atom.
     orbital_offsets : NDArray
         Array of cumulative orbital counts, used to map from atoms to
@@ -263,7 +263,7 @@ class Device:
         lattice_file = self.quatrex_config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
-        self.lattice_vector, self.atom_coordinates, self.atom_type = (
+        self.lattice_vector, self.atom_coordinates, self.atoms_type = (
             distributed_read_xyz(lattice_file)
         )
 
@@ -284,7 +284,7 @@ class Device:
                 defaultdict(
                     lambda: 1, self.quatrex_config.device.num_orbitals_per_atom
                 ).get,
-                self.atom_type,
+                self.atoms_type,
             ),
             dtype=np.int32,
         )

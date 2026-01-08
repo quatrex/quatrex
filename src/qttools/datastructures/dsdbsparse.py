@@ -1046,20 +1046,71 @@ class DSDBSparse(ABC):
         return out
 
 
-def _compose_single(lhs, rhs, length):
+def _compose_single(lhs: int | slice, rhs: int | slice, length: int) -> int | slice:
+    """Composes two unidimensional indices or slices.
+
+    Example:
+        length = 30  # dimension of length 30
+        lhs = slice(2, 27, 2)  # selects indices [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
+        rhs = slice(1, 11, 3)  # selects indices [1, 4, 7, 10] from the previous selection,
+                               # i.e., [4, 10, 16, 22] from the original dimension
+        result = _compose_single(lhs, rhs, 30)
+        # result is slice(4, 22, 6), which selects indices [4, 10, 16, 22] from the original dimension.
+
+    Parameters
+    ----------
+    lhs : int | slice
+        The first index or slice.
+    rhs : int | slice
+        The second index or slice.
+    length : int
+        The length of the dimension being indexed.
+
+    Returns
+    -------
+    int | slice
+        The composed index or slice.
+    """
     out = range(length)[lhs][rhs]
     return out if isinstance(out, int) else slice(out.start, out.stop, out.step)
 
 
-def _compose(shape, first, second):
+def _compose(
+    shape: tuple[int, ...],
+    first: tuple[int, ...] | int | slice,
+    second: tuple[int, ...] | int | slice,
+) -> tuple[int | slice, ...]:
+    """Composes two multidimensional indices or slices.
+
+    Parameters
+    ----------
+    shape : tuple
+        The shape of the array being indexed.
+    first : tuple | int | slice
+        The first index or slice.
+    second : tuple | int | slice
+        The second index or slice.
+
+    Returns
+    -------
+    tuple
+        The composed index or slice.
+    """
+
     def ensure_tuple(ndslice):
         return ndslice if isinstance(ndslice, tuple) else (ndslice,)
 
+    # Ensure both are tuples for easier processing
     first = ensure_tuple(first)
     second = ensure_tuple(second)
 
+    # Initialize output with first index/slice and fill the rest with full slices
     out = list(first) + [slice(None)] * (len(shape) - len(first))
+
+    # We only need to compose the slice dimensions (not the indices).
+    # NOTE: It is implied that for any dimensions excluded here, the corresponding index in `second` is 0.
     remaining_dims = [i for i, s in enumerate(out) if isinstance(s, slice)]
+
     for i, rhs in zip(remaining_dims, second):
         out[i] = _compose_single(out[i], rhs, length=shape[i])
     return tuple(out)

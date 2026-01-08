@@ -191,7 +191,7 @@ class DSDBSparse(ABC):
         self.symmetry_op = symmetry_op
 
         # Set the block and stack communicators.
-        if not comm.is_configured():
+        if not comm.is_configured:
             raise ValueError(
                 "Block and stack communicators must be initialized via "
                 "the BLOCK_COMM_SIZE environment variable."

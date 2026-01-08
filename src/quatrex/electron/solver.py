@@ -569,15 +569,28 @@ class ElectronSolver(SubsystemSolver):
             )
             # Apply the retarded boundary self-energy.
             sigma_00 = m_10 @ g_00 @ m_01
-            self.obc_blocks.retarded[0] = sigma_00
+
+            if self.obc_blocks.retarded[0] is None:
+                self.obc_blocks.retarded[0] = xp.empty(
+                    (
+                        self.local_energies.size,
+                        sigma_00.shape[-2],
+                        sigma_00.shape[-1],
+                    ),
+                    dtype=sigma_00.dtype,
+                )
+                self.obc_blocks.lesser[0] = xp.empty_like(self.obc_blocks.retarded[0])
+                self.obc_blocks.greater[0] = xp.empty_like(self.obc_blocks.retarded[0])
+
+            self.obc_blocks.retarded[0][stack_slice] = sigma_00
             gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
 
             # Compute and apply the lesser boundary self-energy.
-            self.obc_blocks.lesser[0] = 1j * scale_stack(
+            self.obc_blocks.lesser[0][stack_slice] = 1j * scale_stack(
                 gamma_00.copy(), self.left_occupancies[stack_slice]
             )
             # Compute and apply the greater boundary self-energy.
-            self.obc_blocks.greater[0] = 1j * scale_stack(
+            self.obc_blocks.greater[0][stack_slice] = 1j * scale_stack(
                 gamma_00.copy(), self.left_occupancies[stack_slice] - 1
             )
         if comm.block.rank == comm.block.size - 1:
@@ -617,15 +630,29 @@ class ElectronSolver(SubsystemSolver):
             # Apply the retarded boundary self-energy.
             sigma_nn = m_mn @ g_nn @ m_nm
 
-            self.obc_blocks.retarded[-1] = sigma_nn
+            if self.obc_blocks.retarded[-1] is None:
+                self.obc_blocks.retarded[-1] = xp.empty(
+                    (
+                        self.local_energies.size,
+                        sigma_nn.shape[-2],
+                        sigma_nn.shape[-1],
+                    ),
+                    dtype=sigma_nn.dtype,
+                )
+                self.obc_blocks.lesser[-1] = xp.empty_like(self.obc_blocks.retarded[-1])
+                self.obc_blocks.greater[-1] = xp.empty_like(
+                    self.obc_blocks.retarded[-1]
+                )
+
+            self.obc_blocks.retarded[-1][stack_slice] = sigma_nn
 
             gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
 
-            self.obc_blocks.lesser[-1] = 1j * scale_stack(
+            self.obc_blocks.lesser[-1][stack_slice] = 1j * scale_stack(
                 gamma_nn.copy(), self.right_occupancies[stack_slice]
             )
 
-            self.obc_blocks.greater[-1] = 1j * scale_stack(
+            self.obc_blocks.greater[-1][stack_slice] = 1j * scale_stack(
                 gamma_nn.copy(), self.right_occupancies[stack_slice] - 1
             )
 
@@ -851,6 +878,14 @@ class ElectronSolver(SubsystemSolver):
                 out_g.stack[stack_slice],
                 out_r.stack[stack_slice],
             )
+            obc_blocks_tmp = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
+            for j in range(self.system_matrix.num_local_blocks):
+                if self.obc_blocks.retarded[j] is not None:
+                    obc_blocks_tmp.retarded[j] = self.obc_blocks.retarded[j][
+                        stack_slice
+                    ]
+                    obc_blocks_tmp.lesser[j] = self.obc_blocks.lesser[j][stack_slice]
+                    obc_blocks_tmp.greater[j] = self.obc_blocks.greater[j][stack_slice]
 
             t_solve_start = time.perf_counter()
             if comm.block.size > 1:
@@ -858,7 +893,7 @@ class ElectronSolver(SubsystemSolver):
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_tmp,
                     sigma_greater=sse_greater_tmp,
-                    obc_blocks=self.obc_blocks,
+                    obc_blocks=obc_blocks_tmp,
                     out=out_slice,
                     return_retarded=True,
                 )
@@ -867,7 +902,7 @@ class ElectronSolver(SubsystemSolver):
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser_tmp,
                     sigma_greater=sse_greater_tmp,
-                    obc_blocks=self.obc_blocks,
+                    obc_blocks=obc_blocks_tmp,
                     out=out_slice,
                     return_retarded=True,
                     return_current=self.compute_meir_wingreen_current,

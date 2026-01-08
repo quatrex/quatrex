@@ -589,28 +589,32 @@ class QTBM:
 
                 S_P = xp.zeros_like(phi_n)
                 index1 = (
-                    -xp.arange(self.device.contacts[cont_2].n_rep_1)[:, None]
-                    + xp.arange(self.device.contacts[cont_2].n_rep_1)[None, :]
+                    -xp.arange(self.device.contacts[cont_2].repetition_grid[0])[:, None]
+                    + xp.arange(self.device.contacts[cont_2].repetition_grid[0])[
+                        None, :
+                    ]
                 )
                 index2 = (
-                    -xp.arange(self.device.contacts[cont_2].n_rep_2)[:, None]
-                    + xp.arange(self.device.contacts[cont_2].n_rep_2)[None, :]
+                    -xp.arange(self.device.contacts[cont_2].repetition_grid[1])[:, None]
+                    + xp.arange(self.device.contacts[cont_2].repetition_grid[1])[
+                        None, :
+                    ]
                 )
 
                 index1 = xp.kron(
                     index1,
                     xp.ones(
                         (
-                            self.device.contacts[cont_2].n_rep_2,
-                            self.device.contacts[cont_2].n_rep_2,
+                            self.device.contacts[cont_2].repetition_grid[1],
+                            self.device.contacts[cont_2].repetition_grid[1],
                         )
                     ),
                 )
                 index2 = xp.tile(
                     index2,
                     (
-                        self.device.contacts[cont_2].n_rep_1,
-                        self.device.contacts[cont_2].n_rep_1,
+                        self.device.contacts[cont_2].repetition_grid[0],
+                        self.device.contacts[cont_2].repetition_grid[0],
                     ),
                 )
 
@@ -633,16 +637,21 @@ class QTBM:
 
             phi_cont = K[contact.orbitals_contact.squeeze(), :]
             index1 = (
-                -xp.arange(contact.n_rep_1)[:, None]
-                + xp.arange(contact.n_rep_1)[None, :]
+                -xp.arange(contact.repetition_grid[0])[:, None]
+                + xp.arange(contact.repetition_grid[0])[None, :]
             )
             index2 = (
-                -xp.arange(contact.n_rep_2)[:, None]
-                + xp.arange(contact.n_rep_2)[None, :]
+                -xp.arange(contact.repetition_grid[1])[:, None]
+                + xp.arange(contact.repetition_grid[1])[None, :]
             )
 
-            index1 = xp.kron(index1, xp.ones((contact.n_rep_2, contact.n_rep_2)))
-            index2 = xp.tile(index2, (contact.n_rep_1, contact.n_rep_1))
+            index1 = xp.kron(
+                index1,
+                xp.ones((contact.repetition_grid[1], contact.repetition_grid[1])),
+            )
+            index2 = xp.tile(
+                index2, (contact.repetition_grid[0], contact.repetition_grid[0])
+            )
 
             for key, value in T[n].items():
                 phi_cont += kr_mat_mul(
@@ -917,8 +926,8 @@ class QTBM:
                                 sigma_SM_indexes[c],
                                 key[0],
                                 key[1],
-                                self.device.contacts[c].n_rep_1,
-                                self.device.contacts[c].n_rep_2,
+                                self.device.contacts[c].repetition_grid[0],
+                                self.device.contacts[c].repetition_grid[1],
                             )
 
                     t_solve = time.perf_counter() - times.pop()
@@ -953,8 +962,8 @@ class QTBM:
                                 sigma_SM_indexes[c],
                                 key[0],
                                 key[1],
-                                self.device.contacts[c].n_rep_1,
-                                self.device.contacts[c].n_rep_2,
+                                self.device.contacts[c].repetition_grid[0],
+                                self.device.contacts[c].repetition_grid[1],
                             )
 
                     for r in self.device.overlap_matrices.keys():

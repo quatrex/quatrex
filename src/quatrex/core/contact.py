@@ -26,11 +26,13 @@ class Contact:
     origin : NDArray
         The origin coordinates of the contact cell in device
         coordinates.
-    vectors : NDArray
+    lattice_vectors : NDArray
         The lattice vectors defining the unit cell of the contact.
     direction : str
         The transport direction of the contact, specified as 'a', 'b',
         or 'c' corresponding to the lattice axes.
+    fermi_level : float
+        The Fermi level of the contact in eV.
 
     Attributes
     ----------
@@ -38,7 +40,7 @@ class Contact:
         The contact identifier.
     device : Device
         Reference to the parent device.
-    vectors : NDArray
+    lattice_vectors : NDArray
         Contact unit cell lattice vectors.
     origin : NDArray
         Contact origin coordinates.
@@ -71,18 +73,25 @@ class Contact:
         device,
         name: str,
         origin: NDArray,
-        vectors: NDArray,
+        lattice_vectors: NDArray,
         direction: str,
         fermi_level: float,
     ):
         """Initializes the contact object."""
+
+        if len(origin) != 3:
+            raise ValueError("Origin must be a 3D coordinate.")
+        if lattice_vectors.shape != (3, 3):
+            raise ValueError("Vectors must be a 3x3 array.")
+        if direction not in ["a", "b", "c"]:
+            raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
         self.name = name
         self.device = device
 
         self.fermi_level = fermi_level
 
-        self.vectors = vectors
+        self.lattice_vectors = lattice_vectors
         self.origin = origin
 
         self.direction = "abc".index(direction)
@@ -95,22 +104,23 @@ class Contact:
         self.S10_contact = {}
         self.H10_contact = {}
 
-        if len(self.transverse_axis) != 2:
-            raise ValueError("Direction must be one of the three axes (0, 1, or 2).")
-
-        relative_coords = self.device.atom_coordinates - self.origin
-        self.coeffs = relative_coords @ np.linalg.inv(self.vectors)
-
         # Get the atoms inside the origin cell (defined by the user)
-        self.at_origin_cell = self._get_atoms_inside_cell(0, 0, 0)
-        self.orb_origin_cell = self._get_orbitals(self.at_origin_cell)
-        self.n_at_origin_cell = self.at_origin_cell.shape[0]
-        self.n_orb_origin_cell = self.orb_origin_cell.shape[0]
+        self.origin_atom_indices = self._get_atom_indices_in_cell(0, 0, 0)
+        self.origin_orbital_indices = self._atom_to_orbital_indices(
+            self.origin_atom_indices
+        )
+
+        self.origin_number_of_orbitals = len(self.origin_orbital_indices)
+
+        if self.origin_number_of_orbitals == 0:
+            raise ValueError(
+                f"Error in contact {self.name}: No atoms found inside the origin cell."
+            )
 
         if comm.rank == 0:
             print(f"Contact {self.name}:", flush=True)
             print(
-                f"    Number of atoms inside the origin cell: {self.at_origin_cell.shape[0]}",
+                f"    Number of atoms inside the origin cell: {self.origin_number_of_orbitals}",
                 flush=True,
             )
 
@@ -205,9 +215,9 @@ class Contact:
         for i in range(self.n_rep_1 * self.n_rep_2):
             for k in range(0, x - 1):
                 self.sort_orbitals_get_10.append(
-                    np.arange(self.n_orb_origin_cell)
-                    + i * self.n_orb_origin_cell
-                    + k * self.n_orb_origin_cell * self.n_rep_1 * self.n_rep_2
+                    np.arange(self.origin_number_of_orbitals)
+                    + i * self.origin_number_of_orbitals
+                    + k * self.origin_number_of_orbitals * self.n_rep_1 * self.n_rep_2
                 )
         self.sort_orbitals_get_10 = np.concatenate(
             self.sort_orbitals_get_10, dtype=int
@@ -221,7 +231,7 @@ class Contact:
 
         self._compute_band_structure(device)
 
-    def _get_atoms_inside_cell(self, nx: int, ny: int, nz: int) -> NDArray:
+    def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
 
         This method finds all device atoms that fall within the
@@ -246,22 +256,24 @@ class Contact:
 
         # Shift the coordinates of the device atoms to the origin of the
         # contact
-        relative_coords = self.device.atom_coordinates - self.origin
+        relative_coordinates = self.device.atom_coordinates - self.origin
 
         # Compute the coefficients relative to the contact cell
-        coeffs = relative_coords @ np.linalg.inv(self.vectors)
+        fractional_coordinates = relative_coordinates @ np.linalg.inv(
+            self.lattice_vectors
+        )
 
         # Get the indices of the atoms inside the periodic repetition
-        inside_mask = np.nonzero(
-            (coeffs[:, 0] >= nx)
-            & (coeffs[:, 0] <= nx + 1)
-            & (coeffs[:, 1] >= ny)
-            & (coeffs[:, 1] <= ny + 1)
-            & (coeffs[:, 2] >= nz)
-            & (coeffs[:, 2] <= nz + 1)
+        indices_inside = np.nonzero(
+            (fractional_coordinates[:, 0] >= nx)
+            & (fractional_coordinates[:, 0] <= nx + 1)
+            & (fractional_coordinates[:, 1] >= ny)
+            & (fractional_coordinates[:, 1] <= ny + 1)
+            & (fractional_coordinates[:, 2] >= nz)
+            & (fractional_coordinates[:, 2] <= nz + 1)
         )[0]
 
-        return inside_mask
+        return indices_inside
 
     def _reorder_atoms(
         self, at_inside_rep: NDArray, a: int, b: int, c: int, tol: float = 0.3
@@ -303,10 +315,11 @@ class Contact:
         # repetition to match the origin cell
         list_vec = np.array([a, b, c], dtype=np.float64)
         coords_rep = (
-            self.device.atom_coordinates[at_inside_rep, :] - self.vectors @ list_vec
+            self.device.atom_coordinates[at_inside_rep, :]
+            - self.lattice_vectors @ list_vec
         )
         element_rep = self.device.atom_type[at_inside_rep]
-        for at in self.at_origin_cell:
+        for at in self.origin_atom_indices:
             # Find the atoms in the periodic repetition that are close
             # to the atom in the origin cell and have the same element
             delta = coords_rep - self.device.atom_coordinates[at, :]
@@ -360,13 +373,13 @@ class Contact:
                 idx = [0, 0, 0]
                 idx[axis] = sign * (n_rep + 1)
                 # Get the atoms inside the periodic repetition
-                at_inside_rep = self._get_atoms_inside_cell(*idx)
+                at_inside_rep = self._get_atom_indices_in_cell(*idx)
                 # If no atoms are found, break the loop
                 if at_inside_rep.shape[0] == 0:
                     break
                 # If the number of atoms inside the periodic repetition
                 # does not match the origin cell, raise an error
-                if at_inside_rep.shape[0] != self.at_origin_cell.shape[0]:
+                if at_inside_rep.shape[0] != self.origin_atom_indices.shape[0]:
                     pos = tuple(idx)
                     raise ValueError(
                         f"Error in contact {self.name}: "
@@ -420,7 +433,7 @@ class Contact:
                 # repetition
                 idx = [curr_cell[0], curr_cell[1]]
                 idx.insert(self.direction, x)
-                at_inside_rep = self._get_atoms_inside_cell(*idx)
+                at_inside_rep = self._get_atom_indices_in_cell(*idx)
                 # Reorder the atoms to match the order in the origin
                 # cell
                 c_list = [curr_cell[0], curr_cell[1]]
@@ -429,7 +442,7 @@ class Contact:
                 at_inside_rep = self._reorder_atoms(
                     at_inside_rep, c_list[0], c_list[1], c_list[2]
                 )
-                orb_inside_rep = self._get_orbitals(at_inside_rep)
+                orb_inside_rep = self._atom_to_orbital_indices(at_inside_rep)
 
                 self.atoms[curr_cell[0] + self.origin_cell[0]][
                     curr_cell[1] + self.origin_cell[1]
@@ -446,12 +459,12 @@ class Contact:
             curr_cell[0] += 1
             curr_cell[1] = -self.origin_cell[1]
 
-    def _get_orbitals(self, atom_inds: NDArray) -> NDArray:
+    def _atom_to_orbital_indices(self, atom_indices: NDArray) -> NDArray:
         """Gets the orbital indices corresponding to the atoms
 
         Parameters
         ----------
-        atoms : NDArray
+        atom_indices : NDArray
             The indices of the atoms.
 
         Returns
@@ -461,16 +474,16 @@ class Contact:
 
         """
 
-        orbital_ind = np.array([], dtype=np.int32)
-        for atom_ind in atom_inds:
-            # Starting orbitals for the current atom
-            k1 = self.device.orbital_offsets[atom_ind]
-            # Ending orbitals for the current atom (can be computed from
-            # orbital_offsets)
-            k2 = self.device.orbital_offsets[atom_ind + 1]
-            orbital_ind = np.concatenate((orbital_ind, np.arange(k1, k2)))
+        orbital_offsets = self.device.orbital_offsets
+        starts = orbital_offsets[atom_indices]
+        ends = orbital_offsets[atom_indices + 1]
+        counts = ends - starts
 
-        return orbital_ind
+        orbital_indices = np.repeat(starts, counts) + np.concatenate(
+            [np.arange(c) for c in counts]
+        )
+
+        return orbital_indices
 
     def _get_circumference_coordinates(self, radius: int) -> list:
         """Gets coordinates only on the circumference of the grid.
@@ -570,7 +583,7 @@ class Contact:
                 # current coordinates
                 if ham_tu in self.device.hamiltonians:
                     ham_read = self.device.hamiltonians[ham_tu][
-                        self.orb_origin_cell, :
+                        self.origin_orbital_indices, :
                     ][:, orb_coup]
                     if ham_read.nnz != 0:
                         self.UC_hamiltonian[
@@ -584,7 +597,7 @@ class Contact:
                         found = True
                 if ham_tu in self.device.overlap_matrices:
                     overlap_read = self.device.overlap_matrices[ham_tu][
-                        self.orb_origin_cell, :
+                        self.origin_orbital_indices, :
                     ][:, orb_coup]
                     if overlap_read.nnz != 0:
                         self.UC_overlap[
@@ -624,7 +637,7 @@ class Contact:
 
         """
 
-        return self.device.hamiltonians[0, 0, 0][self.orb_origin_cell, :][
+        return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
             :, self.residual_orbitals
         ].nnz
 
@@ -1120,7 +1133,8 @@ class Contact:
 
         # Initialize band structure array
         self.band_structure = xp.zeros(
-            (num_kpoints, n_points_BAND, self.n_orb_origin_cell), dtype=xp.float64
+            (num_kpoints, n_points_BAND, self.origin_number_of_orbitals),
+            dtype=xp.float64,
         )
 
         for i, k_perp in enumerate(kpoints):
@@ -1133,11 +1147,11 @@ class Contact:
 
                 # Construct Hamiltonian and Overlap at k-point
                 H_tot = sparse.csr_matrix(
-                    (self.n_orb_origin_cell, self.n_orb_origin_cell),
+                    (self.origin_number_of_orbitals, self.origin_number_of_orbitals),
                     dtype=xp.complex128,
                 )
                 S_tot = sparse.csr_matrix(
-                    (self.n_orb_origin_cell, self.n_orb_origin_cell),
+                    (self.origin_number_of_orbitals, self.origin_number_of_orbitals),
                     dtype=xp.complex128,
                 )
                 # Sum over all the hoppings in the UC with the

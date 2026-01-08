@@ -359,7 +359,7 @@ class Device:
                     device=self,
                     name=contact_config.name,
                     origin=contact_config.origin,
-                    vectors=contact_config.size,
+                    lattice_vectors=contact_config.size,
                     direction=contact_config.direction,
                     fermi_level=contact_config.fermi_level,
                 )

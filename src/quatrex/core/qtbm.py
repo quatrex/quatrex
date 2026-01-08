@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2025-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
 import time
@@ -20,6 +20,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.constants import e, h
 from quatrex.core.device import Device
 from quatrex.core.energies import get_electron_energies
+from quatrex.core.kpoints import monkhorst_pack
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
 
@@ -28,10 +29,6 @@ _preferred_matrix_type = {
     "superlu": sparse.csc_matrix,
     "cudss": sparse.csr_matrix,
 }
-
-if xp.__name__ == "cupy":
-    mempool = xp.get_default_memory_pool()
-    pinned_mempool = xp.get_default_pinned_memory_pool()
 
 
 def kr_mat_mul(m: NDArray, a: NDArray, vect: NDArray) -> NDArray:
@@ -305,26 +302,6 @@ def compute_update_indeces_dense(
         update_indices[U_row * U_size : (U_row + 1) * U_size] = M_ind_map + M_row_start
 
     return xp.array(update_indices)
-
-
-def monkhorst_pack(size: tuple[int]) -> NDArray:
-    """Constructs a Monkhorst-Pack grid of k-points.
-
-    Parameters
-    ----------
-    size : tuple[int]
-        Grid dimensions as (nx, ny, nz) specifying the number of
-        k-points along each reciprocal lattice direction.
-
-    Returns
-    -------
-    kpts : NDArray
-        Array of k-points with shape (nx*ny*nz, 3). Each row contains
-        the (kx, ky, kz) coordinates of a k-point in reduced units.
-
-    """
-    kpts = np.indices(size).transpose((1, 2, 3, 0)).reshape((-1, 3))
-    return (kpts + 0.5) / size - 0.5
 
 
 @dataclass

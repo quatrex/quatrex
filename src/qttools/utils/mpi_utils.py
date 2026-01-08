@@ -70,15 +70,13 @@ def get_section_sizes(
 
 
 @profiler.profile(level="debug")
-def distributed_load(path: Path, format="coo") -> sparse.spmatrix | NDArray:
-    """Loads an array from disk and distributes it to all ranks.
+def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
+    """Loads an array from disk and broadcasts it to all ranks.
 
     Parameters
     ----------
     path : Path
         The path to the file to load.
-    format : str, optional
-        The format of the sparse matrix to load. Defaults to "csr".
 
     Returns
     -------
@@ -99,16 +97,6 @@ def distributed_load(path: Path, format="coo") -> sparse.spmatrix | NDArray:
     if comm.rank == 0:
         if path.suffix == ".npz":
             arr = sps.load_npz(path)
-            if arr.format != format:
-                arr = arr.asformat(format)
-            if format == "coo":
-                arr = sparse.coo_matrix(arr)
-            elif format == "csr":
-                arr = sparse.csr_matrix(arr)
-            elif format == "csc":
-                arr = sparse.csc_matrix(arr)
-            else:
-                raise ValueError(f"Invalid sparse matrix format: {format}")
         elif path.suffix == ".npy":
             arr = xp.load(path)
 

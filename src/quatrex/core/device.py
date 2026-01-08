@@ -1,3 +1,4 @@
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -111,10 +112,6 @@ class Device:
         Dictionary of overlap matrices with the same indexing as
         hamiltonian. For orthogonal basis sets, defaults to identity
         matrices.
-    num_hamiltonians : int
-        Total number of Hamiltonian matrices loaded from input files.
-    num_overlaps : int
-        Total number of overlap matrices loaded from input files.
     gamma_only : bool
         True if only the Gamma point (0,0,0) Hamiltonian is available,
         indicating that k-point calculations are not possible.
@@ -185,85 +182,74 @@ class Device:
         self.overlap = {}
         self.gamma_only = False
 
+        if not (self.quatrex_config.input_dir / "hamiltonian_0_0_0.npz").exists():
+            raise ValueError("Hamiltonian matrix for (0,0,0) not found.")
+
         # Load all Hamiltonian files with format hamiltonian_x_y_z.npz
         # Find all hamiltonian files in the input directory
         hamiltonian_paths = self.quatrex_config.input_dir.glob("hamiltonian_*_*_*.npz")
 
         # Parse indices from filenames and load files
         for hamiltonian_path in hamiltonian_paths:
-            x_index, y_index, z_index = map(int, hamiltonian_path.stem.split("_")[1:])
-            try:
-                self.hamiltonian[x_index, y_index, z_index] = distributed_load(
-                    hamiltonian_path, format="csr"
-                )
-                if x_index != 0 or y_index != 0 or z_index != 0:
-                    self.hamiltonian[x_index, y_index, z_index] = self.hamiltonian[
-                        x_index, y_index, z_index
-                    ].astype(xp.complex128)
-                if (
-                    self.hamiltonian[x_index, y_index, z_index].has_canonical_format
-                    is not True
-                ):
-                    raise ValueError("Loaded sparse matrix is not in canonical format.")
-                if comm.rank == 0:
-                    print(
-                        f"Loaded Hamiltonian ({x_index} {y_index} {z_index})",
-                        flush=True,
-                    )
 
-            except Exception as e:
-                if comm.rank == 0:
-                    print(f"Failed to load {hamiltonian_path.stem}: {e}", flush=True)
+            indices = tuple(map(int, hamiltonian_path.stem.split("_")[1:]))
+
+            self.hamiltonian[indices] = distributed_load(hamiltonian_path).tocsr()
+            assert (
+                self.hamiltonian[indices].shape[0] == self.hamiltonian[indices].shape[1]
+            ), f"Hamiltonian matrix at {hamiltonian_path} is not square."
+
+            # TODO: Check data type handling.
+            # Gamma point can be real depending on the basis.
+            if not all(index == 0 for index in indices):
+                self.hamiltonian[indices] = self.hamiltonian[indices].astype(
+                    xp.complex128
+                )
+
+            if not self.hamiltonian[indices].has_canonical_format:
+                self.hamiltonian[indices].sum_duplicates()
+                self.hamiltonian[indices].sort_indices()
 
             overlap_path = (
                 self.quatrex_config.input_dir
-                / f"overlap_{x_index}_{y_index}_{z_index}.npz"
+                / f"overlap_{indices[0]}_{indices[1]}_{indices[2]}.npz"
             )
-            # TODO: Mechanism to handle orthogonal basis sets.
-            try:
-                self.overlap[x_index, y_index, z_index] = distributed_load(
-                    overlap_path, format="csr"
-                )
-                if x_index != 0 or y_index != 0 or z_index != 0:
-                    self.overlap[x_index, y_index, z_index] = self.overlap[
-                        x_index, y_index, z_index
-                    ].astype(xp.complex128)
-                if comm.rank == 0:
-                    print(f"Loaded Overlap ({x_index} {y_index} {z_index})", flush=True)
-            except Exception as e:
-                if comm.rank == 0:
-                    print(f"Failed to load {overlap_path.stem}: {e}", flush=True)
 
-        if (0, 0, 0) not in self.hamiltonian:
+            if overlap_path.exists():
+                self.overlap[indices] = distributed_load(overlap_path).tocsr()
+                assert (
+                    self.overlap[indices].shape[0] == self.overlap[indices].shape[1]
+                ), f"Overlap matrix at {overlap_path} is not square."
+
+                if not all(index == 0 for index in indices):
+                    self.overlap[indices] = self.overlap[indices].astype(xp.complex128)
+
+                if not self.overlap[indices].has_canonical_format:
+                    self.overlap[indices].sum_duplicates()
+                    self.overlap[indices].sort_indices()
+
+        # TODO: Mechanism to handle orthogonal basis sets.
+        if len(self.overlap) == 0:
+            # NOTE: Dangerous to automatically assume identity matrix.
+            # Better to add a config option to specify orthogonal basis.
+            if comm.rank == 0:
+                warnings.warn(
+                    "No overlap matrices found. Assuming identity matrix.",
+                )
+            size = self.hamiltonian[0, 0, 0].shape[0]
+            self.overlap[0, 0, 0] = sparse.eye(size, dtype=xp.complex128, format="csr")
+
+        elif len(self.overlap) < len(self.hamiltonian):
             raise ValueError(
-                "Hamiltonian matrix for (0,0,0) not found. Please check the input files."
+                "Some overlap matrices are missing while others are present. All or none must be provided."
             )
 
-        self.num_hamiltonians = len(self.hamiltonian)
         if comm.rank == 0:
-            print(f"Loaded {self.num_hamiltonians} Hamiltonian matrices", flush=True)
+            print(f"Loaded {len(self.hamiltonian)} Hamiltonian matrices", flush=True)
+            print(f"Loaded {len(self.overlap)} overlap matrices", flush=True)
 
-        if self.num_hamiltonians == 1:
-            if comm.rank == 0:
-                print(
-                    "Only Gamma point Hamiltonian found. K-Points calculations are not possible.",
-                    flush=True,
-                )
+        if len(self.hamiltonian) == 1:
             self.gamma_only = True
-
-        if (0, 0, 0) not in self.overlap:
-            if comm.rank == 0:
-                print(
-                    "Overlap matrix for (0,0,0) not found. Assuming identity matrix.",
-                    flush=True,
-                )
-            self.overlap[(0, 0, 0)] = sparse.eye(
-                self.hamiltonian[0, 0, 0].shape[0], dtype=xp.complex128, format="csr"
-            )
-
-        self.num_overlaps = len(self.overlap)
-        if comm.rank == 0:
-            print(f"Loaded {self.num_overlaps} overlap matrices", flush=True)
 
     def _init_lattice(self) -> None:
         """Initializes the atomic structure and lattice parameters of

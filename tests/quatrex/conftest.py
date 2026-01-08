@@ -13,6 +13,9 @@ DIST_TEST_EXAMPLES = [
     "carbon-nanotube:dist",
 ]
 
+BATCH_SIZES_SOLVER = [1000, 2, 1]
+BATCH_SIZES_RGF = [1000, 2, 1]
+
 assert len(TEST_EXAMPLES) == len(set(TEST_EXAMPLES))
 assert set(TEST_EXAMPLES).issubset(ALLOWED_EXAMPLES.keys())
 assert len(DIST_TEST_EXAMPLES) == len(set(DIST_TEST_EXAMPLES))
@@ -39,4 +42,14 @@ def non_distributed_example(request: pytest.FixtureRequest) -> str:
 
 @pytest.fixture(params=DOMAIN_DISTTRIBUTED_EXAMPLES)
 def domain_distributed_example(request: pytest.FixtureRequest) -> str:
+    return request.param
+
+
+@pytest.fixture(params=BATCH_SIZES_SOLVER)
+def batch_size_solver(request: pytest.FixtureRequest) -> int:
+    return request.param
+
+
+@pytest.fixture(params=BATCH_SIZES_RGF)
+def batch_size_rgf(request: pytest.FixtureRequest) -> int:
     return request.param

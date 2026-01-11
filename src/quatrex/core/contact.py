@@ -134,46 +134,14 @@ class Contact:
         # TODO Check if the contact transverse UC vectors are in the
         # same direction as the device vectors
 
-        # Initialize the orbitals
-        # for each periodic repetition in transverse directions
-        ny, nz = self.transverse_repetition_grid
-        self.orbitals_per_repetition = [[[] for _ in range(nz)] for _ in range(ny)]
+        number_of_transport_cells = self._init_orbitals()
+        self.number_of_transport_cells = number_of_transport_cells
 
-        self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
-
-        self._get_atoms_transverse_sorted(0)
-
-        # Get the hamiltonian and overlap matrices for the first contact
-        # cell
-        if comm.rank == 0:
-            print("    Getting matrices for contact cell in repetition=0", flush=True)
-        self._get_matrix(0)
-
-        x = 1
-        # Iterate over the transport direction until there is no more
-        # residual coupling in the contact cell
-        while self._residual_coupling() > 0:
-            if comm.rank == 0:
-                print(
-                    f"        Residual coupling={self._residual_coupling()}",
-                    flush=True,
-                )
-
-            # Get atoms, orbitals and matrices for the next contact cell
-            self._get_atoms_transverse_sorted(x)
-
-            if comm.rank == 0:
-                print(
-                    f"    Getting matrices for contact cell in repetition={x}",
-                    flush=True,
-                )
-            self._get_matrix(x)
-
-            x = x + 1
+        # self._init_hamiltonian_overlap_matrices()
 
         if comm.rank == 0:
             print(
-                f"    Maximum number of repetitions in transport direction: {x-1}",
+                f"    Number of repetitions in transport direction: {number_of_transport_cells-1}",
                 flush=True,
             )
 
@@ -190,7 +158,7 @@ class Contact:
         # When getting the 10 matrix (for spill over), it is more efficient to have it sorted first in transverse, then in transport
         # The orbital list is then different. We keep it separated over slice over transport direction.
         self.orbitals_get_10 = []
-        for i in range(0, x):
+        for i in range(0, number_of_transport_cells):
             orbitals_slice_x = []
             for j in range(self.transverse_repetition_grid[0]):
                 for k in range(self.transverse_repetition_grid[1]):
@@ -202,7 +170,7 @@ class Contact:
         for i in range(
             self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
         ):
-            for k in range(0, x - 1):
+            for k in range(0, number_of_transport_cells - 1):
                 self.sort_orbitals_get_10.append(
                     np.arange(self.origin_number_of_orbitals)
                     + i * self.origin_number_of_orbitals
@@ -215,7 +183,7 @@ class Contact:
             self.sort_orbitals_get_10, dtype=int
         )[None, :]
 
-        self.transverse_rep = x - 1
+        self.transverse_rep = number_of_transport_cells - 1
 
         self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
@@ -396,8 +364,39 @@ class Contact:
             ]
         )
 
-    def _get_atoms_transverse_sorted(self, transport_index: int) -> NDArray:
-        """Gets the indices of the atoms inside the periodic repetition.
+    def _init_orbitals(self):
+        # Initialize the orbitals
+        # for each periodic repetition in transverse directions
+        ny, nz = self.transverse_repetition_grid
+        self.orbitals_per_repetition = [[[] for _ in range(nz)] for _ in range(ny)]
+
+        self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
+
+        residual_orbitals_old = self.residual_orbitals.copy()
+
+        for transport_index in itertools.count(0):
+            self._init_orbitals_transverse(transport_index)
+
+            self._init_hamiltonian_overlap_matrices(transport_index)
+
+            if self._residual_coupling() == 0:
+                return transport_index + 1
+
+            # The residual orbitals did not change
+            # but there are still residual couplings
+            # then some orbitals got missed
+            if np.array_equal(residual_orbitals_old, self.residual_orbitals):
+                raise ValueError(
+                    f"Error in contact {self.name}: "
+                    f"Could not find all orbitals in the contact unit cell. "
+                )
+
+            residual_orbitals_old = self.residual_orbitals.copy()
+
+    def _init_orbitals_transverse(self, transport_index: int):
+        """Initialize the orbitals for a given transport cell
+        for all transverse periodic repetitions. Additionally,
+        this method updates the residual orbitals.
 
         Parameters
         ----------
@@ -405,24 +404,15 @@ class Contact:
             The index of the periodic repetition in the transport
             direction.
 
-        Returns
-        -------
-        NDArray
-            The indices of the atoms inside the periodic repetition.
-
         """
 
-        # Start from the (0,0) cell
-        # and go up to transverse_repetition_grid
-
-        # Use product to iterate over all (x, y) combinations
+        # Iterate over all (x, y) combinations
         for idx, idy in itertools.product(
             range(self.transverse_repetition_grid[0]),
             range(self.transverse_repetition_grid[1]),
         ):
             index = [idx - self.origin_cell_offset[0], idy - self.origin_cell_offset[0]]
             index.insert(self.direction, transport_index)
-            atom_indices = self._get_atom_indices_in_cell(*index)
 
             # Process atom and orbital indices
             atom_indices = self._get_atom_indices_in_cell(*index)
@@ -480,20 +470,18 @@ class Contact:
 
         for y in range(-radius, radius + 1):
             for z in range(-radius, radius + 1):
-                # Check if point is on the boundary (max distance =
-                # radius)
                 if max(abs(y), abs(z)) == radius:
                     coordinates.append((y, z))
 
         return coordinates
 
-    def _get_matrix(self, x: int) -> None:
-        """Gets the hamiltonian matrix for the transverse contact cell
-        at some distance x.
+    def _init_hamiltonian_overlap_matrices(self, transport_index):
+        """Initializes the hamiltonian matrix for the transverse contact cell
+
 
         Parameters
         ----------
-        x : int
+        transport_index : int
             The index of the periodic repetition in the transport
             direction.
 
@@ -563,7 +551,7 @@ class Contact:
                 # These are the orbitals where to look for the coupling
                 o_1 = a % self.transverse_repetition_grid[0]
                 o_2 = b % self.transverse_repetition_grid[1]
-                orb_coup = self.orbitals_per_repetition[o_1][o_2][x]
+                orb_coup = self.orbitals_per_repetition[o_1][o_2][transport_index]
 
                 ham_tu = [H_1, H_2]
                 ham_tu.insert(self.direction, 0)
@@ -576,12 +564,16 @@ class Contact:
                     ][:, orb_coup]
                     if ham_read.nnz != 0:
                         self.UC_hamiltonian[
-                            (x, atom_coordinates[0], atom_coordinates[1])
+                            (transport_index, atom_coordinates[0], atom_coordinates[1])
                         ] = ham_read
-                        if x == 0:
+                        if transport_index == 0:
                             # FORCE THE HAMILTONIAN TO BE HERMITIAN
                             self.UC_hamiltonian[
-                                (x, -atom_coordinates[0], -atom_coordinates[1])
+                                (
+                                    transport_index,
+                                    -atom_coordinates[0],
+                                    -atom_coordinates[1],
+                                )
                             ] = ham_read.T.conj()
                         found = True
                 if ham_tu in self.device.overlap_matrices:
@@ -590,12 +582,16 @@ class Contact:
                     ][:, orb_coup]
                     if overlap_read.nnz != 0:
                         self.UC_overlap[
-                            (x, atom_coordinates[0], atom_coordinates[1])
+                            (transport_index, atom_coordinates[0], atom_coordinates[1])
                         ] = overlap_read
-                        if x == 0:
+                        if transport_index == 0:
                             # FORCE THE OVERLAP TO BE HERMITIAN
                             self.UC_overlap[
-                                (x, -atom_coordinates[0], -atom_coordinates[1])
+                                (
+                                    transport_index,
+                                    -atom_coordinates[0],
+                                    -atom_coordinates[1],
+                                )
                             ] = overlap_read.T.conj()
                         found = True
 

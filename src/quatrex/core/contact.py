@@ -54,7 +54,7 @@ class Contact:
         Unit cell Hamiltonian matrices indexed by (i, j, k) tuples.
     UC_overlap : dict
         Unit cell overlap matrices indexed by (i, j, k) tuples.
-    orbitals_per_repetition : list[NDArray]
+    orbital_indices_per_repetition : list[NDArray]
         List of orbital indices for each contact cell repetition.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
@@ -134,16 +134,18 @@ class Contact:
         # TODO Check if the contact transverse UC vectors are in the
         # same direction as the device vectors
 
-        number_of_transport_cells = self._init_orbitals()
+        number_of_transport_cells = self._init_orbital_indices()
         self.number_of_transport_cells = number_of_transport_cells
 
-        # self._init_hamiltonian_overlap_matrices()
+        # Initialize the hamiltonian and overlap matrices
+        radius = self._init_hamiltonian_overlap_matrices()
 
         if comm.rank == 0:
             print(
-                f"    Number of repetitions in transport direction: {number_of_transport_cells-1}",
+                f"    Number of repetitions in transport direction: {number_of_transport_cells}",
                 flush=True,
             )
+            print(f"    Maximum coupling radius: {radius}")
 
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
@@ -151,7 +153,9 @@ class Contact:
         for i in range(self.transverse_repetition_grid[0]):
             for j in range(self.transverse_repetition_grid[1]):
                 # The last contact cell is not included
-                self.orbitals_contact.extend(self.orbitals_per_repetition[i][j][:-1])
+                self.orbitals_contact.extend(
+                    self.orbital_indices_per_repetition[i][j][:-1]
+                )
 
         self.orbitals_contact = np.concatenate(self.orbitals_contact)[None, :]
 
@@ -162,7 +166,9 @@ class Contact:
             orbitals_slice_x = []
             for j in range(self.transverse_repetition_grid[0]):
                 for k in range(self.transverse_repetition_grid[1]):
-                    orbitals_slice_x.append(self.orbitals_per_repetition[j][k][i])
+                    orbitals_slice_x.append(
+                        self.orbital_indices_per_repetition[j][k][i]
+                    )
             self.orbitals_get_10.append(np.concatenate(orbitals_slice_x))
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
@@ -364,20 +370,33 @@ class Contact:
             ]
         )
 
-    def _init_orbitals(self):
-        # Initialize the orbitals
+    def _init_orbital_indices(self) -> int:
+        """Initializes orbital indices for all periodic repetitions
+        in transverse directions and counts number of transport cells.
+
+        Returns
+        -------
+        int
+            The number of periodic repetitions in the transport
+            direction needed for convergence.
+
+        """
+
+        # Initialize empty orbitals indices
         # for each periodic repetition in transverse directions
+        # list[ny][nz][transport_index] -> orbital indices
         ny, nz = self.transverse_repetition_grid
-        self.orbitals_per_repetition = [[[] for _ in range(nz)] for _ in range(ny)]
+        self.orbital_indices_per_repetition = [
+            [[] for _ in range(nz)] for _ in range(ny)
+        ]
 
         self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
 
         residual_orbitals_old = self.residual_orbitals.copy()
 
+        # First initialize all orbital indices
         for transport_index in itertools.count(0):
             self._init_orbitals_transverse(transport_index)
-
-            self._init_hamiltonian_overlap_matrices(transport_index)
 
             if self._residual_coupling() == 0:
                 return transport_index + 1
@@ -419,7 +438,7 @@ class Contact:
             atom_indices = self._reorder_atoms(atom_indices, index)
             orbital_indices = self._atom_to_orbital_indices(atom_indices)
 
-            self.orbitals_per_repetition[idx][idy].append(orbital_indices)
+            self.orbital_indices_per_repetition[idx][idy].append(orbital_indices)
 
             self.residual_orbitals = self.residual_orbitals[
                 ~np.isin(self.residual_orbitals, orbital_indices)
@@ -471,139 +490,135 @@ class Contact:
         for y in range(-radius, radius + 1):
             for z in range(-radius, radius + 1):
                 if max(abs(y), abs(z)) == radius:
-                    coordinates.append((y, z))
+                    coordinates.append(np.array([y, z]))
 
         return coordinates
 
-    def _init_hamiltonian_overlap_matrices(self, transport_index):
-        """Initializes the hamiltonian matrix for the transverse contact cell
-
-
-        Parameters
-        ----------
-        transport_index : int
-            The index of the periodic repetition in the transport
-            direction.
-
-        """
+    def _init_hamiltonian_overlap_matrices(self) -> int:
+        """Initializes the hamiltonian and overlap matrices"""
 
         # The hamiltonian and overlap matrices for a given transverse
         # slice are obtained around the origin cell increasing radius
         # until no more hamiltonian or overlap is found.
 
-        # Start with radius 0
-        radius = 0
+        for transport_index in range(self.number_of_transport_cells):
+            for radius in itertools.count(0):
 
-        while True:
-            # Stop if no hamilonian or overlap is found
-            found = False
-            # Get the coordinates on the circumference of the grid
-            coords_list = self._get_circumference_coordinates(radius)
-            for atom_coordinates in coords_list:
-                # Add the coordinates to the origin cell
-                a = atom_coordinates[0] + self.origin_cell_offset[0]
-                b = atom_coordinates[1] + self.origin_cell_offset[1]
+                found_any_at_radius = False
 
-                if self.device.gamma_only and (
-                    (
-                        self.transverse_repetition_grid[0] == 1
-                        and atom_coordinates[0] != 0
-                    )
-                    or (
-                        self.transverse_repetition_grid[1] == 1
-                        and atom_coordinates[1] != 0
-                    )
-                ):
-                    continue
-                # The coupling is defined in the in the device
-                # hamiltonian at (H_1, H_2) (it can be in any hopping
-                # hamiltonian). Here we compute in which hopping
-                # hamiltonian it is.
-                H_1 = int((a + 0.0001) / self.transverse_repetition_grid[0])
-                if a < 0:
-                    H_1 -= 1
-                H_2 = int((b + 0.0001) / self.transverse_repetition_grid[1])
-                if b < 0:
-                    H_2 -= 1
+                # Get the coordinates on the circumference of the grid
+                circumference_coordinates = self._get_circumference_coordinates(radius)
+                for cell_coordinates in circumference_coordinates:
 
-                if self.device.gamma_only and (
-                    self.transverse_repetition_grid[0] > 1
-                    or self.transverse_repetition_grid[1] > 1
-                ):
-                    H_1 = 0
-                    H_2 = 0
-                    if (
-                        (2 * radius + 1) > self.transverse_repetition_grid[0]
-                        and self.transverse_repetition_grid[0] > 1
-                    ) or (
-                        (2 * radius + 1) > self.transverse_repetition_grid[1]
-                        and self.transverse_repetition_grid[1] > 1
+                    if self.device.gamma_only and (
+                        np.any(
+                            (self.transverse_repetition_grid == 1)
+                            & (cell_coordinates != 0)
+                        )
                     ):
+                        continue
+
+                    # The coupling is defined in the in the device
+                    # hamiltonian at (H_1, H_2)
+                    shifted_coordinates = cell_coordinates + self.origin_cell_offset
+                    hopping_coordinates = np.array(
+                        (shifted_coordinates + 0.0001)
+                        / self.transverse_repetition_grid,
+                        dtype=int,
+                    )
+                    hopping_coordinates += np.array(
+                        [-1 if i < 0 else 0 for i in shifted_coordinates], dtype=int
+                    )
+
+                    if self.device.gamma_only and np.any(
+                        self.transverse_repetition_grid > 1
+                    ):
+                        diameter = 2 * radius + 1
+                        hopping_coordinates = np.array([0, 0])
+
+                        if np.any(
+                            (diameter > self.transverse_repetition_grid)
+                            & (self.transverse_repetition_grid > 1)
+                        ):
+                            raise ValueError(
+                                f"Error in contact {self.name}: \n"
+                                f"Cannot obtain the UC matrices from the Gamma-point device matrix, probably because the basis decay is not enough.\n"
+                                f"Possible solutions:\n"
+                                f"  - Increase the UC to include the entire cross-section (1x1 contact UC)\n"
+                                f"  - Provide all the hopping Hamiltonians in the device, not only the Gamma point."
+                                f"Error encountered with radius {radius}"
+                            )
+
+                    # These are the orbitals where to look for the coupling
+                    idx, idy = shifted_coordinates % self.transverse_repetition_grid
+                    orbital_indices = self.orbital_indices_per_repetition[idx][idy][
+                        transport_index
+                    ]
+
+                    found_hamiltonian = self._update_uc_matrices(
+                        self.device.hamiltonians,
+                        self.UC_hamiltonian,
+                        cell_coordinates,
+                        hopping_coordinates,
+                        transport_index,
+                        orbital_indices,
+                    )
+                    found_overlap = self._update_uc_matrices(
+                        self.device.overlap_matrices,
+                        self.UC_overlap,
+                        cell_coordinates,
+                        hopping_coordinates,
+                        transport_index,
+                        orbital_indices,
+                    )
+
+                    if found_overlap and not found_hamiltonian:
                         raise ValueError(
                             f"Error in contact {self.name}: \n"
-                            f"I cannot obtain the UC matrices from the Gamma-point device matrix, probably because the basis decay is not enough.\n"
-                            f"Possible solutions:\n"
-                            f"  - Increase the UC to include the entire cross-section (1x1 contact UC)\n"
-                            f"  - Provide all the hopping Hamiltonians in the device, not only the Gamma point."
-                            f"Error encountered with radius {radius}"
+                            f"Overlap matrix found without corresponding Hamiltonian at transport index {transport_index} "
+                            f"and transverse coordinates {cell_coordinates}."
                         )
 
-                # These are the orbitals where to look for the coupling
-                o_1 = a % self.transverse_repetition_grid[0]
-                o_2 = b % self.transverse_repetition_grid[1]
-                orb_coup = self.orbitals_per_repetition[o_1][o_2][transport_index]
+                    if found_hamiltonian or found_overlap:
+                        found_any_at_radius = True
 
-                ham_tu = [H_1, H_2]
-                ham_tu.insert(self.direction, 0)
-                ham_tu = tuple(ham_tu)
-                # Now get the hamiltonian and overlap matrices for the
-                # current coordinates
-                if ham_tu in self.device.hamiltonians:
-                    ham_read = self.device.hamiltonians[ham_tu][
-                        self.origin_orbital_indices, :
-                    ][:, orb_coup]
-                    if ham_read.nnz != 0:
-                        self.UC_hamiltonian[
-                            (transport_index, atom_coordinates[0], atom_coordinates[1])
-                        ] = ham_read
-                        if transport_index == 0:
-                            # FORCE THE HAMILTONIAN TO BE HERMITIAN
-                            self.UC_hamiltonian[
-                                (
-                                    transport_index,
-                                    -atom_coordinates[0],
-                                    -atom_coordinates[1],
-                                )
-                            ] = ham_read.T.conj()
-                        found = True
-                if ham_tu in self.device.overlap_matrices:
-                    overlap_read = self.device.overlap_matrices[ham_tu][
-                        self.origin_orbital_indices, :
-                    ][:, orb_coup]
-                    if overlap_read.nnz != 0:
-                        self.UC_overlap[
-                            (transport_index, atom_coordinates[0], atom_coordinates[1])
-                        ] = overlap_read
-                        if transport_index == 0:
-                            # FORCE THE OVERLAP TO BE HERMITIAN
-                            self.UC_overlap[
-                                (
-                                    transport_index,
-                                    -atom_coordinates[0],
-                                    -atom_coordinates[1],
-                                )
-                            ] = overlap_read.T.conj()
-                        found = True
+                if not found_any_at_radius:
+                    break
 
-            if not found:
-                if comm.rank == 0:
-                    print(f"        Maximum coupling radius: {radius-1}")
-                # if self.transverse_repetition_grid[0] == 1 and self.transverse_repetition_grid[1] == 1 and (radius
-                #    - 1) > 0: raise ValueError("1x1 UC but more than
-                #    1x1 coupling!")
-                break
+        return radius - 1
 
-            radius += 1
+    def _update_uc_matrices(
+        self,
+        quantity,
+        output_dict,
+        cell_coordinates,
+        hopping_index,
+        transport_index,
+        orbital_indices,
+    ):
+        """Updates the unit cell matrices for a given quantity (hamiltonian or overlap)."""
+
+        hopping_index = hopping_index.copy().tolist()
+        hopping_index.insert(self.direction, 0)
+        hopping_index = tuple(hopping_index)
+
+        hopping_matrix = quantity.get(hopping_index)
+        if hopping_matrix is None:
+            return False
+
+        unit = hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+
+        if unit.nnz == 0:
+            return False
+
+        y, z = cell_coordinates
+        output_dict[(transport_index, y, z)] = unit
+
+        # Force the hamiltonian to be hermitian
+        if transport_index == 0:
+            output_dict[(transport_index, -y, -z)] = unit.T.conj()
+
+        return True
 
     def _residual_coupling(self) -> bool:
         """Checks if there is residual coupling between the orbitals in

@@ -676,11 +676,11 @@ class QTBM:
             # Add the spill over from the overlap
             for o_r in overlap.values():
                 phi_ortho[contact.orbitals_contact.squeeze(), :] += (
-                    contact.get_10(o_r) @ phi_cont
+                    contact.get_coupling_matrix(o_r) @ phi_cont
                 )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = xp.linalg.norm(
-                contact.get_10(system_matrix) @ phi_cont
+                contact.get_coupling_matrix(system_matrix) @ phi_cont
                 + system_matrix[contact.orbitals_contact.squeeze(), :] @ phi
             )
             if comm.rank == 0:

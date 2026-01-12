@@ -58,7 +58,7 @@ class Contact:
         List of orbital indices for each contact cell repetition.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
-    transverse_rep : int
+    number_of_transport_cells : int
         Number of repetitions needed in transport direction for
         convergence.
     band_structure: NDArray
@@ -134,62 +134,65 @@ class Contact:
         # TODO Check if the contact transverse UC vectors are in the
         # same direction as the device vectors
 
-        number_of_transport_cells = self._init_orbital_indices()
-        self.number_of_transport_cells = number_of_transport_cells
+        # +-1 difference because when building the supercells,
+        # the last connection is part of the bigger connection block
+        self.number_of_transport_cells = self._init_orbital_indices()
 
         # Initialize the hamiltonian and overlap matrices
         radius = self._init_hamiltonian_overlap_matrices()
 
         if comm.rank == 0:
             print(
-                f"    Number of repetitions in transport direction: {number_of_transport_cells}",
+                f"    Number of repetitions in transport direction: {self.number_of_transport_cells}",
                 flush=True,
             )
             print(f"    Maximum coupling radius: {radius}")
 
+        nx, ny = self.transverse_repetition_grid
+
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
-        self.orbitals_contact = []
-        for i in range(self.transverse_repetition_grid[0]):
-            for j in range(self.transverse_repetition_grid[1]):
-                # The last contact cell is not included
-                self.orbitals_contact.extend(
-                    self.orbital_indices_per_repetition[i][j][:-1]
-                )
-
-        self.orbitals_contact = np.concatenate(self.orbitals_contact)[None, :]
-
-        # When getting the 10 matrix (for spill over), it is more efficient to have it sorted first in transverse, then in transport
-        # The orbital list is then different. We keep it separated over slice over transport direction.
-        self.orbitals_get_10 = []
-        for i in range(0, number_of_transport_cells):
-            orbitals_slice_x = []
-            for j in range(self.transverse_repetition_grid[0]):
-                for k in range(self.transverse_repetition_grid[1]):
-                    orbitals_slice_x.append(
-                        self.orbital_indices_per_repetition[j][k][i]
-                    )
-            self.orbitals_get_10.append(np.concatenate(orbitals_slice_x))
-
-        # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
-        self.sort_orbitals_get_10 = []
-        for i in range(
-            self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
-        ):
-            for k in range(0, number_of_transport_cells - 1):
-                self.sort_orbitals_get_10.append(
-                    np.arange(self.origin_number_of_orbitals)
-                    + i * self.origin_number_of_orbitals
-                    + k
-                    * self.origin_number_of_orbitals
-                    * self.transverse_repetition_grid[0]
-                    * self.transverse_repetition_grid[1]
-                )
-        self.sort_orbitals_get_10 = np.concatenate(
-            self.sort_orbitals_get_10, dtype=int
+        self.orbitals_contact = np.concatenate(
+            [
+                block
+                for i in range(nx)
+                for j in range(ny)
+                for block in self.orbital_indices_per_repetition[i][j][:-1]
+            ]
         )[None, :]
 
-        self.transverse_rep = number_of_transport_cells - 1
+        # When getting the coupling matrix (01) for spill over,
+        # it is more efficient to have it sorted first in transverse, then in transport
+        # The orbital list is then different.
+        # We keep it separated over slice over transport direction.
+        self.orbital_indices_per_layer = [
+            np.concatenate(
+                [
+                    self.orbital_indices_per_repetition[j][k][i]
+                    for j in range(nx)
+                    for k in range(ny)
+                ]
+            )
+            for i in range(self.number_of_transport_cells + 1)
+        ]
+
+        # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
+        self.transverse_to_transport_indices = np.concatenate(
+            [
+                np.arange(self.origin_number_of_orbitals)
+                + i * self.origin_number_of_orbitals
+                + k
+                * self.origin_number_of_orbitals
+                * self.transverse_repetition_grid[0]
+                * self.transverse_repetition_grid[1]
+                for i in range(
+                    self.transverse_repetition_grid[0]
+                    * self.transverse_repetition_grid[1]
+                )
+                for k in range(self.number_of_transport_cells)
+            ],
+            dtype=int,
+        )[None, :]
 
         self.obc_solver = self._configure_obc(
             device.quatrex_config.electron.obc, device.compute_config.nevp
@@ -399,7 +402,7 @@ class Contact:
             self._init_orbitals_transverse(transport_index)
 
             if self._residual_coupling() == 0:
-                return transport_index + 1
+                return transport_index
 
             # The residual orbitals did not change
             # but there are still residual couplings
@@ -501,7 +504,7 @@ class Contact:
         # slice are obtained around the origin cell increasing radius
         # until no more hamiltonian or overlap is found.
 
-        for transport_index in range(self.number_of_transport_cells):
+        for transport_index in range(self.number_of_transport_cells + 1):
             for radius in itertools.count(0):
 
                 found_any_at_radius = False
@@ -530,6 +533,8 @@ class Contact:
                         [-1 if i < 0 else 0 for i in shifted_coordinates], dtype=int
                     )
 
+                    # Edge case for periodic devices,
+                    # when the interactions loop
                     if self.device.gamma_only and np.any(
                         self.transverse_repetition_grid > 1
                     ):
@@ -722,18 +727,18 @@ class Contact:
 
                 a_sparsity = [
                     xp.zeros_like(self.UC_hamiltonian[0, 0, 0].toarray())
-                    for _ in range(2 * self.transverse_rep + 1)
+                    for _ in range(2 * self.number_of_transport_cells + 1)
                 ]
 
                 for key, values in self.UC_hamiltonian.items():
                     values = values.toarray()
-                    a_sparsity[self.transverse_rep + key[0]] += values != 0
-                    a_sparsity[self.transverse_rep - key[0]] += values.T != 0
+                    a_sparsity[self.number_of_transport_cells + key[0]] += values != 0
+                    a_sparsity[self.number_of_transport_cells - key[0]] += values.T != 0
 
                 for key, values in self.UC_overlap.items():
                     values = values.toarray()
-                    a_sparsity[self.transverse_rep + key[0]] += values != 0
-                    a_sparsity[self.transverse_rep - key[0]] += values.T != 0
+                    a_sparsity[self.number_of_transport_cells + key[0]] += values != 0
+                    a_sparsity[self.number_of_transport_cells - key[0]] += values.T != 0
 
                 a_sparsity = tuple(a_sparsity)
 
@@ -747,11 +752,19 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def get_10(self, M: sparse.spmatrix) -> NDArray:
+    def get_coupling_matrix(self, M: sparse.spmatrix) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
         to the contact.
+
+        Example:
+            Given a contact layers |0 1 2 3|,
+            the resulting coupling matrix is
+            |3 2 1|
+            |0 3 2|
+            |0 0 3|
+
 
         Parameters
         ----------
@@ -770,24 +783,29 @@ class Contact:
 
         """
 
-        mat_list = []
-        n = self.orbitals_get_10[0].shape[0]
-        for i in range(1, self.transverse_rep + 1):
-            # Get the hamiltonian matrix for the current key and index
-            mat_list.append(M[self.orbitals_get_10[i], :][:, self.orbitals_get_10[0]])
-        h10_temp = sparse.vstack(mat_list, format="csr")
-        for i in range(self.transverse_rep - 1):
-            mat_list.pop(0)
-            mat_list.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
-            h10_temp = sparse.hstack(
-                [
-                    sparse.vstack(mat_list, format="csr"),
-                    h10_temp,
-                ],
-                format="csr",
-            )
+        n = self.orbital_indices_per_layer[0].shape[0]
 
-        return h10_temp[self.sort_orbitals_get_10.T, self.sort_orbitals_get_10]
+        indices_zero = self.orbital_indices_per_layer[0]
+
+        # Slice block column of the matrix
+        # Thus, no conjugation and transpose is needed
+        layers = [
+            M[indices, :][:, indices_zero]
+            for indices in self.orbital_indices_per_layer[1:]
+        ]
+
+        # NOTE: Stacking sparse matrix is slow
+        coupling_matrix = []
+        zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
+        # Assemble column by column
+        for shift in range(self.number_of_transport_cells):
+            layer = layers[shift:] + [zero] * shift
+            coupling_matrix.append(sparse.vstack(layer, format="csr"))
+
+        coupling_matrix = sparse.hstack(coupling_matrix[::-1], format="csr")
+
+        indices = self.transverse_to_transport_indices
+        return coupling_matrix[indices.T, indices]
 
     def _get_list_mat_phase(self, k1: float, k2: float) -> NDArray:
         """Gets the list of hopping matrices in transport direction with
@@ -816,7 +834,7 @@ class Contact:
 
         # Create empty matrices for each repetion in the transport
         # direction
-        for ii in range(self.transverse_rep + 1):
+        for ii in range(self.number_of_transport_cells + 1):
             H_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
             S_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
 
@@ -830,13 +848,13 @@ class Contact:
 
         # Add the conjugate transpose, for example (H^-2, H^-1, H^0,
         # H^1, H^2)
-        for ii in range(self.transverse_rep):
+        for ii in range(self.number_of_transport_cells):
             H_coup.insert(0, H_coup[ii * 2 + 1].conj().T)
             S_coup.insert(0, S_coup[ii * 2 + 1].conj().T)
 
         # Augment with emtpy matrices (needed for the OBC solver) (H^-2,
         # H^-1, H^0, H^1, H^2, H^3)
-        for ii in range(self.transverse_rep - 1):
+        for ii in range(self.number_of_transport_cells - 1):
             H_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
             S_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
 
@@ -1033,7 +1051,7 @@ class Contact:
 
             # Create the toeplitz structure for the hamiltonian and
             # overlap matrices (in transport direction)
-            for ii in range(self.transverse_rep - 1):
+            for ii in range(self.number_of_transport_cells - 1):
                 H_list.insert(0, H_list.pop())
                 S_list.insert(0, S_list.pop())
                 H_tot = sparse.vstack(
@@ -1051,7 +1069,7 @@ class Contact:
 
             # Solve the OBC for the given ki and kj and store the
             # results in dictionaries
-            self.obc_solver.block_sections = self.transverse_rep
+            self.obc_solver.block_sections = self.number_of_transport_cells
 
             x_ii, phi_surface = self.obc_solver(
                 A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True

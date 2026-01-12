@@ -8,6 +8,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.kernels.linalg.kron import kron_matmul
 from qttools.utils.inplace_utils import (
     add_inplace,
     add_inplace_OBC,
@@ -15,7 +16,13 @@ from qttools.utils.inplace_utils import (
     sub_inplace_OBC,
 )
 from qttools.utils.mpi_utils import get_local_slice
-from qttools.wave_function_solver import MUMPS, SuperLU, WFSolver, cuDSS
+from qttools.wave_function_solver import (
+    MUMPS,
+    SuperLU,
+    WFSolver,
+    cuDSS,
+    preferred_matrix_type,
+)
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.constants import e, h
 from quatrex.core.device import Device
@@ -24,52 +31,10 @@ from quatrex.core.kpoints import monkhorst_pack
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
 
-_preferred_matrix_type = {
-    "mumps": sparse.coo_matrix,
-    "superlu": sparse.csc_matrix,
-    "cudss": sparse.csr_matrix,
-}
-
-
-def kr_mat_mul(m: NDArray, a: NDArray, vect: NDArray) -> NDArray:
-    """Performs Kronecker matrix multiplication.
-
-    Computes the product of a Kronecker product of matrices with a vector:
-    (m ⊗ a) @ vect.
-
-    Parameters
-    ----------
-    a : NDArray
-        First matrix in the Kronecker product.
-    m : NDArray
-        Second matrix in the Kronecker product.
-    vect : NDArray
-        Vector to be multiplied.
-
-    Returns
-    -------
-    result : NDArray
-        Resulting vector from the multiplication.
-
-    """
-    vect_3d = vect.reshape(a.shape[0], m.shape[0], -1, order="F")
-
-    # 2. Apply 'a' to the first dimension (axis 0)
-    # tensordot(a, phi, axes=1) is like a @ phi along the first axis
-    temp = np.tensordot(a, vect_3d, axes=1)
-
-    # 3. Apply 'm' to the second dimension (axis 1 of temp)
-    # We contract axis 1 of m with axis 1 of temp
-    res_simple = np.tensordot(temp, m, axes=(1, 1))
-
-    res_simple = res_simple.transpose(0, 2, 1).reshape(-1, vect.shape[1], order="F")
-
-    return res_simple
-
 
 def allocate_sys_mat(
     ham: dict, ovl: dict, boundary_SE_indexes: list[NDArray]
-) -> list[sparse.csr_matrix]:
+) -> sparse.csr_matrix:
     """Allocates the system matrix with the correct sparsity pattern.
 
     Parameters
@@ -160,7 +125,7 @@ def allocate_sys_mat(
     return system_matrix
 
 
-def compute_update_indeces_sparse(
+def compute_update_indices_sparse(
     M: sparse.csr_matrix, U: sparse.csr_matrix, destination_indexes: NDArray = None
 ) -> NDArray:
     """Computes the indices for updating the system matrix.
@@ -238,7 +203,7 @@ def compute_update_indeces_sparse(
     return xp.array(update_indices)
 
 
-def compute_update_indeces_dense(
+def compute_update_indices_dense(
     M: sparse.csr_matrix, destination_indexes: NDArray = None
 ) -> NDArray:
     """Computes the indices for updating the system matrix.
@@ -475,7 +440,7 @@ class QTBM:
         )
 
         self.solver = self._configure_solver(quatrex_config.electron.solver)
-        self.matrix_type = _preferred_matrix_type[
+        self.matrix_type = preferred_matrix_type[
             quatrex_config.electron.solver.direct_solver
         ]
 
@@ -623,7 +588,7 @@ class QTBM:
                 )
 
                 for key, value in S[cont_2].items():
-                    S_P += kr_mat_mul(
+                    S_P += kron_matmul(
                         xp.exp(-1j * key[0] * index1 - 1j * key[1] * index2),
                         value[i_batch, :, :],
                         phi_n,
@@ -667,7 +632,7 @@ class QTBM:
             )
 
             for key, value in T[n].items():
-                phi_cont += kr_mat_mul(
+                phi_cont += kron_matmul(
                     xp.exp(-1j * key[0] * index1 - 1j * key[1] * index2),
                     value[i_batch, :, :],
                     phi[contact.orbitals_contact.squeeze(), :],
@@ -775,14 +740,14 @@ class QTBM:
 
         ham_update_ind = []
         for r, h_r in self.device.hamiltonians.items():
-            ham_update_ind.append(compute_update_indeces_sparse(system_matrix, h_r))
+            ham_update_ind.append(compute_update_indices_sparse(system_matrix, h_r))
         overlap_update_ind = []
         for r, s_r in self.device.overlap_matrices.items():
-            overlap_update_ind.append(compute_update_indeces_sparse(system_matrix, s_r))
+            overlap_update_ind.append(compute_update_indices_sparse(system_matrix, s_r))
         sigma_SM_indexes = []
         for contact in self.device.contacts:
             sigma_SM_indexes.append(
-                compute_update_indeces_dense(
+                compute_update_indices_dense(
                     system_matrix, contact.orbitals_contact.squeeze()
                 )
             )

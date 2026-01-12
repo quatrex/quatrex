@@ -6,6 +6,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, obc, sparse, xp
+from qttools.kernels import linalg
 from qttools.nevp import NEVP, Beyn, Full
 from quatrex.core.compute_config import NEVPConfig
 from quatrex.core.kpoints import monkhorst_pack
@@ -198,7 +199,7 @@ class Contact:
             device.quatrex_config.electron.obc, device.compute_config.nevp
         )
 
-        self._compute_band_structure(device)
+        self._compute_band_structure()
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -1125,50 +1126,50 @@ class Contact:
 
         return inj, num_inj, K, sigma_obc_k, T_k
 
-    def _compute_band_structure(self, device):
-
-        if comm.rank == 0:
-            print(
-                f"    Computing band structure for contact {self.name}...", flush=True
-            )
+    def _compute_band_structure(self):
+        """Computes the band structure of the contact along the transport direction"""
 
         # Generate k-points in the transverse directions
-        kpoints = monkhorst_pack(device.quatrex_config.device.kpoint_grid)
-        kpoints += np.array(device.quatrex_config.device.kpoint_shift)
-        num_kpoints = kpoints.shape[0]
+        quatrex_config = self.device.quatrex_config
+        compute_config = self.device.compute_config
+        kpoints_transverse = monkhorst_pack(quatrex_config.device.kpoint_grid)
+        kpoints_transverse += np.array(quatrex_config.device.kpoint_shift)
+        num_kpoints = kpoints_transverse.shape[0]
+
+        band_structure_samples = quatrex_config.device.band_structure_samples
+        compute_module = compute_config.band_edge.eigvalsh_compute_location
+        use_pinned_memory = compute_config.band_edge.use_pinned_memory
 
         if (
-            device.quatrex_config.device.kpoint_grid[self.direction] != 1
-            or device.quatrex_config.device.kpoint_shift[self.direction] != 0
+            quatrex_config.device.kpoint_grid[self.direction] != 1
+            or quatrex_config.device.kpoint_shift[self.direction] != 0
         ):
             raise ValueError(
                 f"Error in contact {self.name}: "
-                f"Band structure calculation requires k-point grid of 1 and shift of 0 in transport direction ({self.direction}). "
+                "Band structure calculation requires k-point grid of 1"
+                f" and shift of 0 in transport direction ({self.direction}). "
             )
 
-        # TODO move to CONFIG
-        n_points_BAND = 51
-
         # Generate k-points in the transport direction
-        k_transport = xp.linspace(
+        kpoints_transport = xp.linspace(
             -xp.pi,
             xp.pi,
-            n_points_BAND,
+            band_structure_samples,
         )
 
         # Initialize band structure array
         self.band_structure = xp.zeros(
-            (num_kpoints, n_points_BAND, self.origin_number_of_orbitals),
+            (num_kpoints, band_structure_samples, self.origin_number_of_orbitals),
             dtype=xp.float64,
         )
 
-        for i, k_perp in enumerate(kpoints):
-            for j, k_par in enumerate(k_transport):
+        for i, k_transverse in enumerate(kpoints_transverse):
+            for j, k_transport in enumerate(kpoints_transport):
 
                 # Reconstruct full k-vector
-                k_vec = list(k_perp)
-                k_vec.pop(self.direction)
-                k_vec.insert(0, k_par)
+                kpoint = list(k_transverse)
+                kpoint.pop(self.direction)
+                kpoint.insert(0, k_transport)
 
                 # Construct Hamiltonian and Overlap at k-point
                 H_tot = sparse.csr_matrix(
@@ -1179,27 +1180,29 @@ class Contact:
                     (self.origin_number_of_orbitals, self.origin_number_of_orbitals),
                     dtype=xp.complex128,
                 )
+
                 # Sum over all the hoppings in the UC with the
                 # corresponding phase factors
                 for index, ham in self.UC_hamiltonian.items():
                     phase = xp.exp(
                         1j
                         * (
-                            k_vec[0] * index[0]
-                            + k_vec[1] * index[1]
-                            + k_vec[2] * index[2]
+                            kpoint[0] * index[0]
+                            + kpoint[1] * index[1]
+                            + kpoint[2] * index[2]
                         )
                     )
                     H_tot += ham * phase
                     if index[0] > 0:
                         H_tot += ham.T.conj() * phase.conj()
+
                 for index, overlap in self.UC_overlap.items():
                     phase = xp.exp(
                         1j
                         * (
-                            k_vec[0] * index[0]
-                            + k_vec[1] * index[1]
-                            + k_vec[2] * index[2]
+                            kpoint[0] * index[0]
+                            + kpoint[1] * index[1]
+                            + kpoint[2] * index[2]
                         )
                     )
                     S_tot += overlap * phase
@@ -1210,8 +1213,9 @@ class Contact:
                 H_tot = xp.array(H_tot.todense())
                 S_tot = xp.array(S_tot.todense())
                 # Solve generalized eigenvalue problem
-                chol = xp.linalg.cholesky(S_tot)
-                chol_inv = xp.linalg.inv(chol)
-                H_ortho = chol_inv @ H_tot @ chol_inv.conj().T
-
-                self.band_structure[i, j, :] = xp.linalg.eigvalsh(H_ortho)
+                self.band_structure[i, j, :] = linalg.eigvalsh(
+                    H_tot,
+                    B=S_tot,
+                    compute_module=compute_module,
+                    use_pinned_memory=use_pinned_memory,
+                ).real

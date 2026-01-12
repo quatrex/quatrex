@@ -569,6 +569,12 @@ class DeviceConfig(BaseModel):
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
+    band_structure_samples: int = 51
+    """The number of k-points to sample in the band structure calculation.
+    
+    Currently only used for the contacts in QTBM simulations.
+    """
+
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""

@@ -1,6 +1,7 @@
 # Copyright (c) 2025-2026 ETH Zurich and the authors of the quatrex package.
 
 import itertools
+from collections import defaultdict
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
@@ -100,9 +101,6 @@ class Contact:
         self.UC_hamiltonian = {}
         self.UC_overlap = {}
 
-        self.S10_contact = {}
-        self.H10_contact = {}
-
         # Get the atoms inside the origin cell (defined by the user)
         self.origin_atom_indices = self._get_atom_indices_in_cell(0, 0, 0)
         self.origin_orbital_indices = self._atom_to_orbital_indices(
@@ -126,9 +124,10 @@ class Contact:
         # Check how many periodic repetitions are in the transverse
         # directions
         self._init_periodic_transverse_repetitions()
+        ny, nz = self.transverse_repetition_grid
         if comm.rank == 0:
             print(
-                f"    Number of periodic repetitions in the transverse directions: {self.transverse_repetition_grid[0]} x {self.transverse_repetition_grid[1]}",
+                f"    Number of periodic repetitions in the transverse directions: {ny} x {nz}",
                 flush=True,
             )
 
@@ -149,15 +148,13 @@ class Contact:
             )
             print(f"    Maximum coupling radius: {radius}")
 
-        nx, ny = self.transverse_repetition_grid
-
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
         self.orbitals_contact = np.concatenate(
             [
                 block
-                for i in range(nx)
-                for j in range(ny)
+                for i in range(ny)
+                for j in range(nz)
                 for block in self.orbital_indices_per_repetition[i][j][:-1]
             ]
         )[None, :]
@@ -170,8 +167,8 @@ class Contact:
             np.concatenate(
                 [
                     self.orbital_indices_per_repetition[j][k][i]
-                    for j in range(nx)
-                    for k in range(ny)
+                    for j in range(ny)
+                    for k in range(nz)
                 ]
             )
             for i in range(self.number_of_transport_cells + 1)
@@ -182,14 +179,8 @@ class Contact:
             [
                 np.arange(self.origin_number_of_orbitals)
                 + i * self.origin_number_of_orbitals
-                + k
-                * self.origin_number_of_orbitals
-                * self.transverse_repetition_grid[0]
-                * self.transverse_repetition_grid[1]
-                for i in range(
-                    self.transverse_repetition_grid[0]
-                    * self.transverse_repetition_grid[1]
-                )
+                + k * self.origin_number_of_orbitals * ny * nz
+                for i in range(ny * nz)
                 for k in range(self.number_of_transport_cells)
             ],
             dtype=int,
@@ -430,11 +421,12 @@ class Contact:
         """
 
         # Iterate over all (x, y) combinations
-        for idx, idy in itertools.product(
-            range(self.transverse_repetition_grid[0]),
-            range(self.transverse_repetition_grid[1]),
+        ny, nz = self.transverse_repetition_grid
+        for idy, idz in itertools.product(
+            range(ny),
+            range(nz),
         ):
-            index = [idx - self.origin_cell_offset[0], idy - self.origin_cell_offset[0]]
+            index = [idy - self.origin_cell_offset[0], idz - self.origin_cell_offset[0]]
             index.insert(self.direction, transport_index)
 
             # Process atom and orbital indices
@@ -442,7 +434,7 @@ class Contact:
             atom_indices = self._reorder_atoms(atom_indices, index)
             orbital_indices = self._atom_to_orbital_indices(atom_indices)
 
-            self.orbital_indices_per_repetition[idx][idy].append(orbital_indices)
+            self.orbital_indices_per_repetition[idy][idz].append(orbital_indices)
 
             self.residual_orbitals = self.residual_orbitals[
                 ~np.isin(self.residual_orbitals, orbital_indices)
@@ -672,7 +664,7 @@ class Contact:
             nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=obc_config.block_sections,
+                block_sections=self.number_of_transport_cells,  # WARNING: overrides config
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -808,140 +800,53 @@ class Contact:
         indices = self.transverse_to_transport_indices
         return coupling_matrix[indices.T, indices]
 
-    def _get_list_mat_phase(self, k1: float, k2: float) -> NDArray:
-        """Gets the list of hopping matrices in transport direction with
-        the corresponding phase factors (for the transverse direction).
-
+    def _construct_contact_matrix(self, UC_matrix: dict, ky: float, kz: float):
+        """Constructs the full contact matrix for the contact at given
+        transverse k-points.
         Parameters
         ----------
-        k1 : float
-            The k1 value for the phase factor.
-        k2 : float
-            The k2 value for the phase factor.
+        UC_matrix : dict
+            A dictionary containing the unit cell matrices indexed by
+            (i, j, k) tuples.
+        ky : float
+            The transverse wavevector in the y-direction.
+        kz : float
+            The transverse wavevector in the z-direction.
 
         Returns
         -------
-        tuple
-            A tuple containing two lists: the list of hamiltonian
-            matrices and the list of overlap matrices.
+        sparse.spmatrix
+            The constructed contact matrix in sparse format.
 
         """
-        # Size of the hamiltonian and overlap matrices
-        n = self.UC_hamiltonian[(0, 0, 0)].shape[0]
 
-        # Initialize the lists of hamiltonian and overlap matrices
-        H_coup = []
-        S_coup = []
+        n = UC_matrix[(0, 0, 0)].shape[0]
+        num_cells = self.number_of_transport_cells
+        zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
 
-        # Create empty matrices for each repetion in the transport
-        # direction
-        for ii in range(self.number_of_transport_cells + 1):
-            H_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
-            S_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
+        uc_right = [zero for _ in range(num_cells + 1)]
+        for (x, y, z), ham in UC_matrix.items():
+            if 0 <= x <= num_cells:
+                uc_right[x] += ham * xp.exp(1j * (ky * y + kz * z))
 
-        # Fill the matrices with the hamiltonian and overlap matrices
-        # from the unit cell and apply the phase factors for the
-        # transverse direction (H^0, H^1, H^2)
-        for index, ham in self.UC_hamiltonian.items():
-            H_coup[index[0]] += ham * xp.exp(1j * (k1 * index[1] + k2 * index[2]))
-        for index, overlap in self.UC_overlap.items():
-            S_coup[index[0]] += overlap * xp.exp(1j * (k1 * index[1] + k2 * index[2]))
+        uc_left = [h.conj().T for h in uc_right[1:][::-1]]
 
-        # Add the conjugate transpose, for example (H^-2, H^-1, H^0,
-        # H^1, H^2)
-        for ii in range(self.number_of_transport_cells):
-            H_coup.insert(0, H_coup[ii * 2 + 1].conj().T)
-            S_coup.insert(0, S_coup[ii * 2 + 1].conj().T)
+        # Pad with zeros for the OBCs
+        padding = [zero] * (num_cells - 1)
+        first_row_blocks = uc_left + uc_right + padding
 
-        # Augment with emtpy matrices (needed for the OBC solver) (H^-2,
-        # H^-1, H^0, H^1, H^2, H^3)
-        for ii in range(self.number_of_transport_cells - 1):
-            H_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
-            S_coup.append(sparse.csr_matrix((n, n), dtype=xp.complex128))
+        contact_matrix = []
+        for ii in range(num_cells):
+            contact_matrix.append(sparse.hstack(first_row_blocks, format="csr"))
+            first_row_blocks.insert(0, first_row_blocks.pop())
 
-        return H_coup, S_coup
+        contact_matrix = sparse.vstack(contact_matrix, format="csr")
 
-    def _construct_circulant_matrix(self, list_mat: list, phase: float) -> NDArray:
-        """Constructs circulant matrix from list of matrices with a
-        given phase factor.
+        return contact_matrix
 
-        Parameters
-        ----------
-        list_mat : list
-            A list of matrices to construct the circulant matrix from.
-        phase : float
-            The phase factor to apply to the matrices.
-
-        Returns
-        -------
-        NDArray
-            The constructed circulant matrix.
-
-        """
-        # Number of matrices in the list
-        n = len(list_mat)
-        size_mat_batch = list_mat[0].shape[0]
-        size_mat_orb = list_mat[0].shape[1]
-        # Initialize the circulant matrix (first row)
-        mat = xp.zeros(
-            (size_mat_batch, size_mat_orb * n, size_mat_orb * n), dtype=xp.complex128
-        )
-        # Iterate over the number of matrices and apply the phase factor
-        for i in range(n):
-            mat[:, size_mat_orb * i : size_mat_orb * (i + 1), :] = xp.concatenate(
-                list_mat, axis=2
-            )
-            list_mat.insert(0, list_mat.pop() * phase)
-
-        return mat
-
-    def _upscale_self_energy(
-        self, SE_k: dict, k_1_list: NDArray, k_2_list: NDArray, k1: float, k2: float
+    def _upscale_injection_modes(
+        self, modes_k: dict, number_of_energies: int
     ) -> NDArray:
-        """Upscales self-energy matrices using circulant matrix.
-
-        Parameters
-        ----------
-        SE_k : dict
-            A dictionary containing self-energy matrices indexed by (k1,
-            k2) tuples.
-        k_1_list : NDArray
-            A list of k1 values for the phase factor.
-        k_2_list : NDArray
-            A list of k2 values for the phase factor.
-        k1 : float
-            The k1 value for the lower diagonal phase factor.
-        k2 : float
-            The k2 value for the lower diagonal phase factor.
-
-        Returns
-        -------
-        NDArray
-            The upscaled self-energy matrix.
-
-        """
-        SE_1 = []
-        for i in range(self.transverse_repetition_grid[0]):
-            SE_2 = []
-            for j in range(self.transverse_repetition_grid[1]):
-                # Initialize the self-energy matrix sub block
-                SE_2.append(
-                    xp.zeros_like(SE_k[(k_1_list[0].item(), k_2_list[0].item())])
-                )
-                # Constuct the self-energy subblock
-                for key, value in SE_k.items():
-                    SE_2[-1] += value * xp.exp(-1j * (key[0] * i + key[1] * j))
-            # Construct the circulant matrix sublock
-            SE_1.append(self._construct_circulant_matrix(SE_2, xp.exp(1j * k2)))
-
-        # Construct the final self-energy matrix
-        SE_1 = self._construct_circulant_matrix(SE_1, xp.exp(1j * k1)) / (
-            self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
-        )
-
-        return SE_1
-
-    def _upscale_injection_modes(self, modes_k: dict, E: NDArray) -> NDArray:
         """Upscales injection vectors.
 
         Parameters
@@ -949,9 +854,9 @@ class Contact:
         modes_k : dict
             A dictionary containing injection vectors indexed by (k1,
             k2) tuples.
-        E : NDArray
-            The batch of energies for which to compute the total
-            inhection vectors.
+        number_of_energies : int
+            The number of energies for which to compute the total
+            injection vectors.
 
         Returns
         -------
@@ -960,45 +865,46 @@ class Contact:
 
         """
         # Upscale the k-space modes Iterate over the wavevector keys
+        ny, nz = self.transverse_repetition_grid
+        norm = xp.sqrt(ny * nz)
+
+        modes_upscaled = defaultdict(list)
         for key, value in modes_k.items():
+
+            assert (
+                len(value) == number_of_energies
+            ), "Mismatch in number of energies when upscaling injection modes."
+
             # Iterate over the energies in the batch
-            for i_E in range(len(value)):
-                I_1 = []
-                I_2 = []
+            for i_E in range(number_of_energies):
+
                 # Upscale in 2nd direction first
-                for j in range(self.transverse_repetition_grid[1]):
-                    I_2.append(modes_k[key][i_E] * xp.exp(1j * (key[1] * j)))
-                I_2 = xp.concatenate(I_2, axis=0)
+                I_2 = xp.concatenate(
+                    [modes_k[key][i_E] * xp.exp(1j * (key[1] * j)) for j in range(nz)],
+                    axis=0,
+                )
+
                 # Upscale in 1st direction
-                for i in range(self.transverse_repetition_grid[0]):
-                    I_1.append(I_2 * xp.exp(1j * (key[0] * i)))
-                I_1 = xp.concatenate(I_1, axis=0)
-                # Store the upscaled modes
-                modes_k[key][i_E] = I_1
+                I_1 = xp.concatenate(
+                    [I_2 * xp.exp(1j * (key[0] * i)) for i in range(ny)], axis=0
+                )
+
+                modes_upscaled[key].append(I_1)
 
         # Concatenate all the wavevector (transverse)
-        modes = []
-        # Iterate over the energies in the batch
-        for i_E in range(E.shape[0]):
-            modes_E = []
-            # Iterate over the wavevector keys
-            for key, value in modes_k.items():
-                modes_E.append(value[i_E])
-            modes_E = xp.concatenate(modes_E, axis=1) / xp.sqrt(
-                self.transverse_repetition_grid[0] * self.transverse_repetition_grid[1]
+        modes = [
+            xp.concatenate(
+                [value[i_E] for value in modes_upscaled.values()],
+                axis=1,
             )
-            modes.append(modes_E)
-
-            # SORTING AND NORMALIZATION IS ONLY FOR DEBUG (IT IS NOT
-            # REALLY NEEDED) modes[-1] /=
-            # xp.exp(1j*xp.angle(modes[-1][0,:])) sort_indices =
-            # xp.argsort(modes[-1][0, :]) modes[-1] = modes[-1][:,
-            # sort_indices]
+            / norm
+            for i_E in range(number_of_energies)
+        ]
 
         return modes
 
     def compute_boundary(
-        self, k_outer: tuple[float, float, float], E: NDArray
+        self, k_outer: tuple[float, float, float], energies: NDArray
     ) -> tuple:
         """Computes OBC for the contact at given k-points and energies.
 
@@ -1006,7 +912,7 @@ class Contact:
         ----------
         k_outer : tuple[float, float, float]
             Wavevector. Captures periodicity in transverse directions.
-        E : NDArray
+        energies : NDArray
             Batch of energy values for which to compute the boundary
             conditions.
 
@@ -1019,7 +925,11 @@ class Contact:
 
         """
 
-        # FOR NOW, ONLY E BATCHING IS SUPPORTED
+        number_of_energies = energies.shape[0]
+        ny, nz = self.transverse_repetition_grid
+
+        # TODO: Batching over k-points can be implemented here
+        # and not only over energies
         k_outer = list(k_outer)
 
         if k_outer[self.direction] != 0:
@@ -1043,86 +953,46 @@ class Contact:
         K_k = {}
         T_k = {}
 
-        for k_i, k_j in itertools.product(k_inner[0], k_inner[1]):
+        for ky, kz in itertools.product(k_inner[0], k_inner[1]):
+
             # Construct the hamiltonian and overlap matrices for the
             # given ki and kj
-            H_list, S_list = self._get_list_mat_phase(k_i, k_j)
-            H_tot = sparse.hstack(H_list, format="csr")
-            S_tot = sparse.hstack(S_list, format="csr")
-
-            # Create the toeplitz structure for the hamiltonian and
-            # overlap matrices (in transport direction)
-            for ii in range(self.number_of_transport_cells - 1):
-                H_list.insert(0, H_list.pop())
-                S_list.insert(0, S_list.pop())
-                H_tot = sparse.vstack(
-                    [H_tot, sparse.hstack(H_list, format="csr")], format="csr"
-                )
-                S_tot = sparse.vstack(
-                    [S_tot, sparse.hstack(S_list, format="csr")], format="csr"
-                )
+            H_tot = self._construct_contact_matrix(self.UC_hamiltonian, ky, kz)
+            S_tot = self._construct_contact_matrix(self.UC_overlap, ky, kz)
 
             S_dense = xp.array(S_tot.todense())
             H_dense = xp.array(H_tot.todense())
 
             # Construct the system matrices for the OBC solver
-            A_tot = xp.split((E[:, None, None] * S_dense - H_dense), 3, axis=2)
+            A_tot = xp.split((energies[:, None, None] * S_dense - H_dense), 3, axis=2)
 
             # Solve the OBC for the given ki and kj and store the
             # results in dictionaries
-            self.obc_solver.block_sections = self.number_of_transport_cells
-
             x_ii, phi_surface = self.obc_solver(
-                A_tot[1], A_tot[2], A_tot[0], "left", return_injected=True
-            )
-            sigma_obc_k[k_i, k_j] = (
-                A_tot[0]
-                @ x_ii
-                @ A_tot[2]
-                / (
-                    self.transverse_repetition_grid[1]
-                    * self.transverse_repetition_grid[0]
-                )
-            )
-            inj_k[k_i, k_j] = []
-
-            for i, phi in enumerate(phi_surface):
-                inj_k[k_i, k_j].append(-A_tot[0][i] @ phi)
-
-            num_inj_k[k_i, k_j] = []
-            for phi in phi_surface:
-                num_inj_k[k_i, k_j].append(phi.shape[1])
-
-            K_k[k_i, k_j] = phi_surface
-            T_k[k_i, k_j] = (
-                -x_ii
-                @ A_tot[2]
-                / (
-                    self.transverse_repetition_grid[1]
-                    * self.transverse_repetition_grid[0]
-                )
+                A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
             )
 
-            if comm.rank == 0:
-                print(f"    Computed OBC for k1={k_i}, k2={k_j}", flush=True)
+            sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
 
-        # Upscale self-energy and Bloch matrices
-        # sigma_obc = self._upscale_self_energy(
-        #    sigma_obc_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
-        # )
-        # T = self._upscale_self_energy(
-        #    T_k, k_inner[0], k_inner[1], k_outer[0], k_outer[1]
-        # )
+            inj_k[ky, kz] = [-A_tot[0][i] @ phi for i, phi in enumerate(phi_surface)]
+
+            num_inj_k[ky, kz] = [phi.shape[1] for phi in phi_surface]
+
+            K_k[ky, kz] = phi_surface
+            T_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
         # Upscale injection and Bloch injection matrices
-        inj = self._upscale_injection_modes(inj_k, E)
-        K = self._upscale_injection_modes(K_k, E)
+        inj = self._upscale_injection_modes(inj_k, number_of_energies)
+        K = self._upscale_injection_modes(K_k, number_of_energies)
 
         # Calculate total number of injected modes
-        num_inj = np.zeros(E.shape[0], dtype=np.int32)
-        for i_E in range(E.shape[0]):
+        num_inj = np.zeros(number_of_energies, dtype=np.int32)
+        for i_E in range(number_of_energies):
             for value in num_inj_k.values():
                 num_inj[i_E] += value[i_E]
+
+        if comm.rank == 0:
+            print("    Computed the OBCs", flush=True)
 
         return inj, num_inj, K, sigma_obc_k, T_k
 

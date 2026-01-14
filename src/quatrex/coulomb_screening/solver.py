@@ -19,6 +19,7 @@ from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import (
     compute_num_connected_blocks,
+    filtering_peaks_mask,
     get_periodic_superblocks,
     homogenize,
 )
@@ -583,7 +584,16 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.
         if self.solve_call_count < self.filtering_iteration_limit:
-            self._filter_peaks(out)
+            #self._filter_peaks(out)
+            w_lesser, w_greater, *__ = out
+            local_mask = filtering_peaks_mask(
+                w_greater, self.energies, self.dos_peak_limit
+            )
+            w_greater.data[local_mask] = 0.0
+            local_mask = filtering_peaks_mask(
+                w_lesser, self.energies, self.dos_peak_limit
+            )
+            w_lesser.data[local_mask] = 0.0
 
         self.system_matrix.free_data()
         self.l_lesser.free_data()

@@ -210,3 +210,81 @@ def get_periodic_superblocks(
     # Recover the correct superbblock structure form the subblocks.
     periodic_blocks = xp.concatenate(xp.concatenate(periodic_blocks, -2), -1)
     return _block_view(periodic_blocks, -1, 3)
+
+
+def _one_sided_gradient(y, x=None, axis=0, direction='forward'):
+    if x is None:
+        x = np.arange(y.shape[axis])
+    if not len(x) == y.shape[axis]:
+        raise ValueError("Length of x must match the size of y along the specified axis.")
+
+    if direction == 'forward':
+        append_value = np.take(y, -1, axis=axis)
+        append_value = append_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        y_diff = np.diff(y, append=append_value, axis=axis)
+    elif direction == 'backward':
+        prepend_value = np.take(y, 0, axis=axis)
+        prepend_value = prepend_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        y_diff = np.diff(y, prepend=prepend_value, axis=axis)
+
+    dx = x[1] - x[0]
+    if direction == 'forward':
+        x_diff = np.diff(x, append=x[-1]+dx)
+    elif direction == 'backward':
+        x_diff = np.diff(x, prepend=x[0]-dx)
+    # Reshape x_diff to broadcast correctly along the specified axis
+    shape = [1] * y.ndim
+    shape[axis] = len(x_diff)
+    x_diff = x_diff.reshape(shape)
+    gradient = y_diff / x_diff
+    return gradient
+
+
+def filtering_peaks_mask(
+    matrix: DSDBSparse,
+    energies: NDArray,
+    peak_limit: float,
+) -> DSDBSparse:
+    """Calculates a mask for filtering peaks in the DSDBSparse matrix.
+
+    Parameters
+    ----------
+    matrix : DSDBSparse
+        The DSDBSparse matrix to filter.
+    energies : NDArray
+        The energies corresponding to the matrix.
+    peak_limit : float
+        The peak limit. Peaks above this limit will be filtered out.
+
+    Returns
+    -------
+    DSDBSparse
+        The filtered DSDBSparse data.
+    """
+
+    matrix_diag = matrix.diagonal()
+    block_sizes = matrix.block_sizes
+    block_offsets = matrix.block_offsets
+    local_dos = []
+    for i, (bsz, boff) in enumerate(zip(block_sizes, block_offsets)):
+        matrix_density = matrix_diag[..., boff : boff + bsz].imag.mean(axis=-1)
+        local_dos.append(xp.abs(matrix_density))
+    
+    local_dos = xp.array(local_dos)
+    dos = comm.stack.all_gather_v(
+        local_dos, axis=1, mask=matrix._stack_padding_mask
+    )
+
+    forward_gradient = _one_sided_gradient(dos, x=energies, axis=1, direction='forward')
+    backward_gradient = _one_sided_gradient(dos, x=energies, axis=1, direction='backward')
+    mask = (xp.min(forward_gradient, axis=0) < -peak_limit) | (
+        xp.max(backward_gradient, axis=0) > peak_limit
+    )
+
+    section_sizes, __ = get_section_sizes(energies.size, comm.stack.size)
+    section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+    local_mask = mask[
+        section_offsets[comm.stack.rank] : section_offsets[comm.stack.rank + 1]
+    ]
+
+    return local_mask

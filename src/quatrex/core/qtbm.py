@@ -494,11 +494,12 @@ class QTBM:
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
-    def compute_observables(
+    def _compute_observables(
         self,
         phi: NDArray,
         injection_segments: dict,
-        energy_index: int,
+        local_energy_index: int,
+        global_energy_index: int,
         sigma_obc_per_contact: dict,
         phi_surface_per_contact: dict,
         bloch_per_contact: dict,
@@ -521,7 +522,9 @@ class QTBM:
         injection_segments : dict
             Dictionary of slices for each
             contact where each slice corresponds to the contact's injection modes.
-        energy_index : int
+        local_energy_index : int
+            Energy index in the local energy array.
+        global_energy_index : int
             Energy index in the global energy array for storing results.
         sigma_obc_per_contact : dict
             Self-energy matrices for each contact, used for transmission
@@ -542,6 +545,28 @@ class QTBM:
 
         if phi.size == 0:
             return
+
+        # Input manipulation is done to be able to
+        # process one energy at a time
+        injection_segments = {
+            key[0]: value
+            for key, value in injection_segments.items()
+            if local_energy_index == key[1]
+        }
+        sigma_obc_per_contact = {
+            contact: {
+                key: value[local_energy_index] for key, value in sigma_obcs.items()
+            }
+            for contact, sigma_obcs in sigma_obc_per_contact.items()
+        }
+        phi_surface_per_contact = {
+            contact: value[local_energy_index]
+            for contact, value in phi_surface_per_contact.items()
+        }
+        bloch_per_contact = {
+            contact: {key: value[local_energy_index] for key, value in bloch_k.items()}
+            for contact, bloch_k in bloch_per_contact.items()
+        }
 
         contacts = self.device.contacts
 
@@ -584,7 +609,7 @@ class QTBM:
                     )
 
                 self.observables.electron_transmission_contacts[
-                    k_idx, nt, energy_index
+                    k_idx, nt, global_energy_index
                 ] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
 
         # Compute the DOS
@@ -593,8 +618,8 @@ class QTBM:
         # the overlap matrices are infinite
 
         phi_ortho = xp.zeros_like(phi)
-        for ov in overlap_matrices.values():
-            phi_ortho += ov @ phi
+        for overlap in overlap_matrices.values():
+            phi_ortho += overlap @ phi
 
         for contact in contacts:
             orbitals_contact = contact.orbitals_contact
@@ -621,9 +646,9 @@ class QTBM:
                 )
 
             # Add the spill over from the overlap
-            for o_r in overlap_matrices.values():
+            for overlap in overlap_matrices.values():
                 phi_ortho[orbitals_contact, :] += (
-                    contact.get_coupling_matrix(o_r) @ phi_cont
+                    contact.get_coupling_matrix(overlap) @ phi_cont
                 )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = xp.linalg.norm(
@@ -646,8 +671,102 @@ class QTBM:
 
             if phi_c.size != 0:
                 self.observables.electron_dos_orb[
-                    k_idx, contact_idx, :, energy_index
+                    k_idx, contact_idx, :, global_energy_index
                 ] = xp.real(xp.sum(phi_c.conj() * phi_c_ortho, axis=1) / (2 * xp.pi))
+
+    def _compute_current(self):
+        """Computes the electron current from the transmission data."""
+
+        # Compute the current from all the k dependent transmissions
+        for nt in range(self.num_transmissions):
+            contact_idx_in, contact_idx_out = (
+                self.observables.electron_transmission_indices[nt]
+            )
+            Fermi_factor = fermi_dirac(
+                self.electron_energies
+                - self.device.contacts[contact_idx_in].fermi_level,
+                self.quatrex_config.electron.temperature,
+            ) - fermi_dirac(
+                self.electron_energies
+                - self.device.contacts[contact_idx_out].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+
+            self.observables.electron_current["contact_current"][nt] = -(
+                xp.sum(
+                    xp.trapz(
+                        Fermi_factor
+                        * self.observables.electron_transmission_contacts[:, nt, :],
+                        self.electron_energies,
+                        axis=1,
+                    )
+                )
+                / self.num_kpoints
+                * (2 * e / h)
+            )
+
+    def _compute_electron_charge(self):
+        """Computes the electron charge from the DOS data."""
+
+        # Compute the orbital electron charge density per orbital
+        for n in range(self.num_contacts):
+            Fermi_factor = fermi_dirac(
+                self.electron_energies - self.device.contacts[n].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+            Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
+            self.observables.electron_charge_orb += (
+                2
+                * xp.sum(
+                    xp.trapz(
+                        self.observables.electron_dos_orb[:, n, :, :] * Fermi_factor,
+                        self.electron_energies,
+                        axis=2,
+                    ),
+                    axis=0,
+                )
+                / self.num_kpoints
+            )
+
+        # Compute atomic electron charge from orbital contributions
+        self.observables.electron_charge_at = xp.zeros(
+            self.device.orbital_offsets.shape[0] - 1
+        )
+        self.observables.electron_charge_at = xp.add.reduceat(
+            self.observables.electron_charge_orb, self.device.orbital_offsets[:-1]
+        )
+
+    def _compute_hole_charge(self):
+        """Computes the hole charge from the DOS data."""
+
+        # Compute the orbital hole charge density per orbital
+        for n in range(self.num_contacts):
+            Fermi_factor = fermi_dirac(
+                self.electron_energies - self.device.contacts[n].fermi_level,
+                self.quatrex_config.electron.temperature,
+            )
+            Fermi_factor[self.electron_energies > self.neutrality_level] = 1
+            self.observables.hole_charge_orb += (
+                2
+                * xp.sum(
+                    xp.trapz(
+                        self.observables.electron_dos_orb[:, n, :, :]
+                        * (1 - Fermi_factor),
+                        self.electron_energies,
+                        axis=2,
+                    ),
+                    axis=0,
+                )
+                / self.num_kpoints
+            )
+
+        # Compute atomic hole charge from orbital contributions
+        self.observables.hole_charge_at = xp.zeros(
+            self.device.orbital_offsets.shape[0] - 1
+        )
+        self.observables.hole_charge_at = xp.add.reduceat(
+            self.observables.hole_charge_orb, self.device.orbital_offsets[:-1]
+        )
 
     def _write_outputs(self):
         if comm.rank == 0:
@@ -716,16 +835,21 @@ class QTBM:
             self.device.hamiltonians, self.device.overlap_matrices, cont_ind_list
         )  # Initialize the system matrix
 
-        ham_update_ind = []
+        hamiltonian_update_indices = {}
         for r, h_r in self.device.hamiltonians.items():
-            ham_update_ind.append(compute_update_indices_sparse(system_matrix, h_r))
-        overlap_update_ind = []
+            hamiltonian_update_indices[r] = compute_update_indices_sparse(
+                system_matrix, h_r
+            )
+        overlap_update_indices = {}
         for r, s_r in self.device.overlap_matrices.items():
-            overlap_update_ind.append(compute_update_indices_sparse(system_matrix, s_r))
-        sigma_SM_indexes = []
+            overlap_update_indices[r] = compute_update_indices_sparse(
+                system_matrix, s_r
+            )
+
+        sigma_obc_update_indices = {}
         for contact in self.device.contacts:
-            sigma_SM_indexes.append(
-                compute_update_indices_dense(system_matrix, contact.orbitals_contact)
+            sigma_obc_update_indices[contact] = compute_update_indices_dense(
+                system_matrix, contact.orbitals_contact
             )
 
         for k_idx in range(self.num_kpoints):
@@ -818,26 +942,20 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    for r in self.device.overlap_matrices.keys():
-                        self.device.overlap_matrices[r].data *= energy
+                    # Scale the overlap matrices by the energy
+                    for overlap in self.device.overlap_matrices.values():
+                        overlap.data *= energy
 
                     # Set up sytem matrix and rhs for electron solver.
-                    i0 = (
-                        injection_count[i].get().item()
-                        if hasattr(injection_count[i], "get")
-                        else injection_count[i].item()
-                    )
                     injection_tot = xp.zeros(
-                        (self.num_orbitals, i0), dtype=xp.complex128, order="F"
+                        (self.num_orbitals, injection_count[i]),
+                        dtype=xp.complex128,
+                        order="F",
                     )
-                    # Iterate over contacts
 
+                    # Add the injection vector in the contact elements
+                    # of the rhs
                     for contact in self.device.contacts:
-                        # for contact, injection in zip(
-                        #     self.device.contacts, injection_per_contact
-                        # ):
-                        # Add the injection vector in the contact elements
-                        # of the rhs
                         injection_tot[
                             contact.orbitals_contact, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
@@ -845,39 +963,29 @@ class QTBM:
                     system_matrix.data[:] = 0
 
                     # Add the Hamiltonian and overlap contributions
-                    for r_idx, (r_key, h_r) in enumerate(
-                        self.device.hamiltonians.items()
-                    ):
-
+                    for r, h_r in self.device.hamiltonians.items():
                         sub_inplace(
                             system_matrix.data,
                             h_r.data,
-                            ham_update_ind[r_idx],
+                            hamiltonian_update_indices[r],
                         )
 
-                    for r_idx, (r_key, s_r) in enumerate(
-                        self.device.overlap_matrices.items()
-                    ):
-
+                    for r, s_r in self.device.overlap_matrices.items():
                         add_inplace(
-                            system_matrix.data,
-                            s_r.data,
-                            overlap_update_ind[r_idx],
+                            system_matrix.data, s_r.data, overlap_update_indices[r]
                         )
 
                     # Add the boundary self-energy contributions
-                    for c, s_K in enumerate(sigma_obc_per_contact.values()):
-
-                        for key, value in s_K.items():
-
+                    for contact, sigma_obc in sigma_obc_per_contact.items():
+                        for key, value in sigma_obc.items():
                             sub_inplace_OBC(
                                 system_matrix.data,
                                 value[i, :, :],
-                                sigma_SM_indexes[c],
+                                sigma_obc_update_indices[contact],
                                 key[0],
                                 key[1],
-                                self.device.contacts[c].transverse_repetition_grid[0],
-                                self.device.contacts[c].transverse_repetition_grid[1],
+                                contact.transverse_repetition_grid[0],
+                                contact.transverse_repetition_grid[1],
                             )
 
                     t_solve = time.perf_counter() - times.pop()
@@ -901,60 +1009,42 @@ class QTBM:
                     # transmission calculation
 
                     # Subtract the open boundary conditions
-                    for c, s_K in enumerate(sigma_obc_per_contact.values()):
-
-                        for key, value in s_K.items():
-
+                    for contact, sigma_obc in sigma_obc_per_contact.items():
+                        for key, value in sigma_obc.items():
                             add_inplace_OBC(
                                 system_matrix.data,
                                 value[i, :, :],
-                                sigma_SM_indexes[c],
+                                sigma_obc_update_indices[contact],
                                 key[0],
                                 key[1],
-                                self.device.contacts[c].transverse_repetition_grid[0],
-                                self.device.contacts[c].transverse_repetition_grid[1],
+                                contact.transverse_repetition_grid[0],
+                                contact.transverse_repetition_grid[1],
                             )
 
-                    for r in self.device.overlap_matrices.keys():
-                        self.device.overlap_matrices[r].data *= 1 / energy
+                    # Unscale the overlap matrices
+                    # to be able to process multiple energies
+                    for overlap in self.device.overlap_matrices.values():
+                        overlap.data *= 1 / energy
 
                     if injection_tot.size != 0:
-
-                        # Input manipulation is done to be able to
-                        # process one energy at a time in compute_observables
-                        self.compute_observables(
+                        # Input
+                        self._compute_observables(
                             phi,
-                            {
-                                key[0]: value
-                                for key, value in injection_segments.items()
-                                if i == key[1]
-                            },
+                            injection_segments,
+                            i,
                             batch_start + i,
-                            {
-                                contact: {
-                                    key: value[i] for key, value in sigma_obcs.items()
-                                }
-                                for contact, sigma_obcs in sigma_obc_per_contact.items()
-                            },
-                            {
-                                contact: value[i]
-                                for contact, value in phi_surface_per_contact.items()
-                            },
-                            {
-                                contact: {
-                                    key: value[i] for key, value in bloch_k.items()
-                                }
-                                for contact, bloch_k in bloch_per_contact.items()
-                            },
+                            sigma_obc_per_contact,
+                            phi_surface_per_contact,
+                            bloch_per_contact,
                             system_matrix,
                             self.device.overlap_matrices,
                             k_idx,
                         )
 
-                    t_iteration = time.perf_counter() - times.pop()
+                    t_observables = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
-                            f"Time for computing observables: {t_iteration:.2f} s",
+                            f"Time for computing observables: {t_observables:.2f} s",
                             flush=True,
                         )
 
@@ -962,6 +1052,7 @@ class QTBM:
                 if comm.rank == 0:
                     print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
 
+            # Remove the k-point phase factors from the Hamiltonian and Overlap
             for r, h_r in self.device.hamiltonians.items():
                 if r == (0, 0, 0):
                     continue
@@ -989,87 +1080,8 @@ class QTBM:
             comm.allgather(self.observables.electron_dos_orb), axis=-1
         )
 
-        # Compute the current from all the k dependent transmissions
-        for nt in range(self.num_transmissions):
-            contact_idx_in, contact_idx_out = (
-                self.observables.electron_transmission_indices[nt]
-            )
-            Fermi_factor = fermi_dirac(
-                self.electron_energies
-                - self.device.contacts[contact_idx_in].fermi_level,
-                self.quatrex_config.electron.temperature,
-            ) - fermi_dirac(
-                self.electron_energies
-                - self.device.contacts[contact_idx_out].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-
-            self.observables.electron_current["contact_current"][nt] = -(
-                xp.sum(
-                    xp.trapz(
-                        Fermi_factor
-                        * self.observables.electron_transmission_contacts[:, nt, :],
-                        self.electron_energies,
-                        axis=1,
-                    )
-                )
-                / self.num_kpoints
-                * (2 * e / h)
-            )
-
-        # Compute the orbital electron charge density per orbital
-        for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
-            self.observables.electron_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :] * Fermi_factor,
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
-                )
-                / self.num_kpoints
-            )
-
-        # Compute the orbital hole charge density per orbital
-        for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies > self.neutrality_level] = 1
-            self.observables.hole_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :]
-                        * (1 - Fermi_factor),
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
-                )
-                / self.num_kpoints
-            )
-
-        self.observables.electron_charge_at = xp.zeros(
-            self.device.orbital_offsets.shape[0] - 1
-        )
-        self.observables.electron_charge_at = xp.add.reduceat(
-            self.observables.electron_charge_orb, self.device.orbital_offsets[:-1]
-        )
-
-        self.observables.hole_charge_at = xp.zeros(
-            self.device.orbital_offsets.shape[0] - 1
-        )
-        self.observables.hole_charge_at = xp.add.reduceat(
-            self.observables.hole_charge_orb, self.device.orbital_offsets[:-1]
-        )
+        self._compute_current()
+        self._compute_electron_charge()
+        self._compute_hole_charge()
 
         self._write_outputs()

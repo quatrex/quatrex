@@ -157,7 +157,7 @@ class Contact:
                 for j in range(nz)
                 for block in self.orbital_indices_per_repetition[i][j][:-1]
             ]
-        )[None, :]
+        )
 
         # When getting the coupling matrix (01) for spill over,
         # it is more efficient to have it sorted first in transverse, then in transport
@@ -920,7 +920,7 @@ class Contact:
         -------
         tuple
             A tuple containing the computed self-energy, injection
-            vectors, number of injected modes, transmission matrices, and
+            vectors, transmission matrices, and
             Bloch injection matrices.
 
         """
@@ -948,10 +948,9 @@ class Contact:
         ]
 
         sigma_obc_k = {}
-        inj_k = {}
-        num_inj_k = {}
-        K_k = {}
-        T_k = {}
+        injection_k = {}
+        phi_surface_k = {}
+        bloch_k = {}
 
         for ky, kz in itertools.product(k_inner[0], k_inner[1]):
 
@@ -974,27 +973,18 @@ class Contact:
 
             sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
 
-            inj_k[ky, kz] = [-A_tot[0][i] @ phi for i, phi in enumerate(phi_surface)]
+            injection_k[ky, kz] = [
+                -A_tot[0][i] @ phi for i, phi in enumerate(phi_surface)
+            ]
 
-            num_inj_k[ky, kz] = [phi.shape[1] for phi in phi_surface]
-
-            K_k[ky, kz] = phi_surface
-            T_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
+            phi_surface_k[ky, kz] = phi_surface
+            bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
         # Upscale injection and Bloch injection matrices
-        inj = self._upscale_injection_modes(inj_k, number_of_energies)
-        K = self._upscale_injection_modes(K_k, number_of_energies)
+        injection = self._upscale_injection_modes(injection_k, number_of_energies)
+        phi_surface = self._upscale_injection_modes(phi_surface_k, number_of_energies)
 
-        # Calculate total number of injected modes
-        num_inj = np.zeros(number_of_energies, dtype=np.int32)
-        for i_E in range(number_of_energies):
-            for value in num_inj_k.values():
-                num_inj[i_E] += value[i_E]
-
-        if comm.rank == 0:
-            print("    Computed the OBCs", flush=True)
-
-        return inj, num_inj, K, sigma_obc_k, T_k
+        return injection, phi_surface, sigma_obc_k, bloch_k
 
     def _compute_band_structure(self):
         """Computes the band structure of the contact along the transport direction"""

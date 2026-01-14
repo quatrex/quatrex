@@ -25,6 +25,7 @@ from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import (
     assemble_kpoint_dsb,
+    filtering_peaks_mask,
     get_periodic_superblocks,
     homogenize,
     load_matrix_from_files,
@@ -938,7 +939,15 @@ class ElectronSolver(SubsystemSolver):
         t_filter_peaks_start = time.perf_counter()
         self.system_matrix.free_data()
         if self.call_count < self.filtering_iteration_limit:
-            self._filter_peaks(out)
+            # self._filter_peaks(out)
+            g_lesser, g_greater, g_retarded = out
+            local_mask = filtering_peaks_mask(
+                g_retarded, self.energies, self.dos_peak_limit
+            ) 
+            g_lesser.data[local_mask] = 0.0
+            g_greater.data[local_mask] = 0.0
+            g_retarded.data[local_mask] = 0.0
+
         synchronize_device()
         t_filter_peaks_end = time.perf_counter()
         comm.barrier()

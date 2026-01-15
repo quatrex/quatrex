@@ -646,10 +646,6 @@ class QTBM:
 
             for n in range(self.num_contacts):
                 np.save(
-                    f"{output_dir}/band_{self.device.contacts[n].name[0]}.npy",
-                    self.device.contacts[n].band_structure,
-                )
-                np.save(
                     f"{output_dir}/dos_{self.device.contacts[n].name[0]}.npy",
                     self.observables.electron_dos_orb[:, n, :, :],
                 )

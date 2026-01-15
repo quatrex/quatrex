@@ -35,4 +35,5 @@ jobs:
       - name: Show git diff
         if: steps.lint.outcome == 'failure'
         run: |
+            chmod +x ./.github/workflows/scripts/show-git-diff.sh
             ./.github/workflows/scripts/show-git-diff.sh

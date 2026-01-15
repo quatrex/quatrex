@@ -1,0 +1,38 @@
+# Copyright 2025 ETH Zurich and Quantum Transport Toolbox authors.
+name: Run Pre-Commit and Determine Code Quality
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test-linting:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.13"
+          channels: conda-forge,defaults
+          channel-priority: true
+          activate-environment: quatrex-dev
+          environment-file: environment-dev.yaml
+
+      - name: Install quatrex without Dependencies
+        run: |
+          pip install --no-deps --editable .
+
+      - name: Run linting tools
+        id: lint
+        continue-on-error: true
+        run: pre-commit run --all-files
+
+      - name: Show git diff
+        if: steps.lint.outcome == 'failure'
+        run: |
+            ./.github/workflows/scripts/show-git-diff.sh

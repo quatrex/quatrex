@@ -23,9 +23,9 @@ jobs:
           activate-environment: quatrex-dev
           environment-file: environment-dev.yaml
 
-      - name: Install quatrex without Dependencies
+      - name: Install linting tools
         run: |
-          pip install --no-deps .[linting]
+          pip install pre-commit
 
       - name: Run linting tools
         id: lint

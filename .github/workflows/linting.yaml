@@ -25,7 +25,7 @@ jobs:
 
       - name: Install quatrex without Dependencies
         run: |
-          pip install --no-deps --editable .
+          pip install --no-deps .[linting]
 
       - name: Run linting tools
         id: lint

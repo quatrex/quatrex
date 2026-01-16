@@ -15,7 +15,7 @@ from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.energies import get_electron_energies
+from quatrex.core.grid import get_electron_energies
 from quatrex.core.observables import contact_currents, density, device_current
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern

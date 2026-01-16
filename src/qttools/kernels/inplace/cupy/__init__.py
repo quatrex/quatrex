@@ -2,23 +2,23 @@
 
 
 from qttools.kernels.inplace.cupy.inplace_add import (
-    add_kernel_comp,
-    add_kernel_real,
-    add_OBC_inplace,
+    iadd_kernel_comp,
+    iadd_kernel_real,
+    iadd_OBC,
 )
 from qttools.kernels.inplace.cupy.inplace_sub import (
-    sub_kernel_comp,
-    sub_kernel_real,
-    sub_OBC_inplace,
+    isub_kernel_comp,
+    isub_kernel_real,
+    isub_OBC,
 )
 
 THREADS_PER_BLOCK = 1024
 
 __all__ = [
-    "add_kernel_comp",
-    "add_kernel_real",
-    "sub_kernel_comp",
-    "sub_kernel_real",
-    "add_OBC_inplace",
-    "sub_OBC_inplace",
+    "iadd_kernel_comp",
+    "iadd_kernel_real",
+    "isub_kernel_comp",
+    "isub_kernel_real",
+    "iadd_OBC",
+    "isub_OBC",
 ]

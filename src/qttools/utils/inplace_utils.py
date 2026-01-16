@@ -7,19 +7,19 @@ from qttools import NDArray, sparse, xp
 if xp.__name__ == "cupy":
     from qttools.kernels.inplace.cupy import THREADS_PER_BLOCK
     from qttools.kernels.inplace.cupy.inplace_add import (
-        add_kernel_comp,
-        add_kernel_real,
-        add_OBC_inplace,
+        iadd_kernel_comp,
+        iadd_kernel_real,
+        iadd_OBC,
     )
     from qttools.kernels.inplace.cupy.inplace_sub import (
-        sub_kernel_comp,
-        sub_kernel_real,
-        sub_OBC_inplace,
+        isub_kernel_comp,
+        isub_kernel_real,
+        isub_OBC,
     )
 
 elif xp.__name__ == "numpy":
-    from qttools.kernels.inplace.numba.inplace_add import add_OBC_inplace_CPU
-    from qttools.kernels.inplace.numba.inplace_sub import sub_OBC_inplace_CPU
+    from qttools.kernels.inplace.numba.inplace_add import iadd_OBC_CPU
+    from qttools.kernels.inplace.numba.inplace_sub import isub_OBC_CPU
 
 
 def compute_update_indices_sparse(
@@ -185,9 +185,9 @@ def add_inplace(M, U, ind):
         if M.dtype != xp.complex128:
             raise ValueError("In-place addition kernel requires M to be complex128.")
         if U.dtype == xp.complex128:
-            add_kernel_comp((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
+            iadd_kernel_comp((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
         elif U.dtype == xp.float64:
-            add_kernel_real((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
+            iadd_kernel_real((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
         else:
             raise ValueError("Unsupported dtype for U in in-place addition.")
 
@@ -206,7 +206,7 @@ def add_inplace_OBC(M, U, ind, key1, key2, nrep1, nrep2):
         # Launch kernel
         blocks_per_grid = (N + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
 
-        add_OBC_inplace(
+        iadd_OBC(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
             (
@@ -226,7 +226,7 @@ def add_inplace_OBC(M, U, ind, key1, key2, nrep1, nrep2):
         N_S = U.shape[1]
         N_S_big = N_S * nrep1 * nrep2
         N = ind.shape[0]
-        add_OBC_inplace_CPU(
+        iadd_OBC_CPU(
             M,
             U.flatten(),
             key1,
@@ -258,9 +258,9 @@ def sub_inplace(M, U, ind):
         if M.dtype != xp.complex128:
             raise ValueError("In-place subtraction kernel requires M to be complex128.")
         if U.dtype == xp.complex128:
-            sub_kernel_comp((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
+            isub_kernel_comp((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
         elif U.dtype == xp.float64:
-            sub_kernel_real((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
+            isub_kernel_real((blocks_per_grid,), (THREADS_PER_BLOCK,), (M, U, ind, N))
         else:
             raise ValueError("Unsupported dtype for U in in-place subtraction.")
 
@@ -280,7 +280,7 @@ def sub_inplace_OBC(M, U, ind, key1, key2, nrep1, nrep2):
         # Launch kernel
         blocks_per_grid = (N + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
 
-        sub_OBC_inplace(
+        isub_OBC(
             (blocks_per_grid,),
             (THREADS_PER_BLOCK,),
             (
@@ -300,7 +300,7 @@ def sub_inplace_OBC(M, U, ind, key1, key2, nrep1, nrep2):
         N_S = U.shape[1]
         N_S_big = N_S * nrep1 * nrep2
         N = ind.shape[0]
-        sub_OBC_inplace_CPU(
+        isub_OBC_CPU(
             M,
             U.flatten(),
             key1,

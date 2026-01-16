@@ -8,6 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash -l {0}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,4 +40,4 @@ jobs:
           pip install --no-deps --editable .
           pip install pre-commit
           pre-commit install
-          pre-commit run
+          pre-commit run --all-files

@@ -2,7 +2,7 @@
 
 import cupy as cp
 
-sub_kernel_comp = cp.RawKernel(
+isub_kernel_comp = cp.RawKernel(
     r"""
                                                     #include <cupy/complex.cuh>
                                                     extern "C" __global__
@@ -17,7 +17,7 @@ sub_kernel_comp = cp.RawKernel(
     "sub_comp_func",
 )
 
-sub_kernel_real = cp.RawKernel(
+isub_kernel_real = cp.RawKernel(
     r"""
                                 #include <cupy/complex.cuh>
                                 extern "C" __global__
@@ -32,7 +32,7 @@ sub_kernel_real = cp.RawKernel(
     "sub_real_func",
 )
 
-sub_OBC_inplace = cp.RawKernel(
+isub_OBC = cp.RawKernel(
     r"""
                                     #include <cupy/complex.cuh>
                                            

@@ -6,7 +6,7 @@ from numba import njit, prange
 
 
 @njit(parallel=True)
-def add_OBC_inplace_CPU(M, S, K1, K2, N_S_big, N_S, n_rep_2, ind, N):
+def iadd_OBC_CPU(M, S, K1, K2, N_S_big, N_S, n_rep_2, ind, N):
     for i in prange(N):
         i_S_big = i // N_S_big
         j_S_big = i % N_S_big

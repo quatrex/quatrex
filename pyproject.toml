@@ -59,7 +59,7 @@ dependencies = [
         "mkdocs-literate-nav",
         "mkdocs-section-index",
     ]
-    linting= ["pre-commit",]
+    linting = ["pre-commit",]
 
     [project.urls]
     Code = "https://github.com/quatrex-dev/quatrex"

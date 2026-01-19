@@ -1,12 +1,6 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2025-2026 ETH Zurich and the authors of the qttools package.
 
 
-from qttools.kernels.inplace.numba.inplace_add import iadd_OBC_CPU
-from qttools.kernels.inplace.numba.inplace_sub import isub_OBC_CPU
+from qttools.kernels.inplace.numba.inplace import iadd, iadd_obc, isub, isub_obc
 
-THREADS_PER_BLOCK = 1024
-
-__all__ = [
-    "iadd_OBC_CPU",
-    "isub_OBC_CPU",
-]
+__all__ = ["iadd", "iadd_obc", "isub", "isub_obc"]

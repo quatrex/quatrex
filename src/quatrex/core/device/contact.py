@@ -598,7 +598,15 @@ class Contact:
         if hopping_matrix is None:
             return False
 
-        unit = hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+        # TODO: The hopping matrix sits on the GPU. It seems that there
+        # is some strange fancy indexing bug that makes it necessary to
+        # handle slicing on the CPU. (cupy-13.5.1)
+        hopping_matrix = (
+            hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
+        )
+        unit = sparse.csr_matrix(
+            hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+        )
 
         if unit.nnz == 0:
             return False

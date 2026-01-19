@@ -8,14 +8,11 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
 from qttools.utils.inplace_utils import (
-    add_inplace,
-    add_inplace_OBC,
     compute_update_indices_dense,
     compute_update_indices_sparse,
-    sub_inplace,
-    sub_inplace_OBC,
 )
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import (
@@ -817,21 +814,21 @@ class QTBM:
 
                     # Add the Hamiltonian and overlap contributions
                     for r, h_r in self.device.hamiltonians.items():
-                        sub_inplace(
+                        inplace.isub(
                             system_matrix.data,
                             h_r.data,
                             hamiltonian_update_indices[r],
                         )
 
                     for r, s_r in self.device.overlap_matrices.items():
-                        add_inplace(
+                        inplace.iadd(
                             system_matrix.data, s_r.data, overlap_update_indices[r]
                         )
 
                     # Add the boundary self-energy contributions
                     for contact, sigma_obc in sigma_obc_per_contact.items():
                         for key, value in sigma_obc.items():
-                            sub_inplace_OBC(
+                            inplace.isub_obc(
                                 system_matrix.data,
                                 value[i, :, :],
                                 sigma_obc_update_indices[contact],
@@ -864,7 +861,7 @@ class QTBM:
                     # Subtract the open boundary conditions
                     for contact, sigma_obc in sigma_obc_per_contact.items():
                         for key, value in sigma_obc.items():
-                            add_inplace_OBC(
+                            inplace.iadd_obc(
                                 system_matrix.data,
                                 value[i, :, :],
                                 sigma_obc_update_indices[contact],

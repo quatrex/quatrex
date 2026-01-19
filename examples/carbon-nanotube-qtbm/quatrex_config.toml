@@ -1,6 +1,6 @@
 simulation_dir = "."
 
-formalism = "qtbm" # "scba" or "qtbm"
+formalism = "wf" # "negf" or "wf"
 
 [device]
 transport_direction = "x"

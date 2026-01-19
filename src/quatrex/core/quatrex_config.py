@@ -590,7 +590,20 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
-    formalism: Literal["qtbm", "scba"]
+    formalism: Literal["wf", "negf"]
+    """The transport formalism to use.
+
+    There are two supported formalisms:
+
+    - "wf": Wavefunction formalism
+    - "negf": Non-equilibrium Green's function formalism
+
+    !!! warning "Input formats"
+
+        Currently, the input formats for the two formalisms are not
+        consistent.
+
+    """
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     qtbm: QTBMConfig = QTBMConfig()

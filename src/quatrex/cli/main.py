@@ -47,7 +47,7 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-def _run_qtbm(quatrex_config, compute_config):
+def _run_wf(quatrex_config, compute_config):
     """Runs quatrex with the given configuration.
 
     Parameters
@@ -77,7 +77,7 @@ def _run_qtbm(quatrex_config, compute_config):
             typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
-def _run_scba(quatrex_config, compute_config):
+def _run_negf(quatrex_config, compute_config):
     """Runs quatrex with the given configuration using SCBA.
 
     Parameters
@@ -173,10 +173,10 @@ def run(
     secho_header()
 
     # Dispatch to the appropriate runner based on the formalism.
-    if quatrex_config.formalism == "qtbm":
-        _run_qtbm(quatrex_config, compute_config)
-    elif quatrex_config.formalism == "scba":
-        _run_scba(quatrex_config, compute_config)
+    if quatrex_config.formalism == "wf":
+        _run_wf(quatrex_config, compute_config)
+    elif quatrex_config.formalism == "negf":
+        _run_negf(quatrex_config, compute_config)
     else:
         raise NotImplementedError(
             f"Formalism '{quatrex_config.formalism}' is not implemented."

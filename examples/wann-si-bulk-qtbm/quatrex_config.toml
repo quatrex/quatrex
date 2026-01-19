@@ -1,5 +1,5 @@
 simulation_dir = "."
-formalism = "qtbm"
+formalism = "wf"
 
 [qtbm]
 max_batch_size = 1

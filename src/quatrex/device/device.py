@@ -8,8 +8,8 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.device.contact import Contact
 from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.device.contact import Contact
 
 
 def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
@@ -55,7 +55,7 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
 
     """
 
-    lattice = None
+    lattice_vectors = None
     atom_coordinates = None
     atom_types = None
 
@@ -71,17 +71,19 @@ def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
                 f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
             )
 
-        lattice = lattice_line.split("=")[1].strip().split('"')[1]
-        lattice = np.fromstring(lattice, dtype=np.float64, sep=" ").reshape(3, 3)
+        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
+        lattice_vectors = np.fromstring(
+            lattice_vectors, dtype=np.float64, sep=" "
+        ).reshape(3, 3)
         atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
         atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
 
     # Broadcast the data to all the ranks
-    lattice = comm.bcast(lattice, root=0)
+    lattice_vectors = comm.bcast(lattice_vectors, root=0)
     atom_coordinates = comm.bcast(atom_coordinates, root=0)
     atom_types = comm.bcast(atom_types, root=0)
 
-    return lattice, atom_coordinates, atom_types
+    return lattice_vectors, atom_coordinates, atom_types
 
 
 class Device:
@@ -113,12 +115,12 @@ class Device:
     gamma_only : bool
         True if only the Gamma point (0,0,0) Hamiltonian is available,
         indicating that k-point calculations are not possible.
-    lattice_vector : NDArray
+    lattice_vectors : NDArray
         3x3 array containing the lattice vectors of the device unit
         cell.
     atom_coordinates : NDArray
         Array of atomic coordinates.
-    atoms_type : NDArray
+    atomic_species : NDArray
         Array of atom symbols for each atom.
     orbital_offsets : NDArray
         Array of cumulative orbital counts, used to map from atoms to
@@ -263,7 +265,7 @@ class Device:
         lattice_file = self.quatrex_config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
-        self.lattice_vector, self.atom_coordinates, self.atoms_type = (
+        self.lattice_vectors, self.atom_coordinates, self.atomic_species = (
             distributed_read_xyz(lattice_file)
         )
 
@@ -284,7 +286,7 @@ class Device:
                 defaultdict(
                     lambda: 1, self.quatrex_config.device.num_orbitals_per_atom
                 ).get,
-                self.atoms_type,
+                self.atomic_species,
             ),
             dtype=np.int32,
         )
@@ -300,7 +302,7 @@ class Device:
 
         """
 
-        self.orbital_potential = None
+        self.potential = None
 
         try:
             potential = distributed_load(
@@ -309,11 +311,9 @@ class Device:
 
             if potential.shape[0] == self.atom_coordinates.shape[0]:
                 # Upscale the potential to the number of orbitals
-                self.orbital_potential = get_orbital_potential(
-                    potential, self.orbital_offsets
-                )
+                self.potential = get_orbital_potential(potential, self.orbital_offsets)
             elif potential.shape[0] == self.orbital_offsets[-1]:
-                self.orbital_potential = potential
+                self.potential = potential
             else:
                 raise ValueError(
                     "Potential shape does not match number of atoms or orbitals."
@@ -328,18 +328,18 @@ class Device:
     def apply_potential(self) -> None:
         """Applies electrostatic potential to device Hamiltonian."""
 
-        if self.orbital_potential is None:
+        if self.potential is None:
             if comm.rank == 0:
                 print(
                     "No potential loaded. Skipping potential application.", flush=True
                 )
             return
 
-        potential = self.orbital_potential + 1e-10
+        potential = self.potential + 1e-10
 
-        for lattice_index, overlap in self.overlap_matrices.items():
-            self.hamiltonians[lattice_index] += (
-                overlap.multiply(potential[:, np.newaxis]) + overlap.multiply(potential)
+        for r, s_r in self.overlap_matrices.items():
+            self.hamiltonians[r] += (
+                s_r.multiply(potential[:, np.newaxis]) + s_r.multiply(potential)
             ) / 2
 
     def _add_contacts(self):
@@ -359,7 +359,7 @@ class Device:
                     device=self,
                     name=contact_config.name,
                     origin=contact_config.origin,
-                    lattice_vectors=contact_config.size,
+                    lattice_vectors=contact_config.lattice_vectors,
                     direction=contact_config.direction,
                     fermi_level=contact_config.fermi_level,
                 )

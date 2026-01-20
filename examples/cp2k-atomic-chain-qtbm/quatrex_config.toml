@@ -12,14 +12,14 @@ kpoint_shift = [0,0,0]
     [[device.contacts]]
     name = "left"
     origin = [0.65, 0 ,0]
-    size = [[2.57031, 0, 0], [0,10 , 0], [0, 0, 10]]
+    lattice_vectors = [[2.57031, 0, 0], [0,10 , 0], [0, 0, 10]]
     direction = "a"
      fermi_level = -3
 
     [[device.contacts]]
     name = "right"
     origin = [256.4,  -0.001 ,-0.001]
-    size = [[-2.57031 , 0, 0], [0, 10 , 0], [0, 0, 10]]
+    lattice_vectors = [[-2.57031 , 0, 0], [0, 10 , 0], [0, 0, 10]]
     direction = "a"
     fermi_level = -3.001
 

@@ -535,7 +535,7 @@ class ContactConfig(BaseModel):
     name: str
     type: Literal["ohmic"] = "ohmic"
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    size: list[list[float]] = Field(
+    lattice_vectors: list[list[float]] = Field(
         default_factory=lambda: [
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -548,7 +548,7 @@ class ContactConfig(BaseModel):
     def to_array(self) -> Self:
         """Transforms origin and size to arrays."""
         self.origin = np.array(self.origin, dtype=float)
-        self.size = np.array(self.size, dtype=float)
+        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
         return self
 
 
@@ -564,16 +564,10 @@ class DeviceConfig(BaseModel):
 
     contacts: list[ContactConfig] = Field(default_factory=list)
 
-    num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
+    num_orbitals_per_atom: dict[str, int] = {"X": 1}
 
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
-    band_structure_samples: int = 51
-    """The number of k-points to sample in the band structure calculation.
-    
-    Currently only used for the contacts in QTBM simulations.
-    """
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

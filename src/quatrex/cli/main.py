@@ -58,8 +58,8 @@ def _run_wf(quatrex_config, compute_config):
         The compute configuration.
 
     """
-    from quatrex.device import Device
     from quatrex.core.qtbm import QTBM
+    from quatrex.device import Device
 
     with threadpool_limits(
         limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api

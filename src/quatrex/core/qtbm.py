@@ -24,10 +24,10 @@ from qttools.wave_function_solver import (
 )
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.constants import e, h
-from quatrex.device import Device
-from quatrex.grid import get_electron_energies, monkhorst_pack
 from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
+from quatrex.device import Device
+from quatrex.grid import get_electron_energies, monkhorst_pack
 
 
 def allocate_sys_mat(

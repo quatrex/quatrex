@@ -1,4 +1,4 @@
-# Copyright 2025 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2026 ETH Zurich and the authors of the quatrex package.
 name: Run Pre-Commit and Determine Code Quality
 
 on: [push, pull_request, workflow_dispatch]

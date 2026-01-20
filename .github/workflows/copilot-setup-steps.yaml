@@ -1,4 +1,4 @@
-# Copyright 2025 ETH Zurich and Quantum Transport Toolbox authors.
+# Copyright (c) 2026 ETH Zurich and the authors of the quatrex package.
 name: "Copilot Setup Steps"
 
 on: workflow_dispatch

@@ -220,6 +220,8 @@ class Spectral(OBCSolver):
         batchsize = a_xx[0].shape[0]
 
         if batchsize != 1 and find_injected:
+            # TODO: We keep this restriction, as we have not tested the
+            # injection vector calculation with batchsize > 1 yet.
             raise ValueError(
                 "The injection vector can only be calculated with batchsize = 1"
             )

@@ -8,7 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.device.contact import Contact
+from quatrex.device.contact import Contact
 from quatrex.core.quatrex_config import QuatrexConfig
 
 

@@ -54,8 +54,8 @@ class BandEdgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_eigvalsh: bool = True
-    """Whether to use the eigvalsh or eig function to compute
-    the eigenvalues band edges. The eigvalsh function is more efficient,
+    """Whether to use eigvalsh or eig to compute the eigenvalues to
+    determine the band edges. The eigvalsh function is more efficient,
     but is an approximation if scattering is included.
 
     Only used if the band edge tracking is set to "eigenvalues".
@@ -63,20 +63,14 @@ class BandEdgeConfig(BaseModel):
 
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
     """Location where to compute the eigenvalues.
-    
-    Both used in SCBA band edge calculations
-    and in the QTBM contact band structure calculations.
 
-    For SCBA, only used if the band edge tracking is set to "eigenvalues".
+    Only used if the band edge tracking is set to "eigenvalues".
     """
 
     use_pinned_memory: bool = True
     """Whether to use pinned memory for eigenvalue computations.
-    
-    Both used in SCBA band edge calculations
-    and in the QTBM contact band structure calculations.
 
-    For SCBA, only used if the band edge tracking is set to "eigenvalues".
+    Only used if the band edge tracking is set to "eigenvalues".
     """
 
     block_sections: PositiveInt = 1

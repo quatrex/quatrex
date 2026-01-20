@@ -46,19 +46,19 @@ class Contact:
         Contact origin coordinates.
     direction : int
         Transport direction index (0, 1, or 2).
-    transverse_axis : list[int]
+    transverse_axes : list[int]
         Indices of the two transverse directions.
     obc : obc.Spectral
         Configured open boundary condition solver.
-    UC_hamiltonian : dict
+    unit_cell_hamiltonian : dict
         Unit cell Hamiltonian matrices indexed by (i, j, k) tuples.
-    UC_overlap : dict
+    unit_cell_overlap : dict
         Unit cell overlap matrices indexed by (i, j, k) tuples.
-    orbital_indices_per_repetition : list[NDArray]
-        List of orbital indices for each contact cell repetition.
+    unit_cell_orbital_indices : dict
+        Dict of orbital indices for each contact cell indexed by (i, j, k) tuples.
     transverse_repetition_grid: NDArray
         Number of periodic repetitions in the two transverse directions.
-    number_of_transport_cells : int
+    num_transport_cells : int
         Number of repetitions needed in transport direction for
         convergence.
 
@@ -91,11 +91,11 @@ class Contact:
         self.origin = origin
 
         self.direction = "abc".index(direction)
-        self.transverse_axis = [0, 1, 2]
-        self.transverse_axis.remove(self.direction)
+        self.transverse_axes = [0, 1, 2]
+        self.transverse_axes.remove(self.direction)
 
-        self.UC_hamiltonian = {}
-        self.UC_overlap = {}
+        self.unit_cell_hamiltonian = {}
+        self.unit_cell_overlap = {}
 
         # Get the atoms inside the origin cell (defined by the user)
         self.origin_atom_indices = self._get_atom_indices_in_cell(0, 0, 0)
@@ -103,9 +103,9 @@ class Contact:
             self.origin_atom_indices
         )
 
-        self.origin_number_of_orbitals = len(self.origin_orbital_indices)
+        self.origin_num_orbitals = len(self.origin_orbital_indices)
 
-        if self.origin_number_of_orbitals == 0:
+        if self.origin_num_orbitals == 0:
             raise ValueError(
                 f"Error in contact {self.name}: No atoms found inside the origin cell."
             )
@@ -113,7 +113,7 @@ class Contact:
         if comm.rank == 0:
             print(f"Contact {self.name}:", flush=True)
             print(
-                f"    Number of atoms inside the origin cell: {self.origin_number_of_orbitals}",
+                f"    Number of atoms inside the origin cell: {self.origin_num_orbitals}",
                 flush=True,
             )
 
@@ -132,14 +132,14 @@ class Contact:
 
         # +-1 difference because when building the supercells,
         # the last connection is part of the bigger connection block
-        self.number_of_transport_cells = self._init_orbital_indices()
+        self.num_transport_cells = self._init_orbital_indices()
 
         # Initialize the hamiltonian and overlap matrices
         radius = self._init_hamiltonian_overlap_matrices()
 
         if comm.rank == 0:
             print(
-                f"    Number of repetitions in transport direction: {self.number_of_transport_cells}",
+                f"    Number of repetitions in transport direction: {self.num_transport_cells}",
                 flush=True,
             )
             print(f"    Maximum coupling radius: {radius}")
@@ -148,10 +148,8 @@ class Contact:
         # Sorted first in transport direction, then in transverse directions
         self.orbitals_contact = np.concatenate(
             [
-                block
-                for i in range(ny)
-                for j in range(nz)
-                for block in self.orbital_indices_per_repetition[i][j][:-1]
+                self.unit_cell_orbital_indices[i, j, k]
+                for j, k, i in np.ndindex(ny, nz, self.num_transport_cells)
             ]
         )
 
@@ -161,23 +159,19 @@ class Contact:
         # We keep it separated over slice over transport direction.
         self.orbital_indices_per_layer = [
             np.concatenate(
-                [
-                    self.orbital_indices_per_repetition[j][k][i]
-                    for j in range(ny)
-                    for k in range(nz)
-                ]
+                [self.unit_cell_orbital_indices[i, j, k] for j, k in np.ndindex(ny, nz)]
             )
-            for i in range(self.number_of_transport_cells + 1)
+            for i in range(self.num_transport_cells + 1)
         ]
 
         # We then need to sort the 10 matrix to have the same ordering as the contact OBCs
         self.transverse_to_transport_indices = np.concatenate(
             [
-                np.arange(self.origin_number_of_orbitals)
-                + i * self.origin_number_of_orbitals
-                + k * self.origin_number_of_orbitals * ny * nz
+                np.arange(self.origin_num_orbitals)
+                + i * self.origin_num_orbitals
+                + k * self.origin_num_orbitals * ny * nz
                 for i in range(ny * nz)
-                for k in range(self.number_of_transport_cells)
+                for k in range(self.num_transport_cells)
             ],
             dtype=int,
         )[None, :]
@@ -265,7 +259,7 @@ class Contact:
             atom_indices, :
         ] - self.lattice_vectors @ np.array(idx)
 
-        atoms_type = self.device.atoms_type[atom_indices]
+        atomic_species = self.device.atomic_species[atom_indices]
 
         for origin_atom_index in self.origin_atom_indices:
 
@@ -278,7 +272,7 @@ class Contact:
             # to the atom in the origin cell and have the same element
             found_atoms = np.nonzero(
                 (np.linalg.norm(delta, axis=1) < tol)
-                & (self.device.atoms_type[origin_atom_index] == atoms_type)
+                & (self.device.atomic_species[origin_atom_index] == atomic_species)
             )[0]
             if found_atoms.size == 0:
                 raise ValueError(
@@ -344,10 +338,10 @@ class Contact:
 
         # Count the number of periodic repetitions in each transverse direction
         # (y+, y-, z+, z- )
-        repetitions_y_pos = self._count_repetitions(self.transverse_axis[0], 1)
-        repetitions_y_neg = self._count_repetitions(self.transverse_axis[0], -1)
-        repetitions_z_pos = self._count_repetitions(self.transverse_axis[1], 1)
-        repetitions_z_neg = self._count_repetitions(self.transverse_axis[1], -1)
+        repetitions_y_pos = self._count_repetitions(self.transverse_axes[0], 1)
+        repetitions_y_neg = self._count_repetitions(self.transverse_axes[0], -1)
+        repetitions_z_pos = self._count_repetitions(self.transverse_axes[1], 1)
+        repetitions_z_neg = self._count_repetitions(self.transverse_axes[1], -1)
 
         # Store the number of periodic repetitions in the contact object
         # and the coordinates of the origin cell
@@ -375,33 +369,36 @@ class Contact:
         # for each periodic repetition in transverse directions
         # list[ny][nz][transport_index] -> orbital indices
         ny, nz = self.transverse_repetition_grid
-        self.orbital_indices_per_repetition = [
-            [[] for _ in range(nz)] for _ in range(ny)
-        ]
+        self.unit_cell_orbital_indices = {}
 
-        self.residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
+        residual_orbitals = np.arange(self.device.hamiltonians[(0, 0, 0)].shape[0])
 
-        residual_orbitals_old = self.residual_orbitals.copy()
+        residual_orbitals_old = residual_orbitals.copy()
 
         # First initialize all orbital indices
+        # NOTE: This is basically a while True loop with a return inside.
         for transport_index in itertools.count(0):
-            self._init_orbitals_transverse(transport_index)
+            residual_orbitals = self._init_orbitals_transverse(
+                transport_index, residual_orbitals
+            )
 
-            if self._residual_coupling() == 0:
+            if self._residual_coupling(residual_orbitals) == 0:
                 return transport_index
 
             # The residual orbitals did not change
             # but there are still residual couplings
             # then some orbitals got missed
-            if np.array_equal(residual_orbitals_old, self.residual_orbitals):
+            if np.array_equal(residual_orbitals_old, residual_orbitals):
                 raise ValueError(
                     f"Error in contact {self.name}: "
                     f"Could not find all orbitals in the contact unit cell. "
                 )
 
-            residual_orbitals_old = self.residual_orbitals.copy()
+            residual_orbitals_old = residual_orbitals.copy()
 
-    def _init_orbitals_transverse(self, transport_index: int):
+    def _init_orbitals_transverse(
+        self, transport_index: int, residual_orbitals: NDArray
+    ) -> NDArray:
         """Initialize the orbitals for a given transport cell
         for all transverse periodic repetitions. Additionally,
         this method updates the residual orbitals.
@@ -411,6 +408,15 @@ class Contact:
         transport_index : int
             The index of the periodic repetition in the transport
             direction.
+        residual_orbitals : NDArray
+            The orbital indices that have not yet been included in
+            the contact unit cell.
+
+        Returns
+        -------
+        residual_orbitals : NDArray
+            The updated residual orbital indices after including
+            the orbitals from this transport cell.
 
         """
 
@@ -428,11 +434,13 @@ class Contact:
             atom_indices = self._reorder_atoms(atom_indices, index)
             orbital_indices = self._atom_to_orbital_indices(atom_indices)
 
-            self.orbital_indices_per_repetition[idy][idz].append(orbital_indices)
+            self.unit_cell_orbital_indices[transport_index, idy, idz] = orbital_indices
 
-            self.residual_orbitals = self.residual_orbitals[
-                ~np.isin(self.residual_orbitals, orbital_indices)
+            residual_orbitals = residual_orbitals[
+                ~np.isin(residual_orbitals, orbital_indices)
             ]
+
+        return residual_orbitals
 
     def _atom_to_orbital_indices(self, atom_indices: NDArray) -> NDArray:
         """Gets the orbital indices corresponding to the atoms
@@ -485,14 +493,21 @@ class Contact:
         return coordinates
 
     def _init_hamiltonian_overlap_matrices(self) -> int:
-        """Initializes the hamiltonian and overlap matrices"""
+        """Initializes the hamiltonian and overlap matrices.
+
+        Returns
+        -------
+        int
+            The maximum coupling radius found.
+
+        """
 
         # The hamiltonian and overlap matrices for a given transverse
         # slice are obtained around the origin cell increasing radius
         # until no more hamiltonian or overlap is found.
 
-        for transport_index in range(self.number_of_transport_cells + 1):
-            for radius in itertools.count(0):
+        for transport_index in range(self.num_transport_cells + 1):
+            for radius in itertools.count(0):  # While True loop
 
                 found_any_at_radius = False
 
@@ -511,12 +526,12 @@ class Contact:
                     # The coupling is defined in the in the device
                     # hamiltonian at (H_1, H_2)
                     shifted_coordinates = cell_coordinates + self.origin_cell_offset
-                    hopping_coordinates = np.array(
+                    hopping_indices = np.array(
                         (shifted_coordinates + 0.0001)
                         / self.transverse_repetition_grid,
                         dtype=int,
                     )
-                    hopping_coordinates += np.array(
+                    hopping_indices += np.array(
                         [-1 if i < 0 else 0 for i in shifted_coordinates], dtype=int
                     )
 
@@ -526,7 +541,7 @@ class Contact:
                         self.transverse_repetition_grid > 1
                     ):
                         diameter = 2 * radius + 1
-                        hopping_coordinates = np.array([0, 0])
+                        hopping_indices = np.array([0, 0])
 
                         if np.any(
                             (diameter > self.transverse_repetition_grid)
@@ -542,24 +557,24 @@ class Contact:
                             )
 
                     # These are the orbitals where to look for the coupling
-                    idx, idy = shifted_coordinates % self.transverse_repetition_grid
-                    orbital_indices = self.orbital_indices_per_repetition[idx][idy][
-                        transport_index
+                    idy, idz = shifted_coordinates % self.transverse_repetition_grid
+                    orbital_indices = self.unit_cell_orbital_indices[
+                        transport_index, idy, idz
                     ]
 
-                    found_hamiltonian = self._update_uc_matrices(
+                    found_hamiltonian = self._update_unit_cell_matrices(
                         self.device.hamiltonians,
-                        self.UC_hamiltonian,
+                        self.unit_cell_hamiltonian,
                         cell_coordinates,
-                        hopping_coordinates,
+                        hopping_indices,
                         transport_index,
                         orbital_indices,
                     )
-                    found_overlap = self._update_uc_matrices(
+                    found_overlap = self._update_unit_cell_matrices(
                         self.device.overlap_matrices,
-                        self.UC_overlap,
+                        self.unit_cell_overlap,
                         cell_coordinates,
-                        hopping_coordinates,
+                        hopping_indices,
                         transport_index,
                         orbital_indices,
                     )
@@ -579,22 +594,46 @@ class Contact:
 
         return radius - 1
 
-    def _update_uc_matrices(
+    def _update_unit_cell_matrices(
         self,
-        quantity,
-        output_dict,
-        cell_coordinates,
-        hopping_index,
-        transport_index,
-        orbital_indices,
-    ):
-        """Updates the unit cell matrices for a given quantity (hamiltonian or overlap)."""
+        quantity: dict,
+        output_dict: dict,
+        cell_coordinates: NDArray,
+        hopping_indices: NDArray,
+        transport_index: int,
+        orbital_indices: NDArray,
+    ) -> bool:
+        """Updates the unit cell matrices for a given quantity (hamiltonian or overlap).
 
-        hopping_index = hopping_index.copy().tolist()
-        hopping_index.insert(self.direction, 0)
-        hopping_index = tuple(hopping_index)
+        Parameters
+        ----------
+        quantity : dict
+            The device quantity (hamiltonian or overlap) to extract
+            the hopping matrix from.
+        output_dict : dict
+            The output dictionary to store the unit cell matrices.
+        cell_coordinates : NDArray
+            The transverse cell coordinates.
+        hopping_indices : NDArray
+            The hopping indices in the device quantity.
+        transport_index : int
+            The transport index of the periodic repetition.
+        orbital_indices : NDArray
+            The orbital indices for the periodic repetition.
 
-        hopping_matrix = quantity.get(hopping_index)
+        Returns
+        -------
+        bool
+            True if a non-zero matrix was found and added, False
+            otherwise.
+
+        """
+
+        hopping_indices = hopping_indices.copy().tolist()
+        hopping_indices.insert(self.direction, 0)
+        hopping_indices = tuple(hopping_indices)
+
+        hopping_matrix = quantity.get(hopping_indices)
         if hopping_matrix is None:
             return False
 
@@ -620,9 +659,15 @@ class Contact:
 
         return True
 
-    def _residual_coupling(self) -> bool:
+    def _residual_coupling(self, residual_orbitals: NDArray) -> bool:
         """Checks if there is residual coupling between the orbitals in
         the contact and the full device.
+
+        Parameters
+        ----------
+        residual_orbitals : NDArray
+            The orbital indices that have not yet been included in
+            the contact unit cell.
 
         Returns
         -------
@@ -632,7 +677,7 @@ class Contact:
         """
 
         return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
-            :, self.residual_orbitals
+            :, residual_orbitals
         ].nnz
 
     def _configure_obc(
@@ -666,7 +711,7 @@ class Contact:
             nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
-                block_sections=self.number_of_transport_cells,  # WARNING: overrides config
+                block_sections=self.num_transport_cells,  # WARNING: overrides config
                 min_decay=obc_config.min_decay,
                 max_decay=obc_config.max_decay,
                 num_ref_iterations=obc_config.num_ref_iterations,
@@ -721,19 +766,19 @@ class Contact:
             if nevp_config.reduce_sparsity:
 
                 a_sparsity = [
-                    xp.zeros_like(self.UC_hamiltonian[0, 0, 0].toarray())
-                    for _ in range(2 * self.number_of_transport_cells + 1)
+                    xp.zeros_like(self.unit_cell_hamiltonian[0, 0, 0].toarray())
+                    for _ in range(2 * self.num_transport_cells + 1)
                 ]
 
-                for key, values in self.UC_hamiltonian.items():
+                for key, values in self.unit_cell_hamiltonian.items():
                     values = values.toarray()
-                    a_sparsity[self.number_of_transport_cells + key[0]] += values != 0
-                    a_sparsity[self.number_of_transport_cells - key[0]] += values.T != 0
+                    a_sparsity[self.num_transport_cells + key[0]] += values != 0
+                    a_sparsity[self.num_transport_cells - key[0]] += values.T != 0
 
-                for key, values in self.UC_overlap.items():
+                for key, values in self.unit_cell_overlap.items():
                     values = values.toarray()
-                    a_sparsity[self.number_of_transport_cells + key[0]] += values != 0
-                    a_sparsity[self.number_of_transport_cells - key[0]] += values.T != 0
+                    a_sparsity[self.num_transport_cells + key[0]] += values != 0
+                    a_sparsity[self.num_transport_cells - key[0]] += values.T != 0
 
                 a_sparsity = tuple(a_sparsity)
 
@@ -793,7 +838,7 @@ class Contact:
         coupling_matrix = []
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
         # Assemble column by column
-        for shift in range(self.number_of_transport_cells):
+        for shift in range(self.num_transport_cells):
             layer = layers[shift:] + [zero] * shift
             coupling_matrix.append(sparse.vstack(layer, format="csr"))
 
@@ -823,7 +868,7 @@ class Contact:
         """
 
         n = UC_matrix[(0, 0, 0)].shape[0]
-        num_cells = self.number_of_transport_cells
+        num_cells = self.num_transport_cells
         zero = sparse.csr_matrix((n, n), dtype=xp.complex128)
 
         uc_right = [zero for _ in range(num_cells + 1)]
@@ -846,9 +891,7 @@ class Contact:
 
         return contact_matrix
 
-    def _upscale_injection_modes(
-        self, modes_k: dict, number_of_energies: int
-    ) -> NDArray:
+    def _upscale_injection_modes(self, modes_k: dict, num_energies: int) -> NDArray:
         """Upscales injection vectors.
 
         Parameters
@@ -856,7 +899,7 @@ class Contact:
         modes_k : dict
             A dictionary containing injection vectors indexed by (k1,
             k2) tuples.
-        number_of_energies : int
+        num_energies : int
             The number of energies for which to compute the total
             injection vectors.
 
@@ -874,11 +917,11 @@ class Contact:
         for key, value in modes_k.items():
 
             assert (
-                len(value) == number_of_energies
+                len(value) == num_energies
             ), "Mismatch in number of energies when upscaling injection modes."
 
             # Iterate over the energies in the batch
-            for i_E in range(number_of_energies):
+            for i_E in range(num_energies):
 
                 # Upscale in 2nd direction first
                 I_2 = xp.concatenate(
@@ -900,7 +943,7 @@ class Contact:
                 axis=1,
             )
             / norm
-            for i_E in range(number_of_energies)
+            for i_E in range(num_energies)
         ]
 
         return modes
@@ -927,7 +970,7 @@ class Contact:
 
         """
 
-        number_of_energies = energies.shape[0]
+        num_energies = energies.shape[0]
         ny, nz = self.transverse_repetition_grid
 
         # TODO: Batching over k-points can be implemented here
@@ -958,8 +1001,8 @@ class Contact:
 
             # Construct the hamiltonian and overlap matrices for the
             # given ki and kj
-            H_tot = self._construct_contact_matrix(self.UC_hamiltonian, ky, kz)
-            S_tot = self._construct_contact_matrix(self.UC_overlap, ky, kz)
+            H_tot = self._construct_contact_matrix(self.unit_cell_hamiltonian, ky, kz)
+            S_tot = self._construct_contact_matrix(self.unit_cell_overlap, ky, kz)
 
             S_dense = xp.array(S_tot.todense())
             H_dense = xp.array(H_tot.todense())
@@ -983,7 +1026,7 @@ class Contact:
             bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
         # Upscale injection and Bloch injection matrices
-        injection = self._upscale_injection_modes(injection_k, number_of_energies)
-        phi_surface = self._upscale_injection_modes(phi_surface_k, number_of_energies)
+        injection = self._upscale_injection_modes(injection_k, num_energies)
+        phi_surface = self._upscale_injection_modes(phi_surface_k, num_energies)
 
         return injection, phi_surface, sigma_obc_k, bloch_k

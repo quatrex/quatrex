@@ -25,16 +25,18 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     NDArray
         The convolution of the two arrays.
     """
-    ne = a.shape[0] + b.shape[0] # Should not have -1 here (otherwise hilbert transform fails)
-    a_fft = xp.fft.fftn(a, (ne,), axes=(0,))
-    b_fft = xp.fft.fftn(b, (ne,), axes=(0,))
-    return xp.fft.ifftn(a_fft * b_fft, axes=(0,))
+    ne = (
+        a.shape[0] + b.shape[0]
+    )  # Should not have -1 here (otherwise hilbert transform fails)
+    a_fft = xp.fft.fft(a, (ne,), axes=(0,))
+    b_fft = xp.fft.fft(b, (ne,), axes=(0,))
+    return xp.fft.ifft(a_fft * b_fft, axes=(0,))
 
 
 @profiler.profile(level="api")
 def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
     """Computes the circular convolution of two arrays using the FFT.
-    
+
     Parameters
     ----------
     a : NDArray
@@ -43,7 +45,7 @@ def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.
         Second array.
     axes : tuple[int]
         The axes over which to perform the convolution.
-    
+
     Returns
     -------
     NDArray
@@ -65,7 +67,7 @@ def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
     axes are k-points and the last axis is the orbital index.
 
     Over the k-point axes, a circular convolution is performed.
-    
+
     Parameters
     ----------
     a : NDArray
@@ -128,8 +130,8 @@ def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
 @profiler.profile(level="api")
 def hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
     """Computes the Hilbert transform of the array a, assuming the symmetries of the
-    polarization, i.e $[P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)$.
-    This becomes $a(-\omega)=a^{*}(\omega)$, where $a$ is $a=P^>-P^<$.
+    polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
+    This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
 
     Assumes that the first axis corresponds to the energy axis.
 
@@ -165,23 +167,25 @@ def hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
     hilbert_kernel = -hilbert_kernel[::-1]
     b += fft_convolve(a, hilbert_kernel)[-ne:]
 
-    #hilbert_kernel_fft = xp.fft.fft(
+    # hilbert_kernel_fft = xp.fft.fft(
     #    1 / energy_differences,
     #    2 * ne,
     #    axis=0,
-    #)
-    #a_t = xp.fft.fft(a, 2 * ne, axis=0)
-    #b = xp.fft.ifft(
+    # )
+    # a_t = xp.fft.fft(a, 2 * ne, axis=0)
+    # b = xp.fft.ifft(
     #    a_t * hilbert_kernel_fft
     #    - a_t * hilbert_kernel_fft.conj()
     #    - a_t.conj() * hilbert_kernel_fft,
     #    axis=0,
-    #)[:ne]
-    return b# / (2 * xp.pi) * (energies[1] - energies[0])
+    # )[:ne]
+    return b  # / (2 * xp.pi) * (energies[1] - energies[0])
 
 
 @profiler.profile(level="api")
-def hilbert_transform_selfenergy(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
+def hilbert_transform_selfenergy(
+    sl: NDArray, sg: NDArray, energies: NDArray
+) -> NDArray:
     """Computes the Hilbert transform.
 
     Assumes that the first axis corresponds to the energy axis.
@@ -204,9 +208,7 @@ def hilbert_transform_selfenergy(sl: NDArray, sg: NDArray, energies: NDArray) ->
     ne = energies.size
     nk = sg.shape[1:-1]
     # Add empty dimensions for each k-point.
-    energy_differences = (energies - energies[0]).reshape(
-        -1, *(len(nk) + 1) * (1,)
-    )
+    energy_differences = (energies - energies[0]).reshape(-1, *(len(nk) + 1) * (1,))
     # eta for removing the singularity. See Cauchy principal value.
     eta = (energies[1] - energies[0]) / 2
     hilbert_kernel = 1 / (energy_differences + eta)

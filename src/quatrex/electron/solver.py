@@ -641,8 +641,8 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies + 1j * self.eta,
         )
         self.system_matrix -= sparse.diags(self.potential, format="csr")
-        _btd_subtract(self.system_matrix, self.hamiltonian)
         _btd_subtract(self.system_matrix, sse_retarded)
+        _btd_subtract(self.system_matrix, self.hamiltonian)
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.

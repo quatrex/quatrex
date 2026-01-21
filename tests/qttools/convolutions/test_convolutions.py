@@ -4,8 +4,8 @@ import pytest
 
 from qttools import NDArray, xp
 from qttools.convolutions.ffts import (
-    fft_convolve,
     fft_circular_convolve,
+    fft_convolve,
     fft_convolve_kpoints,
     fft_correlate_kpoints,
     hilbert_transform_polarization,
@@ -17,13 +17,14 @@ def naive_convolve(a: NDArray, b: NDArray) -> NDArray:
     """Naive implementation of convolution for testing purposes."""
     ne_a = a.shape[0]
     ne_b = b.shape[0]
-    ne = ne_a + ne_b # - 1
+    ne = ne_a + ne_b  # - 1
     result_shape = (ne,) + a.shape[1:]
     result = xp.zeros(result_shape, dtype=a.dtype)
     for i in range(ne_a):
         for j in range(ne_b):
             result[i + j] += a[i] * b[j]
     return result
+
 
 def naive_correlate(a: NDArray, b: NDArray) -> NDArray:
     """Naive implementation of correlation for testing purposes."""
@@ -38,6 +39,7 @@ def naive_correlate(a: NDArray, b: NDArray) -> NDArray:
             # It is important that it is the second array that is reversed
             result[i + j] += a[i] * b[ne_b - j - 1]
     return result
+
 
 def naive_circular_convolve(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray:
     """Naive implementation of circular convolution for testing purposes."""
@@ -63,6 +65,7 @@ def naive_circular_convolve(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray
             result[i] += a[i_a] * b[i_b]
     return result
 
+
 def naive_circular_correlate(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray:
     """Naive implementation of circular correlation for testing purposes."""
     result = xp.zeros_like(a)
@@ -87,6 +90,7 @@ def naive_circular_correlate(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArra
             result[i] += a[i_a] * b[i_b]
     return result
 
+
 def naive_convolve_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Naive implementation of convolution over energy axis and circular over k-points."""
     ne_a = a.shape[0]
@@ -103,6 +107,7 @@ def naive_convolve_kpoints(a: NDArray, b: NDArray) -> NDArray:
                     result[i + j, *k] += a[i, *k1] * b[j, *k2]
     return result
 
+
 def naive_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Naive implementation of correlation over energy axis and circular over k-points."""
     ne_a = a.shape[0]
@@ -117,19 +122,19 @@ def naive_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
                 for k2 in xp.ndindex(nk):
                     k = tuple((k1[d] - k2[d]) % nk[d] for d in range(len(nk)))
                     # Important: second array is reversed for correlation
-                    result[i + j, *k] += a[i, *k1] * b[ne_b-j-1, *k2]
+                    result[i + j, *k] += a[i, *k1] * b[ne_b - j - 1, *k2]
     return result
+
 
 def naive_hilbert_transform(a_full: NDArray, energies: NDArray) -> NDArray:
     """Naive implementation of Hilbert transform for testing purposes."""
     de = energies[1] - energies[0]
     ne = energies.size
     energy_differences = energies - energies[0] + de / 2
-    hilbert_kernel = 1 / xp.concatenate(
-        [-energy_differences[::-1], energy_differences]
-    )
+    hilbert_kernel = 1 / xp.concatenate([-energy_differences[::-1], energy_differences])
     result = naive_convolve(a_full, hilbert_kernel)
-    return result[2*ne:3*ne]
+    return result[2 * ne : 3 * ne]
+
 
 def naive_hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
     """Naive implementation of Hilbert transform for polarization for testing purposes.
@@ -140,15 +145,15 @@ def naive_hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArr
     # Should satisfy the symmetries of the polarization
     a_full = xp.concatenate([xp.conj(a[::-1]), a])
     energy_differences = energies - energies[0] + de / 2
-    hilbert_kernel = 1 / xp.concatenate(
-        [-energy_differences[::-1], energy_differences]
-    )
+    hilbert_kernel = 1 / xp.concatenate([-energy_differences[::-1], energy_differences])
     result = naive_convolve(a_full, hilbert_kernel)
-    return result[2*ne:3*ne]
+    return result[2 * ne : 3 * ne]
+
 
 class TestNaiveConvolutions:
-    """Tests for the naive convolution implementations used for 
+    """Tests for the naive convolution implementations used for
     testing purposes, ie tests for the testing functions."""
+
     @staticmethod
     def test_naive_convolve():
         a = xp.array([1, 2, 3], dtype=xp.float64)
@@ -160,7 +165,7 @@ class TestNaiveConvolutions:
         na = a.shape[0]
         nb = b.shape[0]
         # NOTE: No na+nb-1 length here, needed for correct hilbert transform later on.
-        expected_fft = xp.fft.ifft(xp.fft.fft(a, n=na+nb) * xp.fft.fft(b, n=na+nb))
+        expected_fft = xp.fft.ifft(xp.fft.fft(a, n=na + nb) * xp.fft.fft(b, n=na + nb))
         assert xp.allclose(result, expected_fft)
 
     @staticmethod
@@ -172,12 +177,14 @@ class TestNaiveConvolutions:
         assert xp.allclose(result, expected)
         na = a.shape[0]
         nb = b.shape[0]
-        expected_fft = xp.fft.ifft(xp.fft.fft(a, n=na+nb-1) * xp.fft.fft(b[::-1], n=na+nb-1))
+        expected_fft = xp.fft.ifft(
+            xp.fft.fft(a, n=na + nb - 1) * xp.fft.fft(b[::-1], n=na + nb - 1)
+        )
         assert xp.allclose(result, expected_fft)
 
     @staticmethod
     def test_naive_circular_convolve():
-        # This is interesting, the 0th element is 1*0 + 2*0.5 + 3*2 = 7, not 
+        # This is interesting, the 0th element is 1*0 + 2*0.5 + 3*2 = 7, not
         # 1*0.5 + 2*2 + 3*0 = 4.5 which I would expect for the 0-shift.
         # So if we would convolve with two (-2,-1,0,1,2) ordered arrays,
         # we would get (1,2,-2,-1,0) shift ordering in the result.
@@ -194,7 +201,7 @@ class TestNaiveConvolutions:
 
     @staticmethod
     def test_naive_circular_correlate():
-        # NOTE: Here the result is as expected, the 0th (no shift) element 
+        # NOTE: Here the result is as expected, the 0th (no shift) element
         # is 1*0+ 2*2 + 3*0.5 = 5.5. We have to roll the fft by one to get this.
         a = xp.array([1, 2, 3], dtype=xp.complex128)
         b = xp.array([0, 2, 0.5], dtype=xp.complex128)
@@ -207,7 +214,7 @@ class TestNaiveConvolutions:
 
     @staticmethod
     def test_naive_convolve_kpoints():
-        a = xp.array([[1, 2], [3, 4]],  dtype=xp.float64)
+        a = xp.array([[1, 2], [3, 4]], dtype=xp.float64)
         b = xp.array([[0, 1], [0.5, 0]], dtype=xp.float64)
         # Add empty orbital dimensions
         a = a.reshape(a.shape + (1,))
@@ -231,7 +238,6 @@ class TestNaiveConvolutions:
 
 
 class TestFFTConvolutions:
-    
     @pytest.mark.usefixtures("array_shape")
     def test_fft_convolve(self, array_shape):
         a = xp.random.random(array_shape)
@@ -248,8 +254,10 @@ class TestFFTConvolutions:
         # Randomly choose axes to convolve over
         # TODO: Random axes is not a good idea, since the
         # tests are not reproducible and determinstic.
-        size = xp.random.choice(xp.arange(1, len(array_shape)+1))
-        axes = tuple(sorted(xp.random.choice(len(array_shape), size=size, replace=False)))
+        size = xp.random.choice(xp.arange(1, len(array_shape) + 1))
+        axes = tuple(
+            sorted(xp.random.choice(len(array_shape), size=size, replace=False))
+        )
         result = fft_circular_convolve(a, b, axes)
         # Compare with naive circular convolve
         expected = naive_circular_convolve(a, b, axes)
@@ -295,7 +303,9 @@ class TestFFTConvolutions:
         # Use the symmetry of the polarization $a(-\omega)=a^{*}(\omega)$
         ne = array_shape[0]
         # Add empty orbital dimension at the end
-        a = xp.random.random(array_shape+(1,)) + 1j * xp.random.random(array_shape+(1,))
+        a = xp.random.random(array_shape + (1,)) + 1j * xp.random.random(
+            array_shape + (1,)
+        )
         energies = xp.linspace(-10, 10, ne)
         result = hilbert_transform_polarization(a, energies)
         expected = naive_hilbert_transform_polarization(a, energies)

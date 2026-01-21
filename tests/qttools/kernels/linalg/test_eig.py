@@ -62,12 +62,12 @@ def test_eig_numba_list(n: int, batch_shape: tuple[int, ...]):
 
 
 @pytest.mark.usefixtures(
-    "n", "compute_module", "input_module", "output_module", "use_pinned_memory"
+    "n", "eig_compute_module", "input_module", "output_module", "use_pinned_memory"
 )
 @pytest.mark.parametrize("if_list", [False, True])
 def test_eig(
     n: int,
-    compute_module: str,
+    eig_compute_module: str,
     input_module: str,
     output_module: str,
     if_list: bool,
@@ -76,11 +76,19 @@ def test_eig(
     """Tests the eig function."""
 
     if xp.__name__ == "numpy" and (
-        compute_module == "cupy" or output_module == "cupy" or input_module == "cupy"
+        eig_compute_module in ["cupy", "nvmath"]
+        or output_module in ["cupy"]
+        or input_module in ["cupy"]
     ):
         return
-    if compute_module == "cupy" and (hasattr(xp.linalg, "eig") is False):
+    if eig_compute_module == "cupy" and (hasattr(xp.linalg, "eig") is False):
         return
+
+    if eig_compute_module == "nvmath":
+        try:
+            import nvmath  # noqa: F401  # type: ignore
+        except ImportError:
+            return
 
     if input_module == "cupy":
         rng = cp.random.default_rng()
@@ -94,7 +102,7 @@ def test_eig(
 
     w, v = linalg.eig(
         A,
-        compute_module=compute_module,
+        compute_module=eig_compute_module,
         output_module=output_module,
         use_pinned_memory=use_pinned_memory,
     )

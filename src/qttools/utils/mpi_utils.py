@@ -71,7 +71,7 @@ def get_section_sizes(
 
 @profiler.profile(level="debug")
 def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
-    """Loads an array from disk and distributes it to all ranks.
+    """Loads an array from disk and broadcasts it to all ranks.
 
     Parameters
     ----------
@@ -96,6 +96,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
     if comm.rank == 0:
         if path.suffix == ".npz":
+            # NOTE: cupyx.scipy.sparse.load_npz does not exist.
             arr = sps.load_npz(path)
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":

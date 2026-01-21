@@ -1,5 +1,7 @@
 simulation_dir = "."
 
+formalism = "negf" # "negf" or "wf"
+
 [device]
 transport_direction = 'x'
 
@@ -7,12 +9,12 @@ transport_direction = 'x'
 max_iterations = 2
 mixing_factor = 0.5
 
-coulomb_screening = true 
+coulomb_screening = true
 phonon = true
 
 symmetric = true
 
-[outputs]  # Select which outputs to write.
+[outputs] # Select which outputs to write.
 electron_ldos = true
 contact_currents = true
 device_currents = true

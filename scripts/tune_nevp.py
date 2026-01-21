@@ -5,10 +5,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from qttools.nevp import Beyn, Full
-from qttools.obc import Spectral
 from scipy import sparse
 
+from qttools.nevp import Beyn, Full
+from qttools.obc import Spectral
 from quatrex.core.quatrex_config import QuatrexConfig, parse_config
 
 

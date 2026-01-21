@@ -1,0 +1,45 @@
+simulation_dir = "."
+formalism = "wf"
+
+[qtbm]
+max_batch_size = 1
+[device]
+transport_direction = 'x'
+num_orbitals_per_atom = {"Si"=4}
+kpoint_grid = [1,2,1]
+kpoint_shift = [0,0.1,0.1]
+
+    [[device.contacts]]
+    name = "left"
+    origin = [-0.01, -0.01 ,-0.01]
+    lattice_vectors = [[5.444, 0, 0], [0,5.444 , 0], [0, 0, 5.444]]
+    direction = "a"
+     fermi_level = -3
+
+    [[device.contacts]]
+    name = "right"
+    origin = [161.96,  -0.001 ,-0.001]
+    lattice_vectors = [[-5.444, 0, 0], [0, 5.444 , 0], [0, 0, 5.444]]
+    direction = "a"
+    fermi_level = -3.001
+
+
+[electron]
+	solver.direct_solver = "superlu"
+	conduction_band_edge = -2.4
+	valence_band_edge = -2.5
+
+    energy_window_min = 6.2
+    energy_window_max = 7.2
+    energy_window_num = 10
+
+    [electron.obc]
+    algorithm = "spectral"
+    num_ref_iterations = 10
+    nevp_solver = "full"
+    r_o = 1000
+    r_i = 0.9
+    m_0 = 100
+    num_quad_points = 64
+	min_decay = 1e-8
+	max_decay = 10

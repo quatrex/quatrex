@@ -45,3 +45,89 @@ sha256 = "a863ca38cdde927a424bde78342cd8805f85cf2d2a7147131a0223b06a2bd488"
 [silicon-nanowire]
 url = "https://huggingface.co/datasets/vincent-maillou/NEST/resolve/main/quantum_transport/sinw_w90/sinw_w90.npz"
 sha256 = "7e9608d54b3ae97b6629a7bb8e1728db0bf455b8002a854efff34b9a2507cdc5"
+
+[cp2k-atomic-chain-hamiltonian_0_0_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/hamiltonian_0_0_0.npz"
+sha256 = "0f9589074442b31cce681d877c2df54cefe348416673513263ccaf1e0feea9f6"
+
+[cp2k-atomic-chain-lattice]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/lattice.xyz"
+sha256 = "d120dc1500f1ab6be61e5aff424f3f31fa2ffc4326b904cf81608f7ff0eab4ec"
+
+[cp2k-atomic-chain-potential]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/potential.npy"
+sha256 = "7915aced6d1611d860fd5b2a8853f8ec7499b446f458baa34970876404936e7c"
+
+[cp2k-atomic-chain-overlap_0_0_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/inputs/overlap_0_0_0.npz"
+sha256 = "f84400d6bd7958f03ffce8d4966dba56e3b1745984d83573f3118dd86168c37f"
+
+[cp2k-atomic-chain-dos_l-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/dos_l_qtbm.npy"
+sha256 = "b5e5a7dd01e8c8c84ed984e5bfe87b0e6b8e6949b272d3dbbc8f8e1fbdba9dcd"
+
+[cp2k-atomic-chain-dos_r-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/dos_r_qtbm.npy"
+sha256 = "2d70e45e07a2affab0efb978ff0a10cb11e8a6a4124009616f4a495bf9b97ccf"
+
+[cp2k-atomic-chain-transmission_lr-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/cp2k/atomic-chain/outputs/transmission_lr_qtbm.npy"
+sha256 = "2a8603969b2e4611803bc31c493abb4efeaea5f7695da1fd4f550ac9998082d0"
+
+
+
+[wann-si-bulk-hamiltonian_0_0_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_0_0.npz"
+sha256 = "d20c052f92dc68b0e736a3f340d5065b776938f1e4ca102ae40cb84b2ff0cc0e"
+
+[wann-si-bulk-hamiltonian_0_0_-1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_0_-1.npz"
+sha256 = "6bca12f542f3aa642d030dd8c757ca13cb9166f804802f8693b0015537ee63a4"
+
+[wann-si-bulk-hamiltonian_0_0_1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_0_1.npz"
+sha256 = "bf0c76b2d46ee966b4dadd760bb29320968302c7914cac35eae943dfbdd54b48"
+
+[wann-si-bulk-hamiltonian_0_-1_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_-1_0.npz"
+sha256 = "8f3934f968a41fdb2a499a0d1c62d0888ded93c1c197dc9015a480fcf88e2c74"
+
+[wann-si-bulk-hamiltonian_0_1_0]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_1_0.npz"
+sha256 = "b654a65db0a69661e946b5a53ac256f5c243d3bd22ecaac1e1b2107dc3365430"
+
+[wann-si-bulk-hamiltonian_0_-1_-1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_-1_-1.npz"
+sha256 = "1ded9ff99438a9be6972de15d34a26c5b87745f280aea85d6d0d739e01505756"
+
+[wann-si-bulk-hamiltonian_0_-1_1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_-1_1.npz"
+sha256 = "0dfab1b52e349ca1822565683ec3515438d5203a9bdb8a72a88033ff8d4e83cf"
+
+[wann-si-bulk-hamiltonian_0_1_-1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_1_-1.npz"
+sha256 = "8d06642b3abe833249a4e2aa071518b7a066b176c2813419731461129e2506d7"
+
+[wann-si-bulk-hamiltonian_0_1_1]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/hamiltonian_0_1_1.npz"
+sha256 = "ad80dcec74f4058641d72913b7b0cedef06ae781772d2d02b30d708e94931959"
+
+[wann-si-bulk-lattice]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/lattice.xyz"
+sha256 = "9a8fc99bcebc14bf64c5cf5a26ea10e4bda6dc0762c3f39781cf9b2ab9ed86a1"
+
+[wann-si-bulk-potential]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/inputs/potential.npy"
+sha256 = "e62a892f6549c7a7198f3eb0a6bdf12e272bf378053f256fe81870d7058105a4"
+
+[wann-si-bulk-dos_l-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/outputs/dos_l_qtbm.npy"
+sha256 = "70178986935f94255886cf2f35e0769ae462926af6b95d4de6c2565f8d24f60c"
+
+[wann-si-bulk-dos_r-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/outputs/dos_r_qtbm.npy"
+sha256 = "2ee6b97ed8c85e5347898568a521dc348a93ab44f9f594e0239f64990992746f"
+
+[wann-si-bulk-transmission_lr-qtbm]
+url = "https://github.com/quatrex/quatrex-examples/raw/refs/heads/qtbm_examples/w90/si-bulk/outputs/transmission_lr_qtbm.npy"
+sha256 = "e7c47dbfe55bca4539136a6b73657bda11eddc5f8da5c7442e164a49f3f6f7cd"

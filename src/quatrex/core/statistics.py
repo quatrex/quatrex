@@ -1,7 +1,6 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
 
 from qttools import NDArray, xp
-
 from quatrex.core.constants import k_B
 
 

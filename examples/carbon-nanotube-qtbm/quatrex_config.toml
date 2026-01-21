@@ -1,0 +1,60 @@
+simulation_dir = "."
+
+formalism = "wf" # "negf" or "wf"
+
+[device]
+transport_direction = "x"
+kpoint_grid = [1, 1, 1]
+num_orbitals_per_atom = { "X" = 1 }
+
+    [[device.contacts]]
+    name = "left"
+    origin = [0.012479, 0.0, 0.0]
+    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    direction = "a"
+    fermi_level = -3.6
+
+    [[device.contacts]]
+    name = "right"
+    origin = [102.55062666, 0.0, 0.0]
+    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    direction = "a"
+    fermi_level = -3.8
+
+[qtbm] # ===============================================================
+max_batch_size = 1000
+
+
+[outputs] # Select which outputs to write.
+electron_ldos = true
+contact_currents = true
+device_currents = true
+electron_density = true
+hole_density = true
+
+
+[electron] # ===========================================================
+# 0.2 V Potential difference.
+left_fermi_level = -3.6  # eV
+right_fermi_level = -3.8 # eV
+
+# Energy grid.
+energy_window_min = -6.5
+energy_window_max = -1.0
+energy_window_num = 1000
+
+solver.direct_solver = "superlu"
+
+obc.algorithm = "spectral"
+obc.nevp_solver = "beyn"
+
+# Parameters for Beyn's method.
+obc.num_ref_iterations = 3
+obc.max_decay = 15
+obc.min_decay = 1e-3
+obc.r_o = 10
+obc.r_i = 0.8
+obc.m_0 = 31
+obc.num_quad_points = 31
+
+obc.residual_tolerance = 1e-4

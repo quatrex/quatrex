@@ -220,6 +220,8 @@ class Spectral(OBCSolver):
         batchsize = a_xx[0].shape[0]
 
         if batchsize != 1 and find_injected:
+            # TODO: We keep this restriction, as we have not tested the
+            # injection vector calculation with batchsize > 1 yet.
             raise ValueError(
                 "The injection vector can only be calculated with batchsize = 1"
             )
@@ -298,9 +300,7 @@ class Spectral(OBCSolver):
                 abs(dEk_dk.imag) + eta
             )
 
-            dEk_dK_injected = dEk_dk[mask_injected]
-
-            return mask_reflected, mask_injected, dEk_dK_injected
+            return mask_reflected, mask_injected, dEk_dk
 
         return mask_reflected
 
@@ -427,21 +427,10 @@ class Spectral(OBCSolver):
         -------
         x_ii : NDArray
             The system's surface Green's function.
-        sigma_retarded: NDArray
-            The boundary self energy. Returned only if return_injected
-            is True. (only compatible with batchsize = 1)
-        inj: NDArray
-            The Injection vector. Returned only if return_injected is
-            True. (only compatible with batchsize = 1)
-        w_inj: NDArray
-            The eigenvalues of the injected modes. Returned only if
-            return_injected is True. (only compatible with batchsize =
-            1)
+        phi_surface: NDArray
+            The surface phi. Returned only if return_injected is True.
 
         """
-
-        if a_ii.ndim != 2 and return_injected:
-            raise NotImplementedError
 
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
@@ -454,7 +443,7 @@ class Spectral(OBCSolver):
         ws, vs = self._upscale_eigenmodes(ws, vs)
 
         if return_injected:
-            mask_reflected, mask_injected, dE_dK_injected = self._find_reflected_modes(
+            mask_reflected, mask_injected, dEk_dk = self._find_reflected_modes(
                 ws,
                 vs,
                 a_xx=[a_ji, a_ii, a_ij],
@@ -489,22 +478,28 @@ class Spectral(OBCSolver):
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_injected:
 
-            mask_injected = mask_injected[0, :]
-            vrs_inj = vs[0][:, mask_injected]
-            wrs_inj = xp.diag(ws[0, mask_injected])
+            phi_surface = []
 
-            # Flux normalization
-            vrs_inj = vrs_inj / xp.sqrt(dE_dK_injected[None, :])
+            x_ii_a_ij = x_ii_ref @ a_ij
 
-            # Compute boundary self energy
-            sigma_retarded = a_ji[0, :, :] @ x_ii[0, :, :] @ a_ij[0, :, :]
+            for i in range(a_ii.shape[0]):
+                mask_injected_i = mask_injected[i, :]
 
-            # Compute injection vector
-            injection = (
-                -a_ji[0, :, :] @ vrs_inj @ linalg.inv(wrs_inj)
-                - sigma_retarded @ vrs_inj
-            )
+                vrs_injected = vs[i][:, mask_injected_i]
+                wrs_injected = ws[i, mask_injected_i]
+                dE_dk_injected = dEk_dk[i, mask_injected_i]
 
-            return x_ii_ref, sigma_retarded, injection, ws[0, mask_injected]
+                # Flux normalization
+                vrs_injected = vrs_injected / xp.sqrt(
+                    xp.real(dE_dk_injected[xp.newaxis, :])
+                )
+
+                # Compute surface phi
+                phi_surface.append(
+                    vrs_injected / wrs_injected[xp.newaxis, :]
+                    + x_ii_a_ij[i] @ vrs_injected
+                )
+
+            return x_ii_ref, phi_surface
 
         return x_ii_ref

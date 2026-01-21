@@ -2,6 +2,7 @@
 
 import os
 import tomllib
+import warnings
 from math import isclose
 from pathlib import Path
 from typing import Literal
@@ -29,6 +30,15 @@ class SCSPConfig(BaseModel):
     convergence_tol: PositiveFloat = 1e-5
 
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+
+
+class QTBMConfig(BaseModel):
+    """Options for the quantum transmitting boundary method (QTBM)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The maximum number of energies per batch.
+    max_batch_size: PositiveInt = 10
 
 
 class SCBAConfig(BaseModel):
@@ -121,6 +131,8 @@ class SolverConfig(BaseModel):
 
     # Whether to compute the current via the Meir-Wingreen formula.
     compute_current: bool = False
+
+    direct_solver: Literal["superlu", "mumps", "cudss"] = "superlu"
 
 
 class OBCConfig(BaseModel):
@@ -362,13 +374,13 @@ class ElectronConfig(BaseModel):
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
         if (self.left_fermi_level is None) != (self.right_fermi_level is None):
-            raise ValueError(
+            warnings.warn(
                 "Either both left and right Fermi levels must be set or neither."
             )
 
         if self.left_fermi_level is None and self.right_fermi_level is None:
             if self.fermi_level is None:
-                raise ValueError("Fermi level must be set.")
+                warnings.warn("Fermi level must be set.")
 
             self.left_fermi_level = self.fermi_level
             self.right_fermi_level = self.fermi_level
@@ -392,11 +404,38 @@ class ElectronConfig(BaseModel):
     @model_validator(mode="after")
     def set_flatband(self) -> Self:
         """Sets the flatband flags if not already set."""
-        if self.flatband is None:
-            if isclose(self.left_fermi_level, self.right_fermi_level):
-                self.flatband = True
-            else:
-                self.flatband = False
+        if self.left_fermi_level is not None or self.right_fermi_level is not None:
+            if self.flatband is None:
+                if isclose(self.left_fermi_level, self.right_fermi_level):
+                    self.flatband = True
+                else:
+                    self.flatband = False
+
+        return self
+
+    @model_validator(mode="after")
+    def verify_energies(self) -> Self:
+        """Verifies the energy window settings."""
+
+        if (
+            self.energy_window_min is not None
+            or self.energy_window_max is not None
+            or self.energy_window_num is not None
+            or self.energy_window_num_per_rank is not None
+        ):
+
+            if (self.energy_window_min is None) and (self.energy_window_max is None):
+                raise ValueError(
+                    "When the energy grid is not read from file, should set both `energy_window_min` and `energy_window_max`."
+                )
+
+            if (
+                self.energy_window_num is not None
+                and self.energy_window_num_per_rank is not None
+            ):
+                raise ValueError(
+                    "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
+                )
 
         return self
 
@@ -489,7 +528,32 @@ class OutputConfig(BaseModel):
     profiling_stats: bool = False
 
 
+class ContactConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fermi_level: float
+    name: str
+    type: Literal["ohmic"] = "ohmic"
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    lattice_vectors: list[list[float]] = Field(
+        default_factory=lambda: [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    direction: Literal["a", "b", "c"]
+
+    @model_validator(mode="after")
+    def to_array(self) -> Self:
+        """Transforms origin and size to arrays."""
+        self.origin = np.array(self.origin, dtype=float)
+        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
+        return self
+
+
 class DeviceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     construct_from_unit_cell: bool = False
 
@@ -498,10 +562,18 @@ class DeviceConfig(BaseModel):
     number_of_supercells: PositiveInt = 1
     transport_direction: Literal["x", "y", "z"]
 
+    contacts: list[ContactConfig] = Field(default_factory=list)
+
+    num_orbitals_per_atom: dict[str, int] = {"X": 1}
+
+    kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""
         self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
+        self.kpoint_grid = tuple(self.kpoint_grid)
         return self
 
 
@@ -512,8 +584,23 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
+    formalism: Literal["wf", "negf"]
+    """The transport formalism to use.
+
+    There are two supported formalisms:
+
+    - "wf": Wavefunction formalism
+    - "negf": Non-equilibrium Green's function formalism
+
+    !!! warning "Input formats"
+
+        Currently, the input formats for the two formalisms are not
+        consistent.
+
+    """
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
+    qtbm: QTBMConfig = QTBMConfig()
     poisson: PoissonConfig = PoissonConfig()
 
     electron: ElectronConfig
@@ -560,6 +647,25 @@ class QuatrexConfig(BaseModel):
             self.input_dir = Path(self.input_dir).resolve()
             return self
         self.input_dir = self.simulation_dir / "inputs/"
+        return self
+
+    @model_validator(mode="after")
+    def validate_paths(self) -> Self:
+        """Validates the input file paths."""
+
+        if (
+            self.electron.energy_window_min is None
+            and self.electron.energy_window_max is None
+            and self.electron.energy_window_num is None
+            and self.electron.energy_window_num_per_rank is None
+        ):
+            if not (self.input_dir / "electron_energies.npy").resolve().is_file():
+                raise ValueError(
+                    f"Energy grid not specified and file '{(self.input_dir / 'electron_energies.npy').resolve()}' does not exist."
+                )
+
+        # TODO: extend this to other paths, not only energies
+
         return self
 
 

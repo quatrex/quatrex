@@ -7,7 +7,7 @@ from importlib.resources import files
 import numpy as np
 import pytest
 
-from quatrex.cli.main import fetch_example, run_quatrex
+from quatrex.cli.main import fetch_example, run
 from quatrex.examples import get_example_dir, load
 
 REFERENCE_OBSERVABLES = {
@@ -18,6 +18,16 @@ REFERENCE_OBSERVABLES = {
     "carbon-nanotube:dist": [
         "electron_density_1",
         "i_device_1",
+    ],
+    "cp2k-atomic-chain:qtbm": [
+        "dos_l",
+        "dos_r",
+        "transmission_lr",
+    ],
+    "wann-si-bulk:qtbm": [
+        "dos_l",
+        "dos_r",
+        "transmission_lr",
     ],
 }
 
@@ -58,7 +68,7 @@ def test_non_distributed(non_distributed_example: str):
     if not compute_config_path.exists():
         compute_config_path = None
 
-    run_quatrex(
+    run(
         quatrex_config_path,
         compute_config_path,
     )

@@ -25,7 +25,7 @@ class LyapunovConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
     use_pinned_memory: bool = True
 
 
@@ -34,13 +34,18 @@ class NEVPConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    eig_compute_location: Literal["numpy", "cupy"] = "numpy"
+    eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
+
+    # Parameters for contour NEVP solvers.
     project_compute_location: Literal["numpy", "cupy"] = "numpy"
     use_pinned_memory: bool = True
 
     use_qr: bool = False
     contour_batch_size: PositiveInt | None = None
     num_threads_contour: PositiveInt = 1024
+
+    # Parameters for full NEVP solvers.
+    reduce_sparsity: bool = False
 
 
 class BandEdgeConfig(BaseModel):
@@ -49,8 +54,25 @@ class BandEdgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_eigvalsh: bool = True
+    """Whether to use eigvalsh or eig to compute the eigenvalues to
+    determine the band edges. The eigvalsh function is more efficient,
+    but is an approximation if scattering is included.
+
+    Only used if the band edge tracking is set to "eigenvalues".
+    """
+
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
+    """Location where to compute the eigenvalues.
+
+    Only used if the band edge tracking is set to "eigenvalues".
+    """
+
     use_pinned_memory: bool = True
+    """Whether to use pinned memory for eigenvalue computations.
+
+    Only used if the band edge tracking is set to "eigenvalues".
+    """
+
     block_sections: PositiveInt = 1
 
     @field_validator("use_eigvalsh", mode="after")
@@ -157,7 +179,7 @@ class ComputeConfig(BaseModel):
 
     dsdbsparse_type: DSDBSparse = DSDBCOO
     numba_threading_layer: Literal["workqueue", "omp", "tbb"] = "workqueue"
-    threadpool_api: Literal["blas", "openmp", "tbb"] | None = "blas"
+    threadpool_api: Literal["blas", "openmp", "tbb"] | None = None
     numba_num_threads: PositiveInt | None = None
     blas_num_threads: PositiveInt | Literal["sequential_blas_under_openmp"] | None = (
         None

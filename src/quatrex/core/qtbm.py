@@ -719,15 +719,13 @@ class QTBM:
 
                     # Add the boundary self-energy contributions
                     for contact, sigma_obc in sigma_obc_per_contact.items():
-                        for key, value in sigma_obc.items():
+                        for k_t, sigma_obc_k in sigma_obc.items():
                             inplace.isub_obc(
                                 system_matrix.data,
-                                value[i, :, :],
+                                sigma_obc_k[i, :, :],
                                 sigma_obc_update_indices[contact],
-                                key[0],
-                                key[1],
-                                contact.transverse_repetition_grid[0],
-                                contact.transverse_repetition_grid[1],
+                                k_t,
+                                contact.transverse_repetition_grid,
                             )
 
                     t_solve = time.perf_counter() - times.pop()
@@ -752,15 +750,13 @@ class QTBM:
 
                     # Subtract the open boundary conditions
                     for contact, sigma_obc in sigma_obc_per_contact.items():
-                        for key, value in sigma_obc.items():
+                        for k_t, sigma_obc_k in sigma_obc.items():
                             inplace.iadd_obc(
                                 system_matrix.data,
-                                value[i, :, :],
+                                sigma_obc_k[i, :, :],
                                 sigma_obc_update_indices[contact],
-                                key[0],
-                                key[1],
-                                contact.transverse_repetition_grid[0],
-                                contact.transverse_repetition_grid[1],
+                                k_t,
+                                contact.transverse_repetition_grid,
                             )
 
                     # Unscale the overlap matrices

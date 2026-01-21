@@ -28,12 +28,9 @@ def iadd_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
-    key1: float,
-    key2: float,
-    nrep1: int,
-    nrep2: int,
+    k: tuple[float, float],
+    transverse_repetition_grid: tuple[int, int],
 ):
-    # TODO: figure out names
     """Adds array `b` to array `a` at indices `ind` in-place with OBC repetitions.
 
     Parameters
@@ -41,22 +38,20 @@ def iadd_obc(
     a : NDArray
         The array to be updated.
     b : NDArray
-        The array to be added to `a`.
+        The array to be subtracted from `a`.
     inds : NDArray
-        The indices at which to add `b` to `a`.
-    key1 : float
-        The first OBC key.
-    key2 : float
-        The second OBC key.
-    nrep1 : int
-        The number of repetitions in the first direction.
-    nrep2 : int
-        The number of repetitions in the second direction.
+        The indices at which to subtract `b` from `a`.
+    k : tuple[float, float]
+        The transverse wavevector components.
+    transverse_repetition_grid : tuple[int, int]
+        The transverse repetition grid of the contact.
 
     """
+    ky, kz = k
+    ny, nz = transverse_repetition_grid
 
     N_S = b.shape[1]
-    N_S_big = N_S * nrep1 * nrep2
+    N_S_big = N_S * ny * nz
     num_inds = inds.shape[0]
 
     b = b.reshape(-1)
@@ -71,14 +66,14 @@ def iadd_obc(
         i_cell = i_S_big // N_S
         j_cell = j_S_big // N_S
 
-        cell_rep_1_i = i_cell // nrep2
-        cell_rep_2_i = i_cell % nrep2
+        cell_rep_1_i = i_cell // nz
+        cell_rep_2_i = i_cell % nz
 
-        cell_rep_1_j = j_cell // nrep2
-        cell_rep_2_j = j_cell % nrep2
+        cell_rep_1_j = j_cell // nz
+        cell_rep_2_j = j_cell % nz
 
-        phase_1 = -key1 * (cell_rep_1_j - cell_rep_1_i)
-        phase_2 = -key2 * (cell_rep_2_j - cell_rep_2_i)
+        phase_1 = -ky * (cell_rep_1_j - cell_rep_1_i)
+        phase_2 = -kz * (cell_rep_2_j - cell_rep_2_i)
         total_phase = phase_1 + phase_2
 
         c = math.cos(total_phase)
@@ -106,7 +101,13 @@ def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
 
 
 @nb.njit(parallel=True)
-def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
+def isub_obc(
+    a: NDArray,
+    b: NDArray,
+    inds: NDArray,
+    k: tuple[float, float],
+    transverse_repetition_grid: tuple[int, int],
+):
     """Subtracts array `b` from array `a` at indices `ind` in-place with OBC repetitions.
 
     Parameters
@@ -117,18 +118,17 @@ def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
         The array to be subtracted from `a`.
     inds : NDArray
         The indices at which to subtract `b` from `a`.
-    key1 : float
-        The first OBC key.
-    key2 : float
-        The second OBC key.
-    nrep1 : int
-        The number of repetitions in the first direction.
-    nrep2 : int
-        The number of repetitions in the second direction.
+    k : tuple[float, float]
+        The transverse wavevector components.
+    transverse_repetition_grid : tuple[int, int]
+        The transverse repetition grid of the contact.
 
     """
+    ky, kz = k
+    ny, nz = transverse_repetition_grid
+
     N_S = b.shape[1]
-    N_S_big = N_S * nrep1 * nrep2
+    N_S_big = N_S * ny * nz
     num_inds = inds.shape[0]
     b = b.reshape(-1)
 
@@ -142,14 +142,14 @@ def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
         i_cell = i_S_big // N_S
         j_cell = j_S_big // N_S
 
-        cell_rep_1_i = i_cell // nrep2
-        cell_rep_2_i = i_cell % nrep2
+        cell_rep_1_i = i_cell // nz
+        cell_rep_2_i = i_cell % nz
 
-        cell_rep_1_j = j_cell // nrep2
-        cell_rep_2_j = j_cell % nrep2
+        cell_rep_1_j = j_cell // nz
+        cell_rep_2_j = j_cell % nz
 
-        phase_1 = -key1 * (cell_rep_1_j - cell_rep_1_i)
-        phase_2 = -key2 * (cell_rep_2_j - cell_rep_2_i)
+        phase_1 = -ky * (cell_rep_1_j - cell_rep_1_i)
+        phase_2 = -kz * (cell_rep_2_j - cell_rep_2_i)
         total_phase = phase_1 + phase_2
 
         c = math.cos(total_phase)

@@ -42,12 +42,9 @@ def iadd_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
-    key1: float,
-    key2: float,
-    nrep1: int,
-    nrep2: int,
+    k: tuple[float, float],
+    transverse_repetition_grid: tuple[int, int],
 ):
-    # TODO: figure out names
     """Adds array `b` to array `a` at indices `ind` in-place with OBC repetitions.
 
     Parameters
@@ -55,21 +52,20 @@ def iadd_obc(
     a : NDArray
         The array to be updated.
     b : NDArray
-        The array to be added to `a`.
+        The array to be subtracted from `a`.
     inds : NDArray
-        The indices at which to add `b` to `a`.
-    key1 : float
-        The first OBC key.
-    key2 : float
-        The second OBC key.
-    nrep1 : int
-        The number of repetitions in the first direction.
-    nrep2 : int
-        The number of repetitions in the second direction.
+        The indices at which to subtract `b` from `a`.
+    k : tuple[float, float]
+        The transverse wavevector components.
+    transverse_repetition_grid : tuple[int, int]
+        The transverse repetition grid of the contact.
 
     """
 
     num_inds = inds.shape[0]
+
+    ky, kz = k
+    ny, nz = transverse_repetition_grid
 
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
@@ -80,11 +76,11 @@ def iadd_obc(
         (
             a,
             b.flatten(),
-            key1,
-            key2,
-            b.shape[1] * nrep1 * nrep2,
+            ky,
+            kz,
+            b.shape[1] * ny * nz,
             b.shape[1],
-            nrep2,
+            nz,
             inds,
             num_inds,
         ),
@@ -120,7 +116,13 @@ def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
         raise ValueError("Unsupported dtype for `b` in in-place subtraction.")
 
 
-def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
+def isub_obc(
+    a: NDArray,
+    b: NDArray,
+    inds: NDArray,
+    k: tuple[float, float],
+    transverse_repetition_grid: tuple[int, int],
+):
     """Subtracts array `b` from array `a` at indices `ind` in-place with OBC repetitions.
 
     Parameters
@@ -131,18 +133,17 @@ def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
         The array to be subtracted from `a`.
     inds : NDArray
         The indices at which to subtract `b` from `a`.
-    key1 : float
-        The first OBC key.
-    key2 : float
-        The second OBC key.
-    nrep1 : int
-        The number of repetitions in the first direction.
-    nrep2 : int
-        The number of repetitions in the second direction.
+    k : tuple[float, float]
+        The transverse wavevector components.
+    transverse_repetition_grid : tuple[int, int]
+        The transverse repetition grid of the contact.
 
     """
 
     num_inds = inds.shape[0]
+
+    ky, kz = k
+    ny, nz = transverse_repetition_grid
 
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
@@ -153,11 +154,11 @@ def isub_obc(a, b, inds, key1, key2, nrep1, nrep2):
         (
             a,
             b.flatten(),
-            key1,
-            key2,
-            b.shape[0] * nrep1 * nrep2,
+            ky,
+            kz,
+            b.shape[0] * ny * nz,
             b.shape[0],
-            nrep2,
+            nz,
             inds,
             num_inds,
         ),

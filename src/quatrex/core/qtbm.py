@@ -42,7 +42,7 @@ def allocate_system_matrix(
     overlap_matrices : dict
         Dictionary of Overlap matrices for each hopping direction.
     contacts : list
-        
+
 
     Returns
     -------
@@ -117,52 +117,23 @@ class Observables:
     Attributes
     ----------
     electron_ldos : NDArray, optional
-        Local density of states (LDOS) for electrons with shape
-        (n_atoms, n_energies). Provides site-resolved DOS information.
-    electron_density : NDArray, optional
-        Electron density distribution with shape (n_atoms,).
-    hole_density : NDArray, optional
-        Hole density distribution with shape (n_atoms,).
-    electron_current : dict, optional
-        Dictionary containing current density information. Keys may
-        include directional components and spatial distributions.
+        Orbital-resolved local density of states (LDOS) for electrons
+        with shape (n_atoms, n_energies).
+    contact_currents : dict, optional
+        Contact current values for each contact pair.
+    transmissions : dict, optional
+        Transmission coefficients between contact pairs.
     spill_over_error : NDArray, optional
         Error metric for boundary condition accuracy with shape
         (n_energies,). Quantifies how well the open boundary conditions
         are satisfied.
-    electron_transmission_contacts : NDArray, optional
-        Contact-to-contact transmission coefficients with shape
-        (n_contact_pairs, n_energies). Each element T_ij(E) gives the
-        transmission probability from contact i to contact j at energy
-        E.
-    electron_transmission_contacts_labels : list[str]
-        String labels for each contact pair in the format
-        "source->drain" corresponding to the transmission matrix rows.
-    electron_transmission_x_slabs : NDArray, optional
-        Spatial transmission between adjacent slabs with shape
-        (n_contacts, n_slabs-1, n_energies). Shows current flow as a
-        function of position for each injection contact.
-    electron_dos_x_slabs : NDArray, optional
-        Position-resolved density of states with shape (n_contacts,
-        n_slabs, n_energies). Provides spatial distribution of DOS for
-        each injection contact.
-    excess_charge_density : NDArray, optional
-        Excess charge density distribution with shape (n_atoms,).
-
     """
 
     electron_ldos: NDArray = None
-    electron_density: NDArray = None
-    hole_density: NDArray = None
-    electron_current: dict = field(default_factory=dict)
+    contact_currents: dict = field(default_factory=dict)
+    transmissions: dict = field(default_factory=dict)
 
     spill_over_error: NDArray = None
-
-    electron_transmission_contacts: NDArray = None
-    electron_transmission_contacts_labels = []
-    electron_transmission_indices = []
-
-    electron_dos_orb: NDArray = None
 
     electron_charge_orb: NDArray = None
     electron_charge_at: NDArray = None
@@ -254,23 +225,18 @@ class QTBM:
         # Look for all the combinations of contacts
         self.num_transmissions = int((self.num_contacts**2 - self.num_contacts))
 
-        for contact_idx_in in range(self.num_contacts):
-            for contact_idx_out in range(self.num_contacts):
-                if contact_idx_out != contact_idx_in:
-                    self.observables.electron_transmission_contacts_labels.append(
-                        f"{self.device.contacts[contact_idx_in].name[0]}{self.device.contacts[contact_idx_out].name[0]}"
-                    )
-                    self.observables.electron_transmission_indices.append(
-                        (contact_idx_in, contact_idx_out)
-                    )
+        for contact_in in self.device.contacts:
+            for contact_out in self.device.contacts:
+                if contact_in == contact_out:
+                    continue
 
-        # Initialize the observables
-        self.observables.electron_transmission_contacts = xp.zeros(
-            (self.num_kpoints, self.num_transmissions, self.local_energies.shape[0]),
-            dtype=xp.float64,
-        )
+                # Initialize the observables
+                self.observables.transmissions[contact_in, contact_out] = xp.zeros(
+                    (self.num_kpoints, self.local_energies.shape[0]),
+                    dtype=xp.float64,
+                )
 
-        self.observables.electron_dos_orb = xp.zeros(
+        self.observables.electron_ldos = xp.zeros(
             (
                 self.num_kpoints,
                 self.num_contacts,
@@ -284,10 +250,6 @@ class QTBM:
         self.matrix_type = preferred_matrix_type[
             quatrex_config.electron.solver.direct_solver
         ]
-
-        self.observables.electron_current["contact_current"] = xp.zeros(
-            self.num_transmissions
-        )
 
         self.observables.electron_charge_orb = xp.zeros(
             (self.num_orbitals,), dtype=xp.float64
@@ -412,15 +374,13 @@ class QTBM:
         contacts = self.device.contacts
 
         # Compute transmissions for all the possible contact couples
-        for nt in range(self.num_transmissions):
+        # for nt in range(self.num_transmissions):
+        for (
+            contact_in,
+            contact_out,
+        ), transmission in self.observables.transmissions.items():
             # Get the all the wavefunctions injected from contact 1 and
             # extract the elements inside contact 2
-            contact_idx_in, contact_idx_out = (
-                self.observables.electron_transmission_indices[nt]
-            )
-
-            contact_in = contacts[contact_idx_in]
-            contact_out = contacts[contact_idx_out]
 
             # Wavefunctions injected from contact_in and evaluated at contact_out
             phi_nt = phi[
@@ -449,9 +409,9 @@ class QTBM:
                         phi_nt,
                     )
 
-                self.observables.electron_transmission_contacts[
-                    k_idx, nt, global_energy_index
-                ] = xp.trace(-2 * xp.imag(phi_nt.T.conj() @ S_P))
+                transmission[k_idx, global_energy_index] = xp.trace(
+                    -2 * xp.imag(phi_nt.T.conj() @ S_P)
+                )
 
         # Compute the DOS
         # diag(phi^H @ S @ phi)
@@ -511,7 +471,7 @@ class QTBM:
             phi_c_ortho = phi_ortho[:, injection_segment]
 
             if phi_c.size != 0:
-                self.observables.electron_dos_orb[
+                self.observables.electron_ldos[
                     k_idx, contact_idx, :, global_energy_index
                 ] = xp.real(xp.sum(phi_c.conj() * phi_c_ortho, axis=1) / (2 * xp.pi))
 
@@ -519,25 +479,23 @@ class QTBM:
         """Computes the electron current from the transmission data."""
 
         # Compute the current from all the k dependent transmissions
-        for nt in range(self.num_transmissions):
-            contact_idx_in, contact_idx_out = (
-                self.observables.electron_transmission_indices[nt]
-            )
+        # for nt in range(self.num_transmissions):
+        for (
+            contact_in,
+            contact_out,
+        ), transmission in self.observables.transmissions.items():
             Fermi_factor = fermi_dirac(
-                self.electron_energies
-                - self.device.contacts[contact_idx_in].fermi_level,
+                self.electron_energies - contact_in.fermi_level,
                 self.quatrex_config.electron.temperature,
             ) - fermi_dirac(
-                self.electron_energies
-                - self.device.contacts[contact_idx_out].fermi_level,
+                self.electron_energies - contact_out.fermi_level,
                 self.quatrex_config.electron.temperature,
             )
 
-            self.observables.electron_current["contact_current"][nt] = -(
+            self.observables.contact_currents[contact_in, contact_out] = -(
                 xp.sum(
                     xp.trapz(
-                        Fermi_factor
-                        * self.observables.electron_transmission_contacts[:, nt, :],
+                        Fermi_factor * transmission,
                         self.electron_energies,
                         axis=1,
                     )
@@ -560,7 +518,7 @@ class QTBM:
                 2
                 * xp.sum(
                     xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :] * Fermi_factor,
+                        self.observables.electron_ldos[:, n, :, :] * Fermi_factor,
                         self.electron_energies,
                         axis=2,
                     ),
@@ -591,8 +549,7 @@ class QTBM:
                 2
                 * xp.sum(
                     xp.trapz(
-                        self.observables.electron_dos_orb[:, n, :, :]
-                        * (1 - Fermi_factor),
+                        self.observables.electron_ldos[:, n, :, :] * (1 - Fermi_factor),
                         self.electron_energies,
                         axis=2,
                     ),
@@ -616,21 +573,30 @@ class QTBM:
             if not os.path.exists(self.quatrex_config.output_dir):
                 os.mkdir(self.quatrex_config.output_dir)
 
-            for n in range(self.num_transmissions):
+            for (
+                contact_in,
+                contact_out,
+            ), transmission in self.observables.transmissions.items():
+                label = f"{contact_in.name[0]}{contact_out.name[0]}"
                 np.save(
-                    f"{output_dir}/transmission_{self.observables.electron_transmission_contacts_labels[n]}.npy",
-                    self.observables.electron_transmission_contacts[:, n, :],
+                    f"{output_dir}/transmission_{label}.npy",
+                    transmission,
                 )
 
+            for (
+                contact_in,
+                contact_out,
+            ), contact_current in self.observables.contact_currents.items():
+                label = f"{contact_in.name[0]}{contact_out.name[0]}"
                 np.save(
-                    f"{output_dir}/current_{self.observables.electron_transmission_contacts_labels[n]}.npy",
-                    self.observables.electron_current["contact_current"][n],
+                    f"{output_dir}/current_{label}.npy",
+                    contact_current,
                 )
 
             for n in range(self.num_contacts):
                 np.save(
                     f"{output_dir}/dos_{self.device.contacts[n].name[0]}.npy",
-                    self.observables.electron_dos_orb[:, n, :, :],
+                    self.observables.electron_ldos[:, n, :, :],
                 )
 
             np.save(
@@ -906,11 +872,13 @@ class QTBM:
 
         # Gather the observables
         comm.Barrier()
-        self.observables.electron_transmission_contacts = xp.concatenate(
-            comm.allgather(self.observables.electron_transmission_contacts), axis=-1
-        )
-        self.observables.electron_dos_orb = xp.concatenate(
-            comm.allgather(self.observables.electron_dos_orb), axis=-1
+        # for nt in range(self.num_transmissions):
+        for key, transmission in self.observables.transmissions.items():
+            self.observables.transmissions[key] = xp.concatenate(
+                comm.allgather(transmission), axis=-1
+            )
+        self.observables.electron_ldos = xp.concatenate(
+            comm.allgather(self.observables.electron_ldos), axis=-1
         )
 
         self._compute_current()

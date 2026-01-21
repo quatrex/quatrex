@@ -123,23 +123,12 @@ class Observables:
         Contact current values for each contact pair.
     transmissions : dict, optional
         Transmission coefficients between contact pairs.
-    spill_over_error : NDArray, optional
-        Error metric for boundary condition accuracy with shape
-        (n_energies,). Quantifies how well the open boundary conditions
-        are satisfied.
+
     """
 
     electron_ldos: NDArray = None
     contact_currents: dict = field(default_factory=dict)
     transmissions: dict = field(default_factory=dict)
-
-    spill_over_error: NDArray = None
-
-    electron_charge_orb: NDArray = None
-    electron_charge_at: NDArray = None
-
-    hole_charge_orb: NDArray = None
-    hole_charge_at: NDArray = None
 
 
 class QTBM:
@@ -173,8 +162,7 @@ class QTBM:
         Full energy grid for the calculation.
     local_energies : NDArray
         Local portion of energy grid for MPI parallelization.
-    neutrality_level : float
-        Charge neutrality level for the device.
+
     """
 
     def __init__(
@@ -251,28 +239,6 @@ class QTBM:
             quatrex_config.electron.solver.direct_solver
         ]
 
-        self.observables.electron_charge_orb = xp.zeros(
-            (self.num_orbitals,), dtype=xp.float64
-        )
-
-        self.observables.hole_charge_orb = xp.zeros(
-            (self.num_orbitals,), dtype=xp.float64
-        )
-
-        if (
-            self.quatrex_config.electron.conduction_band_edge is None
-            or self.quatrex_config.electron.valence_band_edge is None
-        ):
-            if comm.rank == 0:
-                print(
-                    "WARNING: No band edges provided, only electron charge will be computed."
-                )
-            self.neutrality_level = -np.inf
-        else:
-            self.neutrality_level = 0.5 * (
-                self.quatrex_config.electron.conduction_band_edge
-                + self.quatrex_config.electron.valence_band_edge
-            )
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
@@ -504,68 +470,6 @@ class QTBM:
                 * (2 * e / h)
             )
 
-    def _compute_electron_charge(self):
-        """Computes the electron charge from the DOS data."""
-
-        # Compute the orbital electron charge density per orbital
-        for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies < self.neutrality_level] = 0.0
-            self.observables.electron_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_ldos[:, n, :, :] * Fermi_factor,
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
-                )
-                / self.num_kpoints
-            )
-
-        # Compute atomic electron charge from orbital contributions
-        self.observables.electron_charge_at = xp.zeros(
-            self.device.orbital_offsets.shape[0] - 1
-        )
-        self.observables.electron_charge_at = xp.add.reduceat(
-            self.observables.electron_charge_orb, self.device.orbital_offsets[:-1]
-        )
-
-    def _compute_hole_charge(self):
-        """Computes the hole charge from the DOS data."""
-
-        # Compute the orbital hole charge density per orbital
-        for n in range(self.num_contacts):
-            Fermi_factor = fermi_dirac(
-                self.electron_energies - self.device.contacts[n].fermi_level,
-                self.quatrex_config.electron.temperature,
-            )
-            Fermi_factor[self.electron_energies > self.neutrality_level] = 1
-            self.observables.hole_charge_orb += (
-                2
-                * xp.sum(
-                    xp.trapz(
-                        self.observables.electron_ldos[:, n, :, :] * (1 - Fermi_factor),
-                        self.electron_energies,
-                        axis=2,
-                    ),
-                    axis=0,
-                )
-                / self.num_kpoints
-            )
-
-        # Compute atomic hole charge from orbital contributions
-        self.observables.hole_charge_at = xp.zeros(
-            self.device.orbital_offsets.shape[0] - 1
-        )
-        self.observables.hole_charge_at = xp.add.reduceat(
-            self.observables.hole_charge_orb, self.device.orbital_offsets[:-1]
-        )
-
     def _write_outputs(self):
         if comm.rank == 0:
 
@@ -598,28 +502,6 @@ class QTBM:
                     f"{output_dir}/dos_{self.device.contacts[n].name[0]}.npy",
                     self.observables.electron_ldos[:, n, :, :],
                 )
-
-            np.save(
-                f"{output_dir}/el_charge_orb.npy",
-                self.observables.electron_charge_orb,
-            )
-
-            np.save(
-                f"{output_dir}/el_charge_at.npy",
-                self.observables.electron_charge_at,
-            )
-
-            np.save(f"{output_dir}/orb.npy", self.device.orbital_offsets)
-
-            np.save(
-                f"{output_dir}/ho_charge_orb.npy",
-                self.observables.hole_charge_orb,
-            )
-
-            np.save(
-                f"{output_dir}/ho_charge_at.npy",
-                self.observables.hole_charge_at,
-            )
 
     def run(self) -> None:
         """Runs the complete QTBM transport calculation."""
@@ -882,7 +764,5 @@ class QTBM:
         )
 
         self._compute_current()
-        self._compute_electron_charge()
-        self._compute_hole_charge()
 
         self._write_outputs()

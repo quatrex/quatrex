@@ -146,7 +146,7 @@ class Contact:
 
         # Orbitals for contact (where to apply the OBC)
         # Sorted first in transport direction, then in transverse directions
-        self.orbitals_contact = np.concatenate(
+        self.orbital_indices = np.concatenate(
             [
                 self.unit_cell_orbital_indices[i, j, k]
                 for j, k, i in np.ndindex(ny, nz, self.num_transport_cells)

@@ -30,89 +30,76 @@ from quatrex.device import Device
 from quatrex.grid import get_electron_energies, monkhorst_pack
 
 
-def allocate_sys_mat(
-    ham: dict, ovl: dict, boundary_SE_indexes: list[NDArray]
+def allocate_system_matrix(
+    hamiltonians: dict, overlap_matrices: dict, contacts: list
 ) -> sparse.csr_matrix:
-    """Allocates the system matrix with the correct sparsity pattern.
+    """Allocates the system matrix.
 
     Parameters
     ----------
-    ham : dict
-        Hopping hamiltonian sparse matrices.
-    ovl : dict
-        Hopping hamiltonian sparse matrices.
-    boundary_SE_indexes : list[NDArray]
-        List of destination indices for each boundary self-energy.
+    hamiltonians : dict
+        Dictionary of Hamiltonian matrices for each hopping direction.
+    overlap_matrices : dict
+        Dictionary of Overlap matrices for each hopping direction.
+    contacts : list
+        
 
     Returns
     -------
     system_matrix : sparse.csr_matrix
-        The allocated system matrix with the correct sparsity pattern.
+        The allocated system matrix.
+
     """
 
-    ham_cpu = {}
-    ovl_cpu = {}
+    hamiltonians_host = {}
+    overlap_matrices_host = {}
 
-    for key, value in ham.items():
-        ham_cpu[key] = value.get() if hasattr(value, "get") else value
-    for key, value in ovl.items():
-        ovl_cpu[key] = value.get() if hasattr(value, "get") else value
+    for r, h_r in hamiltonians.items():
+        hamiltonians_host[r] = h_r.get() if hasattr(h_r, "get") else h_r
+    for r, s_r in overlap_matrices.items():
+        overlap_matrices_host[r] = s_r.get() if hasattr(s_r, "get") else s_r
 
-    # System matrix size
-    mat_size = ham_cpu[(0, 0, 0)].shape[0]
+    size = hamiltonians_host[(0, 0, 0)].shape[0]
 
-    # Given a row i for the system matrix, check if it is affected by each boundary self-energy
-    boundary_SE_mask = []
-    for indexes in boundary_SE_indexes:
-        boundary_SE_mask.append(np.zeros(mat_size, dtype=np.bool))
-        boundary_SE_mask[-1][:] = False
-        boundary_SE_mask[-1][indexes] = True
+    indices_host = []
+    indptr_host = np.zeros(size + 1, dtype=np.int64)
 
-    # List containing all System Matrix col indices for each row
-    SM_indices_list = []
-
-    # CSR System-matrix indptr array
-    SM_indptr = np.zeros(mat_size + 1, dtype=np.int64)
-
-    for i_row in range(mat_size):
+    # Build column indices and indptr
+    for row in range(size):
 
         # Compute the union of all column indices affecting this row
         row_union = np.array([], dtype=np.int64)
 
         # Add Hamiltonian contributions
-        for r, h_r in ham_cpu.items():
-            row_start = h_r.indptr[i_row]
-            row_end = h_r.indptr[i_row + 1]
+        for r, h_r in hamiltonians_host.items():
+            row_start = h_r.indptr[row]
+            row_end = h_r.indptr[row + 1]
             row_union = np.union1d(row_union, h_r.indices[row_start:row_end])
 
-        # Add Overlap contributions
-        for r, s_r in ovl_cpu.items():
-            row_start = s_r.indptr[i_row]
-            row_end = s_r.indptr[i_row + 1]
+        # Add overlap contributions
+        for r, s_r in overlap_matrices_host.items():
+            row_start = s_r.indptr[row]
+            row_end = s_r.indptr[row + 1]
             row_union = np.union1d(row_union, s_r.indices[row_start:row_end])
 
-        # Add Boundary self-energy contributions
-        for i, s_ind in enumerate(boundary_SE_mask):
-            if s_ind[i_row]:
-                row_union = np.union1d(row_union, boundary_SE_indexes[i])
+        # Add boundary self-energy contributions. This assumes that
+        # the contact self-energies are dense.
+        for contact in contacts:
+            if row in contact.orbital_indices:
+                row_union = np.union1d(row_union, contact.orbital_indices)
 
         # Store the column indices for this row
-        SM_indices_list.append(row_union)
-        SM_indptr[i_row + 1] = SM_indptr[i_row] + len(row_union)
-
-    total_SM_nnz = SM_indptr[-1]
+        indices_host.append(row_union)
+        indptr_host[row + 1] = indptr_host[row] + len(row_union)
 
     # Allocate data and indices arrays
-    SM_data = np.zeros(total_SM_nnz, dtype=xp.complex128)
-    SM_indices = np.concatenate(SM_indices_list)
-
-    SM_data_gpu = xp.asarray(SM_data)
-    SM_indices_gpu = xp.asarray(SM_indices)
-    SM_indptr_gpu = xp.asarray(SM_indptr)
+    indices_device = xp.asarray(np.concatenate(indices_host))
+    indptr_device = xp.asarray(indptr_host)
+    data = xp.zeros_like(indices_device, dtype=xp.complex128)
 
     system_matrix = sparse.csr_matrix(
-        (SM_data_gpu, SM_indices_gpu, SM_indptr_gpu),
-        shape=(mat_size, mat_size),
+        (data, indices_device, indptr_device),
+        shape=(size, size),
         dtype=xp.complex128,
     )
 
@@ -437,7 +424,7 @@ class QTBM:
 
             # Wavefunctions injected from contact_in and evaluated at contact_out
             phi_nt = phi[
-                contact_out.orbitals_contact,
+                contact_out.orbital_indices,
                 injection_segments[contact_in],
             ]
 
@@ -476,11 +463,11 @@ class QTBM:
             phi_ortho += overlap @ phi
 
         for contact in contacts:
-            orbitals_contact = contact.orbitals_contact
+            orbital_indices = contact.orbital_indices
             ny, nz = contact.transverse_repetition_grid
 
             phi_cont = xp.zeros(
-                (orbitals_contact.shape[0], phi.shape[1]), dtype=xp.complex128
+                (orbital_indices.shape[0], phi.shape[1]), dtype=xp.complex128
             )
             phi_cont[:, injection_segments[contact]] = phi_surface_per_contact[contact]
 
@@ -496,18 +483,18 @@ class QTBM:
                 phi_cont += kron_matmul(
                     xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
                     value,
-                    phi[orbitals_contact, :],
+                    phi[orbital_indices, :],
                 )
 
             # Add the spill over from the overlap
             for overlap in overlap_matrices.values():
-                phi_ortho[orbitals_contact, :] += (
+                phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap) @ phi_cont
                 )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = xp.linalg.norm(
                 contact.get_coupling_matrix(system_matrix) @ phi_cont
-                + system_matrix[orbitals_contact, :] @ phi
+                + system_matrix[orbital_indices, :] @ phi
             )
             if comm.rank == 0:
                 print(f"    Spill over error for contact {contact.name[0]}: {error}")
@@ -676,13 +663,9 @@ class QTBM:
         times = []
         comm.Barrier()
 
-        cont_ind_list = []
-        for contact in self.device.contacts:
-            cont_ind_list.append(contact.orbitals_contact)
-
         # Allocate indices to update the system matrix in-place
-        system_matrix = allocate_sys_mat(
-            self.device.hamiltonians, self.device.overlap_matrices, cont_ind_list
+        system_matrix = allocate_system_matrix(
+            self.device.hamiltonians, self.device.overlap_matrices, self.device.contacts
         )  # Initialize the system matrix
 
         hamiltonian_update_indices = {}
@@ -699,7 +682,7 @@ class QTBM:
         sigma_obc_update_indices = {}
         for contact in self.device.contacts:
             sigma_obc_update_indices[contact] = compute_update_indices_dense(
-                system_matrix, contact.orbitals_contact
+                system_matrix, contact.orbital_indices
             )
 
         for k_idx in range(self.num_kpoints):
@@ -807,7 +790,7 @@ class QTBM:
                     # of the rhs
                     for contact in self.device.contacts:
                         injection_tot[
-                            contact.orbitals_contact, injection_segments[contact, i]
+                            contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
 
                     system_matrix.data[:] = 0

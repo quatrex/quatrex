@@ -1,0 +1,113 @@
+site_name: quatrex
+site_url: https://quatrex.github.io/quatrex/
+site_description: Quantum transport simulations at the exascale and beyond.
+
+repo_url: https://github.com/quatrex/quatrex
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      primary: white
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      primary: white
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Arimo
+    code: Fira Code
+  features:
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - content.code.copy
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - footnotes
+  - tables
+  - toc:
+      permalink: "#"
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      use_pygments: true
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+extra_javascript:
+  - javascript/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/custom.css
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs/scripts/generate_parameter_docs.py # or any other name or path
+  - mkapi:
+      exclude:
+        - quatrex.cli
+        - quatrex.examples
+        - quatrex.core.*config
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting_started/installation.md
+      - Setting up a simulation: getting_started/setup_simulations.md
+      - Running a simulation: getting_started/running_simulations.md
+  - User Guide:
+      - Overview: user_guide/index.md
+      - Introduction: user_guide/introduction.md
+      - Methodology: user_guide/methodology.md
+      - Parameters:
+          - Overview: user_guide/parameters/index.md
+          - QuaTrEx: user_guide/parameters/quatrex.md
+          - Device: user_guide/parameters/device.md
+          - Contact: user_guide/parameters/contact.md
+          - SCSP: user_guide/parameters/scsp.md
+          - Poisson: user_guide/parameters/poisson.md
+          - SCBA: user_guide/parameters/scba.md
+          - QTBM: user_guide/parameters/qtbm.md
+          - Electron: user_guide/parameters/electron.md
+          - Phonon: user_guide/parameters/phonon.md
+          - Coulomb Screening: user_guide/parameters/coulomb_screening.md
+          - Photon: user_guide/parameters/photon.md
+          - OBC: user_guide/parameters/obc.md
+          - Lyapunov: user_guide/parameters/lyapunov.md
+          - Memoizer: user_guide/parameters/memoizer.md
+          - Solver: user_guide/parameters/solver.md
+          - Output: user_guide/parameters/output.md
+      - Examples:
+          - Carbon Nanotube: user_guide/examples/cnt.md
+  - Contributing: contributing.md
+  - API Reference:
+      - Overview: api/index.md
+      - $api:src/qttools.***
+      - $api:src/quatrex.***

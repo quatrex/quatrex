@@ -54,14 +54,15 @@ dependencies = [
     docs = [
         "mkdocs",
         "mkdocs-material",
-        "mkdocstrings-python",
+        "griffe-pydantic",
         "mkdocs-gen-files",
-        "mkdocs-literate-nav",
-        "mkdocs-section-index",
+        "tabulate",
+        "mkapi",
+        "mpich",  # If not present, mkapi cannot build the api docs.
     ]
 
     [project.urls]
-    Code = "https://github.com/quatrex-dev/quatrex"
+    Code = "https://github.com/quatrex/quatrex"
 
 [project.scripts]
 quatrex = "quatrex.cli:run_cli"

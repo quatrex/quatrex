@@ -204,7 +204,7 @@ class OBCConfig(BaseModel):
     num_ref_iterations: PositiveInt = 2
     r"""The number of fixed-point iterations used to refine the surface Green's functions.
 
-        $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
+    $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
 
     This is needed to improve the accuracy of the surface Green's functions
     if not enough eigenpairs are considered. 
@@ -216,6 +216,7 @@ class OBCConfig(BaseModel):
     r"""The minimum propagation speed for propagating modes.
     
     The propagation speed is computed as:
+
     $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
 
     """
@@ -224,6 +225,7 @@ class OBCConfig(BaseModel):
     r"""The tolerance for the residual of the eigenpairs.
     
     The residuals are computed as:
+
     $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} \vec{v} \rvert $$
 
     Modes above this tolerance are considered wrong and are not used.
@@ -243,6 +245,7 @@ class OBCConfig(BaseModel):
     residual is above this value.
 
     The residual is computed as:
+
     $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
     """
 

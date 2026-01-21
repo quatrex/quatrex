@@ -90,9 +90,11 @@ nav:
           - Overview: user_guide/parameters/index.md
           - QuaTrEx: user_guide/parameters/quatrex.md
           - Device: user_guide/parameters/device.md
+          - Contact: user_guide/parameters/contact.md
           - SCSP: user_guide/parameters/scsp.md
           - Poisson: user_guide/parameters/poisson.md
           - SCBA: user_guide/parameters/scba.md
+          - QTBM: user_guide/parameters/qtbm.md
           - Electron: user_guide/parameters/electron.md
           - Phonon: user_guide/parameters/phonon.md
           - Coulomb Screening: user_guide/parameters/coulomb_screening.md
@@ -102,7 +104,6 @@ nav:
           - Memoizer: user_guide/parameters/memoizer.md
           - Solver: user_guide/parameters/solver.md
           - Output: user_guide/parameters/output.md
-          - Computation: user_guide/parameters/compute.md
       - Examples:
           - Carbon Nanotube: user_guide/examples/cnt.md
   - Contributing: contributing.md

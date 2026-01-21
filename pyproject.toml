@@ -64,8 +64,8 @@ dependencies = [
     [project.urls]
     Code = "https://github.com/quatrex/quatrex"
 
-    [project.scripts]
-    quatrex = "quatrex.cli:run"
+[project.scripts]
+quatrex = "quatrex.cli:run_cli"
 
 [tool.setuptools.dynamic]
 version = { attr = "quatrex.__about__.__version__" }

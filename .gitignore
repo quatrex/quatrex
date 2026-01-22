@@ -166,10 +166,9 @@ notebooks/
 
 # Examples directory and outputs
 **/outputs
-**/inputs
+
 hostfile
 .vscode/
-examples/.file_cache.npy
 
 # Nsight Systems output
 *.nsys-rep

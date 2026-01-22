@@ -1,0 +1,3 @@
+[lfs]
+  url = https://gitlab.ethz.ch/quatrex/quatrex.git/info/lfs
+  locksverify = false

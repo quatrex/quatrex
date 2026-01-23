@@ -30,8 +30,20 @@ git clone https://github.com/quatrex/quatrex.git
 cd quatrex
 ```
 
-Then create a conda environment from the provided `environment-dev.yml`
-file
+We provide several example configurations, input files, and reference
+outputs that we use for testing and development. You can find them in
+the `examples/` directory.
+
+We track this data using [Git LFS](https://git-lfs.com/), so make sure
+to install Git LFS and pull the files after cloning the repository:
+
+```bash
+git lfs install
+git lfs pull
+```
+
+You can then create a conda environment from the provided
+`environment-dev.yml` file
 
 ```bash
 conda env create -f environment-dev.yml

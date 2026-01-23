@@ -1,6 +1,5 @@
 # Copyright (c) 2026 ETH Zurich and the authors of the qttools package.
 import cupy as cp
-from pygments.unistring import Nd
 
 from qttools import NDArray
 from qttools.kernels.inplace.cupy import _rawkernel

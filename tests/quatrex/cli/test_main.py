@@ -2,6 +2,7 @@
 
 import subprocess
 
+
 def test_help_cli():
     """Tests the help CLI."""
     subprocess.run(["quatrex", "--help"], check=True)

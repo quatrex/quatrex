@@ -637,7 +637,12 @@ class QuatrexConfig(BaseModel):
     def set_output_dir(self):
         """Resolves the simulation directory path."""
         if self.output_dir is not None:
-            self.output_dir = Path(self.output_dir).resolve()
+            self.output_dir = Path(self.output_dir)
+            if self.output_dir.is_absolute():
+                self.output_dir = self.output_dir.resolve()
+                return self
+
+            self.output_dir = (self.config_dir / self.output_dir).resolve()
             return self
 
         self.output_dir = self.simulation_dir / "outputs/"
@@ -647,8 +652,14 @@ class QuatrexConfig(BaseModel):
     def set_input_dir(self) -> Path:
         """Returns the input directory path."""
         if self.input_dir is not None:
-            self.input_dir = Path(self.input_dir).resolve()
+            self.input_dir = Path(self.input_dir)
+            if self.input_dir.is_absolute():
+                self.input_dir = self.input_dir.resolve()
+                return self
+
+            self.input_dir = (self.config_dir / self.input_dir).resolve()
             return self
+
         self.input_dir = self.simulation_dir / "inputs/"
         return self
 

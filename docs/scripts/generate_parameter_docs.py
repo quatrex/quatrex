@@ -13,13 +13,13 @@ class_template = """{description}"""
 
 entry_template = """
 ## :octicons-sliders-24: {name}
+<!-- blacken-docs:off -->
 ```python
 {name}: {annotation}{default_value}
 ```
 
 {description}
 """
-
 
 camel_case_pattern = re.compile("((?<=[a-z0-9])[A-Z]|(?!^)[A-Z](?=[a-z]))")
 

@@ -60,6 +60,7 @@ dependencies = [
         "mkapi",
         "mpich",  # If not present, mkapi cannot build the api docs.
     ]
+    linting = ["pre-commit",]
 
     [project.urls]
     Code = "https://github.com/quatrex/quatrex"

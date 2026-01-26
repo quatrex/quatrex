@@ -1,0 +1,43 @@
+# Copyright (c) 2026 ETH Zurich and the authors of the quatrex package.
+name: "Copilot Setup Steps"
+
+on: workflow_dispatch
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up C++ compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ build-essential
+
+      - name: Set up CMake
+        run: |
+          sudo apt-get install -y cmake
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.13"
+          channels: conda-forge,defaults
+          channel-priority: true
+          activate-environment: quatrex-dev
+          environment-file: environment-dev.yaml
+
+      - name: Install quatrex without Dependencies
+        run: |
+          pip install --no-deps --editable .
+          pip install pre-commit
+          pre-commit install
+          pre-commit run --all-files

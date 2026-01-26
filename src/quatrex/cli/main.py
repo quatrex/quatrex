@@ -14,8 +14,6 @@ from rich import print as pprint
 from typing_extensions import Annotated
 
 import quatrex
-from quatrex.examples import ALLOWED_EXAMPLES, get_example_dir
-from quatrex.examples import load as load_example
 
 HEADER = rf"""
                    _                 
@@ -181,43 +179,6 @@ def run(
         raise NotImplementedError(
             f"Formalism '{quatrex_config.formalism}' is not implemented."
         )
-
-
-@quatrex_cli.command()
-def fetch_example(
-    name: Annotated[
-        str,
-        typer.Argument(
-            ...,
-            help="Name of the example to fetch. Allowed examples are:\n"
-            f"{'\n'.join([f'- `{ex}`' for ex in ALLOWED_EXAMPLES.keys()])}",
-        ),
-    ],
-    force: Annotated[
-        bool,
-        typer.Option(
-            "--force",
-            "-f",
-            help="Forces re-download even if the dataset already exists.",
-        ),
-    ] = False,
-):
-    """Fetches a preconfigured example by name."""
-    if comm.rank == 0:
-        if name not in ALLOWED_EXAMPLES.keys():
-            raise ValueError(
-                f"Unknown example: {name}. Current examples are: {list(ALLOWED_EXAMPLES.keys())}"
-            )
-
-        typer.secho(f"Fetching example: {name}")
-        device_key, __, target_dir = get_example_dir(name)
-
-        for subname in ALLOWED_EXAMPLES[name]:
-            load_example(
-                device_key + "-" + subname,
-                target_dir=target_dir / "inputs",
-                force=force,
-            )
 
 
 @quatrex_cli.callback(no_args_is_help=True)

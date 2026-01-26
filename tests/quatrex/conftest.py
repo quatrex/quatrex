@@ -1,44 +1,16 @@
 # Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+from pathlib import Path
 
 import pytest
 
-from quatrex.examples import ALLOWED_EXAMPLES
+EXAMPLES_DIR = Path(__file__).parents[2].resolve() / "examples"
 
-# only small examples for testing
-TEST_EXAMPLES = [
-    "carbon-nanotube:",
-    "cp2k-atomic-chain:qtbm",
-    "wann-si-bulk:qtbm",
-]
+assert EXAMPLES_DIR.exists()
 
-DIST_TEST_EXAMPLES = [
-    "carbon-nanotube:dist",
-]
-
-assert len(TEST_EXAMPLES) == len(set(TEST_EXAMPLES))
-assert set(TEST_EXAMPLES).issubset(ALLOWED_EXAMPLES.keys())
-assert len(DIST_TEST_EXAMPLES) == len(set(DIST_TEST_EXAMPLES))
-assert set(DIST_TEST_EXAMPLES).issubset(ALLOWED_EXAMPLES.keys())
-
-NON_DISTIRBUTED_EXAMPLES = [
-    pytest.param(example, id=example) for example in TEST_EXAMPLES
-]
-DOMAIN_DISTTRIBUTED_EXAMPLES = [
-    pytest.param(example, id=example) for example in DIST_TEST_EXAMPLES
-]
-EXAMPLES = NON_DISTIRBUTED_EXAMPLES + DOMAIN_DISTTRIBUTED_EXAMPLES
+CONFIGS = list(EXAMPLES_DIR.glob("**/quatrex_config.toml"))
+EXAMPLES = [(config.parent, "dist" in config.parent.stem) for config in CONFIGS]
 
 
-@pytest.fixture(params=EXAMPLES)
-def example(request: pytest.FixtureRequest) -> str:
-    return request.param
-
-
-@pytest.fixture(params=NON_DISTIRBUTED_EXAMPLES)
-def non_distributed_example(request: pytest.FixtureRequest) -> str:
-    return request.param
-
-
-@pytest.fixture(params=DOMAIN_DISTTRIBUTED_EXAMPLES)
-def domain_distributed_example(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(params=EXAMPLES, autouse=True, scope="function")
+def example(request: pytest.FixtureRequest) -> tuple[Path, bool]:
     return request.param

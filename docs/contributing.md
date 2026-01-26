@@ -25,6 +25,18 @@ pip install --editable .
 - Push your branch to GitHub and open a pull request.
 - Wait for code review and address any feedback.
 
+## Example configurations
+As described in the [installation instructions](getting_started/installation.md),
+we provide several example configurations, input files, and reference
+outputs that we use for testing and development.
+
+This data is tracked using [Git LFS](https://git-lfs.com/). We do not
+use GitHub's built-in large file storage, as it has some bandwidth
+limitations. Instead, we use ETH Zürich's GitLab instance to host the
+LFS files in [this project](https://gitlab.ethz.ch/quatrex/quatrex).
+
+To update the LFS files, you will need to have write access to the
+GitLab project. The files can be read without authentication.
 
 ## Guidelines
 
@@ -49,7 +61,10 @@ pip install --editable .
 
 The documentation is built using the [Material for
 mkdocs](https://squidfunk.github.io/mkdocs-material/) framework with the
-and hosted on GitHub Pages. To build the documentation locally, run:
+[`mkapi`](https://github.com/daizutabi/mkapi) plugin to automatically
+generate API reference documentation. The documentation is automatically
+built and hosted on GitHub Pages. To build the documentation locally,
+run:
 ```bash
 mkdocs serve
 ```

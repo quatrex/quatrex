@@ -13,6 +13,9 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      
+      - name: Get Git LFS Files
+        run: git lfs pull
 
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3

@@ -1,14 +1,17 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
 
+from pathlib import Path
+
 import pytest
 
 from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn, Full
-from quatrex.cli.main import fetch_example
 from quatrex.core.compute_config import CommConfig
 from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
 from quatrex.electron.solver import ElectronSolver
-from quatrex.examples import get_example_dir
+
+EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
+CARBON_NANOTUBE_EXAMPLE = EXAMPLES_DIR / "w90" / "carbon-nanotube" / "gw"
 
 BLOCK_SIZE = [
     pytest.param(21, id="21x21"),
@@ -66,18 +69,11 @@ def contact(request: pytest.FixtureRequest) -> str:
 
 @pytest.fixture(params=ENERGIES, autouse=True, scope="session")
 def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
-    """Returns some CNT boundary blocks."""
+    """Returns some boundary blocks for the carbon nanotube example."""
 
     energies = xp.array(request.param)
 
-    try:
-        fetch_example("carbon-nanotube:")
-    except Exception as e:
-        pytest.fail(f"fetch-example failed: {e}")
-
-    _, _, example_path = get_example_dir("carbon-nanotube:")
-
-    quatrex_config_path = example_path / "quatrex_config.toml"
+    quatrex_config_path = CARBON_NANOTUBE_EXAMPLE / "quatrex_config.toml"
     quatrex_config = parse_quatrex_config(quatrex_config_path)
 
     # hack to configure the communicator

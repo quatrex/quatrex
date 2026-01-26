@@ -2,7 +2,6 @@
 import math
 
 import numba as nb
-import numpy as np
 
 from qttools import NDArray
 

@@ -73,7 +73,6 @@ plugins:
   - mkapi:
       exclude:
         - quatrex.cli
-        - quatrex.examples
         - quatrex.core.*config
 
 nav:

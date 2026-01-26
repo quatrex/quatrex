@@ -1,10 +1,10 @@
-import griffe
-from griffe import Attribute, Class
 import os
 import re
-import mkdocs_gen_files
-from tabulate import tabulate
 
+import griffe
+import mkdocs_gen_files
+from griffe import Attribute, Class
+from tabulate import tabulate
 
 OUTPUT_PATH = "user_guide/parameters"
 

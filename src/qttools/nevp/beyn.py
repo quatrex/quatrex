@@ -14,9 +14,6 @@ from qttools.utils.mpi_utils import get_section_sizes
 profiler = Profiler()
 
 
-rng = xp.random.default_rng(42)
-
-
 @decorate_methods(
     profiler.profile(level="debug"),
     exclude=["__call__", "__init__"],
@@ -100,6 +97,8 @@ class Beyn(NEVP):
             np.concatenate(([0], np.array(contour_counts)))
         )
         self.use_pinned_memory = use_pinned_memory
+
+        self.rng = xp.random.default_rng(42)
 
     def _project_svd(
         self, P_0: NDArray, P_1: NDArray
@@ -319,7 +318,7 @@ class Beyn(NEVP):
         batchsize = a_xx[0].shape[0]
 
         # NOTE: Here we could also use a good initial guess.
-        Y = rng.random((batchsize, d, self.m_0)) + 1j * rng.random(
+        Y = self.rng.random((batchsize, d, self.m_0)) + 1j * self.rng.random(
             (batchsize, d, self.m_0)
         )
 

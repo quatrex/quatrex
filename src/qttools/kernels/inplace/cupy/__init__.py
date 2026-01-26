@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 
 from qttools.kernels.inplace.cupy.inplace import iadd, iadd_obc, isub, isub_obc

@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 """Main CLI entrypoint and command dispatch for quatrex."""
 

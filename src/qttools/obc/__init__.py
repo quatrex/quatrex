@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools.obc.obc import OBCMemoizer, OBCSolver
 from qttools.obc.sancho_rubio import SanchoRubio

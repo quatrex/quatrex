@@ -1,4 +1,4 @@
-# Copyright (c) 2026 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 from qttools import xp
 
 if xp.__name__ == "numpy":

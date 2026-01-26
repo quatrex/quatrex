@@ -1,11 +1,11 @@
 # Copyright (c) 2024 ETH Zurich and the authors of the quatrex package.
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
 
 from quatrex.core.compute_config import parse_config as parse_compute_config
 from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-from contextlib import nullcontext
 
 
 def test_parse_quatrex_config(example: tuple[Path, bool]):

@@ -354,7 +354,7 @@ class SCBA:
             coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
                 self.data.sparsity_pattern.astype(xp.complex128),
                 block_sizes=block_sizes,
-                global_stack_shape=(comm.size,)
+                global_stack_shape=(comm.stack.size,)
                 + tuple(
                     [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
                 ),
@@ -692,20 +692,25 @@ class SCBA:
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
+        overlap = (
+            None
+            if self.electron_solver.is_overlap_identity
+            else self.electron_solver.overlap
+        )
         if self.quatrex_config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
 
         if self.quatrex_config.outputs.contact_currents:
@@ -743,15 +748,15 @@ class SCBA:
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                self.electron_solver.overlap,
+                overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")

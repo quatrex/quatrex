@@ -810,7 +810,7 @@ def bd_matmul_distr(
                         except Exception as e:
                             rank = comm.block.rank if comm.block is not None else 0
                             print(e)
-                            print(
+                            raise RuntimeError(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
                             )
 

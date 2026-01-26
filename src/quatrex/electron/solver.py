@@ -460,9 +460,11 @@ class ElectronSolver(SubsystemSolver):
                 matrix_sparray, matrix_dict, _ = load_matrix_from_files(
                     quatrex_config, "overlap"
                 )
+            self.is_overlap_identity = False
             return matrix_sparray, matrix_dict
         except FileNotFoundError:
             # Fallback to identity matrix for overlap
+            self.is_overlap_identity = True
             return (
                 sparse.eye(
                     self.hamiltonian.shape[-2],

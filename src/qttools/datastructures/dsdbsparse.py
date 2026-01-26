@@ -962,7 +962,7 @@ class _DStackIndexer:
             # return self._dsdbsparse
 
         # Not sure what the expected behavior should be here
-        #self._dsdbsparse.data[stack_index] = other.data[:]
+        # self._dsdbsparse.data[stack_index] = other.data[:]
         self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 

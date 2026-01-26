@@ -3,13 +3,13 @@
 import time
 
 import numpy as np
+
 from qttools import NDArray, xp
 from qttools.comm import comm
+from qttools.convolutions.ffts import fft_circular_convolve
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
-from qttools.convolutions.ffts import fft_circular_convolve
-
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 

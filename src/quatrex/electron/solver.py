@@ -9,8 +9,12 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import synchronize_device, get_host
-from qttools.utils.input_utils import create_coordinate_grid
+from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.input_utils import (
+    create_coordinate_grid,
+    create_hamiltonian,
+    cutoff_hr,
+)
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
@@ -253,9 +257,9 @@ class ElectronSolver(SubsystemSolver):
                 )
 
                 device_cell = list(quatrex_config.device.unit_cell_per_supercell)
-                device_cell["xyz".index(quatrex_config.device.transport_direction)] *= (
-                    quatrex_config.device.number_of_supercells
-                )
+                device_cell[
+                    "xyz".index(quatrex_config.device.transport_direction)
+                ] *= quatrex_config.device.number_of_supercells
                 device_cell = tuple(device_cell)
 
                 grid = create_coordinate_grid(
@@ -459,11 +463,14 @@ class ElectronSolver(SubsystemSolver):
             return matrix_sparray, matrix_dict
         except FileNotFoundError:
             # Fallback to identity matrix for overlap
-            return sparse.eye(
-                self.hamiltonian.shape[-2],
-                format="coo",
-                dtype=self.hamiltonian.dtype,
-            ), None
+            return (
+                sparse.eye(
+                    self.hamiltonian.shape[-2],
+                    format="coo",
+                    dtype=self.hamiltonian.dtype,
+                ),
+                None,
+            )
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -508,7 +515,8 @@ class ElectronSolver(SubsystemSolver):
             left_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
         self.right_fermi_level = (
-            self.left_fermi_level - self.bias
+            self.left_fermi_level
+            - self.bias
             # right_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
 

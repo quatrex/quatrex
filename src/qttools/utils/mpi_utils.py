@@ -106,9 +106,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
             with open(path, "rb") as f:
                 arr = pickle.load(f)
             if not isinstance(arr, dict):
-                raise TypeError(
-                    f"Expected a dictionary, but got {type(arr)}"
-                )
+                raise TypeError(f"Expected a dictionary, but got {type(arr)}")
             for k in arr.keys():
                 arr[k] = sparse.coo_matrix(arr[k])
 

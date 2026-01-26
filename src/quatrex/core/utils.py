@@ -98,9 +98,7 @@ def assemble_kpoint_dsb(
                     else (
                         [] + [j]
                         if number_of_kpoints[1] > 1
-                        else [] + [k]
-                        if number_of_kpoints[2] > 1
-                        else []
+                        else [] + [k] if number_of_kpoints[2] > 1 else []
                     )
                 )
                 ik = k_values[0][i]

@@ -778,7 +778,7 @@ class DSDBCOO(DSDBSparse):
             if (c, r) not in sparsity_set:
                 return False
         return True
-    
+
     @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
@@ -806,7 +806,9 @@ class DSDBCOO(DSDBSparse):
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
 
         if not self._check_sparsity_pattern_symmetric():
-            raise ValueError("Sparsity pattern is not symmetric. This will lead to incorrect results.")
+            raise ValueError(
+                "Sparsity pattern is not symmetric. This will lead to incorrect results."
+            )
 
         if not hasattr(self, "_inds_bcoo2bcoo_t"):
             # Transpose.

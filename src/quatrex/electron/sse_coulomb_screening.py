@@ -6,12 +6,15 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
+from qttools.convolutions.ffts import (
+    fft_convolve_kpoints,
+    fft_correlate_kpoints,
+    hilbert_transform_selfenergy,
+)
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
-from qttools.convolutions.ffts import fft_convolve_kpoints, fft_correlate_kpoints, hilbert_transform_selfenergy
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
@@ -515,10 +518,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
                     sigma_retarded.data[..., batch] += (
                         self.prefactor
-                        #* sr
-                        * hilbert_transform_selfenergy(
-                            sl, sg, self.energies
-                        )
+                        # * sr
+                        * hilbert_transform_selfenergy(sl, sg, self.energies)
                         # Here we shouldn't divide with kpoint volume, as we are
                         # convolving in E-space
                         * self.kpoint_volume

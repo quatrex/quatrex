@@ -28,9 +28,9 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     ne = (
         a.shape[0] + b.shape[0]
     )  # Should not have -1 here (otherwise hilbert transform fails)
-    a_fft = xp.fft.fft(a, (ne,), axis=(0,))
-    b_fft = xp.fft.fft(b, (ne,), axis=(0,))
-    return xp.fft.ifft(a_fft * b_fft, axis=(0,))
+    a_fft = xp.fft.fft(a, ne, axis=0)
+    b_fft = xp.fft.fft(b, ne, axis=0)
+    return xp.fft.ifft(a_fft * b_fft, axis=0)
 
 
 @profiler.profile(level="api")

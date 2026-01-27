@@ -74,7 +74,7 @@ def density(
 
     """
     if overlap is None:
-        local_density = x.diagonal()  # .imag
+        local_density = x.diagonal().imag
         return comm.stack.all_gather_v(
             local_density,
             axis=0,
@@ -116,7 +116,7 @@ def density(
                 axis2=-1,
             )
 
-        local_density.append(local_density_slice)  # .imag)
+        local_density.append(local_density_slice.imag)
 
     local_density = xp.concatenate(local_density, axis=-1)
 
@@ -291,7 +291,4 @@ def current_conservation(
         current_conservation_absolute / (term1 + term2) if (term1 + term2) != 0 else 0
     )
 
-    return (
-        xp.abs(current_conservation_absolute),
-        xp.abs(current_conservation_relative),
-    )
+    return xp.abs(current_conservation_absolute), xp.abs(current_conservation_relative)

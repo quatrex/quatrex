@@ -471,6 +471,13 @@ class CoulombScreeningConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    apply_hilbert_correction: bool = False
+    """Whether to apply the corrections for the edges of the energy window
+    to the hilbert transform when computing the retarded self-energy.
+
+    Computing the correction is slightly more expensive.
+    """
+
 
 class PhotonConfig(BaseModel):
     """Options for the optical degrees of freedom."""

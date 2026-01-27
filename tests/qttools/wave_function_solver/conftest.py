@@ -1,3 +1,4 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 import pytest
 
 NUM_ROWS = [

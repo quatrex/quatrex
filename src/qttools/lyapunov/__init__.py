@@ -1,4 +1,4 @@
-# Copyright (c) 2024 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools.lyapunov.doubling import Doubling
 from qttools.lyapunov.lyapunov import LyapunovMemoizer, LyapunovSolver

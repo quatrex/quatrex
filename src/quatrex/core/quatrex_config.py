@@ -459,7 +459,6 @@ class CoulombScreeningConfig(BaseModel):
     temperature: PositiveFloat = 300.0  # K
 
     epsilon_r: PositiveFloat = 1.0
-    num_adiabatic_steps: PositiveInt = 1
 
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
@@ -476,6 +475,24 @@ class CoulombScreeningConfig(BaseModel):
     to the hilbert transform when computing the retarded self-energy.
 
     Computing the correction is slightly more expensive.
+    """
+
+    discard_real_parts: bool = True
+    """Whether to discard the real parts of the lesser/greater polarization and self-energy.
+
+    This affect the retarded parts in the following way:
+    For Polarization and Coulomb Screening Self-Energy if the `discard_real_parts` flag is set,
+    the imaginary part is only computed from only the lesser and greater parts by $\frac{\mathbf{X}^> - \mathbf{X}^<}{2}$.
+    Else, the imaginary part can also contain contributions from the Hilbert transformation.
+
+    """
+
+    compute_retarded_polarization: bool = False
+    """Whether to compute the Hilbert part of the retarded polarization function.
+    
+    If not set, the retarded polarization is computed only from
+    the lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
+
     """
 
 

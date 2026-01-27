@@ -386,10 +386,7 @@ class SCBA:
             # TODO: Check that this is correct for kpoints.
             if not coulomb_matrix.symmetry:
                 coulomb_matrix.symmetrize()
-            coulomb_matrix._data /= (
-                quatrex_config.coulomb_screening.epsilon_r
-                * self.quatrex_config.coulomb_screening.num_adiabatic_steps
-            )
+            coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
 
             energies_path = (
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
@@ -492,9 +489,12 @@ class SCBA:
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        # self.data.sigma_lesser._data.real = 0
-        # self.data.sigma_greater._data.real = 0
-        self.data.sigma_retarded._data.imag = 0
+        if self.quatrex_config.coulomb_screening.discard_real_parts:
+            self.data.sigma_lesser._data.real = 0
+            self.data.sigma_greater._data.real = 0
+            # Make sure that the imaginary part comes only from
+            # sigma_greater - sigma_lesser.
+            self.data.sigma_retarded._data.imag = 0
 
         # Now add the imaginary, skew-Hermitian part back.
         self.data.sigma_retarded.data += 0.5 * (
@@ -532,11 +532,11 @@ class SCBA:
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
-        current_conservation_abs = self.observables.electron_current.get(
-            "current_conservation_abs", 0.0
-        )
-        current_conservation_rel = self.observables.electron_current.get(
-            "current_conservation_rel", 0.0
+        current_conservation_abs, current_conservation_rel = current_conservation(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.sigma_lesser,
+            self.data.sigma_greater,
         )
 
         if comm.rank == 0:
@@ -661,7 +661,7 @@ class SCBA:
             )
 
         t_sigma_start = time.perf_counter()
-        self.sigma_coulomb_screening.compute_new(
+        self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             self.data.w_lesser,
@@ -955,14 +955,6 @@ class SCBA:
                 )
 
             if self.quatrex_config.scba.coulomb_screening:
-                if (
-                    i >= 1
-                    and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
-                ):
-                    self.coulomb_screening_solver.coulomb_matrix.data *= (i + 1) / i
-                    self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
-
-            if self.quatrex_config.scba.coulomb_screening:
                 t_start_coulomb = time.perf_counter()
                 self._compute_coulomb_screening_interaction()
                 synchronize_device()
@@ -998,21 +990,6 @@ class SCBA:
                         f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s",
                         flush=True,
                     )
-
-            # Check the current conservation.
-            self.observables.electron_current.update(
-                dict(
-                    zip(
-                        ("current_conservation_abs", "current_conservation_rel"),
-                        current_conservation(
-                            self.data.g_lesser,
-                            self.data.g_greater,
-                            self.data.sigma_lesser,
-                            self.data.sigma_greater,
-                        ),
-                    )
-                )
-            )
 
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()

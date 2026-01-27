@@ -167,19 +167,7 @@ def hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
     hilbert_kernel = -hilbert_kernel[::-1]
     b += fft_convolve(a, hilbert_kernel)[-ne:]
 
-    # hilbert_kernel_fft = xp.fft.fft(
-    #    1 / energy_differences,
-    #    2 * ne,
-    #    axis=0,
-    # )
-    # a_t = xp.fft.fft(a, 2 * ne, axis=0)
-    # b = xp.fft.ifft(
-    #    a_t * hilbert_kernel_fft
-    #    - a_t * hilbert_kernel_fft.conj()
-    #    - a_t.conj() * hilbert_kernel_fft,
-    #    axis=0,
-    # )[:ne]
-    return b  # / (2 * xp.pi) * (energies[1] - energies[0])
+    return b
 
 
 @profiler.profile(level="api")

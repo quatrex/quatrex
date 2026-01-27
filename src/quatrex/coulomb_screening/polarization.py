@@ -48,11 +48,16 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
-            / (2 * xp.pi)
+            / (xp.pi)
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )
         self.batch_size = compute_config.convolve.batch_size
+
+        self.discard_real_parts = quatrex_config.coulomb_screening.discard_real_parts
+        self.compute_retarded = (
+            quatrex_config.coulomb_screening.compute_retarded_polarization
+        )
 
     @profiler.profile(level="api")
     def compute(
@@ -152,19 +157,21 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
                     # Note that only the hermitian part is computed here.
-                    p_retarded.data[..., batch] = (
-                        -self.prefactor
-                        * (
-                            hilbert_transform_polarization(
-                                (
-                                    p_greater.data[..., batch]
-                                    - p_lesser.data[..., batch]
-                                ),
-                                self.energies,
+
+                    if self.compute_retarded:
+                        p_retarded.data[..., batch] = (
+                            -self.prefactor
+                            * (
+                                hilbert_transform_polarization(
+                                    (
+                                        p_greater.data[..., batch]
+                                        - p_lesser.data[..., batch]
+                                    ),
+                                    self.energies,
+                                )
                             )
+                            * self.kpoint_volume
                         )
-                        * self.kpoint_volume
-                    )
 
         # Barrier before communication
         synchronize_device()
@@ -206,10 +213,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
             p_greater.symmetrize(xp.subtract)
             p_retarded.symmetrize(xp.add)
 
+        if not self.compute_retarded:
+            p_retarded.data[:] = 0
+
         # Discard the real part.
-        # p_lesser.data.real = 0
-        # p_greater.data.real = 0
-        # p_retarded._data[:] = 0
+        if self.discard_real_parts:
+            p_lesser.data.real = 0
+            p_greater.data.real = 0
+            p_retarded.data.imag = 0
 
         p_retarded.data += (p_greater.data - p_lesser.data) / 2
 

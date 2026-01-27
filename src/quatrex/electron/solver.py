@@ -315,7 +315,7 @@ class ElectronSolver(SubsystemSolver):
         self.band_edge_tracking = quatrex_config.electron.band_edge_tracking
         self.delta_fermi_level_conduction_band = (
             quatrex_config.electron.conduction_band_edge
-            - quatrex_config.electron.left_fermi_level
+            - quatrex_config.electron.fermi_level
         )
         self.left_mid_gap_energy = 0.5 * (
             quatrex_config.electron.conduction_band_edge
@@ -324,8 +324,8 @@ class ElectronSolver(SubsystemSolver):
         self.left_fermi_level = quatrex_config.electron.left_fermi_level
         self.right_fermi_level = quatrex_config.electron.right_fermi_level
 
-        self.bias = self.left_fermi_level - self.right_fermi_level
-        self.right_mid_gap_energy = self.left_mid_gap_energy - self.bias
+        potential = self.left_fermi_level - self.right_fermi_level
+        self.right_mid_gap_energy = self.left_mid_gap_energy - potential
         self.temperature = quatrex_config.electron.temperature
 
         self.left_occupancies = fermi_dirac(
@@ -517,9 +517,7 @@ class ElectronSolver(SubsystemSolver):
             left_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
         self.right_fermi_level = (
-            self.left_fermi_level
-            - self.bias
-            # right_conduction_band_edge - self.delta_fermi_level_conduction_band
+            right_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
 
         self.left_occupancies = fermi_dirac(

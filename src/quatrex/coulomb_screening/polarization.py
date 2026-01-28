@@ -160,7 +160,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
                     if self.compute_retarded:
                         p_retarded.data[..., batch] = (
-                            -self.prefactor
+                            -(self.prefactor / 2)
                             * (
                                 hilbert_transform_polarization(
                                     (

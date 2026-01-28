@@ -1,1 +1,1 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the quatrex package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.

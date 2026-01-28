@@ -332,7 +332,10 @@ class Spectral(OBCSolver):
 
         """
         if self.block_sections == 1:
-            return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
+            with warnings.catch_warnings(
+                action="ignore", category=RuntimeWarning
+            ):  # Ignore division by zero.
+                return ws, vs / xp.linalg.norm(vs, axis=-2, keepdims=True)
 
         # batchsize, subblock_size, num_modes = vs.shape
         batchsize = vs.shape[:-2]

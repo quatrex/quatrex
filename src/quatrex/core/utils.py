@@ -35,9 +35,9 @@ def homogenize(matrix: DSDBSparse) -> None:
 
 def assemble_kpoint_dsb(
     buffer: DSDBSparse,
-    lattice_matrix: dict[tuple, sparse.csr_matrix | xp.ndarray],
-    number_of_kpoints: xp.ndarray,
-    roll_index: int | xp.ndarray,
+    lattice_matrix: dict[tuple, sparse.csr_matrix | NDArray],
+    number_of_kpoints: NDArray,
+    roll_index: int | NDArray,
     transport_direction: str | None = None,
 ) -> DSDBSparse:
     """Assembles a DSBSparse with the k-point distribution."""

@@ -226,12 +226,12 @@ def get_hamiltonian_block(
     hr: NDArray,
     supercell_size: tuple,
     global_shift: tuple,
-) -> xp.ndarray:
+) -> NDArray:
     """Constructs a supercell hamiltonian block from an hr array.
 
     Parameters
     ----------
-    hr : ndarray
+    hr : NDArray
         Wannier Hamiltonian.
     supercell_size : tuple
         Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
@@ -242,7 +242,7 @@ def get_hamiltonian_block(
 
     Returns
     -------
-    ndarray
+    NDArray
         The supercell hamiltonian block.
 
     """

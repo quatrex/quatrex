@@ -34,7 +34,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
 
 
 @profiler.profile(level="api")
-def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.ndarray:
+def fft_circular_convolve(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray:
     """Computes the circular convolution of two arrays using the FFT.
 
     Parameters
@@ -60,7 +60,7 @@ def fft_circular_convolve(a: xp.ndarray, b: xp.ndarray, axes: tuple[int]) -> xp.
 
 
 @profiler.profile(level="api")
-def fft_convolve_kpoints(a: xp.ndarray, b: xp.ndarray) -> xp.ndarray:
+def fft_convolve_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using the FFT.
 
     The first axis is assumed to be the energy axis, the other

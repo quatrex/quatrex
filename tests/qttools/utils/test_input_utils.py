@@ -8,9 +8,9 @@ from qttools import NDArray, _DType, xp
 from qttools.utils.input_utils import (
     create_coordinate_grid,
     create_hamiltonian,
-    cutoff_hr,
     get_hamiltonian_block,
     read_hr_dat,
+    trim_tight_binding_matrix,
 )
 
 wannier90_hr_path = Path(__file__).parent / "data" / "wannier90_hr.dat"
@@ -50,7 +50,7 @@ def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
 )
 def test_cutoff_hr(value_cutoff: float, R_cutoff: int, remove_zeros: bool):
     hr = read_hr_dat(wannier90_hr_path)
-    hr_cutoff = cutoff_hr(hr, value_cutoff, R_cutoff, remove_zeros)
+    hr_cutoff = trim_tight_binding_matrix(hr, value_cutoff, R_cutoff, remove_zeros)
     if R_cutoff is None:
         R_cutoff = xp.array([s // 2 if s > 1 else 1 for s in hr.shape[:3]])
     if value_cutoff is None:

@@ -23,11 +23,9 @@ from quatrex.core.observables import (
 )
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.utils import (
-    assemble_kpoint_dsb,
     compute_num_connected_blocks,
     compute_sparsity_pattern,
-    load_matrix_from_files,
-    load_matrix_from_unit_cell,
+    load_matrix,
 )
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.electron import (
@@ -72,22 +70,26 @@ class SCBAData:
                 quatrex_config.input_dir / "lattice_vectors.npy"
             )
 
-            device_cell = list(quatrex_config.device.unit_cell_per_supercell)
-            device_cell[
-                "xyz".index(quatrex_config.device.transport_direction)
-            ] *= quatrex_config.device.number_of_supercells
-            device_cell = tuple(device_cell)
+            # The neighbor cell cutoff along the transport direction
+            # determines the size of the transport cell.
+            transport_ind = "xyz".index(quatrex_config.device.transport_direction)
+            unit_cells_per_transport_cell = [1, 1, 1]
+            unit_cells_per_transport_cell[transport_ind] = (
+                quatrex_config.device.neighbor_cell_cutoff[transport_ind]
+            )
+            device_cell = unit_cells_per_transport_cell.copy()
+            device_cell[transport_ind] *= quatrex_config.device.num_transport_cells
 
-            grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
+            grid = create_coordinate_grid(
+                wannier_centers, tuple(device_cell), lattice_vectors
+            )
 
             block_sizes = np.array(
                 [
-                    quatrex_config.device.unit_cell_per_supercell[
-                        "xyz".index(quatrex_config.device.transport_direction)
-                    ]
+                    unit_cells_per_transport_cell[transport_ind]
                     * wannier_centers.shape[0]
                 ]
-                * quatrex_config.device.number_of_supercells
+                * quatrex_config.device.num_transport_cells
             )
 
         else:
@@ -345,42 +347,13 @@ class SCBA:
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
             # Load the Coulomb matrix.
-            coulomb_matrix_sparray, coulomb_matrix_dict, block_sizes = (
-                load_matrix_from_unit_cell(quatrex_config, "coulomb_matrix")
-                if quatrex_config.device.construct_from_unit_cell
-                else load_matrix_from_files(quatrex_config, "coulomb_matrix")
+            coulomb_matrix, __ = load_matrix(
+                quatrex_config=quatrex_config,
+                compute_config=compute_config,
+                matrix_name="coulomb_matrix",
+                sparsity_pattern=self.data.sparsity_pattern,
+                shift_kpoints=True,
             )
-
-            coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-                self.data.sparsity_pattern.astype(xp.complex128),
-                block_sizes=block_sizes,
-                global_stack_shape=(comm.stack.size,)
-                + tuple(
-                    [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
-                ),
-                symmetry=quatrex_config.scba.symmetric,
-                symmetry_op=xp.conj,
-            )
-            coulomb_matrix._data[:] = 0.0  # Initialize to zero.
-            if coulomb_matrix_dict is None:
-                coulomb_matrix += coulomb_matrix_sparray
-            else:
-                number_of_kpoints = xp.array(
-                    [
-                        1 if k <= 1 else k
-                        for k in self.quatrex_config.electron.number_of_kpoints
-                    ]
-                )
-                assemble_kpoint_dsb(
-                    coulomb_matrix,
-                    coulomb_matrix_dict,
-                    number_of_kpoints,
-                    -(number_of_kpoints // 2),
-                    transport_direction=quatrex_config.device.transport_direction,
-                )
-            # Explicitely try to free the memory
-            del coulomb_matrix_sparray
-            del coulomb_matrix_dict
 
             # Make sure the Coulomb matrix is hermitian.
             # TODO: Check that this is correct for kpoints.
@@ -694,7 +667,7 @@ class SCBA:
         """Computes electron observables."""
         overlap = (
             None
-            if self.electron_solver.is_overlap_identity
+            if self.electron_solver.orthogonal_basis
             else self.electron_solver.overlap
         )
         if self.quatrex_config.outputs.electron_ldos:

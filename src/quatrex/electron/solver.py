@@ -9,8 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
@@ -22,13 +21,7 @@ from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import (
-    assemble_kpoint_dsb,
-    get_periodic_superblocks,
-    homogenize,
-    load_matrix_from_files,
-    load_matrix_from_unit_cell,
-)
+from quatrex.core.utils import get_periodic_superblocks, homogenize, load_matrix
 
 profiler = Profiler()
 
@@ -83,7 +76,7 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix = None,
+        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -91,78 +84,54 @@ class ElectronSolver(SubsystemSolver):
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
-        synchronize_device()
-        comm.barrier()
-        t_ham_load_start = time.perf_counter()
-
-        hamiltonian_sparray, hamiltonian_dict, self.block_sizes = (
-            load_matrix_from_unit_cell(quatrex_config, "hamiltonian")
-            if quatrex_config.device.construct_from_unit_cell
-            else load_matrix_from_files(quatrex_config, "hamiltonian")
+        self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
+            quatrex_config=quatrex_config,
+            compute_config=compute_config,
+            matrix_name="hamiltonian",
+            sparsity_pattern=None,
+            shift_kpoints=False,
         )
-        # Symmetrize the Hamiltonian sparse array. (Noticed that sparsity pattern
-        # was not always symmetric).
-        hamiltonian_sparray = 0.5 * (hamiltonian_sparray + hamiltonian_sparray.conj().T)
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
         if sparsity_pattern is None:
-            sparsity_pattern = hamiltonian_sparray.copy()
+            sparsity_pattern = hamiltonian_sparsity_pattern.copy()
         else:
-            sparsity_pattern += hamiltonian_sparray
+            sparsity_pattern += hamiltonian_sparsity_pattern
 
-        synchronize_device()
-        t_ham_load_end = time.perf_counter()
-        comm.barrier()
-        t_ham_load_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Load Hamiltonian: {t_ham_load_end - t_ham_load_start}",
-                flush=True,
-            )
-            print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all - t_ham_load_start}",
-                flush=True,
+        del hamiltonian_sparsity_pattern
+        self.block_sizes = self.hamiltonian.block_sizes
+
+        self.orthogonal_basis = quatrex_config.device.orthogonal_basis
+        if not self.orthogonal_basis:
+            # TODO: Overlap matrix is not supported correctly. The code
+            # should look like this.
+
+            # Load the device Overlap.
+            self.overlap, overlap_sparsity_pattern = load_matrix(
+                quatrex_config=quatrex_config,
+                compute_config=compute_config,
+                matrix_name="overlap",
+                sparsity_pattern=None,
+                shift_kpoints=False,
             )
 
-        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
-            hamiltonian_sparray.astype(xp.complex128),
-            block_sizes=self.block_sizes,
-            global_stack_shape=(comm.stack.size,)
-            + tuple([k for k in number_of_kpoints if k > 1]),
-            symmetry=quatrex_config.scba.symmetric,
-            symmetry_op=xp.conj,
-        )
-        self.hamiltonian.data = 0.0
-        if hamiltonian_dict is None:
-            self.hamiltonian += hamiltonian_sparray
+            # Make sure that the the system matrix sparsity is a superset of
+            # self-energy and overlap sparsity.
+            sparsity_pattern += overlap_sparsity_pattern
+            # Check that the overlap matrix and Hamiltonian matrix match.
+            if self.overlap.shape != self.hamiltonian.shape:
+                raise ValueError(
+                    "Overlap matrix and Hamiltonian matrix have different shapes."
+                )
+
+            raise NotImplementedError("Currently, overlap matrices are not supported.")
+
         else:
-            number_of_kpoints = xp.array(
-                [1 if k <= 1 else k for k in number_of_kpoints]
-            )
-            assemble_kpoint_dsb(
-                self.hamiltonian,
-                hamiltonian_dict,
-                number_of_kpoints,
-                0,
-                transport_direction=quatrex_config.device.transport_direction,
-            )
-        del hamiltonian_sparray
-        del hamiltonian_dict
-
-        synchronize_device()
-        t_ham_create_end = time.perf_counter()
-        comm.barrier()
-        t_ham_create_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Create Hamiltonian: {t_ham_create_end - t_ham_load_end_all}",
-                flush=True,
-            )
-            print(
-                f"    Create Hamiltonian all: {t_ham_create_end_all - t_ham_load_end_all}",
-                flush=True,
+            self.overlap_sparray = sparse.eye(
+                self.hamiltonian.shape[-2],
+                format="coo",
+                dtype=self.hamiltonian.dtype,
             )
 
         # Allocate memory for the system matrix.
@@ -170,7 +139,9 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple([int(k) for k in number_of_kpoints if k > 1]),
+            + tuple(
+                [int(k) for k in quatrex_config.electron.number_of_kpoints if k > 1]
+            ),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -182,57 +153,6 @@ class ElectronSolver(SubsystemSolver):
                 "Block sizes do not match Hamiltonian. "
                 f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
             )
-
-        # Create the overlap matrix.
-        overlap_sparray, overlap_sparray_dict = self._load_overlap_matrix(
-            quatrex_config
-        )
-
-        # Create the overlap matrix DSDBSparse object.
-        self.overlap = compute_config.dsdbsparse_type.from_sparray(
-            overlap_sparray.astype(xp.complex128),
-            block_sizes=self.block_sizes,
-            global_stack_shape=(comm.stack.size,)
-            + tuple(
-                [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
-            ),
-            symmetry=quatrex_config.scba.symmetric,
-            symmetry_op=xp.conj,
-        )
-        self.overlap.data = 0.0
-
-        if overlap_sparray_dict is None:
-            self.overlap += overlap_sparray
-        else:
-            number_of_kpoints = xp.array(
-                [
-                    1 if k <= 1 else k
-                    for k in self.quatrex_config.electron.number_of_kpoints
-                ]
-            )
-            assemble_kpoint_dsb(
-                self.overlap,
-                overlap_sparray_dict,
-                number_of_kpoints,
-                0,
-            )
-            del overlap_sparray_dict
-
-        # Check that the overlap matrix and Hamiltonian matrix match.
-        if self.overlap.shape != self.hamiltonian.shape:
-            raise ValueError(
-                "Overlap matrix and Hamiltonian matrix have different shapes."
-            )
-
-        # Make sure that the Hamiltonian and overlap matrices are
-        # Hermitian.
-        if not self.hamiltonian.symmetry:
-            self.hamiltonian.symmetrize()
-
-        # Store symmetrized overlap matrix as sparse array for later use
-        self.overlap_sparray = (
-            0.5 * (overlap_sparray + overlap_sparray.conj().T)
-        ).tocoo()
 
         # Load the potential.
         try:
@@ -247,13 +167,12 @@ class ElectronSolver(SubsystemSolver):
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         self.eta = quatrex_config.electron.eta
+        self.eta_obc = quatrex_config.electron.eta_obc
 
         # Contacts.
         self.flatband = quatrex_config.electron.flatband
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
-
-        self.eta_obc = quatrex_config.electron.eta_obc
 
         if quatrex_config.electron.solver.compute_current and comm.block.size > 1:
             raise NotImplementedError(
@@ -328,111 +247,6 @@ class ElectronSolver(SubsystemSolver):
         ] = coo.data[mask]
 
         return block
-
-    @staticmethod
-    def load_hamiltonian(
-        quatrex_config: QuatrexConfig,
-    ) -> tuple[sparse.coo_matrix, NDArray]:
-
-        # Load the device Hamiltonian.
-        synchronize_device()
-        comm.barrier()
-        t_ham_load_start = time.perf_counter()
-        if quatrex_config.device.construct_from_unit_cell:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
-
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, comm.block.size
-            )
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            start_block = section_offsets[comm.block.rank]
-            end_block = section_offsets[comm.block.rank + 1]
-
-            hamiltonian_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
-            hamiltonian_sparray.sum_duplicates()
-            block_sizes = get_host(block_sizes)
-            block_sizes = np.asarray(
-                [block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-
-        else:
-            hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
-            ).astype(xp.complex128)
-            block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
-
-        synchronize_device()
-        t_ham_load_end = time.perf_counter()
-        comm.barrier()
-        t_ham_load_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
-                flush=True,
-            )
-            print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
-                flush=True,
-            )
-
-        return hamiltonian_sparray, block_sizes
-
-    def _load_overlap_matrix(
-        self, quatrex_config
-    ) -> tuple[sparse.coo_matrix, dict | None]:
-        """Load overlap matrix from various sources.
-
-        Parameters
-        ----------
-        quatrex_config : QuatrexConfig
-            The quatrex simulation configuration.
-
-        Returns
-        -------
-        tuple[sparse.coo_matrix, dict | None]
-            The overlap matrix and optional dictionary for k-point assembly.
-        """
-        try:
-            if quatrex_config.device.construct_from_unit_cell:
-                matrix_sparray, matrix_dict, _ = load_matrix_from_unit_cell(
-                    quatrex_config, "overlap", use_r_cutoff=False
-                )
-            else:
-                matrix_sparray, matrix_dict, _ = load_matrix_from_files(
-                    quatrex_config, "overlap"
-                )
-            self.is_overlap_identity = False
-            return matrix_sparray, matrix_dict
-        except FileNotFoundError:
-            # Fallback to identity matrix for overlap
-            self.is_overlap_identity = True
-            return (
-                sparse.eye(
-                    self.hamiltonian.shape[-2],
-                    format="coo",
-                    dtype=self.hamiltonian.dtype,
-                ),
-                None,
-            )
 
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
@@ -602,8 +416,12 @@ class ElectronSolver(SubsystemSolver):
 
         """
         self.system_matrix.data = 0.0
-        # TODO: prove that k-points don't matter here.
-        self.system_matrix += self.overlap_sparray
+        if self.orthogonal_basis:
+            self.system_matrix.fill_diagonal(1.0)
+        else:
+            # TODO: This is not correct in the case of kpoints
+            self.system_matrix += self.overlap_sparray
+
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,

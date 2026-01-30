@@ -2,13 +2,15 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
+import scipy.sparse as sps
 
 from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn, Full
+from qttools.utils.gpu_utils import get_host
 from quatrex.core.compute_config import CommConfig
 from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-from quatrex.electron.solver import ElectronSolver
 
 EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
 CARBON_NANOTUBE_EXAMPLE = EXAMPLES_DIR / "w90" / "carbon-nanotube" / "gw"
@@ -79,8 +81,12 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     # hack to configure the communicator
     CommConfig()
 
-    hamiltonian_sparray, block_sizes = ElectronSolver.load_hamiltonian(quatrex_config)
-    hamiltonian_sparray = hamiltonian_sparray.toarray()
+    hamiltonian_sparray = sps.load_npz(
+        quatrex_config.input_dir / "hamiltonian.npz"
+    ).astype(xp.complex128)
+    block_sizes = get_host(np.load(quatrex_config.input_dir / "block_sizes.npy"))
+
+    hamiltonian_sparray = xp.asarray(hamiltonian_sparray.toarray())
 
     block_size = block_sizes[0]
 

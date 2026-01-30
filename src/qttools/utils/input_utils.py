@@ -157,69 +157,61 @@ def read_wannier_wout(
     return wannier_centers, lattice_vectors
 
 
-def cutoff_hr(
-    hr: NDArray,
+def trim_tight_binding_matrix(
+    tight_binding_matrix: NDArray,
     value_cutoff: float | None = None,
-    R_cutoff: int | tuple[int, int, int] | None = None,
-    remove_zeros: bool = True,
+    neighbor_cell_cutoff: tuple[int, int, int] | None = None,
 ) -> NDArray:
-    """Cutoffs the Hamiltonian matrix elements based on their values and/or the wigner-seitz cell indices.
+    """Applies cutoffs to tight-binding matrix elements/blocks.
 
-    TODO: Add tests.
+    Elements are selected based on value cutoff or their distance to the
+    home cell. Cells that end up being all zeros after applying the
+    cutoffs are removed.
 
     Parameters
     ----------
-    hr : ndarray
-        Wannier Hamiltonian.
+    tight_binding_matrix : NDArray
+        A tight-binding matrix.
     value_cutoff : float, optional
-        Cutoff value for the Hamiltonian. Defaults to `None`.
-    R_cutoff : int or tuple, optional
-        Cutoff distance for the Hamiltonian. Defaults to `None`.
-    remove_zeros : bool, optional
-        Whether to remove cell planes with only zeros. Defaults to `True`.
+        Cutoff value for the matrix. Defaults to `None`.
+    neighbor_cell_cutoff: tuple, optional
+        How many neighboring cells to consider along each lattice
+        vector. A cutoff of (1, 1, 0) would consider the home cell and
+        the first neighbor cells along the first two lattice vectors,
+        but not along the third lattice vector. Defaults to `None`,
+        which means to consider all the neighbor cells present in `hr`.
 
     Returns
     -------
-    ndarray
-        The cutoff Hamiltonian.
+    NDArray
+        The remaining matrix after applying the cutoffs.
+
     """
-    hr_cut = None
-    if value_cutoff is None and R_cutoff is None:
-        return hr.copy()
-    if R_cutoff is not None:
-        if isinstance(R_cutoff, int):
-            R_cutoff = (R_cutoff, R_cutoff, R_cutoff)
-        hr_cut = xp.zeros_like(hr)
-        for ind in xp.ndindex(hr.shape[:3]):
-            ind = xp.asarray(ind) - xp.asarray(hr.shape[:3]) // 2
-            if (abs(ind) <= xp.asarray(R_cutoff)).all():
-                hr_cut[*ind] = hr[*ind]
+    trimmed_matrix = tight_binding_matrix.copy()
+
+    if neighbor_cell_cutoff is not None:
+        neighbor_cell_cutoff = np.array(neighbor_cell_cutoff)
+        # Make sure that we don't ask for more neighbor cells than
+        # available in the matrix.
+        if any(tight_binding_matrix.shape[:3] < 2 * neighbor_cell_cutoff + 1):
+            raise ValueError(
+                "matrix contains fewer neighbor cells than requested."
+                f"({tight_binding_matrix.shape[:3]=}, {neighbor_cell_cutoff=})"
+            )
+
+        for ind in np.ndindex(tight_binding_matrix.shape[:3]):
+            # Center the indices around zero.
+            cell_index = (
+                np.asarray(ind) - np.asarray(tight_binding_matrix.shape[:3]) // 2
+            )
+            if any(abs(cell_index) > neighbor_cell_cutoff):
+                trimmed_matrix[*cell_index] = 0.0
+
     if value_cutoff is not None:
-        if hr_cut is None:
-            hr_cut = hr.copy()
-        hr_cut[xp.abs(hr_cut) < value_cutoff] = 0
+        trimmed_matrix[xp.abs(trimmed_matrix) < value_cutoff] = 0
 
-    # Remove eventual cell planes with only zeros, except the center.
-    if remove_zeros:
-        zero_mask = hr_cut.any(axis=(-2, -1))
-        for ax in range(3):  # Loop through axes (0, 1, 2)
-            # Loop backwards through the axis (from the edge to the center).
-            axes_to_remove = []
-            for idx in range(hr_cut.shape[ax] // 2, 0, -1):
-                # Check if all elements are False in the cell plane.
-                if (
-                    not zero_mask.take(idx, axis=ax).any()
-                    and not zero_mask.take(-idx, axis=ax).any()
-                ):
-                    # If so, remove it.
-                    axes_to_remove.append(idx)
-                    axes_to_remove.append(-idx)
-                else:
-                    # If not, break the loop (to not mess with ordering incase zero planes are not at the edge).
-                    break
-            hr_cut = xp.delete(hr_cut, axes_to_remove, axis=ax)
-
-    return hr_cut
+    # Remove cells that end up being all zeros.
+    return xp.trim_zeros(trimmed_matrix)
 
 
 def get_hamiltonian_block(
@@ -227,7 +219,7 @@ def get_hamiltonian_block(
     supercell_size: tuple,
     global_shift: tuple,
 ) -> NDArray:
-    """Constructs a supercell hamiltonian block from an hr array.
+    """Constructs a supercell Hamiltonian block from the unit cell.
 
     Parameters
     ----------
@@ -246,13 +238,10 @@ def get_hamiltonian_block(
         The supercell hamiltonian block.
 
     """
-    local_shifts = xp.asarray(list(xp.ndindex(supercell_size)))
-    # Transform to NDArrays (because of cupy multiply).
-    if not isinstance(supercell_size, xp.ndarray):
-        supercell_size = xp.asarray(supercell_size)
-    if not isinstance(global_shift, xp.ndarray):
-        global_shift = xp.asarray(global_shift)
-    global_shift = xp.multiply(global_shift, supercell_size)
+    local_shifts = np.asarray(list(np.ndindex(supercell_size)))
+    supercell_size = np.asarray(supercell_size)
+    global_shift = np.asarray(global_shift)
+    global_shift = np.multiply(global_shift, supercell_size)
 
     rows = []
     for r_i in local_shifts:
@@ -271,14 +260,33 @@ def get_hamiltonian_block(
 
 
 def create_coordinate_grid(
-    wannier_centers: NDArray, super_cell: tuple, lattice_vectors: NDArray
+    wannier_centers: NDArray,
+    supercell_size: tuple,
+    lattice_vectors: NDArray,
 ) -> NDArray:
-    """Creates a grid of coordinates for Wannier functions in a supercell."""
+    """Creates a grid of coordinates for Wannier centers in a supercell.
+
+    Parameters
+    ----------
+    wannier_centers : NDArray
+        Coordinates of the Wannier centers in a unit cell.
+    supercell_size : tuple
+        Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
+    lattice_vectors : NDArray
+        Lattice vectors of the system.
+
+    Returns
+    -------
+    NDArray
+        The grid of coordinates for the Wannier centers in the
+        supercell.
+
+    """
     num_wann = wannier_centers.shape[0]
     grid = xp.zeros(
-        (int(xp.prod(xp.asarray(super_cell)) * num_wann), 3), dtype=xp.float64
+        (int(xp.prod(xp.asarray(supercell_size)) * num_wann), 3), dtype=xp.float64
     )
-    for i, cell_ind in enumerate(np.ndindex(super_cell)):
+    for i, cell_ind in enumerate(np.ndindex(supercell_size)):
         grid[i * num_wann : (i + 1) * num_wann, :] = (
             wannier_centers + xp.asarray(cell_ind) @ lattice_vectors
         )
@@ -286,10 +294,10 @@ def create_coordinate_grid(
 
 
 def create_hamiltonian(
-    hR: NDArray,
+    hr: NDArray,
     num_transport_cells: int,
     transport_dir: int | str = "x",
-    transport_cell: tuple = None,
+    supercell_size: tuple = None,
     block_start: int = None,
     block_end: int = None,
     periodic_shift: tuple = (0, 0, 0),
@@ -299,12 +307,15 @@ def create_hamiltonian(
     lattice_vectors: NDArray = None,
 ) -> list[NDArray]:
     """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
-    The transport cell (same as supercell) is the cell that is repeated in the transport direction,
-    and is only connected to nearest-neighboring cells. NOTE: interactions outside
-    nearest neighbors are not included in the block-tridiagonal Hamiltonian (see below).
-    It can therefore be important to make sure that the transport cell is large enough, such that
-    each row have the same number of neighbouring cells. Not setting a transport cell will default
-    to a cell that includes all interactions of hR.
+
+    The transport cell (same as supercell) is the cell that is repeated
+    in the transport direction, and is only connected to
+    nearest-neighboring cells. NOTE: interactions outside nearest
+    neighbors are not included in the block-tridiagonal Hamiltonian (see
+    below). It can therefore be important to make sure that the
+    transport cell is large enough, such that each row have the same
+    number of neighbouring cells. Not setting a transport cell will
+    default to a cell that includes all interactions of hr.
 
       ------- -------
      | o o o | o o o | x
@@ -322,35 +333,44 @@ def create_hamiltonian(
 
     Parameters
     ----------
-    hR : ndarray
+    hr : NDArray
         Wannier Hamiltonian.
     num_transport_cells : int
         Number of transport cells.
     transport_dir : int or str, optional
         Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
     transport_cell : tuple, optional
-        Size of the transport cell. E.g. (2, 2, 1) for a 2x2 xy-transport cell.
+        Size of the transport cell. E.g. (2, 2, 1) for a 2x2
+        xy-transport cell.
     block_start : int, optional
-        Starting block index for arrow shape partition. Defaults to `None`.
+        Starting block index for arrow shape partition. Defaults to
+        `None`.
     block_end : int, optional
-        Ending block index for arrow shape partition. Defaults to `None`.
+        Ending block index for arrow shape partition. Defaults to
+        `None`.
     periodic_shift : tuple, optional
-        Incase the system is periodic in non-transport directions, the periodic shift
-        can be used to get interactions between the transport cell and the periodic cells.
-        E.g. (0, 0, 1) for one of the periodic shifts in the z-direction.
+        Incase the system is periodic in non-transport directions, the
+        periodic shift can be used to get interactions between the
+        transport cell and the periodic cells. E.g. (0, 0, 1) for one of
+        the periodic shifts in the z-direction.
     return_sparse : bool, optional
-        Whether to return the block-tridiagonal Hamiltonian as a sparse matrix. Defaults to `False`.
+        Whether to return the block-tridiagonal Hamiltonian as a sparse
+        matrix. Defaults to `False`.
     cutoff : float, optional
-        Cutoff distance for connections between wannier functions. Defaults to `np.inf`.
-    coords : ndarray, optional
-        Coordinates of the Wannier functions in a unit cell. Defaults to `None`.
-    lattice_vectors : ndarray, optional
+        Cutoff distance for connections between wannier functions.
+        Defaults to `np.inf`.
+    coords : NDArray, optional
+        Coordinates of the Wannier functions in a unit cell. Defaults to
+        `None`.
+    lattice_vectors : NDArray, optional
         Lattice vectors of the system. Defaults to `None`.
 
     Returns
     -------
-    list[ndarray] or tuple[sparse.coo_matrix, ndarray]
-        The block-tridiagonal Hamiltonian matrix as either a tuple of arrays or a sparse matrix and block sizes.
+    list[NDArray] or tuple[sparse.coo_matrix, NDArray]
+        The block-tridiagonal Hamiltonian matrix as either a tuple of
+        arrays or a sparse matrix and block sizes.
+
     """
     if cutoff is not xp.inf and coords is None and lattice_vectors is None:
         print(
@@ -361,12 +381,12 @@ def create_hamiltonian(
     if isinstance(transport_dir, str):
         transport_dir = "xyz".index(transport_dir)
 
-    if transport_cell is None:
+    if supercell_size is None:
         # NOTE: Can also do without the + 1.
-        transport_cell = tuple(
+        supercell_size = tuple(
             [
                 shape // 2 + 1 if i == transport_dir else 1
-                for i, shape in enumerate(hR.shape[:3])
+                for i, shape in enumerate(hr.shape[:3])
             ]
         )
 
@@ -379,7 +399,7 @@ def create_hamiltonian(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    if (np.abs(periodic_shift) > np.array(hR.shape[:3]) // 2).any():
+    if (np.abs(periodic_shift) > np.array(hr.shape[:3]) // 2).any():
         warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
@@ -396,14 +416,14 @@ def create_hamiltonian(
     )
     diag_ind = tuple([0 if i == transport_dir else periodic_shift[i] for i in range(3)])
 
-    diag_block = get_hamiltonian_block(hR, transport_cell, diag_ind)
-    upper_block = get_hamiltonian_block(hR, transport_cell, upper_ind)
-    lower_block = get_hamiltonian_block(hR, transport_cell, lower_ind)
+    diag_block = get_hamiltonian_block(hr, supercell_size, diag_ind)
+    upper_block = get_hamiltonian_block(hr, supercell_size, upper_ind)
+    lower_block = get_hamiltonian_block(hr, supercell_size, lower_ind)
 
     # Enforce cutoff.
     if coords is not None and cutoff < xp.inf and lattice_vectors is not None:
         super_cell_coords = create_coordinate_grid(
-            coords, transport_cell, lattice_vectors
+            coords, supercell_size, lattice_vectors
         )
         distance_matrix = xp.diagonal(
             xp.subtract.outer(super_cell_coords, super_cell_coords), axis1=1, axis2=3

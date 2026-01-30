@@ -13,6 +13,7 @@ from pydantic import (
     ConfigDict,
     Field,
     NonNegativeFloat,
+    NonNegativeInt,
     PositiveFloat,
     PositiveInt,
     model_validator,
@@ -588,8 +589,36 @@ class DeviceConfig(BaseModel):
     construct_from_unit_cell: bool = False
 
     # --- Device geometry ---------------------------------------------
-    unit_cell_per_supercell: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
-    number_of_supercells: PositiveInt = 1
+    neighbor_cell_cutoff: (
+        tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
+    ) = None
+    """The number of neighbor cells to consider along each lattice direction.
+
+    !!! note
+
+        Currently, this parameter is only used if
+        `construct_from_unit_cell` is `True`.
+
+    If set to `None`, all neighbor cells are considered. A
+    `neighbor_cell_cutoff` of zero means that only the unit cell itself
+    is considered. Along the transport direction, at least one
+    neighboring cell must be included.
+
+    If more neighbor cells are requested than present in the input
+    Hamiltonian, a `ValueError` is raised.
+
+    """
+
+    num_transport_cells: PositiveInt = 1
+    """The number of transport cells to include in the simulation.
+
+    !!! note
+
+        This parameter is only used if `construct_from_unit_cell` is
+        `True`.
+
+    """
+
     transport_direction: Literal["x", "y", "z"]
 
     contacts: list[ContactConfig] = Field(default_factory=list)
@@ -599,20 +628,44 @@ class DeviceConfig(BaseModel):
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    R_cutoff: tuple[int, int, int] | None = None
-    # Periodicity of the unit cell in non-transport directions.
-    # Only in one direction (so actuall number of periodic cells is 2 times minus 1 this value).
-    cells_in_periodic_directions: tuple[PositiveInt, PositiveInt, PositiveInt] = (
-        1,
-        1,
-        1,
-    )
+    orthogonal_basis: bool = True
+    """Whether the basis set is orthogonal.
+
+    This affects how the overlap matrix is handled.
+    In the case of `True`, the overlap matrix is identity.
+
+    !!! warning
+
+        Currently, `False` is not supported since
+        the code does not correctly handle overlap matrices in the case 
+        of kpoints.
+
+    """
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""
-        self.unit_cell_per_supercell = tuple(self.unit_cell_per_supercell)
+        if self.neighbor_cell_cutoff is not None:
+            self.neighbor_cell_cutoff = tuple(self.neighbor_cell_cutoff)
         self.kpoint_grid = tuple(self.kpoint_grid)
+        return self
+
+    @model_validator(mode="after")
+    def check_connecting_cells(self) -> Self:
+        """Checks that num_connecting_cells is not zero in transport direction."""
+        if not self.construct_from_unit_cell:
+            return self
+
+        if self.neighbor_cell_cutoff is None:
+            return self
+
+        ind = "xyz".index(self.transport_direction)
+        if self.neighbor_cell_cutoff[ind] < 1:
+            raise ValueError(
+                f"At least one neighboring cell in transport direction "
+                f"('{self.transport_direction}') must be included."
+            )
+
         return self
 
 

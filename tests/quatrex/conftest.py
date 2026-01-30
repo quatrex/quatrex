@@ -8,7 +8,13 @@ EXAMPLES_DIR = Path(__file__).parents[2].resolve() / "examples"
 assert EXAMPLES_DIR.exists()
 
 CONFIGS = list(EXAMPLES_DIR.glob("**/quatrex_config.toml"))
-EXAMPLES = [(config.parent, "dist" in config.parent.stem) for config in CONFIGS]
+EXAMPLES = [
+    pytest.param(
+        (config.parent, "dist" in config.parent.stem),
+        id="-".join(config.parent.parts[-3:]),
+    )
+    for config in CONFIGS
+]
 
 
 @pytest.fixture(params=EXAMPLES, autouse=True, scope="function")

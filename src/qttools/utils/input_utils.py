@@ -2,6 +2,7 @@
 
 import re
 import warnings
+from copy import copy
 from pathlib import Path
 
 import numpy as np
@@ -345,11 +346,9 @@ def create_hamiltonian(
     hr: NDArray,
     num_transport_cells: int,
     transport_dir: int | str = "x",
-    supercell_size: tuple = None,
     block_start: int = None,
     block_end: int = None,
-    periodic_shift: tuple = (0, 0, 0),
-    return_sparse: bool = True,
+    periodic_shift: tuple = (0, 0),
     cutoff: float = xp.inf,
     coords: NDArray = None,
     lattice_vectors: NDArray = None,
@@ -399,11 +398,8 @@ def create_hamiltonian(
     periodic_shift : tuple, optional
         Incase the system is periodic in non-transport directions, the
         periodic shift can be used to get interactions between the
-        transport cell and the periodic cells. E.g. (0, 0, 1) for one of
+        transport cell and the periodic cells. E.g. (0, 1) for one of
         the periodic shifts in the z-direction.
-    return_sparse : bool, optional
-        Whether to return the block-tridiagonal Hamiltonian as a sparse
-        matrix. Defaults to `False`.
     cutoff : float, optional
         Cutoff distance for connections between wannier functions.
         Defaults to `np.inf`.
@@ -429,14 +425,12 @@ def create_hamiltonian(
     if isinstance(transport_dir, str):
         transport_dir = "xyz".index(transport_dir)
 
-    if supercell_size is None:
-        # NOTE: Can also do without the + 1.
-        supercell_size = tuple(
-            [
-                shape // 2 + 1 if i == transport_dir else 1
-                for i, shape in enumerate(hr.shape[:3])
-            ]
-        )
+    supercell_size = tuple(
+        [
+            shape // 2 if i == transport_dir else 1
+            for i, shape in enumerate(hr.shape[:3])
+        ]
+    )
 
     block_start = block_start or 0
     block_end = block_end or num_transport_cells
@@ -447,22 +441,20 @@ def create_hamiltonian(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    if (np.abs(periodic_shift) > np.array(hr.shape[:3]) // 2).any():
+    if len(periodic_shift) != 2:
+        raise ValueError("periodic_shift must have length 2.")
+
+    upper_ind = list(copy(periodic_shift))
+    upper_ind.insert(transport_dir, 1)
+    lower_ind = list(copy(periodic_shift))
+    lower_ind.insert(transport_dir, -1)
+    diag_ind = list(copy(periodic_shift))
+    diag_ind.insert(transport_dir, 0)
+
+    if (np.abs(diag_ind) > np.array(hr.shape[:3]) // 2).any():
         warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
-    if periodic_shift[transport_dir] != 0:
-        warnings.warn(
-            "Periodic shift in the transport direction. This does not make sense and will be ignored."
-        )
-
-    upper_ind = tuple(
-        [1 if i == transport_dir else periodic_shift[i] for i in range(3)]
-    )
-    lower_ind = tuple(
-        [-1 if i == transport_dir else periodic_shift[i] for i in range(3)]
-    )
-    diag_ind = tuple([0 if i == transport_dir else periodic_shift[i] for i in range(3)])
 
     diag_block = get_hamiltonian_block(hr, supercell_size, diag_ind)
     upper_block = get_hamiltonian_block(hr, supercell_size, upper_ind)
@@ -487,67 +479,53 @@ def create_hamiltonian(
         upper_block[upper_dist > cutoff] = 0
         lower_block[lower_dist > cutoff] = 0
 
-    if return_sparse:
-        # Create sparse matrices of the blocks.
-        diag_block = sparse.coo_matrix(diag_block)
-        upper_block = sparse.coo_matrix(upper_block)
-        lower_block = sparse.coo_matrix(lower_block)
-        # Canoncialize the sparse matrices.
-        # NOTE: Not sure if this is necessary.
-        for mat in [diag_block, upper_block, lower_block]:
-            if mat.has_canonical_format is False:
-                mat.sum_duplicates()
-        # Create the block-tridiagonal matrix.
-        num_blocks = block_end - block_start
-        offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
+    # Create sparse matrices of the blocks.
+    diag_block = sparse.coo_matrix(diag_block)
+    upper_block = sparse.coo_matrix(upper_block)
+    lower_block = sparse.coo_matrix(lower_block)
+    # Canoncialize the sparse matrices.
+    # NOTE: Not sure if this is necessary.
+    for mat in [diag_block, upper_block, lower_block]:
+        if mat.has_canonical_format is False:
+            mat.sum_duplicates()
+    # Create the block-tridiagonal matrix.
+    num_blocks = block_end - block_start
+    offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
 
-        def _tile_sparse_blocks(block, num_blocks, offsets):
-            return (
-                xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
-                xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
-                xp.tile(block.data, num_blocks),
-            )
-
-        diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
-            diag_block, num_blocks, offsets
-        )
-        upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
-            upper_block, num_blocks, offsets
-        )
-        lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
-            lower_block, num_blocks, offsets
-        )
-        upper_cols += diag_block.shape[0]
-        lower_rows += diag_block.shape[0]
-
-        full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
-        full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
-        full_data = xp.hstack([diag_data, upper_data, lower_data])
-        # Remove the fishtail at the end of the matrix.
-        matrix_shape = num_transport_cells * diag_block.shape[0]
-        valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
-        full_rows = full_rows[valid_mask]
-        full_cols = full_cols[valid_mask]
-        full_data = full_data[valid_mask]
-        # Also return the block sizes.
-        block_sizes = np.ones(num_blocks, dtype=int) * diag_block.shape[0]
+    def _tile_sparse_blocks(block, num_blocks, offsets):
         return (
-            sparse.coo_matrix(
-                (full_data, (full_rows, full_cols)),
-                shape=(matrix_shape, matrix_shape),
-            ),
-            block_sizes,
-        )
-    else:
-        # Returns the block-tridiagonal Hamiltonian matrix as a tuple of arrays.
-        diag = xp.tile(diag_block, (block_end - block_start, 1))
-        upper = xp.tile(
-            upper_block,
-            (min(block_end + 1, num_transport_cells) - (block_start + 1), 1),
-        )
-        lower = xp.tile(
-            lower_block,
-            (min(block_end + 1, num_transport_cells) - (block_start + 1), 1),
+            xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
+            xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
+            xp.tile(block.data, num_blocks),
         )
 
-        return diag, upper, lower
+    diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
+        diag_block, num_blocks, offsets
+    )
+    upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
+        upper_block, num_blocks, offsets
+    )
+    lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
+        lower_block, num_blocks, offsets
+    )
+    upper_cols += diag_block.shape[0]
+    lower_rows += diag_block.shape[0]
+
+    full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
+    full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
+    full_data = xp.hstack([diag_data, upper_data, lower_data])
+    # Remove the fishtail at the end of the matrix.
+    matrix_shape = num_transport_cells * diag_block.shape[0]
+    valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
+    full_rows = full_rows[valid_mask]
+    full_cols = full_cols[valid_mask]
+    full_data = full_data[valid_mask]
+    # Also return the block sizes.
+    block_sizes = np.ones(num_blocks, dtype=int) * diag_block.shape[0]
+    return (
+        sparse.csr_matrix(
+            (full_data, (full_rows, full_cols)),
+            shape=(matrix_shape, matrix_shape),
+        ),
+        block_sizes,
+    )

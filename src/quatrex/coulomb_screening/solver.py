@@ -118,12 +118,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Allocate memory for the System matrix (1 - V @ P).
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        num_kpoints = quatrex_config.electron.num_kpoints
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
         )
         self.system_matrix.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
@@ -142,7 +142,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )

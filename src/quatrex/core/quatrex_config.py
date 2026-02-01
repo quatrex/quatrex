@@ -342,7 +342,7 @@ class ElectronConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    number_of_kpoints: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    num_kpoints: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
 
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()

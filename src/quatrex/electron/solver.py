@@ -139,9 +139,7 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple(
-                [int(k) for k in quatrex_config.electron.number_of_kpoints if k > 1]
-            ),
+            + tuple([int(k) for k in quatrex_config.electron.num_kpoints if k > 1]),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern

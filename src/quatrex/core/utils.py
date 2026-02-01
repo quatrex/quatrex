@@ -1,4 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+import itertools
+from copy import copy
 from typing import Callable
 
 import numpy as np
@@ -37,97 +39,79 @@ def homogenize(matrix: DSDBSparse) -> None:
     # matrix.blocks[-1, -2] = matrix.blocks[1, 0]
 
 
-def assemble_kpoint_dsb(
-    buffer: DSDBSparse,
-    lattice_matrix: dict[tuple, sparse.csr_matrix | NDArray],
-    number_of_kpoints: NDArray,
-    roll_index: int | NDArray,
-    transport_direction: str | None = None,
-) -> DSDBSparse:
-    """Assembles a DSBSparse with the k-point distribution."""
-    if isinstance(roll_index, int):
-        roll_index = xp.array([roll_index, roll_index, roll_index])
+def _assemble_kpoint(
+    out_matrix: DSDBSparse,
+    matrix_dict: dict[tuple, sparse.csr_matrix],
+    num_kpoints: NDArray,
+    kshift: int | NDArray,
+) -> None:
+    """Assembles a DSBSparse from a dictionary of sparse matrices
+    corresponding to different transverse periodic repetitions.
+    Each sparse matrix is already expanded in the transport direction.
 
-    # Pre-filter cells based on transport direction
-    if transport_direction is not None:
-        transport_idx = "xyz".index(transport_direction)
-        # Interacting cells in transport direction should not be included.
-        valid_cells = [
-            cell for cell in lattice_matrix.keys() if cell[transport_idx] == 0
-        ]
-    else:
-        valid_cells = list(lattice_matrix.keys())
+    Parameters
+    ----------
+    out_matrix : DSDBSparse
+        The matrix to assemble into.
+    matrix_dict : dict[tuple, sparse.csr_matrix]
+        The dictionary of matrices for each transverse repetition.
+    num_kpoints : NDArray
+        The number of k-points in transverse directions.
+    kshift : int | NDArray
+        The k-point shift to apply in transverse directions.
 
-    if not valid_cells:
-        return buffer
+    """
 
-    # Convert valid_cells to array for vectorization
-    cell_array = xp.array(valid_cells)
+    transverse_dimensions = len(num_kpoints)
 
-    # Pre-compute rolled indices
-    rolled_indices = [
-        xp.roll(xp.arange(number_of_kpoints[dim]), roll_index[dim]) for dim in range(3)
+    if isinstance(kshift, int):
+        kshift = xp.array([kshift for _ in range(transverse_dimensions)])
+
+    if transverse_dimensions >= 3:
+        raise ValueError("K-point assembly need 2D grid for transport.")
+
+    if not matrix_dict:
+        raise ValueError("No matrices found in matrix_dict.")
+    for cell in matrix_dict.keys():
+        if len(cell) != transverse_dimensions:
+            raise ValueError(
+                f"Cell {cell} has incorrect dimensionality. "
+                f"Expected {transverse_dimensions}, got {len(cell)}."
+            )
+    for matrix in matrix_dict.values():
+        if not isinstance(matrix, sparse.csr_matrix):
+            raise ValueError(
+                "All matrices in matrix_dict must be of type sparse.csr_matrix."
+            )
+
+    rolled_kpoints = [
+        xp.roll(xp.arange(num_kpoints[dim]), kshift[dim])
+        for dim in range(transverse_dimensions)
     ]
 
-    # Pre-compute k-point values
-    k_values = [
-        (rolled_indices[dim] - number_of_kpoints[dim] // 2) / number_of_kpoints[dim]
-        for dim in range(3)
+    kpoints = [
+        (rolled_kpoints[dim] - num_kpoints[dim] // 2) / num_kpoints[dim]
+        for dim in range(transverse_dimensions)
     ]
 
-    # Convert lattice matrices to a list for faster indexing
-    if isinstance(lattice_matrix[valid_cells[0]], xp.ndarray):
-        lattice_matrices_array = xp.array(
-            [lattice_matrix[cell] for cell in valid_cells]
-        )
-    # Check if it is sparse.csr_matrix or sparse.coo_matrix
-    elif isinstance(lattice_matrix[valid_cells[0]], sparse.csr_matrix):
-        lattice_matrices_array = np.array(
-            [lattice_matrix[cell] for cell in valid_cells]
-        )
-    elif isinstance(lattice_matrix[valid_cells[0]], sparse.coo_matrix):
-        lattice_matrices_array = np.array(
-            [lattice_matrix[cell].tocsr() for cell in valid_cells]
-        )
-    else:
-        raise TypeError("Unsupported lattice matrix type.")
+    for indices in itertools.product(*rolled_kpoints):
 
-    # Loop over k-points
-    for i in rolled_indices[0]:
-        for j in rolled_indices[1]:
-            for k in rolled_indices[2]:
-                stack_index = tuple(
-                    [i]
-                    if number_of_kpoints[0] > 1
-                    else (
-                        [] + [j]
-                        if number_of_kpoints[1] > 1
-                        else [] + [k] if number_of_kpoints[2] > 1 else []
-                    )
-                )
-                ik = k_values[0][i]
-                jk = k_values[1][j]
-                kk = k_values[2][k]
+        stack_index = tuple(idx for idx, n_k in zip(indices, num_kpoints) if n_k > 1)
 
-                phases = xp.exp(
-                    2
-                    * xp.pi
-                    * 1j
-                    * (
-                        ik * cell_array[:, 0]
-                        + jk * cell_array[:, 1]
-                        + kk * cell_array[:, 2]
-                    )
-                )
-                if isinstance(lattice_matrices_array[0], xp.ndarray):
-                    phases = phases[:, None, None]  # Reshape for broadcasting
-                elif isinstance(lattice_matrices_array[0], sparse.csr_matrix):
-                    phases = get_host(phases)
-                # This sum is extremely slow when the lattice matrices are sparse.csr_matrix
-                matrix_contribution = xp.sum(phases * lattice_matrices_array, axis=0)
-                buffer.stack[(...,) + stack_index] += sparse.csr_matrix(
-                    matrix_contribution
-                )
+        kpoint = xp.array(
+            [kpoints[d][indices[d]] for d in range(transverse_dimensions)]
+        )
+
+        cells = np.array(list(matrix_dict.keys()))
+        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+
+        # NOTE: Sparse matrix addition is slow
+        # but unavoidable due to memory constraints.
+        # TODO: Could still be optimized
+        matrix_contribution = sum(
+            [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
+        )
+        out_matrix.stack[(...,) + stack_index] += matrix_contribution
 
 
 def _create_matrix_from_unit_cells(
@@ -160,16 +144,11 @@ def _create_matrix_from_unit_cells(
     start_block = section_offsets[comm.block.rank]
     end_block = section_offsets[comm.block.rank + 1]
 
-    neighbor_cell_cutoff = quatrex_config.device.neighbor_cell_cutoff
     transport_ind = "xyz".index(quatrex_config.device.transport_direction)
 
     transverse_repetitions = list(unit_cells.shape[:3])
     transverse_repetitions.pop(transport_ind)
     transverse_repetitions = tuple(transverse_repetitions)
-
-    supercell_size = [1, 1, 1]
-    supercell_size[transport_ind] = neighbor_cell_cutoff[transport_ind]
-    supercell_size = tuple(supercell_size)
 
     matrix_dict = {}
     # Create a matrix for each connecting layer along the transverse
@@ -177,23 +156,17 @@ def _create_matrix_from_unit_cells(
     # shape of the unit cell data.
     for periodic_shift in xp.ndindex(transverse_repetitions):
         # Center the periodic shift around zero.
-        periodic_shift = [
-            ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)
-        ]
-
-        # insert zero for transport direction to periodic_shift
-        periodic_shift.insert(transport_ind, 0)
-        periodic_shift = tuple(periodic_shift)
+        periodic_shift = tuple(
+            [ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)]
+        )
 
         matrix_sparray, block_sizes = create_hamiltonian(
             hr=unit_cells,
             num_transport_cells=quatrex_config.device.num_transport_cells,
             transport_dir=quatrex_config.device.transport_direction,
-            supercell_size=supercell_size,
             block_start=start_block,
             block_end=end_block,
             periodic_shift=periodic_shift,
-            return_sparse=True,
         )
         matrix_dict[periodic_shift] = matrix_sparray.astype(xp.complex128)
 
@@ -305,7 +278,7 @@ def load_matrix(
         sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
         global_stack_shape=(comm.stack.size,)
-        + tuple([k for k in quatrex_config.electron.number_of_kpoints if k > 1]),
+        + tuple([k for k in quatrex_config.electron.num_kpoints if k > 1]),
         symmetry=quatrex_config.scba.symmetric,
         symmetry_op=symmetry_op,
     )
@@ -313,14 +286,19 @@ def load_matrix(
     if matrix_dict is None:
         matrix += matrix_sparray
     else:
-        number_of_kpoints = xp.array(quatrex_config.electron.number_of_kpoints)
-        roll_index = -(number_of_kpoints // 2) if shift_kpoints else 0
-        assemble_kpoint_dsb(
-            buffer=matrix,
-            lattice_matrix=matrix_dict,
-            number_of_kpoints=number_of_kpoints,
-            roll_index=roll_index,
-            transport_direction=quatrex_config.device.transport_direction,
+        # Pop the k-point in transport direction
+        num_kpoints = list(copy(quatrex_config.electron.num_kpoints))
+        transport_idx = "xyz".index(quatrex_config.device.transport_direction)
+        num_kpoints.pop(transport_idx)
+        num_kpoints = xp.array(num_kpoints)
+
+        # Shift the k-points if requested
+        # Needed for the coulomb matrix
+        _assemble_kpoint(
+            out_matrix=matrix,
+            matrix_dict=matrix_dict,
+            num_kpoints=num_kpoints,
+            kshift=-(num_kpoints // 2) if shift_kpoints else 0,
         )
         # Explicitely try to free the memory
         del matrix_dict

@@ -98,7 +98,7 @@ class SCBAData:
             block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        num_kpoints = quatrex_config.electron.num_kpoints
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0
         if quatrex_config.scba.coulomb_screening:
@@ -165,7 +165,7 @@ class SCBAData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
@@ -173,7 +173,7 @@ class SCBAData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
@@ -218,7 +218,7 @@ class SCBAData:
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
-                + tuple([k for k in number_of_kpoints if k > 1]),
+                + tuple([k for k in num_kpoints if k > 1]),
                 symmetry=quatrex_config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
             )

@@ -10,7 +10,10 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.utils.gpu_utils import get_host
-from qttools.utils.input_utils import create_hamiltonian, trim_tight_binding_matrix
+from qttools.utils.input_utils import (
+    expand_tight_binding_matrix,
+    trim_tight_binding_matrix,
+)
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
@@ -160,10 +163,10 @@ def _create_matrix_from_unit_cells(
             [ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)]
         )
 
-        matrix_sparray, block_sizes = create_hamiltonian(
-            hr=unit_cells,
+        matrix_sparray, block_sizes = expand_tight_binding_matrix(
+            tight_binding_matrix=unit_cells,
             num_transport_cells=quatrex_config.device.num_transport_cells,
-            transport_dir=quatrex_config.device.transport_direction,
+            transport_direction=quatrex_config.device.transport_direction,
             block_start=start_block,
             block_end=end_block,
             periodic_shift=periodic_shift,

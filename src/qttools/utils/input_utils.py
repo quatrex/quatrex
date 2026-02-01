@@ -263,51 +263,6 @@ def trim_tight_binding_matrix(
     return trimmed_matrix
 
 
-def get_hamiltonian_block(
-    hr: NDArray,
-    supercell_size: tuple,
-    global_shift: tuple,
-) -> NDArray:
-    """Constructs a supercell Hamiltonian block from the unit cell.
-
-    Parameters
-    ----------
-    hr : NDArray
-        Wannier Hamiltonian.
-    supercell_size : tuple
-        Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
-    global_shift : tuple
-        Shift in the supercell system. If you want a
-        R-shift of 1 cell in x direction, you would pass (1, 0,
-        0). NOTE: this is for the supercell and NOT the unit cell.
-
-    Returns
-    -------
-    NDArray
-        The supercell hamiltonian block.
-
-    """
-    local_shifts = np.asarray(list(np.ndindex(supercell_size)))
-    supercell_size = np.asarray(supercell_size)
-    global_shift = np.asarray(global_shift)
-    global_shift = np.multiply(global_shift, supercell_size)
-
-    rows = []
-    for r_i in local_shifts:
-        row = []
-        for r_j in local_shifts:
-            ind = tuple(r_j - r_i + global_shift)
-            try:
-                if any(abs(i) > hr.shape[j] // 2 for j, i in enumerate(ind)):
-                    raise IndexError
-                block = hr[ind]
-            except IndexError:
-                block = xp.zeros(hr.shape[-2:], dtype=hr.dtype)
-            row.append(block)
-        rows.append(xp.hstack(row))
-    return xp.vstack(rows)
-
-
 def create_coordinate_grid(
     wannier_centers: NDArray,
     supercell_size: tuple,
@@ -342,53 +297,96 @@ def create_coordinate_grid(
     return grid
 
 
-def create_hamiltonian(
-    hr: NDArray,
+def _get_transport_block(
+    tight_binding_matrix: NDArray,
+    supercell_size: tuple,
+    global_shift: tuple,
+) -> NDArray:
+    """Constructs a supercell block from the unit cell.
+
+    Parameters
+    ----------
+    tight_binding_matrix : NDArray
+        Wannier unit cells.
+    supercell_size : tuple
+        Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
+    global_shift : tuple
+        Shift in the supercell system. If you want a
+        R-shift of 1 cell in x direction, you would pass (1, 0,
+        0). NOTE: this is for the supercell and NOT the unit cell.
+
+    Returns
+    -------
+    NDArray
+        The supercell hamiltonian block.
+
+    """
+    local_shifts = np.asarray(list(np.ndindex(supercell_size)))
+    supercell_size = np.asarray(supercell_size)
+    global_shift = np.asarray(global_shift)
+    global_shift = np.multiply(global_shift, supercell_size)
+
+    rows = []
+    for r_i in local_shifts:
+        row = []
+        for r_j in local_shifts:
+            ind = tuple(r_j - r_i + global_shift)
+            try:
+                if any(
+                    abs(i) > tight_binding_matrix.shape[j] // 2
+                    for j, i in enumerate(ind)
+                ):
+                    raise IndexError
+                block = tight_binding_matrix[ind]
+            except IndexError:
+                block = xp.zeros(
+                    tight_binding_matrix.shape[-2:], dtype=tight_binding_matrix.dtype
+                )
+            row.append(block)
+        rows.append(xp.hstack(row))
+    return xp.vstack(rows)
+
+
+def expand_tight_binding_matrix(
+    tight_binding_matrix: NDArray,
     num_transport_cells: int,
-    transport_dir: int | str = "x",
+    transport_direction: int | str,
     block_start: int = None,
     block_end: int = None,
     periodic_shift: tuple = (0, 0),
-    cutoff: float = xp.inf,
-    coords: NDArray = None,
-    lattice_vectors: NDArray = None,
-) -> list[NDArray]:
-    """Creates a block-tridiagonal Hamiltonian matrix from a Wannier Hamiltonian.
+) -> tuple[sparse.csr_matrix, NDArray]:
+    """Creates a full block-tridiagonal matrix from tight-binding matrix / Wannier Centers.
 
     The transport cell (same as supercell) is the cell that is repeated
     in the transport direction, and is only connected to
     nearest-neighboring cells. NOTE: interactions outside nearest
     neighbors are not included in the block-tridiagonal Hamiltonian (see
-    below). It can therefore be important to make sure that the
-    transport cell is large enough, such that each row have the same
-    number of neighbouring cells. Not setting a transport cell will
-    default to a cell that includes all interactions of hr.
+    below).
+
+    Example for a tight-binding matrix with 3 cells in transport direction,
 
       ------- -------
-     | o o o | o o o | x
-     | o o o | o o o | x x  <- cells outside nearest neighbors are not included
+     | o o o | o x x | x
+     | o o o | o o x | x x
      | o o o | o o o | x x x
       ------- ------- -------
-     | o o o | o o o | o o o |
-     | o o o | o o o | o o o |
-     | o o o | o o o | o o o |
+     | o o o | o o o | o x x |
+     | x o o | o o o | o o x |
+     | x x o | o o o | o o o |
       ------- ------- -------
        x x x | o o o | o o o |
-         x x | o o o | o o o |
-           x | o o o | o o o |
+         x x | x o o | o o o |
+           x | x x o | o o o |
               ------- -------
 
     Parameters
     ----------
-    hr : NDArray
-        Wannier Hamiltonian.
+    tight_binding_matrix : NDArray
+        Wannier unit cells.
     num_transport_cells : int
         Number of transport cells.
-    transport_dir : int or str, optional
+    transport_direction : int or str
         Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
-    transport_cell : tuple, optional
-        Size of the transport cell. E.g. (2, 2, 1) for a 2x2
-        xy-transport cell.
     block_start : int, optional
         Starting block index for arrow shape partition. Defaults to
         `None`.
@@ -400,35 +398,22 @@ def create_hamiltonian(
         periodic shift can be used to get interactions between the
         transport cell and the periodic cells. E.g. (0, 1) for one of
         the periodic shifts in the z-direction.
-    cutoff : float, optional
-        Cutoff distance for connections between wannier functions.
-        Defaults to `np.inf`.
-    coords : NDArray, optional
-        Coordinates of the Wannier functions in a unit cell. Defaults to
-        `None`.
-    lattice_vectors : NDArray, optional
-        Lattice vectors of the system. Defaults to `None`.
 
     Returns
     -------
-    list[NDArray] or tuple[sparse.coo_matrix, NDArray]
+    tuple[sparse.csr_matrix, NDArray]
         The block-tridiagonal Hamiltonian matrix as either a tuple of
         arrays or a sparse matrix and block sizes.
 
     """
-    if cutoff is not xp.inf and coords is None and lattice_vectors is None:
-        print(
-            "Cutoff is set but coords and lattice_vectors are not provided. No cutoff will be applied.",
-            flush=True,
-        )
 
-    if isinstance(transport_dir, str):
-        transport_dir = "xyz".index(transport_dir)
+    if isinstance(transport_direction, str):
+        transport_direction = "xyz".index(transport_direction)
 
     supercell_size = tuple(
         [
-            shape // 2 if i == transport_dir else 1
-            for i, shape in enumerate(hr.shape[:3])
+            shape // 2 if i == transport_direction else 1
+            for i, shape in enumerate(tight_binding_matrix.shape[:3])
         ]
     )
 
@@ -444,53 +429,35 @@ def create_hamiltonian(
     if len(periodic_shift) != 2:
         raise ValueError("periodic_shift must have length 2.")
 
-    upper_ind = list(copy(periodic_shift))
-    upper_ind.insert(transport_dir, 1)
-    lower_ind = list(copy(periodic_shift))
-    lower_ind.insert(transport_dir, -1)
-    diag_ind = list(copy(periodic_shift))
-    diag_ind.insert(transport_dir, 0)
+    block_inds = [
+        list(copy(periodic_shift))[:transport_direction]
+        + [b]
+        + list(copy(periodic_shift))[transport_direction:]
+        for b in [-1, 0, 1]
+    ]
 
-    if (np.abs(diag_ind) > np.array(hr.shape[:3]) // 2).any():
+    if (np.abs(block_inds[1]) > np.array(tight_binding_matrix.shape[:3]) // 2).any():
         warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
 
-    diag_block = get_hamiltonian_block(hr, supercell_size, diag_ind)
-    upper_block = get_hamiltonian_block(hr, supercell_size, upper_ind)
-    lower_block = get_hamiltonian_block(hr, supercell_size, lower_ind)
-
-    # Enforce cutoff.
-    if coords is not None and cutoff < xp.inf and lattice_vectors is not None:
-        super_cell_coords = create_coordinate_grid(
-            coords, supercell_size, lattice_vectors
-        )
-        distance_matrix = xp.diagonal(
-            xp.subtract.outer(super_cell_coords, super_cell_coords), axis1=1, axis2=3
-        )
-        diag_dist = xp.linalg.norm(distance_matrix, axis=-1)
-        upper_dist = xp.linalg.norm(
-            distance_matrix + xp.asarray(upper_ind) @ lattice_vectors, axis=-1
-        )
-        lower_dist = xp.linalg.norm(
-            distance_matrix + xp.asarray(lower_ind) @ lattice_vectors, axis=-1
-        )
-        diag_block[diag_dist > cutoff] = 0
-        upper_block[upper_dist > cutoff] = 0
-        lower_block[lower_dist > cutoff] = 0
-
     # Create sparse matrices of the blocks.
-    diag_block = sparse.coo_matrix(diag_block)
-    upper_block = sparse.coo_matrix(upper_block)
-    lower_block = sparse.coo_matrix(lower_block)
+    blocks = [
+        sparse.coo_matrix(
+            _get_transport_block(tight_binding_matrix, supercell_size, ind)
+        )
+        for ind in block_inds
+    ]
+
     # Canoncialize the sparse matrices.
-    # NOTE: Not sure if this is necessary.
-    for mat in [diag_block, upper_block, lower_block]:
-        if mat.has_canonical_format is False:
-            mat.sum_duplicates()
+    for block in blocks:
+        if block.has_canonical_format is False:
+            block.sum_duplicates()
+
     # Create the block-tridiagonal matrix.
     num_blocks = block_end - block_start
-    offsets = xp.arange(block_start, block_end) * diag_block.shape[0]
+    block_size = blocks[0].shape[0]
+    offsets = xp.arange(block_start, block_end) * blocks[0].shape[0]
 
     def _tile_sparse_blocks(block, num_blocks, offsets):
         return (
@@ -499,29 +466,33 @@ def create_hamiltonian(
             xp.tile(block.data, num_blocks),
         )
 
-    diag_rows, diag_cols, diag_data = _tile_sparse_blocks(
-        diag_block, num_blocks, offsets
-    )
-    upper_rows, upper_cols, upper_data = _tile_sparse_blocks(
-        upper_block, num_blocks, offsets
-    )
-    lower_rows, lower_cols, lower_data = _tile_sparse_blocks(
-        lower_block, num_blocks, offsets
-    )
-    upper_cols += diag_block.shape[0]
-    lower_rows += diag_block.shape[0]
+    full_rows = []
+    full_cols = []
+    full_data = []
+    shifts = [(1, 0), (0, 0), (0, 1)]
+    for block, (row_shift, col_shift) in zip(blocks, shifts):
+        rows, cols, data = _tile_sparse_blocks(block, num_blocks, offsets)
 
-    full_rows = xp.hstack([diag_rows, upper_rows, lower_rows])
-    full_cols = xp.hstack([diag_cols, upper_cols, lower_cols])
-    full_data = xp.hstack([diag_data, upper_data, lower_data])
+        # Shift rows and columns for off-diagonal blocks
+        rows += row_shift * block_size
+        cols += col_shift * block_size
+
+        full_rows.append(rows)
+        full_cols.append(cols)
+        full_data.append(data)
+
+    full_rows = xp.hstack(full_rows)
+    full_cols = xp.hstack(full_cols)
+    full_data = xp.hstack(full_data)
+
     # Remove the fishtail at the end of the matrix.
-    matrix_shape = num_transport_cells * diag_block.shape[0]
+    matrix_shape = num_transport_cells * block_size
     valid_mask = (full_cols < matrix_shape) & (full_rows < matrix_shape)
     full_rows = full_rows[valid_mask]
     full_cols = full_cols[valid_mask]
     full_data = full_data[valid_mask]
     # Also return the block sizes.
-    block_sizes = np.ones(num_blocks, dtype=int) * diag_block.shape[0]
+    block_sizes = np.ones(num_blocks, dtype=int) * block_size
     return (
         sparse.csr_matrix(
             (full_data, (full_rows, full_cols)),

@@ -157,6 +157,32 @@ def read_wannier_wout(
     return wannier_centers, lattice_vectors
 
 
+def _trim_zeros_nd(arr: NDArray) -> NDArray:
+    """Implementation of trim_zeros over all dimensions
+
+    This function removes all-zero slices from a multi-dimensional array.
+
+    Parameters
+    ----------
+    arr : NDArray
+        The input array.
+
+    Returns
+    -------
+    NDArray
+        The trimmed array.
+
+    """
+
+    nz = xp.nonzero(arr)
+
+    if len(nz[0]) == 0:
+        return xp.array([])
+
+    slices = tuple(slice(xp.min(i), xp.max(i) + 1) for i in nz)
+    return arr[slices]
+
+
 def trim_tight_binding_matrix(
     tight_binding_matrix: NDArray,
     value_cutoff: float | None = None,
@@ -210,8 +236,30 @@ def trim_tight_binding_matrix(
     if value_cutoff is not None:
         trimmed_matrix[xp.abs(trimmed_matrix) < value_cutoff] = 0
 
+    # Rotate such that 0,0,0 is in the center
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=(trimmed_matrix.shape[0] // 2), axis=0
+    )
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=(trimmed_matrix.shape[1] // 2), axis=1
+    )
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=(trimmed_matrix.shape[2] // 2), axis=2
+    )
     # Remove cells that end up being all zeros.
-    return xp.trim_zeros(trimmed_matrix)
+    trimmed_matrix = _trim_zeros_nd(trimmed_matrix)
+    # Rotate back
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=-(trimmed_matrix.shape[0] // 2), axis=0
+    )
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=-(trimmed_matrix.shape[1] // 2), axis=1
+    )
+    trimmed_matrix = xp.roll(
+        trimmed_matrix, shift=-(trimmed_matrix.shape[2] // 2), axis=2
+    )
+
+    return trimmed_matrix
 
 
 def get_hamiltonian_block(

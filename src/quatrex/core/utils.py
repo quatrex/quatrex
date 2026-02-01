@@ -159,29 +159,37 @@ def _create_matrix_from_unit_cells(
     section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
     start_block = section_offsets[comm.block.rank]
     end_block = section_offsets[comm.block.rank + 1]
+
+    neighbor_cell_cutoff = quatrex_config.device.neighbor_cell_cutoff
     transport_ind = "xyz".index(quatrex_config.device.transport_direction)
 
-    # The neighbor cell cutoff along the transport direction determines
-    # the size of the transport cell.
-    unit_cells_per_transport_cell = [1, 1, 1]
-    unit_cells_per_transport_cell[transport_ind] = (
-        quatrex_config.device.neighbor_cell_cutoff[transport_ind]
-    )
+    transverse_repetitions = list(unit_cells.shape[:3])
+    transverse_repetitions.pop(transport_ind)
+    transverse_repetitions = tuple(transverse_repetitions)
+
+    supercell_size = [1, 1, 1]
+    supercell_size[transport_ind] = neighbor_cell_cutoff[transport_ind]
+    supercell_size = tuple(supercell_size)
 
     matrix_dict = {}
     # Create a matrix for each connecting layer along the transverse
     # directions. The number of periodic cells is determined by the
     # shape of the unit cell data.
-    for periodic_shift in xp.ndindex(unit_cells.shape[:3]):
+    for periodic_shift in xp.ndindex(transverse_repetitions):
         # Center the periodic shift around zero.
-        periodic_shift = tuple(
-            ps - (us // 2) for ps, us in zip(periodic_shift, unit_cells.shape[:3])
-        )
+        periodic_shift = [
+            ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)
+        ]
+
+        # insert zero for transport direction to periodic_shift
+        periodic_shift.insert(transport_ind, 0)
+        periodic_shift = tuple(periodic_shift)
+
         matrix_sparray, block_sizes = create_hamiltonian(
             hr=unit_cells,
             num_transport_cells=quatrex_config.device.num_transport_cells,
             transport_dir=quatrex_config.device.transport_direction,
-            supercell_size=tuple(unit_cells_per_transport_cell),
+            supercell_size=supercell_size,
             block_start=start_block,
             block_end=end_block,
             periodic_shift=periodic_shift,

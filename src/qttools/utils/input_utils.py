@@ -1,161 +1,11 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import re
 import warnings
 from copy import copy
-from pathlib import Path
 
 import numpy as np
 
-from qttools import NDArray, _DType, sparse, xp
-
-
-def read_hr_dat(
-    path: Path, return_all: bool = False, dtype: _DType = xp.complex128, read_fast=False
-) -> tuple[NDArray, ...]:
-    """Parses the contents of a `seedname_hr.dat` file.
-
-    The first line gives the date and time at which the file was
-    created. The second line states the number of Wannier functions
-    `num_wann`. The third line gives the number of Wigner-Seitz
-    grid-points.
-
-    The next block of integers gives the degeneracy of each Wigner-Seitz
-    grid point, arranged into 15 values per line.
-
-    Finally, the remaining lines each contain, respectively, the
-    components of the Wigner-Seitz cell index, the Wannier center
-    indices m and n, and and the real and imaginary parts of the
-    Hamiltonian matrix element `HRmn` in the localized basis.
-
-    Parameters
-    ----------
-    path : Path
-        Path to a `seedname_hr.dat` file.
-    return_all : bool, optional
-        Whether to return all the data or just the Hamiltonian in the
-        localized basis. When `True`, the degeneracies and the
-        Wigner-Seitz cell indices are also returned. Defaults to
-        `False`.
-    dtype : dtype, optional
-        The data type of the Hamiltonian matrix elements. Defaults to
-        `numpy.complex128`.
-    read_fast : bool, optional
-        Whether to assume that the file is well-formatted and all the
-        data is sorted correctly. Defaults to `False`.
-
-    Returns
-    -------
-    hr : ndarray
-        The Hamiltonian matrix elements in the localized basis.
-    degeneracies : ndarray, optional
-        The degeneracies of the Wigner-Seitz grid points.
-    R : ndarray, optional
-        The Wigner-Seitz cell indices.
-
-    """
-
-    # Strip info from header.
-    num_wann, nrpts = xp.loadtxt(path, skiprows=1, max_rows=2, dtype=int)
-    num_wann, nrpts = int(num_wann), int(nrpts)
-
-    # Read wannier data (skipping degeneracy info).
-    deg_rows = int(xp.ceil(nrpts / 15.0))
-    wann_dat = xp.loadtxt(path, skiprows=3 + deg_rows)
-
-    # Assign R
-    if read_fast:
-        R = wann_dat[:: num_wann**2, :3].astype(int)
-    else:
-        R = wann_dat[:, :3].astype(int)
-    Rs = xp.subtract(R, R.min(axis=0))
-    N1, N2, N3 = Rs.max(axis=0) + 1
-    N1, N2, N3 = int(N1), int(N2), int(N3)
-
-    # Obtain Hamiltonian elements.
-    if read_fast:
-        hR = wann_dat[:, 5] + 1j * wann_dat[:, 6]
-        hR = hR.reshape(N1, N2, N3, num_wann, num_wann).swapaxes(-2, -1)
-        hR = xp.roll(hR, shift=(N1 // 2 + 1, N2 // 2 + 1, N3 // 2 + 1), axis=(0, 1, 2))
-    else:
-        hR = xp.zeros((N1, N2, N3, num_wann, num_wann), dtype=dtype)
-        for line in wann_dat:
-            R1, R2, R3 = line[:3].astype(int)
-            m, n = line[3:5].astype(int)
-            hR_mn_real, hR_mn_imag = line[5:]
-            hR[R1, R2, R3, m - 1, n - 1] = hR_mn_real + 1j * hR_mn_imag
-
-    if return_all:
-        return hR, xp.unique(R, axis=0)
-    return hR
-
-
-def read_wannier_wout(
-    path: Path, transform_home_cell: bool = True
-) -> tuple[NDArray, NDArray]:
-    """Parses the contents of a `seedname.wout` file and returns the Wannier centers and lattice vectors.
-
-    TODO: Add tests.
-
-    Parameters
-    ----------
-    path : Path
-        Path to a `seedname.wout` file.
-    transform_home_cell : bool, optional
-        Whether to transform the Wannier centers to the home cell. Defaults to `True`.
-
-    Returns
-    -------
-    wannier_centers : ndarray
-        The Wannier centers.
-    lattice_vectors : ndarray
-        The lattice vectors.
-    """
-    with open(path, "r") as f:
-        lines = f.readlines()
-
-    num_lines = len(lines)
-
-    # Find the line with the lattice vectors.
-    for i, line in enumerate(lines):
-        if "Lattice Vectors" in line:
-            lattice_vectors = xp.asarray(
-                [list(map(float, lines[i + j + 1].split()[1:])) for j in range(3)]
-            )
-        if "Number of Wannier Functions" in line:
-            num_wann = int(line.split()[-2])
-            break
-
-    # Find the line with the Wannier centers. Start from the end of the file.
-    for i, line in enumerate(lines[::-1]):
-        if "Final State" in line:
-            # The Wannier centers are enclosed by parantheses, so we have to extract them.
-            wannier_centers = xp.asarray(
-                [
-                    list(
-                        map(
-                            float,
-                            re.findall(r"\((.*?)\)", lines[num_lines - i + j])[0].split(
-                                ","
-                            ),
-                        )
-                    )
-                    for j in range(num_wann)
-                ]
-            )
-            break
-
-    if transform_home_cell:
-        # Get the transformation that diagonalize the lattice vectors
-        transformation = xp.linalg.inv(lattice_vectors)
-        # Appy it to the wannier centers
-        wannier_centers = xp.dot(wannier_centers, transformation)
-        # Translate the Wannier centers to the home cell
-        wannier_centers = xp.mod(wannier_centers, 1)
-        # Transform the Wannier centers back to the original basis
-        wannier_centers = xp.dot(wannier_centers, lattice_vectors)
-
-    return wannier_centers, lattice_vectors
+from qttools import NDArray, sparse, xp
 
 
 def _trim_zeros_nd(arr: NDArray) -> NDArray:
@@ -351,8 +201,8 @@ def expand_tight_binding_matrix(
     tight_binding_matrix: NDArray,
     num_transport_cells: int,
     transport_direction: int | str,
-    block_start: int = None,
-    block_end: int = None,
+    block_start: int | None = None,
+    block_end: int | None = None,
     periodic_shift: tuple = (0, 0),
 ) -> tuple[sparse.csr_matrix, NDArray]:
     """Creates a full block-tridiagonal matrix from tight-binding matrix / Wannier Centers.
@@ -387,10 +237,10 @@ def expand_tight_binding_matrix(
         Number of transport cells.
     transport_direction : int or str
         Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
-    block_start : int, optional
+    block_start : int | None, optional
         Starting block index for arrow shape partition. Defaults to
         `None`.
-    block_end : int, optional
+    block_end : int | None, optional
         Ending block index for arrow shape partition. Defaults to
         `None`.
     periodic_shift : tuple, optional

@@ -1,153 +1,135 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-from pathlib import Path
-
+import numpy as np
 import pytest
 
-from qttools import NDArray, _DType, xp
+from qttools import NDArray, xp
 from qttools.utils.input_utils import (
     _get_transport_block,
     create_coordinate_grid,
     expand_tight_binding_matrix,
-    read_hr_dat,
     trim_tight_binding_matrix,
 )
 
-wannier90_hr_path = Path(__file__).parent / "data" / "wannier90_hr.dat"
-R_ref = xp.loadtxt(Path(__file__).parent / "data" / "R_ref.txt", dtype=int)
-
 
 @pytest.mark.parametrize(
-    "return_all, dtype, read_fast",
-    [
-        (False, xp.complex128, False),
-        (True, xp.complex128, False),
-        (True, xp.complex128, True),
-    ],
-)
-def test_read_hr_dat(return_all: bool, dtype: _DType, read_fast: bool):
-    if return_all:
-        hr, R = read_hr_dat(wannier90_hr_path, return_all, dtype, read_fast)
-    else:
-        hr = read_hr_dat(wannier90_hr_path, return_all, dtype, read_fast)
-    for i, r in enumerate(R_ref):
-        if return_all:
-            assert xp.allclose(R[i], r)
-        # NOTE: This assumes specific data in the file, should be generalized
-        assert xp.allclose(hr[*r], r[0] + 1j * r[1])
-
-
-@pytest.mark.parametrize(
-    "value_cutoff, R_cutoff",
+    "value_cutoff, neighbor_cell_cutoff",
     [
         (0.5, None),
-        (None, (1, 1, 0)),
-        (0.5, (1, 1, 0)),
-        (0.5, None),
-        (None, (1, 1, 0)),
-        (0.5, (1, 1, 0)),
+        (None, (3, 2, 0)),
+        (0.5, (3, 2, 0)),
+        (None, (7, 9, 0)),
+        (0.5, (7, 9, 0)),
     ],
 )
-def test_cutoff_hr(value_cutoff: float, R_cutoff: int):
-    hr = read_hr_dat(wannier90_hr_path)
+def test_tight_binding_matrix(
+    unit_cells: NDArray, value_cutoff: float, neighbor_cell_cutoff: tuple[int, int, int]
+):
+    """Tests the trimming of the tight binding matrix."""
 
-    hr_cutoff = trim_tight_binding_matrix(
-        tight_binding_matrix=hr,
+    trimmed_unit_cells = trim_tight_binding_matrix(
+        tight_binding_matrix=unit_cells,
         value_cutoff=value_cutoff,
-        neighbor_cell_cutoff=R_cutoff,
+        neighbor_cell_cutoff=neighbor_cell_cutoff,
     )
-    if R_cutoff is None:
-        R_cutoff = xp.array([s // 2 if s > 1 else 1 for s in hr.shape[:3]])
+
+    if neighbor_cell_cutoff is None:
+        neighbor_cell_cutoff = [s // 2 if s > 1 else 1 for s in unit_cells.shape[:3]]
+
+    neighbor_cell_cutoff = np.array(neighbor_cell_cutoff)
+
     if value_cutoff is None:
-        value_cutoff = xp.inf
+        # Only neighbor_cell_cutoff is set
+        # Additional value cutoff could lead to smaller shape
+        assert trimmed_unit_cells.shape[:3] == tuple(
+            [
+                2 * r + 1 if i > 1 else 1
+                for r, i in zip(neighbor_cell_cutoff, unit_cells.shape[:3])
+            ]
+        )
+
+    # Orbital dimensions should remain the same
+    assert trimmed_unit_cells.shape[3:] == unit_cells.shape[3:]
+
     if value_cutoff is None:
-        # NOTE: if value_cutoff is not None, we don't know the shape
-        if isinstance(R_cutoff, int):
-            assert (
-                hr_cutoff.shape
-                == tuple([2 * R_cutoff + 1 if hrs > 1 else 1 for hrs in hr.shape[:3]])
-                + hr.shape[3:]
-            )
-        else:
-            assert (
-                hr_cutoff.shape
-                == tuple(
-                    [
-                        2 * r + 1 if hrs > 1 else 1
-                        for r, hrs in zip(R_cutoff, hr.shape[:3])
-                    ]
-                )
-                + hr.shape[3:]
-            )
-    elif value_cutoff is None:
-        assert hr_cutoff.shape == hr.shape
-    for r in R_ref:
-        if (xp.abs(r) <= R_cutoff).all():
-            hr_ref = hr[*r][xp.abs(hr[*r]) <= value_cutoff]
-            try:
-                assert xp.allclose(hr_cutoff[*r], hr_ref)
+        value_cutoff = -np.inf
+
+    trimmed_cutoff = np.array(
+        [s // 2 if s > 1 else 1 for s in trimmed_unit_cells.shape[:3]]
+    )
+
+    for r in np.ndindex(unit_cells.shape[:3]):
+
+        r = np.asarray(r) - np.asarray(unit_cells.shape[:3]) // 2
+
+        if np.all(np.abs(r) <= neighbor_cell_cutoff):
+            unit_cells_ref = unit_cells[*r]
+
+            zerod_unit_cells_ref = unit_cells_ref.copy()
+            zerod_unit_cells_ref[xp.abs(zerod_unit_cells_ref) < value_cutoff] = 0
+
             # Some R values can have been removed because of the value_cutoff,
-            # but then the corresponding hr values should be zero
-            except IndexError:
-                assert (hr_ref == 0).all()
+            # but then the corresponding unit_cells values should be zero
+            # meaning the cell does not contain values above the cutoff
+            if np.all(np.abs(r) <= trimmed_cutoff):
+                assert xp.allclose(trimmed_unit_cells[*r], zerod_unit_cells_ref)
+
+            else:
+                assert len(unit_cells_ref[xp.abs(unit_cells[*r]) >= value_cutoff]) == 0
 
 
 @pytest.mark.parametrize(
-    "supercell, shift, ref_val",
+    "supercell_size, shift",
     [
         (
             (2, 2, 1),
             (0, 0, 0),
-            (
-                (0 + 0j, 0 + 1j, 1 + 0j, 1 + 1j),
-                (0 - 1j, 0 + 0j, 1 - 1j, 1 + 0j),
-                (-1 + 0j, -1 + 1j, 0 + 0j, 0 + 1j),
-                (-1 - 1j, -1 + 0j, 0 - 1j, 0 + 0j),
-            ),
         ),
         (
             (2, 2, 1),
             (1, 1, 0),
-            (
-                (2 + 2j, 0 + 0j, 0 + 0j, 0 + 0j),
-                (2 + 1j, 2 + 2j, 0 + 0j, 0 + 0j),
-                (1 + 2j, 0 + 0j, 2 + 2j, 0 + 0j),
-                (1 + 1j, 1 + 2j, 2 + 1j, 2 + 2j),
-            ),
         ),
         (
             (3, 1, 1),
             (0, 0, 0),
-            (
-                (0 + 0j, 1 + 0j, 2 + 0j),
-                (-1 + 0j, 0 + 0j, 1 + 0j),
-                (-2 + 0j, -1 + 0j, 0 + 0j),
-            ),
         ),
         (
             (3, 1, 1),
             (1, 0, 0),
-            (
-                (0 + 0j, 0 + 0j, 0 + 0j),
-                (2 + 0j, 0 + 0j, 0 + 0j),
-                (1 + 0j, 2 + 0j, 0 + 0j),
-            ),
         ),
     ],
 )
 def test_get_transport_block(
-    supercell: tuple[int, int, int], shift: tuple[int, int, int], ref_val: tuple[tuple]
+    unit_cells: NDArray,
+    supercell_size: tuple[int, int, int],
+    shift: tuple[int, int, int],
 ):
-    # TODO: replace with hr from example file
-    hr = read_hr_dat(wannier90_hr_path)
-    bs = hr.shape[-1]
-    block = _get_transport_block(hr, supercell, shift)
-    for ind_r in xp.ndindex(supercell):
-        br = int(xp.ravel_multi_index(xp.asarray(ind_r), supercell))
-        for ind_c in xp.ndindex(supercell):
-            bc = int(xp.ravel_multi_index(xp.asarray(ind_c), supercell))
+    """Tests the extraction of the transport block from the tight binding matrix."""
+
+    bs = unit_cells.shape[-1]
+    test_block = _get_transport_block(unit_cells, supercell_size, shift)
+
+    global_shift = np.multiply(np.asarray(shift), np.asarray(supercell_size))
+
+    for ind_r in np.ndindex(supercell_size):
+        br = np.ravel_multi_index(np.array(ind_r), supercell_size)
+        for ind_c in np.ndindex(supercell_size):
+            bc = np.ravel_multi_index(np.array(ind_c), supercell_size)
+
+            target_ind = tuple(np.array(ind_c) - np.array(ind_r) + global_shift)
+
+            is_out_of_bounds = any(
+                abs(val) > unit_cells.shape[dim] // 2
+                for dim, val in enumerate(target_ind)
+            )
+
+            if is_out_of_bounds:
+                ref_block = xp.zeros((bs, bs))
+            else:
+                ref_block = unit_cells[target_ind]
+
             assert xp.allclose(
-                block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_val[br][bc]
+                test_block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_block
             )
 
 
@@ -160,6 +142,7 @@ def test_get_transport_block(
 def test_create_coordinate_grid(
     coords: NDArray, supercell: tuple[int, int, int], lat_vecs: NDArray
 ):
+    """Tests the creation of a coordinate grid for a supercell."""
     grid = create_coordinate_grid(coords, supercell, lat_vecs)
     assert grid.shape == (xp.prod(xp.asarray(supercell)) * 10, 3)
     for ind in xp.ndindex(supercell):
@@ -197,6 +180,10 @@ def test_expand_tight_binding_matrix(
     block_start: int | None,
     block_end: int | None,
 ):
+    """Tests the expansion of the tight-binding matrix into a block-tridiagonal Hamiltonian."""
+    # NOTE: hr is set to ones to make it easy to check the resulting matrix
+    # Using example data would require complex checks.
+
     sparse_hamiltonian, block_sizes = expand_tight_binding_matrix(
         tight_binding_matrix=hr,
         num_transport_cells=num_transport_cells,

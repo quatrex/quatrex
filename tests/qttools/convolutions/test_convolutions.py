@@ -3,13 +3,13 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.convolutions.convolve import _naive_convolve
-from qttools.convolutions.ffts import (
+from qttools.fft import (
     fft_circular_convolve,
     fft_convolve,
     fft_convolve_kpoints,
     fft_correlate_kpoints,
 )
+from qttools.fft.convolve import _naive_convolve
 
 
 def naive_correlate(a: NDArray, b: NDArray) -> NDArray:

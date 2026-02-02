@@ -3,7 +3,7 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.convolutions.convolve import _naive_convolve
+from qttools.fft.convolve import _naive_convolve
 from quatrex.coulomb_screening.polarization import hilbert_transform
 
 

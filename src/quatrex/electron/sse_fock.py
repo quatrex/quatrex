@@ -6,8 +6,8 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.comm import comm
-from qttools.convolutions.ffts import fft_circular_convolve
 from qttools.datastructures import DSDBSparse
+from qttools.fft import fft_circular_convolve
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 from quatrex.core.quatrex_config import QuatrexConfig

@@ -6,12 +6,8 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
-from qttools.convolutions.ffts import (
-    fft_convolve,
-    fft_convolve_kpoints,
-    fft_correlate_kpoints,
-)
 from qttools.datastructures import DSDBSparse
+from qttools.fft import fft_convolve, fft_convolve_kpoints, fft_correlate_kpoints
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes

@@ -6,10 +6,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
-from qttools.convolutions.ffts import (
-    fft_correlate_kpoints,
-    hilbert_transform_polarization,
-)
+from qttools.convolutions.ffts import fft_convolve, fft_correlate_kpoints
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
@@ -22,6 +19,45 @@ profiler = Profiler()
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
+
+
+def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
+    """Computes the Hilbert transform of the array a, assuming the symmetries of the
+    polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
+    This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
+
+    Assumes that the first axis corresponds to the energy axis.
+
+    Parameters
+    ----------
+    a : NDArray
+        The array to transform.
+    energies : NDArray
+        The energy values corresponding to the first axis of a.
+
+    Returns
+    -------
+    NDArray
+         The Hilbert transform of a.
+
+    """
+    # eta for removing the singularity. See Cauchy principal value.
+    de = energies[1] - energies[0]
+    eta = de / 2
+    energy_differences = (
+        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
+    )
+    ne = energies.size
+
+    hilbert_kernel = 1 / energy_differences
+    b = fft_convolve(a, hilbert_kernel)[:ne]
+    # Negative frequencies of a
+    b += fft_convolve(a[::-1].conj(), hilbert_kernel)[-ne:]
+    # Negative frequencies of the kernel
+    hilbert_kernel = -hilbert_kernel[::-1]
+    b += fft_convolve(a, hilbert_kernel)[-ne:]
+
+    return b
 
 
 class PCoulombScreening(ScatteringSelfEnergy):
@@ -162,7 +198,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
-                                hilbert_transform_polarization(
+                                hilbert_transform(
                                     (
                                         p_greater.data[..., batch]
                                         - p_lesser.data[..., batch]

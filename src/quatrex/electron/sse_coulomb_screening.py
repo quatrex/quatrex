@@ -7,9 +7,9 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
 from qttools.convolutions.ffts import (
+    fft_convolve,
     fft_convolve_kpoints,
     fft_correlate_kpoints,
-    hilbert_transform_selfenergy,
 )
 from qttools.datastructures import DSDBSparse
 from qttools.profiling import Profiler
@@ -23,6 +23,46 @@ profiler = Profiler()
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
+
+
+def hilbert_transform(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
+    """Computes the Hilbert transform.
+
+    Assumes that the first axis corresponds to the energy axis.
+
+    Parameters
+    ----------
+    sl : NDArray
+        The lesser self-energy on the grid |-----|-----|xxxxx|.
+    sg : NDArray
+        The greater self-energy on the grid |xxxxx|-----|-----|.
+    energies : NDArray
+        The energy values corresponding to the first axis of sl/sg.
+
+    Returns
+    -------
+    NDArray
+         The Hilbert transformation of sg - sl.
+
+    """
+    ne = energies.size
+    nk = sg.shape[1:-1]
+    # Add empty dimensions for each k-point.
+    energy_differences = (energies - energies[0]).reshape(-1, *(len(nk) + 1) * (1,))
+    # eta for removing the singularity. See Cauchy principal value.
+    eta = (energies[1] - energies[0]) / 2
+    hilbert_kernel = 1 / (energy_differences + eta)
+
+    sr = fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[:ne]
+    # Correct for left edge
+    sr += fft_convolve(-sl[:ne], hilbert_kernel)[-ne:]
+    # Next account for negative frequencies
+    hilbert_kernel = -hilbert_kernel[::-1]
+    sr += fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[-ne:]
+    # Correct for right edge
+    sr += fft_convolve(sg[-ne:], hilbert_kernel)[:ne]
+
+    return sr
 
 
 class SigmaCoulombScreening(ScatteringSelfEnergy):
@@ -206,7 +246,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         sigma_retarded.data[..., batch] += (
             self.prefactor
-            * hilbert_transform_selfenergy(sl, sg, self.energies)
+            * hilbert_transform(sl, sg, self.energies)
             * self.kpoint_volume
         )
 

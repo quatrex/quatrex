@@ -3,27 +3,13 @@
 import pytest
 
 from qttools import NDArray, xp
+from qttools.convolutions.convolve import _naive_convolve
 from qttools.convolutions.ffts import (
     fft_circular_convolve,
     fft_convolve,
     fft_convolve_kpoints,
     fft_correlate_kpoints,
-    hilbert_transform_polarization,
-    hilbert_transform_selfenergy,
 )
-
-
-def naive_convolve(a: NDArray, b: NDArray) -> NDArray:
-    """Naive implementation of convolution for testing purposes."""
-    ne_a = a.shape[0]
-    ne_b = b.shape[0]
-    ne = ne_a + ne_b  # - 1
-    result_shape = (ne,) + a.shape[1:]
-    result = xp.zeros(result_shape, dtype=a.dtype)
-    for i in range(ne_a):
-        for j in range(ne_b):
-            result[i + j] += a[i] * b[j]
-    return result
 
 
 def naive_correlate(a: NDArray, b: NDArray) -> NDArray:
@@ -126,30 +112,6 @@ def naive_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
     return result
 
 
-def naive_hilbert_transform(a_full: NDArray, energies: NDArray) -> NDArray:
-    """Naive implementation of Hilbert transform for testing purposes."""
-    de = energies[1] - energies[0]
-    ne = energies.size
-    energy_differences = energies - energies[0] + de / 2
-    hilbert_kernel = 1 / xp.concatenate([-energy_differences[::-1], energy_differences])
-    result = naive_convolve(a_full, hilbert_kernel)
-    return result[2 * ne : 3 * ne]
-
-
-def naive_hilbert_transform_polarization(a: NDArray, energies: NDArray) -> NDArray:
-    """Naive implementation of Hilbert transform for polarization for testing purposes.
-    `a` should have the symmetry $a(-E) = a^*(E)$.
-    """
-    de = energies[1] - energies[0]
-    ne = energies.size
-    # Should satisfy the symmetries of the polarization
-    a_full = xp.concatenate([xp.conj(a[::-1]), a])
-    energy_differences = energies - energies[0] + de / 2
-    hilbert_kernel = 1 / xp.concatenate([-energy_differences[::-1], energy_differences])
-    result = naive_convolve(a_full, hilbert_kernel)
-    return result[2 * ne : 3 * ne]
-
-
 class TestNaiveConvolutions:
     """Tests for the naive convolution implementations used for
     testing purposes, ie tests for the testing functions."""
@@ -158,7 +120,7 @@ class TestNaiveConvolutions:
     def test_naive_convolve():
         a = xp.array([1, 2, 3], dtype=xp.float64)
         b = xp.array([0, 1, 0.5], dtype=xp.float64)
-        result = naive_convolve(a, b)
+        result = _naive_convolve(a, b)
         # NOTE: No -1 length here, needed for correct hilbert transform later on.
         expected = xp.array([0, 1, 2.5, 4, 1.5, 0], dtype=xp.float64)
         assert xp.allclose(result, expected)
@@ -244,7 +206,7 @@ class TestFFTConvolutions:
         b = xp.random.random(array_shape)
         result = fft_convolve(a, b)
         # Compare with naive convolve
-        expected = naive_convolve(a, b)
+        expected = _naive_convolve(a, b)
         assert xp.allclose(result, expected)
 
     @pytest.mark.usefixtures("array_shape")
@@ -282,31 +244,4 @@ class TestFFTConvolutions:
         result = fft_correlate_kpoints(a, b)
         # Compare with naive correlate
         expected = naive_correlate_kpoints(a, b)
-        assert xp.allclose(result, expected)
-
-    @pytest.mark.usefixtures("array_shape")
-    def test_hilbert_transform_selfenergy(self, array_shape):
-        ne = array_shape[0]
-        # Also add orbital dimension at the end
-        full_array_shape = (3 * ne,) + array_shape[1:] + (1,)
-        a_full = xp.random.random(full_array_shape)
-        energies = xp.linspace(-10, 10, ne)
-        result = hilbert_transform_selfenergy(a_full[:-ne], a_full[ne:], energies)
-        x = xp.zeros_like(a_full)
-        x[ne:] = a_full[ne:]
-        x[:-ne] -= a_full[:-ne]
-        expected = naive_hilbert_transform(x, energies)
-        assert xp.allclose(result, expected)
-
-    @pytest.mark.usefixtures("array_shape")
-    def test_hilbert_transform_polarization(self, array_shape):
-        # Use the symmetry of the polarization $a(-\omega)=a^{*}(\omega)$
-        ne = array_shape[0]
-        # Add empty orbital dimension at the end
-        a = xp.random.random(array_shape + (1,)) + 1j * xp.random.random(
-            array_shape + (1,)
-        )
-        energies = xp.linspace(-10, 10, ne)
-        result = hilbert_transform_polarization(a, energies)
-        expected = naive_hilbert_transform_polarization(a, energies)
         assert xp.allclose(result, expected)

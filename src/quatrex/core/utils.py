@@ -44,7 +44,7 @@ def homogenize(matrix: DSDBSparse) -> None:
 
 def _assemble_kpoint(
     out_matrix: DSDBSparse,
-    matrix_dict: dict[tuple, sparse.csr_matrix],
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
     num_kpoints: NDArray,
     kshift: int | NDArray,
 ) -> None:
@@ -56,54 +56,46 @@ def _assemble_kpoint(
     ----------
     out_matrix : DSDBSparse
         The matrix to assemble into.
-    matrix_dict : dict[tuple, sparse.csr_matrix]
-        The dictionary of matrices for each transverse repetition.
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
     num_kpoints : NDArray
-        The number of k-points in transverse directions.
+        The number of k-points.
     kshift : int | NDArray
-        The k-point shift to apply in transverse directions.
+        The k-point shift to apply.
 
     """
 
-    transverse_dimensions = len(num_kpoints)
+    num_dimensions = len(num_kpoints)
 
     if isinstance(kshift, int):
-        kshift = xp.array([kshift for _ in range(transverse_dimensions)])
-
-    if transverse_dimensions >= 3:
-        raise ValueError("K-point assembly need 2D grid for transport.")
+        kshift = xp.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
+
     for cell in matrix_dict.keys():
-        if len(cell) != transverse_dimensions:
+        if len(cell) != num_dimensions:
             raise ValueError(
                 f"Cell {cell} has incorrect dimensionality. "
-                f"Expected {transverse_dimensions}, got {len(cell)}."
-            )
-    for matrix in matrix_dict.values():
-        if not isinstance(matrix, sparse.csr_matrix):
-            raise ValueError(
-                "All matrices in matrix_dict must be of type sparse.csr_matrix."
+                f"Expected {num_dimensions}, got {len(cell)}."
             )
 
     rolled_kpoints = [
         xp.roll(xp.arange(num_kpoints[dim]), kshift[dim])
-        for dim in range(transverse_dimensions)
+        for dim in range(num_dimensions)
     ]
 
     kpoints = [
         (rolled_kpoints[dim] - num_kpoints[dim] // 2) / num_kpoints[dim]
-        for dim in range(transverse_dimensions)
+        for dim in range(num_dimensions)
     ]
 
     for indices in itertools.product(*rolled_kpoints):
 
         stack_index = tuple(idx for idx, n_k in zip(indices, num_kpoints) if n_k > 1)
 
-        kpoint = xp.array(
-            [kpoints[d][indices[d]] for d in range(transverse_dimensions)]
-        )
+        kpoint = xp.array([kpoints[d][indices[d]] for d in range(num_dimensions)])
 
         cells = np.array(list(matrix_dict.keys()))
         phases = xp.exp(2j * xp.pi * (cells @ kpoint))
@@ -173,6 +165,7 @@ def _create_matrix_from_unit_cells(
         )
         matrix_dict[periodic_shift] = matrix_sparray.astype(xp.complex128)
 
+    # TODO: This could lead to cancelations
     matrix_sparray = sum(matrix_dict.values())
     matrix_sparray.sum_duplicates()
     block_sizes = get_host(block_sizes)

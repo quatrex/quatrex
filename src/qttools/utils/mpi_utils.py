@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import pickle
 from pathlib import Path
 
 import scipy.sparse as sps
@@ -92,7 +91,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix not in [".npz", ".npy", ".pkl"]:
+    if path.suffix not in [".npz", ".npy"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
     if comm.rank == 0:
@@ -102,14 +101,6 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
-        elif path.suffix == ".pkl":
-            with open(path, "rb") as f:
-                arr = pickle.load(f)
-            if not isinstance(arr, dict):
-                raise TypeError(f"Expected a dictionary, but got {type(arr)}")
-            for k in arr.keys():
-                arr[k] = sparse.coo_matrix(arr[k])
-
     else:
         arr = None
 

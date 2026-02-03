@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qttools import NDArray, xp
-from qttools.utils.input_utils import (
+from quatrex.device.inputs import (
     _get_transport_block,
     create_coordinate_grid,
     expand_tight_binding_matrix,
@@ -22,7 +22,7 @@ from qttools.utils.input_utils import (
         (0.5, (7, 9, 0)),
     ],
 )
-def test_tight_binding_matrix(
+def test_trim_tight_binding_matrix(
     unit_cells: NDArray, value_cutoff: float, neighbor_cell_cutoff: tuple[int, int, int]
 ):
     """Tests the trimming of the tight binding matrix."""

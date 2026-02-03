@@ -1,11 +1,19 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import itertools
 import warnings
 from copy import copy
+from typing import Callable
 
 import numpy as np
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
+from qttools.datastructures import DSDBSparse
+from qttools.utils.gpu_utils import get_host
+from qttools.utils.mpi_utils import distributed_load, get_section_sizes
+from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.quatrex_config import QuatrexConfig
 
 
 def _trim_zeros_nd(arr: NDArray) -> NDArray:
@@ -350,3 +358,263 @@ def expand_tight_binding_matrix(
         ),
         block_sizes,
     )
+
+
+def _assemble_kpoint(
+    out_matrix: DSDBSparse,
+    matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    num_kpoints: NDArray,
+    kshift: int | NDArray,
+) -> None:
+    """Assembles a DSBSparse from a dictionary of sparse matrices
+    corresponding to different transverse periodic repetitions.
+    Each sparse matrix is already expanded in the transport direction.
+
+    Parameters
+    ----------
+    out_matrix : DSDBSparse
+        The matrix to assemble into.
+    matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
+        The dictionary of matrices corresponding to different periodic
+        repetitions.
+    num_kpoints : NDArray
+        The number of k-points.
+    kshift : int | NDArray
+        The k-point shift to apply.
+
+    """
+
+    num_dimensions = len(num_kpoints)
+
+    if isinstance(kshift, int):
+        kshift = xp.array([kshift for _ in range(num_dimensions)])
+
+    if not matrix_dict:
+        raise ValueError("No matrices found in matrix_dict.")
+
+    for cell in matrix_dict.keys():
+        if len(cell) != num_dimensions:
+            raise ValueError(
+                f"Cell {cell} has incorrect dimensionality. "
+                f"Expected {num_dimensions}, got {len(cell)}."
+            )
+
+    rolled_kpoints = [
+        xp.roll(xp.arange(num_kpoints[dim]), kshift[dim])
+        for dim in range(num_dimensions)
+    ]
+
+    kpoints = [
+        (rolled_kpoints[dim] - num_kpoints[dim] // 2) / num_kpoints[dim]
+        for dim in range(num_dimensions)
+    ]
+
+    for indices in itertools.product(*rolled_kpoints):
+
+        stack_index = tuple(idx for idx, n_k in zip(indices, num_kpoints) if n_k > 1)
+
+        kpoint = xp.array([kpoints[d][indices[d]] for d in range(num_dimensions)])
+
+        cells = np.array(list(matrix_dict.keys()))
+        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+
+        # NOTE: Sparse matrix addition is slow
+        # but unavoidable due to memory constraints.
+        # TODO: Could still be optimized
+        matrix_contribution = sum(
+            [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
+        )
+        out_matrix.stack[(...,) + stack_index] += matrix_contribution
+
+
+def _create_matrix_from_unit_cells(
+    quatrex_config: QuatrexConfig,
+    unit_cells: NDArray,
+) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+    """Creates a matrix from unit cells with periodic shifts.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The quatrex simulation configuration.
+    unit_cells : NDArray
+        The unit cell data.
+
+    Returns
+    -------
+    tuple[sparse.coo_matrix, dict | None, NDArray | None]
+        The matrix, optional k-point dictionary, and optional block
+        sizes.
+
+    """
+    # Determine the local slice of the data.
+    # NOTE: This is arrow-wise partitioning.
+    # TODO: Allow more options, e.g., block row-wise partitioning.
+    section_sizes, __ = get_section_sizes(
+        quatrex_config.device.num_transport_cells, comm.block.size
+    )
+    section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+    start_block = section_offsets[comm.block.rank]
+    end_block = section_offsets[comm.block.rank + 1]
+
+    transport_ind = "xyz".index(quatrex_config.device.transport_direction)
+
+    transverse_repetitions = list(unit_cells.shape[:3])
+    transverse_repetitions.pop(transport_ind)
+    transverse_repetitions = tuple(transverse_repetitions)
+
+    matrix_dict = {}
+    # Create a matrix for each connecting layer along the transverse
+    # directions. The number of periodic cells is determined by the
+    # shape of the unit cell data.
+    for periodic_shift in xp.ndindex(transverse_repetitions):
+        # Center the periodic shift around zero.
+        periodic_shift = tuple(
+            [ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)]
+        )
+
+        matrix_sparray, block_sizes = expand_tight_binding_matrix(
+            tight_binding_matrix=unit_cells,
+            num_transport_cells=quatrex_config.device.num_transport_cells,
+            transport_direction=quatrex_config.device.transport_direction,
+            block_start=start_block,
+            block_end=end_block,
+            periodic_shift=periodic_shift,
+        )
+        matrix_dict[periodic_shift] = matrix_sparray.astype(xp.complex128)
+
+    # TODO: This could lead to cancelations
+    matrix_sparray = sum(matrix_dict.values())
+    matrix_sparray.sum_duplicates()
+    block_sizes = get_host(block_sizes)
+    block_sizes_array = np.asarray(
+        [block_sizes[0]] * quatrex_config.device.num_transport_cells
+    )
+
+    return matrix_sparray, matrix_dict, block_sizes_array
+
+
+def _load_matrix_from_unit_cell(
+    quatrex_config: QuatrexConfig,
+    matrix_name: str,
+) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
+    """Loads a matrix from unit cell data.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The quatrex simulation configuration.
+    matrix_name : str
+        Name of the matrix ('hamiltonian','overlap' or
+        'coulomb_matrix').
+
+    Returns
+    -------
+    tuple[sparse.coo_matrix, dict | None, NDArray | None]
+        The matrix, optional k-point dictionary, and optional block sizes.
+
+    """
+    unit_cells = distributed_load(
+        quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
+    ).astype(xp.complex128)
+
+    # Apply cutoff if requested and available
+    trimmed_unit_cells = trim_tight_binding_matrix(
+        tight_binding_matrix=unit_cells,
+        neighbor_cell_cutoff=quatrex_config.device.neighbor_cell_cutoff,
+    )
+
+    return _create_matrix_from_unit_cells(quatrex_config, trimmed_unit_cells)
+
+
+def load_matrix(
+    quatrex_config: QuatrexConfig,
+    compute_config: ComputeConfig,
+    matrix_name: str,
+    sparsity_pattern: sparse.coo_matrix | None = None,
+    shift_kpoints: bool = False,
+    symmetry_op: Callable = xp.conj,
+) -> tuple[DSDBSparse, sparse.coo_matrix]:
+    """Loads a matrix from file, applying symmetrization and optionally
+    using a provided sparsity pattern.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+    matrix_name : str
+        The name of the matrix ('hamiltonian', 'overlap', etc.).
+    sparsity_pattern : sparse.coo_matrix | None
+        The sparsity pattern to enforce. If None, the sparsity of the
+        loaded matrix is used.
+    shift_kpoints : bool
+        Whether to "shift"/"center" the kpoints in the allocated
+        DSDBSparse.
+    symmetry_op : Callable, optional
+        The symmetry operation to apply, by default xp.conj
+
+    Returns
+    -------
+    matrix : DSDBSparse
+        The loaded matrix.
+    sparsity_pattern : sparse.coo_matrix
+        The sparsity pattern of the returned matrix.
+
+    """
+
+    if quatrex_config.device.construct_from_unit_cell:
+        matrix_sparray, matrix_dict, block_sizes = _load_matrix_from_unit_cell(
+            quatrex_config, matrix_name
+        )
+    else:
+        matrix_sparray = distributed_load(
+            quatrex_config.input_dir / f"{matrix_name}.npz"
+        ).astype(xp.complex128)
+        block_sizes = get_host(
+            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+        )
+        matrix_dict = None
+
+    # TODO: This is not efficient and will be refactored when the inputs
+    # are unified in (issue #214).
+    if sparsity_pattern is None:
+        sparsity_pattern = matrix_sparray.copy()
+        sparsity_pattern.data[:] = 1
+        # Make sure that the sparsity pattern is symmetric.
+        sparsity_pattern = sparsity_pattern + sparsity_pattern.T
+
+    # Symmetrize the data.
+    matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
+
+    matrix = compute_config.dsdbsparse_type.from_sparray(
+        sparsity_pattern.astype(xp.complex128),
+        block_sizes=block_sizes,
+        global_stack_shape=(comm.stack.size,)
+        + tuple([k for k in quatrex_config.electron.num_kpoints if k > 1]),
+        symmetry=quatrex_config.scba.symmetric,
+        symmetry_op=symmetry_op,
+    )
+    matrix.data[:] = 0.0  # Initialize to zero.
+    if matrix_dict is None:
+        matrix += matrix_sparray
+    else:
+        # Pop the k-point in transport direction
+        num_kpoints = list(copy(quatrex_config.electron.num_kpoints))
+        transport_idx = "xyz".index(quatrex_config.device.transport_direction)
+        num_kpoints.pop(transport_idx)
+        num_kpoints = xp.array(num_kpoints)
+
+        # Shift the k-points if requested
+        # Needed for the coulomb matrix
+        _assemble_kpoint(
+            out_matrix=matrix,
+            matrix_dict=matrix_dict,
+            num_kpoints=num_kpoints,
+            kshift=-(num_kpoints // 2) if shift_kpoints else 0,
+        )
+        # Explicitely try to free the memory
+        del matrix_dict
+
+    return matrix, sparsity_pattern

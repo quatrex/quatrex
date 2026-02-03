@@ -12,7 +12,6 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import (
@@ -22,12 +21,9 @@ from quatrex.core.observables import (
     device_current,
 )
 from quatrex.core.quatrex_config import QuatrexConfig
-from quatrex.core.utils import (
-    compute_num_connected_blocks,
-    compute_sparsity_pattern,
-    load_matrix,
-)
+from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
+from quatrex.device.inputs import create_coordinate_grid, load_matrix
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,

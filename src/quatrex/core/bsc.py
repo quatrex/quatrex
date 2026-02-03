@@ -8,6 +8,8 @@ import numpy as np
 from cupyx.profiler import time_range
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
+from scipy.signal import find_peaks
+
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
@@ -18,15 +20,19 @@ from qttools.utils.gpu_utils import get_host, synchronize_device
 from qttools.utils.input_utils import cutoff_hr, get_hamiltonian_block
 from qttools.utils.mpi_utils import distributed_load, get_local_slice
 from qttools.utils.stack_utils import scale_stack
-from scipy.signal import find_peaks
-
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import density
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein, fermi_dirac
 from quatrex.core.utils import assemble_kpoint_dsb
 from quatrex.coulomb_screening import PCoulombScreening
-from quatrex.electron import SigmaCoulombScreening, SigmaFock, SigmaHartree, SigmaPhonon, SigmaPhoton
+from quatrex.electron import (
+    SigmaCoulombScreening,
+    SigmaFock,
+    SigmaHartree,
+    SigmaPhonon,
+    SigmaPhoton,
+)
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
@@ -127,7 +133,7 @@ class BSCData:
         )
         # TODO: Should maybe not be loaded here, but in the BSC class (needed for charge density calculation).
         self.lattice_vectors = distributed_load(
-           quatrex_config.input_dir / "lattice_vectors.npy"
+            quatrex_config.input_dir / "lattice_vectors.npy"
         )
 
         number_of_kpoints = quatrex_config.electron.number_of_kpoints
@@ -397,7 +403,7 @@ class BSC:
                 hamiltonian_block = get_hamiltonian_block(
                     hamiltonian_unit_cells, (1, 1, 1), periodic_shift
                 )
-                #hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
+                # hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
                 hamiltonian_dict[periodic_shift] = hamiltonian_block
             del hamiltonian_block
 
@@ -497,9 +503,9 @@ class BSC:
                         (1, 1, 1),
                         periodic_shift,
                     )
-                    #coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
+                    # coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
                     #    coulomb_matrix_block
-                    #)
+                    # )
                     coulomb_matrix_dict[periodic_shift] = coulomb_matrix_block
                 del coulomb_matrix_block
 
@@ -537,7 +543,7 @@ class BSC:
                 quatrex_config.coulomb_screening.epsilon_r
                 * self.quatrex_config.coulomb_screening.num_adiabatic_steps
             )
-        
+
         if self.quatrex_config.bsc.hartree:
             self.sigma_hartree = SigmaHartree(
                 self.quatrex_config,
@@ -545,7 +551,7 @@ class BSC:
                 self.electron_energies,
                 self.data.lattice_vectors,
             )
-        
+
         if self.quatrex_config.bsc.coulomb_screening:
             self.coulomb_screening_energies = (
                 self.electron_energies - self.electron_energies[0]
@@ -700,7 +706,9 @@ class BSC:
         # Should the potential also be updated?
         if self.quatrex_config.electron.fermi_level_mode == "track_band_edge":
             # NOTE: This option is not really converging well (should be dropped?).
-            self.fermi_level = self.conduction_band_edges - self.delta_conduction_band_edge
+            self.fermi_level = (
+                self.conduction_band_edges - self.delta_conduction_band_edge
+            )
             self.occupancies = fermi_dirac(
                 self.local_electron_energies - self.fermi_level,
                 self.quatrex_config.electron.temperature,
@@ -708,6 +716,7 @@ class BSC:
         # TODO: Should clean this up a bit.
         elif self.quatrex_config.electron.fermi_level_mode == "charge_neutrality":
             from scipy.optimize import bisect
+
             doping = self.quatrex_config.electron.doping
             dos_density = self._compute_dos_density()
             mid_bandgap = (self.conduction_band_edges + self.valence_band_edges) / 2
@@ -715,14 +724,20 @@ class BSC:
                 self.electron_energies - mid_bandgap,
                 self.quatrex_config.electron.temperature,
             )
+
             def func(fermi_level):
                 occupancies = fermi_dirac(
                     self.electron_energies - fermi_level,
                     self.quatrex_config.electron.temperature,
                 )
-                charge_density = xp.sum(dos_density * (occupancies-equilibrium_occupancies))
+                charge_density = xp.sum(
+                    dos_density * (occupancies - equilibrium_occupancies)
+                )
                 return charge_density - doping
-            self.fermi_level = bisect(func, self.electron_energies[0], self.electron_energies[-1])
+
+            self.fermi_level = bisect(
+                func, self.electron_energies[0], self.electron_energies[-1]
+            )
             self.occupancies = fermi_dirac(
                 self.local_electron_energies - self.fermi_level,
                 self.quatrex_config.electron.temperature,
@@ -740,10 +755,8 @@ class BSC:
         # TODO: This is hard coded for 2D materials.
         de = self.electron_energies[1] - self.electron_energies[0]
         nk = np.prod(self.quatrex_config.electron.number_of_kpoints)
-        uc_area = np.linalg.det(
-            self.data.lattice_vectors[:2, :2]
-        ) 
-        dos_density *= de / (nk * uc_area) * 1e16 # in 1/cm^2
+        uc_area = np.linalg.det(self.data.lattice_vectors[:2, :2])
+        dos_density *= de / (nk * uc_area) * 1e16  # in 1/cm^2
         return dos_density
 
     def _compute_total_charge(self) -> float:
@@ -765,7 +778,7 @@ class BSC:
             self.quatrex_config.electron.temperature,
         )
         # Compute the total charge in the system.
-        total_charge = xp.sum(dos * (occupancies-equilibrium_occupancies))
+        total_charge = xp.sum(dos * (occupancies - equilibrium_occupancies))
         de = self.electron_energies[1] - self.electron_energies[0]
         total_charge *= de
         return total_charge
@@ -792,14 +805,17 @@ class BSC:
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        # self.data.sigma_lesser._data.real = 0
-        # self.data.sigma_greater._data.real = 0
-        # self.data.sigma_retarded._data *= -1
+        if self.quatrex_config.coulomb_screening.discard_real_parts:
+            self.data.sigma_lesser._data.real = 0
+            self.data.sigma_greater._data.real = 0
+            # Make sure that the imaginary part comes only from
+            # sigma_greater - sigma_lesser.
+            self.data.sigma_retarded._data.imag = 0
 
         # Now add the imaginary, skew-Hermitian part back.
         if self.quatrex_config.electron.use_sigma_ah:
             self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
+                self.data.sigma_greater.data - self.data.sigma_lesser.data
             )
 
     @profiler.profile(level="api")
@@ -837,7 +853,8 @@ class BSC:
         """Computes the Hartree interaction."""
         t_sigma_hartree_start = time.perf_counter()
         intrinsic_occupancies = fermi_dirac(
-            self.local_electron_energies - (self.conduction_band_edges + self.valence_band_edges) / 2,
+            self.local_electron_energies
+            - (self.conduction_band_edges + self.valence_band_edges) / 2,
             self.quatrex_config.electron.temperature,
         )
         self.sigma_hartree.compute(
@@ -1046,40 +1063,52 @@ class BSC:
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.electron_ldos = self.observables.electron_ldos.sum(axis=-1)
+                self.observables.electron_ldos = self.observables.electron_ldos.sum(
+                    axis=-1
+                )
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.electron_density = self.observables.electron_density.sum(axis=-1)
+                self.observables.electron_density = (
+                    self.observables.electron_density.sum(axis=-1)
+                )
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.hole_density = self.observables.hole_density.sum(axis=-1)
+                self.observables.hole_density = self.observables.hole_density.sum(
+                    axis=-1
+                )
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.sigma_retarded_density = self.observables.sigma_retarded_density.sum(axis=-1)
+                self.observables.sigma_retarded_density = (
+                    self.observables.sigma_retarded_density.sum(axis=-1)
+                )
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.sigma_lesser_density = self.observables.sigma_lesser_density.sum(axis=-1)
+                self.observables.sigma_lesser_density = (
+                    self.observables.sigma_lesser_density.sum(axis=-1)
+                )
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
                 self.overlap,
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.sigma_greater_density = self.observables.sigma_greater_density.sum(axis=-1)
+                self.observables.sigma_greater_density = (
+                    self.observables.sigma_greater_density.sum(axis=-1)
+                )
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
@@ -1089,34 +1118,46 @@ class BSC:
                 self.data.p_retarded, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.p_retarded_density = self.observables.p_retarded_density.sum(axis=-1)
+                self.observables.p_retarded_density = (
+                    self.observables.p_retarded_density.sum(axis=-1)
+                )
             self.observables.p_lesser_density = -density(
                 self.data.p_lesser, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.p_lesser_density = self.observables.p_lesser_density.sum(axis=-1)
+                self.observables.p_lesser_density = (
+                    self.observables.p_lesser_density.sum(axis=-1)
+                )
             self.observables.p_greater_density = -density(
                 self.data.p_greater, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.p_greater_density = self.observables.p_greater_density.sum(axis=-1)
+                self.observables.p_greater_density = (
+                    self.observables.p_greater_density.sum(axis=-1)
+                )
 
         if self.quatrex_config.outputs.coulomb_screening_density:
             self.observables.w_retarded_density = -density(
                 self.data.w_retarded, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.w_retarded_density = self.observables.w_retarded_density.sum(axis=-1)
+                self.observables.w_retarded_density = (
+                    self.observables.w_retarded_density.sum(axis=-1)
+                )
             self.observables.w_lesser_density = -density(
                 self.data.w_lesser, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.w_lesser_density = self.observables.w_lesser_density.sum(axis=-1)
+                self.observables.w_lesser_density = (
+                    self.observables.w_lesser_density.sum(axis=-1)
+                )
             self.observables.w_greater_density = -density(
                 self.data.w_greater, self.overlap
             ) / (2 * xp.pi)
             if not self.quatrex_config.outputs.spatially_resolved:
-                self.observables.w_greater_density = self.observables.w_greater_density.sum(axis=-1)
+                self.observables.w_greater_density = (
+                    self.observables.w_greater_density.sum(axis=-1)
+                )
 
     @profiler.profile(level="debug")
     def _write_iteration_outputs(self, iteration: int):
@@ -1258,7 +1299,7 @@ class BSC:
                     f"Time for assembling system matrix all: {t_assemble_end_all - t_assemble_start:.3f} s",
                     flush=True,
                 )
-            
+
             t_solve_start = time.perf_counter()
             self.solver.selected_inv(
                 self.data.g_system_matrix,
@@ -1319,7 +1360,7 @@ class BSC:
                     f"Valley difference between K and G symmetry points: {valley_difference}",
                     flush=True,
                 )
-            
+
             synchronize_device()
             t_band_edge_end = time.perf_counter()
             comm.barrier()
@@ -1398,13 +1439,17 @@ class BSC:
             # to access the Green's function and the self-energies in
             # their nnz-distributed state.
             t_start_transpose = time.perf_counter()
-            for m in (self.data.g_lesser, self.data.g_greater, self.data.sigma_retarded):
+            for m in (
+                self.data.g_lesser,
+                self.data.g_greater,
+                self.data.sigma_retarded,
+            ):
                 m.dtranspose(discard=False)  # This must not be discarded.
                 assert m.distribution_state == "nnz"
             for m in (
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
-                #self.data.sigma_retarded,
+                # self.data.sigma_retarded,
             ):
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "nnz"
@@ -1446,7 +1491,7 @@ class BSC:
                         f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
                         flush=True,
                     )
-            
+
             if self.quatrex_config.bsc.photon:
                 self._compute_photon_interaction()
 
@@ -1493,7 +1538,7 @@ class BSC:
                     f"bsc: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
                     flush=True,
                 )
-            
+
             t_sigma_symmetrize_start = time.perf_counter()
             # Make sure the self-energies satify the required symmetries.
             self._symmetrize_sigma()

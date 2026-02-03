@@ -188,9 +188,7 @@ class QTBM:
             )
 
         # Generate the Monkhorst-Pack k-point grid.
-        self.kpoints = monkhorst_pack(kpoint_grid)
-        # Shift the k-points.
-        self.kpoints += np.array(quatrex_config.device.kpoint_shift)
+        self.kpoints = monkhorst_pack(kpoint_grid, quatrex_config.device.kpoint_shift)
         self.num_kpoints = self.kpoints.shape[0]
 
         self.max_batch_size = self.quatrex_config.qtbm.max_batch_size

@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import itertools
 import warnings
 from copy import copy
 from typing import Callable
@@ -14,6 +13,7 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.grid.kpoints import monkhorst_pack
 
 
 def _trim_zeros_nd(arr: NDArray) -> NDArray:
@@ -363,7 +363,8 @@ def expand_tight_binding_matrix(
 def _assemble_kpoint(
     out_matrix: DSDBSparse,
     matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
-    num_kpoints: NDArray,
+    kpoint_grid: NDArray,
+    kpoint_shift: NDArray,
     kshift: int | NDArray,
 ) -> None:
     """Assembles a DSBSparse from a dictionary of sparse matrices
@@ -377,14 +378,14 @@ def _assemble_kpoint(
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
         repetitions.
-    num_kpoints : NDArray
-        The number of k-points.
+    kpoint_grid : NDArray
+        The k-point grid.
     kshift : int | NDArray
         The k-point shift to apply.
 
     """
 
-    num_dimensions = len(num_kpoints)
+    num_dimensions = len(kpoint_grid)
 
     if isinstance(kshift, int):
         kshift = xp.array([kshift for _ in range(num_dimensions)])
@@ -399,21 +400,16 @@ def _assemble_kpoint(
                 f"Expected {num_dimensions}, got {len(cell)}."
             )
 
-    rolled_kpoints = [
-        xp.roll(xp.arange(num_kpoints[dim]), kshift[dim])
-        for dim in range(num_dimensions)
-    ]
+    kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
+        tuple(kpoint_grid) + (-1,)
+    )
+    kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-    kpoints = [
-        (rolled_kpoints[dim] - num_kpoints[dim] // 2) / num_kpoints[dim]
-        for dim in range(num_dimensions)
-    ]
-
-    for indices in itertools.product(*rolled_kpoints):
-
-        stack_index = tuple(idx for idx, n_k in zip(indices, num_kpoints) if n_k > 1)
-
-        kpoint = xp.array([kpoints[d][indices[d]] for d in range(num_dimensions)])
+    index = np.argwhere(kpoint_grid > 1)[0]
+    for stack_index in np.ndindex(kpoints.shape[:-1]):
+        kpoint = kpoints[stack_index]
+        stack_index = np.array(stack_index)
+        stack_index = tuple(stack_index[index])
 
         cells = np.array(list(matrix_dict.keys()))
         phases = xp.exp(2j * xp.pi * (cells @ kpoint))
@@ -592,7 +588,7 @@ def load_matrix(
         sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
         global_stack_shape=(comm.stack.size,)
-        + tuple([k for k in quatrex_config.electron.num_kpoints if k > 1]),
+        + tuple([k for k in quatrex_config.device.kpoint_grid if k > 1]),
         symmetry=quatrex_config.scba.symmetric,
         symmetry_op=symmetry_op,
     )
@@ -600,19 +596,25 @@ def load_matrix(
     if matrix_dict is None:
         matrix += matrix_sparray
     else:
-        # Pop the k-point in transport direction
-        num_kpoints = list(copy(quatrex_config.electron.num_kpoints))
         transport_idx = "xyz".index(quatrex_config.device.transport_direction)
-        num_kpoints.pop(transport_idx)
-        num_kpoints = xp.array(num_kpoints)
+
+        # Pop the k-point in transport direction
+        kpoint_grid = list(copy(quatrex_config.device.kpoint_grid))
+        kpoint_grid.pop(transport_idx)
+        kpoint_grid = np.array(kpoint_grid)
+
+        kpoint_shift = list(copy(quatrex_config.device.kpoint_shift))
+        kpoint_shift.pop(transport_idx)
+        kpoint_shift = np.array(kpoint_shift)
 
         # Shift the k-points if requested
         # Needed for the coulomb matrix
         _assemble_kpoint(
             out_matrix=matrix,
             matrix_dict=matrix_dict,
-            num_kpoints=num_kpoints,
-            kshift=-(num_kpoints // 2) if shift_kpoints else 0,
+            kpoint_grid=kpoint_grid,
+            kpoint_shift=kpoint_shift,
+            kshift=-(kpoint_grid // 2) if shift_kpoints else 0,
         )
         # Explicitely try to free the memory
         del matrix_dict

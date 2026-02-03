@@ -83,7 +83,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
     ):
         """Initializes the scattering self-energy."""
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(quatrex_config.electron.num_kpoints)
+        self.kpoint_volume = np.prod(quatrex_config.device.kpoint_grid)
         # self.num_energies = self.energies.size
         self.prefactor = (
             1j

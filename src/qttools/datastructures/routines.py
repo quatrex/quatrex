@@ -150,7 +150,6 @@ def bd_sandwich(
     spillover_correction: bool = False,
     accumulator_dtype=None,
     accumulate: bool = False,
-    symmetric: bool = True,
 ):
     """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
 
@@ -173,10 +172,8 @@ def bd_sandwich(
         systems. The default is False.
     accumulator_dtype : data type, optional
         The data type of the temporary accumulator matrices. The default is complex128.
-    TODO: accumulate: bool, optional
-    symmetric: bool, optional
-        Whether to treat the input matrix `a` as symmetric. If True, the multiplication
-        `a @ b @ a` is performed, where `a` is assumed to be symmetric.
+    accumulate : bool, optional
+        Whether to add the result into the output matrix. The default is False.
 
     TODO: replace @ by appropriate gemm
 
@@ -186,6 +183,8 @@ def bd_sandwich(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
     num_blocks = len(a.block_sizes)
+
+    a_is_hermitian = a.symmetry and a.symmetry_op(1 + 1j) != (1 - 1j)
 
     if accumulator_dtype is None:
         accumulator_dtype = a.dtype
@@ -266,7 +265,7 @@ def bd_sandwich(
                         a_k, a_j = k, j
                 if ab_ik[k] is None:
                     continue
-                if symmetric:
+                if a_is_hermitian:
                     partsum += (ab_ik[k] @ a_.blocks[a_k, a_j]).astype(
                         accumulator_dtype
                     )  # cast data type

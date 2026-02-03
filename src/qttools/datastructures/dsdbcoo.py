@@ -80,6 +80,11 @@ class DSDBCOO(DSDBSparse):
         self.rows = xp.asarray(rows, dtype=xp.int32)
         self.cols = xp.asarray(cols, dtype=xp.int32)
 
+        # NOTE: If the symmetry is not enforced and we want to symmetrize
+        # later, we need to check if the sparsity pattern is symmetric now.
+        if not symmetry:
+            self._symmetric_pattern = self._check_sparsity_pattern_symmetric()
+
         self._set_diagonal_indices()
 
     def _set_diagonal_indices(self) -> None:
@@ -765,19 +770,21 @@ class DSDBCOO(DSDBSparse):
 
         Returns
         -------
-        is_symmetric : bool
+        bool
             Whether the sparsity pattern is symmetric.
 
         """
-        # Gather rows and cols.
-        rows, cols = self.spy()
+        # NOTE: This uses the global shape, but the local rows and cols.
+        # In the block distributed case, this is an upper bound, but sufficient for the check.
+        num_rows = self.shape[-2]
 
-        # Create a set of (row, col) tuples.
-        sparsity_set = set(zip(rows.tolist(), cols.tolist()))
-        for r, c in sparsity_set.copy():
-            if (c, r) not in sparsity_set:
-                return False
-        return True
+        idx_original = (self.rows.astype(xp.int64) * num_rows) + self.cols
+        idx_swapped = (self.cols.astype(xp.int64) * num_rows) + self.rows
+
+        idx_original.sort()
+        idx_swapped.sort()
+
+        return xp.all(idx_original == idx_swapped)
 
     @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
@@ -805,7 +812,7 @@ class DSDBCOO(DSDBSparse):
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
 
-        if not self._check_sparsity_pattern_symmetric():
+        if not self._symmetric_pattern:
             raise ValueError(
                 "Sparsity pattern is not symmetric. This will lead to incorrect results."
             )

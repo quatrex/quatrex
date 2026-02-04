@@ -217,7 +217,7 @@ class BSCData:
             quatrex_config.input_dir / "lattice_vectors.npy"
         )
 
-        number_of_kpoints = quatrex_config.electron.number_of_kpoints
+        num_kpoints = quatrex_config.electron.num_kpoints
         # We only use dense matrices for the BSC.
         # Sure, the Hamiltonian can be sparse, but the sparsity pattern is not
         # the usual block-tridiagonal one, there are also corner blocks that have
@@ -240,7 +240,7 @@ class BSCData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
         self.g_system_matrix = dsdbsparse_type.zeros_like(self.g_retarded)
@@ -249,7 +249,7 @@ class BSCData:
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
-            + tuple([k for k in number_of_kpoints if k > 1]),
+            + tuple([k for k in num_kpoints if k > 1]),
             symmetry=quatrex_config.bsc.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
@@ -663,7 +663,7 @@ class BSC:
         # Normalize the dos density to get it in 1/cm^2.
         # TODO: This is hard coded for 2D materials.
         de = self.electron_energies[1] - self.electron_energies[0]
-        nk = np.prod(self.quatrex_config.electron.number_of_kpoints)
+        nk = np.prod(self.quatrex_config.electron.num_kpoints)
         uc_area = np.linalg.det(self.data.lattice_vectors[:2, :2])
         dos_density *= de / (nk * uc_area) * 1e16  # in 1/cm^2
         return dos_density
@@ -1141,10 +1141,10 @@ class BSC:
             -density(self.data.g_retarded, self.overlap).imag / (2 * xp.pi),
             axis=-1,
         )
-        number_of_kpoints = np.array(
-            [kp for kp in self.quatrex_config.electron.number_of_kpoints if kp > 1]
+        num_kpoints = np.array(
+            [kp for kp in self.quatrex_config.electron.num_kpoints if kp > 1]
         )
-        grids = [(np.arange(n) - n // 2) / n for n in number_of_kpoints]
+        grids = [(np.arange(n) - n // 2) / n for n in num_kpoints]
         kpoint_mesh = np.meshgrid(*grids, indexing="ij")
         # Find the corresponding k-point indices for the symmetry points. The closest k-point is used.
         # Make sure the symmetry points are numpy arrays.
@@ -1154,13 +1154,13 @@ class BSC:
             np.argmin(
                 np.linalg.norm(kpoint_mesh - sp1.reshape(-1, 1, 1), axis=0),
             ),
-            number_of_kpoints[-1],
+            num_kpoints[-1],
         )
         sp2_idx = divmod(
             np.argmin(
                 np.linalg.norm(kpoint_mesh - sp2.reshape(-1, 1, 1), axis=0),
             ),
-            number_of_kpoints[-1],
+            num_kpoints[-1],
         )
         # Find the peaks in the density of states at the symmetry points.
         peaks_sp1, _ = find_peaks(get_host(dos[:, *sp1_idx]))

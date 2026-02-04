@@ -54,14 +54,16 @@ def get_block(
     return block
 
 
-def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
+def density(
+    x: DSDBSparse, overlap: sparse.spmatrix | DSDBSparse | None = None
+) -> NDArray:
     """Computes the density from Green's function and overlap matrix.
 
     Parameters
     ----------
     x : DSDBSparse
         The Green's function.
-    overlap : sparse.spmatrix, optional
+    overlap : sparse.spmatrix | DSDBSparse, optional
         The overlap matrix, by default None.
 
     Returns
@@ -78,6 +80,16 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
             axis=0,
             mask=x._stack_padding_mask,
         )
+    elif isinstance(overlap, sparse.spmatrix):
+        overlap = overlap.tocoo()
+        _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
+    elif isinstance(overlap, DSDBSparse):
+        # _overlap_block =  lambda index: overlap.blocks[index[0], index[1]]
+        def _overlap_block(index):
+            return overlap.blocks[index[0], index[1]]
+
+    else:
+        raise TypeError("Overlap must be a sparse matrix or DSDBSparse.")
 
     if comm.block.size > 1:
         raise NotImplementedError(
@@ -85,8 +97,6 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
         )
 
     local_density = []
-    overlap = overlap.tocoo()
-    _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
     for i in range(x.num_blocks):
         local_density_slice = xp.diagonal(
             x.blocks[i, i] @ _overlap_block((i, i)),
@@ -108,7 +118,7 @@ def density(x: DSDBSparse, overlap: sparse.spmatrix | None = None) -> NDArray:
 
         local_density.append(local_density_slice.imag)
 
-    local_density = xp.hstack(local_density)
+    local_density = xp.concatenate(local_density, axis=-1)
 
     return comm.stack.all_gather_v(
         local_density,
@@ -222,11 +232,63 @@ def device_current(
 
     local_current = xp.array(local_current)
     block_local_current = comm.block.all_gather_v(local_current, axis=0)
-
-    block_local_current = xp.ascontiguousarray(xp.vstack(block_local_current).T)
+    block_local_current = xp.ascontiguousarray(block_local_current)
+    block_local_current = xp.moveaxis(block_local_current, 0, -1)
 
     return comm.stack.all_gather_v(
         block_local_current,
         axis=0,
         mask=x_lesser._stack_padding_mask,
     )
+
+
+def current_conservation(
+    x_lesser: DSDBSparse,
+    x_greater: DSDBSparse,
+    se_int_lesser: DSDBSparse,
+    se_int_greater: DSDBSparse,
+) -> NDArray:
+    """Checks current conservation.
+    See eq. (12.34) in H. Haug and A.-P. Jauho,
+    "Quantum Kinetics in Transport and Optics of Semiconductors"
+
+    $$
+    \int dE dk sum_{ij} sigma_{ij}^< * G_{ji}^> - sigma_{ij}^> * G_{ji}^< = 0
+    $$
+
+    We can use the skew-symmetric property of the Green's functions $G_{ji}^< = -[G_{ij}^<]^*$
+    such that we don't have to communicate the greater Green's function.
+
+    Parameters
+    ----------
+    x_lesser : DSDBSparse
+        The lesser Green's function.
+    x_greater : DSDBSparse
+        The greater Green's function.
+    se_int_lesser : DSDBSparse
+        The lesser interaction self-energy.
+    se_int_greater : DSDBSparse
+        The greater interaction self-energy.
+    Returns
+    -------
+    tuple[NDArray, NDArray]
+        The absolute value of the current conservation and the
+        relative value of the current conservation.
+    """
+    term1 = (se_int_lesser.data * (-x_greater.data.conj())).sum()
+    term2 = (se_int_greater.data * (-x_lesser.data.conj())).sum()
+
+    sendbuff = xp.array([term1, term2], dtype=x_lesser.dtype)
+    recvbuff_block = xp.empty_like(sendbuff)
+    comm.block.all_reduce(sendbuff, recvbuff_block)
+    recvbuff_stack = xp.empty_like(sendbuff)
+    comm.stack.all_reduce(recvbuff_block, recvbuff_stack)
+
+    term1, term2 = recvbuff_stack
+
+    current_conservation_absolute = term1 - term2
+    current_conservation_relative = (
+        current_conservation_absolute / (term1 + term2) if (term1 + term2) != 0 else 0
+    )
+
+    return xp.abs(current_conservation_absolute), xp.abs(current_conservation_relative)

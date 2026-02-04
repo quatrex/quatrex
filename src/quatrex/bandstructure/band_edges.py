@@ -98,7 +98,7 @@ def _compute_eigenvalues(
     overlap: sparse.spmatrix,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
-    ind: int,
+    ind: tuple[int, ...],
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
@@ -124,12 +124,12 @@ def _compute_eigenvalues(
         block_offsets=sigma_retarded.block_offsets,
     )
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[0, row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[0, row_slice]
+    h_00 = _get_block(hamiltonian, index=blocks[0])[:, *ind[1:], row_slice]
+    h_01 = _get_block(hamiltonian, index=blocks[1])[:, *ind[1:], row_slice]
     s_00 = _get_block(overlap, index=blocks[0])[row_slice]
     s_01 = _get_block(overlap, index=blocks[1])[row_slice]
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[ind, row_slice])
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[ind, row_slice])
+    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
+    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
@@ -247,7 +247,12 @@ def find_renormalized_eigenvalues(
             rank_left = xp.digitize(ind_left, section_offsets) - 1
 
             if rank_left == comm.stack.rank:
-                local_ind = ind_left - section_offsets[rank_left]
+                # NOTE: This assumes that each rank has all k-points and that the band edge
+                # is at the Gamma point.
+                # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
+                local_ind = (ind_left - section_offsets[rank_left],) + tuple(
+                    [s // 2 for s in sigma_retarded.shape[1:-2]]
+                )
                 e_0_left = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
@@ -292,7 +297,12 @@ def find_renormalized_eigenvalues(
             rank_right = xp.digitize(ind_right, section_offsets) - 1
 
             if rank_right == comm.stack.rank:
-                local_ind = ind_right - section_offsets[rank_right]
+                # NOTE: This assumes that each rank has all k-points and that the band edge
+                # is at the Gamma point.
+                # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
+                local_ind = (ind_right - section_offsets[rank_right],) + tuple(
+                    [s // 2 for s in sigma_retarded.shape[1:-2]]
+                )
                 e_0_right = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,

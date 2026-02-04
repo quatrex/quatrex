@@ -2,13 +2,13 @@
 
 import os
 
-from qttools import xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.quatrex_config import QuatrexConfig
 
 
-def get_electron_energies(quatrex_config: QuatrexConfig) -> xp.ndarray:
+def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:
     """Get the electron energies based on the configuration.
     If an energy window is specified in the configuration, it generates
     the energies using linspace. Otherwise, it attempts to load the energies
@@ -21,7 +21,7 @@ def get_electron_energies(quatrex_config: QuatrexConfig) -> xp.ndarray:
 
     Returns
     -------
-    electron_energies : xp.ndarray
+    electron_energies : NDArray
         Array of electron energies.
 
     Raises

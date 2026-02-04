@@ -135,6 +135,9 @@ class Full(NEVP):
         # Allow for batched input.
         if a_xx[0].ndim == 2:
             a_xx = tuple(a_x[xp.newaxis, :, :] for a_x in a_xx)
+        batch_shape = a_xx[0].shape[:-2]
+        if a_xx[0].ndim > 3:
+            a_xx = tuple(a_x.reshape(-1, *a_x.shape[-2:]) for a_x in a_xx)
 
         inverse = linalg.inv(sum(a_xx))
 
@@ -175,5 +178,9 @@ class Full(NEVP):
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)
         w = 1 / w + 1
         v = v[:, : a_xx[0].shape[-1]]
+
+        # Reshape to original batch shape.
+        w = w.reshape(*batch_shape, -1)
+        v = v.reshape(*batch_shape, v.shape[1], -1)
 
         return w, v

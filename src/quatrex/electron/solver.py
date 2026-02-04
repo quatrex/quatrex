@@ -9,8 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler, decorate_methods
-from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_hamiltonian, cutoff_hr
+from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
@@ -23,6 +22,7 @@ from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
+from quatrex.device.inputs import load_matrix
 
 profiler = Profiler()
 
@@ -77,7 +77,7 @@ class ElectronSolver(SubsystemSolver):
         quatrex_config: QuatrexConfig,
         compute_config: ComputeConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix = None,
+        sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -85,100 +85,59 @@ class ElectronSolver(SubsystemSolver):
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
-        synchronize_device()
-        comm.barrier()
-        t_ham_load_start = time.perf_counter()
-        if quatrex_config.device.construct_from_unit_cell:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
-
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, comm.block.size
-            )
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            start_block = section_offsets[comm.block.rank]
-            end_block = section_offsets[comm.block.rank + 1]
-
-            hamiltonian_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
-            hamiltonian_sparray.sum_duplicates()
-            block_sizes = get_host(block_sizes)
-            self.block_sizes = np.asarray(
-                [block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-
-        else:
-            hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
-            ).astype(xp.complex128)
-            self.block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
+        self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
+            quatrex_config=quatrex_config,
+            compute_config=compute_config,
+            matrix_name="hamiltonian",
+            sparsity_pattern=None,
+            shift_kpoints=False,
+        )
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
-        if sparsity_pattern is None:
-            sparsity_pattern = hamiltonian_sparray.copy()
+        sparsity_pattern += hamiltonian_sparsity_pattern
+
+        del hamiltonian_sparsity_pattern
+        self.block_sizes = self.hamiltonian.block_sizes
+
+        self.orthogonal_basis = quatrex_config.device.orthogonal_basis
+        if not self.orthogonal_basis:
+            # TODO: Overlap matrix is not supported correctly. The code
+            # should look like this.
+
+            # Load the device Overlap.
+            self.overlap, overlap_sparsity_pattern = load_matrix(
+                quatrex_config=quatrex_config,
+                compute_config=compute_config,
+                matrix_name="overlap",
+                sparsity_pattern=None,
+                shift_kpoints=False,
+            )
+
+            # Make sure that the the system matrix sparsity is a superset of
+            # self-energy and overlap sparsity.
+            sparsity_pattern += overlap_sparsity_pattern
+            # Check that the overlap matrix and Hamiltonian matrix match.
+            if self.overlap.shape != self.hamiltonian.shape:
+                raise ValueError(
+                    "Overlap matrix and Hamiltonian matrix have different shapes."
+                )
+
+            raise NotImplementedError("Currently, overlap matrices are not supported.")
+
         else:
-            sparsity_pattern += hamiltonian_sparray
-
-        synchronize_device()
-        t_ham_load_end = time.perf_counter()
-        comm.barrier()
-        t_ham_load_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
-                flush=True,
-            )
-            print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
-                flush=True,
-            )
-
-        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
-            hamiltonian_sparray.astype(xp.complex128),
-            block_sizes=self.block_sizes,
-            global_stack_shape=(comm.stack.size,),
-            symmetry=quatrex_config.scba.symmetric,
-            symmetry_op=xp.conj,
-        )
-        del hamiltonian_sparray
-
-        synchronize_device()
-        t_ham_create_end = time.perf_counter()
-        comm.barrier()
-        t_ham_create_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Create Hamiltonian: {t_ham_create_end-t_ham_load_end_all}",
-                flush=True,
-            )
-            print(
-                f"    Create Hamiltonian all: {t_ham_create_end_all-t_ham_load_end_all}",
-                flush=True,
+            self.overlap_sparray = sparse.eye(
+                self.hamiltonian.shape[-2],
+                format="coo",
+                dtype=self.hamiltonian.dtype,
             )
 
         # Allocate memory for the system matrix.
         self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
-            global_stack_shape=self.energies.shape,
+            global_stack_shape=self.energies.shape
+            + tuple([int(k) for k in quatrex_config.device.kpoint_grid if k > 1]),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -191,80 +150,25 @@ class ElectronSolver(SubsystemSolver):
                 f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
             )
 
-        if quatrex_config.device.construct_from_unit_cell:
-            try:
-                overlap_unit_cells = distributed_load(
-                    quatrex_config.input_dir / "overlap_unit_cells.npy"
-                ).astype(xp.complex128)
-                overlap_sparray, __ = create_hamiltonian(
-                    cutoff_hr(
-                        overlap_unit_cells,
-                        R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                    ),
-                    quatrex_config.device.number_of_supercells,
-                    quatrex_config.device.transport_direction,
-                    quatrex_config.device.unit_cell_per_supercell,
-                    return_sparse=True,
-                )
-                self.overlap_sparray = overlap_sparray.astype(xp.complex128)
-            except FileNotFoundError:
-                # No overlap provided. Assume orthonormal basis.
-                self.overlap_sparray = sparse.eye(
-                    self.hamiltonian.shape[-2],
-                    format="coo",
-                    dtype=self.hamiltonian.dtype,
-                )
-
-        else:
-            # Load the overlap matrix.
-            try:
-                self.overlap_sparray = distributed_load(
-                    quatrex_config.input_dir / "overlap.npz"
-                ).astype(xp.complex128)
-            except FileNotFoundError:
-                # No overlap provided. Assume orthonormal basis.
-                self.overlap_sparray = sparse.eye(
-                    self.hamiltonian.shape[-2],
-                    format="coo",
-                    dtype=self.hamiltonian.dtype,
-                )
-
-        # Check that the overlap matrix and Hamiltonian matrix match.
-        if self.overlap_sparray.shape != self.hamiltonian.shape[-2:]:
-            raise ValueError(
-                "Overlap matrix and Hamiltonian matrix have different shapes."
-            )
-
-        # Make sure that the Hamiltonian and overlap matrices are
-        # Hermitian.
-        if not self.hamiltonian.symmetry:
-            self.hamiltonian.symmetrize()
-        self.overlap_sparray = (
-            0.5 * (self.overlap_sparray + self.overlap_sparray.conj().T)
-        ).tocoo()
-
         # Load the potential.
         try:
             self.potential = distributed_load(
                 quatrex_config.input_dir / "potential.npy"
             )
-            if self.potential.size != self.hamiltonian.shape[-2]:
-                raise ValueError(
-                    "Potential matrix and Hamiltonian have different shapes."
-                )
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
                 self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
             )
+        if self.potential.size != self.hamiltonian.shape[-2]:
+            raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         self.eta = quatrex_config.electron.eta
+        self.eta_obc = quatrex_config.electron.eta_obc
 
         # Contacts.
         self.flatband = quatrex_config.electron.flatband
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
-
-        self.eta_obc = quatrex_config.electron.eta_obc
 
         if quatrex_config.electron.solver.compute_current and comm.block.size > 1:
             raise NotImplementedError(
@@ -314,73 +218,6 @@ class ElectronSolver(SubsystemSolver):
         self.filtering_iteration_limit = (
             quatrex_config.electron.filtering_iteration_limit
         )
-
-    @staticmethod
-    def load_hamiltonian(
-        quatrex_config: QuatrexConfig,
-    ) -> tuple[sparse.coo_matrix, NDArray]:
-
-        # Load the device Hamiltonian.
-        synchronize_device()
-        comm.barrier()
-        t_ham_load_start = time.perf_counter()
-        if quatrex_config.device.construct_from_unit_cell:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
-
-            # Determine the local slice of the data.
-            # NOTE: This is arrow-wise partitioning.
-            # TODO: Allow more options, e.g., block row-wise partitioning.
-            section_sizes, __ = get_section_sizes(
-                quatrex_config.device.number_of_supercells, comm.block.size
-            )
-            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-            start_block = section_offsets[comm.block.rank]
-            end_block = section_offsets[comm.block.rank + 1]
-
-            hamiltonian_sparray, block_sizes = create_hamiltonian(
-                cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.unit_cell_per_supercell,
-                ),
-                quatrex_config.device.number_of_supercells,
-                quatrex_config.device.transport_direction,
-                quatrex_config.device.unit_cell_per_supercell,
-                block_start=start_block,
-                block_end=end_block,
-                return_sparse=True,
-            )
-            hamiltonian_sparray = hamiltonian_sparray.astype(xp.complex128)
-            hamiltonian_sparray.sum_duplicates()
-            block_sizes = get_host(block_sizes)
-            block_sizes = np.asarray(
-                [block_sizes[0]] * quatrex_config.device.number_of_supercells
-            )
-
-        else:
-            hamiltonian_sparray = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.npz"
-            ).astype(xp.complex128)
-            block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-            )
-
-        synchronize_device()
-        t_ham_load_end = time.perf_counter()
-        comm.barrier()
-        t_ham_load_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"    Load Hamiltonian: {t_ham_load_end-t_ham_load_start}",
-                flush=True,
-            )
-            print(
-                f"    Load Hamiltonian all: {t_ham_load_end_all-t_ham_load_start}",
-                flush=True,
-            )
-
-        return hamiltonian_sparray, block_sizes
 
     @staticmethod
     def get_block(
@@ -575,12 +412,16 @@ class ElectronSolver(SubsystemSolver):
 
         """
         self.system_matrix.data = 0.0
-        self.system_matrix += self.overlap_sparray
+        if self.orthogonal_basis:
+            self.system_matrix.fill_diagonal(1.0)
+        else:
+            # TODO: This is not correct in the case of kpoints
+            self.system_matrix += self.overlap_sparray
+
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * self.eta,
         )
-
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
@@ -664,11 +505,11 @@ class ElectronSolver(SubsystemSolver):
             time_homogenize_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"    Homogenize: {time_homogenize_end-time_homogenize_start}",
+                    f"    Homogenize: {time_homogenize_end - time_homogenize_start}",
                     flush=True,
                 )
                 print(
-                    f"    Homogenize all: {time_homogenize_end_all-time_homogenize_start}",
+                    f"    Homogenize all: {time_homogenize_end_all - time_homogenize_start}",
                     flush=True,
                 )
 
@@ -681,9 +522,9 @@ class ElectronSolver(SubsystemSolver):
         comm.barrier()
         t_assemble_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    Assemble: {t_assemble_end-t_assemble_start}", flush=True)
+            print(f"    Assemble: {t_assemble_end - t_assemble_start}", flush=True)
             print(
-                f"    Assemble all: {t_assemble_end_all-t_assemble_start}", flush=True
+                f"    Assemble all: {t_assemble_end_all - t_assemble_start}", flush=True
             )
 
         if self.band_edge_tracking == "eigenvalues":
@@ -709,10 +550,11 @@ class ElectronSolver(SubsystemSolver):
             t_band_edges_end_all = time.perf_counter()
             if comm.rank == 0:
                 print(
-                    f"    Band edges: {t_band_edges_end-t_band_edges_start}", flush=True
+                    f"    Band edges: {t_band_edges_end - t_band_edges_start}",
+                    flush=True,
                 )
                 print(
-                    f"    Band edges all: {t_band_edges_end_all-t_band_edges_start}",
+                    f"    Band edges all: {t_band_edges_end_all - t_band_edges_start}",
                     flush=True,
                 )
 
@@ -723,8 +565,8 @@ class ElectronSolver(SubsystemSolver):
         comm.barrier()
         t_obc_end_all = time.perf_counter()
         if comm.rank == 0:
-            print(f"    OBC: {t_obc_end-t_obc_start}", flush=True)
-            print(f"    OBC all: {t_obc_end_all-t_obc_start}", flush=True)
+            print(f"    OBC: {t_obc_end - t_obc_start}", flush=True)
+            print(f"    OBC all: {t_obc_end_all - t_obc_start}", flush=True)
 
         if comm.block.size > 1:
             t_solve_start = time.perf_counter()
@@ -741,8 +583,8 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
 
         else:
             t_solve_start = time.perf_counter()
@@ -760,8 +602,8 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_solve_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    Solve: {t_solve_end-t_solve_start}", flush=True)
-                print(f"    Solve all: {t_solve_end_all-t_solve_start}", flush=True)
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
         self.system_matrix.free_data()
@@ -773,16 +615,15 @@ class ElectronSolver(SubsystemSolver):
         t_filter_peaks_end_all = time.perf_counter()
         if comm.rank == 0:
             print(
-                f"    Filter peaks: {t_filter_peaks_end-t_filter_peaks_start}",
+                f"    Filter peaks: {t_filter_peaks_end - t_filter_peaks_start}",
                 flush=True,
             )
             print(
-                f"    Filter peaks all: {t_filter_peaks_end_all-t_filter_peaks_start}",
+                f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
                 flush=True,
             )
 
         if self.band_edge_tracking == "dos-peaks":
-
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
@@ -838,9 +679,11 @@ class ElectronSolver(SubsystemSolver):
             comm.barrier()
             t_dos_peaks_end_all = time.perf_counter()
             if comm.rank == 0:
-                print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
                 print(
-                    f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
+                    f"    DOS peaks: {t_dos_peaks_end - t_dos_peaks_start}", flush=True
+                )
+                print(
+                    f"    DOS peaks all: {t_dos_peaks_end_all - t_dos_peaks_start}",
                     flush=True,
                 )
 

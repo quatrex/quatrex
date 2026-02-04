@@ -80,6 +80,15 @@ class DSDBCOO(DSDBSparse):
         self.rows = xp.asarray(rows, dtype=xp.int32)
         self.cols = xp.asarray(cols, dtype=xp.int32)
 
+        # NOTE: If the symmetry is not enforced and we want to symmetrize
+        # later, we need to check if the sparsity pattern is symmetric now.
+        if not symmetry:
+            self._symmetric_pattern = self._check_sparsity_pattern_symmetric()
+
+        self._set_diagonal_indices()
+
+    def _set_diagonal_indices(self) -> None:
+        """Sets the diagonal indices of the matrix."""
         self._diag_inds = xp.where(self.rows == self.cols)[0]
         self._diag_value_inds = self.rows[self._diag_inds]
         ranks = dsdbsparse_kernels.find_ranks(self.nnz_section_offsets, self._diag_inds)
@@ -529,7 +538,11 @@ class DSDBCOO(DSDBSparse):
         """In-place addition of two DSDBCOO matrices."""
 
         if sparse.issparse(other):
-
+            # Perform checks on the shape of the sparse matrix.
+            if other.shape != self.shape[-2:]:
+                raise ValueError(
+                    f"Sparse matrix shape does not match DSDBCOO shape: {other.shape} != {self.shape[-2:]}"
+                )
             csr = other.tocsr()
             self.data += csr[
                 self.rows + self.global_block_offset,
@@ -656,6 +669,7 @@ class DSDBCOO(DSDBSparse):
                 ]
                 + self.global_block_offset
             )
+            self._set_diagonal_indices()
 
             self.block_section_offsets = block_section_offsets
             # We need to know our local block sizes and those of all
@@ -703,6 +717,7 @@ class DSDBCOO(DSDBSparse):
             ]
             + self.global_block_offset
         )
+        self._set_diagonal_indices()
 
         # Update the block sizes and offsets as in the initializer.
         self.num_blocks = num_blocks
@@ -750,6 +765,28 @@ class DSDBCOO(DSDBSparse):
             cols[i] += rank_offset[i]
         return xp.hstack(rows), xp.hstack(cols)
 
+    def _check_sparsity_pattern_symmetric(self) -> bool:
+        """Checks if the sparsity pattern is symmetric.
+
+        Returns
+        -------
+        bool
+            Whether the sparsity pattern is symmetric.
+
+        """
+        # NOTE: This uses the global shape, but the local rows and cols.
+        # In the block distributed case, this is an upper bound, but sufficient for the check.
+        num_rows = self.shape[-2]
+
+        idx_original = (self.rows.astype(xp.int64) * num_rows) + self.cols
+        idx_swapped = (self.cols.astype(xp.int64) * num_rows) + self.rows
+
+        idx_original.sort()
+        idx_swapped.sort()
+
+        return xp.all(idx_original == idx_swapped)
+
+    @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix with a given operation.
 
@@ -774,6 +811,11 @@ class DSDBCOO(DSDBSparse):
 
         if self.distribution_state == "nnz":
             raise NotImplementedError("Cannot symmetrize when distributed through nnz.")
+
+        if not self._symmetric_pattern:
+            raise ValueError(
+                "Sparsity pattern is not symmetric. This will lead to incorrect results."
+            )
 
         if not hasattr(self, "_inds_bcoo2bcoo_t"):
             # Transpose.

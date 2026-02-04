@@ -1,4 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
+
 from qttools import NDArray, sparse, xp
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
@@ -40,9 +41,9 @@ def compute_sparsity_pattern(
 
     Parameters
     ----------
-    grid : NDArray
+    positions : NDArray
         The grid points.
-    interaction_cutoff : float
+    cutoff_distance : float
         The interaction cutoff.
     transport_direction : str, optional
         The transport direction, by default 'x'.
@@ -51,6 +52,14 @@ def compute_sparsity_pattern(
         along the transport direction is considered. The other option is
         "sphere", where the usual Euclidean distance between points
         matters.
+    start_idx : int, optional
+        The start index for which to compute the sparsity pattern, by
+        default 0.
+    end_idx : int, optional
+        The end index for which to compute the sparsity pattern, by
+        default None.
+    batch_size : int, optional
+        The batch size for distance computations, by default 1000.
 
     Returns
     -------
@@ -118,7 +127,7 @@ def compute_num_connected_blocks(
     ----------
     sparsity_pattern : sparse.coo_matrix
         The sparsity pattern.
-    block_sizes : list
+    block_sizes : NDArray
         The block sizes.
 
     Returns

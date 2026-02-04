@@ -12,13 +12,18 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import create_coordinate_grid
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.observables import contact_currents, density, device_current
+from quatrex.core.observables import (
+    contact_currents,
+    current_conservation,
+    density,
+    device_current,
+)
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
+from quatrex.device.inputs import create_coordinate_grid, load_matrix
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -61,22 +66,26 @@ class SCBAData:
                 quatrex_config.input_dir / "lattice_vectors.npy"
             )
 
-            device_cell = list(quatrex_config.device.unit_cell_per_supercell)
-            device_cell[
-                "xyz".index(quatrex_config.device.transport_direction)
-            ] *= quatrex_config.device.number_of_supercells
-            device_cell = tuple(device_cell)
+            # The neighbor cell cutoff along the transport direction
+            # determines the size of the transport cell.
+            transport_ind = "xyz".index(quatrex_config.device.transport_direction)
+            unit_cells_per_transport_cell = [1, 1, 1]
+            unit_cells_per_transport_cell[transport_ind] = (
+                quatrex_config.device.neighbor_cell_cutoff[transport_ind]
+            )
+            device_cell = unit_cells_per_transport_cell.copy()
+            device_cell[transport_ind] *= quatrex_config.device.num_transport_cells
 
-            grid = create_coordinate_grid(wannier_centers, device_cell, lattice_vectors)
+            grid = create_coordinate_grid(
+                wannier_centers, tuple(device_cell), lattice_vectors
+            )
 
             block_sizes = np.array(
                 [
-                    quatrex_config.device.unit_cell_per_supercell[
-                        "xyz".index(quatrex_config.device.transport_direction)
-                    ]
+                    unit_cells_per_transport_cell[transport_ind]
                     * wannier_centers.shape[0]
                 ]
-                * quatrex_config.device.number_of_supercells
+                * quatrex_config.device.num_transport_cells
             )
 
         else:
@@ -85,7 +94,7 @@ class SCBAData:
             block_sizes = get_host(
                 distributed_load(quatrex_config.input_dir / "block_sizes.npy")
             )
-
+        kpoint_grid = quatrex_config.device.kpoint_grid
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0
         if quatrex_config.scba.coulomb_screening:
@@ -103,6 +112,11 @@ class SCBAData:
                 max_interaction_cutoff,
                 quatrex_config.phonon.interaction_cutoff,
             )
+        if max_interaction_cutoff == 0.0:
+            raise NotImplementedError(
+                "At least one interaction must be enabled in the SCBA."
+                "Ballistic transport is not properly supported yet."
+            )
 
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
@@ -117,6 +131,7 @@ class SCBAData:
         block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
         start_idx = block_offsets[section_offsets[comm.block.rank]]
         end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
+
         self.sparsity_pattern = compute_sparsity_pattern(
             grid,
             max_interaction_cutoff,
@@ -124,6 +139,7 @@ class SCBAData:
             start_idx=start_idx,
             end_idx=end_idx,
         )
+
         synchronize_device()
         time_sparsity_end = time.perf_counter()
         if comm.rank == 0:
@@ -141,14 +157,16 @@ class SCBAData:
         self.g_retarded = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape,
+            global_stack_shape=electron_energies.shape
+            + tuple([k for k in kpoint_grid if k > 1]),
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
             block_sizes=block_sizes,
-            global_stack_shape=electron_energies.shape,
+            global_stack_shape=electron_energies.shape
+            + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
@@ -192,7 +210,8 @@ class SCBAData:
             self.w_lesser = dsdbsparse_type.from_sparray(
                 self.sparsity_pattern.astype(xp.complex128),
                 block_sizes=coulomb_screening_block_sizes,
-                global_stack_shape=electron_energies.shape,
+                global_stack_shape=electron_energies.shape
+                + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=quatrex_config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
             )
@@ -320,6 +339,21 @@ class SCBA:
 
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.scba.coulomb_screening:
+            # Load the Coulomb matrix.
+            coulomb_matrix, __ = load_matrix(
+                quatrex_config=quatrex_config,
+                compute_config=compute_config,
+                matrix_name="coulomb_matrix",
+                sparsity_pattern=self.data.sparsity_pattern,
+                shift_kpoints=True,
+            )
+
+            # Make sure the Coulomb matrix is hermitian.
+            # TODO: Check that this is correct for kpoints.
+            if not coulomb_matrix.symmetry:
+                coulomb_matrix.symmetrize()
+            coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
+
             energies_path = (
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
             )
@@ -332,12 +366,23 @@ class SCBA:
                 # Remove the zero energy to avoid division by zero.
                 self.coulomb_screening_energies += 1e-6
 
+            (
+                coulomb_matrix.dtranspose()
+                if coulomb_matrix.distribution_state != "nnz"
+                else None
+            )
             self.sigma_fock = SigmaFock(
                 self.quatrex_config,
-                self.compute_config,
+                coulomb_matrix,
                 self.electron_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
             )
+            # Have to transpose the coulomb matrix back to the original distribution.
+            (
+                coulomb_matrix.dtranspose()
+                if coulomb_matrix.distribution_state == "nnz"
+                else None
+            )
+
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
@@ -347,6 +392,7 @@ class SCBA:
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
                 self.compute_config,
+                coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
@@ -401,9 +447,29 @@ class SCBA:
         self.data.sigma_greater.data[:] = 0.0
 
     @profiler.profile(level="api")
+    def _symmetrize_sigma(self) -> None:
+        # Symmetrization.
+        if not self.quatrex_config.scba.symmetric:
+            self.data.sigma_lesser.symmetrize(xp.subtract)
+            self.data.sigma_greater.symmetrize(xp.subtract)
+            # Make the self-energy Hermitian (removing the skew-Hermitian part).
+            self.data.sigma_retarded.symmetrize(xp.add)
+
+        if self.quatrex_config.coulomb_screening.discard_real_parts:
+            self.data.sigma_lesser._data.real = 0
+            self.data.sigma_greater._data.real = 0
+            # Make sure that the imaginary part comes only from
+            # sigma_greater - sigma_lesser.
+            self.data.sigma_retarded._data.imag = 0
+
+        # Now add the imaginary, skew-Hermitian part back.
+        self.data.sigma_retarded.data += 0.5 * (
+            self.data.sigma_greater.data - self.data.sigma_lesser.data
+        )
+
+    @profiler.profile(level="api")
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
-
         self.data.sigma_lesser.data[:] = (
             (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
             + self.mixing_factor * self.data.sigma_lesser.data
@@ -416,31 +482,6 @@ class SCBA:
             (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
             + self.mixing_factor * self.data.sigma_retarded.data
         )
-
-        # Symmetrization.
-        synchronize_device()
-        time_start = time.perf_counter()
-        if not self.quatrex_config.scba.symmetric:
-            self.data.sigma_lesser.symmetrize(xp.subtract)
-            self.data.sigma_greater.symmetrize(xp.subtract)
-
-        self.data.sigma_lesser.data.real = 0
-        self.data.sigma_greater.data.real = 0
-
-        self.data.sigma_retarded.data.imag = 0.0
-
-        # Make the remaining real part Hermitian.
-        if not self.quatrex_config.scba.symmetric:
-            self.data.sigma_retarded.symmetrize(xp.add)
-
-        # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
-        )
-        synchronize_device()
-        time_end = time.perf_counter()
-        if comm.rank == 0:
-            print(f"Symmetrization time: {time_end-time_start}", flush=True)
 
     @profiler.profile(level="api")
     def _has_converged(self) -> bool:
@@ -457,9 +498,18 @@ class SCBA:
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
+        current_conservation_abs, current_conservation_rel = current_conservation(
+            self.data.g_lesser,
+            self.data.g_greater,
+            self.data.sigma_lesser,
+            self.data.sigma_greater,
+        )
+
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
+            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
+            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
 
@@ -608,20 +658,25 @@ class SCBA:
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
+        overlap = (
+            None
+            if self.electron_solver.orthogonal_basis
+            else self.electron_solver.overlap
+        )
         if self.quatrex_config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
         if self.quatrex_config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
 
         if self.quatrex_config.outputs.contact_currents:
@@ -659,20 +714,21 @@ class SCBA:
         if self.quatrex_config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                # self.electron_solver.overlap_sparray,
+                overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
 
+        # NOTE: The overlap is maybe missing here (it is not used)
         if self.quatrex_config.outputs.polarization_density:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (
                 2 * xp.pi
@@ -925,6 +981,23 @@ class SCBA:
                 )
                 print(
                     f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
+                    flush=True,
+                )
+
+            # Symmetrize the self-energy.
+            t_sigma_symmetrize_start = time.perf_counter()
+            self._symmetrize_sigma()
+            synchronize_device()
+            t_sigma_symmetrize_end = time.perf_counter()
+            comm.barrier()
+            t_sigma_symmetrize_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"Time for symmetrization: {t_sigma_symmetrize_end - t_sigma_symmetrize_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"Time for symmetrization all: {t_sigma_symmetrize_end_all - t_sigma_symmetrize_start:.3f} s",
                     flush=True,
                 )
 

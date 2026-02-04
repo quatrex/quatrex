@@ -101,7 +101,6 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
-
     else:
         arr = None
 

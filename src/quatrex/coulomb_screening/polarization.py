@@ -7,6 +7,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
+from qttools.fft import fft_convolve, fft_correlate_kpoints
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
@@ -20,27 +21,43 @@ if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
 
 
-@profiler.profile(level="api")
-def fft_correlate(a: NDArray, b: NDArray) -> NDArray:
-    """Computes the correlation of two arrays using FFT.
+def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
+    """Computes the Hilbert transform of the array a, assuming the symmetries of the
+    polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
+    This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
+
+    Assumes that the first axis corresponds to the energy axis.
 
     Parameters
     ----------
     a : NDArray
-        First array.
-    b : NDArray
-        Second array.
+        The array to transform.
+    energies : NDArray
+        The energy values corresponding to the first axis of a.
 
     Returns
     -------
     NDArray
-        The cross-correlation of the two arrays.
+         The Hilbert transform of a.
 
     """
-    n = a.shape[0] + b.shape[0] - 1
-    a_fft = xp.fft.fft(a.T, n, axis=1)
-    b_fft = xp.fft.fft(b[::-1].T, n, axis=1)
-    return xp.fft.ifft(a_fft * b_fft, axis=1).T
+    # eta for removing the singularity. See Cauchy principal value.
+    de = energies[1] - energies[0]
+    eta = de / 2
+    energy_differences = (
+        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
+    )
+    ne = energies.size
+
+    hilbert_kernel = 1 / energy_differences
+    b = fft_convolve(a, hilbert_kernel)[:ne]
+    # Negative frequencies of a
+    b += fft_convolve(a[::-1].conj(), hilbert_kernel)[-ne:]
+    # Negative frequencies of the kernel
+    hilbert_kernel = -hilbert_kernel[::-1]
+    b += fft_convolve(a, hilbert_kernel)[-ne:]
+
+    return b
 
 
 class PCoulombScreening(ScatteringSelfEnergy):
@@ -63,9 +80,20 @@ class PCoulombScreening(ScatteringSelfEnergy):
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
+        self.kpoint_volume = np.prod(quatrex_config.device.kpoint_grid)
         self.ne = len(self.energies)
-        self.prefactor = -1j / xp.pi * xp.abs(self.energies[1] - self.energies[0])
+        self.prefactor = (
+            -1j
+            / (xp.pi)
+            * xp.abs(self.energies[1] - self.energies[0])
+            / self.kpoint_volume
+        )
         self.batch_size = compute_config.convolve.batch_size
+
+        self.discard_real_parts = quatrex_config.coulomb_screening.discard_real_parts
+        self.compute_retarded = (
+            quatrex_config.coulomb_screening.compute_retarded_polarization
+        )
 
     @profiler.profile(level="api")
     def compute(
@@ -96,6 +124,12 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
+            if self.compute_retarded:
+                (
+                    p_retarded.dtranspose(discard=True)
+                    if (p_retarded.distribution_state != "nnz")
+                    else None
+                )
 
         synchronize_device()
         t_all2all_end = time.perf_counter()
@@ -154,8 +188,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    p_g_full = self.prefactor * fft_correlate(
-                        g_greater.data[:, batch], -g_lesser.data[:, batch].conj()
+                    p_g_full = self.prefactor * fft_correlate_kpoints(
+                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
                     )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the
@@ -164,6 +198,22 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # energy convolution.
                     p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                    # Note that only the hermitian part is computed here.
+
+                    if self.compute_retarded:
+                        p_retarded.data[..., batch] = (
+                            -(self.prefactor / 2)
+                            * (
+                                hilbert_transform(
+                                    (
+                                        p_greater.data[..., batch]
+                                        - p_lesser.data[..., batch]
+                                    ),
+                                    self.energies,
+                                )
+                            )
+                            * self.kpoint_volume
+                        )
 
         # Barrier before communication
         synchronize_device()
@@ -183,6 +233,12 @@ class PCoulombScreening(ScatteringSelfEnergy):
         with profiler.profile_range("nnz->stack transpose", level="debug"):
             for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None
+            if self.compute_retarded:
+                (
+                    p_retarded.dtranspose()
+                    if (p_retarded.distribution_state != "stack")
+                    else None
+                )
             # NOTE: The Green's functions must not be transposed back to
             # stack distribution, as they are needed in nnz distribution for
             # the other interactions.
@@ -203,12 +259,18 @@ class PCoulombScreening(ScatteringSelfEnergy):
         if not p_lesser.symmetry:
             p_lesser.symmetrize(xp.subtract)
             p_greater.symmetrize(xp.subtract)
+            p_retarded.symmetrize(xp.add)
+
+        if not self.compute_retarded:
+            p_retarded.data[:] = 0
 
         # Discard the real part.
-        p_lesser.data.real = 0
-        p_greater.data.real = 0
+        if self.discard_real_parts:
+            p_lesser.data.real = 0
+            p_greater.data.real = 0
+            p_retarded.data.imag = 0
 
-        p_retarded.data = (p_greater.data - p_lesser.data) / 2
+        p_retarded.data += (p_greater.data - p_lesser.data) / 2
 
         synchronize_device()
         t_symmetrization_end = time.perf_counter()

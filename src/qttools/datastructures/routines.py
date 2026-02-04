@@ -151,7 +151,7 @@ def bd_sandwich(
     accumulator_dtype=None,
     accumulate: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
+    """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
 
     Parameters
     ----------
@@ -172,6 +172,8 @@ def bd_sandwich(
         systems. The default is False.
     accumulator_dtype : data type, optional
         The data type of the temporary accumulator matrices. The default is complex128.
+    accumulate : bool, optional
+        Whether to add the result into the output matrix. The default is False.
 
     TODO: replace @ by appropriate gemm
 
@@ -181,6 +183,8 @@ def bd_sandwich(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
     num_blocks = len(a.block_sizes)
+
+    a_is_hermitian = a.symmetry and a.symmetry_op(1 + 1j) != (1 - 1j)
 
     if accumulator_dtype is None:
         accumulator_dtype = a.dtype
@@ -261,9 +265,16 @@ def bd_sandwich(
                         a_k, a_j = k, j
                 if ab_ik[k] is None:
                     continue
-                partsum += (ab_ik[k] @ a_.blocks[a_k, a_j]).astype(
-                    accumulator_dtype
-                )  # cast data type
+                if a_is_hermitian:
+                    partsum += (ab_ik[k] @ a_.blocks[a_k, a_j]).astype(
+                        accumulator_dtype
+                    )  # cast data type
+                else:
+                    partsum += (
+                        ab_ik[k] @ a_.blocks[a_j, a_k].swapaxes(-1, -2).conj()
+                    ).astype(
+                        accumulator_dtype
+                    )  # cast data type
 
             if out_block:
                 out[i, j] = partsum
@@ -798,7 +809,7 @@ def bd_matmul_distr(
                         except Exception as e:
                             rank = comm.block.rank if comm.block is not None else 0
                             print(e)
-                            print(
+                            raise RuntimeError(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
                             )
 

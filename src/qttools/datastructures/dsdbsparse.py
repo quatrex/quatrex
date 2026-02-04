@@ -889,6 +889,47 @@ class DSDBSparse(ABC):
         ...
 
 
+def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:
+    """Replaces ellipsis with the correct number of slices.
+
+    Note
+    ----
+    This replacement of ellipsis is nicked from
+    https://github.com/dask/dask/blob/main/dask/array/slicing.py
+
+    See the license at
+    https://github.com/dask/dask/blob/main/LICENSE.txt
+
+    Parameters
+    ----------
+    stack_index : tuple
+        The stack index to replace the ellipsis in.
+    ndim : int
+        The number of dimensions of the data.
+
+    Returns
+    -------
+    stack_index : tuple
+        The stack index with the ellipsis replaced.
+
+    """
+    is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
+    if is_ellipsis:
+        if len(is_ellipsis) > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+
+        loc = is_ellipsis[0]
+        extra_dimensions = (ndim - 1) - (
+            len(stack_index) - sum(i is None for i in stack_index) - 1
+        )
+        stack_index = (
+            stack_index[:loc]
+            + (slice(None, None, None),) * extra_dimensions
+            + stack_index[loc + 1 :]
+        )
+    return stack_index
+
+
 class _DStackIndexer:
     """A utility class to locate substacks in the distributed stack.
 
@@ -906,6 +947,23 @@ class _DStackIndexer:
     def __getitem__(self, index: tuple) -> "_DStackView":
         """Gets a substack view."""
         return _DStackView(self._dsdbsparse, index)
+
+    def __setitem__(
+        self, stack_index: tuple, other: "DSDBSparse | sparse.spmatrix"
+    ) -> None:
+        """Sets a substack."""
+
+        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
+
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self._dsdbsparse.data[stack_index] = csr[self._dsdbsparse.spy()]
+            return None
+            # return self._dsdbsparse
+
+        # Not sure what the expected behavior should be here
+        # self._dsdbsparse.data[stack_index] = other.data[:]
+        self._dsdbsparse.data[stack_index] = other.data[stack_index]
 
 
 class _DStackView:
@@ -926,7 +984,7 @@ class _DStackView:
         self.symmetry = dsdbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
-        stack_index = self._replace_ellipsis(stack_index)
+        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
         self._stack_index = stack_index
         self._block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, cache_stack=True
@@ -934,44 +992,6 @@ class _DStackView:
         self._sparse_block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, return_dense=False, cache_stack=True
         )
-
-    def _replace_ellipsis(self, stack_index: tuple) -> tuple:
-        """Replaces ellipsis with the correct number of slices.
-
-        Note
-        ----
-        This replacement of ellipsis is nicked from
-        https://github.com/dask/dask/blob/main/dask/array/slicing.py
-
-        See the license at
-        https://github.com/dask/dask/blob/main/LICENSE.txt
-
-        Parameters
-        ----------
-        stack_index : tuple
-            The stack index to replace the ellipsis in.
-
-        Returns
-        -------
-        stack_index : tuple
-            The stack index with the ellipsis replaced.
-
-        """
-        is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
-        if is_ellipsis:
-            if len(is_ellipsis) > 1:
-                raise IndexError("an index can only have a single ellipsis ('...')")
-
-            loc = is_ellipsis[0]
-            extra_dimensions = (self._dsdbsparse._data.ndim - 1) - (
-                len(stack_index) - sum(i is None for i in stack_index) - 1
-            )
-            stack_index = (
-                stack_index[:loc]
-                + (slice(None, None, None),) * extra_dimensions
-                + stack_index[loc + 1 :]
-            )
-        return stack_index
 
     def __getitem__(self, index: tuple[ArrayLike, ArrayLike]) -> NDArray:
         """Gets the requested data from the substack."""
@@ -982,6 +1002,48 @@ class _DStackView:
         """Sets the requested data in the substack."""
         rows, cols = self._dsdbsparse._normalize_index(index)
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
+
+    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place addition of sparse matrix."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                xp.asarray(csr[self._dsdbsparse.spy()])
+            )
+            return self._dsdbsparse
+        try:
+            # TODO: Lots more checks should be done here.
+            # For example, the nnz sizes should match.
+            self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                xp.asarray(other.data[:])
+            )
+        except ValueError as e:
+            raise ValueError(
+                "In-place addition requires the shapes of the two "
+                "DSDBSparse matrices to match."
+            ) from e
+        return self._dsdbsparse
+
+    def __isub__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+        """In-place subtraction of two DSDBSparse matrices."""
+        if sparse.issparse(other):
+            csr = other.tocsr()
+            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(
+                xp.asarray(csr[self._dsdbsparse.spy()])
+            )
+            return self._dsdbsparse
+        try:
+            # TODO: Lots more checks should be done here.
+            # For example, the nnz sizes should match.
+            self._dsdbsparse.data[self._stack_index] -= xp.squeeze(
+                xp.asarray(other.data[:])
+            )
+        except ValueError as e:
+            raise ValueError(
+                "In-place subtraction requires the shapes of the two "
+                "DSDBSparse matrices to match."
+            ) from e
+        return self._dsdbsparse
 
     @property
     def num_local_blocks(self) -> int:

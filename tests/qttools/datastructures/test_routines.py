@@ -145,12 +145,14 @@ class TestNotDistr:
 
         # Initalize the output matrix with the correct sparsity pattern.
         out = dsdbsparse_type.from_sparray(
-            coo @ coo @ coo, block_sizes, global_stack_shape
+            coo @ coo @ coo.T, block_sizes, global_stack_shape
         )
 
         bd_sandwich(dsdbsparse, dsdbsparse, out)
 
-        assert xp.allclose(dense @ dense @ dense, out.to_dense())
+        assert xp.allclose(
+            dense @ dense @ dense.conj().swapaxes(-2, -1), out.to_dense()
+        )
 
     def test_bd_matmul_spillover(
         self,
@@ -242,7 +244,7 @@ class TestNotDistr:
             ..., :-right_obc, -2 * right_obc : -right_obc
         ]
 
-        expended_product = dense_exp @ dense_exp @ dense_exp
+        expended_product = dense_exp @ dense_exp @ dense_exp.conj().swapaxes(-2, -1)
         ref = expended_product[
             ...,
             left_obc : left_obc + sum(block_sizes),

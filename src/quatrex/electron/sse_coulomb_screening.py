@@ -393,9 +393,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 energy_differences = (self.energies - self.energies[0]).reshape(
                     -1, *(len(nk) + 1) * (1,)
                 )
-                # TODO: make eta a parameter
-                # Divergent behavior with and without correction
-                eta = 1e-8
+
+                # NOTE: Same eta as in the other computation, but fewer
+                # ffts are computed in this case.
+                eta = (self.energies[1] - self.energies[0]) / 2
                 hilbert_kernel_fft = xp.fft.fft(
                     1 / (energy_differences + eta), n, axis=0
                 )

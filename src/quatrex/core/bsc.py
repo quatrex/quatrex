@@ -17,15 +17,18 @@ from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver import RGF
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host, synchronize_device
-from qttools.utils.input_utils import cutoff_hr, get_hamiltonian_block
 from qttools.utils.mpi_utils import distributed_load, get_local_slice
 from qttools.utils.stack_utils import scale_stack
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import density
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein, fermi_dirac
-from quatrex.core.utils import assemble_kpoint_dsb
 from quatrex.coulomb_screening import PCoulombScreening
+from quatrex.device.inputs import (
+    _assemble_kpoint,
+    _get_transport_block,
+    trim_tight_binding_matrix,
+)
 from quatrex.electron import (
     SigmaCoulombScreening,
     SigmaFock,
@@ -33,6 +36,7 @@ from quatrex.electron import (
     SigmaPhonon,
     SigmaPhoton,
 )
+from quatrex.grid import get_electron_energies
 from quatrex.phonon import PhononSolver, PiPhonon
 from quatrex.photon import PhotonSolver, PiPhoton
 
@@ -79,6 +83,83 @@ def _spectral_function(
 
     if return_out:
         return out
+
+
+def _load_matrix(
+    quatrex_config: QuatrexConfig, compute_config: ComputeConfig, matrix_name: str
+) -> dict[tuple[int, ...], NDArray]:
+    """
+    Load a tight-binding matrix from file, and creates a dictionary of matrices
+    from the unit cells (mainly a hack to use the _assemble_kpoint function), and
+    assemble the k-point matrix.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The Quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+    matrix_name : str
+        The name of the matrix to load. Should be one of "hamiltonian", "overlap_matrix", or "coulomb_matrix".
+
+    Returns
+    -------
+    matrix : DSDBSparse
+        The loaded matrix.
+    """
+    unit_cells = distributed_load(
+        quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
+    ).astype(xp.complex128)
+
+    trimmed_unit_cells = trim_tight_binding_matrix(
+        tight_binding_matrix=unit_cells,
+        neighbor_cell_cutoff=quatrex_config.device.neighbor_cell_cutoff,
+    )
+
+    transverse_repetitions = trimmed_unit_cells.shape[:3]
+    matrix_dict = {}
+    # Create a matrix for each connecting layer along the transverse
+    # directions. The number of periodic cells is determined by the
+    # shape of the unit cell data.
+    for periodic_shift in xp.ndindex(transverse_repetitions):
+        # Center the periodic shift around zero.
+        periodic_shift = tuple(
+            [ps - (us // 2) for ps, us in zip(periodic_shift, transverse_repetitions)]
+        )
+        matrix_block = _get_transport_block(
+            trimmed_unit_cells,
+            (1, 1, 1),
+            periodic_shift,
+        )
+        matrix_dict[periodic_shift] = matrix_block
+
+    sparsity_pattern = sparse.csr_matrix(
+        xp.ones(
+            (trimmed_unit_cells.shape[-2], trimmed_unit_cells.shape[-1]),
+            dtype=xp.complex128,
+        )
+    )
+    matrix = compute_config.dsdbsparse_type.from_sparray(
+        sparsity_pattern,
+        block_sizes=np.array([sparsity_pattern.shape[0]]),
+        global_stack_shape=(comm.size,)
+        + tuple([k for k in quatrex_config.electron.num_kpoints if k > 1]),
+        symmetry=quatrex_config.bsc.symmetric,
+        symmetry_op=xp.conj,
+    )
+    matrix._data[:] = 0.0  # Initialize to zero.
+    num_kpoints = xp.array(quatrex_config.electron.num_kpoints)
+    if matrix_name == "coulomb_matrix":
+        kshift = -num_kpoints // 2
+    elif matrix_name == "hamiltonian" or matrix_name == "overlap_matrix":
+        kshift = 0
+    _assemble_kpoint(
+        matrix,
+        matrix_dict,
+        num_kpoints,
+        kshift=kshift,
+    )
+    return matrix
 
 
 def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
@@ -303,58 +384,8 @@ class BSC:
         self.mixing_factor = self.quatrex_config.bsc.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        if (self.quatrex_config.electron.energy_window_max is not None) and (
-            self.quatrex_config.electron.energy_window_min is not None
-        ):
-            if self.quatrex_config.electron.energy_window_num is not None:
-                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
-                    raise ValueError(
-                        "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
-                    )
-                self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
-                    self.quatrex_config.electron.energy_window_num,
-                )
-            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
-                energy_window_num = (
-                    self.quatrex_config.electron.energy_window_num_per_rank
-                    * comm.stack.size
-                )
-                self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
-                    energy_window_num,
-                )
-            else:
-                raise ValueError(
-                    "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
-                )
-        else:
-            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
-            if os.path.isfile(energies_path):
-                self.electron_energies = distributed_load(energies_path)
-            else:
-                if comm.rank == 0:
-                    message = f"""
-                                {'-'*40}
-                                # WARNING
-                                # since no information about electron energy grid is provided,
-                                # we decide to take an energy range enough to cover all the bands 
-                                # in the contact bandstructure. This can lead to unexpected memory usage.
-                                {'-'*40}
-                                """
-                    print(message)
-                self.electron_energies = self._determine_electron_energy_window(
-                    quatrex_config, compute_config
-                )
-        self.local_electron_energies = get_local_slice(
-            self.electron_energies, comm.stack
-        )
-        self.occupancies = fermi_dirac(
-            self.local_electron_energies - self.fermi_level,
-            quatrex_config.electron.temperature,
-        )
+        self.electron_energies = get_electron_energies(quatrex_config)
+
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
         num_energies = len(self.electron_energies)
@@ -370,170 +401,43 @@ class BSC:
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
             )
 
-        # ----- Read the Hamiltonian -----------------------------------
-        try:
-            hamiltonian_dict = distributed_load(
-                quatrex_config.input_dir / "hamiltonian.pkl"
-            )
-        except FileNotFoundError:
-            hamiltonian_unit_cells = distributed_load(
-                quatrex_config.input_dir / "hamiltonian_unit_cells.npy"
-            ).astype(xp.complex128)
+        self.local_electron_energies = get_local_slice(
+            self.electron_energies, comm.stack
+        )
+        self.occupancies = fermi_dirac(
+            self.local_electron_energies - self.fermi_level,
+            quatrex_config.electron.temperature,
+        )
 
-            # Apply the cutoff.
-            if quatrex_config.device.R_cutoff is not None:
-                hamiltonian_unit_cells = cutoff_hr(
-                    hamiltonian_unit_cells,
-                    R_cutoff=quatrex_config.device.R_cutoff,
-                )
-            hamiltonian_dict = {}
-            # Create the Hamiltonian for each periodic shift.
-            for periodic_shift in xp.ndindex(
-                tuple(
-                    2 * ps - 1
-                    for ps in quatrex_config.device.cells_in_periodic_directions
-                )
-            ):
-                periodic_shift = tuple(
-                    [
-                        ps - quatrex_config.device.cells_in_periodic_directions[i] + 1
-                        for i, ps in enumerate(periodic_shift)
-                    ]
-                )
-                hamiltonian_block = get_hamiltonian_block(
-                    hamiltonian_unit_cells, (1, 1, 1), periodic_shift
-                )
-                # hamiltonian_dict[periodic_shift] = sparse.csr_matrix(hamiltonian_block)
-                hamiltonian_dict[periodic_shift] = hamiltonian_block
-            del hamiltonian_block
-
-        self.hamiltonian = compute_config.dsdbsparse_type.from_sparray(
-            self.data.sparsity_pattern,
-            block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
-            global_stack_shape=(comm.stack.size,)
-            + tuple(
-                [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
-            ),
-            symmetry=quatrex_config.bsc.symmetric,
-            symmetry_op=xp.conj,
+        # ----- Load the Hamiltonian -----------------------------------
+        self.hamiltonian = _load_matrix(
+            quatrex_config,
+            compute_config,
+            "hamiltonian",
         )
-        self.hamiltonian.data = 0.0
-        number_of_kpoints = xp.array(
-            [1 if k <= 1 else k for k in self.quatrex_config.electron.number_of_kpoints]
-        )
-        assemble_kpoint_dsb(
-            self.hamiltonian,
-            hamiltonian_dict,
-            number_of_kpoints,
-            0,
-        )
-        del hamiltonian_dict
 
         # Create the overlap matrix.
-        self.overlap = compute_config.dsdbsparse_type.from_sparray(
-            self.data.sparsity_pattern,
-            block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
-            global_stack_shape=(comm.stack.size,)
-            + tuple(
-                [k for k in self.quatrex_config.electron.number_of_kpoints if k > 1]
-            ),
-            symmetry=quatrex_config.bsc.symmetric,
-            symmetry_op=xp.conj,
-        )
-        self.overlap.data = 0.0
         try:
             # Load the overlap matrix from file, if it exists...
-            self.overlap_sparray_dict = distributed_load(
-                quatrex_config.input_dir / "overlap_matrix.pkl"
+            self.overlap = _load_matrix(
+                quatrex_config,
+                compute_config,
+                "overlap_matrix",
             )
-            number_of_kpoints = xp.array(
-                [
-                    1 if k <= 1 else k
-                    for k in self.quatrex_config.electron.number_of_kpoints
-                ]
-            )
-            assemble_kpoint_dsb(
-                self.overlap,
-                self.overlap_sparray_dict,
-                number_of_kpoints,
-                0,
-            )
-            del self.overlap_sparray_dict
+            self.orthogonal_basis = False
         except FileNotFoundError:
-            # ... otherwise, assume the overlap matrix is the identity (orthonormal basis).
-            self.overlap += sparse.eye(
-                self.overlap.shape[-1],
-                dtype=xp.complex128,
-            )
+            # ... if it does not exist, assume orthogonal basis.
+            self.overlap = None
+            self.orthogonal_basis = True
 
         # ----- Coulomb screening --------------------------------------
         if self.quatrex_config.bsc.coulomb_screening or self.quatrex_config.bsc.hartree:
             # Load the Coulomb matrix.
-            try:
-                coulomb_matrix_dict = distributed_load(
-                    quatrex_config.input_dir / "coulomb_matrix.pkl"
-                )
-            except FileNotFoundError:
-                coulomb_matrix_unit_cells = distributed_load(
-                    quatrex_config.input_dir / "coulomb_matrix_unit_cells.npy"
-                ).astype(xp.complex128)
-                # Apply the cutoff to the Coulomb matrix.
-                if quatrex_config.device.R_cutoff is not None:
-                    coulomb_matrix_unit_cells = cutoff_hr(
-                        coulomb_matrix_unit_cells,
-                        R_cutoff=quatrex_config.device.R_cutoff,
-                    )
-                coulomb_matrix_dict = {}
-                for periodic_shift in xp.ndindex(
-                    tuple(
-                        2 * ps - 1
-                        for ps in quatrex_config.device.cells_in_periodic_directions
-                    )
-                ):
-                    periodic_shift = tuple(
-                        [
-                            ps
-                            - quatrex_config.device.cells_in_periodic_directions[i]
-                            + 1
-                            for i, ps in enumerate(periodic_shift)
-                        ]
-                    )
-                    coulomb_matrix_block = get_hamiltonian_block(
-                        coulomb_matrix_unit_cells,
-                        (1, 1, 1),
-                        periodic_shift,
-                    )
-                    # coulomb_matrix_dict[periodic_shift] = sparse.csr_matrix(
-                    #    coulomb_matrix_block
-                    # )
-                    coulomb_matrix_dict[periodic_shift] = coulomb_matrix_block
-                del coulomb_matrix_block
-
-            self.coulomb_matrix = compute_config.dsdbsparse_type.from_sparray(
-                self.data.sparsity_pattern.astype(xp.complex128),
-                block_sizes=np.array([self.data.sparsity_pattern.shape[0]]),
-                global_stack_shape=(comm.size,)
-                + tuple(
-                    [k for k in quatrex_config.electron.number_of_kpoints if k > 1]
-                ),
-                symmetry=quatrex_config.bsc.symmetric,
-                symmetry_op=xp.conj,
+            self.coulomb_matrix = _load_matrix(
+                quatrex_config,
+                compute_config,
+                "coulomb_matrix",
             )
-            self.coulomb_matrix._data[:] = 0.0  # Initialize to zero.
-            number_of_kpoints = xp.array(
-                [
-                    1 if k <= 1 else k
-                    for k in self.quatrex_config.electron.number_of_kpoints
-                ]
-            )
-            assemble_kpoint_dsb(
-                self.coulomb_matrix,
-                coulomb_matrix_dict,
-                number_of_kpoints,
-                -(number_of_kpoints // 2),
-            )
-            # Explicitely try to free the memory
-            del coulomb_matrix_dict
 
             # Make sure the Coulomb matrix is hermitian.
             # TODO: Check that this is correct for kpoints.
@@ -638,8 +542,10 @@ class BSC:
 
         """
         self.data.g_system_matrix.data = 0.0
-        # TODO: prove that k-points don't matter here.
-        self.data.g_system_matrix.data[:] += self.overlap.data
+        if self.orthogonal_basis:
+            self.data.g_system_matrix.fill_diagonal(1.0)
+        else:
+            self.data.g_system_matrix += self.overlap
         scale_stack(
             self.data.g_system_matrix.data,
             self.local_electron_energies + 1j * self.quatrex_config.electron.eta,
@@ -660,8 +566,11 @@ class BSC:
             out=self.data.w_system_matrix,
         )
         xp.negative(self.data.w_system_matrix.data, out=self.data.w_system_matrix.data)
-        # I believe it should be the overlap matrix here
-        self.data.w_system_matrix.data[:] += self.overlap.data
+        if self.orthogonal_basis:
+            self.data.w_system_matrix += sparse.eye(self.data.w_system_matrix.shape[-1])
+        else:
+            # I believe it should be the overlap matrix here
+            self.data.w_system_matrix += self.overlap
 
     def _find_band_edges(self) -> None:
         """Find the band edges (conduction band minima and valence band maxima)."""

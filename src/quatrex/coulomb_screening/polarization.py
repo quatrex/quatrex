@@ -121,9 +121,15 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (g_lesser, g_greater):
                 # These should ideally already be in nnz-distribution.
                 m.dtranspose() if m.distribution_state != "nnz" else None
-            for m in (p_lesser, p_greater, p_retarded):
+            for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
+            if self.compute_retarded:
+                (
+                    p_retarded.dtranspose(discard=True)
+                    if (p_retarded.distribution_state != "nnz")
+                    else None
+                )
 
         synchronize_device()
         t_all2all_end = time.perf_counter()
@@ -225,8 +231,14 @@ class PCoulombScreening(ScatteringSelfEnergy):
         t_all2all2_start = time.perf_counter()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range("nnz->stack transpose", level="debug"):
-            for m in (p_lesser, p_greater, p_retarded):
+            for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None
+            if self.compute_retarded:
+                (
+                    p_retarded.dtranspose()
+                    if (p_retarded.distribution_state != "stack")
+                    else None
+                )
             # NOTE: The Green's functions must not be transposed back to
             # stack distribution, as they are needed in nnz distribution for
             # the other interactions.

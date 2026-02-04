@@ -1003,13 +1003,16 @@ class _DStackView:
         rows, cols = self._dsdbsparse._normalize_index(index)
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
-    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
+    def __iadd__(self, other: "DSDBSparse | sparse.spmatrix | NDArray") -> "DSDBSparse":
         """In-place addition of sparse matrix."""
         if sparse.issparse(other):
             csr = other.tocsr()
             self._dsdbsparse.data[self._stack_index] += xp.squeeze(
                 xp.asarray(csr[self._dsdbsparse.spy()])
             )
+            return self._dsdbsparse
+        elif isinstance(other, xp.ndarray):
+            self._dsdbsparse.data[self._stack_index] += other[self._dsdbsparse.spy()]
             return self._dsdbsparse
         try:
             # TODO: Lots more checks should be done here.

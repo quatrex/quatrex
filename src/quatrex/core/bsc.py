@@ -689,8 +689,6 @@ class BSC:
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
-        self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
-        self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
         self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
 
         self.data.sigma_retarded.data[:] = 0.0

@@ -255,9 +255,7 @@ class BSCData:
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
-        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
@@ -704,8 +702,6 @@ class BSC:
         """Symmetrize the self-energy."""
 
         if not self.quatrex_config.bsc.symmetric:
-            # This is not relly necessary as sigma_lesser and sigma_greater
-            # currently aren't used.
             self.data.sigma_lesser.symmetrize(xp.subtract)
             self.data.sigma_greater.symmetrize(xp.subtract)
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
@@ -728,14 +724,6 @@ class BSC:
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
-        self.data.sigma_lesser.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
-        )
-        self.data.sigma_greater.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
-        )
         self.data.sigma_retarded.data[:] = (
             (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
             + self.mixing_factor * self.data.sigma_retarded.data

@@ -443,10 +443,7 @@ class BSC:
             # TODO: Check that this is correct for kpoints.
             if not self.coulomb_matrix.symmetry:
                 self.coulomb_matrix.symmetrize()
-            self.coulomb_matrix._data /= (
-                quatrex_config.coulomb_screening.epsilon_r
-                * self.quatrex_config.coulomb_screening.num_adiabatic_steps
-            )
+            self.coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
 
         if self.quatrex_config.bsc.hartree:
             self.sigma_hartree = SigmaHartree(
@@ -1375,14 +1372,6 @@ class BSC:
                     f"bsc: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
                     flush=True,
                 )
-
-            if self.quatrex_config.bsc.coulomb_screening:
-                if (
-                    i >= 1
-                    and i < self.quatrex_config.coulomb_screening.num_adiabatic_steps
-                ):
-                    self.coulomb_matrix.data *= (i + 1) / i
-                    self.sigma_fock.coulomb_matrix_data *= (i + 1) / i
 
             if self.quatrex_config.bsc.coulomb_screening:
                 t_start_coulomb = time.perf_counter()

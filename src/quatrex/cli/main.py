@@ -104,6 +104,35 @@ def _run_negf(quatrex_config, compute_config):
             typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _run_bsc(quatrex_config, compute_config):
+    """Runs quatrex with the given configuration using BSC.
+
+    Parameters
+    ----------
+    quatrex_config : QuatrexConfig
+        The main quatrex configuration.
+    compute_config : ComputeConfig
+        The compute configuration.
+
+    """
+
+    from quatrex.core.bsc import BSC
+
+    with threadpool_limits(
+        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
+    ):
+        pprint(threadpool_info()) if comm.rank == 0 else None
+
+        bsc = BSC(quatrex_config, compute_config)
+
+        tic = time.perf_counter()
+        bsc.run()
+        toc = time.perf_counter()
+
+        if comm.rank == 0:
+            typer.secho(f"Leaving BSC after: {(toc - tic):.2f} s")
+
+
 @quatrex_cli.command()
 def run(
     quatrex_config: Annotated[
@@ -175,6 +204,8 @@ def run(
         _run_wf(quatrex_config, compute_config)
     elif quatrex_config.formalism == "negf":
         _run_negf(quatrex_config, compute_config)
+    elif quatrex_config.formalism == "bsc":
+        _run_bsc(quatrex_config, compute_config)
     else:
         raise NotImplementedError(
             f"Formalism '{quatrex_config.formalism}' is not implemented."

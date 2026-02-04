@@ -369,7 +369,6 @@ class BSC:
 
         self.conduction_band_edges = self.quatrex_config.electron.conduction_band_edge
         self.valence_band_edges = self.quatrex_config.electron.valence_band_edge
-        # TODO: Now the Fermi level is fixed to the conduction band edge.
         self.fermi_level = self.quatrex_config.electron.fermi_level
         self.delta_conduction_band_edge = (
             self.quatrex_config.electron.conduction_band_edge

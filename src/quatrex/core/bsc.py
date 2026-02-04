@@ -574,7 +574,7 @@ class BSC:
             -density(
                 self.data.g_retarded,
                 self.overlap,
-            ).imag
+            )
             / (2 * xp.pi),
             axis=-1,
         )
@@ -652,7 +652,7 @@ class BSC:
         ldos = -density(
             self.data.g_retarded,
             self.overlap,
-        ).imag / (xp.pi)
+        ) / (xp.pi)
         # Sum all axis except the first one (which is the energy axis).
         dos_density = xp.sum(ldos, axis=tuple(i for i in range(1, ldos.ndim)))
         # Normalize the dos density to get it in 1/cm^2.
@@ -668,7 +668,7 @@ class BSC:
         ldos = -density(
             self.data.g_retarded,
             self.overlap,
-        ).imag / (2 * xp.pi)
+        ) / (2 * xp.pi)
         # Sum all axis except the first one (which is the energy axis).
         dos = xp.sum(ldos, axis=tuple(i for i in range(1, ldos.ndim)))
         # Gather the occupancies across all ranks.
@@ -1121,7 +1121,7 @@ class BSC:
             The band edge to consider ('conduction' or 'valence').
         """
         dos = xp.sum(
-            -density(self.data.g_retarded, self.overlap).imag / (2 * xp.pi),
+            -density(self.data.g_retarded, self.overlap) / (2 * xp.pi),
             axis=-1,
         )
         num_kpoints = np.array(

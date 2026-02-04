@@ -95,10 +95,7 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
-        if sparsity_pattern is None:
-            sparsity_pattern = hamiltonian_sparsity_pattern.copy()
-        else:
-            sparsity_pattern += hamiltonian_sparsity_pattern
+        sparsity_pattern += hamiltonian_sparsity_pattern
 
         del hamiltonian_sparsity_pattern
         self.block_sizes = self.hamiltonian.block_sizes

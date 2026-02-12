@@ -464,6 +464,11 @@ class BSC:
             self.coulomb_screening_energies = (
                 self.electron_energies - self.electron_energies[0]
             )
+            # If the energy is zero, the occupancy diverges. At the same point,
+            # the DOS should also be zero, so the contribution at this point should
+            # be zero. Therefore, we can safely set the occupancy to zero at this
+            # point to remove the divergence.
+            self.coulomb_screening_energies[0] = xp.inf
             local_coulomb_screening_energies = get_local_slice(
                 self.coulomb_screening_energies, comm.stack
             )
@@ -471,6 +476,8 @@ class BSC:
                 local_coulomb_screening_energies,
                 quatrex_config.coulomb_screening.temperature,
             )
+            # Set the value to a finite value again to avoid issues.
+            self.coulomb_screening_energies[0] = 0.0
 
             (
                 self.coulomb_matrix.dtranspose()
@@ -492,7 +499,7 @@ class BSC:
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
                 self.compute_config,
-                self.coulomb_screening_energies,
+                self.electron_energies,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.quatrex_config,

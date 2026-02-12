@@ -111,10 +111,20 @@ def _load_matrix(
         quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
     ).astype(xp.complex128)
 
-    trimmed_unit_cells = trim_tight_binding_matrix(
-        tight_binding_matrix=unit_cells,
-        neighbor_cell_cutoff=quatrex_config.device.neighbor_cell_cutoff,
-    )
+    if matrix_name == "coulomb_matrix":
+        # Neighbour cells for the Coulomb matrix should be determined
+        # by the number of k-points, not the neighbor cell cutoff
+        trimmed_unit_cells = trim_tight_binding_matrix(
+            tight_binding_matrix=unit_cells,
+            neighbor_cell_cutoff=tuple(
+                i // 2 for i in quatrex_config.electron.num_kpoints
+            ),
+        )
+    else:
+        trimmed_unit_cells = trim_tight_binding_matrix(
+            tight_binding_matrix=unit_cells,
+            neighbor_cell_cutoff=quatrex_config.device.neighbor_cell_cutoff,
+        )
 
     transverse_repetitions = trimmed_unit_cells.shape[:3]
     matrix_dict = {}

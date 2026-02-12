@@ -117,7 +117,7 @@ def _load_matrix(
         trimmed_unit_cells = trim_tight_binding_matrix(
             tight_binding_matrix=unit_cells,
             neighbor_cell_cutoff=tuple(
-                i // 2 for i in quatrex_config.electron.num_kpoints
+                i // 2 for i in quatrex_config.device.kpoint_grid
             ),
         )
     else:
@@ -153,7 +153,7 @@ def _load_matrix(
         sparsity_pattern,
         block_sizes=np.array([sparsity_pattern.shape[0]]),
         global_stack_shape=(comm.size,)
-        + tuple([k for k in quatrex_config.electron.num_kpoints if k > 1]),
+        + tuple([k for k in quatrex_config.device.kpoint_grid if k > 1]),
         symmetry=quatrex_config.bsc.symmetric,
         symmetry_op=xp.conj,
     )
@@ -227,7 +227,7 @@ class BSCData:
             quatrex_config.input_dir / "lattice_vectors.npy"
         )
 
-        num_kpoints = quatrex_config.electron.num_kpoints
+        num_kpoints = quatrex_config.device.kpoint_grid
         # We only use dense matrices for the BSC.
         # Sure, the Hamiltonian can be sparse, but the sparsity pattern is not
         # the usual block-tridiagonal one, there are also corner blocks that have
@@ -674,7 +674,7 @@ class BSC:
         # Normalize the dos density to get it in 1/cm^2.
         # TODO: This is hard coded for 2D materials.
         de = self.electron_energies[1] - self.electron_energies[0]
-        nk = np.prod(self.quatrex_config.electron.num_kpoints)
+        nk = np.prod(self.quatrex_config.device.kpoint_grid)
         uc_area = np.linalg.det(self.data.lattice_vectors[:2, :2])
         dos_density *= de / (nk * uc_area) * 1e16  # in 1/cm^2
         return dos_density
@@ -869,13 +869,11 @@ class BSC:
             self.data.w_retarded,
             self.data.p_lesser,
             out=self.data.w_lesser,
-            symmetric=False,
         )
         bd_sandwich(
             self.data.w_retarded,
             self.data.p_greater,
             out=self.data.w_greater,
-            symmetric=False,
         )
 
         synchronize_device()
@@ -1141,7 +1139,7 @@ class BSC:
             axis=-1,
         )
         num_kpoints = np.array(
-            [kp for kp in self.quatrex_config.electron.num_kpoints if kp > 1]
+            [kp for kp in self.quatrex_config.device.kpoint_grid if kp > 1]
         )
         grids = [(np.arange(n) - n // 2) / n for n in num_kpoints]
         kpoint_mesh = np.meshgrid(*grids, indexing="ij")

@@ -576,7 +576,9 @@ class BSC:
         )
         xp.negative(self.data.w_system_matrix.data, out=self.data.w_system_matrix.data)
         if self.orthogonal_basis:
-            self.data.w_system_matrix += sparse.eye(self.data.w_system_matrix.shape[-1])
+            self.data.w_system_matrix += (1 + 1e-6j) * sparse.eye(
+                self.data.w_system_matrix.shape[-1]
+            )
         else:
             # I believe it should be the overlap matrix here
             self.data.w_system_matrix += self.overlap

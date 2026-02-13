@@ -52,6 +52,7 @@ class QTBMConfig(BaseModel):
 
     # The maximum number of energies per batch.
     max_batch_size: PositiveInt = 10
+    method: Literal["Normal", "SplitSolve"] = "Normal"
 
 
 class SCBAConfig(BaseModel):

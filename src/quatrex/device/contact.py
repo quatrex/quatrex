@@ -970,6 +970,90 @@ class Contact:
 
         return contact_matrix
 
+    def _concatenate_eig(self, eig_k: dict, num_energies: int) -> NDArray:
+        """Concatenates eigenvectors for different k-points.
+
+        Parameters
+        ----------
+        eig_k : dict
+            A dictionary containing eigenvalues indexed by (k1, k2)
+            tuples.
+        num_energies : int
+            The number of energies for which to compute the total
+            eigenvectors.
+        Returns
+        -------
+        NDArray
+            The concatenated eigenvectors for all k-points.
+        """
+
+        eig = [
+            xp.concatenate([eig_k[key][i_E] for key in eig_k.keys()])
+            for i_E in range(num_energies)
+        ]
+
+        return eig
+
+    def _upscale_pseudo_inverse(self, pseudo_k: dict, num_energies: int) -> NDArray:
+        """Upscales injection vectors.
+
+        Parameters
+        ----------
+        pseudo_k : dict
+            A dictionary containing pseudo-inverse vectors indexed by (k1,
+            k2) tuples.
+        num_energies : int
+            The number of energies for which to compute the total
+            pseudo-inverse vectors.
+
+        Returns
+        -------
+        NDArray
+            The upscaled and concatenated pseudo-inverse vectors.
+
+        """
+        # Upscale the k-space modes Iterate over the wavevector keys
+        ny, nz = self.transverse_repetition_grid
+        norm = xp.sqrt(ny * nz)
+
+        modes_upscaled = defaultdict(list)
+        for key, value in pseudo_k.items():
+
+            assert (
+                len(value) == num_energies
+            ), "Mismatch in number of energies when upscaling pseudo-inverse vectors."
+
+            # Iterate over the energies in the batch
+            for i_E in range(num_energies):
+
+                # Upscale in 2nd direction first
+                I_2 = xp.concatenate(
+                    [
+                        pseudo_k[key][i_E] * xp.exp(-1j * (key[1] * j))
+                        for j in range(nz)
+                    ],
+                    axis=1,
+                )
+
+                # Upscale in 1st direction
+                I_1 = xp.concatenate(
+                    [I_2 * xp.exp(-1j * (key[0] * i)) for i in range(ny)], axis=1
+                )
+
+                modes_upscaled[key].append(I_1)
+
+        # Concatenate all the wavevector (transverse)
+        modes = [
+            xp.concatenate(
+                [value[i_E] for value in modes_upscaled.values()],
+                axis=0,
+            )
+            / norm
+            for i_E in range(num_energies)
+        ]
+
+        return modes
+
     def _upscale_injection_modes(self, modes_k: dict, num_energies: int) -> NDArray:
         """Upscales injection vectors.
 
@@ -1028,7 +1112,10 @@ class Contact:
         return modes
 
     def compute_boundary(
-        self, k_outer: tuple[float, float, float], energies: NDArray
+        self,
+        k_outer: tuple[float, float, float],
+        energies: NDArray,
+        return_modes_only: bool = False,
     ) -> tuple:
         """Computes OBC for the contact at given k-points and energies.
 
@@ -1039,13 +1126,17 @@ class Contact:
         energies : NDArray
             Batch of energy values for which to compute the boundary
             conditions.
+        return_modes_only : bool, optional
+            Whether to return only the injection and surface modes without
+            computing the full self-energy and Bloch matrices.
 
         Returns
         -------
         tuple
             A tuple containing the computed self-energy, injection
             vectors, transmission matrices, and
-            Bloch injection matrices.
+            Bloch injection matrices. If `return_modes_only` is True, the injection vectors, injection_b,
+            reflection vectors, reflected modes, reflected eigenvalues, reflected pseudoinverse are returned instead.
 
         """
 
@@ -1071,10 +1162,18 @@ class Contact:
             for i, n_rep in enumerate(self.transverse_repetition_grid)
         ]
 
-        sigma_obc_k = {}
-        injection_k = {}
-        phi_surface_k = {}
-        bloch_k = {}
+        if return_modes_only:
+            injection_k = {}
+            b_injected_k = {}
+            reflection_k = {}
+            phi_reflected_k = {}
+            eig_reflected_k = {}
+            phi_inv_reflected_k = {}
+        else:
+            sigma_obc_k = {}
+            injection_k = {}
+            b_injected_k = {}
+            bloch_k = {}
 
         for ky, kz in itertools.product(k_inner[0], k_inner[1]):
 
@@ -1089,23 +1188,54 @@ class Contact:
             # Construct the system matrices for the OBC solver
             A_tot = xp.split((energies[:, None, None] * S_dense - H_dense), 3, axis=2)
 
-            # Solve the OBC for the given ki and kj and store the
-            # results in dictionaries
-            x_ii, phi_surface = self.obc_solver(
-                A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
-            )
+            if return_modes_only:
+                _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (
+                    self.obc_solver(
+                        A_tot[1],
+                        A_tot[2],
+                        A_tot[0],
+                        "",
+                        return_injected=True,
+                        return_modes_only=True,
+                    )
+                )
+                reflection_k[ky, kz] = A_tot[0] @ phi_reflected
+                phi_reflected_k[ky, kz] = phi_reflected
+                eig_reflected_k[ky, kz] = eig_reflected
+                phi_inv_reflected_k[ky, kz] = phi_inv_reflected
+            else:
+                # Solve the OBC for the given ki and kj and store the
+                # results in dictionaries
+                x_ii, b_injected = self.obc_solver(
+                    A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
+                )
 
-            sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
+                sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
 
-            injection_k[ky, kz] = [
-                -A_tot[0][i] @ phi for i, phi in enumerate(phi_surface)
-            ]
+            injection_k[ky, kz] = [-A_tot[0][i] @ b for i, b in enumerate(b_injected)]
 
-            phi_surface_k[ky, kz] = phi_surface
+            b_injected_k[ky, kz] = b_injected
             bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
         # Upscale injection and Bloch injection matrices
         injection = self._upscale_injection_modes(injection_k, num_energies)
-        phi_surface = self._upscale_injection_modes(phi_surface_k, num_energies)
+        b_injected = self._upscale_injection_modes(b_injected_k, num_energies)
 
-        return injection, phi_surface, sigma_obc_k, bloch_k
+        if return_modes_only:
+            reflection = self._upscale_injection_modes(reflection_k, num_energies)
+            phi_reflected = self._upscale_injection_modes(phi_reflected_k, num_energies)
+            phi_inv_reflected = self._upscale_pseudo_inverse(
+                phi_inv_reflected_k, num_energies
+            )
+            eig_reflected = self._concatenate_eig(eig_reflected_k, num_energies)
+
+            return (
+                injection,
+                b_injected,
+                reflection,
+                phi_reflected,
+                eig_reflected,
+                phi_inv_reflected,
+            )
+
+        return injection, b_injected, sigma_obc_k, bloch_k

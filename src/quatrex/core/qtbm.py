@@ -30,7 +30,7 @@ from quatrex.grid import get_electron_energies, monkhorst_pack
 
 
 def allocate_system_matrix(
-    hamiltonians: dict, overlap_matrices: dict, contacts: list
+    hamiltonians: dict, overlap_matrices: dict, contacts: list = []
 ) -> sparse.csr_matrix:
     """Allocates the system matrix.
 
@@ -238,6 +238,9 @@ class QTBM:
         injection_segments: dict,
         global_energy_index: int,
         sigma_obc_per_contact: dict,
+        reflection_per_contact: dict,
+        eig_ref_per_contact: dict,
+        phi_inv_ref_per_contact: dict,
         k_idx: int,
     ):
         """Computes transmission coefficients.
@@ -255,6 +258,12 @@ class QTBM:
         sigma_obc_per_contact : dict
             Self-energy matrices for each contact, used for transmission
             calculations.
+        reflection_per_contact : dict
+            Reflection matrices for each contact, used in SplitSolve method.
+        eig_ref_per_contact : dict
+            Eigenvalues of the reflected wavefunctions for each contact, used in SplitSolve method.
+        phi_inv_ref_per_contact : dict
+            Inverse of the reflected wavefunctions for each contact, used in SplitSolve method.
         k_idx : int
             Index of the current k-point being processed.
 
@@ -277,21 +286,32 @@ class QTBM:
 
                 S_P = xp.zeros_like(phi_nt)
 
-                # This upscales the self-energy if the contact
-                # has periodicity in the transverse directions
-                ny, nz = contact_out.transverse_repetition_grid
-                indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
-                indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
-
-                indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
-                indices_z = xp.tile(indices_z, (ny, ny))
-
-                for (ky, kz), sigma_obc in sigma_obc_per_contact[contact_out].items():
-                    S_P += kron_matmul(
-                        xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
-                        sigma_obc,
-                        phi_nt,
+                if self.quatrex_config.qtbm.method == "SplitSolve":
+                    S_P += (
+                        reflection_per_contact[contact_out]
+                        @ xp.diag(1 / eig_ref_per_contact[contact_out])
+                        @ phi_inv_ref_per_contact[contact_out]
+                        @ phi_nt
                     )
+
+                else:
+                    # This upscales the self-energy if the contact
+                    # has periodicity in the transverse directions
+                    ny, nz = contact_out.transverse_repetition_grid
+                    indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
+                    indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+
+                    indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
+                    indices_z = xp.tile(indices_z, (ny, ny))
+
+                    for (ky, kz), sigma_obc in sigma_obc_per_contact[
+                        contact_out
+                    ].items():
+                        S_P += kron_matmul(
+                            xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
+                            sigma_obc,
+                            phi_nt,
+                        )
 
                 transmission[k_idx, global_energy_index] = xp.trace(
                     -2 * xp.imag(phi_nt.T.conj() @ S_P)
@@ -302,8 +322,11 @@ class QTBM:
         phi: NDArray,
         injection_segments: dict,
         global_energy_index: int,
-        phi_surface_per_contact: dict,
+        phi_inj_per_contact: dict,
         bloch_per_contact: dict,
+        phi_ref_per_contact: dict,
+        eig_ref_per_contact: dict,
+        phi_inv_ref_per_contact: dict,
         system_matrix: sparse.spmatrix,
         overlap_matrices: dict,
         k_idx: int,
@@ -320,10 +343,16 @@ class QTBM:
             contact where each slice corresponds to the contact's injection modes.
         global_energy_index : int
             Energy index in the global energy array for storing results.
-        phi_surface_per_contact : dict
+        phi_inj_per_contact : dict
            Surface wavefunctions for each contact.
         bloch_per_contact : dict
             Bloch transmission matrices for each contact.
+        phi_ref_per_contact : dict
+            Reflected wavefunctions for each contact.
+        eig_ref_per_contact : dict
+            Eigenvalues of the reflected wavefunctions for each contact.
+        phi_inv_ref_per_contact : dict
+            Inverse of the reflected wavefunctions for each contact.
         system_matrix : sparse.spmatrix
             The system matrix used in the QTBM calculation.
             $E*S - H + \Sigma_{obc}$
@@ -344,27 +373,36 @@ class QTBM:
 
         for contact in self.device.contacts:
             orbital_indices = contact.orbital_indices
-            ny, nz = contact.transverse_repetition_grid
 
             phi_cont = xp.zeros(
                 (orbital_indices.shape[0], phi.shape[1]), dtype=xp.complex128
             )
-            phi_cont[:, injection_segments[contact]] = phi_surface_per_contact[contact]
+            phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
 
-            indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
-            indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
-
-            indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
-            indices_z = xp.tile(indices_z, (ny, ny))
-
-            # This upscales the block matrix if the contact
-            # has periodicity in the transverse directions
-            for key, value in bloch_per_contact[contact].items():
-                phi_cont += kron_matmul(
-                    xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
-                    value,
-                    phi[orbital_indices, :],
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                phi_cont += (
+                    phi_ref_per_contact[contact]
+                    @ xp.diag(1 / eig_ref_per_contact[contact])
+                    @ phi_inv_ref_per_contact[contact]
+                    @ phi[orbital_indices, :]
                 )
+
+            else:
+                ny, nz = contact.transverse_repetition_grid
+                indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
+                indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+
+                indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
+                indices_z = xp.tile(indices_z, (ny, ny))
+
+                # This upscales the block matrix if the contact
+                # has periodicity in the transverse directions
+                for key, value in bloch_per_contact[contact].items():
+                    phi_cont += kron_matmul(
+                        xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
+                        value,
+                        phi[orbital_indices, :],
+                    )
 
             # Add the spill over from the overlap
             for overlap in overlap_matrices.values():
@@ -402,8 +440,12 @@ class QTBM:
         local_energy_index: int,
         global_energy_index: int,
         sigma_obc_per_contact: dict,
-        phi_surface_per_contact: dict,
+        reflection_per_contact: dict,
+        eig_ref_per_contact: dict,
+        phi_inv_ref_per_contact: dict,
+        phi_inj_per_contact: dict,
         bloch_per_contact: dict,
+        phi_ref_per_contact: dict,
         system_matrix: sparse.spmatrix,
         overlap_matrices: dict,
         k_idx: int,
@@ -430,7 +472,7 @@ class QTBM:
         sigma_obc_per_contact : dict
             Self-energy matrices for each contact, used for transmission
             calculations.
-        phi_surface_per_contact : dict
+        phi_inj_per_contact : dict
            Surface wavefunctions for each contact.
         bloch_per_contact : dict
             Bloch transmission matrices for each contact.
@@ -461,13 +503,33 @@ class QTBM:
             }
             for contact, sigma_obcs in sigma_obc_per_contact.items()
         }
-        phi_surface_per_contact = {
+        phi_inj_per_contact = {
             contact: value[local_energy_index]
-            for contact, value in phi_surface_per_contact.items()
+            for contact, value in phi_inj_per_contact.items()
         }
         bloch_per_contact = {
             contact: {key: value[local_energy_index] for key, value in bloch_k.items()}
             for contact, bloch_k in bloch_per_contact.items()
+        }
+
+        reflection_per_contact = {
+            contact: value[local_energy_index]
+            for contact, value in reflection_per_contact.items()
+        }
+
+        phi_ref_per_contact = {
+            contact: value[local_energy_index]
+            for contact, value in phi_ref_per_contact.items()
+        }
+
+        eig_ref_per_contact = {
+            contact: value[local_energy_index]
+            for contact, value in eig_ref_per_contact.items()
+        }
+
+        phi_inv_ref_per_contact = {
+            contact: value[local_energy_index]
+            for contact, value in phi_inv_ref_per_contact.items()
         }
 
         # Compute transmissions for all the possible contact couples
@@ -476,6 +538,9 @@ class QTBM:
             injection_segments,
             global_energy_index,
             sigma_obc_per_contact,
+            reflection_per_contact,
+            eig_ref_per_contact,
+            phi_inv_ref_per_contact,
             k_idx,
         )
 
@@ -484,8 +549,11 @@ class QTBM:
             phi,
             injection_segments,
             global_energy_index,
-            phi_surface_per_contact,
+            phi_inj_per_contact,
             bloch_per_contact,
+            phi_ref_per_contact,
+            eig_ref_per_contact,
+            phi_inv_ref_per_contact,
             system_matrix,
             overlap_matrices,
             k_idx,
@@ -561,9 +629,16 @@ class QTBM:
         comm.Barrier()
 
         # Allocate indices to update the system matrix in-place
-        system_matrix = allocate_system_matrix(
-            self.device.hamiltonians, self.device.overlap_matrices, self.device.contacts
-        )  # Initialize the system matrix
+        if self.quatrex_config.qtbm.method == "SplitSolve":
+            system_matrix = allocate_system_matrix(
+                self.device.hamiltonians, self.device.overlap_matrices
+            )  # Initialize the system matrix without boundary self energies
+        else:
+            system_matrix = allocate_system_matrix(
+                self.device.hamiltonians,
+                self.device.overlap_matrices,
+                self.device.contacts,
+            )  # Initialize the system matrix
 
         hamiltonian_update_indices = {}
         for r, h_r in self.device.hamiltonians.items():
@@ -577,11 +652,12 @@ class QTBM:
                 system_matrix, s_r
             )
 
-        sigma_obc_update_indices = {}
-        for contact in self.device.contacts:
-            sigma_obc_update_indices[contact] = compute_update_indices_dense(
-                system_matrix, contact.orbital_indices
-            )
+        if self.quatrex_config.qtbm.method != "SplitSolve":
+            sigma_obc_update_indices = {}
+            for contact in self.device.contacts:
+                sigma_obc_update_indices[contact] = compute_update_indices_dense(
+                    system_matrix, contact.orbital_indices
+                )
 
         for k_idx in range(self.num_kpoints):
 
@@ -622,20 +698,37 @@ class QTBM:
                 times.append(time.perf_counter())
 
                 injection_per_contact = {}
-                phi_surface_per_contact = {}
+                phi_inj_per_contact = {}
                 bloch_per_contact = {}
                 sigma_obc_per_contact = {}
+
+                reflection_per_contact = {}
+                phi_ref_per_contact = {}
+                eig_ref_per_contact = {}
+                phi_inv_ref_per_contact = {}
 
                 # Compute the boundary self-energy and the injection vector.
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
-                    (
-                        injection_per_contact[contact],
-                        phi_surface_per_contact[contact],
-                        sigma_obc_per_contact[contact],
-                        bloch_per_contact[contact],
-                    ) = contact.compute_boundary(k * 2 * np.pi, energy_batch)
+                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                        (
+                            injection_per_contact[contact],
+                            phi_inj_per_contact[contact],
+                            reflection_per_contact[contact],
+                            phi_ref_per_contact[contact],
+                            eig_ref_per_contact[contact],
+                            phi_inv_ref_per_contact[contact],
+                        ) = contact.compute_boundary(
+                            k * 2 * np.pi, energy_batch, return_modes_only=True
+                        )
+                    else:
+                        (
+                            injection_per_contact[contact],
+                            phi_inj_per_contact[contact],
+                            sigma_obc_per_contact[contact],
+                            bloch_per_contact[contact],
+                        ) = contact.compute_boundary(k * 2 * np.pi, energy_batch)
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -659,6 +752,21 @@ class QTBM:
 
                     injection_count += modes_per_energy
 
+                if self.quatrex_config.qtbm.method == "SplitSolve":
+                    reflection_segments = {}
+                    reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
+                    for contact in self.device.contacts:
+                        modes_per_energy = np.array(
+                            [arr.shape[1] for arr in reflection_per_contact[contact]]
+                        )
+                        for i, num_modes in enumerate(modes_per_energy):
+                            start = reflection_count[i]
+                            reflection_segments[contact, i] = slice(
+                                start, start + num_modes
+                            )
+
+                        reflection_count += modes_per_energy
+
                 t_solve = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(f"Time for OBC: {t_solve:.2f} s", flush=True)
@@ -681,6 +789,33 @@ class QTBM:
                             contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
 
+                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                        reflection_tot = xp.zeros(
+                            (self.num_orbitals, reflection_count[i]),
+                            dtype=xp.complex128,
+                            order="F",
+                        )
+                        phi_inv_tot = xp.zeros(
+                            (reflection_count[i], self.num_orbitals),
+                            dtype=xp.complex128,
+                            order="F",
+                        )
+
+                        eig_tot = xp.zeros(reflection_count[i], dtype=xp.complex128)
+
+                        for contact in self.device.contacts:
+                            reflection_tot[
+                                contact.orbital_indices, reflection_segments[contact, i]
+                            ] = reflection_per_contact[contact][i]
+
+                            phi_inv_tot[
+                                reflection_segments[contact, i], contact.orbital_indices
+                            ] = phi_inv_ref_per_contact[contact][i]
+
+                            eig_tot[reflection_segments[contact, i]] = (
+                                eig_ref_per_contact[contact][i]
+                            )
+
                     system_matrix.data[:] = 0
 
                     # Add the Hamiltonian and overlap contributions
@@ -700,16 +835,17 @@ class QTBM:
                             system_matrix.data, s_r.data, overlap_update_indices[r]
                         )
 
-                    # Add the boundary self-energy contributions
-                    for contact, sigma_obc in sigma_obc_per_contact.items():
-                        for k_t, sigma_obc_k in sigma_obc.items():
-                            inplace.isub_obc(
-                                system_matrix.data,
-                                sigma_obc_k[i, :, :],
-                                sigma_obc_update_indices[contact],
-                                k_t,
-                                contact.transverse_repetition_grid,
-                            )
+                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                        # Add the boundary self-energy contributions
+                        for contact, sigma_obc in sigma_obc_per_contact.items():
+                            for k_t, sigma_obc_k in sigma_obc.items():
+                                inplace.isub_obc(
+                                    system_matrix.data,
+                                    sigma_obc_k[i, :, :],
+                                    sigma_obc_update_indices[contact],
+                                    k_t,
+                                    contact.transverse_repetition_grid,
+                                )
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -719,9 +855,22 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    # Solve for the wavefunction
-                    if injection_tot.size != 0:
-                        phi = self.solver.solve(system_matrix, injection_tot)
+                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                        phi_uncorrected = self.solver.solve(
+                            system_matrix, injection_tot
+                        )
+                        phi_reflected = self.solver.solve(system_matrix, reflection_tot)
+                        phi = (
+                            phi_uncorrected
+                            + phi_reflected
+                            @ (xp.inv(xp.diag(eig_tot) - phi_inv_tot @ phi_reflected))
+                            @ phi_inv_tot
+                            @ phi_uncorrected
+                        )
+                    else:
+                        # Solve for the wavefunction
+                        if injection_tot.size != 0:
+                            phi = self.solver.solve(system_matrix, injection_tot)
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -731,16 +880,17 @@ class QTBM:
                     # Get the bare system matrix back, needed for
                     # transmission calculation
 
-                    # Subtract the open boundary conditions
-                    for contact, sigma_obc in sigma_obc_per_contact.items():
-                        for k_t, sigma_obc_k in sigma_obc.items():
-                            inplace.iadd_obc(
-                                system_matrix.data,
-                                sigma_obc_k[i, :, :],
-                                sigma_obc_update_indices[contact],
-                                k_t,
-                                contact.transverse_repetition_grid,
-                            )
+                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                        # Subtract the open boundary conditions
+                        for contact, sigma_obc in sigma_obc_per_contact.items():
+                            for k_t, sigma_obc_k in sigma_obc.items():
+                                inplace.iadd_obc(
+                                    system_matrix.data,
+                                    sigma_obc_k[i, :, :],
+                                    sigma_obc_update_indices[contact],
+                                    k_t,
+                                    contact.transverse_repetition_grid,
+                                )
 
                     # Unscale the overlap matrices
                     # to be able to process multiple energies
@@ -755,8 +905,12 @@ class QTBM:
                             i,
                             batch_start + i,
                             sigma_obc_per_contact,
-                            phi_surface_per_contact,
+                            reflection_per_contact,
+                            eig_ref_per_contact,
+                            phi_inv_ref_per_contact,
+                            phi_inj_per_contact,
                             bloch_per_contact,
+                            phi_ref_per_contact,
                             system_matrix,
                             self.device.overlap_matrices,
                             k_idx,

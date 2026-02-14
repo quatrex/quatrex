@@ -462,8 +462,11 @@ class Spectral(OBCSolver):
             vr = vs[i][:, m]
             w = ws[i][m]
             # Moore-Penrose pseudoinverse.
-            V = a_ji @ vr @ linalg.inv(w) @ linalg.inv(w) + a_ii @ vr @ linalg.inv(w)
-            v_inv = -linalg.inv(V.conj().T @ V) @ V.conj().T @ a_ij
+            V = a_ji[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w)) @ linalg.inv(
+                xp.diag(w)
+            ) + a_ii[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w))
+            # V = - a_ij[i,:,:].squeeze() @ vr
+            v_inv = -linalg.inv(V.conj().T @ V) @ V.conj().T @ a_ij[i, :, :].squeeze()
 
             phi_inv_reflected.append(v_inv)
 
@@ -570,7 +573,8 @@ class Spectral(OBCSolver):
             b_injected = []
 
             if not return_modes_only:
-                x_ii_a_ij = x_ii_ref @ a_ij
+                # Compute the bloch matrix
+                x_ii_a_ij = -x_ii_ref @ a_ij
             else:
                 phi_reflected = []
                 eig_reflected = []
@@ -591,7 +595,7 @@ class Spectral(OBCSolver):
                     # Compute surface phi
                     b_injected.append(
                         vrs_injected / wrs_injected[xp.newaxis, :]
-                        + x_ii_a_ij[i] @ vrs_injected
+                        - x_ii_a_ij[i] @ vrs_injected
                     )
                 else:
                     vrs_reflected = vs[i][:, mask_reflected[i, :]]
@@ -600,8 +604,8 @@ class Spectral(OBCSolver):
                     eig_reflected.append(wrs_reflected)
                     b_injected.append(
                         vrs_injected / wrs_injected[xp.newaxis, :]
-                        + vrs_reflected
-                        @ xp.diag(wrs_reflected)
+                        - vrs_reflected
+                        @ xp.diag(1 / wrs_reflected)
                         @ phi_inv_reflected[i]
                         @ vrs_injected
                     )

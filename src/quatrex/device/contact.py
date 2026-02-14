@@ -1199,7 +1199,9 @@ class Contact:
                         return_modes_only=True,
                     )
                 )
-                reflection_k[ky, kz] = A_tot[0] @ phi_reflected
+                reflection_k[ky, kz] = [
+                    -A_tot[0][i] @ b for i, b in enumerate(phi_reflected)
+                ]
                 phi_reflected_k[ky, kz] = phi_reflected
                 eig_reflected_k[ky, kz] = eig_reflected
                 phi_inv_reflected_k[ky, kz] = phi_inv_reflected
@@ -1209,13 +1211,11 @@ class Contact:
                 x_ii, b_injected = self.obc_solver(
                     A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
                 )
-
                 sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
+                bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
             injection_k[ky, kz] = [-A_tot[0][i] @ b for i, b in enumerate(b_injected)]
-
             b_injected_k[ky, kz] = b_injected
-            bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
         # Upscale injection and Bloch injection matrices
         injection = self._upscale_injection_modes(injection_k, num_energies)

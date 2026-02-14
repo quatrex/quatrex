@@ -287,7 +287,7 @@ class QTBM:
                 S_P = xp.zeros_like(phi_nt)
 
                 if self.quatrex_config.qtbm.method == "SplitSolve":
-                    S_P += (
+                    S_P = (
                         reflection_per_contact[contact_out]
                         @ xp.diag(1 / eig_ref_per_contact[contact_out])
                         @ phi_inv_ref_per_contact[contact_out]
@@ -856,17 +856,22 @@ class QTBM:
                     times.append(time.perf_counter())
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
-                        phi_uncorrected = self.solver.solve(
-                            system_matrix, injection_tot
-                        )
-                        phi_reflected = self.solver.solve(system_matrix, reflection_tot)
-                        phi = (
-                            phi_uncorrected
-                            + phi_reflected
-                            @ (xp.inv(xp.diag(eig_tot) - phi_inv_tot @ phi_reflected))
-                            @ phi_inv_tot
-                            @ phi_uncorrected
-                        )
+                        if injection_tot.size != 0:
+                            phi_uncorrected = self.solver.solve(
+                                system_matrix, injection_tot
+                            )
+                            phi_reflected = self.solver.solve(
+                                system_matrix, reflection_tot
+                            )
+                            phi = (
+                                phi_uncorrected
+                                + phi_reflected
+                                @ xp.linalg.inv(
+                                    xp.diag(eig_tot) - phi_inv_tot @ phi_reflected
+                                )
+                                @ phi_inv_tot
+                                @ phi_uncorrected
+                            )
                     else:
                         # Solve for the wavefunction
                         if injection_tot.size != 0:

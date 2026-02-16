@@ -55,7 +55,9 @@ def get_block(
 
 
 def density(
-    x: DSDBSparse, overlap: sparse.spmatrix | DSDBSparse | None = None
+    x: DSDBSparse,
+    overlap: sparse.spmatrix | DSDBSparse | None = None,
+    also_return_real: bool = False,
 ) -> NDArray:
     """Computes the density from Green's function and overlap matrix.
 
@@ -74,7 +76,10 @@ def density(
 
     """
     if overlap is None:
-        local_density = x.diagonal().imag
+        if also_return_real:
+            local_density = x.diagonal()
+        else:
+            local_density = x.diagonal().imag
         return comm.stack.all_gather_v(
             local_density,
             axis=0,
@@ -116,7 +121,9 @@ def density(
                 axis2=-1,
             )
 
-        local_density.append(local_density_slice.imag)
+        local_density.append(
+            local_density_slice.imag if not also_return_real else local_density_slice
+        )
 
     local_density = xp.concatenate(local_density, axis=-1)
 

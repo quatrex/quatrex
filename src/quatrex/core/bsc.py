@@ -860,10 +860,10 @@ class BSC:
 
         # Omega = self.data.w_retarded.blocks[0, 0] - self.data.w_retarded.blocks[0, 0].conj().swapaxes(-1, -2)
         # self.data.w_lesser.blocks[0, 0] = scale_stack(
-        #   Omega.copy(), self.occupancies_coulomb_screening
+        #  Omega.copy(), self.occupancies_coulomb_screening
         # )
         # self.data.w_greater.blocks[0, 0] = scale_stack(
-        #   Omega.copy(), (1 + self.occupancies_coulomb_screening)
+        #  Omega.copy(), (1 + self.occupancies_coulomb_screening)
         # )
 
         bd_sandwich(
@@ -995,6 +995,7 @@ class BSC:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
                 self.overlap,
+                also_return_real=True,
             )
             if not self.quatrex_config.outputs.spatially_resolved:
                 self.observables.sigma_retarded_density = (
@@ -1019,10 +1020,9 @@ class BSC:
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
-
         if self.quatrex_config.outputs.polarization_density:
             self.observables.p_retarded_density = -density(
-                self.data.p_retarded, self.overlap
+                self.data.p_retarded, self.overlap, also_return_real=True
             )
             if not self.quatrex_config.outputs.spatially_resolved:
                 self.observables.p_retarded_density = (
@@ -1045,7 +1045,7 @@ class BSC:
 
         if self.quatrex_config.outputs.coulomb_screening_density:
             self.observables.w_retarded_density = -density(
-                self.data.w_retarded, self.overlap
+                self.data.w_retarded, self.overlap, also_return_real=True
             )
             if not self.quatrex_config.outputs.spatially_resolved:
                 self.observables.w_retarded_density = (

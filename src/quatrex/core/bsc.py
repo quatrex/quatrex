@@ -158,7 +158,7 @@ def _load_matrix(
         symmetry_op=xp.conj,
     )
     matrix._data[:] = 0.0  # Initialize to zero.
-    num_kpoints = xp.array(quatrex_config.electron.num_kpoints)
+    num_kpoints = xp.array(quatrex_config.device.kpoint_grid)
     if matrix_name == "coulomb_matrix":
         kshift = -num_kpoints // 2
     elif matrix_name == "hamiltonian" or matrix_name == "overlap_matrix":
@@ -167,6 +167,7 @@ def _load_matrix(
         matrix,
         matrix_dict,
         num_kpoints,
+        kpoint_shift=quatrex_config.device.kpoint_shift,
         kshift=kshift,
     )
     return matrix

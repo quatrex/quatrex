@@ -405,13 +405,13 @@ def _assemble_kpoint(
     )
     kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-    index = np.argwhere(kpoint_grid > 1)[0]
+    # index = np.argwhere(kpoint_grid > 1)[0]
     for stack_index in np.ndindex(kpoints.shape[:-1]):
         kpoint = kpoints[stack_index]
         stack_index = np.array(stack_index)
-        stack_index = tuple(stack_index[index])
+        stack_index = tuple(stack_index[kpoint_grid > 1])
 
-        cells = np.array(list(matrix_dict.keys()))
+        cells = xp.array(list(matrix_dict.keys()))
         phases = xp.exp(2j * xp.pi * (cells @ kpoint))
 
         # NOTE: Sparse matrix addition is slow

@@ -20,6 +20,24 @@ from pydantic import (
 )
 from typing_extensions import Self
 
+class BSCConfig(BaseModel):
+    """Options for the band-structure calculation."""
+    # NOTE: so far same as SCBAConfig
+    model_config = ConfigDict(extra="forbid")
+
+    min_iterations: PositiveInt = 1
+    max_iterations: PositiveInt = 100
+    convergence_tol: PositiveFloat = 1e-5
+
+    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+    output_interval: PositiveInt = 1
+
+    coulomb_screening: bool = False
+    hartree: bool = False
+    photon: bool = False
+    phonon: bool = False
+
+    symmetric: bool = False
 
 class SCSPConfig(BaseModel):
     """Options for the self-consistent Schrödinger-Poisson loop."""
@@ -342,12 +360,16 @@ class ElectronConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    doping: float = 0.0  # 1/cm^2
+
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
 
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
+
+    fermi_level_mode: Literal["fixed", "charge_neutrality"] = "fixed"
 
     fermi_level: float | None = None
     conduction_band_edge: float | None = None
@@ -373,6 +395,9 @@ class ElectronConfig(BaseModel):
     dos_peak_limit: PositiveFloat = 100.0
 
     filtering_iteration_limit: PositiveInt = 1
+
+    # Use the anti-Hermitian part of the retarded self-energy
+    use_sigma_ah: bool = True
 
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
@@ -556,6 +581,8 @@ class OutputConfig(BaseModel):
 
     profiling_stats: bool = False
 
+    spatially_resolved: bool = True
+
 
 class ContactConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -674,13 +701,14 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
-    formalism: Literal["wf", "negf"]
-    """The transport formalism to use.
+    formalism: Literal["wf", "negf", "bsc"]
+    """The formalism to use.
 
-    There are two supported formalisms:
+    There are three supported formalisms:
 
     - "wf": Wavefunction formalism
     - "negf": Non-equilibrium Green's function formalism
+    - "bsc": Band structure calculation formalism
 
     !!! warning "Input formats"
 
@@ -688,6 +716,7 @@ class QuatrexConfig(BaseModel):
         consistent.
 
     """
+    bsc: BSCConfig = BSCConfig()
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     qtbm: QTBMConfig = QTBMConfig()

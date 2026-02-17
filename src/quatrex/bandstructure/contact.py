@@ -1,8 +1,8 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import numpy as np
 from functools import partial
 
+import numpy as np
 from scipy.optimize import minimize_scalar
 
 from qttools import NDArray, xp
@@ -219,9 +219,12 @@ def assemble_kpoint_matrix(tiled_blocks):
     """
     leading_shape = tiled_blocks.shape[:-3]
     total_small_blocks = tiled_blocks.shape[-3]
-    num_kpoints = 16*total_small_blocks
+    num_kpoints = 16 * total_small_blocks
 
-    kpoint_matrix = xp.zeros(leading_shape + (num_kpoints, tiled_blocks.shape[-2], tiled_blocks.shape[-1]), dtype=tiled_blocks.dtype)
+    kpoint_matrix = xp.zeros(
+        leading_shape + (num_kpoints, tiled_blocks.shape[-2], tiled_blocks.shape[-1]),
+        dtype=tiled_blocks.dtype,
+    )
 
     # R shifts in x-direction
     x = xp.arange(-(total_small_blocks // 2), total_small_blocks // 2 + 1)
@@ -271,7 +274,7 @@ def contact_greens_function(
     g_retarded = np.zeros_like(sigma_retarded)
 
     for i in range(num_energies):
-        energy_matrix = (energies[i]+1j * eta) * overlap - potential
+        energy_matrix = (energies[i] + 1j * eta) * overlap - potential
         g_retarded[i] = np.linalg.inv(energy_matrix - hamiltonian - sigma_retarded[i])
 
     return g_retarded
@@ -426,7 +429,6 @@ def find_charge_neutral_fermi_level(
         energies=local_energies,
     )
 
-    
     dos_k = -(1 / np.pi) * np.imag(np.trace(g_k, axis1=-2, axis2=-1))
     # Mean over k-points (all axis except energy axis, which is the first axis)
     dos = dos_k.mean(axis=tuple(range(1, dos_k.ndim)))
@@ -435,7 +437,15 @@ def find_charge_neutral_fermi_level(
     dos = comm.stack.all_gather_v(dos, axis=0)
 
     # Update the mid band gap from the dos
-    vb_edge, cb_edge = local_band_edges(dos[:, None], energies, xp.array([mid_gap_energy,]))
+    vb_edge, cb_edge = local_band_edges(
+        dos[:, None],
+        energies,
+        xp.array(
+            [
+                mid_gap_energy,
+            ]
+        ),
+    )
     mid_gap_energy = float(0.5 * (vb_edge + cb_edge))
 
     fermi_level = contact_fermi_level(

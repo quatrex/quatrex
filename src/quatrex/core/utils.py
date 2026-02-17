@@ -1,8 +1,12 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
+import numpy as np
+
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.dsdbsparse import _block_view
+from qttools.utils.mpi_utils import get_section_sizes
 
 
 def homogenize(matrix: DSDBSparse) -> None:
@@ -74,7 +78,6 @@ def compute_sparsity_pattern(
             return xp.linalg.norm(x[..., xp.newaxis, :] - y[xp.newaxis, ...], axis=-1)
 
     elif strategy == "box":
-
         idx = {"x": 0, "y": 1, "z": 2}[transport_direction]
 
         def distance(x, y):
@@ -212,26 +215,32 @@ def get_periodic_superblocks(
     return _block_view(periodic_blocks, -1, 3)
 
 
-def _one_sided_gradient(y, x=None, axis=0, direction='forward'):
+def _one_sided_gradient(y, x=None, axis=0, direction="forward"):
     if x is None:
         x = np.arange(y.shape[axis])
     if not len(x) == y.shape[axis]:
-        raise ValueError("Length of x must match the size of y along the specified axis.")
+        raise ValueError(
+            "Length of x must match the size of y along the specified axis."
+        )
 
-    if direction == 'forward':
+    if direction == "forward":
         append_value = np.take(y, -1, axis=axis)
-        append_value = append_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        append_value = append_value.reshape(
+            [y.shape[i] if i != axis else 1 for i in range(y.ndim)]
+        )
         y_diff = np.diff(y, append=append_value, axis=axis)
-    elif direction == 'backward':
+    elif direction == "backward":
         prepend_value = np.take(y, 0, axis=axis)
-        prepend_value = prepend_value.reshape([y.shape[i] if i != axis else 1 for i in range(y.ndim)])
+        prepend_value = prepend_value.reshape(
+            [y.shape[i] if i != axis else 1 for i in range(y.ndim)]
+        )
         y_diff = np.diff(y, prepend=prepend_value, axis=axis)
 
     dx = x[1] - x[0]
-    if direction == 'forward':
-        x_diff = np.diff(x, append=x[-1]+dx)
-    elif direction == 'backward':
-        x_diff = np.diff(x, prepend=x[0]-dx)
+    if direction == "forward":
+        x_diff = np.diff(x, append=x[-1] + dx)
+    elif direction == "backward":
+        x_diff = np.diff(x, prepend=x[0] - dx)
     # Reshape x_diff to broadcast correctly along the specified axis
     shape = [1] * y.ndim
     shape[axis] = len(x_diff)
@@ -269,14 +278,14 @@ def filtering_peaks_mask(
     for i, (bsz, boff) in enumerate(zip(block_sizes, block_offsets)):
         matrix_density = matrix_diag[..., boff : boff + bsz].imag.mean(axis=-1)
         local_dos.append(xp.abs(matrix_density))
-    
-    local_dos = xp.array(local_dos)
-    dos = comm.stack.all_gather_v(
-        local_dos, axis=1, mask=matrix._stack_padding_mask
-    )
 
-    forward_gradient = _one_sided_gradient(dos, x=energies, axis=1, direction='forward')
-    backward_gradient = _one_sided_gradient(dos, x=energies, axis=1, direction='backward')
+    local_dos = xp.array(local_dos)
+    dos = comm.stack.all_gather_v(local_dos, axis=1, mask=matrix._stack_padding_mask)
+
+    forward_gradient = _one_sided_gradient(dos, x=energies, axis=1, direction="forward")
+    backward_gradient = _one_sided_gradient(
+        dos, x=energies, axis=1, direction="backward"
+    )
     mask = (xp.min(forward_gradient, axis=0) < -peak_limit) | (
         xp.max(backward_gradient, axis=0) > peak_limit
     )

@@ -388,7 +388,7 @@ def _assemble_kpoint(
     num_dimensions = len(kpoint_grid)
 
     if isinstance(kshift, int):
-        kshift = xp.array([kshift for _ in range(num_dimensions)])
+        kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -405,14 +405,14 @@ def _assemble_kpoint(
     )
     kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-    index = np.argwhere(kpoint_grid > 1)[0]
+    # index = np.argwhere(kpoint_grid > 1)[0]
     for stack_index in np.ndindex(kpoints.shape[:-1]):
         kpoint = kpoints[stack_index]
         stack_index = np.array(stack_index)
-        stack_index = tuple(stack_index[index])
+        stack_index = tuple(stack_index[kpoint_grid > 1])
 
         cells = np.array(list(matrix_dict.keys()))
-        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+        phases = np.exp(2j * np.pi * (cells @ kpoint))
 
         # NOTE: Sparse matrix addition is slow
         # but unavoidable due to memory constraints.
@@ -582,7 +582,9 @@ def load_matrix(
         sparsity_pattern = sparsity_pattern + sparsity_pattern.T
 
     # Symmetrize the data.
-    matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
+    # The xp.conj() don't have support for sparse arrays
+    # matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
+    matrix_sparray = 0.5 * (matrix_sparray + matrix_sparray.conj().T)
 
     matrix = compute_config.dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),

@@ -32,28 +32,6 @@ _level_to_num = {"off": 0, "default": 1, "debug": 2}
 QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
-def _get_cuda_devices(return_names: bool = False):
-    """Returns the list of available CUDA devices.
-
-    Parameters
-    ----------
-    return_names
-        If the device names should be written out.
-
-    Returns
-    ----------
-    list
-        List of available devices
-    """
-    if xp.__name__ != "cupy":
-        return []
-    num_devices = xp.cuda.runtime.getDeviceCount()
-    if return_names:
-        return [f"cuda:{i}" for i in range(num_devices)]
-
-    return list(range(num_devices))
-
-
 class _OutputFile:
     def __init__(self, name: str = "qtx_times"):
         new_name = f"{name}.out"
@@ -210,8 +188,30 @@ class Profiler:
     ----------
     eventlog : list
         A list of profiling data.
-    devices : list
-        A list of CUDA device IDs.
+    depth : int
+        The current depth of the profiled functions. This is used to
+        indent the printed profiling data.
+    print_file : _OutputFile
+        The file to which the profiling data is printed. This can be set
+        through the `set_parameters` method.
+    save_path : str
+        The path to which the profiling data is saved. This can be set
+        through the `set_parameters` method.
+    save_format : str
+        The format in which the profiling data is saved. This can be set
+        through the `set_parameters` method. The following formats are
+        supported:
+        - `"pickle"`: The profiling data is saved as a pickle file.
+        - `"json"`: The profiling data is saved as a json file.
+    start_event : cupy.cuda.Event
+        The CUDA event used to record the start time of a profiled function.
+        Only relevant for GPU computations.
+    end_event : cupy.cuda.Event
+        The CUDA event used to record the end time of a profiled function.
+        Only relevant for GPU computations.
+    after_barrier_event : cupy.cuda.Event
+        The CUDA event used to record the time after the barrier of a profiled function.
+        Only relevant for GPU computations.
 
     """
 
@@ -222,7 +222,6 @@ class Profiler:
             cls._instance = super(Profiler, cls).__new__(cls)
 
             cls._instance.eventlog = []
-            cls._instance.devices = _get_cuda_devices()
             cls._instance.depth = -1
             cls._instance.print_file = _OutputFile("qtx_times")
             cls._instance.save_path = "qtx_times"

@@ -39,4 +39,5 @@ def bose_einstein(energy: float | NDArray, temperature: float) -> float | NDArra
         Bose-Einstein occupancy.
 
     """
-    return 1 / (xp.exp(energy / (k_B * temperature)) - 1)
+    # If a zero energy is encountered, return zero occupancy to avoid division by zero.
+    return xp.where(energy == 0, 0, 1 / (xp.exp(energy / (k_B * temperature)) - 1))

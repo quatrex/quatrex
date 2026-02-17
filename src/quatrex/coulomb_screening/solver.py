@@ -13,6 +13,7 @@ from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
+from qttools.utils.stack_utils import scale_stack
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
@@ -175,6 +176,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             quatrex_config.coulomb_screening.filtering_iteration_limit
         )
 
+        self.solve_lyapunov = quatrex_config.coulomb_screening.solve_lyapunov
+
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
 
@@ -221,38 +224,51 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             t_lyapunov_start = time.perf_counter()
             # Compute and apply the left lesser/greater boundary self-energy.
-            a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
-            a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+            if self.solve_lyapunov:
+                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
+                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
 
-            q_00_lesser = (
-                x_00
-                @ (
-                    self.l_lesser.blocks[0, 0]
-                    - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+                q_00_lesser = (
+                    x_00
+                    @ (
+                        self.l_lesser.blocks[0, 0]
+                        - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+                    )
+                    @ x_00.conj().swapaxes(-1, -2)
                 )
-                @ x_00.conj().swapaxes(-1, -2)
-            )
-            q_00_greater = (
-                x_00
-                @ (
-                    self.l_greater.blocks[0, 0]
-                    - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+                q_00_greater = (
+                    x_00
+                    @ (
+                        self.l_greater.blocks[0, 0]
+                        - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+                    )
+                    @ x_00.conj().swapaxes(-1, -2)
                 )
-                @ x_00.conj().swapaxes(-1, -2)
+
+                b_00 = x_00 @ m_10
+                q_00 = xp.stack((q_00_lesser, q_00_greater))
+
+                w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
+
+            else:  # Fluctuation-dissipation based boundary self-energies.
+                omega_00 = x_00 - x_00.conj().swapaxes(-1, -2)
+                w_00_lesser = scale_stack(omega_00.copy(), self.left_occupancies)
+                w_00_greater = scale_stack(omega_00.copy(), 1 + self.left_occupancies)
+
+            self.obc_blocks.lesser[0] = (
+                m_10 @ w_00_lesser @ m_10.conj().swapaxes(-1, -2)
+            )
+            self.obc_blocks.greater[0] = (
+                m_10 @ w_00_greater @ m_10.conj().swapaxes(-1, -2)
             )
 
-            b_00 = x_00 @ m_10
-            q_00 = xp.stack((q_00_lesser, q_00_greater))
-
-            w_00_lesser, w_00_greater = self.lyapunov(b_00, q_00, "left")
-
-            self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
-                -1, -2
-            ) - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
-
-            self.obc_blocks.greater[0] = m_10 @ w_00_greater @ m_10.conj().swapaxes(
-                -1, -2
-            ) - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
+            if self.solve_lyapunov:
+                self.obc_blocks.lesser[0] -= a_00_lesser - a_00_lesser.conj().swapaxes(
+                    -1, -2
+                )
+                self.obc_blocks.greater[
+                    0
+                ] -= a_00_greater - a_00_greater.conj().swapaxes(-1, -2)
 
             synchronize_device()
             t_lyapunov_end = time.perf_counter()
@@ -297,40 +313,53 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             self.obc_blocks.retarded[-1] = m_mn_x_nn @ m_nm
 
-            # Compute and apply the right lesser/greater boundary self-energy.
-            a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
-            a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
+            if self.solve_lyapunov:
+                # Compute and apply the right lesser/greater boundary self-energy.
+                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
+                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
 
-            q_nn_lesser = (
-                x_nn
-                @ (
-                    self.l_lesser.blocks[n, n]
-                    - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+                q_nn_lesser = (
+                    x_nn
+                    @ (
+                        self.l_lesser.blocks[n, n]
+                        - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
+                    )
+                    @ x_nn.conj().swapaxes(-1, -2)
                 )
-                @ x_nn.conj().swapaxes(-1, -2)
-            )
-            q_nn_greater = (
-                x_nn
-                @ (
-                    self.l_greater.blocks[n, n]
-                    - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+                q_nn_greater = (
+                    x_nn
+                    @ (
+                        self.l_greater.blocks[n, n]
+                        - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+                    )
+                    @ x_nn.conj().swapaxes(-1, -2)
                 )
-                @ x_nn.conj().swapaxes(-1, -2)
+
+                b_nn = x_nn @ m_mn
+
+                q_nn = xp.stack((q_nn_lesser, q_nn_greater))
+
+                w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
+
+            else:  # Fluctuation-dissipation based boundary self-energies.
+                omega_nn = x_nn - x_nn.conj().swapaxes(-1, -2)
+                w_nn_lesser = scale_stack(omega_nn.copy(), self.right_occupancies)
+                w_nn_greater = scale_stack(omega_nn.copy(), 1 + self.right_occupancies)
+
+            self.obc_blocks.lesser[-1] = (
+                m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(-1, -2)
+            )
+            self.obc_blocks.greater[-1] = (
+                m_mn @ w_nn_greater @ m_mn.conj().swapaxes(-1, -2)
             )
 
-            b_nn = x_nn @ m_mn
-
-            q_nn = xp.stack((q_nn_lesser, q_nn_greater))
-
-            w_nn_lesser, w_nn_greater = self.lyapunov(b_nn, q_nn, "right")
-
-            self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(
-                -1, -2
-            ) - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
-
-            self.obc_blocks.greater[-1] = m_mn @ w_nn_greater @ m_mn.conj().swapaxes(
-                -1, -2
-            ) - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
+            if self.solve_lyapunov:
+                self.obc_blocks.lesser[-1] -= a_nn_lesser - a_nn_lesser.conj().swapaxes(
+                    -1, -2
+                )
+                self.obc_blocks.greater[
+                    -1
+                ] -= a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2)
 
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
         """Assembles the system matrix."""
@@ -350,6 +379,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             spillover_correction=True,
         )
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
+        # self.system_matrix += (1+1e-3j)*sparse.eye(self.system_matrix.shape[-1])
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -584,7 +614,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         t_filter_start = time.perf_counter()
         # Only filter the peaks for the first few iterations.
         if self.solve_call_count < self.filtering_iteration_limit:
-            #self._filter_peaks(out)
+            # self._filter_peaks(out)
             w_lesser, w_greater, *__ = out
             local_mask = filtering_peaks_mask(
                 w_greater, self.energies, self.dos_peak_limit

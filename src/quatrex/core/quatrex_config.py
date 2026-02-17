@@ -357,7 +357,9 @@ class ElectronConfig(BaseModel):
     right_fermi_level: float | None = None
 
     doping: float = 0.0  # Charge per unit volume
-    band_edge_tracking: Literal["dos-peaks", "eigenvalues", "charge-neutrality"] | None = None
+    band_edge_tracking: (
+        Literal["dos-peaks", "eigenvalues", "charge-neutrality"] | None
+    ) = None
 
     temperature: PositiveFloat = 300.0  # K
 
@@ -455,6 +457,7 @@ class CoulombScreeningConfig(BaseModel):
     solver: SolverConfig = SolverConfig()
     obc: OBCConfig = OBCConfig()
     lyapunov: LyapunovConfig = LyapunovConfig()
+    solve_lyapunov: bool = True
 
     temperature: PositiveFloat = 300.0  # K
 

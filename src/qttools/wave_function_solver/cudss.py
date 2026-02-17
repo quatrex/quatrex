@@ -8,6 +8,7 @@ from qttools.wave_function_solver.solver import WFSolver
 
 try:
     from nvmath.bindings import cudss
+    from nvmath.bindings.cudss import MatrixType, MatrixViewType
     from nvmath.internal import tensor_wrapper, utils
     from nvmath.sparse._internal import cudss_utils
     from nvmath.sparse.advanced import DirectSolver
@@ -55,6 +56,7 @@ class cuDSS(WFSolver):
         self,
         explicitely_reset_operands: str = "b",
         use_multithreading: bool = True,
+        hermitian_matrix: bool = False,
     ) -> None:
         """Initializes the cuDSS wave function solver."""
         if not nvmath_available:
@@ -79,6 +81,10 @@ class cuDSS(WFSolver):
                 print("WARNING! No suitable multithreading library found for cuDSS.")
             else:
                 self.solver_options["multithreading_lib"] = multithreading_lib
+
+        if hermitian_matrix:
+            self.solver_options["sparse_system_type"] = MatrixType(2)
+            self.solver_options["sparse_system_view"] = MatrixViewType(2)
 
     def __del__(self) -> None:
         """Cleans up the cuDSS solver context."""

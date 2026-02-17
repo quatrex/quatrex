@@ -230,11 +230,28 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.h5").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        # NOTE: Contains only the upper triangular parts of the matrices.
-        hamiltonians = load_matrices(self.config, "hamiltonian")
+        self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
 
-        self.hamiltonians = {}
-        for r, h_r in hamiltonians.items():
+        for r, h_r in self.hamiltonians.items():
+            assert (
+                h_r.shape[0] == h_r.shape[1]
+            ), f"Hamiltonian matrix at index {r} is not square."
+
+            # assert all hamiltonians are sparse matrices
+            if not isinstance(h_r, scipy.sparse.spmatrix):
+                raise ValueError(
+                    f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
+                    f"Matrix type: {type(h_r)}"
+                )
+
+            self.hamiltonians[r] = sparse.csr_matrix((h_r))
+
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                # Hamiltonian and system-matrix are hermitian, only the higher half of the matrix is stored.
+                self.hamiltonians[r] = sparse.triu(
+                    self.hamiltonians[r], format="csr"
+                )
+
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
             # TODO: Do not unsymmetrize
@@ -263,13 +280,20 @@ class Device:
 
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
-                # TODO: Do not unsymmetrize
-                flipped_r = tuple(-i for i in r)
-                overlap_matrix_flipped = overlap_matrices[flipped_r]
-                self.overlap_matrices[r] = (
-                    overlap_matrices[r]
-                    + sparse.triu(overlap_matrix_flipped, k=1).conj().T
-                )
+                if self.quatrex_config.qtbm.method == "SplitSolve":
+                    # Overlap is hermitian, only the higher half of the matrix is stored.
+                    self.overlap_matrices[r] = sparse.triu(
+                        self.overlap_matrices[r], format="csr"
+                    )
+
+                if not all(index == 0 for index in r):
+                    self.overlap_matrices[r] = self.overlap_matrices[r].astype(
+                        xp.complex128
+                    )
+
+                if not self.overlap_matrices[r].has_canonical_format:
+                    self.overlap_matrices[r].sum_duplicates()
+                    self.overlap_matrices[r].sort_indices()
 
             if len(self.overlap_matrices) < len(self.hamiltonians):
                 raise ValueError(

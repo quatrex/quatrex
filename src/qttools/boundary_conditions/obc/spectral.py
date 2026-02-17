@@ -465,7 +465,7 @@ class Spectral(OBCSolver):
             V = a_ji[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w)) @ linalg.inv(
                 xp.diag(w)
             ) + a_ii[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w))
-            # V = - a_ij[i,:,:].squeeze() @ vr
+            # V = -a_ij[i, :, :].squeeze() @ vr
             v_inv = -linalg.inv(V.conj().T @ V) @ V.conj().T @ a_ij[i, :, :].squeeze()
 
             phi_inv_reflected.append(v_inv)

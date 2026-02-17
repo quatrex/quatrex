@@ -220,6 +220,8 @@ class Contact:
         # Initialize the hamiltonian and overlap matrices
         radius = self._init_hamiltonian_overlap_matrices()
 
+        self._hermitianize_unit_cell_matrices()
+
         if comm.rank == 0:
             print(
                 f"    Number of repetitions in transport direction: {self.num_transport_cells}",
@@ -476,7 +478,6 @@ class Contact:
                     f"Error in contact {self.name}: "
                     f"Could not find all orbitals in the contact unit cell. "
                 )
-
             residual_orbitals_old = residual_orbitals.copy()
 
     def _init_orbitals_transverse(
@@ -574,6 +575,22 @@ class Contact:
                     coordinates.append(np.array([y, z]))
 
         return coordinates
+
+    def _hermitianize_unit_cell_matrices(self):
+
+        for key in self.unit_cell_hamiltonian.keys():
+            if key[0] == 0:
+
+                key_opp = (key[0], -key[1], -key[2])
+                self.unit_cell_hamiltonian[key_opp] = self.unit_cell_hamiltonian[
+                    key
+                ].T.conj()
+
+        for key in self.unit_cell_overlap.keys():
+
+            if key[0] == 0:
+                key_opp = (key[0], -key[1], -key[2])
+                self.unit_cell_overlap[key_opp] = self.unit_cell_overlap[key].T.conj()
 
     def _init_hamiltonian_overlap_matrices(self) -> int:
         """Initializes the hamiltonian and overlap matrices.
@@ -712,13 +729,20 @@ class Contact:
 
         """
 
+        opposite_hopping_indices = (hopping_indices * -1).tolist()
         hopping_indices = hopping_indices.copy().tolist()
+
         hopping_indices.insert(self.direction, 0)
+        opposite_hopping_indices.insert(self.direction, 0)
+
         hopping_indices = tuple(hopping_indices)
+        opposite_hopping_indices = tuple(opposite_hopping_indices)
 
         hopping_matrix = quantity.get(hopping_indices)
         if hopping_matrix is None:
             return False
+
+        y, z = cell_coordinates
 
         # TODO: The hopping matrix sits on the GPU. It seems that there
         # is some strange fancy indexing bug that makes it necessary to
@@ -726,19 +750,37 @@ class Contact:
         hopping_matrix = (
             hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
         )
-        unit = sparse.csr_matrix(
-            hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
-        )
+        if self.device.quatrex_config.qtbm.method == "SplitSolve":
+            opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
+            # In SplitSolve, the coupling is only given by the upper triangular part of the Hamiltonian.
+            # We need to add the lower part to get the full coupling.
+            unit = (
+                sparse.csr_matrix(
+                    hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+                )
+                + sparse.csr_matrix(
+                    opposite_hopping_matrix[orbital_indices, :][
+                        :, self.origin_orbital_indices
+                    ]
+                ).T.conj()
+            )
+            if (transport_index, y, z) == (0, 0, 0):
+
+                unit -= sparse.diags(
+                    hopping_matrix[self.origin_orbital_indices, :][
+                        :, orbital_indices
+                    ].diagonal(),
+                    format="csr",
+                )
+        else:
+            unit = sparse.csr_matrix(
+                hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+            )
 
         if unit.nnz == 0:
             return False
 
-        y, z = cell_coordinates
         output_dict[(transport_index, y, z)] = unit
-
-        # Force the hamiltonian to be hermitian
-        if transport_index == 0:
-            output_dict[(transport_index, -y, -z)] = unit.T.conj()
 
         return True
 
@@ -759,9 +801,21 @@ class Contact:
 
         """
 
-        return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
-            :, residual_orbitals
-        ].nnz
+        if self.device.quatrex_config.qtbm.method == "SplitSolve":
+            # In SplitSolve, the coupling is only given by the upper triangular part of the Hamiltonian.
+            # We need to check both the upper and lower part to find all couplings.
+            return (
+                self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
+                    :, residual_orbitals
+                ].nnz
+                + self.device.hamiltonians[0, 0, 0][residual_orbitals, :][
+                    :, self.origin_orbital_indices
+                ].nnz
+            )
+        else:
+            return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
+                :, residual_orbitals
+            ].nnz
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig
@@ -1202,9 +1256,9 @@ class Contact:
                 reflection_k[ky, kz] = [
                     -A_tot[0][i] @ b for i, b in enumerate(phi_reflected)
                 ]
-                phi_reflected_k[ky, kz] = phi_reflected
-                eig_reflected_k[ky, kz] = eig_reflected
-                phi_inv_reflected_k[ky, kz] = phi_inv_reflected
+                phi_reflected_k[ky, kz] = phi_reflected.copy()
+                eig_reflected_k[ky, kz] = eig_reflected.copy()
+                phi_inv_reflected_k[ky, kz] = phi_inv_reflected.copy()
             else:
                 # Solve the OBC for the given ki and kj and store the
                 # results in dictionaries

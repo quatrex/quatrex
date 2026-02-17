@@ -206,10 +206,21 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        self.solver = self._configure_solver(config.electron.solver)
-        self.matrix_type = preferred_matrix_type[config.electron.solver.direct_solver]
+        if self.quatrex_config.qtbm.method == "SplitSolve":
+            self.solver = self._configure_solver(
+                quatrex_config.electron.solver, hermitian_matrix=True
+            )
+        else:
+            self.solver = self._configure_solver(
+                quatrex_config.electron.solver, hermitian_matrix=False
+            )
+        self.matrix_type = preferred_matrix_type[
+            quatrex_config.electron.solver.direct_solver
+        ]
 
-    def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
+    def _configure_solver(
+        self, solver_config: SolverConfig, hermitian_matrix: bool = True
+    ) -> WFSolver:
         """Configures the wavefunction solver based on the config.
 
         Parameters
@@ -228,7 +239,7 @@ class QTBM:
         if solver_config.direct_solver == "superlu":
             return SuperLU()
         if solver_config.direct_solver == "cudss":
-            return cuDSS()
+            return cuDSS(hermitian_matrix=hermitian_matrix)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -370,6 +381,9 @@ class QTBM:
         phi_ortho = xp.zeros_like(phi)
         for overlap in overlap_matrices.values():
             phi_ortho += overlap @ phi
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                phi_ortho += overlap.T.conj() @ phi
+                phi_ortho -= sparse.diags(overlap.diagonal()) @ phi
 
         for contact in self.device.contacts:
             orbital_indices = contact.orbital_indices
@@ -409,11 +423,26 @@ class QTBM:
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap) @ phi_cont
                 )
+                if self.quatrex_config.qtbm.method == "SplitSolve":
+                    phi_ortho[orbital_indices, :] += (
+                        contact.get_coupling_matrix(overlap.T.conj()) @ phi_cont
+                    )
             # CHECK SPILL OVER ERROR (DEBUG)
-            error = xp.linalg.norm(
+            error = (
                 contact.get_coupling_matrix(system_matrix) @ phi_cont
                 + system_matrix[orbital_indices, :] @ phi
             )
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                error += (
+                    contact.get_coupling_matrix(system_matrix.T.conj()) @ phi_cont
+                    + (system_matrix.T.conj() - sparse.diags(system_matrix.diagonal()))[
+                        orbital_indices, :
+                    ]
+                    @ phi
+                )
+
+            error = xp.linalg.norm(error)
+
             if comm.rank == 0:
                 print(f"    Spill over error for contact {contact.name[0]}: {error}")
 

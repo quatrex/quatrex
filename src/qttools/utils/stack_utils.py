@@ -1,9 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 def scale_stack(stacked: NDArray, factor: NDArray, axis: int = 0) -> NDArray:

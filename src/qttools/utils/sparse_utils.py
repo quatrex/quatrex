@@ -5,9 +5,6 @@ import functools
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 def product_sparsity_pattern(

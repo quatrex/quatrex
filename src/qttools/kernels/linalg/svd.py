@@ -4,10 +4,7 @@ import numba as nb
 import numpy as np
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
-
-profiler = Profiler()
 
 
 @nb.njit(parallel=True, cache=True, no_rewrites=True)

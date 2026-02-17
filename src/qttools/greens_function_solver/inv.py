@@ -4,10 +4,7 @@ from qttools import xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels import linalg
-from qttools.profiling import Profiler
 from qttools.utils.solvers_utils import get_batches
-
-profiler = Profiler()
 
 
 class Inv(GFSolver):

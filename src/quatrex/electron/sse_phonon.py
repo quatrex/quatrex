@@ -2,12 +2,9 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
-from qttools.profiling import Profiler
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
-
-profiler = Profiler()
 
 
 class SigmaPhonon(ScatteringSelfEnergy):

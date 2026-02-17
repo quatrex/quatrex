@@ -5,9 +5,6 @@ import warnings
 from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.obc.obc import OBCSolver
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class SanchoRubio(OBCSolver):

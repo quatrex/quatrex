@@ -7,7 +7,6 @@ import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, strtobool
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
-from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
     from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
@@ -17,8 +16,6 @@ else:
 
 # NOTE: CUDA kernels are not profiled, as the jit-compiled kernels
 # cannot find the correct name of the function to profile.
-profiler = Profiler()
-
 QTX_USE_DENSIFY_BLOCK = strtobool(os.getenv("QTX_USE_DENSIFY_BLOCK"), False)
 
 

@@ -7,9 +7,6 @@ from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class Spectral(OBCSolver):

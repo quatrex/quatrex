@@ -3,9 +3,6 @@
 import inspect
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 if xp.__name__ == "cupy":
     import cupyx

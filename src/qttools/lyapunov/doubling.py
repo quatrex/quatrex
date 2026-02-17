@@ -5,9 +5,6 @@ import warnings
 from qttools import NDArray, xp
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.lyapunov.utils import system_reduction
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class Doubling(LyapunovSolver):

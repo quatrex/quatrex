@@ -3,10 +3,7 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.kernels import linalg
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
-
-profiler = Profiler()
 
 
 def _eigvalsh(

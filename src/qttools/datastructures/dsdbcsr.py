@@ -8,10 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcsr_kernels, dsdbsparse_kernels
-from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
-
-profiler = Profiler()
 
 
 def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:

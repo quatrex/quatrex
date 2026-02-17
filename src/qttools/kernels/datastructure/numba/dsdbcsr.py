@@ -4,10 +4,6 @@ import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from qttools.profiling import Profiler
-
-profiler = Profiler()
-
 
 @nb.njit(parallel=True, cache=True)
 def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArray:

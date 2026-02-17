@@ -13,10 +13,7 @@ except ImportError:
     nvmath_available = False
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_any_location, get_array_module_name
-
-profiler = Profiler()
 
 library_to_location = {
     "numpy": "numpy",

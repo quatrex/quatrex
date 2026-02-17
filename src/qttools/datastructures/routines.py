@@ -8,10 +8,7 @@ from qttools import xp
 from qttools.comm import comm
 from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
-
-profiler = Profiler()
 
 
 def correct_out_range_index(i: int, k: int, num_blocks: int):

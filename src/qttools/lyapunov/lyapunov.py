@@ -6,9 +6,6 @@ from abc import ABC, abstractmethod
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.lyapunov.utils import system_reduction
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class LyapunovSolver(ABC):

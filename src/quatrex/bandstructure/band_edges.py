@@ -7,13 +7,9 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import BandEdgeConfig
-
-profiler = Profiler()
-
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks

@@ -8,11 +8,8 @@ import numpy as np
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
-
-profiler = Profiler()
 
 
 def _flatten_list(nested_lists: list[list]) -> list:

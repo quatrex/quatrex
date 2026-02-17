@@ -1,12 +1,9 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
-
-profiler = Profiler()
 
 
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:

@@ -8,12 +8,10 @@ from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
-from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 
-profiler = Profiler()
-
 rng = xp.random.default_rng(42)
+
 
 class Beyn(NEVP):
     """Beyn's integral method for solving NEVP.[^1]

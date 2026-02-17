@@ -6,9 +6,6 @@ from abc import ABC, abstractmethod
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels import linalg
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class OBCSolver(ABC):

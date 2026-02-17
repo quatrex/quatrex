@@ -17,6 +17,7 @@ from qttools.utils.inplace_utils import (
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import (
     MUMPS,
+    PARDISO,
     SuperLU,
     WFSolver,
     cuDSS,
@@ -235,11 +236,17 @@ class QTBM:
 
         """
         if solver_config.direct_solver == "mumps":
+            if hermitian_matrix:
+                raise ValueError("MUMPS does not support hermitian matrices.")
             return MUMPS()
         if solver_config.direct_solver == "superlu":
+            if hermitian_matrix:
+                raise ValueError("SuperLU does not support hermitian matrices.")
             return SuperLU()
         if solver_config.direct_solver == "cudss":
             return cuDSS(hermitian_matrix=hermitian_matrix)
+        if solver_config.direct_solver == "pardiso":
+            return PARDISO(hermitian_matrix=hermitian_matrix)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 

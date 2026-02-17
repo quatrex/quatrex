@@ -83,8 +83,8 @@ class cuDSS(WFSolver):
                 self.solver_options["multithreading_lib"] = multithreading_lib
 
         if hermitian_matrix:
-            self.solver_options["sparse_system_type"] = MatrixType(2)
-            self.solver_options["sparse_system_view"] = MatrixViewType(2)
+            self.solver_options["sparse_system_type"] = MatrixType.HERMITIAN
+            self.solver_options["sparse_system_view"] = MatrixViewType.UPPER
 
     def __del__(self) -> None:
         """Cleans up the cuDSS solver context."""

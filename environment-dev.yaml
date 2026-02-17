@@ -1,7 +1,9 @@
 name: quatrex-dev
 channels:
   - defaults
+  - conda-forge
 dependencies:
+  - pypardiso=0.2.0
   - _libgcc_mutex=0.1
   - _openmp_mutex=5.1
   - annotated-types=0.6.0

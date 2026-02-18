@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -11,7 +10,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import (
@@ -121,35 +120,24 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        # Determine the local slice of the data.
-        # NOTE: This is arrow-wise partitioning.
-        # TODO: Allow more options, e.g., block row-wise partitioning.
-        synchronize_device()
-        time_sparsity_start = time.perf_counter()
-        section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
-        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-        start_idx = block_offsets[section_offsets[comm.block.rank]]
-        end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
+        with profiler.profile_range(
+            label="SCBA: Sparsity Pattern", level="default", comm=comm
+        ):
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+            start_idx = block_offsets[section_offsets[comm.block.rank]]
+            end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
 
-        self.sparsity_pattern = compute_sparsity_pattern(
-            grid,
-            max_interaction_cutoff,
-            transport_direction=quatrex_config.device.transport_direction,
-            start_idx=start_idx,
-            end_idx=end_idx,
-        )
-
-        synchronize_device()
-        time_sparsity_end = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"Time for sparsity pattern: {time_sparsity_end - time_sparsity_start}",
-                flush=True,
-            )
-            print(
-                f"Sparsity pattern: {self.sparsity_pattern.shape=}, {self.sparsity_pattern.nnz=}",
-                flush=True,
+            self.sparsity_pattern = compute_sparsity_pattern(
+                grid,
+                max_interaction_cutoff,
+                transport_direction=quatrex_config.device.transport_direction,
+                start_idx=start_idx,
+                end_idx=end_idx,
             )
 
         dsdbsparse_type = compute_config.dsdbsparse_type
@@ -813,7 +801,6 @@ class SCBA:
                     ):
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "stack"
-
 
             # Symmetrize the self-energy.
             self._symmetrize_sigma()

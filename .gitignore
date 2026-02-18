@@ -175,4 +175,4 @@ hostfile
 *.sqlite
 
 # quatrex output files
-*qtx_times*
+*quatrex_times*

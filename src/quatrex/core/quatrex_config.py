@@ -564,13 +564,13 @@ class OutputConfig(BaseModel):
     """The file to print the timing results to.
 
     If None, the file is tried to be infered from the SLURM output file,
-    else the default qtx_times.out is used.
+    else the default quatrex_times.out is used.
     """
 
     save_profiling_results: bool = False
     """If the timing results should be saved."""
 
-    profiling_save_path: str = "qtx_times"
+    profiling_save_path: str = "quatrex_times"
     """The path to save the timing results to.
 
     The file extension is determined by `profiling_save_format`.
@@ -583,7 +583,7 @@ class OutputConfig(BaseModel):
     @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
         if self.profiling_print_path is None:
-            self.profiling_print_path = "qtx_times"
+            self.profiling_print_path = "quatrex_times.out"
             if "SLURM_JOB_ID" in os.environ:
                 try:
                     jid = os.environ.get("SLURM_JOB_ID")
@@ -596,7 +596,7 @@ class OutputConfig(BaseModel):
                     slurm_out = re.search(r"StdOut=(\S+)", info).group(1)
 
                     if os.path.exists(slurm_out):
-                        self.profiling_print_path = slurm_out + "_qtx_times"
+                        self.profiling_print_path = slurm_out + "_quatrex_times.out"
 
                 except Exception:
                     pass

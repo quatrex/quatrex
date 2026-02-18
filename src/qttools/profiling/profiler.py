@@ -33,10 +33,9 @@ QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
 class _OutputFile:
-    def __init__(self, name: str = "qtx_times"):
-        new_name = f"{name}.out"
+    def __init__(self, name: str = "quatrex_times.out"):
         try:
-            self.file_handle = open(new_name, "a")
+            self.file_handle = open(name, "w")
             self.is_custom_file = True
         except Exception:
             self.file_handle = sys.stdout
@@ -45,7 +44,7 @@ class _OutputFile:
     def write(self, message):
         print(message, flush=True, file=self.file_handle)
 
-    def __delete__(self):
+    def __del__(self):
         """Explicitly close the file if a new one was opened."""
         if self.is_custom_file:
             self.file_handle.close()
@@ -223,8 +222,8 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.depth = -1
-            cls._instance.print_file = _OutputFile("qtx_times")
-            cls._instance.save_path = "qtx_times"
+            cls._instance.print_file = _OutputFile("quatrex_times.out")
+            cls._instance.save_path = "quatrex_times"
             cls._instance.save_format = "json"
 
             if xp.__name__ == "cupy":
@@ -263,9 +262,9 @@ class Profiler:
 
     def set_parameters(
         self,
-        save_path: str = "qtx_times",
+        save_path: str = "quatrex_times",
         save_format: Literal["pickle", "json"] = "json",
-        print_path: str = "qtx_times",
+        print_path: str = "quatrex_times.out",
     ):
 
         if save_format not in ("pickle", "json"):

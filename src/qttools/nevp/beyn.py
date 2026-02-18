@@ -10,8 +10,6 @@ from qttools.kernels.operator import operator_inverse
 from qttools.nevp.nevp import NEVP
 from qttools.utils.mpi_utils import get_section_sizes
 
-rng = xp.random.default_rng(42)
-
 
 class Beyn(NEVP):
     """Beyn's integral method for solving NEVP.[^1]

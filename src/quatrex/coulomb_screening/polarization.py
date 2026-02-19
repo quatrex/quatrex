@@ -1,7 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
-
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -243,4 +241,3 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 p_retarded.data.imag = 0
 
             p_retarded.data += (p_greater.data - p_lesser.data) / 2
-

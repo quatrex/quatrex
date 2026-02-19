@@ -1,7 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
-
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -389,7 +387,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                         slice(start, end),
                         hilbert_kernel_fft,
                     )
-
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range(

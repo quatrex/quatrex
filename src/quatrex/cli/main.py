@@ -157,10 +157,10 @@ def run(
         if not compute_config.exists():
             compute_config = None
 
+    from qttools.profiling import Profiler
     from quatrex.core.compute_config import ComputeConfig
     from quatrex.core.compute_config import parse_config as parse_compute_config
     from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
-    from qttools.profiling import Profiler
 
     profiler = Profiler()
 
@@ -185,7 +185,6 @@ def run(
 
     if quatrex_config.outputs.save_profiling_results:
         profiler.dump_stats()
-
 
 
 @quatrex_cli.callback(no_args_is_help=True)

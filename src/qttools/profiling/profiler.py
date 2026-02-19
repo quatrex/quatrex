@@ -10,6 +10,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 from typing import Literal
 
 from mpi4py.MPI import COMM_WORLD as comm_world
@@ -33,7 +34,7 @@ QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
 class _OutputFile:
-    def __init__(self, name: str = "quatrex_times.out"):
+    def __init__(self, name: Path = Path("quatrex_times.out")):
         try:
             self.file_handle = open(name, "w")
             self.is_custom_file = True
@@ -193,7 +194,7 @@ class Profiler:
     print_file : _OutputFile
         The file to which the profiling data is printed. This can be set
         through the `set_parameters` method.
-    save_path : str
+    save_path : Path
         The path to which the profiling data is saved. This can be set
         through the `set_parameters` method.
     save_format : str
@@ -262,9 +263,9 @@ class Profiler:
 
     def set_parameters(
         self,
-        save_path: str = "quatrex_times",
+        save_path: Path = Path("quatrex_times"),
         save_format: Literal["pickle", "json"] = "json",
-        print_path: str = "quatrex_times.out",
+        print_path: Path = Path("quatrex_times.out"),
     ):
 
         if save_format not in ("pickle", "json"):
@@ -285,8 +286,6 @@ class Profiler:
         save_path = self.save_path
         save_format = self.save_format
 
-        save_path, _ = os.path.splitext(save_path)
-
         if save_format not in ("pickle", "json"):
             raise ValueError(
                 f"Invalid save_format {save_format}. `set_parameters` should be called with the valid format."
@@ -297,16 +296,15 @@ class Profiler:
             # Only the root rank dumps the stats.
             return
 
-        save_path = os.fspath(save_path)
-        os.path.isdir(os.path.dirname(save_path))
         if save_format == "pickle":
-            if not save_path.endswith(".pkl"):
-                save_path += ".pkl"
+            save_path = save_path.with_suffix(".pkl")
+        else:
+            save_path = save_path.with_suffix(".json")
+
+        if save_format == "pickle":
             with open(save_path, "wb") as pickle_file:
                 pickle.dump(stats, pickle_file)
         else:
-            if not save_path.endswith(".json"):
-                save_path += ".json"
             with open(save_path, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 

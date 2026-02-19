@@ -560,7 +560,7 @@ class OutputConfig(BaseModel):
 
     self_energy_density: bool = False
 
-    profiling_path: str | None = None
+    profiling_path: Path | None = None
     """The files to print and save the timing results to.
 
     For printing, the full name with extension is used while for saving
@@ -579,7 +579,7 @@ class OutputConfig(BaseModel):
     @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
         if self.profiling_path is None:
-            self.profiling_path = "quatrex_times.out"
+            self.profiling_path = Path("quatrex_times.out")
             if "SLURM_JOB_ID" in os.environ:
                 try:
                     jid = os.environ.get("SLURM_JOB_ID")
@@ -593,19 +593,14 @@ class OutputConfig(BaseModel):
                     slurm_out_base, _ = os.path.splitext(slurm_out)
 
                     if os.path.exists(slurm_out):
-                        self.profiling_path = slurm_out_base + "_quatrex_times.out"
+                        self.profiling_path = Path(
+                            slurm_out_base + "_quatrex_times.out"
+                        )
 
                 except Exception:
                     pass
 
         assert self.profiling_path is not None, "profiling_path should be set here."
-
-        # Saving will strip the extension
-        profiler.set_parameters(
-            print_path=self.profiling_path,
-            save_path=self.profiling_path,
-            save_format=self.profiling_save_format,
-        )
 
         return self
 
@@ -819,6 +814,23 @@ class QuatrexConfig(BaseModel):
                 )
 
         # TODO: extend this to other paths, not only energies
+
+        return self
+
+    @model_validator(mode="after")
+    def resolve_profiler_path(self):
+        """Resolves the simulation directory path."""
+        if not self.outputs.profiling_path.is_absolute():
+            self.outputs.profiling_path = (
+                self.config_dir / self.outputs.profiling_path
+            ).resolve()
+
+        # Saving will strip the extension
+        profiler.set_parameters(
+            print_path=self.outputs.profiling_path,
+            save_path=self.outputs.profiling_path,
+            save_format=self.outputs.profiling_save_format,
+        )
 
         return self
 

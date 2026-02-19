@@ -62,8 +62,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     Parameters
     ----------
-    config : Path
-        Quatrex configuration file.
+    config : QuatrexConfig
+        Quatrex configuration object.
     coulomb_screening_energies : NDArray
         The energies for the Coulomb screening
 

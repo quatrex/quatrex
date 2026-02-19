@@ -113,7 +113,7 @@ class Contact:
         if comm.rank == 0:
             print(f"Contact {self.name}:", flush=True)
             print(
-                f"    Number of atoms inside the origin cell: {self.origin_num_orbitals}",
+                f"    Number of orbitals inside the origin cell: {self.origin_num_orbitals}",
                 flush=True,
             )
 
@@ -426,7 +426,7 @@ class Contact:
             range(ny),
             range(nz),
         ):
-            index = [idy - self.origin_cell_offset[0], idz - self.origin_cell_offset[0]]
+            index = [idy - self.origin_cell_offset[0], idz - self.origin_cell_offset[1]]
             index.insert(self.direction, transport_index)
 
             # Process atom and orbital indices

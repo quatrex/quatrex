@@ -560,30 +560,26 @@ class OutputConfig(BaseModel):
 
     self_energy_density: bool = False
 
-    profiling_print_path: str | None = None
-    """The file to print the timing results to.
+    profiling_path: str | None = None
+    """The files to print and save the timing results to.
+
+    For printing, the full name with extension is used while for saving
+    the extension give by `profiling_save_format` is used.
 
     If None, the file is tried to be infered from the SLURM output file,
     else the default quatrex_times.out is used.
     """
 
     save_profiling_results: bool = False
-    """If the timing results should be saved."""
-
-    profiling_save_path: str = "quatrex_times"
-    """The path to save the timing results to.
-
-    The file extension is determined by `profiling_save_format`.
-    The data is only saved at the end of the simulation.
-    """
+    """If the timing stats should be saved."""
 
     profiling_save_format: Literal["pickle", "json"] = "json"
     """The format to save the timing results in."""
 
     @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
-        if self.profiling_print_path is None:
-            self.profiling_print_path = "quatrex_times.out"
+        if self.profiling_path is None:
+            self.profiling_path = "quatrex_times.out"
             if "SLURM_JOB_ID" in os.environ:
                 try:
                     jid = os.environ.get("SLURM_JOB_ID")
@@ -597,20 +593,17 @@ class OutputConfig(BaseModel):
                     slurm_out_base, _ = os.path.splitext(slurm_out)
 
                     if os.path.exists(slurm_out):
-                        self.profiling_print_path = (
-                            slurm_out_base + "_quatrex_times.out"
-                        )
+                        self.profiling_path = slurm_out_base + "_quatrex_times.out"
 
                 except Exception:
                     pass
 
-        assert (
-            self.profiling_print_path is not None
-        ), "profiling_print_path should be set here."
+        assert self.profiling_path is not None, "profiling_path should be set here."
 
+        # Saving will strip the extension
         profiler.set_parameters(
-            print_path=self.profiling_print_path,
-            save_path=self.profiling_save_path,
+            print_path=self.profiling_path,
+            save_path=self.profiling_path,
             save_format=self.profiling_save_format,
         )
 

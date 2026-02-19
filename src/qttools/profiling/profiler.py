@@ -222,9 +222,9 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.depth = -1
-            cls._instance.print_file = _OutputFile("quatrex_times.out")
-            cls._instance.save_path = "quatrex_times"
-            cls._instance.save_format = "json"
+            cls._instance.print_file = None
+            cls._instance.save_path = None
+            cls._instance.save_format = None
 
             if xp.__name__ == "cupy":
                 # NOTE: this consumes some resources
@@ -249,7 +249,7 @@ class Profiler:
             return all_events
         return [[]]
 
-    def get_stats(self) -> dict:
+    def _get_stats(self) -> dict:
         """Computes statistics from profiling data accross all ranks.
 
         Returns
@@ -288,9 +288,11 @@ class Profiler:
         save_path, _ = os.path.splitext(save_path)
 
         if save_format not in ("pickle", "json"):
-            raise ValueError(f"Invalid save_format {save_format}.")
+            raise ValueError(
+                f"Invalid save_format {save_format}. `set_parameters` should be called with the valid format."
+            )
 
-        stats = self.get_stats()
+        stats = self._get_stats()
         if comm_world.rank != 0:
             # Only the root rank dumps the stats.
             return
@@ -400,6 +402,9 @@ class Profiler:
         if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
             yield
             return
+
+        if self.print_file is None:
+            raise ValueError("Before profiling, `set_parameters` needs to be called.")
 
         try:
             self.depth += 1

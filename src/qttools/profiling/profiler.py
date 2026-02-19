@@ -283,12 +283,9 @@ class Profiler:
                 "No save_path specified for dumping profiling data. Call set method before dumping."
             )
 
-        save_path = self.save_path
-        save_format = self.save_format
-
-        if save_format not in ("pickle", "json"):
+        if self.save_format not in ("pickle", "json"):
             raise ValueError(
-                f"Invalid save_format {save_format}. `set_parameters` should be called with the valid format."
+                f"Invalid save_format {self.save_format}. `set_parameters` should be called with the valid format."
             )
 
         stats = self._get_stats()
@@ -296,15 +293,12 @@ class Profiler:
             # Only the root rank dumps the stats.
             return
 
-        if save_format == "pickle":
-            save_path = save_path.with_suffix(".pkl")
-        else:
-            save_path = save_path.with_suffix(".json")
-
-        if save_format == "pickle":
+        if self.save_format == "pickle":
+            save_path = self.save_path.with_suffix(".pkl")
             with open(save_path, "wb") as pickle_file:
                 pickle.dump(stats, pickle_file)
         else:
+            save_path = self.save_path.with_suffix(".json")
             with open(save_path, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 

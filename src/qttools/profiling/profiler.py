@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO, Union
 
 from mpi4py.MPI import COMM_WORLD as comm_world
 
@@ -34,13 +34,16 @@ QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
 class _OutputFile:
-    def __init__(self, name: Path = Path("quatrex_times.out")):
-        try:
-            self.file_handle = open(name, "w")
-            self.is_custom_file = True
-        except Exception:
-            self.file_handle = sys.stdout
-            self.is_custom_file = False
+    def __init__(self, target: Union[Path, str, TextIO] = Path("quatrex_times.out")):
+        self.is_custom_file = False
+        if hasattr(target, "write"):
+            self.file_handle = target
+        else:
+            try:
+                self.file_handle = open(target, "w")
+                self.is_custom_file = True
+            except Exception:
+                self.file_handle = sys.stdout
 
     def write(self, message):
         print(message, flush=True, file=self.file_handle)
@@ -223,7 +226,7 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.depth = -1
-            cls._instance.print_file = None
+            cls._instance.print_file = _OutputFile(sys.stdout)
             cls._instance.save_path = None
             cls._instance.save_format = None
 

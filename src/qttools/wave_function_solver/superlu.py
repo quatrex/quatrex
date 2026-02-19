@@ -1,15 +1,12 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, sparse
-from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
 
 if "cupy" in sparse.__name__:
     from cupyx.scipy.sparse import linalg
 else:
     from scipy.sparse import linalg
-
-profiler = Profiler()
 
 
 class SuperLU(WFSolver):
@@ -21,7 +18,6 @@ class SuperLU(WFSolver):
 
     """
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse system a @ x = b using LU decomposition.
 

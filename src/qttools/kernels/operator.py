@@ -2,9 +2,6 @@
 
 from qttools import QTX_USE_CUPY_JIT, NDArray, xp
 from qttools.kernels import linalg
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 if xp.__name__ == "cupy":
     import cupyx as cpx
@@ -113,7 +110,6 @@ if xp.__name__ == "cupy":
         )
 
 
-@profiler.profile(level="debug")
 def operator_inverse(
     a_xx: tuple[NDArray, ...],
     z: NDArray,

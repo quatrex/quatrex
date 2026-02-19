@@ -7,15 +7,8 @@ from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
-from qttools.profiling import Profiler, decorate_methods
-
-profiler = Profiler()
 
 
-@decorate_methods(
-    profiler.profile(level="debug"),
-    exclude=["__call__", "__init__"],
-)
 class Spectral(OBCSolver):
     """Spectral open-boundary condition solver.
 
@@ -407,7 +400,6 @@ class Spectral(OBCSolver):
         # Calculate the surface Green's function.
         return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,

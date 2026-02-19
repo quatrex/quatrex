@@ -4,13 +4,9 @@ from qttools import xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels import linalg
-from qttools.profiling import Profiler, decorate_methods
 from qttools.utils.solvers_utils import get_batches
 
-profiler = Profiler()
 
-
-@decorate_methods(profiler.profile(level="api"), exclude=["__init__"])
 class Inv(GFSolver):
     """Selected inversion solver based on dense matrix inversion.
 

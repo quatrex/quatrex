@@ -12,36 +12,43 @@ from datetime import datetime
 from functools import wraps
 from typing import Literal
 
-from mpi4py.MPI import COMM_WORLD as comm
+from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import strtobool, xp
-from qttools.profiling.utils import get_cuda_devices
 
 NVTX_AVAILABLE = xp.__name__ == "cupy" and xp.cuda.nvtx.available
 
-
-# Set the whether to profile the GPU.
-QTX_PROFILE_GPU = strtobool(os.getenv("QTX_PROFILE_GPU"), False)
-if QTX_PROFILE_GPU:
-    if xp.__name__ != "cupy":
-        warnings.warn("CUDA is not available. Defaulting to no GPU profiling.")
-        QTX_PROFILE_GPU = False
-    else:
-        warnings.warn(
-            "GPU profiling is enabled. This will cause device "
-            "synchronization for every profiled event."
-        )
-
 # Set the profiling level.
-QTX_PROFILE_LEVEL = os.getenv("QTX_PROFILE_LEVEL", "basic").lower()
-if QTX_PROFILE_LEVEL not in ("off", "basic", "api", "debug", "full"):
+QTX_PROFILE_LEVEL = os.getenv("QTX_PROFILE_LEVEL", "default").lower()
+if QTX_PROFILE_LEVEL not in ("off", "default", "debug"):
     warnings.warn(
-        f"Invalid profiling level {QTX_PROFILE_LEVEL=}. Defaulting to 'basic'."
+        f"Invalid profiling level {QTX_PROFILE_LEVEL=}. Defaulting to 'default'."
     )
-    QTX_PROFILE_LEVEL = "basic"
+    QTX_PROFILE_LEVEL = "default"
 
 # Define the mapping of profiling levels to numbers.
-_level_to_num = {"off": 0, "basic": 1, "api": 2, "debug": 3, "full": 4}
+_level_to_num = {"off": 0, "default": 1, "debug": 2}
+
+QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
+
+
+class _OutputFile:
+    def __init__(self, name: str = "quatrex_times.out"):
+        try:
+            self.file_handle = open(name, "w")
+            self.is_custom_file = True
+        except Exception:
+            self.file_handle = sys.stdout
+            self.is_custom_file = False
+
+    def write(self, message):
+        print(message, flush=True, file=self.file_handle)
+
+    def __del__(self):
+        """Explicitly close the file if a new one was opened."""
+        if self.is_custom_file:
+            self.file_handle.close()
+            self.is_custom_file = False
 
 
 class _ProfilingEvent:
@@ -62,16 +69,14 @@ class _ProfilingEvent:
     ----------
     datetime : datetime
         The timestamp of the event.
-    prof_type : str
-        The type of the profiling event.
-    qualname : str
-        The qualified name of the profiled function.
-    prof_id : str
-        The ID of the profiling event.
-    host_time : float
-        The time spent on the host.
-    device_times : list
-        The time spent on each device.
+    depth: int
+        The depth of the profiled function.
+    label : str
+        The label of the profiled function.
+    call_time : float
+        The time spent on the call.
+    after_barrier_time : float
+        The time spent including the barrier
     rank : int
         The MPI rank on which the event occurred.
 
@@ -79,19 +84,15 @@ class _ProfilingEvent:
 
     def __init__(self, event: list, rank: int):
         """Initializes the profiling event object."""
-        timestamp, name, host_time, device_times = event
+        timestamp, depth, label, call_time, after_barrier_time = event
         # TODO: Here we parse the timestamp as a datetime object. It
         # would be very nice to have a trace plot of the profiling
         # data, but this would require a bit more work.
         self.datetime = datetime.fromtimestamp(timestamp)
-
-        # Names will look like "<function Class.do_something at 0x...>".
-        prof_type, qualname, *__ = name.strip("<>").split()
-        self.prof_type = prof_type
-        self.qualname = qualname
-
-        self.host_time = host_time
-        self.device_times = device_times
+        self.depth = depth
+        self.label = label
+        self.call_time = call_time
+        self.after_barrier_time = after_barrier_time
         self.rank = rank
 
 
@@ -130,48 +131,49 @@ class _ProfilingRun:
             A dictionary containing the profiling statistics.
 
         """
-        host_stats = defaultdict(list)
-        device_stats = defaultdict(list)
+        call_stats = defaultdict(list)
+        after_barrier_stats = defaultdict(list)
         ranks = defaultdict(set)
+        depths = defaultdict(set)
         for event in self.profiling_events:
-            host_stats[event.qualname].append(event.host_time)
-            device_stats[event.qualname].append(event.device_times)
-            ranks[event.qualname].add(event.rank)
+            call_stats[event.label].append(event.call_time)
+            after_barrier_stats[event.label].append(event.after_barrier_time)
+            ranks[event.label].add(event.rank)
+            depths[event.label].add(event.depth)
 
         stats = {}
-        for key in host_stats:
-            host_times = xp.array(host_stats[key])
+        for key in call_stats:
+            call_times = xp.array(call_stats[key])
 
-            num_calls = len(host_times)
+            num_calls = len(call_times)
             num_ranks = len(ranks[key])
-            total_host_time = float(xp.sum(host_times))
+            total_call_time = float(xp.sum(call_times))
 
             stats[key] = {
                 "num_calls": num_calls,
                 "num_participating_ranks": num_ranks,
                 "num_calls_per_rank": num_calls / num_ranks,
-                "total_host_time": total_host_time,
-                "total_host_time_per_rank": total_host_time / num_ranks,
-                "average_host_time": float(xp.mean(host_times)),
-                "median_host_time": float(xp.median(host_times)),
-                "std_host_time": float(xp.std(host_times)),
-                "min_host_time": float(xp.min(host_times)),
-                "max_host_time": float(xp.max(host_times)),
+                "total_call_time": total_call_time,
+                "total_call_time_per_rank": total_call_time / num_ranks,
+                "average_call_time": float(xp.mean(call_times)),
+                "median_call_time": float(xp.median(call_times)),
+                "std_call_time": float(xp.std(call_times)),
+                "min_call_time": float(xp.min(call_times)),
+                "max_call_time": float(xp.max(call_times)),
             }
-            device_times = xp.array(device_stats[key])
-            if not xp.any(device_times):
-                continue
 
-            total_device_time = float(xp.sum(device_times))
+            after_barrier_times = xp.array(after_barrier_stats[key])
+            total_after_barrier_time = float(xp.sum(after_barrier_times))
             stats[key].update(
                 {
-                    "total_device_time": total_device_time,
-                    "total_device_time_per_rank": total_device_time / num_ranks,
-                    "average_device_time": float(xp.mean(device_times)),
-                    "median_device_time": float(xp.median(device_times)),
-                    "std_device_time": float(xp.std(device_times)),
-                    "min_device_time": float(xp.min(device_times)),
-                    "max_device_time": float(xp.max(device_times)),
+                    "total_after_barrier_time": total_after_barrier_time,
+                    "total_after_barrier_time_per_rank": total_after_barrier_time
+                    / num_ranks,
+                    "average_after_barrier_time": float(xp.mean(after_barrier_times)),
+                    "median_after_barrier_time": float(xp.median(after_barrier_times)),
+                    "std_after_barrier_time": float(xp.std(after_barrier_times)),
+                    "min_after_barrier_time": float(xp.min(after_barrier_times)),
+                    "max_after_barrier_time": float(xp.max(after_barrier_times)),
                 }
             )
 
@@ -185,8 +187,30 @@ class Profiler:
     ----------
     eventlog : list
         A list of profiling data.
-    devices : list
-        A list of CUDA device IDs.
+    depth : int
+        The current depth of the profiled functions. This is used to
+        indent the printed profiling data.
+    print_file : _OutputFile
+        The file to which the profiling data is printed. This can be set
+        through the `set_parameters` method.
+    save_path : str
+        The path to which the profiling data is saved. This can be set
+        through the `set_parameters` method.
+    save_format : str
+        The format in which the profiling data is saved. This can be set
+        through the `set_parameters` method. The following formats are
+        supported:
+        - `"pickle"`: The profiling data is saved as a pickle file.
+        - `"json"`: The profiling data is saved as a json file.
+    start_event : cupy.cuda.Event
+        The CUDA event used to record the start time of a profiled function.
+        Only relevant for GPU computations.
+    end_event : cupy.cuda.Event
+        The CUDA event used to record the end time of a profiled function.
+        Only relevant for GPU computations.
+    after_barrier_event : cupy.cuda.Event
+        The CUDA event used to record the time after the barrier of a profiled function.
+        Only relevant for GPU computations.
 
     """
 
@@ -197,7 +221,17 @@ class Profiler:
             cls._instance = super(Profiler, cls).__new__(cls)
 
             cls._instance.eventlog = []
-            cls._instance.devices = get_cuda_devices()
+            cls._instance.depth = -1
+            cls._instance.print_file = None
+            cls._instance.save_path = None
+            cls._instance.save_format = None
+
+            if xp.__name__ == "cupy":
+                # NOTE: this consumes some resources
+                # could be moved to the __init__ of the Profiler class
+                cls._instance.start_event = xp.cuda.stream.Event()
+                cls._instance.end_event = xp.cuda.stream.Event()
+                cls._instance.after_barrier_event = xp.cuda.stream.Event()
 
         return cls._instance
 
@@ -210,12 +244,12 @@ class Profiler:
             A list of profiling events or an empty list.
 
         """
-        all_events = comm.gather(self.eventlog, root=root)
-        if comm.rank == root:
+        all_events = comm_world.gather(self.eventlog, root=root)
+        if comm_world.rank == root:
             return all_events
         return [[]]
 
-    def get_stats(self) -> dict:
+    def _get_stats(self) -> dict:
         """Computes statistics from profiling data accross all ranks.
 
         Returns
@@ -226,135 +260,88 @@ class Profiler:
         """
         return _ProfilingRun(self._gather_events()).get_stats()
 
-    def dump_stats(self, filepath: str, format: Literal["pickle", "json"] = "pickle"):
-        """Dumps the profiling statistics to a file.
+    def set_parameters(
+        self,
+        save_path: str = "quatrex_times",
+        save_format: Literal["pickle", "json"] = "json",
+        print_path: str = "quatrex_times.out",
+    ):
 
-        Parameters
-        ----------
-        filepath : str
-            The path to the output file. The correct file extension
-            will be appended based on the format.
-        format : {"pickle", "json"}, optional
-            The format in which to save the profiling data.
+        if save_format not in ("pickle", "json"):
+            raise ValueError(f"Invalid save_format {save_format}.")
 
-        """
-        if format not in ("pickle", "json"):
-            raise ValueError(f"Invalid format {format}.")
+        self.save_format = save_format
+        self.print_file = _OutputFile(print_path)
+        self.save_path = save_path
 
-        stats = self.get_stats()
-        if comm.rank != 0:
+    def dump_stats(self):
+        """Dumps the profiling statistics to a file."""
+
+        if self.save_path is None:
+            raise ValueError(
+                "No save_path specified for dumping profiling data. Call set method before dumping."
+            )
+
+        save_path = self.save_path
+        save_format = self.save_format
+
+        save_path, _ = os.path.splitext(save_path)
+
+        if save_format not in ("pickle", "json"):
+            raise ValueError(
+                f"Invalid save_format {save_format}. `set_parameters` should be called with the valid format."
+            )
+
+        stats = self._get_stats()
+        if comm_world.rank != 0:
             # Only the root rank dumps the stats.
             return
 
-        filepath = os.fspath(filepath)
-        os.path.isdir(os.path.dirname(filepath))
-        if format == "pickle":
-            if not filepath.endswith(".pkl"):
-                filepath += ".pkl"
-            with open(filepath, "wb") as pickle_file:
+        save_path = os.fspath(save_path)
+        os.path.isdir(os.path.dirname(save_path))
+        if save_format == "pickle":
+            if not save_path.endswith(".pkl"):
+                save_path += ".pkl"
+            with open(save_path, "wb") as pickle_file:
                 pickle.dump(stats, pickle_file)
         else:
-            if not filepath.endswith(".json"):
-                filepath += ".json"
-            with open(filepath, "w") as json_file:
+            if not save_path.endswith(".json"):
+                save_path += ".json"
+            with open(save_path, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 
-    def _setup_events(self) -> tuple[list, list]:
-        """Sets up CUDA events for each device.
-
-        Returns
-        -------
-        tuple[list, list]
-            A tuple of lists of start and end events for each device.
-
-        """
-        start_events = []
-        end_events = []
-
-        for device in self.devices:
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                start_events.append(xp.cuda.stream.Event())
-                end_events.append(xp.cuda.stream.Event())
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-        return start_events, end_events
-
-    def _record_events(self, events: list):
-        """Records events for each device.
-
-        Parameters
-        ----------
-        events : list
-            A list of events to record.
-
-        """
-        for device, event in zip(self.devices, events):
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                event.record(xp.cuda.stream.Stream(device))
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-    def _synchronize_events(self, events: list):
-        """Synchronizes events for each device.
-
-        Parameters
-        ----------
-        events : list
-            A list of events to synchronize.
-
-        """
-        for device, event in zip(self.devices, events):
-            current_device = xp.cuda.runtime.getDevice()
-            try:
-                xp.cuda.runtime.setDevice(device)
-                event.synchronize()
-            finally:
-                xp.cuda.runtime.setDevice(current_device)
-
-    def profile(self, level: str = QTX_PROFILE_LEVEL):
+    def profile(self, label: str, level: str, comm=None):
         """Profiles a function and adds profiling data to the event log.
 
         Notes
         -----
         Two environment variables control the profiling behavior:
-        - `PROFILE_GPU`: Whether to separately measure the time spent on
-          the GPU. If turned on, this will cause device synchronization
-          for every profiled event.
         - `PROFILE_LEVEL`: The profiling level for functions. The
             following levels are implemented:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled for
-              debugging purposes unless the user explicitly requests it.
-
+        - `PROFILE_COMM_SYNC`: If set to `True`, a communicator barrier
+            is called after the profiled function to ensure that all
+            processes are synchronized before recording the end time.
+            Through this, differences in between processes can be
+            better captured.
 
         Parameters
         ----------
-        level : str, optional
+        label : str
+            A label for the profiled range. This is used to identify
+            the profiled range in the profiling data.
+        level : str
             The profiling level controls whether the function is
-            profiled or not. By default, the level is set to the
-            PROFILE_LEVEL environment variable. The function is thus
-            always profiled. The following levels are implemented:
+            profiled or not. The following levels are implemented:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled
-              for debugging purposes unless the user explicitly requests
-              it to be profiled.
+        comm : optional
+            An optional communicator to use for synchronization
 
         Returns
         -------
@@ -363,60 +350,17 @@ class Profiler:
             specified level.
 
         """
-        if level not in ("off", "basic", "api", "debug", "full"):
-            raise ValueError(f"Invalid profiling level {level}.")
 
         def decorator(func):
             if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
                 return func
 
-            name = func.__str__()
-
             @wraps(func)
             def wrapper(*args, **kwargs):
 
-                timestamp = time.time()
-
-                if QTX_PROFILE_GPU:
-                    start_events, end_events = self._setup_events()
-
-                    # Record and sync start events for each device.
-                    self._record_events(start_events)
-                    self._synchronize_events(start_events)
-
-                    # Record start events for each device.
-                    self._record_events(start_events)
-
-                # Push a range to NVTX if available.
-                if NVTX_AVAILABLE:
-                    xp.cuda.nvtx.RangePush(name)
-
-                host_time = -time.perf_counter()
-
                 # Call the function.
-                result = func(*args, **kwargs)
-
-                host_time += time.perf_counter()
-
-                if NVTX_AVAILABLE:
-                    xp.cuda.nvtx.RangePop()
-
-                device_times = []
-                if QTX_PROFILE_GPU:
-                    # Record end events for each device.
-                    self._record_events(end_events)
-
-                    # Sync to ensure all devices are done.
-                    self._synchronize_events(end_events)
-
-                    # Calculate the time spent on each device.
-                    for start_event, end_event in zip(start_events, end_events):
-                        device_times.append(
-                            xp.cuda.get_elapsed_time(start_event, end_event)
-                            * 1e-3  # Convert to seconds.
-                        )
-
-                self.eventlog.append((timestamp, name, host_time, device_times))
+                with self.profile_range(label, level, comm):
+                    result = func(*args, **kwargs)
 
                 return result
 
@@ -425,31 +369,26 @@ class Profiler:
         return decorator
 
     @contextmanager
-    def profile_range(self, label: str = "range", level: str = QTX_PROFILE_LEVEL):
+    def profile_range(self, label: str, level: str, comm=None):
         """Profiles a range of code.
 
         This is a context manager that profiles a range of code.
 
         Parameters
         ----------
-        label : str, optional
+        label : str
             A label for the profiled range. This is used to identify
             the profiled range in the profiling data.
-        level : str, optional
+        level : str
             The profiling level controls whether the function is
-            profiled or not. By default, the function is always
-            profiled, irrespective of the PROFILE_LEVEL environment
-            variable. The following levels are implemented:
+            profiled or not:
             - `"off"`: The function is not profiled.
-            - `"basic"`: The function is part of the core profiling.
-            - `"api"`: The function is part of the API and does not
-              always need to be timed. It is part of the underlying
-              infrastructure.
+            - `"default"`: The function is part of the core profiling.
             - `"debug"`: This function only needs to be profiled for
               debugging purposes.
-            - `"full"`: The function does not even need to be profiled
-              for debugging purposes unless the user explicitly requests
-              it to be profiled.
+        comm : optional
+            An optional communicator to use for synchronization.
+            comm_world is not used to not potentially deadlock.
 
         Yields
         ------
@@ -457,63 +396,75 @@ class Profiler:
             The context manager does not return anything.
 
         """
-        if level not in ("off", "basic", "api", "debug", "full"):
+        if level not in ("off", "default", "debug"):
             raise ValueError(f"Invalid profiling level {level}.")
 
         if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
             yield
             return
 
-        # This is quite a bit of a hack to get the qualified name of the
-        # function in which the context manager is called.
-        qualname = "no_qualname"
-        if hasattr(sys, "_getframe"):
-            qualname = sys._getframe(2).f_code.co_qualname
-
-        label = "." + label.replace(" ", "_")
-        name = "<range " + qualname + label + ">"
+        if self.print_file is None:
+            raise ValueError("Before profiling, `set_parameters` needs to be called.")
 
         try:
+            self.depth += 1
             timestamp = time.time()
 
-            if QTX_PROFILE_GPU:
-                start_events, end_events = self._setup_events()
+            # NOTE: We maybe need to barrier before starting the timer
 
-                # Record and sync start events for each device.
-                self._record_events(start_events)
-                self._synchronize_events(start_events)
+            if xp.__name__ == "cupy":
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePush(label)
 
-                # Record start events for each device.
-                self._record_events(start_events)
+                self.start_event.record(xp.cuda.get_current_stream())
+                self.start_event.synchronize()
+                self.start_event.record(xp.cuda.get_current_stream())
 
-            # Push a range to NVTX if available.
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePush(name)
-
-            host_time = -time.perf_counter()
+            else:
+                start_time = time.perf_counter()
 
             yield
 
         finally:
 
-            host_time += time.perf_counter()
+            if xp.__name__ == "cupy":
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePop()
 
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePop()
+                self.end_event.record(xp.cuda.get_current_stream())
+                self.end_event.synchronize()
+                call_time = (
+                    xp.cuda.get_elapsed_time(self.start_event, self.end_event) * 1e-3
+                )  # Convert to seconds.
+            else:
+                call_time = time.perf_counter() - start_time
 
-            device_times = []
-            if QTX_PROFILE_GPU:
-                # Record end events for each device.
-                self._record_events(end_events)
+            if comm is not None and QTX_PROFILE_COMM_SYNC:
+                comm.barrier()
+                if xp.__name__ == "cupy":
+                    self.after_barrier_event.record(xp.cuda.get_current_stream())
+                    self.after_barrier_event.synchronize()
+                    after_barrier_time = (
+                        xp.cuda.get_elapsed_time(
+                            self.start_event, self.after_barrier_event
+                        )
+                        * 1e-3
+                    )
+                else:
+                    after_barrier_time = time.perf_counter() - start_time
+            else:
+                after_barrier_time = call_time
 
-                # Sync to ensure all devices are done.
-                self._synchronize_events(end_events)
+            self.eventlog.append(
+                (timestamp, self.depth, label, call_time, after_barrier_time)
+            )
 
-                # Calculate the time spent on each device.
-                for start_event, end_event in zip(start_events, end_events):
-                    device_times.append(
-                        xp.cuda.get_elapsed_time(start_event, end_event)
-                        * 1e-3  # Convert to seconds.
+            if comm_world.rank == 0:
+                offset = "  " * (self.depth)
+                self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
+                if comm is not None and QTX_PROFILE_COMM_SYNC:
+                    self.print_file.write(
+                        f"{offset}{label} all : {after_barrier_time:.4f}s"
                     )
 
-            self.eventlog.append((timestamp, name, host_time, device_times))
+            self.depth -= 1

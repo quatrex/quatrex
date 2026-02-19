@@ -6,7 +6,6 @@ import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
-from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
     from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
@@ -14,10 +13,6 @@ else:
     from qttools.kernels.datastructure.cupy import _cupy_rawkernel as cupy_backend
 
 
-profiler = Profiler()
-
-
-@profiler.profile(level="api")
 def find_ranks(nnz_section_offsets: NDArray, inds: NDArray) -> NDArray:
     """Finds the ranks of the indices in the offsets.
 

@@ -5,7 +5,6 @@ import numpy as np
 
 from qttools import QTX_USE_CUPY_JIT, NDArray
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
-from qttools.profiling import Profiler
 
 if QTX_USE_CUPY_JIT:
     from qttools.kernels.datastructure.cupy import _cupy_jit as cupy_backend
@@ -13,10 +12,6 @@ else:
     from qttools.kernels.datastructure.cupy import _cupy_rawkernel as cupy_backend
 
 
-profiler = Profiler()
-
-
-@profiler.profile(level="api")
 def find_inds(
     rowptr_map: dict,
     block_offsets: NDArray,
@@ -127,7 +122,6 @@ def find_inds(
     return cp.array(inds, dtype=int), cp.array(value_inds, dtype=int)
 
 
-@profiler.profile(level="api")
 def densify_block(
     block: NDArray,
     block_offset: NDArray,
@@ -169,7 +163,6 @@ def densify_block(
     block[..., rows, cols] = data[..., rowptr[0] : rowptr[-1]]
 
 
-@profiler.profile(level="api")
 def sparsify_block(
     block: NDArray,
     block_offset: NDArray,
@@ -211,7 +204,6 @@ def sparsify_block(
     data[..., rowptr[0] : rowptr[-1]] = block[..., rows, cols]
 
 
-@profiler.profile(level="api")
 def compute_rowptr_map(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> dict:

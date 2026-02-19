@@ -4,12 +4,7 @@ import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 
-from qttools.profiling import Profiler
 
-profiler = Profiler()
-
-
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True)
 def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArray:
     """Finds the block coordinates of the given rows and columns.
@@ -43,7 +38,6 @@ def _find_bcoords(block_offsets: NDArray, rows: NDArray, cols: NDArray) -> NDArr
     return brows, bcols
 
 
-@profiler.profile(level="debug")
 @nb.njit(parallel=True, cache=True)
 def _find_block_inds(
     brows: NDArray,
@@ -109,7 +103,6 @@ def _find_block_inds(
     return inds[valid], mask_inds[valid]
 
 
-@profiler.profile(level="api")
 def find_inds(
     rowptr_map: dict[tuple, NDArray],
     block_offsets: NDArray,
@@ -169,7 +162,6 @@ def find_inds(
     return np.array(inds, dtype=int), np.array(value_inds, dtype=int)
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def densify_block(
     block: NDArray,
@@ -199,7 +191,6 @@ def densify_block(
         block[..., i, cols] = data[..., rowptr[i] : rowptr[i + 1]]
 
 
-@profiler.profile(level="api")
 @nb.njit(parallel=True, cache=True)
 def sparsify_block(
     block: NDArray,
@@ -231,7 +222,8 @@ def sparsify_block(
 
 # TODO: Check why the jit is uncommented here.
 # @nb.njit(parallel=True, cache=True)
-@profiler.profile(level="debug")
+
+
 def _compute_rowptr_map_kernel(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> nb.typed.Dict:
@@ -313,7 +305,6 @@ def _compute_rowptr_map_kernel(
     return sort_index, rowptr_map
 
 
-@profiler.profile(level="api")
 def compute_rowptr_map(
     coo_rows: NDArray, coo_cols: NDArray, block_sizes: NDArray
 ) -> dict:

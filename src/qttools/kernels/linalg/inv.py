@@ -1,9 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 def _invert(a: NDArray) -> NDArray:
@@ -24,7 +21,6 @@ if xp.__name__ == "cupy":
         _inv = _solve
 
 
-@profiler.profile(level="debug")
 def inv(
     a: NDArray,
 ) -> NDArray:

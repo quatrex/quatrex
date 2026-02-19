@@ -1,15 +1,11 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
 
 if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
 
-profiler = Profiler()
 
-
-@profiler.profile(level="api")
 def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using FFT over the first axis (energy axis).
 
@@ -33,7 +29,6 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     return xp.fft.ifft(a_fft * b_fft, axis=0)
 
 
-@profiler.profile(level="api")
 def fft_circular_convolve(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray:
     """Computes the circular convolution of two arrays using the FFT.
 
@@ -59,7 +54,6 @@ def fft_circular_convolve(a: NDArray, b: NDArray, axes: tuple[int]) -> NDArray:
     return xp.fft.ifftn(a_fft * b_fft, axes=axes)
 
 
-@profiler.profile(level="api")
 def fft_convolve_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Computes the convolution of two arrays using the FFT.
 
@@ -87,7 +81,6 @@ def fft_convolve_kpoints(a: NDArray, b: NDArray) -> NDArray:
     return xp.fft.ifftn(a_fft * b_fft, axes=(0,) + tuple(range(1, len(nka) + 1)))
 
 
-@profiler.profile(level="api")
 def fft_correlate_kpoints(a: NDArray, b: NDArray) -> NDArray:
     """Computes the correlation of two arrays using FFT.
 

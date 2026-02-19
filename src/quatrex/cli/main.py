@@ -157,9 +157,12 @@ def run(
         if not compute_config.exists():
             compute_config = None
 
+    from qttools.profiling import Profiler
     from quatrex.core.compute_config import ComputeConfig
     from quatrex.core.compute_config import parse_config as parse_compute_config
     from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+
+    profiler = Profiler()
 
     quatrex_config = parse_quatrex_config(quatrex_config)
 
@@ -179,6 +182,9 @@ def run(
         raise NotImplementedError(
             f"Formalism '{quatrex_config.formalism}' is not implemented."
         )
+
+    if quatrex_config.outputs.save_profiling_results:
+        profiler.dump_stats()
 
 
 @quatrex_cli.callback(no_args_is_help=True)

@@ -1,19 +1,13 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import time
 from functools import partial
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
-from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.compute_config import BandEdgeConfig
-
-profiler = Profiler()
-
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -71,7 +65,6 @@ def get_block(
     return block
 
 
-@profiler.profile(level="api")
 def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
     """Computes the band edges from the density of states.
 
@@ -92,7 +85,6 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
     return energies[peaks]
 
 
-@profiler.profile(level="debug")
 def _compute_eigenvalues(
     hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
@@ -180,7 +172,6 @@ def _compute_eigenvalues(
     )
 
 
-@profiler.profile(level="api")
 def find_renormalized_eigenvalues(
     hamiltonian: sparse.spmatrix | DSDBSparse,
     overlap: sparse.spmatrix,
@@ -273,23 +264,7 @@ def find_renormalized_eigenvalues(
             )
             left_conduction_band_guess, left_mid_gap_energy = left_packed
 
-        synchronize_device()
-        comm.stack.barrier()
-        t_band_edge_start = time.perf_counter()
         comm.stack.bcast(left_band_edges, root=rank_left)
-        synchronize_device()
-        t_band_edge_end = time.perf_counter()
-        comm.stack.barrier()
-        t_band_edge_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"        Band edge comm time: {t_band_edge_end - t_band_edge_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"        Band edge comm all time: {t_band_edge_end_all - t_band_edge_start:.3f} s",
-                flush=True,
-            )
 
     if comm.block.rank == comm.block.size - 1:
         for __ in range(num_ref_iterations):
@@ -328,7 +303,6 @@ def find_renormalized_eigenvalues(
     return left_band_edges, right_band_edges
 
 
-@profiler.profile(level="api")
 def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
     """Partitions the band edges into valence and conduction bands.
 
@@ -353,7 +327,6 @@ def find_band_edges(e_0: NDArray, mid_gap_energy: float) -> NDArray:
     return xp.array([valence_band_edge, conduction_band_edge])
 
 
-@profiler.profile(level="api")
 def local_band_edges(
     electron_ldos: NDArray, energies: NDArray, mid_gap_energies: NDArray
 ) -> tuple[NDArray, NDArray]:

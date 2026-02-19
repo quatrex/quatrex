@@ -4,7 +4,6 @@ import ctypes.util
 from collections.abc import Sequence
 
 from qttools import NDArray, sparse
-from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
 
 try:
@@ -22,8 +21,6 @@ try:
 except ImportError:
     nvmath_available = False
 
-
-profiler = Profiler()
 
 # Possible multithreading libraries for cuDSS in descending order of
 # preference.
@@ -193,7 +190,6 @@ class cuDSS(WFSolver):
             stream_holder,
         )
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse linear system a @ x = b using cuDSS.
 

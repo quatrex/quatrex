@@ -8,10 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcsr_kernels, dsdbsparse_kernels
-from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
-
-profiler = Profiler()
 
 
 def _upper_triangle(rows: NDArray, cols: NDArray) -> tuple[NDArray, NDArray, NDArray]:
@@ -110,7 +107,6 @@ class DSDBCSR(DSDBSparse):
             - self._diag_value_inds[ranks == comm.rank][0]
         )
 
-    @profiler.profile(level="debug")
     def _get_items(self, stack_index: tuple, rows: NDArray, cols: NDArray) -> NDArray:
         """Gets the requested items from the data structure.
 
@@ -192,7 +188,6 @@ class DSDBCSR(DSDBSparse):
             ..., inds[ranks == comm.rank] - self.nnz_section_offsets[comm.rank]
         ]
 
-    @profiler.profile(level="debug")
     def _set_items(
         self, stack_index: tuple, rows: NDArray, cols: NDArray, value: NDArray
     ) -> None:
@@ -264,7 +259,6 @@ class DSDBCSR(DSDBSparse):
         ]
         return
 
-    @profiler.profile(level="debug")
     def _get_block(
         self, arg: tuple | NDArray, row: int, col: int, is_index: bool = True
     ) -> NDArray | tuple:
@@ -397,7 +391,6 @@ class DSDBCSR(DSDBSparse):
         cols = self.cols[rowptr[0] : rowptr[-1]] - self.block_offsets[col]
         return data_stack[..., rowptr[0] : rowptr[-1]], cols, rowptr - rowptr[0]
 
-    @profiler.profile(level="debug")
     def _set_block(
         self,
         arg: tuple | NDArray,
@@ -455,7 +448,6 @@ class DSDBCSR(DSDBSparse):
             data=data_stack,
         )
 
-    @profiler.profile(level="debug")
     def _check_commensurable(self, other: "DSDBSparse") -> None:
         """Checks if the other matrix is commensurate."""
         if not isinstance(other, DSDBCSR):
@@ -585,7 +577,6 @@ class DSDBCSR(DSDBSparse):
         self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-    @profiler.profile(level="api")
     def ltranspose(self, copy=False) -> "None | DSDBCSR":
         """Performs a local transposition of the matrix.
 
@@ -668,7 +659,6 @@ class DSDBCSR(DSDBSparse):
 
         return self if copy else None
 
-    @profiler.profile(level="api")
     def symmetrize(self, op: Callable[[NDArray, NDArray], NDArray] = xp.add) -> None:
         """Symmetrizes the matrix.
 
@@ -725,7 +715,6 @@ class DSDBCSR(DSDBSparse):
                 data[stack_idx], data[stack_idx, self._inds_bcsr2bcsr_t].conj()
             )
 
-    @profiler.profile(level="api")
     def spy(self) -> tuple[NDArray, NDArray]:
         """Returns the row and column indices of the non-zero elements.
 
@@ -749,7 +738,6 @@ class DSDBCSR(DSDBSparse):
         return rows, self.cols
 
     @classmethod
-    @profiler.profile(level="api")
     def zeros_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
         """Creates a new DSDBSparse matrix with the same shape and dtype.
 
@@ -786,7 +774,6 @@ class DSDBCSR(DSDBSparse):
         return out
 
     @classmethod
-    @profiler.profile(level="api")
     def from_sparray(
         cls,
         arr: sparse.spmatrix,
@@ -850,7 +837,6 @@ class DSDBCSR(DSDBSparse):
             symmetry_op=symmetry_op,
         )
 
-    @profiler.profile(level="api")
     def to_dense(self) -> NDArray:
         """Converts the local data to a dense array.
 

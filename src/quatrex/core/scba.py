@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -11,7 +10,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host, synchronize_device
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.compute_config import ComputeConfig
 from quatrex.core.observables import (
@@ -121,35 +120,24 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-        # Determine the local slice of the data.
-        # NOTE: This is arrow-wise partitioning.
-        # TODO: Allow more options, e.g., block row-wise partitioning.
-        synchronize_device()
-        time_sparsity_start = time.perf_counter()
-        section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
-        section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-        start_idx = block_offsets[section_offsets[comm.block.rank]]
-        end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
+        with profiler.profile_range(
+            label="SCBA: Sparsity Pattern", level="default", comm=comm
+        ):
+            # Determine the local slice of the data.
+            # NOTE: This is arrow-wise partitioning.
+            # TODO: Allow more options, e.g., block row-wise partitioning.
+            section_sizes, __ = get_section_sizes(len(block_sizes), comm.block.size)
+            section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
+            block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
+            start_idx = block_offsets[section_offsets[comm.block.rank]]
+            end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
 
-        self.sparsity_pattern = compute_sparsity_pattern(
-            grid,
-            max_interaction_cutoff,
-            transport_direction=quatrex_config.device.transport_direction,
-            start_idx=start_idx,
-            end_idx=end_idx,
-        )
-
-        synchronize_device()
-        time_sparsity_end = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"Time for sparsity pattern: {time_sparsity_end - time_sparsity_start}",
-                flush=True,
-            )
-            print(
-                f"Sparsity pattern: {self.sparsity_pattern.shape=}, {self.sparsity_pattern.nnz=}",
-                flush=True,
+            self.sparsity_pattern = compute_sparsity_pattern(
+                grid,
+                max_interaction_cutoff,
+                transport_direction=quatrex_config.device.transport_direction,
+                start_idx=start_idx,
+                end_idx=end_idx,
             )
 
         dsdbsparse_type = compute_config.dsdbsparse_type
@@ -446,7 +434,7 @@ class SCBA:
         self.data.sigma_lesser.data[:] = 0.0
         self.data.sigma_greater.data[:] = 0.0
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Symmetrize Sigma", level="default", comm=comm)
     def _symmetrize_sigma(self) -> None:
         # Symmetrization.
         if not self.quatrex_config.scba.symmetric:
@@ -467,7 +455,7 @@ class SCBA:
             self.data.sigma_greater.data - self.data.sigma_lesser.data
         )
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
         self.data.sigma_lesser.data[:] = (
@@ -483,7 +471,7 @@ class SCBA:
             + self.mixing_factor * self.data.sigma_retarded.data
         )
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Convergence test", level="default", comm=comm)
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
@@ -513,7 +501,7 @@ class SCBA:
 
         return False  # TODO: :-)
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
         if self.quatrex_config.phonon.model == "negf":
@@ -530,12 +518,12 @@ class SCBA:
                 ),
             )
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Photon interactions", level="default", comm=comm)
     def _compute_photon_interaction(self):
         """Computes the photon interaction."""
         raise NotImplementedError
 
-    @profiler.profile(level="api")
+    @profiler.profile(label="SCBA: Electron interactions", level="default", comm=comm)
     def _compute_coulomb_screening_interaction(self):
         """Computes the Coulomb screening interaction."""
 
@@ -543,90 +531,33 @@ class SCBA:
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
 
-        t_polarization_start = time.perf_counter()
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
-        synchronize_device()
-        t_polarization_end = time.perf_counter()
-        comm.barrier()
-        t_polarization_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for polarization: {t_polarization_end - t_polarization_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for polarization all: {t_polarization_end_all - t_polarization_start:.3f} s",
-                flush=True,
-            )
 
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        t_coulomb_start = time.perf_counter()
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
             self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater),
         )
-        synchronize_device()
-        t_coulomb_end = time.perf_counter()
-        comm.barrier()
-        t_coulomb_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Coulomb screening: {t_coulomb_end - t_coulomb_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for Coulomb screening all: {t_coulomb_end_all - t_coulomb_start:.3f} s",
-                flush=True,
-            )
 
-        t_coulomb_observables = time.perf_counter()
         self._compute_coulomb_screening_observables()
-        synchronize_device()
-        t_coulomb_observables_end = time.perf_counter()
-        comm.barrier()
-        t_coulomb_observables_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Coulomb screening observables: {t_coulomb_observables_end - t_coulomb_observables:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for Coulomb screening observables all: {t_coulomb_observables_end_all - t_coulomb_observables:.3f} s",
-                flush=True,
-            )
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
 
-        t_sigma_fock_start = time.perf_counter()
         self.sigma_fock.compute(
             self.data.g_lesser,
             out=(self.data.sigma_retarded,),
         )
-        synchronize_device()
-        t_sigma_fock_end = time.perf_counter()
-        comm.barrier()
-        t_sigma_fock_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s",
-                flush=True,
-            )
 
-        t_sigma_start = time.perf_counter()
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -638,24 +569,11 @@ class SCBA:
                 self.data.sigma_retarded,
             ),
         )
-        synchronize_device()
-        t_sigma_end = time.perf_counter()
-        comm.barrier()
-        t_sigma_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Coulomb screening self-energy: {t_sigma_end - t_sigma_start:.3f} s",
-                flush=True,
-            )
-            print(
-                f"  Time for Coulomb screening self-energy all: {t_sigma_end_all - t_sigma_start:.3f} s",
-                flush=True,
-            )
 
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
-    @profiler.profile(level="debug")
+    @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
         overlap = (
@@ -725,7 +643,7 @@ class SCBA:
                 overlap,
             ) / (2 * xp.pi)
 
-    @profiler.profile(level="debug")
+    @profiler.profile(label="SCBA: W observables", level="default", comm=comm)
     def _compute_coulomb_screening_observables(self) -> None:
 
         # NOTE: The overlap is maybe missing here (it is not used)
@@ -748,12 +666,9 @@ class SCBA:
                 2 * xp.pi
             )
 
-    @profiler.profile(level="debug")
+    @profiler.profile(label="SCBA: Write outputs", level="default", comm=comm)
     def _write_iteration_outputs(self, iteration: int):
         """Writes output for the current iteration on rank zero."""
-
-        if self.quatrex_config.outputs.profiling_stats:
-            profiler.dump_stats(self.quatrex_config.output_dir / "profiling_stats")
 
         if comm.rank != 0:
             return
@@ -824,223 +739,79 @@ class SCBA:
         for filename, data in outputs.items():
             xp.save(self.quatrex_config.output_dir / filename, data)
 
-    @profiler.profile(level="basic")
+    @profiler.profile(label="SCBA", level="default", comm=comm)
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
         for i in range(self.quatrex_config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
-            # append for iteration time
-            synchronize_device()
-            comm.barrier()
-            t_iteration_start = time.perf_counter()
 
-            t_solve_start = time.perf_counter()
-            self.electron_solver.solve(
-                self.data.sigma_lesser,
-                self.data.sigma_greater,
-                self.data.sigma_retarded,
-                out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
-            )
-            synchronize_device()
-            t_solve_end = time.perf_counter()
-            comm.barrier()
-            t_solve_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for electron solver: {t_solve_end - t_solve_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for electron solver all: {t_solve_end_all - t_solve_start:.3f} s",
-                    flush=True,
-                )
-
-            t_oberservables_start = time.perf_counter()
-            self._compute_electron_observables()
-            synchronize_device()
-            t_oberservables_end = time.perf_counter()
-            comm.barrier()
-
-            t_oberservables_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for computing observables: {t_oberservables_end - t_oberservables_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for computing observables all: {t_oberservables_end_all - t_oberservables_start:.3f} s",
-                    flush=True,
-                )
-
-            # Stash current into previous self-energy buffer.
-            t_stash_start = time.perf_counter()
-            self._stash_sigma()
-            synchronize_device()
-            t_stash_end = time.perf_counter()
-            comm.barrier()
-            t_stash_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for swapping: {t_stash_end - t_stash_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for swapping all: {t_stash_end_all - t_stash_start:.3f} s",
-                    flush=True,
-                )
-
-            # Transpose to nnz distribution.
-            # NOTE: While computing all interactions, we only ever need
-            # to access the Green's function and the self-energies in
-            # their nnz-distributed state.
-            t_start_transpose = time.perf_counter()
-            for m in (self.data.g_lesser, self.data.g_greater):
-                m.dtranspose(discard=False)  # This must not be discarded.
-                assert m.distribution_state == "nnz"
-            for m in (
-                self.data.sigma_lesser,
-                self.data.sigma_greater,
-                self.data.sigma_retarded,
+            with profiler.profile_range(
+                label="SCBA: Iteration", level="default", comm=comm
             ):
-                m.dtranspose(discard=True)  # These can be safely discarded.
-                assert m.distribution_state == "nnz"
-            synchronize_device()
-            t_end_transpose = time.perf_counter()
-            comm.barrier()
-            t_end_transpose_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"scba: Time for transposing forth: {t_end_transpose - t_start_transpose:.3f} s",
-                    flush=True,
+                self.electron_solver.solve(
+                    self.data.sigma_lesser,
+                    self.data.sigma_greater,
+                    self.data.sigma_retarded,
+                    out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
-                print(
-                    f"scba: Time for transposing forth all: {t_end_transpose_all - t_start_transpose:.3f} s",
-                    flush=True,
-                )
+                self._compute_electron_observables()
 
-            if self.quatrex_config.scba.coulomb_screening:
-                t_start_coulomb = time.perf_counter()
-                self._compute_coulomb_screening_interaction()
-                synchronize_device()
-                t_end_coulomb = time.perf_counter()
-                comm.barrier()
-                t_end_coulomb_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(
-                        f"Time for Coulomb screening interaction: {t_end_coulomb - t_start_coulomb:.3f} s",
-                        flush=True,
-                    )
-                    print(
-                        f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
-                        flush=True,
-                    )
+                # Stash current into previous self-energy buffer.
+                self._stash_sigma()
 
-            if self.quatrex_config.scba.photon:
-                self._compute_photon_interaction()
+                with profiler.profile_range(
+                    label="SCBA: stack->nnz transpose", level="default", comm=comm
+                ):
+                    # Transpose to nnz distribution.
+                    # NOTE: While computing all interactions, we only ever need
+                    # to access the Green's function and the self-energies in
+                    # their nnz-distributed state.
+                    for m in (self.data.g_lesser, self.data.g_greater):
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "nnz"
+                    for m in (
+                        self.data.sigma_lesser,
+                        self.data.sigma_greater,
+                        self.data.sigma_retarded,
+                    ):
+                        m.dtranspose(discard=True)  # These can be safely discarded.
+                        assert m.distribution_state == "nnz"
 
-            if self.quatrex_config.scba.phonon:
-                t_start_phonon = time.perf_counter()
-                self._compute_phonon_interaction()
-                synchronize_device()
-                t_end_phonon = time.perf_counter()
-                comm.barrier()
-                t_end_phonon_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(
-                        f"Time for phonon interaction: {t_end_phonon - t_start_phonon:.3f} s",
-                        flush=True,
-                    )
-                    print(
-                        f"Time for phonon interaction all: {t_end_phonon_all - t_start_phonon:.3f} s",
-                        flush=True,
-                    )
+                if self.quatrex_config.scba.coulomb_screening:
+                    self._compute_coulomb_screening_interaction()
 
-            # Transpose back to stack distribution.
-            t_transpose_sigma_start = time.perf_counter()
-            for m in (self.data.g_lesser, self.data.g_greater):
-                m.dtranspose(discard=True)  # These can be safely discarded.
-                assert m.distribution_state == "stack"
-            for m in (
-                self.data.sigma_lesser,
-                self.data.sigma_greater,
-                self.data.sigma_retarded,
-            ):
-                m.dtranspose(discard=False)  # This must not be discarded.
-                assert m.distribution_state == "stack"
-            synchronize_device()
-            t_transpose_sigma_end = time.perf_counter()
-            comm.barrier()
-            t_transpose_sigma_end_all = time.perf_counter()
+                if self.quatrex_config.scba.photon:
+                    self._compute_photon_interaction()
 
-            if comm.rank == 0:
-                print(
-                    f"scba: Time for transposing back: {t_transpose_sigma_end - t_transpose_sigma_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"scba: Time for transposing back all: {t_transpose_sigma_end_all - t_transpose_sigma_start:.3f} s",
-                    flush=True,
-                )
+                if self.quatrex_config.scba.phonon:
+                    self._compute_phonon_interaction()
+
+                with profiler.profile_range(
+                    label="SCBA: stack->nnz transpose back", level="default", comm=comm
+                ):
+                    for m in (self.data.g_lesser, self.data.g_greater):
+                        m.dtranspose(discard=True)  # These can be safely discarded.
+                        assert m.distribution_state == "stack"
+                    for m in (
+                        self.data.sigma_lesser,
+                        self.data.sigma_greater,
+                        self.data.sigma_retarded,
+                    ):
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "stack"
 
             # Symmetrize the self-energy.
-            t_sigma_symmetrize_start = time.perf_counter()
             self._symmetrize_sigma()
-            synchronize_device()
-            t_sigma_symmetrize_end = time.perf_counter()
-            comm.barrier()
-            t_sigma_symmetrize_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for symmetrization: {t_sigma_symmetrize_end - t_sigma_symmetrize_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for symmetrization all: {t_sigma_symmetrize_end_all - t_sigma_symmetrize_start:.3f} s",
-                    flush=True,
-                )
 
-            t_convergence_start = time.perf_counter()
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)
-
                 break
-            synchronize_device()
-            t_convergence_end = time.perf_counter()
-            comm.barrier()
-            t_convergence_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for convergence check: {t_convergence_end - t_convergence_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for convergence check all: {t_convergence_end_all - t_convergence_start:.3f} s",
-                    flush=True,
-                )
 
             # Update self-energy for next iteration with mixing factor.
-            t_sigma_update_start = time.perf_counter()
             self._update_sigma()
-            synchronize_device()
-            t_sigma_update_end = time.perf_counter()
-            comm.barrier()
-            t_sigma_update_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(
-                    f"Time for updating: {t_sigma_update_end - t_sigma_update_start:.3f} s",
-                    flush=True,
-                )
-                print(
-                    f"Time for updating all: {t_sigma_update_end_all - t_sigma_update_start:.3f} s",
-                    flush=True,
-                )
-
-            t_iteration = time.perf_counter() - t_iteration_start
-            if comm.rank == 0:
-                print(f"Time for iteration all: {t_iteration:.3f} s", flush=True)
 
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info
@@ -1062,23 +833,7 @@ class SCBA:
                     )
 
             if i % self.quatrex_config.scba.output_interval == 0:
-                synchronize_device()
-                comm.barrier()
-                t_write_start = time.perf_counter()
                 self._write_iteration_outputs(i)
-                synchronize_device()
-                t_write_end = time.perf_counter()
-                comm.barrier()
-                t_write_end_all = time.perf_counter()
-                if comm.rank == 0:
-                    print(
-                        f"Time for writing outputs: {t_write_end_all - t_write_start:.3f} s",
-                        flush=True,
-                    )
-                    print(
-                        f"Time for writing outputs all: {t_write_end - t_write_start:.3f} s",
-                        flush=True,
-                    )
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:

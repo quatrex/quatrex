@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, sparse, xp
-from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
 
 try:
@@ -11,8 +10,6 @@ try:
 
 except ImportError:
     mumps_available = False
-
-profiler = Profiler()
 
 valid_orderings = ["amd", "amf", "scotch", "pord", "metis", "qamd", "auto"]
 
@@ -62,7 +59,6 @@ class MUMPS(WFSolver):
         self.ordering = ordering
         self.context = mumps.Context(verbose=verbose)
 
-    @profiler.profile(level="api")
     def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
         """Solves the sparse linear system a @ x = b using MUMPS.
 

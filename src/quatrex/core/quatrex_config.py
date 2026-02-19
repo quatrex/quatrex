@@ -1,6 +1,8 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
+import re
+import subprocess
 import tomllib
 import warnings
 from math import isclose
@@ -19,6 +21,10 @@ from pydantic import (
     model_validator,
 )
 from typing_extensions import Self
+
+from qttools.profiling import Profiler
+
+profiler = Profiler()
 
 
 class SCSPConfig(BaseModel):
@@ -554,7 +560,54 @@ class OutputConfig(BaseModel):
 
     self_energy_density: bool = False
 
-    profiling_stats: bool = False
+    profiling_path: str | None = None
+    """The files to print and save the timing results to.
+
+    For printing, the full name with extension is used while for saving
+    the extension give by `profiling_save_format` is used.
+
+    If None, the file is tried to be infered from the SLURM output file,
+    else the default quatrex_times.out is used.
+    """
+
+    save_profiling_results: bool = False
+    """If the timing stats should be saved."""
+
+    profiling_save_format: Literal["pickle", "json"] = "json"
+    """The format to save the timing results in."""
+
+    @model_validator(mode="after")
+    def set_profiling_parameters(self) -> Self:
+        if self.profiling_path is None:
+            self.profiling_path = "quatrex_times.out"
+            if "SLURM_JOB_ID" in os.environ:
+                try:
+                    jid = os.environ.get("SLURM_JOB_ID")
+                    if not jid:
+                        raise ValueError("SLURM_JOB_ID is not set.")
+                    info = subprocess.check_output(
+                        ["scontrol", "show", "job", jid]
+                    ).decode()
+
+                    slurm_out = re.search(r"StdOut=(\S+)", info).group(1)
+                    slurm_out_base, _ = os.path.splitext(slurm_out)
+
+                    if os.path.exists(slurm_out):
+                        self.profiling_path = slurm_out_base + "_quatrex_times.out"
+
+                except Exception:
+                    pass
+
+        assert self.profiling_path is not None, "profiling_path should be set here."
+
+        # Saving will strip the extension
+        profiler.set_parameters(
+            print_path=self.profiling_path,
+            save_path=self.profiling_path,
+            save_format=self.profiling_save_format,
+        )
+
+        return self
 
 
 class ContactConfig(BaseModel):

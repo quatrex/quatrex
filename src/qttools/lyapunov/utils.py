@@ -1,11 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 from qttools import NDArray, xp
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
-@profiler.profile(level="debug")
 def _system_reduction_rows(
     a: NDArray,
     q: NDArray,
@@ -51,7 +47,6 @@ def _system_reduction_rows(
     return x
 
 
-@profiler.profile(level="debug")
 def _system_reduction_cols(
     a: NDArray,
     q: NDArray,
@@ -95,7 +90,6 @@ def _system_reduction_cols(
     return x
 
 
-@profiler.profile(level="debug")
 def system_reduction(
     a: NDArray,
     q: NDArray,

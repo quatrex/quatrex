@@ -6,9 +6,6 @@ from qttools import NDArray, xp
 from qttools.kernels import linalg
 from qttools.lyapunov.lyapunov import LyapunovSolver
 from qttools.lyapunov.utils import system_reduction
-from qttools.profiling import Profiler
-
-profiler = Profiler()
 
 
 class Spectral(LyapunovSolver):
@@ -46,7 +43,6 @@ class Spectral(LyapunovSolver):
         self.reduce_sparsity = reduce_sparsity
         self.use_pinned_memory = use_pinned_memory
 
-    @profiler.profile(level="debug")
     def _solve(
         self,
         a: NDArray,
@@ -115,7 +111,6 @@ class Spectral(LyapunovSolver):
 
         return x_ref
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a: NDArray,

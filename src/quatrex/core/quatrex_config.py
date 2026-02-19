@@ -594,9 +594,12 @@ class OutputConfig(BaseModel):
                     ).decode()
 
                     slurm_out = re.search(r"StdOut=(\S+)", info).group(1)
+                    slurm_out_base, _ = os.path.splitext(slurm_out)
 
                     if os.path.exists(slurm_out):
-                        self.profiling_print_path = slurm_out + "_quatrex_times.out"
+                        self.profiling_print_path = (
+                            slurm_out_base + "_quatrex_times.out"
+                        )
 
                 except Exception:
                     pass

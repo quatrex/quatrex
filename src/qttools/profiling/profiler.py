@@ -10,7 +10,8 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
-from typing import Literal
+from pathlib import Path
+from typing import Literal, TextIO, Union
 
 from mpi4py.MPI import COMM_WORLD as comm_world
 
@@ -33,13 +34,16 @@ QTX_PROFILE_COMM_SYNC = strtobool(os.getenv("QTX_PROFILE_COMM_SYNC"), True)
 
 
 class _OutputFile:
-    def __init__(self, name: str = "quatrex_times.out"):
-        try:
-            self.file_handle = open(name, "w")
-            self.is_custom_file = True
-        except Exception:
-            self.file_handle = sys.stdout
-            self.is_custom_file = False
+    def __init__(self, target: Union[Path, str, TextIO] = Path("quatrex_times.out")):
+        self.is_custom_file = False
+        if hasattr(target, "write"):
+            self.file_handle = target
+        else:
+            try:
+                self.file_handle = open(target, "w")
+                self.is_custom_file = True
+            except Exception:
+                self.file_handle = sys.stdout
 
     def write(self, message):
         print(message, flush=True, file=self.file_handle)
@@ -193,7 +197,7 @@ class Profiler:
     print_file : _OutputFile
         The file to which the profiling data is printed. This can be set
         through the `set_parameters` method.
-    save_path : str
+    save_path : Path
         The path to which the profiling data is saved. This can be set
         through the `set_parameters` method.
     save_format : str
@@ -222,7 +226,7 @@ class Profiler:
 
             cls._instance.eventlog = []
             cls._instance.depth = -1
-            cls._instance.print_file = None
+            cls._instance.print_file = _OutputFile(sys.stdout)
             cls._instance.save_path = None
             cls._instance.save_format = None
 
@@ -262,9 +266,9 @@ class Profiler:
 
     def set_parameters(
         self,
-        save_path: str = "quatrex_times",
+        save_path: Path = Path("quatrex_times"),
         save_format: Literal["pickle", "json"] = "json",
-        print_path: str = "quatrex_times.out",
+        print_path: Path = Path("quatrex_times.out"),
     ):
 
         if save_format not in ("pickle", "json"):
@@ -282,14 +286,9 @@ class Profiler:
                 "No save_path specified for dumping profiling data. Call set method before dumping."
             )
 
-        save_path = self.save_path
-        save_format = self.save_format
-
-        save_path, _ = os.path.splitext(save_path)
-
-        if save_format not in ("pickle", "json"):
+        if self.save_format not in ("pickle", "json"):
             raise ValueError(
-                f"Invalid save_format {save_format}. `set_parameters` should be called with the valid format."
+                f"Invalid save_format {self.save_format}. `set_parameters` should be called with the valid format."
             )
 
         stats = self._get_stats()
@@ -297,16 +296,12 @@ class Profiler:
             # Only the root rank dumps the stats.
             return
 
-        save_path = os.fspath(save_path)
-        os.path.isdir(os.path.dirname(save_path))
-        if save_format == "pickle":
-            if not save_path.endswith(".pkl"):
-                save_path += ".pkl"
+        if self.save_format == "pickle":
+            save_path = self.save_path.with_suffix(".pkl")
             with open(save_path, "wb") as pickle_file:
                 pickle.dump(stats, pickle_file)
         else:
-            if not save_path.endswith(".json"):
-                save_path += ".json"
+            save_path = self.save_path.with_suffix(".json")
             with open(save_path, "w") as json_file:
                 json.dump(stats, json_file, indent=4)
 

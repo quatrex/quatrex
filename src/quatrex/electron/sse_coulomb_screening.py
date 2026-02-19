@@ -9,8 +9,7 @@ from qttools.fft import fft_convolve, fft_convolve_kpoints, fft_correlate_kpoint
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
@@ -66,8 +65,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
     ----------
     quatrex_config : QuatrexConfig
         The Quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     electron_energies : NDArray
         The energies for the electron system.
 
@@ -76,7 +73,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
         electron_energies: NDArray,
     ):
         """Initializes the scattering self-energy."""
@@ -90,7 +86,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             / self.kpoint_volume
         )
         self.big_block_sizes = None
-        self.batch_size = compute_config.convolve.batch_size
+        self.batch_size = quatrex_config.compute.convolve.batch_size
 
         self.apply_hilbert_correction = (
             quatrex_config.coulomb_screening.apply_hilbert_correction

@@ -12,14 +12,13 @@ from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
-from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import (
     contact_currents,
     current_conservation,
     density,
     device_current,
 )
-from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device.inputs import create_coordinate_grid, load_matrix
@@ -44,15 +43,12 @@ class SCBAData:
     ----------
     quatrex_config : QuatrexConfig
         The Quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
 
     """
 
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
         electron_energies: NDArray,
     ) -> None:
         """Initializes the SCBA data."""
@@ -140,7 +136,7 @@ class SCBAData:
                 end_idx=end_idx,
             )
 
-        dsdbsparse_type = compute_config.dsdbsparse_type
+        dsdbsparse_type = quatrex_config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
@@ -274,29 +270,17 @@ class SCBA:
     ----------
     quatrex_config : Path
         Quatrex configuration file.
-    compute_config : Path, optional
-        Compute configuration file, by default None. If None, the
-        default compute parameters are used.
 
     """
 
-    def __init__(
-        self,
-        quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig | None = None,
-    ) -> None:
+    def __init__(self, quatrex_config: QuatrexConfig) -> None:
         """Initializes an SCBA instance."""
         self.quatrex_config = quatrex_config
-
-        if compute_config is None:
-            compute_config = ComputeConfig()
-
-        self.compute_config = compute_config
 
         self.observables = Observables()
         electron_energies = xp.zeros((comm.size,))
         self.data = SCBAData(
-            quatrex_config, compute_config, electron_energies=electron_energies
+            quatrex_config, electron_energies=electron_energies
         )  # dummy data
         self.mixing_factor = self.quatrex_config.scba.mixing_factor
 
@@ -320,7 +304,6 @@ class SCBA:
 
         self.electron_solver = ElectronSolver(
             self.quatrex_config,
-            self.compute_config,
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
         )
@@ -330,7 +313,6 @@ class SCBA:
             # Load the Coulomb matrix.
             coulomb_matrix, __ = load_matrix(
                 quatrex_config=quatrex_config,
-                compute_config=compute_config,
                 matrix_name="coulomb_matrix",
                 sparsity_pattern=self.data.sparsity_pattern,
                 shift_kpoints=True,
@@ -374,19 +356,16 @@ class SCBA:
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
                 self.quatrex_config,
-                self.compute_config,
                 self.coulomb_screening_energies,
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
                 self.quatrex_config,
-                self.compute_config,
                 coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.quatrex_config,
-                self.compute_config,
                 self.electron_energies,
             )
 
@@ -397,7 +376,6 @@ class SCBA:
             self.pi_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(
                 self.quatrex_config,
-                self.compute_config,
                 self.photon_energies,
                 ...,
             )
@@ -411,7 +389,6 @@ class SCBA:
                 self.pi_phonon = PiPhonon(...)
                 self.phonon_solver = PhononSolver(
                     self.quatrex_config,
-                    self.compute_config,
                     self.phonon_energies,
                     ...,
                 )
@@ -421,7 +398,7 @@ class SCBA:
                 self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
 
         self.data = SCBAData(
-            quatrex_config, compute_config, electron_energies=self.electron_energies
+            quatrex_config, electron_energies=self.electron_energies
         )  # real data
 
     def _stash_sigma(self) -> None:

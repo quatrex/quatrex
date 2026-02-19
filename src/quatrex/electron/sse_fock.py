@@ -7,7 +7,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_circular_convolve
 from qttools.profiling import Profiler
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
@@ -20,8 +20,6 @@ class SigmaFock(ScatteringSelfEnergy):
     ----------
     quatrex_config : QuatrexConfig
         The Quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     electron_energies : NDArray
         The energies for the electron system.
 

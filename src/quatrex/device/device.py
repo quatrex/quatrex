@@ -8,8 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
 
 
@@ -95,16 +94,11 @@ class Device:
     quatrex_config : QuatrexConfig
         Configuration object containing input paths, device parameters,
         and computational settings.
-    compute_config : ComputeConfig
-        Configuration object specifying computational resources and
-        parallelization settings.
 
     Attributes
     ----------
     quatrex_config : QuatrexConfig
         Reference to the configuration object.
-    compute_config : ComputeConfig
-        Reference to the compute configuration object.
     hamiltonians : dict
         Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
         vectors. Keys are tuples representing the lattice vector
@@ -143,13 +137,10 @@ class Device:
 
     """
 
-    def __init__(
-        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
-    ) -> None:
+    def __init__(self, quatrex_config: QuatrexConfig) -> None:
         """Initializes a Device object from configuration."""
 
         self.quatrex_config = quatrex_config
-        self.compute_config = compute_config
 
         self._init_hamiltonian()
         self._init_lattice()

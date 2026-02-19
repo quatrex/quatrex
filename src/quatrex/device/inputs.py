@@ -11,8 +11,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.grid.kpoints import monkhorst_pack
 
 
@@ -525,7 +524,6 @@ def _load_matrix_from_unit_cell(
 
 def load_matrix(
     quatrex_config: QuatrexConfig,
-    compute_config: ComputeConfig,
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
@@ -538,8 +536,6 @@ def load_matrix(
     ----------
     quatrex_config : QuatrexConfig
         The quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
     sparsity_pattern : sparse.coo_matrix | None
@@ -584,7 +580,7 @@ def load_matrix(
     # Symmetrize the data.
     matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
 
-    matrix = compute_config.dsdbsparse_type.from_sparray(
+    matrix = quatrex_config.compute.dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
         global_stack_shape=(comm.stack.size,)

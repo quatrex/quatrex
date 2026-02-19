@@ -26,7 +26,7 @@ camel_case_pattern = re.compile("((?<=[a-z0-9])[A-Z]|(?!^)[A-Z](?=[a-z]))")
 quatrex_module = griffe.load(
     "quatrex", extensions=griffe.load_extensions("griffe_pydantic")
 )
-quatrex_config_module = quatrex_module.get_member("core.quatrex_config")
+quatrex_config_module = quatrex_module.get_member("core.config")
 
 
 class_members = quatrex_config_module.filter_members(lambda m: isinstance(m, Class))

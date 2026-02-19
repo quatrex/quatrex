@@ -22,9 +22,8 @@ from qttools.wave_function_solver import (
     cuDSS,
     preferred_matrix_type,
 )
-from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
-from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Device
 from quatrex.grid import get_electron_energies, monkhorst_pack
@@ -142,9 +141,6 @@ class QTBM:
     quatrex_config : QuatrexConfig
         Configuration object containing calculation parameters, energy
         grid, and numerical settings.
-    compute_config : ComputeConfig, optional
-        Computational configuration specifying solver options and
-        parallelization parameters. If None, default settings are used.
 
     Attributes
     ----------
@@ -167,7 +163,6 @@ class QTBM:
         self,
         device: Device,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig | None = None,
     ) -> None:
         """Initializes the QTBM solver."""
 
@@ -175,10 +170,6 @@ class QTBM:
         self.num_orbitals = device.hamiltonians[0, 0, 0].shape[0]
 
         self.quatrex_config = quatrex_config
-        if compute_config is None:
-            compute_config = ComputeConfig()
-
-        self.compute_config = compute_config
 
         kpoint_grid = quatrex_config.device.kpoint_grid
         if self.device.gamma_only and kpoint_grid != (1, 1, 1):

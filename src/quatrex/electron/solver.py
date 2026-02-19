@@ -14,8 +14,7 @@ from quatrex.bandstructure.band_edges import (
     find_dos_peaks,
     find_renormalized_eigenvalues,
 )
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
@@ -58,8 +57,6 @@ class ElectronSolver(SubsystemSolver):
     ----------
     quatrex_config : QuatrexConfig
         The quatrex simulation configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     energies : np.ndarray
         The energies at which to solve.
 
@@ -70,19 +67,17 @@ class ElectronSolver(SubsystemSolver):
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
-        super().__init__(quatrex_config, compute_config, energies)
+        super().__init__(quatrex_config, energies)
 
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
         self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
             quatrex_config=quatrex_config,
-            compute_config=compute_config,
             matrix_name="hamiltonian",
             sparsity_pattern=None,
             shift_kpoints=False,
@@ -103,7 +98,6 @@ class ElectronSolver(SubsystemSolver):
             # Load the device Overlap.
             self.overlap, overlap_sparsity_pattern = load_matrix(
                 quatrex_config=quatrex_config,
-                compute_config=compute_config,
                 matrix_name="overlap",
                 sparsity_pattern=None,
                 shift_kpoints=False,
@@ -128,7 +122,7 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
+        self.system_matrix = quatrex_config.compute.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
@@ -523,7 +517,7 @@ class ElectronSolver(SubsystemSolver):
                         self.left_mid_gap_energy,
                         self.right_mid_gap_energy,
                     ),
-                    band_edge_config=self.compute_config.band_edge,
+                    band_edge_config=self.quatrex_config.compute.band_edge,
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 

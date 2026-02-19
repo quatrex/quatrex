@@ -45,27 +45,26 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-def _run_wf(quatrex_config, compute_config):
+def _run_wf(quatrex_config):
     """Runs quatrex with the given configuration.
 
     Parameters
     ----------
     quatrex_config : QuatrexConfig
         The main quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
 
     """
     from quatrex.core.qtbm import QTBM
     from quatrex.device import Device
 
     with threadpool_limits(
-        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
+        limits=quatrex_config.compute.blas_num_threads,
+        user_api=quatrex_config.compute.threadpool_api,
     ):
         pprint(threadpool_info()) if comm.rank == 0 else None
 
-        device = Device(quatrex_config, compute_config)
-        qtbm = QTBM(device, quatrex_config, compute_config)
+        device = Device(quatrex_config)
+        qtbm = QTBM(device, quatrex_config)
 
         tic = time.perf_counter()
         qtbm.run()
@@ -75,26 +74,25 @@ def _run_wf(quatrex_config, compute_config):
             typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
-def _run_negf(quatrex_config, compute_config):
+def _run_negf(quatrex_config):
     """Runs quatrex with the given configuration using SCBA.
 
     Parameters
     ----------
     quatrex_config : QuatrexConfig
         The main quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
 
     """
 
     from quatrex.core.scba import SCBA
 
     with threadpool_limits(
-        limits=compute_config.blas_num_threads, user_api=compute_config.threadpool_api
+        limits=quatrex_config.compute.blas_num_threads,
+        user_api=quatrex_config.compute.threadpool_api,
     ):
         pprint(threadpool_info()) if comm.rank == 0 else None
 
-        scba = SCBA(quatrex_config, compute_config)
+        scba = SCBA(quatrex_config)
 
         tic = time.perf_counter()
         scba.run()
@@ -117,16 +115,6 @@ def run(
             exists=True,
         ),
     ] = None,
-    compute_config: Annotated[
-        Optional[Path],
-        typer.Argument(
-            ...,
-            help="Path to the compute TOML configuration file.",
-            dir_okay=False,
-            resolve_path=True,
-            exists=True,
-        ),
-    ] = None,
 ):
     """Runs quatrex with the provided configuration."""
     # No arguments provided, use default paths.
@@ -137,47 +125,28 @@ def run(
                 "No quatrex configuration file provided and default "
                 "'./quatrex_config.toml' does not exist."
             )
-        compute_config = Path("./compute_config.toml")
-        if not compute_config.exists():
-            compute_config = None
-
     # If a directory is provided, look for the config files inside.
     if quatrex_config.is_dir():
-        if compute_config is not None:
-            raise BadArgumentUsage(
-                "If a directory is provided as quatrex_config, "
-                "compute_config must not be provided."
-            )
         quatrex_config = quatrex_config / "quatrex_config.toml"
         if not quatrex_config.exists():
             raise BadArgumentUsage(
                 f"No quatrex configuration file found in directory: {quatrex_config.parent}"
             )
-        compute_config = quatrex_config.parent / "compute_config.toml"
-        if not compute_config.exists():
-            compute_config = None
 
     from qttools.profiling import Profiler
-    from quatrex.core.compute_config import ComputeConfig
-    from quatrex.core.compute_config import parse_config as parse_compute_config
-    from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+    from quatrex.core.config import parse_config
 
     profiler = Profiler()
 
-    quatrex_config = parse_quatrex_config(quatrex_config)
-
-    if compute_config is None:
-        compute_config = ComputeConfig()
-    else:
-        compute_config = parse_compute_config(compute_config)
+    quatrex_config = parse_config(quatrex_config)
 
     secho_header()
 
     # Dispatch to the appropriate runner based on the formalism.
     if quatrex_config.formalism == "wf":
-        _run_wf(quatrex_config, compute_config)
+        _run_wf(quatrex_config)
     elif quatrex_config.formalism == "negf":
-        _run_negf(quatrex_config, compute_config)
+        _run_negf(quatrex_config)
     else:
         raise NotImplementedError(
             f"Formalism '{quatrex_config.formalism}' is not implemented."

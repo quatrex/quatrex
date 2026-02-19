@@ -5,7 +5,7 @@ import os
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.utils.mpi_utils import distributed_load
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 
 
 def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:

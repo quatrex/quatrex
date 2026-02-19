@@ -9,8 +9,7 @@ from qttools.fft import fft_convolve, fft_correlate_kpoints
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
@@ -73,7 +72,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
         coulomb_screening_energies: NDArray,
     ) -> None:
         """Initializes the polarization."""
@@ -86,7 +84,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )
-        self.batch_size = compute_config.convolve.batch_size
+        self.batch_size = quatrex_config.compute.convolve.batch_size
 
         self.discard_real_parts = quatrex_config.coulomb_screening.discard_real_parts
         self.compute_retarded = (

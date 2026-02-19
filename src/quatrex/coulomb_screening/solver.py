@@ -10,8 +10,7 @@ from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import (
@@ -48,8 +47,6 @@ class CoulombScreeningSolver(SubsystemSolver):
     ----------
     quatrex_config : QuatrexConfig
         The quatrex simulation configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     energies : NDArray
         The energies at which to solve.
 
@@ -60,13 +57,12 @@ class CoulombScreeningSolver(SubsystemSolver):
     def __init__(
         self,
         quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
         coulomb_matrix: DSDBSparse,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(quatrex_config, compute_config, energies)
+        super().__init__(quatrex_config, energies)
 
         self.coulomb_matrix = coulomb_matrix
         self.small_block_sizes = self.coulomb_matrix.block_sizes
@@ -101,7 +97,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         # The dummy dsbsparse is only used to compute the sparsity
         # pattern of the system matrix and the l_lesser and l_greater
         # matrices.
-        dummy_dsbsparse = compute_config.dsdbsparse_type.from_sparray(
+        dummy_dsbsparse = quatrex_config.compute.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
@@ -114,7 +110,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         # Allocate memory for the System matrix (1 - V @ P).
         kpoint_grid = quatrex_config.device.kpoint_grid
-        self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
+        self.system_matrix = quatrex_config.compute.dsdbsparse_type.from_sparray(
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
@@ -133,7 +129,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         del dummy_dsbsparse
 
         # Allocate memory for the L_lesser and L_greater matrices.
-        self.l_lesser = compute_config.dsdbsparse_type.from_sparray(
+        self.l_lesser = quatrex_config.compute.dsdbsparse_type.from_sparray(
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
@@ -141,7 +137,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             symmetry=quatrex_config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
-        self.l_greater = compute_config.dsdbsparse_type.zeros_like(self.l_lesser)
+        self.l_greater = quatrex_config.compute.dsdbsparse_type.zeros_like(
+            self.l_lesser
+        )
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
         self.l_lesser.free_data()

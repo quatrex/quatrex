@@ -348,13 +348,6 @@ class Profiler:
             specified level.
 
         """
-        if level not in ("off", "default", "debug"):
-            raise ValueError(f"Invalid profiling level {level}.")
-
-        if comm is not None:
-            assert hasattr(
-                comm, "barrier"
-            ), "The communicator must have a barrier attribute."
 
         def decorator(func):
             if _level_to_num[level] > _level_to_num[QTX_PROFILE_LEVEL]:
@@ -363,67 +356,9 @@ class Profiler:
             @wraps(func)
             def wrapper(*args, **kwargs):
 
-                self.depth += 1
-                timestamp = time.time()
-
-                # NOTE: We maybe need to barrier before starting the timer
-
-                if xp.__name__ == "cupy":
-                    if NVTX_AVAILABLE:
-                        xp.cuda.nvtx.RangePush(label)
-
-                    self.start_event.record(xp.cuda.get_current_stream())
-                    self.start_event.synchronize()
-                    self.start_event.record(xp.cuda.get_current_stream())
-
-                else:
-                    start_time = time.perf_counter()
-
                 # Call the function.
-                result = func(*args, **kwargs)
-
-                if xp.__name__ == "cupy":
-                    if NVTX_AVAILABLE:
-                        xp.cuda.nvtx.RangePop()
-
-                    self.end_event.record(xp.cuda.get_current_stream())
-                    self.end_event.synchronize()
-                    call_time = (
-                        xp.cuda.get_elapsed_time(self.start_event, self.end_event)
-                        * 1e-3
-                    )  # Convert to seconds.
-                else:
-                    call_time = time.perf_counter() - start_time
-
-                if comm is not None and QTX_PROFILE_COMM_SYNC:
-                    comm.barrier()
-                    if xp.__name__ == "cupy":
-                        self.after_barrier_event.record(xp.cuda.get_current_stream())
-                        self.after_barrier_event.synchronize()
-                        after_barrier_time = (
-                            xp.cuda.get_elapsed_time(
-                                self.start_event, self.after_barrier_event
-                            )
-                            * 1e-3
-                        )
-                    else:
-                        after_barrier_time = time.perf_counter() - start_time
-                else:
-                    after_barrier_time = call_time
-
-                self.eventlog.append(
-                    (timestamp, self.depth, label, call_time, after_barrier_time)
-                )
-
-                if comm_world.rank == 0:
-                    offset = "  " * (self.depth)
-                    self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
-                    if comm is not None and QTX_PROFILE_COMM_SYNC:
-                        self.print_file.write(
-                            f"{offset}{label} all : {after_barrier_time:.4f}s"
-                        )
-
-                self.depth -= 1
+                with self.profile_range(label, level, comm):
+                    result = func(*args, **kwargs)
 
                 return result
 

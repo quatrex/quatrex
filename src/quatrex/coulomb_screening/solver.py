@@ -45,7 +45,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
     energies : NDArray
         The energies at which to solve.
@@ -56,20 +56,18 @@ class CoulombScreeningSolver(SubsystemSolver):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
+        config: QuatrexConfig,
         coulomb_matrix: DSDBSparse,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(quatrex_config, energies)
+        super().__init__(config, energies)
 
         self.coulomb_matrix = coulomb_matrix
         self.small_block_sizes = self.coulomb_matrix.block_sizes
 
-        self.num_connected_blocks = (
-            quatrex_config.coulomb_screening.num_connected_blocks
-        )
+        self.num_connected_blocks = config.coulomb_screening.num_connected_blocks
         if self.num_connected_blocks == "auto":
             self.num_connected_blocks = compute_num_connected_blocks(
                 sparsity_pattern, self.small_block_sizes
@@ -97,11 +95,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         # The dummy dsbsparse is only used to compute the sparsity
         # pattern of the system matrix and the l_lesser and l_greater
         # matrices.
-        dummy_dsbsparse = quatrex_config.compute.dsdbsparse_type.from_sparray(
+        dummy_dsbsparse = config.compute.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.float32),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=config.scba.symmetric,
             symmetry_op=xp.conj,
         )
         v_times_p_sparsity_pattern = _compute_sparsity_pattern(
@@ -109,8 +107,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         # Allocate memory for the System matrix (1 - V @ P).
-        kpoint_grid = quatrex_config.device.kpoint_grid
-        self.system_matrix = quatrex_config.compute.dsdbsparse_type.from_sparray(
+        kpoint_grid = config.device.kpoint_grid
+        self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
             v_times_p_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
@@ -129,17 +127,15 @@ class CoulombScreeningSolver(SubsystemSolver):
         del dummy_dsbsparse
 
         # Allocate memory for the L_lesser and L_greater matrices.
-        self.l_lesser = quatrex_config.compute.dsdbsparse_type.from_sparray(
+        self.l_lesser = config.compute.dsdbsparse_type.from_sparray(
             l_sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
-        self.l_greater = quatrex_config.compute.dsdbsparse_type.zeros_like(
-            self.l_lesser
-        )
+        self.l_greater = config.compute.dsdbsparse_type.zeros_like(self.l_lesser)
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
         self.l_lesser.free_data()
@@ -148,23 +144,23 @@ class CoulombScreeningSolver(SubsystemSolver):
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
             self.local_energies,
-            quatrex_config.coulomb_screening.temperature,
+            config.coulomb_screening.temperature,
         )
         self.right_occupancies = bose_einstein(
             self.local_energies,
-            quatrex_config.coulomb_screening.temperature,
+            config.coulomb_screening.temperature,
         )
 
-        self.dos_peak_limit = quatrex_config.coulomb_screening.dos_peak_limit
+        self.dos_peak_limit = config.coulomb_screening.dos_peak_limit
 
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
 
-        self.block_sections = quatrex_config.coulomb_screening.obc.block_sections
+        self.block_sections = config.coulomb_screening.obc.block_sections
 
-        self.flatband = quatrex_config.electron.flatband
+        self.flatband = config.electron.flatband
         self.solve_call_count = 0
         self.filtering_iteration_limit = (
-            quatrex_config.coulomb_screening.filtering_iteration_limit
+            config.coulomb_screening.filtering_iteration_limit
         )
 
     def _set_block_sizes(self, block_sizes: NDArray) -> None:

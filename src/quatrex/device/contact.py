@@ -176,7 +176,7 @@ class Contact:
         )[None, :]
 
         self.obc_solver = self._configure_obc(
-            device.quatrex_config.electron.obc, device.quatrex_config.compute.nevp
+            device.config.electron.obc, device.config.compute.nevp
         )
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:

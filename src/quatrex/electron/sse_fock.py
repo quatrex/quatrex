@@ -18,7 +18,7 @@ class SigmaFock(ScatteringSelfEnergy):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The Quatrex configuration.
     electron_energies : NDArray
         The energies for the electron system.
@@ -27,13 +27,13 @@ class SigmaFock(ScatteringSelfEnergy):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
+        config: QuatrexConfig,
         coulomb_matrix: DSDBSparse,
         electron_energies: NDArray,
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(quatrex_config.device.kpoint_grid)
+        self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
         (
             coulomb_matrix.dtranspose()

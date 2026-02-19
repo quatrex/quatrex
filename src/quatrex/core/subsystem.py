@@ -22,7 +22,7 @@ class SubsystemSolver(ABC):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
     energies : np.ndarray
         The energies at which to solve.
@@ -37,7 +37,7 @@ class SubsystemSolver(ABC):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
+        config: QuatrexConfig,
         energies: NDArray,
     ) -> None:
         """Initializes the solver."""
@@ -45,20 +45,18 @@ class SubsystemSolver(ABC):
         self.local_energies = get_local_slice(energies)
 
         self.obc = self._configure_obc(
-            getattr(quatrex_config, self.system).obc, quatrex_config.compute.nevp
+            getattr(config, self.system).obc, config.compute.nevp
         )
         self.lyapunov = self._configure_lyapunov(
-            getattr(quatrex_config, self.system).lyapunov,
-            quatrex_config.compute.lyapunov,
+            getattr(config, self.system).lyapunov,
+            config.compute.lyapunov,
         )
-        self.solver = self._configure_solver(
-            getattr(quatrex_config, self.system).solver
-        )
+        self.solver = self._configure_solver(getattr(config, self.system).solver)
         self.solver_dist = RGFDist(
-            max_batch_size=getattr(quatrex_config, self.system).solver.max_batch_size,
+            max_batch_size=getattr(config, self.system).solver.max_batch_size,
         )
 
-        self.quatrex_config = quatrex_config
+        self.config = config
 
     def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
         """Configures the NEVP solver from the config.

@@ -8,7 +8,7 @@ from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 
 
-def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:
+def get_electron_energies(config: QuatrexConfig) -> NDArray:
     """Get the electron energies based on the configuration.
     If an energy window is specified in the configuration, it generates
     the energies using linspace. Otherwise, it attempts to load the energies
@@ -16,7 +16,7 @@ def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The Quatrex configuration.
 
     Returns
@@ -33,26 +33,26 @@ def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:
 
     """
 
-    if (quatrex_config.electron.energy_window_max is not None) and (
-        quatrex_config.electron.energy_window_min is not None
+    if (config.electron.energy_window_max is not None) and (
+        config.electron.energy_window_min is not None
     ):
-        if quatrex_config.electron.energy_window_num is not None:
-            if quatrex_config.electron.energy_window_num_per_rank is not None:
+        if config.electron.energy_window_num is not None:
+            if config.electron.energy_window_num_per_rank is not None:
                 raise ValueError(
                     "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
                 )
             electron_energies = xp.linspace(
-                quatrex_config.electron.energy_window_min,
-                quatrex_config.electron.energy_window_max,
-                quatrex_config.electron.energy_window_num,
+                config.electron.energy_window_min,
+                config.electron.energy_window_max,
+                config.electron.energy_window_num,
             )
-        elif quatrex_config.electron.energy_window_num_per_rank is not None:
+        elif config.electron.energy_window_num_per_rank is not None:
             energy_window_num = (
-                quatrex_config.electron.energy_window_num_per_rank * comm.stack.size
+                config.electron.energy_window_num_per_rank * comm.stack.size
             )
             electron_energies = xp.linspace(
-                quatrex_config.electron.energy_window_min,
-                quatrex_config.electron.energy_window_max,
+                config.electron.energy_window_min,
+                config.electron.energy_window_max,
                 energy_window_num,
             )
         else:
@@ -60,7 +60,7 @@ def get_electron_energies(quatrex_config: QuatrexConfig) -> NDArray:
                 "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
             )
     else:
-        energies_path = quatrex_config.input_dir / "electron_energies.npy"
+        energies_path = config.input_dir / "electron_energies.npy"
         if os.path.isfile(energies_path):
             electron_energies = distributed_load(energies_path)
         else:

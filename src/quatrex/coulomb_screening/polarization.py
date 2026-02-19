@@ -62,7 +62,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     Parameters
     ----------
-    quatrex_config : Path
+    config : Path
         Quatrex configuration file.
     coulomb_screening_energies : NDArray
         The energies for the Coulomb screening
@@ -70,13 +70,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
     """
 
     def __init__(
-        self,
-        quatrex_config: QuatrexConfig,
-        coulomb_screening_energies: NDArray,
+        self, config: QuatrexConfig, coulomb_screening_energies: NDArray
     ) -> None:
         """Initializes the polarization."""
         self.energies = coulomb_screening_energies
-        self.kpoint_volume = np.prod(quatrex_config.device.kpoint_grid)
+        self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
@@ -84,12 +82,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
             * xp.abs(self.energies[1] - self.energies[0])
             / self.kpoint_volume
         )
-        self.batch_size = quatrex_config.compute.convolve.batch_size
+        self.batch_size = config.compute.convolve.batch_size
 
-        self.discard_real_parts = quatrex_config.coulomb_screening.discard_real_parts
-        self.compute_retarded = (
-            quatrex_config.coulomb_screening.compute_retarded_polarization
-        )
+        self.discard_real_parts = config.coulomb_screening.discard_real_parts
+        self.compute_retarded = config.coulomb_screening.compute_retarded_polarization
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(

@@ -11,10 +11,10 @@ class PhotonSolver(SubsystemSolver):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
+        config: QuatrexConfig,
         energies: np.ndarray,
     ) -> None:
         """Initializes the solver."""
-        super().__init__(quatrex_config)
+        super().__init__(config)
 
         ...

@@ -41,35 +41,27 @@ class SCBAData:
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The Quatrex configuration.
 
     """
 
-    def __init__(
-        self,
-        quatrex_config: QuatrexConfig,
-        electron_energies: NDArray,
-    ) -> None:
+    def __init__(self, config: QuatrexConfig, electron_energies: NDArray) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
-        if quatrex_config.device.construct_from_unit_cell:
-            wannier_centers = distributed_load(
-                quatrex_config.input_dir / "wannier_centers.npy"
-            )
-            lattice_vectors = distributed_load(
-                quatrex_config.input_dir / "lattice_vectors.npy"
-            )
+        if config.device.construct_from_unit_cell:
+            wannier_centers = distributed_load(config.input_dir / "wannier_centers.npy")
+            lattice_vectors = distributed_load(config.input_dir / "lattice_vectors.npy")
 
             # The neighbor cell cutoff along the transport direction
             # determines the size of the transport cell.
-            transport_ind = "xyz".index(quatrex_config.device.transport_direction)
+            transport_ind = "xyz".index(config.device.transport_direction)
             unit_cells_per_transport_cell = [1, 1, 1]
             unit_cells_per_transport_cell[transport_ind] = (
-                quatrex_config.device.neighbor_cell_cutoff[transport_ind]
+                config.device.neighbor_cell_cutoff[transport_ind]
             )
             device_cell = unit_cells_per_transport_cell.copy()
-            device_cell[transport_ind] *= quatrex_config.device.num_transport_cells
+            device_cell[transport_ind] *= config.device.num_transport_cells
 
             grid = create_coordinate_grid(
                 wannier_centers, tuple(device_cell), lattice_vectors
@@ -80,32 +72,32 @@ class SCBAData:
                     unit_cells_per_transport_cell[transport_ind]
                     * wannier_centers.shape[0]
                 ]
-                * quatrex_config.device.num_transport_cells
+                * config.device.num_transport_cells
             )
 
         else:
-            grid = distributed_load(quatrex_config.input_dir / "grid.npy")
+            grid = distributed_load(config.input_dir / "grid.npy")
 
             block_sizes = get_host(
-                distributed_load(quatrex_config.input_dir / "block_sizes.npy")
+                distributed_load(config.input_dir / "block_sizes.npy")
             )
-        kpoint_grid = quatrex_config.device.kpoint_grid
+        kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0
-        if quatrex_config.scba.coulomb_screening:
+        if config.scba.coulomb_screening:
             max_interaction_cutoff = max(
                 max_interaction_cutoff,
-                quatrex_config.coulomb_screening.interaction_cutoff,
+                config.coulomb_screening.interaction_cutoff,
             )
-        if quatrex_config.scba.photon:
+        if config.scba.photon:
             max_interaction_cutoff = max(
                 max_interaction_cutoff,
-                quatrex_config.photon.interaction_cutoff,
+                config.photon.interaction_cutoff,
             )
-        if quatrex_config.scba.phonon:
+        if config.scba.phonon:
             max_interaction_cutoff = max(
                 max_interaction_cutoff,
-                quatrex_config.phonon.interaction_cutoff,
+                config.phonon.interaction_cutoff,
             )
         if max_interaction_cutoff == 0.0:
             raise NotImplementedError(
@@ -131,12 +123,12 @@ class SCBAData:
             self.sparsity_pattern = compute_sparsity_pattern(
                 grid,
                 max_interaction_cutoff,
-                transport_direction=quatrex_config.device.transport_direction,
+                transport_direction=config.device.transport_direction,
                 start_idx=start_idx,
                 end_idx=end_idx,
             )
 
-        dsdbsparse_type = quatrex_config.compute.dsdbsparse_type
+        dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
@@ -151,7 +143,7 @@ class SCBAData:
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
-            symmetry=quatrex_config.scba.symmetric,
+            symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
@@ -163,11 +155,11 @@ class SCBAData:
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-        if quatrex_config.scba.symmetric:
+        if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
 
-        if quatrex_config.scba.coulomb_screening:
+        if config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
@@ -176,7 +168,7 @@ class SCBAData:
             self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
-            num_connected_blocks = quatrex_config.coulomb_screening.num_connected_blocks
+            num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
                     self.sparsity_pattern, block_sizes
@@ -196,17 +188,17 @@ class SCBAData:
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
-                symmetry=quatrex_config.scba.symmetric,
+                symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
-        if quatrex_config.scba.photon:
+        if config.scba.photon:
             raise NotImplementedError
 
-        if quatrex_config.scba.phonon and quatrex_config.phonon.model == "negf":
+        if config.scba.phonon and config.phonon.model == "negf":
             raise NotImplementedError
 
 
@@ -268,24 +260,22 @@ class SCBA:
 
     Parameters
     ----------
-    quatrex_config : Path
-        Quatrex configuration file.
+    config : QuatrexConfig
+        Quatrex configuration object.
 
     """
 
-    def __init__(self, quatrex_config: QuatrexConfig) -> None:
+    def __init__(self, config: QuatrexConfig) -> None:
         """Initializes an SCBA instance."""
-        self.quatrex_config = quatrex_config
+        self.config = config
 
         self.observables = Observables()
         electron_energies = xp.zeros((comm.size,))
-        self.data = SCBAData(
-            quatrex_config, electron_energies=electron_energies
-        )  # dummy data
-        self.mixing_factor = self.quatrex_config.scba.mixing_factor
+        self.data = SCBAData(config, electron_energies=electron_energies)  # dummy data
+        self.mixing_factor = self.config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        self.electron_energies = get_electron_energies(quatrex_config)
+        self.electron_energies = get_electron_energies(config)
 
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]
@@ -303,16 +293,16 @@ class SCBA:
             )
 
         self.electron_solver = ElectronSolver(
-            self.quatrex_config,
+            self.config,
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
         )
 
         # ----- Coulomb screening --------------------------------------
-        if self.quatrex_config.scba.coulomb_screening:
+        if self.config.scba.coulomb_screening:
             # Load the Coulomb matrix.
             coulomb_matrix, __ = load_matrix(
-                quatrex_config=quatrex_config,
+                config=config,
                 matrix_name="coulomb_matrix",
                 sparsity_pattern=self.data.sparsity_pattern,
                 shift_kpoints=True,
@@ -322,11 +312,9 @@ class SCBA:
             # TODO: Check that this is correct for kpoints.
             if not coulomb_matrix.symmetry:
                 coulomb_matrix.symmetrize()
-            coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
+            coulomb_matrix._data /= config.coulomb_screening.epsilon_r
 
-            energies_path = (
-                self.quatrex_config.input_dir / "coulomb_screening_energies.npy"
-            )
+            energies_path = self.config.input_dir / "coulomb_screening_energies.npy"
             if os.path.isfile(energies_path):
                 self.coulomb_screening_energies = distributed_load(energies_path)
             else:
@@ -342,7 +330,7 @@ class SCBA:
                 else None
             )
             self.sigma_fock = SigmaFock(
-                self.quatrex_config,
+                self.config,
                 coulomb_matrix,
                 self.electron_energies,
             )
@@ -355,50 +343,50 @@ class SCBA:
 
             # NOTE: No sparsity information required here.
             self.p_coulomb_screening = PCoulombScreening(
-                self.quatrex_config,
+                self.config,
                 self.coulomb_screening_energies,
             )
             self.coulomb_screening_solver = CoulombScreeningSolver(
-                self.quatrex_config,
+                self.config,
                 coulomb_matrix,
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
-                self.quatrex_config,
+                self.config,
                 self.electron_energies,
             )
 
         # ----- Photons ------------------------------------------------
-        if self.quatrex_config.scba.photon:
-            energies_path = self.quatrex_config.input_dir / "photon_energies.npy"
+        if self.config.scba.photon:
+            energies_path = self.config.input_dir / "photon_energies.npy"
             self.photon_energies = distributed_load(energies_path)
             self.pi_photon = PiPhoton(...)
             self.photon_solver = PhotonSolver(
-                self.quatrex_config,
+                self.config,
                 self.photon_energies,
                 ...,
             )
             self.sigma_photon = SigmaPhoton(...)
 
         # ----- Phonons ------------------------------------------------
-        if self.quatrex_config.scba.phonon:
-            if self.quatrex_config.phonon.model == "negf":
-                energies_path = self.quatrex_config.input_dir / "phonon_energies.npy"
+        if self.config.scba.phonon:
+            if self.config.phonon.model == "negf":
+                energies_path = self.config.input_dir / "phonon_energies.npy"
                 self.phonon_energies = distributed_load(energies_path)
                 self.pi_phonon = PiPhonon(...)
                 self.phonon_solver = PhononSolver(
-                    self.quatrex_config,
+                    self.config,
                     self.phonon_energies,
                     ...,
                 )
                 self.sigma_phonon = SigmaPhonon(...)
 
-            elif self.quatrex_config.phonon.model == "pseudo-scattering":
-                self.sigma_phonon = SigmaPhonon(quatrex_config, self.electron_energies)
+            elif self.config.phonon.model == "pseudo-scattering":
+                self.sigma_phonon = SigmaPhonon(config, self.electron_energies)
 
         self.data = SCBAData(
-            quatrex_config, electron_energies=self.electron_energies
+            config, electron_energies=self.electron_energies
         )  # real data
 
     def _stash_sigma(self) -> None:
@@ -414,13 +402,13 @@ class SCBA:
     @profiler.profile(label="SCBA: Symmetrize Sigma", level="default", comm=comm)
     def _symmetrize_sigma(self) -> None:
         # Symmetrization.
-        if not self.quatrex_config.scba.symmetric:
+        if not self.config.scba.symmetric:
             self.data.sigma_lesser.symmetrize(xp.subtract)
             self.data.sigma_greater.symmetrize(xp.subtract)
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        if self.quatrex_config.coulomb_screening.discard_real_parts:
+        if self.config.coulomb_screening.discard_real_parts:
             self.data.sigma_lesser._data.real = 0
             self.data.sigma_greater._data.real = 0
             # Make sure that the imaginary part comes only from
@@ -481,10 +469,10 @@ class SCBA:
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
-        if self.quatrex_config.phonon.model == "negf":
+        if self.config.phonon.model == "negf":
             raise NotImplementedError
 
-        elif self.quatrex_config.phonon.model == "pseudo-scattering":
+        elif self.config.phonon.model == "pseudo-scattering":
             self.sigma_phonon.compute(
                 self.data.g_lesser,
                 self.data.g_greater,
@@ -558,23 +546,23 @@ class SCBA:
             if self.electron_solver.orthogonal_basis
             else self.electron_solver.overlap
         )
-        if self.quatrex_config.outputs.electron_ldos:
+        if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
                 overlap,
             ) / (2 * xp.pi)
-        if self.quatrex_config.outputs.electron_density:
+        if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 overlap,
             ) / (2 * xp.pi)
-        if self.quatrex_config.outputs.hole_density:
+        if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 overlap,
             ) / (2 * xp.pi)
 
-        if self.quatrex_config.outputs.contact_currents:
+        if self.config.outputs.contact_currents:
             self.observables.electron_current = dict(
                 zip(
                     ("left", "right"),
@@ -585,11 +573,11 @@ class SCBA:
                     ),
                 )
             )
-        if self.quatrex_config.outputs.device_currents:
+        if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(
                 self.data.g_lesser, self.electron_solver.hamiltonian
             )
-            if self.quatrex_config.electron.solver.compute_current:
+            if self.config.electron.solver.compute_current:
                 if comm.block.size > 1:
                     raise NotImplementedError(
                         "Meir-Wingreen current is not implemented for distributed SCBA."
@@ -606,7 +594,7 @@ class SCBA:
                     meir_wingreen_current
                 )
 
-        if self.quatrex_config.outputs.self_energy_density:
+        if self.config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
                 overlap,
@@ -624,7 +612,7 @@ class SCBA:
     def _compute_coulomb_screening_observables(self) -> None:
 
         # NOTE: The overlap is maybe missing here (it is not used)
-        if self.quatrex_config.outputs.polarization_density:
+        if self.config.outputs.polarization_density:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (
                 2 * xp.pi
             )
@@ -635,7 +623,7 @@ class SCBA:
                 2 * xp.pi
             )
 
-        if self.quatrex_config.outputs.coulomb_screening_density:
+        if self.config.outputs.coulomb_screening_density:
             self.observables.w_lesser_density = density(self.data.w_lesser) / (
                 2 * xp.pi
             )
@@ -652,27 +640,27 @@ class SCBA:
 
         outputs = {}
 
-        if self.quatrex_config.outputs.electron_ldos:
+        if self.config.outputs.electron_ldos:
             outputs[f"electron_ldos_{iteration}.npy"] = self.observables.electron_ldos
-        if self.quatrex_config.outputs.electron_density:
+        if self.config.outputs.electron_density:
             outputs[f"electron_density_{iteration}.npy"] = (
                 self.observables.electron_density
             )
-        if self.quatrex_config.outputs.hole_density:
+        if self.config.outputs.hole_density:
             outputs[f"hole_density_{iteration}.npy"] = self.observables.hole_density
 
-        if self.quatrex_config.outputs.contact_currents:
+        if self.config.outputs.contact_currents:
             outputs.update(
                 {
                     f"i_{contact}_{iteration}.npy": current
                     for contact, current in self.observables.electron_current.items()
                 }
             )
-        if self.quatrex_config.outputs.device_currents:
+        if self.config.outputs.device_currents:
             outputs[f"device_current_{iteration}.npy"] = (
                 self.observables.electron_current["device"]
             )
-            if self.quatrex_config.electron.solver.compute_current:
+            if self.config.electron.solver.compute_current:
                 if comm.block.size > 1:
                     raise NotImplementedError(
                         "Meir-Wingreen current is not implemented for distributed SCBA."
@@ -682,8 +670,8 @@ class SCBA:
                     self.observables.electron_current["meir-wingreen"]
                 )
 
-        if self.quatrex_config.scba.coulomb_screening:
-            if self.quatrex_config.outputs.polarization_density:
+        if self.config.scba.coulomb_screening:
+            if self.config.outputs.polarization_density:
                 outputs.update(
                     {
                         f"p_lesser_density_{iteration}.npy": self.observables.p_lesser_density,
@@ -691,7 +679,7 @@ class SCBA:
                         f"p_retarded_density_{iteration}.npy": self.observables.p_retarded_density,
                     }
                 )
-            if self.quatrex_config.outputs.coulomb_screening_density:
+            if self.config.outputs.coulomb_screening_density:
                 outputs.update(
                     {
                         f"w_lesser_density_{iteration}.npy": self.observables.w_lesser_density,
@@ -699,7 +687,7 @@ class SCBA:
                     }
                 )
 
-        if self.quatrex_config.outputs.self_energy_density:
+        if self.config.outputs.self_energy_density:
             outputs.update(
                 {
                     f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
@@ -710,18 +698,18 @@ class SCBA:
 
         print(f"Writing output for iteration {iteration}...", flush=True)
 
-        if not os.path.exists(self.quatrex_config.output_dir):
-            os.mkdir(self.quatrex_config.output_dir)
+        if not os.path.exists(self.config.output_dir):
+            os.mkdir(self.config.output_dir)
 
         for filename, data in outputs.items():
-            xp.save(self.quatrex_config.output_dir / filename, data)
+            xp.save(self.config.output_dir / filename, data)
 
     @profiler.profile(label="SCBA", level="default", comm=comm)
     def run(self) -> None:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
-        for i in range(self.quatrex_config.scba.max_iterations):
+        for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(
@@ -756,13 +744,13 @@ class SCBA:
                         m.dtranspose(discard=True)  # These can be safely discarded.
                         assert m.distribution_state == "nnz"
 
-                if self.quatrex_config.scba.coulomb_screening:
+                if self.config.scba.coulomb_screening:
                     self._compute_coulomb_screening_interaction()
 
-                if self.quatrex_config.scba.photon:
+                if self.config.scba.photon:
                     self._compute_photon_interaction()
 
-                if self.quatrex_config.scba.phonon:
+                if self.config.scba.phonon:
                     self._compute_phonon_interaction()
 
                 with profiler.profile_range(
@@ -809,7 +797,7 @@ class SCBA:
                         flush=True,
                     )
 
-            if i % self.quatrex_config.scba.output_interval == 0:
+            if i % self.config.scba.output_interval == 0:
                 self._write_iteration_outputs(i)
 
         else:  # Did not break, i.e. max_iterations reached.

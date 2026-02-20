@@ -1,9 +1,11 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import meshio
 import numpy as np
 import skfem
-from qttools import NDArray
 from scipy import sparse
 from skfem.helpers import dot, grad, mul
+
+from qttools import NDArray
 
 
 def assemble_stiffness_matrix(basis: skfem.Basis) -> sparse.csr_matrix:

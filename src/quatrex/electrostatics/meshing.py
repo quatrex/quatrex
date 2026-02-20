@@ -1,3 +1,4 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import os
 import random
 import string
@@ -5,6 +6,7 @@ import string
 import gmsh
 import meshio
 import numpy as np
+
 from qttools import NDArray
 
 

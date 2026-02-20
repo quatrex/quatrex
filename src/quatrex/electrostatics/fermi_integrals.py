@@ -1,71 +1,13 @@
-import json
-from dataclasses import dataclass
-from pathlib import Path
-
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import numpy as np
-from qttools import NDArray
 from scipy.optimize import minimize
 
-# Parameters for the minimax rational approximation scheme.
-ETA_5 = 40.154967308044433594
-C = 16 * ETA_5**2
-
-
-@dataclass
-class Coefficients:
-    """Dataclass to hold coefficients for the approximation scheme.
-
-    Attributes
-    ----------
-    P : NDArray
-        Coefficients for the numerator polynomial.
-    Q : NDArray
-        Coefficients for the denominator polynomial.
-    alpha : float | None
-        Offset for the variable transformation.
-    beta : float | None
-        Scaling factor for the variable transformation.
-    u_max : float | None
-        Maximum value of u for which the coefficients are valid.
-
-    """
-
-    P: NDArray
-    Q: NDArray
-    alpha: float | None
-    beta: float | None
-    u_max: float | None
-
-
-def _load_params(file: Path) -> dict[str, Coefficients]:
-    """Loads the parameters for the approximation scheme."""
-    with open(file) as f:
-        params = json.load(f)
-
-    for key in params:
-        params[key] = Coefficients(
-            P=np.array(params[key]["P"]),
-            Q=np.array(params[key]["Q"]),
-            alpha=params[key].get("alpha"),
-            beta=params[key].get("beta"),
-            u_max=params[key].get("u_max"),
-        )
-
-    return params
-
-
-# Load the parameters from the JSON file.
-PARAMS = {
-    "+1/2": _load_params(Path(__file__).parent / "params_plus_one_half.json"),
-    "-1/2": _load_params(Path(__file__).parent / "params_minus_one_half.json"),
-}
-
-
-def R_j(t: float, P: NDArray, Q: NDArray) -> float:
-    """Computes a rational polynomial function R_j(t)"""
-    numerator = sum(P_n * t**n for n, P_n in enumerate(P))
-    denominator = sum(Q_n * t**n for n, Q_n in enumerate(Q))
-    return numerator / denominator
+from qttools import NDArray
+from quatrex.electrostatics._params import (
+    PARAMS_MINUS_ONE_HALF,
+    PARAMS_PLUS_ONE_HALF,
+    C,
+)
 
 
 def fermi_integral(k: int, eta: float, num_quad_points: int = 500) -> float:
@@ -81,7 +23,7 @@ def fermi_integral(k: int, eta: float, num_quad_points: int = 500) -> float:
     Parameters
     ----------
     k : int
-        The order of the Fermi integral. If k is 0, the analytical
+        The order of the Fermi integral. If k is 0 or -1, the analytical
         solution is returned.
     eta : float
         The parameter eta. The method should be very accurate for
@@ -99,11 +41,22 @@ def fermi_integral(k: int, eta: float, num_quad_points: int = 500) -> float:
         # Analytical solution for k = 0.
         return np.log(1 + np.exp(eta))
 
+    if k == -1:
+        # Analytical solution for k = -1.
+        return 1 / (1 + np.exp(-eta))
+
     a, b = -4.5, 5.0
     t = np.linspace(a, b, num_quad_points)
     x = np.exp(t - np.exp(-t))
     f = x * (1 + np.exp(-t)) * x**k / (1 + np.exp(x - eta))
     return np.trapezoid(f, t)
+
+
+def R_j(t: float, P: NDArray, Q: NDArray) -> float:
+    """Computes a rational polynomial function R_j(t)"""
+    numerator = sum(P_n * t**n for n, P_n in enumerate(P))
+    denominator = sum(Q_n * t**n for n, Q_n in enumerate(Q))
+    return numerator / denominator
 
 
 def _inverse_fermi_integral_numerical(
@@ -159,7 +112,7 @@ def _inverse_fermi_integral_approximate_plus_one_half(u: float):
         Must be non-negative.
 
     """
-    params = PARAMS["+1/2"]
+    params = PARAMS_PLUS_ONE_HALF
 
     if u < params["R_0"].u_max:
         R_0 = R_j(u, params["R_0"].P, params["R_0"].Q)
@@ -199,7 +152,7 @@ def _inverse_fermi_integral_approximate_minus_one_half(u: float):
         Must be non-negative.
 
     """
-    params = PARAMS["-1/2"]
+    params = PARAMS_MINUS_ONE_HALF
 
     if u < params["R_0"].u_max:
         y = params["R_0"].u_max - u
@@ -278,6 +231,10 @@ def inverse_fermi_integral(
     if k == 0:
         # Analytical solution for k = 0.
         return np.log(np.exp(u) - 1)
+
+    if k == -1:
+        # Analytical solution for k = -1.
+        return -np.log(1 / u - 1)
 
     if method == "numerical":
         return _inverse_fermi_integral_numerical(k, u, num_quad_points)

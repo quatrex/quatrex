@@ -109,20 +109,29 @@ def run(
         typer.Argument(
             ...,
             help="Path to the quatrex TOML configuration file.",
-            dir_okay=False,
+            dir_okay=True,
             resolve_path=True,
             exists=True,
         ),
     ] = None,
 ):
     """Runs quatrex with the provided configuration."""
-    # No arguments provided, use default paths.
+    # No arguments provided, check for the default config file in the
+    # working directory.
     if config is None:
         config = Path("./quatrex_config.toml")
         if not config.exists():
             raise BadArgumentUsage(
                 "No quatrex configuration file provided and default "
                 "'./quatrex_config.toml' does not exist."
+            )
+
+    # If a directory is provided, look for the config file inside.
+    if config.is_dir():
+        config = config / "quatrex_config.toml"
+        if not config.exists():
+            raise BadArgumentUsage(
+                f"No quatrex configuration file found in directory: {config.parent}"
             )
 
     from qttools.profiling import Profiler

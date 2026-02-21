@@ -255,7 +255,22 @@ class CoulombScreeningSolver(SubsystemSolver):
                     a_ij=a_ij,
                     block_sections=self.block_sections,
                 )
+
+                # _data = comm.stack.all_gather_v(m_00, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"w_m_00_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+                # _data = comm.stack.all_gather_v(m_10, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"w_m_10_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+                # _data = comm.stack.all_gather_v(m_01, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"w_m_01_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
                 x_00 = self.obc(a_ii=m_00, a_ij=m_01, a_ji=m_10, contact="left")
+
+                # _data = comm.stack.all_gather_v(x_00, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"w_x_00_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
 
                 m_10_x_00 = m_10 @ x_00
                 self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
@@ -563,7 +578,30 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.block_sizes)
 
         # Apply the OBC algorithm.
+        # if self.solve_call_count < self.compute_config.mixed_precision.start_iter:        
         self._compute_obc()
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_lesser_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_lesser_right_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.greater[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_greater_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.greater[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_greater_right_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.retarded[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_retarded_left_{self.solve_call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.retarded[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_obc_retarded_right_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Solve", level="default", comm=comm
@@ -600,6 +638,33 @@ class CoulombScreeningSolver(SubsystemSolver):
             # Only filter the peaks for the first few iterations.
             if self.solve_call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
+
+
+            # mempool = xp.get_default_memory_pool()
+            # mempool.free_all_blocks()
+            # _data = comm.stack.all_gather_v2(self.l_lesser.data.get(), axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"l_lesser_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
+            # del _data
+            # self.l_lesser.free_data()
+            # mempool.free_all_blocks()
+
+            # _data = comm.stack.all_gather_v2(self.l_greater.data.get(), axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"l_greater_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
+            # del _data
+            # self.l_greater.free_data()
+            # mempool.free_all_blocks()
+
+            # _data = comm.stack.all_gather_v2(self.system_matrix.data.get(), axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"w_system_matrix_{self.solve_call_count}.npy", _data, allow_pickle=True)
+
+            # del _data
+            # self.system_matrix.free_data()
+            # mempool.free_all_blocks()
 
             self.system_matrix.free_data()
             self.l_lesser.free_data()

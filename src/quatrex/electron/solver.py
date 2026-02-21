@@ -396,12 +396,27 @@ class ElectronSolver(SubsystemSolver):
                 block_sections=self.block_sections,
             )
 
+            # _data = comm.stack.all_gather_v(m_00 + s_00, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"g_m_00_left_{self.call_count}.npy", _data, allow_pickle=True)
+            # _data = comm.stack.all_gather_v(m_10 + s_10, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"g_m_10_left_{self.call_count}.npy", _data, allow_pickle=True)
+            # _data = comm.stack.all_gather_v(m_01 + s_01, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"g_m_01_left_{self.call_count}.npy", _data, allow_pickle=True)
+
             g_00 = self.obc(
                 a_ii=m_00 + s_00,
                 a_ij=m_01 + s_01,
                 a_ji=m_10 + s_10,
                 contact="left",
             )
+
+            # _data = comm.stack.all_gather_v(g_00, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"g_x_00_left_{self.call_count}.npy", _data, allow_pickle=True)
+
             # Apply the retarded boundary self-energy.
             sigma_00 = m_10 @ g_00 @ m_01
             self.obc_blocks.retarded[0] = sigma_00
@@ -628,7 +643,32 @@ class ElectronSolver(SubsystemSolver):
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
+       
+        # if self.call_count < self.compute_config.mixed_precision.start_iter:
+        # if self.call_count == 0:       
         self._compute_obc()
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_lesser_left_{self.call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_lesser_right_{self.call_count}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.greater[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_greater_left_{self.call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.greater[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_greater_right_{self.call_count}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.obc_blocks.retarded[0], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_retarded_left_{self.call_count}.npy", _data, allow_pickle=True)
+        # _data = comm.stack.all_gather_v(self.obc_blocks.retarded[-1], axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"g_obc_retarded_right_{self.call_count}.npy", _data, allow_pickle=True)
+
 
         with profiler.profile_range(
             label="ElectronSolver: Solve", level="default", comm=comm

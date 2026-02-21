@@ -159,24 +159,24 @@ class SCBAData:
         self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
-        self.sigma_lesser_prev._data = self.sigma_lesser_prev._data.astype(_dtype)
-        self.sigma_lesser._data = self.sigma_lesser._data.astype(_dtype)
-        self.sigma_greater_prev._data = self.sigma_greater_prev._data.astype(_dtype)
-        self.sigma_greater._data = self.sigma_greater._data.astype(_dtype)
-        self.sigma_lesser_prev.dtype = _dtype
-        self.sigma_lesser.dtype = _dtype
-        self.sigma_greater_prev.dtype = _dtype
-        self.sigma_greater.dtype = _dtype
+        # self.sigma_lesser_prev._data = self.sigma_lesser_prev._data.astype(_dtype)
+        # self.sigma_lesser._data = self.sigma_lesser._data.astype(_dtype)
+        # self.sigma_greater_prev._data = self.sigma_greater_prev._data.astype(_dtype)
+        # self.sigma_greater._data = self.sigma_greater._data.astype(_dtype)
+        # self.sigma_lesser_prev.dtype = _dtype
+        # self.sigma_lesser.dtype = _dtype
+        # self.sigma_greater_prev.dtype = _dtype
+        # self.sigma_greater.dtype = _dtype
 
         self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
-        self.sigma_retarded_prev._data = self.sigma_retarded_prev._data.astype(_dtype)
-        self.sigma_retarded._data = self.sigma_retarded._data.astype(_dtype)
-        self.sigma_retarded_prev.dtype = _dtype
-        self.sigma_retarded.dtype = _dtype
+        # self.sigma_retarded_prev._data = self.sigma_retarded_prev._data.astype(_dtype)
+        # self.sigma_retarded._data = self.sigma_retarded._data.astype(_dtype)
+        # self.sigma_retarded_prev.dtype = _dtype
+        # self.sigma_retarded.dtype = _dtype
 
         if config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
@@ -188,12 +188,12 @@ class SCBAData:
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
-            self.p_retarded._data = self.p_retarded._data.astype(_dtype)
-            self.p_lesser._data = self.p_lesser._data.astype(_dtype)
-            self.p_greater._data = self.p_greater._data.astype(_dtype)
-            self.p_retarded.dtype = _dtype
-            self.p_lesser.dtype = _dtype
-            self.p_greater.dtype = _dtype
+            # self.p_retarded._data = self.p_retarded._data.astype(_dtype)
+            # self.p_lesser._data = self.p_lesser._data.astype(_dtype)
+            # self.p_greater._data = self.p_greater._data.astype(_dtype)
+            # self.p_retarded.dtype = _dtype
+            # self.p_lesser.dtype = _dtype
+            # self.p_greater.dtype = _dtype
 
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
@@ -220,10 +220,10 @@ class SCBAData:
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
-            self.w_lesser._data = self.w_lesser._data.astype(_dtype)
-            self.w_greater._data = self.w_greater._data.astype(_dtype)
-            self.w_lesser.dtype = _dtype
-            self.w_greater.dtype = _dtype
+            # self.w_lesser._data = self.w_lesser._data.astype(_dtype)
+            # self.w_greater._data = self.w_greater._data.astype(_dtype)
+            # self.w_lesser.dtype = _dtype
+            # self.w_greater.dtype = _dtype
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -552,7 +552,7 @@ class SCBA:
         raise NotImplementedError
 
     @profiler.profile(label="SCBA: Electron interactions", level="default", comm=comm)
-    def _compute_coulomb_screening_interaction(self):
+    def _compute_coulomb_screening_interaction(self, i):
         """Computes the Coulomb screening interaction."""
 
         self.data.p_greater.allocate_data()
@@ -568,36 +568,48 @@ class SCBA:
         profiler.add_stats("p_lesser", self.data.p_lesser.data)
         profiler.add_stats("p_greater", self.data.p_greater.data)
         profiler.add_stats("p_retarded", self.data.p_retarded.data)
-        self.data.p_lesser._data = mask_complex_precision(
-            self.data.p_lesser._data,
+        self.data.p_lesser.data[:] = mask_complex_precision(
+            self.data.p_lesser.data,
             self.config.compute.mixed_precision.pl_real_precision,
             self.config.compute.mixed_precision.pl_imag_precision,
         )
-        self.data.p_greater._data = mask_complex_precision(
-            self.data.p_greater._data,
+        self.data.p_greater.data[:] = mask_complex_precision(
+            self.data.p_greater.data,
             self.config.compute.mixed_precision.pg_real_precision,
             self.config.compute.mixed_precision.pg_imag_precision,
         )
-        self.data.p_retarded._data = mask_complex_precision(
-            self.data.p_retarded._data,
+        self.data.p_retarded.data[:] = mask_complex_precision(
+            self.data.p_retarded.data,
             self.config.compute.mixed_precision.pr_real_precision,
             self.config.compute.mixed_precision.pr_imag_precision,
         )
-        self.data.p_lesser._data = cutoff_complex_data(
-            self.data.p_lesser._data,
+        self.data.p_lesser.data[:] = cutoff_complex_data(
+            self.data.p_lesser.data,
             self.config.compute.mixed_precision.pl_real_cutoff,
             self.config.compute.mixed_precision.pl_imag_cutoff,
         )
-        self.data.p_greater._data = cutoff_complex_data(
-            self.data.p_greater._data,
+        self.data.p_greater.data[:] = cutoff_complex_data(
+            self.data.p_greater.data,
             self.config.compute.mixed_precision.pg_real_cutoff,
             self.config.compute.mixed_precision.pg_imag_cutoff,
         )
-        self.data.p_retarded._data = cutoff_complex_data(
-            self.data.p_retarded._data,
+        self.data.p_retarded.data[:] = cutoff_complex_data(
+            self.data.p_retarded.data,
             self.config.compute.mixed_precision.pr_real_cutoff,
             self.config.compute.mixed_precision.pr_imag_cutoff,
         )
+
+        # _data = comm.stack.all_gather_v(self.data.p_lesser.data, axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"p_lesser_{i}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.data.p_greater.data, axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"p_greater_{i}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.data.p_retarded.data, axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"p_retarded_{i}.npy", _data, allow_pickle=True)
 
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
@@ -611,26 +623,34 @@ class SCBA:
 
         profiler.add_stats("w_lesser", self.data.w_lesser.data)
         profiler.add_stats("w_greater", self.data.w_greater.data)
-        self.data.w_lesser._data = mask_complex_precision(
-            self.data.w_lesser._data,
+        self.data.w_lesser.data[:] = mask_complex_precision(
+            self.data.w_lesser.data,
             self.config.compute.mixed_precision.wl_real_precision,
             self.config.compute.mixed_precision.wl_imag_precision,
         )
-        self.data.w_greater._data = mask_complex_precision(
-            self.data.w_greater._data,
+        self.data.w_greater.data[:] = mask_complex_precision(
+            self.data.w_greater.data,
             self.config.compute.mixed_precision.wg_real_precision,
             self.config.compute.mixed_precision.wg_imag_precision,
         )
-        self.data.w_lesser._data = cutoff_complex_data(
-            self.data.w_lesser._data,
+        self.data.w_lesser.data[:] = cutoff_complex_data(
+            self.data.w_lesser.data,
             self.config.compute.mixed_precision.wl_real_cutoff,
             self.config.compute.mixed_precision.wl_imag_cutoff,
         )
-        self.data.w_greater._data = cutoff_complex_data(
-            self.data.w_greater._data,
+        self.data.w_greater.data[:] = cutoff_complex_data(
+            self.data.w_greater.data,
             self.config.compute.mixed_precision.wg_real_cutoff,
             self.config.compute.mixed_precision.wg_imag_cutoff,
         )
+
+        # _data = comm.stack.all_gather_v(self.data.w_lesser.data, axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_lesser_{i}.npy", _data, allow_pickle=True)
+
+        # _data = comm.stack.all_gather_v(self.data.w_greater.data, axis=0)
+        # if comm.rank == 0:
+        #     np.save(f"w_greater_{i}.npy", _data, allow_pickle=True)
 
 
         self._compute_coulomb_screening_observables()
@@ -639,13 +659,13 @@ class SCBA:
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
 
-        self.data.sigma_retarded._data = mask_complex_precision(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = mask_complex_precision(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_precision,
             self.config.compute.mixed_precision.sr_imag_precision,
         )
-        self.data.sigma_retarded._data = cutoff_complex_data(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = cutoff_complex_data(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_cutoff,
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
@@ -655,43 +675,44 @@ class SCBA:
             out=(self.data.sigma_retarded,),
         )
 
-        self.data.sigma_retarded._data = mask_complex_precision(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = mask_complex_precision(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_precision,
             self.config.compute.mixed_precision.sr_imag_precision,
         )
-        self.data.sigma_retarded._data = cutoff_complex_data(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = cutoff_complex_data(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_cutoff,
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
-        self.data.sigma_lesser._data = mask_complex_precision(
-            self.data.sigma_lesser._data,
+
+        self.data.sigma_lesser.data[:] = mask_complex_precision(
+            self.data.sigma_lesser.data,
             self.config.compute.mixed_precision.sl_real_precision,
             self.config.compute.mixed_precision.sl_imag_precision,
         )
-        self.data.sigma_greater._data = mask_complex_precision(
-            self.data.sigma_greater._data,
+        self.data.sigma_greater.data[:] = mask_complex_precision(
+            self.data.sigma_greater.data,
             self.config.compute.mixed_precision.sg_real_precision,
             self.config.compute.mixed_precision.sg_imag_precision,
         )
-        self.data.sigma_retarded._data = mask_complex_precision(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = mask_complex_precision(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_precision,
             self.config.compute.mixed_precision.sr_imag_precision,
         )
-        self.data.sigma_lesser._data = cutoff_complex_data(
-            self.data.sigma_lesser._data,
+        self.data.sigma_lesser.data[:] = cutoff_complex_data(
+            self.data.sigma_lesser.data,
             self.config.compute.mixed_precision.sl_real_cutoff,
             self.config.compute.mixed_precision.sl_imag_cutoff,
         )
-        self.data.sigma_greater._data = cutoff_complex_data(
-            self.data.sigma_greater._data,
+        self.data.sigma_greater.data[:] = cutoff_complex_data(
+            self.data.sigma_greater.data,
             self.config.compute.mixed_precision.sg_real_cutoff,
             self.config.compute.mixed_precision.sg_imag_cutoff,
         )
-        self.data.sigma_retarded._data = cutoff_complex_data(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = cutoff_complex_data(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_cutoff,
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
@@ -708,33 +729,33 @@ class SCBA:
             ),
         )
 
-        self.data.sigma_lesser._data = mask_complex_precision(
-            self.data.sigma_lesser._data,
+        self.data.sigma_lesser.data[:] = mask_complex_precision(
+            self.data.sigma_lesser.data,
             self.config.compute.mixed_precision.sl_real_precision,
             self.config.compute.mixed_precision.sl_imag_precision,
         )
-        self.data.sigma_greater._data = mask_complex_precision(
-            self.data.sigma_greater._data,
+        self.data.sigma_greater.data[:] = mask_complex_precision(
+            self.data.sigma_greater.data,
             self.config.compute.mixed_precision.sg_real_precision,
             self.config.compute.mixed_precision.sg_imag_precision,
         )
-        self.data.sigma_retarded._data = mask_complex_precision(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = mask_complex_precision(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_precision,
             self.config.compute.mixed_precision.sr_imag_precision,
         )
-        self.data.sigma_lesser._data = cutoff_complex_data(
-            self.data.sigma_lesser._data,
+        self.data.sigma_lesser.data[:] = cutoff_complex_data(
+            self.data.sigma_lesser.data,
             self.config.compute.mixed_precision.sl_real_cutoff,
             self.config.compute.mixed_precision.sl_imag_cutoff,
         )
-        self.data.sigma_greater._data = cutoff_complex_data(
-            self.data.sigma_greater._data,
+        self.data.sigma_greater.data[:] = cutoff_complex_data(
+            self.data.sigma_greater.data,
             self.config.compute.mixed_precision.sg_real_cutoff,
             self.config.compute.mixed_precision.sg_imag_cutoff,
         )
-        self.data.sigma_retarded._data = cutoff_complex_data(
-            self.data.sigma_retarded._data,
+        self.data.sigma_retarded.data[:] = cutoff_complex_data(
+            self.data.sigma_retarded.data,
             self.config.compute.mixed_precision.sr_real_cutoff,
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
@@ -922,33 +943,33 @@ class SCBA:
                 profiler.add_stats("sigma_lesser", self.data.sigma_lesser.data)
                 profiler.add_stats("sigma_greater", self.data.sigma_greater.data)
                 profiler.add_stats("sigma_retarded", self.data.sigma_retarded.data)
-                self.data.sigma_lesser._data = mask_complex_precision(
-                    self.data.sigma_lesser._data,
+                self.data.sigma_lesser.data[:] = mask_complex_precision(
+                    self.data.sigma_lesser.data,
                     self.config.compute.mixed_precision.sl_real_precision,
                     self.config.compute.mixed_precision.sl_imag_precision,
                 )
-                self.data.sigma_greater._data = mask_complex_precision(
-                    self.data.sigma_greater._data,
+                self.data.sigma_greater.data[:] = mask_complex_precision(
+                    self.data.sigma_greater.data,
                     self.config.compute.mixed_precision.sg_real_precision,
                     self.config.compute.mixed_precision.sg_imag_precision,
                 )
-                self.data.sigma_retarded._data = mask_complex_precision(
-                    self.data.sigma_retarded._data,
+                self.data.sigma_retarded.data[:] = mask_complex_precision(
+                    self.data.sigma_retarded.data,
                     self.config.compute.mixed_precision.sr_real_precision,
                     self.config.compute.mixed_precision.sr_imag_precision,
                 )
-                self.data.sigma_lesser._data = cutoff_complex_data(
-                    self.data.sigma_lesser._data,
+                self.data.sigma_lesser.data[:] = cutoff_complex_data(
+                    self.data.sigma_lesser.data,
                     self.config.compute.mixed_precision.sl_real_cutoff,
                     self.config.compute.mixed_precision.sl_imag_cutoff,
                 )
-                self.data.sigma_greater._data = cutoff_complex_data(
-                    self.data.sigma_greater._data,
+                self.data.sigma_greater.data[:] = cutoff_complex_data(
+                    self.data.sigma_greater.data,
                     self.config.compute.mixed_precision.sg_real_cutoff,
                     self.config.compute.mixed_precision.sg_imag_cutoff,
                 )
-                self.data.sigma_retarded._data = cutoff_complex_data(
-                    self.data.sigma_retarded._data,
+                self.data.sigma_retarded.data[:] = cutoff_complex_data(
+                    self.data.sigma_retarded.data,
                     self.config.compute.mixed_precision.sr_real_cutoff,
                     self.config.compute.mixed_precision.sr_imag_cutoff,
                 )
@@ -964,36 +985,78 @@ class SCBA:
                 profiler.add_stats("g_greater", self.data.g_greater.data)
                 profiler.add_stats("g_retarded", self.data.g_retarded.data)
                 # downcast
-                self.data.g_lesser._data = mask_complex_precision(
-                    self.data.g_lesser._data,
+                # if self.config.compute.mixed_precision.start_iter < i:
+                self.data.g_lesser.data[:] = mask_complex_precision(
+                    self.data.g_lesser.data,
                     self.config.compute.mixed_precision.gl_real_precision,
                     self.config.compute.mixed_precision.gl_imag_precision,
                 )
-                self.data.g_greater._data = mask_complex_precision(
-                    self.data.g_greater._data,
+                self.data.g_greater.data[:] = mask_complex_precision(
+                    self.data.g_greater.data,
                     self.config.compute.mixed_precision.gg_real_precision,
                     self.config.compute.mixed_precision.gg_imag_precision,
                 )
-                self.data.g_retarded._data = mask_complex_precision(
-                    self.data.g_retarded._data,
+                self.data.g_retarded.data[:] = mask_complex_precision(
+                    self.data.g_retarded.data,
                     self.config.compute.mixed_precision.gr_real_precision,
                     self.config.compute.mixed_precision.gr_imag_precision,
                 )
-                self.data.g_lesser._data = cutoff_complex_data(
-                    self.data.g_lesser._data,
+                self.data.g_lesser.data[:] = cutoff_complex_data(
+                    self.data.g_lesser.data,
                     self.config.compute.mixed_precision.gl_real_cutoff,
                     self.config.compute.mixed_precision.gl_imag_cutoff,
                 )
-                self.data.g_greater._data = cutoff_complex_data(
-                    self.data.g_greater._data,
+                self.data.g_greater.data[:] = cutoff_complex_data(
+                    self.data.g_greater.data,
                     self.config.compute.mixed_precision.gg_real_cutoff,
                     self.config.compute.mixed_precision.gg_imag_cutoff,
                 )
-                self.data.g_retarded._data = cutoff_complex_data(
-                    self.data.g_retarded._data,
+                self.data.g_retarded.data[:] = cutoff_complex_data(
+                    self.data.g_retarded.data,
                     self.config.compute.mixed_precision.gr_real_cutoff,
                     self.config.compute.mixed_precision.gr_imag_cutoff,
                 )
+                # else:
+                #     self.data.g_lesser.data[:] = mask_complex_precision(
+                #         self.data.g_lesser.data,
+                #         "fp64",
+                #         "fp64",
+                #     )
+                #     self.data.g_greater.data[:] = mask_complex_precision(
+                #         self.data.g_greater.data,
+                #         "fp64",
+                #         "fp64",
+                #     )
+                #     self.data.g_retarded.data[:] = mask_complex_precision(
+                #         self.data.g_retarded.data,
+                #         "fp64",
+                #         "fp64",
+                #     )
+                #     self.data.g_lesser.data[:] = cutoff_complex_data(
+                #         self.data.g_lesser.data,
+                #         0,
+                #         0,
+                #     )
+                #     self.data.g_greater.data[:] = cutoff_complex_data(
+                #         self.data.g_greater.data,
+                #         0,
+                #         0,
+                #     )
+                #     self.data.g_retarded.data[:] = cutoff_complex_data(
+                #         self.data.g_retarded.data,
+                #         0,
+                #         0,
+                #     )
+
+                # print("2 ", xp.linalg.norm(self.data.g_lesser.data))
+
+                # _data = comm.stack.all_gather_v(self.data.g_lesser.data, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"g_lesser_{i}.npy", _data, allow_pickle=True)
+
+                # _data = comm.stack.all_gather_v(self.data.g_greater.data, axis=0)
+                # if comm.rank == 0:
+                #     np.save(f"g_greater_{i}.npy", _data, allow_pickle=True)
 
                 self._compute_electron_observables()
 
@@ -1044,6 +1107,20 @@ class SCBA:
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
 
+            
+            
+            # _data = comm.stack.all_gather_v(self.data.sigma_lesser.data, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"sigma_lesser_{i}.npy", _data, allow_pickle=True)
+
+            # _data = comm.stack.all_gather_v(self.data.sigma_greater.data, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"sigma_greater_{i}.npy", _data, allow_pickle=True)
+
+            # _data = comm.stack.all_gather_v(self.data.sigma_retarded.data, axis=0)
+            # if comm.rank == 0:
+            #     np.save(f"sigma_retarded_{i}.npy", _data, allow_pickle=True)            
+            
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)

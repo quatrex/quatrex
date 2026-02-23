@@ -9,7 +9,7 @@ from scipy import sparse
 
 from qttools.nevp import Beyn, Full
 from qttools.obc import Spectral
-from quatrex.core.quatrex_config import QuatrexConfig, parse_config
+from quatrex.core.config import QuatrexConfig, parse_config
 
 
 class BeynTuner:

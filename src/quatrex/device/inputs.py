@@ -11,8 +11,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.grid.kpoints import monkhorst_pack
 
 
@@ -424,14 +423,14 @@ def _assemble_kpoint(
 
 
 def _create_matrix_from_unit_cells(
-    quatrex_config: QuatrexConfig,
+    config: QuatrexConfig,
     unit_cells: NDArray,
 ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
     """Creates a matrix from unit cells with periodic shifts.
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
     unit_cells : NDArray
         The unit cell data.
@@ -447,13 +446,13 @@ def _create_matrix_from_unit_cells(
     # NOTE: This is arrow-wise partitioning.
     # TODO: Allow more options, e.g., block row-wise partitioning.
     section_sizes, __ = get_section_sizes(
-        quatrex_config.device.num_transport_cells, comm.block.size
+        config.device.num_transport_cells, comm.block.size
     )
     section_offsets = np.hstack(([0], np.cumsum(section_sizes)))
     start_block = section_offsets[comm.block.rank]
     end_block = section_offsets[comm.block.rank + 1]
 
-    transport_ind = "xyz".index(quatrex_config.device.transport_direction)
+    transport_ind = "xyz".index(config.device.transport_direction)
 
     transverse_repetitions = list(unit_cells.shape[:3])
     transverse_repetitions.pop(transport_ind)
@@ -471,8 +470,8 @@ def _create_matrix_from_unit_cells(
 
         matrix_sparray, block_sizes = expand_tight_binding_matrix(
             tight_binding_matrix=unit_cells,
-            num_transport_cells=quatrex_config.device.num_transport_cells,
-            transport_direction=quatrex_config.device.transport_direction,
+            num_transport_cells=config.device.num_transport_cells,
+            transport_direction=config.device.transport_direction,
             block_start=start_block,
             block_end=end_block,
             periodic_shift=periodic_shift,
@@ -483,22 +482,20 @@ def _create_matrix_from_unit_cells(
     matrix_sparray = sum(matrix_dict.values())
     matrix_sparray.sum_duplicates()
     block_sizes = get_host(block_sizes)
-    block_sizes_array = np.asarray(
-        [block_sizes[0]] * quatrex_config.device.num_transport_cells
-    )
+    block_sizes_array = np.asarray([block_sizes[0]] * config.device.num_transport_cells)
 
     return matrix_sparray, matrix_dict, block_sizes_array
 
 
 def _load_matrix_from_unit_cell(
-    quatrex_config: QuatrexConfig,
+    config: QuatrexConfig,
     matrix_name: str,
 ) -> tuple[sparse.coo_matrix, dict | None, NDArray | None]:
     """Loads a matrix from unit cell data.
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
     matrix_name : str
         Name of the matrix ('hamiltonian','overlap' or
@@ -511,21 +508,20 @@ def _load_matrix_from_unit_cell(
 
     """
     unit_cells = distributed_load(
-        quatrex_config.input_dir / f"{matrix_name}_unit_cells.npy"
+        config.input_dir / f"{matrix_name}_unit_cells.npy"
     ).astype(xp.complex128)
 
     # Apply cutoff if requested and available
     trimmed_unit_cells = trim_tight_binding_matrix(
         tight_binding_matrix=unit_cells,
-        neighbor_cell_cutoff=quatrex_config.device.neighbor_cell_cutoff,
+        neighbor_cell_cutoff=config.device.neighbor_cell_cutoff,
     )
 
-    return _create_matrix_from_unit_cells(quatrex_config, trimmed_unit_cells)
+    return _create_matrix_from_unit_cells(config, trimmed_unit_cells)
 
 
 def load_matrix(
-    quatrex_config: QuatrexConfig,
-    compute_config: ComputeConfig,
+    config: QuatrexConfig,
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
@@ -536,10 +532,8 @@ def load_matrix(
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
     sparsity_pattern : sparse.coo_matrix | None
@@ -560,17 +554,15 @@ def load_matrix(
 
     """
 
-    if quatrex_config.device.construct_from_unit_cell:
+    if config.device.construct_from_unit_cell:
         matrix_sparray, matrix_dict, block_sizes = _load_matrix_from_unit_cell(
-            quatrex_config, matrix_name
+            config, matrix_name
         )
     else:
         matrix_sparray = distributed_load(
-            quatrex_config.input_dir / f"{matrix_name}.npz"
+            config.input_dir / f"{matrix_name}.npz"
         ).astype(xp.complex128)
-        block_sizes = get_host(
-            distributed_load(quatrex_config.input_dir / "block_sizes.npy")
-        )
+        block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.npy"))
         matrix_dict = None
 
     # TODO: This is not efficient and will be refactored when the inputs
@@ -584,26 +576,26 @@ def load_matrix(
     # Symmetrize the data.
     matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
 
-    matrix = compute_config.dsdbsparse_type.from_sparray(
+    matrix = config.compute.dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
         global_stack_shape=(comm.stack.size,)
-        + tuple([k for k in quatrex_config.device.kpoint_grid if k > 1]),
-        symmetry=quatrex_config.scba.symmetric,
+        + tuple([k for k in config.device.kpoint_grid if k > 1]),
+        symmetry=config.scba.symmetric,
         symmetry_op=symmetry_op,
     )
     matrix.data[:] = 0.0  # Initialize to zero.
     if matrix_dict is None:
         matrix += matrix_sparray
     else:
-        transport_idx = "xyz".index(quatrex_config.device.transport_direction)
+        transport_idx = "xyz".index(config.device.transport_direction)
 
         # Pop the k-point in transport direction
-        kpoint_grid = list(copy(quatrex_config.device.kpoint_grid))
+        kpoint_grid = list(copy(config.device.kpoint_grid))
         kpoint_grid.pop(transport_idx)
         kpoint_grid = np.array(kpoint_grid)
 
-        kpoint_shift = list(copy(quatrex_config.device.kpoint_shift))
+        kpoint_shift = list(copy(config.device.kpoint_shift))
         kpoint_shift.pop(transport_idx)
         kpoint_shift = np.array(kpoint_shift)
 

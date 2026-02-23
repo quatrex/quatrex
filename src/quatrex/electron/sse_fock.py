@@ -7,7 +7,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_circular_convolve
 from qttools.profiling import Profiler
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
 profiler = Profiler()
@@ -18,10 +18,8 @@ class SigmaFock(ScatteringSelfEnergy):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The Quatrex configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     electron_energies : NDArray
         The energies for the electron system.
 
@@ -29,13 +27,13 @@ class SigmaFock(ScatteringSelfEnergy):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
+        config: QuatrexConfig,
         coulomb_matrix: DSDBSparse,
         electron_energies: NDArray,
     ):
         """Initializes the bare Fock self-energy."""
         self.energies = electron_energies
-        self.kpoint_volume = np.prod(quatrex_config.device.kpoint_grid)
+        self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.prefactor = 1j / (2 * xp.pi) * (self.energies[1] - self.energies[0])
         (
             coulomb_matrix.dtranspose()

@@ -22,9 +22,8 @@ from qttools.wave_function_solver import (
     cuDSS,
     preferred_matrix_type,
 )
-from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
-from quatrex.core.quatrex_config import QuatrexConfig, SolverConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Device
 from quatrex.grid import get_electron_energies, monkhorst_pack
@@ -139,12 +138,9 @@ class QTBM:
     device : Device
         The quantum device object containing Hamiltonian, atomic
         structure, and attached contacts.
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         Configuration object containing calculation parameters, energy
         grid, and numerical settings.
-    compute_config : ComputeConfig, optional
-        Computational configuration specifying solver options and
-        parallelization parameters. If None, default settings are used.
 
     Attributes
     ----------
@@ -163,24 +159,15 @@ class QTBM:
 
     """
 
-    def __init__(
-        self,
-        device: Device,
-        quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig | None = None,
-    ) -> None:
+    def __init__(self, device: Device, config: QuatrexConfig) -> None:
         """Initializes the QTBM solver."""
 
         self.device = device
         self.num_orbitals = device.hamiltonians[0, 0, 0].shape[0]
 
-        self.quatrex_config = quatrex_config
-        if compute_config is None:
-            compute_config = ComputeConfig()
+        self.config = config
 
-        self.compute_config = compute_config
-
-        kpoint_grid = quatrex_config.device.kpoint_grid
+        kpoint_grid = config.device.kpoint_grid
         if self.device.gamma_only and kpoint_grid != (1, 1, 1):
             raise ValueError(
                 "The device only has a Gamma point Hamiltonian, "
@@ -188,15 +175,15 @@ class QTBM:
             )
 
         # Generate the Monkhorst-Pack k-point grid.
-        self.kpoints = monkhorst_pack(kpoint_grid, quatrex_config.device.kpoint_shift)
+        self.kpoints = monkhorst_pack(kpoint_grid, config.device.kpoint_shift)
         self.num_kpoints = self.kpoints.shape[0]
 
-        self.max_batch_size = self.quatrex_config.qtbm.max_batch_size
+        self.max_batch_size = self.config.qtbm.max_batch_size
 
         self.observables = Observables()
 
         # Get the electron energies.
-        self.electron_energies = get_electron_energies(quatrex_config)
+        self.electron_energies = get_electron_energies(config)
 
         # Get the local slice of the electron energies
         self.local_energies = get_local_slice(self.electron_energies)
@@ -219,10 +206,8 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        self.solver = self._configure_solver(quatrex_config.electron.solver)
-        self.matrix_type = preferred_matrix_type[
-            quatrex_config.electron.solver.direct_solver
-        ]
+        self.solver = self._configure_solver(config.electron.solver)
+        self.matrix_type = preferred_matrix_type[config.electron.solver.direct_solver]
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
@@ -516,10 +501,10 @@ class QTBM:
         ), transmission in self.observables.transmissions.items():
             prefactor = fermi_dirac(
                 self.electron_energies - contact_in.fermi_level,
-                self.quatrex_config.electron.temperature,
+                self.config.electron.temperature,
             ) - fermi_dirac(
                 self.electron_energies - contact_out.fermi_level,
-                self.quatrex_config.electron.temperature,
+                self.config.electron.temperature,
             )
 
             self.observables.contact_currents[contact_in, contact_out] = -(
@@ -537,9 +522,9 @@ class QTBM:
     def _write_outputs(self):
         if comm.rank == 0:
 
-            output_dir = self.quatrex_config.output_dir
-            if not os.path.exists(self.quatrex_config.output_dir):
-                os.mkdir(self.quatrex_config.output_dir)
+            output_dir = self.config.output_dir
+            if not os.path.exists(self.config.output_dir):
+                os.mkdir(self.config.output_dir)
 
             for (
                 contact_in,

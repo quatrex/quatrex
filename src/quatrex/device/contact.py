@@ -8,8 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, obc, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
-from quatrex.core.compute_config import NEVPConfig
-from quatrex.core.quatrex_config import OBCConfig
+from quatrex.core.config import NEVPConfig, OBCConfig
 
 
 class Contact:
@@ -177,7 +176,7 @@ class Contact:
         )[None, :]
 
         self.obc_solver = self._configure_obc(
-            device.quatrex_config.electron.obc, device.compute_config.nevp
+            device.config.electron.obc, device.config.compute.nevp
         )
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:

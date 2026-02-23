@@ -9,8 +9,7 @@ import scipy.sparse as sps
 from qttools import NDArray, xp
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.gpu_utils import get_host
-from quatrex.core.compute_config import CommConfig
-from quatrex.core.quatrex_config import parse_config as parse_quatrex_config
+from quatrex.core.config import parse_config
 
 EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
 CARBON_NANOTUBE_EXAMPLE = EXAMPLES_DIR / "w90" / "carbon-nanotube" / "gw"
@@ -76,10 +75,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     energies = xp.array(request.param)
 
     quatrex_config_path = CARBON_NANOTUBE_EXAMPLE / "quatrex_config.toml"
-    quatrex_config = parse_quatrex_config(quatrex_config_path)
-
-    # hack to configure the communicator
-    CommConfig()
+    quatrex_config = parse_config(quatrex_config_path)
 
     hamiltonian_sparray = sps.load_npz(
         quatrex_config.input_dir / "hamiltonian.npz"

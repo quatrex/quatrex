@@ -15,14 +15,10 @@ def test_single_rank(example: tuple[Path, bool]):
         pytest.skip("Skipping single-rank test for distributed example.")
 
     quatrex_config_path = example_path / "quatrex_config.toml"
-    compute_config_path = example_path / "compute_config.toml"
-
-    if not compute_config_path.exists():
-        compute_config_path = None
 
     from quatrex.cli.main import run
 
-    run(quatrex_config_path, compute_config_path)
+    run(quatrex_config_path)
 
     output_dir = example_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
@@ -45,13 +41,10 @@ def test_distributed(example: tuple[Path, bool]):
     example_path, distributed = example
 
     quatrex_config_path = example_path / "quatrex_config.toml"
-    compute_config_path = example_path / "compute_config.toml"
 
     # TODO: This is not compatible with SLURM yet.
     # This needs to be adapted when running on a cluster.
     args = ["mpiexec", "-n", "6", "quatrex", "run", str(quatrex_config_path)]
-    if compute_config_path.exists():
-        args.append(str(compute_config_path))
 
     subprocess.run(args, check=True, stdout=None, stderr=None)
 

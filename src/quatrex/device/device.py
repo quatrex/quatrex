@@ -8,8 +8,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
 
 
@@ -92,19 +91,14 @@ class Device:
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         Configuration object containing input paths, device parameters,
         and computational settings.
-    compute_config : ComputeConfig
-        Configuration object specifying computational resources and
-        parallelization settings.
 
     Attributes
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         Reference to the configuration object.
-    compute_config : ComputeConfig
-        Reference to the compute configuration object.
     hamiltonians : dict
         Dictionary of Hamiltonian matrices indexed by (i, j, k) lattice
         vectors. Keys are tuples representing the lattice vector
@@ -143,13 +137,10 @@ class Device:
 
     """
 
-    def __init__(
-        self, quatrex_config: QuatrexConfig, compute_config: ComputeConfig
-    ) -> None:
+    def __init__(self, config: QuatrexConfig) -> None:
         """Initializes a Device object from configuration."""
 
-        self.quatrex_config = quatrex_config
-        self.compute_config = compute_config
+        self.config = config
 
         self._init_hamiltonian()
         self._init_lattice()
@@ -183,12 +174,12 @@ class Device:
         self.overlap_matrices = {}
         self.gamma_only = False
 
-        if not (self.quatrex_config.input_dir / "hamiltonian_0_0_0.npz").exists():
+        if not (self.config.input_dir / "hamiltonian_0_0_0.npz").exists():
             raise ValueError("Hamiltonian matrix for (0,0,0) not found.")
 
         # Load all Hamiltonian files with format hamiltonian_x_y_z.npz
         # Find all hamiltonian files in the input directory
-        hamiltonian_paths = self.quatrex_config.input_dir.glob("hamiltonian_*_*_*.npz")
+        hamiltonian_paths = self.config.input_dir.glob("hamiltonian_*_*_*.npz")
 
         # Parse indices from filenames and load files
         for hamiltonian_path in hamiltonian_paths:
@@ -213,7 +204,7 @@ class Device:
                 self.hamiltonians[indices].sort_indices()
 
             overlap_path = (
-                self.quatrex_config.input_dir
+                self.config.input_dir
                 / f"overlap_{indices[0]}_{indices[1]}_{indices[2]}.npz"
             )
 
@@ -263,7 +254,7 @@ class Device:
         the device."""
 
         # Load the lattice structure from file.
-        lattice_file = self.quatrex_config.input_dir / "lattice.xyz"
+        lattice_file = self.config.input_dir / "lattice.xyz"
         if not lattice_file.exists():
             raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
         self.lattice_vectors, self.atom_coordinates, self.atomic_species = (
@@ -284,9 +275,7 @@ class Device:
         """
         orbitals_per_atom = np.fromiter(
             map(
-                defaultdict(
-                    lambda: 1, self.quatrex_config.device.num_orbitals_per_atom
-                ).get,
+                defaultdict(lambda: 1, self.config.device.num_orbitals_per_atom).get,
                 self.atomic_species,
             ),
             dtype=np.int32,
@@ -306,9 +295,7 @@ class Device:
         self.potential = None
 
         try:
-            potential = distributed_load(
-                self.quatrex_config.input_dir / "potential.npy"
-            )
+            potential = distributed_load(self.config.input_dir / "potential.npy")
 
             if potential.shape[0] == self.atom_coordinates.shape[0]:
                 # Upscale the potential to the number of orbitals
@@ -354,7 +341,7 @@ class Device:
         """
 
         contacts = []
-        for contact_config in self.quatrex_config.device.contacts:
+        for contact_config in self.config.device.contacts:
             contacts.append(
                 Contact(
                     device=self,

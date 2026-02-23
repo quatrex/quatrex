@@ -7,7 +7,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
-from quatrex.core.compute_config import BandEdgeConfig
+from quatrex.core.config import BandEdgeConfig
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks

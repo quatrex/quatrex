@@ -7,9 +7,10 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import get_local_slice
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import (
+from quatrex.core.config import (
+    LyapunovComputeConfig,
     LyapunovConfig,
+    NEVPConfig,
     OBCConfig,
     QuatrexConfig,
     SolverConfig,
@@ -21,10 +22,8 @@ class SubsystemSolver(ABC):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     energies : np.ndarray
         The energies at which to solve.
 
@@ -38,8 +37,7 @@ class SubsystemSolver(ABC):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
+        config: QuatrexConfig,
         energies: NDArray,
     ) -> None:
         """Initializes the solver."""
@@ -47,24 +45,20 @@ class SubsystemSolver(ABC):
         self.local_energies = get_local_slice(energies)
 
         self.obc = self._configure_obc(
-            getattr(quatrex_config, self.system).obc, compute_config
+            getattr(config, self.system).obc, config.compute.nevp
         )
         self.lyapunov = self._configure_lyapunov(
-            getattr(quatrex_config, self.system).lyapunov, compute_config
+            getattr(config, self.system).lyapunov,
+            config.compute.lyapunov,
         )
-        self.solver = self._configure_solver(
-            getattr(quatrex_config, self.system).solver
-        )
+        self.solver = self._configure_solver(getattr(config, self.system).solver)
         self.solver_dist = RGFDist(
-            max_batch_size=getattr(quatrex_config, self.system).solver.max_batch_size,
+            max_batch_size=getattr(config, self.system).solver.max_batch_size,
         )
 
-        self.quatrex_config = quatrex_config
-        self.compute_config = compute_config
+        self.config = config
 
-    def _configure_nevp(
-        self, obc_config: OBCConfig, compute_config: ComputeConfig
-    ) -> NEVP:
+    def _configure_nevp(self, obc_config: OBCConfig, nevp_config: NEVPConfig) -> NEVP:
         """Configures the NEVP solver from the config.
 
         Parameters
@@ -84,17 +78,17 @@ class SubsystemSolver(ABC):
                 r_i=obc_config.r_i,
                 m_0=obc_config.m_0,
                 num_quad_points=obc_config.num_quad_points,
-                num_threads_contour=compute_config.nevp.num_threads_contour,
-                eig_compute_location=compute_config.nevp.eig_compute_location,
-                project_compute_location=compute_config.nevp.project_compute_location,
-                use_qr=compute_config.nevp.use_qr,
-                contour_batch_size=compute_config.nevp.contour_batch_size,
-                use_pinned_memory=compute_config.nevp.use_pinned_memory,
+                num_threads_contour=nevp_config.num_threads_contour,
+                eig_compute_location=nevp_config.eig_compute_location,
+                project_compute_location=nevp_config.project_compute_location,
+                use_qr=nevp_config.use_qr,
+                contour_batch_size=nevp_config.contour_batch_size,
+                use_pinned_memory=nevp_config.use_pinned_memory,
             )
         if obc_config.nevp_solver == "full":
             return Full(
-                eig_compute_location=compute_config.nevp.eig_compute_location,
-                reduce=compute_config.nevp.reduce_sparsity,
+                eig_compute_location=nevp_config.eig_compute_location,
+                reduce=nevp_config.reduce_sparsity,
             )
 
         raise NotImplementedError(
@@ -102,7 +96,7 @@ class SubsystemSolver(ABC):
         )
 
     def _configure_obc(
-        self, obc_config: OBCConfig, compute_config: ComputeConfig
+        self, obc_config: OBCConfig, nevp_config: NEVPConfig
     ) -> obc.OBCSolver:
         """Configures the OBC algorithm from the config.
 
@@ -123,7 +117,7 @@ class SubsystemSolver(ABC):
             )
 
         elif obc_config.algorithm == "spectral":
-            nevp = self._configure_nevp(obc_config, compute_config)
+            nevp = self._configure_nevp(obc_config, nevp_config)
             obc_solver = obc.Spectral(
                 nevp=nevp,
                 block_sections=obc_config.block_sections,
@@ -155,7 +149,9 @@ class SubsystemSolver(ABC):
         return obc_solver
 
     def _configure_lyapunov(
-        self, lyapunov_config: LyapunovConfig, compute_config: ComputeConfig
+        self,
+        lyapunov_config: LyapunovConfig,
+        lyapunov_compute_config: LyapunovComputeConfig,
     ) -> lyapunov.LyapunovSolver:
         """Configures the Lyapunov solver from the config.
 
@@ -163,6 +159,8 @@ class SubsystemSolver(ABC):
         ----------
         lyapunov_config : LyapunovConfig
             The Lyapunov configuration.
+        lyapunov_compute_config : LyapunovComputeConfig
+            The Lyapunov compute configuration.
 
         Returns
         -------
@@ -174,9 +172,9 @@ class SubsystemSolver(ABC):
             lyapunov_solver = lyapunov.Spectral(
                 num_ref_iterations=lyapunov_config.num_ref_iterations,
                 warning_threshold=lyapunov_config.warning_threshold,
-                eig_compute_location=compute_config.lyapunov.eig_compute_location,
+                eig_compute_location=lyapunov_compute_config.eig_compute_location,
                 reduce_sparsity=lyapunov_config.reduce_sparsity,
-                use_pinned_memory=compute_config.lyapunov.use_pinned_memory,
+                use_pinned_memory=lyapunov_compute_config.use_pinned_memory,
             )
         elif lyapunov_config.algorithm == "doubling":
             lyapunov_solver = lyapunov.Doubling(

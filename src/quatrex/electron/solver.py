@@ -14,8 +14,7 @@ from quatrex.bandstructure.band_edges import (
     find_dos_peaks,
     find_renormalized_eigenvalues,
 )
-from quatrex.core.compute_config import ComputeConfig
-from quatrex.core.quatrex_config import QuatrexConfig
+from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
@@ -56,10 +55,8 @@ class ElectronSolver(SubsystemSolver):
 
     Parameters
     ----------
-    quatrex_config : QuatrexConfig
+    config : QuatrexConfig
         The quatrex simulation configuration.
-    compute_config : ComputeConfig
-        The compute configuration.
     energies : np.ndarray
         The energies at which to solve.
 
@@ -69,20 +66,18 @@ class ElectronSolver(SubsystemSolver):
 
     def __init__(
         self,
-        quatrex_config: QuatrexConfig,
-        compute_config: ComputeConfig,
+        config: QuatrexConfig,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
     ) -> None:
         """Initializes the electron solver."""
-        super().__init__(quatrex_config, compute_config, energies)
+        super().__init__(config, energies)
 
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
         self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
-            quatrex_config=quatrex_config,
-            compute_config=compute_config,
+            config=config,
             matrix_name="hamiltonian",
             sparsity_pattern=None,
             shift_kpoints=False,
@@ -95,15 +90,14 @@ class ElectronSolver(SubsystemSolver):
         del hamiltonian_sparsity_pattern
         self.block_sizes = self.hamiltonian.block_sizes
 
-        self.orthogonal_basis = quatrex_config.device.orthogonal_basis
+        self.orthogonal_basis = config.device.orthogonal_basis
         if not self.orthogonal_basis:
             # TODO: Overlap matrix is not supported correctly. The code
             # should look like this.
 
             # Load the device Overlap.
             self.overlap, overlap_sparsity_pattern = load_matrix(
-                quatrex_config=quatrex_config,
-                compute_config=compute_config,
+                config=config,
                 matrix_name="overlap",
                 sparsity_pattern=None,
                 shift_kpoints=False,
@@ -128,11 +122,11 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Allocate memory for the system matrix.
-        self.system_matrix = compute_config.dsdbsparse_type.from_sparray(
+        self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(xp.complex128),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
-            + tuple([int(k) for k in quatrex_config.device.kpoint_grid if k > 1]),
+            + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -147,9 +141,7 @@ class ElectronSolver(SubsystemSolver):
 
         # Load the potential.
         try:
-            self.potential = distributed_load(
-                quatrex_config.input_dir / "potential.npy"
-            )
+            self.potential = distributed_load(config.input_dir / "potential.npy")
         except FileNotFoundError:
             # No potential provided. Assume zero potential.
             self.potential = xp.zeros(
@@ -157,24 +149,22 @@ class ElectronSolver(SubsystemSolver):
             )
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
-        self.eta = quatrex_config.electron.eta
-        self.eta_obc = quatrex_config.electron.eta_obc
+        self.eta = config.electron.eta
+        self.eta_obc = config.electron.eta_obc
 
         # Contacts.
-        self.flatband = quatrex_config.electron.flatband
+        self.flatband = config.electron.flatband
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
-        if quatrex_config.electron.solver.compute_current and comm.block.size > 1:
+        if config.electron.solver.compute_current and comm.block.size > 1:
             raise NotImplementedError(
                 "Current computation not implemented in distributed mode."
             )
 
-        self.compute_meir_wingreen_current = (
-            quatrex_config.electron.solver.compute_current
-        )
+        self.compute_meir_wingreen_current = config.electron.solver.compute_current
 
-        self.dos_peak_limit = quatrex_config.electron.dos_peak_limit
+        self.dos_peak_limit = config.electron.dos_peak_limit
 
         # Band edges and Fermi levels.
         # TODO: This only works for small potential variations accross
@@ -182,21 +172,19 @@ class ElectronSolver(SubsystemSolver):
         # TODO: During this initialization we should compute the contact
         # band structures and extract the correct fermi levels & band
         # edges from there.
-        self.band_edge_tracking = quatrex_config.electron.band_edge_tracking
+        self.band_edge_tracking = config.electron.band_edge_tracking
         self.delta_fermi_level_conduction_band = (
-            quatrex_config.electron.conduction_band_edge
-            - quatrex_config.electron.fermi_level
+            config.electron.conduction_band_edge - config.electron.fermi_level
         )
         self.left_mid_gap_energy = 0.5 * (
-            quatrex_config.electron.conduction_band_edge
-            + quatrex_config.electron.valence_band_edge
+            config.electron.conduction_band_edge + config.electron.valence_band_edge
         )
-        self.left_fermi_level = quatrex_config.electron.left_fermi_level
-        self.right_fermi_level = quatrex_config.electron.right_fermi_level
+        self.left_fermi_level = config.electron.left_fermi_level
+        self.right_fermi_level = config.electron.right_fermi_level
 
         potential = self.left_fermi_level - self.right_fermi_level
         self.right_mid_gap_energy = self.left_mid_gap_energy - potential
-        self.temperature = quatrex_config.electron.temperature
+        self.temperature = config.electron.temperature
 
         self.left_occupancies = fermi_dirac(
             self.local_energies - self.left_fermi_level, self.temperature
@@ -207,12 +195,10 @@ class ElectronSolver(SubsystemSolver):
 
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
-        self.block_sections = quatrex_config.electron.obc.block_sections
+        self.block_sections = config.electron.obc.block_sections
 
         self.call_count = 0
-        self.filtering_iteration_limit = (
-            quatrex_config.electron.filtering_iteration_limit
-        )
+        self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
     @staticmethod
     def get_block(
@@ -523,7 +509,7 @@ class ElectronSolver(SubsystemSolver):
                         self.left_mid_gap_energy,
                         self.right_mid_gap_energy,
                     ),
-                    band_edge_config=self.compute_config.band_edge,
+                    band_edge_config=self.config.compute.band_edge,
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 

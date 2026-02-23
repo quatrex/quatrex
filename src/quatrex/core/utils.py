@@ -288,7 +288,7 @@ def filtering_peaks_mask(
     )
     mask = (xp.min(forward_gradient, axis=0) < -peak_limit) | (
         xp.max(backward_gradient, axis=0) > peak_limit
-    )
+    ) | (xp.max(dos, axis=0) > 10)
 
     section_sizes, __ = get_section_sizes(energies.size, comm.stack.size)
     section_offsets = np.hstack(([0], np.cumsum(section_sizes)))

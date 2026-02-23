@@ -174,7 +174,12 @@ class ElectronSolver(SubsystemSolver):
             )
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
+        # Eta can be a float or an array, if it is an array the elements are iterated over
+        # each call to solve, until the end is reached and the last element is used for all
+        # subsequent calls.
         self.eta = quatrex_config.electron.eta
+        if isinstance(self.eta, float):
+            self.eta = (self.eta,)
         self.eta_obc = quatrex_config.electron.eta_obc
 
         # Contacts.
@@ -431,9 +436,14 @@ class ElectronSolver(SubsystemSolver):
             # TODO: This is not correct in the case of kpoints
             self.system_matrix += self.overlap_sparray
 
+        eta = self.eta[
+            self.call_count if self.call_count < len(self.eta) else -1
+        ]
+        if comm.rank == 0:
+            print(f"Using eta = {eta}", flush=True) 
         scale_stack(
             self.system_matrix.data,
-            self.local_energies + 1j * self.eta,
+            self.local_energies + 1j * eta,
         )
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)

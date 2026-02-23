@@ -347,7 +347,7 @@ class ElectronConfig(BaseModel):
     lyapunov: LyapunovConfig = LyapunovConfig()
 
     eta_obc: NonNegativeFloat = 0  # eV
-    eta: NonNegativeFloat = 1e-12  # eV
+    eta: NonNegativeFloat | tuple[NonNegativeFloat, ...] = 1e-12  # eV
 
     fermi_level: float | None = None
     conduction_band_edge: float | None = None

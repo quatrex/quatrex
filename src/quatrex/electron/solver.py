@@ -676,21 +676,19 @@ class ElectronSolver(SubsystemSolver):
             right_band_edges = np.empty((2,), dtype=float)
 
             if comm.block.rank == 0:
-                s_00 = self._get_block(self.overlap_sparray, (0, 0))
-                g_00 = g_retarded.blocks[0, 0]
-
-                kp_dims = len(g_retarded.shape[1:-2])
-                local_left_dos = (
-                    -xp.mean(
-                        xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag,
-                        axis=tuple(range(1, kp_dims + 1)),
-                    )
-                    / xp.pi
-                )
-                # Normalize by the number of unit cells in the transport cell
-                local_left_dos /= self.quatrex_config.device.neighbor_cell_cutoff[
+                uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
                     "xyz".index(self.quatrex_config.device.transport_direction)
                 ]
+                block_size_0 = self.block_sizes[0]
+                assert block_size_0 % uc_size == 0, "Block size must be divisible by unit cell size."
+                small_block_size = block_size_0 // uc_size
+                s_00 = self._get_block(self.overlap_sparray, (0, 0))[..., :small_block_size, :small_block_size]
+                g_00 = g_retarded.blocks[0, 0][..., :small_block_size, :small_block_size]
+
+                kp_dims = len(g_retarded.shape[1:-2])
+                local_left_dos = -xp.mean(
+                    xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
+                ) / xp.pi
 
                 left_dos = comm.stack.all_gather_v(
                     local_left_dos,
@@ -721,20 +719,18 @@ class ElectronSolver(SubsystemSolver):
                     )
 
             if comm.block.rank == comm.block.size - 1:
-                s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-                n = g_retarded.num_local_blocks - 1
-                g_nn = g_retarded.blocks[n, n]
-                local_right_dos = (
-                    -xp.mean(
-                        xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag,
-                        axis=tuple(range(1, kp_dims + 1)),
-                    )
-                    / xp.pi
-                )
-                # Normalize by the number of unit cells in the transport cell
-                local_right_dos /= self.quatrex_config.device.neighbor_cell_cutoff[
+                uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
                     "xyz".index(self.quatrex_config.device.transport_direction)
                 ]
+                block_size_n = self.block_sizes[-1]
+                assert block_size_n % uc_size == 0, "Block size must be divisible by unit cell size."
+                small_block_size = block_size_n // uc_size
+                s_nn = self._get_block(self.overlap_sparray, (-1, -1))[..., -small_block_size:, -small_block_size:]
+                n = g_retarded.num_local_blocks - 1
+                g_nn = g_retarded.blocks[n, n][..., -small_block_size:, -small_block_size:]
+                local_right_dos = -xp.mean(
+                    xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
+                ) / xp.pi
 
                 right_dos = comm.stack.all_gather_v(
                     local_right_dos,

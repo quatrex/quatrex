@@ -6,7 +6,8 @@ from collections import defaultdict
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
-from qttools import NDArray, obc, sparse, xp
+from qttools import NDArray, sparse, xp
+from qttools.boundary_conditions import obc
 from qttools.nevp import NEVP, Beyn, Full
 from quatrex.core.config import NEVPConfig, OBCConfig
 
@@ -717,7 +718,6 @@ class Contact:
                 min_propagation=obc_config.min_propagation,
                 residual_tolerance=obc_config.residual_tolerance,
                 residual_normalization=obc_config.residual_normalization,
-                warning_threshold=obc_config.warning_threshold,
                 eta_decay=obc_config.eta_decay,
             )
 

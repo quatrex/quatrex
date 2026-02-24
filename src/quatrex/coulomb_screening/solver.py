@@ -246,6 +246,10 @@ class CoulombScreeningSolver(SubsystemSolver):
                 level="default",
                 comm=comm.stack,
             ):
+
+                n = self.system_matrix.num_local_blocks - 1
+                m = n - 1
+
                 m_mn, m_nn, m_nm = get_periodic_superblocks(
                     # Twist it, flip it, ...
                     a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
@@ -268,9 +272,6 @@ class CoulombScreeningSolver(SubsystemSolver):
                 )
                 # ... bop it.
                 x_nn = xp.flip(x_nn, axis=(-2, -1))
-
-                n = self.system_matrix.num_local_blocks - 1
-                m = n - 1
 
                 m_mn_x_nn = m_mn @ x_nn
 

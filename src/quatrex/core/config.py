@@ -131,7 +131,8 @@ class MemoizerConfig(BaseModel):
     """
 
     agreement_threshold: float = Field(default=0.999, ge=0, le=1)
-    
+
+
 class SolverConfig(BaseModel):
     """Options for the system solver."""
 

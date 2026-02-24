@@ -4,7 +4,7 @@ import pytest
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.lyapunov import LyapunovSolver, LyapunovSystem
-from quatrex.core.quatrex_config import MemoizerConfig
+from quatrex.core.config import MemoizerConfig
 
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])

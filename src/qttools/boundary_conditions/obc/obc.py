@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from qttools import NDArray, xp
 from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
 from qttools.kernels import linalg
-from quatrex.core.quatrex_config import MemoizerConfig
+from quatrex.core.config import MemoizerConfig
 
 
 class OBCSolver(ABC):

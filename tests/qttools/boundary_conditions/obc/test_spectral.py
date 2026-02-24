@@ -5,7 +5,7 @@ import pytest
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc import OBCSystem, Spectral
 from qttools.nevp import NEVP
-from quatrex.core.quatrex_config import MemoizerConfig
+from quatrex.core.config import MemoizerConfig
 
 
 def _make_periodic(

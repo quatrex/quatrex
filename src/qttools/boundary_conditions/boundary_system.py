@@ -1,11 +1,11 @@
-# Copyright (c) 2025 ETH Zurich and the authors of the qttools package.
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import warnings
 from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
 from qttools.comm import comm
-from quatrex.core.quatrex_config import MemoizerConfig
+from quatrex.core.config import MemoizerConfig
 
 
 class BaseBoundarySystem(ABC):

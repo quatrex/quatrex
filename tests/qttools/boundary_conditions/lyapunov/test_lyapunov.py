@@ -4,7 +4,6 @@ import pytest
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.lyapunov import LyapunovSolver, LyapunovSystem
-from quatrex.core.config import MemoizerConfig
 
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])
@@ -14,13 +13,10 @@ def test_correctness(
     reduce_sparsity: bool,
 ):
 
-    config = MemoizerConfig()
-    config.mode = "off"
-
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         reduce_sparsity=reduce_sparsity,
-        config=config,
+        mode="off",
     )
 
     a, q, _, _ = inputs
@@ -37,13 +33,10 @@ def test_correctness_zeros(
     reduce_sparsity: bool,
 ):
 
-    config = MemoizerConfig()
-    config.mode = "off"
-
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         reduce_sparsity=reduce_sparsity,
-        config=config,
+        mode="off",
     )
 
     a, q, _, _ = inputs
@@ -64,13 +57,10 @@ def test_memoizer(
     """Tests that the Lyapunov memoizer works."""
     a, q, row_slice, col_slice = inputs
 
-    config = MemoizerConfig()
-    config.mode = "force-after-first"
-
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         reduce_sparsity=reduce_sparsity,
-        config=config,
+        mode="force-after-first",
     )
     _, _, x = lyapunov_system((a, q), contact="contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

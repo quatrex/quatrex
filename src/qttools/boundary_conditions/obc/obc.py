@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from qttools import NDArray, xp
 from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
 from qttools.kernels import linalg
-from quatrex.core.config import MemoizerConfig
 
 
 class OBCSolver(ABC):
@@ -59,8 +58,20 @@ class OBCSystem(BaseBoundarySystem):
     cache_compressor : object, optional
         An object with 'compress' and 'decompress' methods to handle
         cache compression. If None, no compression is applied.
-    config : MemoizerConfig, optional
-        Configuration for the memoizer.
+    num_ref_iterations : int, optional
+        The number of fixed-point iterations to refine the solution. Default is 2.
+    relative_tol : float, optional
+        The relative tolerance for convergence. Default is 0.2.
+    absolute_tol : float, optional
+        The absolute tolerance for convergence. Default is 1e-6.
+    warning_threshold : float, optional
+        The threshold for issuing a warning about high residuals. Default is 0.1.
+    mode : str, optional
+        The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
+        Default is 'auto'.
+    agreement_threshold : float, optional
+        The threshold for agreement across MPI ranks to consider a memoized solution valid.
+        Default is 0.999.
 
     """
 
@@ -68,14 +79,24 @@ class OBCSystem(BaseBoundarySystem):
         self,
         boundary_solver: OBCSolver,
         cache_compressor: None = None,
-        config: MemoizerConfig = MemoizerConfig(),
+        num_ref_iterations: int = 2,
+        relative_tol: float = 2e-1,
+        absolute_tol: float = 1e-6,
+        warning_threshold: float = 1e-1,
+        mode: str = "auto",
+        agreement_threshold: float = 0.999,
     ) -> None:
         """Initializes the lyapunov system."""
 
         super().__init__(
-            boundary_solver,
-            cache_compressor,
-            config,
+            boundary_solver=boundary_solver,
+            cache_compressor=cache_compressor,
+            num_ref_iterations=num_ref_iterations,
+            relative_tol=relative_tol,
+            absolute_tol=absolute_tol,
+            warning_threshold=warning_threshold,
+            mode=mode,
+            agreement_threshold=agreement_threshold,
         )
 
     def _contract_system(

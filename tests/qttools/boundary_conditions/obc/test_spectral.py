@@ -5,7 +5,6 @@ import pytest
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc import OBCSystem, Spectral
 from qttools.nevp import NEVP
-from quatrex.core.config import MemoizerConfig
 
 
 def _make_periodic(
@@ -144,10 +143,7 @@ def test_memoizer(
         max_decay=20,
     )
 
-    config = MemoizerConfig()
-    config.mode = "force-after-first"
-
-    obc_system = OBCSystem(spectral, config=config)
+    obc_system = OBCSystem(spectral, mode="force-after-first")
 
     # Add a little noise to the input matrices.
     a_ji, a_ii, a_ij = a_xx

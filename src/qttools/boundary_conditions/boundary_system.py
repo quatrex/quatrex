@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
 from qttools.comm import comm
-from quatrex.core.config import MemoizerConfig
 
 
 class BaseBoundarySystem(ABC):
@@ -18,8 +17,20 @@ class BaseBoundarySystem(ABC):
     cache_compressor : object, optional
         An object with 'compress' and 'decompress' methods to handle
         cache compression. If None, no compression is applied.
-    config : MemoizerConfig, optional
-        Configuration for the memoizer.
+    num_ref_iterations : int, optional
+        The number of fixed-point iterations to refine the solution. Default is 2.
+    relative_tol : float, optional
+        The relative tolerance for convergence. Default is 0.2.
+    absolute_tol : float, optional
+        The absolute tolerance for convergence. Default is 1e-6.
+    warning_threshold : float, optional
+        The threshold for issuing a warning about high residuals. Default is 0.1.
+    mode : str, optional
+        The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
+        Default is 'auto'.
+    agreement_threshold : float, optional
+        The threshold for agreement across MPI ranks to consider a memoized solution valid.
+        Default is 0.999.
 
     """
 
@@ -27,17 +38,22 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_solver,
         cache_compressor: None = None,
-        config: MemoizerConfig = MemoizerConfig(),
+        num_ref_iterations: int = 2,
+        relative_tol: float = 2e-1,
+        absolute_tol: float = 1e-6,
+        warning_threshold: float = 1e-1,
+        mode: str = "auto",
+        agreement_threshold: float = 0.999,
     ) -> None:
         """Initializes the boundary method."""
 
         self.boundary_solver = boundary_solver
-        self.num_ref_iterations = config.num_ref_iterations
-        self.relative_tol = config.relative_tol
-        self.absolute_tol = config.absolute_tol
-        self.warning_threshold = config.warning_threshold
-        self.mode = config.mode
-        self.agreement_threshold = config.agreement_threshold
+        self.num_ref_iterations = num_ref_iterations
+        self.relative_tol = relative_tol
+        self.absolute_tol = absolute_tol
+        self.warning_threshold = warning_threshold
+        self.mode = mode
+        self.agreement_threshold = agreement_threshold
 
         if cache_compressor is None:
             self.compress = lambda x: x.copy()

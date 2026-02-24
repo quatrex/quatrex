@@ -139,7 +139,12 @@ class SubsystemSolver(ABC):
         # NOTE: wrapper handles if the memoizer is off
         obc_solver = obc.OBCSystem(
             boundary_solver=obc_solver,
-            config=obc_config.memoizer,
+            num_ref_iterations=obc_config.memoizer.num_ref_iterations,
+            relative_tol=obc_config.memoizer.relative_tol,
+            absolute_tol=obc_config.memoizer.absolute_tol,
+            warning_threshold=obc_config.memoizer.warning_threshold,
+            mode=obc_config.memoizer.mode,
+            agreement_threshold=obc_config.memoizer.agreement_threshold,
         )
 
         return obc_solver
@@ -184,7 +189,12 @@ class SubsystemSolver(ABC):
         # NOTE: wrapper handles if the memoizer is off
         lyapunov_solver = lyapunov.LyapunovSystem(
             boundary_solver=lyapunov_solver,
-            config=lyapunov_config.memoizer,
+            num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
+            relative_tol=lyapunov_config.memoizer.relative_tol,
+            absolute_tol=lyapunov_config.memoizer.absolute_tol,
+            warning_threshold=lyapunov_config.memoizer.warning_threshold,
+            mode=lyapunov_config.memoizer.mode,
+            agreement_threshold=lyapunov_config.memoizer.agreement_threshold,
             reduce_sparsity=lyapunov_config.reduce_sparsity,
             assume_constant_sparsity=lyapunov_config.assume_constant_sparsity,
         )

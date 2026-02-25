@@ -72,6 +72,11 @@ class SCBAConfig(BaseModel):
 
     symmetric: bool = False
 
+    adaptive: bool = False
+    adaptive_num_points: PositiveInt = 1000
+    adaptive_start_iteration: NonNegativeInt = 0
+    adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
+    adaptive_interpolation_order: Literal[1, 2, 3] = 1
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""
@@ -564,6 +569,10 @@ class OutputConfig(BaseModel):
     coulomb_screening_density: bool = False
 
     self_energy_density: bool = False
+
+    save_reduced_functions: bool = False
+    save_scba_iteration_data: bool = False
+    num_nnz_samples_scba_iteration_data: PositiveInt = 100 # used if scba_iteration_data is True
 
     profiling_path: Path | None = None
     """The files to print and save the timing results to.

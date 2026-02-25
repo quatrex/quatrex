@@ -71,6 +71,35 @@ class SigmaPhonon(ScatteringSelfEnergy):
             return
 
         raise ValueError(f"Unknown phonon model: {config.phonon.model}")
+    
+    def update_energies(self, electron_energies: NDArray) -> None:
+        # energy + hbar * omega
+        # <=> xp.roll(self.electron_energies, -upshift)[:-upshift]
+        self.upshift = xp.argmin(
+            xp.abs(electron_energies - (electron_energies[0] + self.phonon_energy))
+        )
+        # energy - hbar * omega
+        # <=> xp.roll(self.electron_energies, downshift)[downshift:]
+        self.downshift = (
+            electron_energies.size
+            - xp.argmin(
+                xp.abs(
+                    electron_energies - (electron_energies[-1] - self.phonon_energy)
+                )
+            )
+            - 1
+        )
+
+        self.valid_slice = (
+            slice(self.downshift, -self.upshift)
+            if self.upshift != 0
+            else slice(None)
+        )
+
+        totalshift = self.upshift + self.downshift
+
+        self.upslice = slice(None) if totalshift == 0 else slice(-totalshift)
+        self.downslice = slice(totalshift, None)
 
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]

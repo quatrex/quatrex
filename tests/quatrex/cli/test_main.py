@@ -11,3 +11,7 @@ def test_help_cli():
 def test_version_cli():
     """Tests the version CLI."""
     subprocess.run(["quatrex", "--version"], check=True)
+
+# add if you want to run the tests directly as python file and debug it
+# if __name__ == "__main__":
+#     pytest.main([__file__])

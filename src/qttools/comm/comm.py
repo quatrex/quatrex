@@ -555,3 +555,32 @@ class QuatrexCommunicator:
     def barrier(self):
         """Perform barrier synchronization."""
         global_comm.Barrier()
+
+    def Gather(self, sendbuf: NDArray, recvbuf: NDArray | None, root: int = 0):
+        """Gathers the sendbuf from all ranks to the root rank. For buffer-like objects (ex. Numpy arrays)"""
+        global_comm.Gather(sendbuf, recvbuf, root=root)
+
+    def gather(self, sendbuf: NDArray, root: int = 0) -> NDArray | None:
+        """Gathers the sendbuf from all ranks and returns the result. For generic Python objects."""
+        return global_comm.gather(sendbuf, root=root)
+    
+    # recvbuf is type BufSpecV in MPI [gatherbuf, counts, displacement, datatype]
+    def Gatherv(self, sendbuf: NDArray, recvbuf, root: int = 0) -> None:
+        """Gathers the sendbuf from all ranks to the root rank. For buffer-like objects (ex. Numpy arrays)"""
+        global_comm.Gatherv(sendbuf, recvbuf, root=root)
+
+    # wrapper for MPI Bcast (numpy objects, not generic python objects)
+    def Bcast(self, sendrecvbuf: NDArray, root: int = 0):
+        """Perform broadcast communication."""
+        global_comm.Bcast(sendrecvbuf, root=root)
+
+    # wrapper for MPI bcast (generic python objects)
+    def bcast(self, sendrecvobj, root: int = 0):
+        """Perform broadcast communication for generic Python objects."""
+        return global_comm.bcast(sendrecvobj, root=root)
+
+    # wrapper for Scatterv (numpy objects, not generic python objects)
+    # sendbuf is type BufSpecV in MPI [scatterbuf, counts, displacement, datatype]
+    def Scatterv(self, sendbuf, recvbuf: NDArray, root: int = 0):
+        """Scatters the sendbuf from the root rank to all ranks. For buffer-like objects (ex. Numpy arrays)"""
+        global_comm.Scatterv(sendbuf, recvbuf, root=root)

@@ -7,7 +7,7 @@ formalism = "negf" # "negf" or "wf"
 transport_direction = 'x'
 
 [scba] # ===============================================================
-max_iterations = 2
+max_iterations = 5
 mixing_factor = 0.5
 
 coulomb_screening = true
@@ -15,7 +15,25 @@ phonon = true
 
 symmetric = true
 
-[outputs] # Select which outputs to write.
+adaptive = false
+
+# used if adaptive = true
+
+# number of energy points in adaptive scheme
+#   04 Feb 2026: discussion with AlexMaeder, Nicolas, and Anders
+#   keep the same number of points in adaptive and regular version
+#   that way memory buffers all stay the same size
+#   we just redistribute the same number of points
+
+#   for performance comparison, do 2x separate runs
+#   fine grid with no adaptive vs coarse grid with adaptive
+adaptive_num_points = 21  # should be same as energy_window_num
+adaptive_start_iteration = 0 # iteration to start adaptive grid
+adaptive_integration_method = 'trapezoid' # method to use for adaptive integration (only SigmaFock), can be 'trapezoid' or 'simpson'
+
+adaptive_interpolation_order = 1 # order of interpolation to use for adaptive grid, can be 1 (linear), 2 (quadratic), or 3 (cubic)
+
+[outputs]  # Select which outputs to write.
 electron_ldos = true
 contact_currents = true
 device_currents = true
@@ -31,6 +49,11 @@ self_energy_density = true
 # numbers.
 save_profiling_results = true
 
+save_scba_iteration_data = true
+num_nnz_samples_scba_iteration_data = 100   # how many nnz samples to save for each SCBA iteration, can't save all 43824 nnz due to disk space 
+
+save_reduced_functions = true
+
 
 [electron] # ===========================================================
 # 0.2 V Potential difference.
@@ -43,10 +66,15 @@ valence_band_edge = -4.174109778287768    # eV
 
 band_edge_tracking = "eigenvalues"
 
-# Energy grid.
-energy_window_min = -10
-energy_window_max = 0
-energy_window_num = 100
+# Energy grid (2 modes).
+# 1. set `energy_window_num` for total number of energy points
+# 2. set `energy_window_num_per_rank` for number of points per MPI rank
+# if mode 2 is chosen, total number of points = energy_window_num_per_rank * num_ranks
+# Only one of these should be uncommented.
+energy_window_min = -15
+energy_window_max = 5
+energy_window_num = 201       # aim for 1-5 meV resolution
+# energy_window_num_per_rank = 4    # don't use if you want to visualize scba outputs
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000

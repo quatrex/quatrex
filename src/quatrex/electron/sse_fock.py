@@ -1,8 +1,9 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import numpy as np
+from scipy.integrate import trapezoid, simpson
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_circular_convolve
@@ -43,13 +44,22 @@ class SigmaFock(ScatteringSelfEnergy):
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
-    def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
+    def update_energies(self, electron_energies: NDArray):
+        """ Update energy grid """
+        self.energies = electron_energies
+        
+    @profiler.profile(level="api")
+    def compute(self, g_lesser: DSDBSparse, use_adaptive: bool, adaptive_integration_method: str, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 
         Parameters
         ----------
         g_lesser : DSDBSparse
             The lesser Green's function.
+        use_adaptive : bool
+            Whether to use the adaptive grid.
+        adaptive_integration_method : str
+            The method to use for adaptive integration. Can be "trapezoid" or "simpson".
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
             sigma_retarded.
@@ -70,6 +80,15 @@ class SigmaFock(ScatteringSelfEnergy):
             label="SigmaFock: SSE computation", level="default", comm=comm
         ):
             if g_lesser.data.shape[-1] != 0:
+                if use_adaptive:
+                    if adaptive_integration_method == "trapezoid":
+                        gl_density = self.prefactor * trapezoid(g_lesser.data, self.energies, axis=0)
+                    elif adaptive_integration_method == "simpson":
+                        gl_density = self.prefactor * simpson(g_lesser.data, self.energies, axis=0)
+                    else:
+                        raise ValueError(f"Invalid adaptive integration method: {adaptive_integration_method}. Must be 'trapezoid' or 'simpson'.")
+                else:
+                    
                 gl_density = self.prefactor * g_lesser.data.sum(axis=0)
                 sigma_retarded.data += (
                     fft_circular_convolve(

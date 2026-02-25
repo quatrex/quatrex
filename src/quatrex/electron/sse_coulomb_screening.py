@@ -1,6 +1,9 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import numpy as np
+from scipy import interpolate
+import finufft
+
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
@@ -248,6 +251,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         w_lesser: DSDBSparse,
         w_greater: DSDBSparse,
         out: tuple[DSDBSparse, ...],
+        use_adaptive: bool = False
     ) -> None:
         """Computes the GW self-energy.
 

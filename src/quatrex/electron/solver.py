@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import numpy as np
+from mpi4py import MPI
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -19,6 +20,7 @@ from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
 from quatrex.device.inputs import load_matrix
+from scipy import integrate, interpolate
 
 profiler = Profiler()
 
@@ -230,6 +232,12 @@ class ElectronSolver(SubsystemSolver):
 
         """
         self.potential = new_potential
+
+    def update_energies(self, new_energies: NDArray) -> None:
+        self.energies = new_energies
+        self.local_energies = get_local_slice(new_energies)
+        # liyongda (13 Mar 2026): fermi levels updated during _update_fermi_levels call, which is early in the electron solve function
+        #   don't need to update fermi levels here
 
     def _update_fermi_levels(
         self, left_band_edges: NDArray, right_band_edges: NDArray
@@ -454,7 +462,7 @@ class ElectronSolver(SubsystemSolver):
         sse_lesser: DSDBSparse,
         sse_greater: DSDBSparse,
         sse_retarded: DSDBSparse,
-        out: tuple[DSDBSparse, ...],
+        out: tuple[DSDBSparse, ...]
     ):
         """Solves for the electron Green's function.
 
@@ -471,7 +479,6 @@ class ElectronSolver(SubsystemSolver):
             retarded).
 
         """
-
         if self.flatband:
             with profiler.profile_range(
                 label="ElectronSolver: Homogenize", level="default", comm=comm
@@ -487,6 +494,7 @@ class ElectronSolver(SubsystemSolver):
 
             self._assemble_system_matrix(sse_retarded)
 
+        # liyongda (13 Mar 2026): default case
         if self.band_edge_tracking == "eigenvalues":
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
@@ -595,6 +603,5 @@ class ElectronSolver(SubsystemSolver):
                     right_band_edges, root=comm.block.size - 1, backend="device_mpi"
                 )
 
-                self._update_fermi_levels(left_band_edges, right_band_edges)
-
+            self._update_fermi_levels(left_band_edges, right_band_edges)
         self.call_count += 1

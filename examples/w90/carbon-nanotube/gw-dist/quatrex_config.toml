@@ -5,6 +5,9 @@ formalism = "negf" # "negf" or "wf"
 
 [compute.comm]
 block_comm_size = 3
+# liyongda (Mon, Jan 12, 2026)
+# Value error: Total number of ranks must be a multiple of block_comm_size=3 
+#   if you want to use block_comm_size n, then you need to have at least n ranks
 
 [device]
 transport_direction = 'x'

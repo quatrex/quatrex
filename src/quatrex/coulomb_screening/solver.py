@@ -39,7 +39,7 @@ def _compute_sparsity_pattern(
         (xp.ones_like(rows), (rows, cols)), shape=shape, dtype=dtype
     )
 
-
+# liyongda (13 Mar 2026): confirmed with Anders. No explicit energy dependence. No changes needed
 class CoulombScreeningSolver(SubsystemSolver):
     """Solves the dynamics of the screened Coulomb interaction.
 

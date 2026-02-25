@@ -88,6 +88,12 @@ class SCBAConfig(BaseModel):
 
     """
 
+    adaptive: bool = False
+    adaptive_num_points: PositiveInt = 1000
+    adaptive_start_iteration: PositiveInt = 1   # must be iteration 1 or later, since we need iteration 0 to compute the uniform case
+    adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
+    adaptive_interpolation_order: Literal[1, 2, 3] = 1
+    adaptive_interpolation_oversampling_ratio: NonNegativeFloat = 1.0
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""
@@ -703,6 +709,10 @@ class OutputConfig(BaseModel):
 
     self_energy_density: bool = False
 
+    save_reduced_functions: bool = False
+    save_scba_iteration_data: bool = False
+    num_nnz_samples_scba_iteration_data: PositiveInt = 100 # used if scba_iteration_data is True
+
     profiling_path: Path | None = None
     """The files to print and save the timing results to.
 
@@ -830,6 +840,9 @@ class DeviceConfig(BaseModel):
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
 
+    # (transport direction, transverse direction 1, transverse direction 2)
+    # will add ^that many dimensions to g_lesser
+    # ex. (1, 7, 10) --> g_lesser.shape = (num_energy_points, 7, 10, num_orbitals, num_orbitals)
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
@@ -1114,6 +1127,28 @@ class QuatrexConfig(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def resolve_profiler_path(self):
+        """Resolves the simulation directory path."""
+        if not self.outputs.profiling_path.is_absolute():
+            self.outputs.profiling_path = (
+                self.config_dir / self.outputs.profiling_path
+            ).resolve()
+
+        # Saving will strip the extension
+        profiler.set_parameters(
+            print_path=self.outputs.profiling_path,
+            save_path=self.outputs.profiling_path,
+            save_format=self.outputs.profiling_save_format,
+        )
+
+        return self
+
+    # liyongda (16 Mar 2026): I have some archive Quatrex runs from before this change, where block_size=32 was not added to the quatrex_config.toml
+    #   don't want to retroactively add block_size parameter to all the .toml files
+    #   just comment out this check
+    #   https://github.com/quatrex/quatrex/commit/d5aaf6a87349a127891c19bef313879b1987c14d
+    # liyongda (30 Mar 2026): I cleaned up old archive Quatrex runs. Now all archive runs have the block_size parameter in the .toml files, so I will uncomment this check again
     @model_validator(mode="after")
     def check_device_block_size(self) -> Self:
         """Checks that block size is consistent with other parameters."""

@@ -318,7 +318,7 @@ class ElectronSolver(SubsystemSolver):
             )
 
             # TODO: use residuals to filter "bad" energies
-            _, _, g_00 = self.obc(
+            g_00, _, _ = self.obc(
                 (m_00 + s_00, m_01 + s_01, m_10 + s_10),
                 contact="left",
             )
@@ -355,7 +355,7 @@ class ElectronSolver(SubsystemSolver):
             m_nn = xp.flip(m_nn, axis=(-2, -1))
             m_nm = xp.flip(m_nm, axis=(-2, -1))
             m_mn = xp.flip(m_mn, axis=(-2, -1))
-            _, _, g_nn = self.obc(
+            g_nn, _, _ = self.obc(
                 # Twist it, flip it, ...
                 (
                     xp.flip(m_nn + s_nn, axis=(-2, -1)),

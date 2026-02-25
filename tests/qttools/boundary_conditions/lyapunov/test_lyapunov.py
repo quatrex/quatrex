@@ -21,7 +21,7 @@ def test_correctness(
 
     a, q, _, _ = inputs
 
-    _, _, x = lyapunov_system((a, q), "contact")
+    x, _, _ = lyapunov_system((a, q), "contact")
 
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
@@ -43,7 +43,7 @@ def test_correctness_zeros(
 
     a[:] = 0
 
-    _, _, x = lyapunov_system((a, q), "contact")
+    x, _, _ = lyapunov_system((a, q), "contact")
 
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
@@ -62,7 +62,7 @@ def test_memoizer(
         reduce_sparsity=reduce_sparsity,
         mode="force-after-first",
     )
-    _, _, x = lyapunov_system((a, q), contact="contact")
+    x, _, _ = lyapunov_system((a, q), contact="contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)
 
     # Add a little noise to the input matrices.
@@ -72,6 +72,6 @@ def test_memoizer(
     a[..., row_slice, col_slice] = 0
     a[..., row_slice, col_slice] = 0
 
-    _, _, x = lyapunov_system((a, q), contact="contact")
+    x, _, _ = lyapunov_system((a, q), contact="contact")
 
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

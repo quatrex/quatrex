@@ -354,12 +354,12 @@ class BaseBoundarySystem(ABC):
 
         Returns
         -------
+        solution : NDArray | tuple[NDArray, ...]
+            The solution of the boundary system.
         rel_residuals : NDArray
             The relative residuals of the solution.
         abs_residuals : NDArray
             The absolute residuals of the solution.
-        solution : NDArray | tuple[NDArray, ...]
-            The solution of the boundary system.
 
         """
 
@@ -402,4 +402,4 @@ class BaseBoundarySystem(ABC):
             boundary_system, reduced_system, rel_residuals, abs_residuals
         )
 
-        return rel_residuals, abs_residuals, solution
+        return solution, rel_residuals, abs_residuals

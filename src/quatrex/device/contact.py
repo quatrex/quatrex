@@ -719,6 +719,7 @@ class Contact:
                 residual_tolerance=obc_config.residual_tolerance,
                 residual_normalization=obc_config.residual_normalization,
                 eta_decay=obc_config.eta_decay,
+                warning_threshold=obc_config.warning_threshold,
             )
 
         else:

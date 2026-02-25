@@ -126,7 +126,7 @@ class MemoizerConfig(BaseModel):
     """
 
     warning_threshold: PositiveFloat = 1e-1
-    """The threshold for issuing a warning if the surface Green's functions
+    """The threshold for issuing a warning if the memoized functions
         residual is above this value after the fixed-point iterations.
     """
 
@@ -261,6 +261,9 @@ class OBCConfig(BaseModel):
     The residual is computed as:
 
     $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
+    
+    This parameter is only used if the `formalism` is `wf`. Otherwise, the memoizer
+    is responsible for residual checking and warnings.
     """
 
     eta_decay: PositiveFloat = 1e-12

@@ -49,6 +49,10 @@ class Spectral(OBCSolver):
         The tolerance for the residual of the NEVP.
     residual_normalization : bool
         If the residual should be normalized by the eigenvalue.
+    warning_threshold : float, optional
+        The threshold for the relative recursion error above which a warning is issued.
+        This is only used if `return_injected` is True. Otherwise,
+        the intend is that the memoizer wrapper handles the warning.
     eta_decay : float, optional
         Small value to separate very slow decaying modes from
         non-decaying ones.
@@ -69,6 +73,7 @@ class Spectral(OBCSolver):
         min_propagation: float = 0.01,
         residual_tolerance: float = 1e-3,
         residual_normalization: bool = True,
+        warning_threshold: float = 1e-1,
         eta_decay: float = 1e-14,
     ) -> None:
         """Initializes the spectral OBC solver."""
@@ -83,7 +88,11 @@ class Spectral(OBCSolver):
         self.min_propagation = min_propagation
         self.residual_tolerance = residual_tolerance
         self.residual_normalization = residual_normalization
+        self.warning_threshold = warning_threshold
         self.eta_decay = eta_decay
+
+        if self.num_ref_iterations < 1:
+            raise ValueError("Number of refinement iterations must be at least 1.")
 
     def _extract_subblocks(
         self,
@@ -472,15 +481,25 @@ class Spectral(OBCSolver):
         x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
 
         # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations):
+        for __ in range(self.num_ref_iterations - 1):
             x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
         if return_injected:
+            x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
+            recursion_error = xp.max(
+                xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+                / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+            )
+            if recursion_error > self.warning_threshold:
+                warnings.warn(
+                    f"High relative recursion error: {recursion_error:.2e}",
+                    RuntimeWarning,
+                )
             phi_surface = []
 
-            x_ii_a_ij = x_ii @ a_ij
+            x_ii_a_ij = x_ii_ref @ a_ij
 
             for i in range(a_ii.shape[0]):
                 mask_injected_i = mask_injected[i, :]
@@ -500,6 +519,8 @@ class Spectral(OBCSolver):
                     + x_ii_a_ij[i] @ vrs_injected
                 )
 
-            return x_ii, phi_surface
+            return x_ii_ref, phi_surface
+
+        x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 
         return x_ii

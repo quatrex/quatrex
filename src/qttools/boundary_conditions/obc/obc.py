@@ -269,18 +269,7 @@ class OBCSystem(BaseBoundarySystem):
             The (possibly refined) solution of the boundary system.
 
         """
-        if type(test_solution) in [tuple, list]:
-            # first output is the surface Green's function
-            solution_ref = self._fix_point_step(boundary_system, test_solution[0])
-
-            abs_residuals = xp.linalg.norm(
-                solution_ref - test_solution[0], axis=(-2, -1)
-            )
-            rel_residuals = abs_residuals / xp.linalg.norm(solution_ref, axis=(-2, -1))
-
-            return rel_residuals, abs_residuals, (solution_ref, *test_solution[1:])
-
-        elif type(test_solution) is xp.ndarray:
+        if type(test_solution) is xp.ndarray:
             solution_ref = self._fix_point_step(boundary_system, test_solution)
 
             abs_residuals = xp.linalg.norm(solution_ref - test_solution, axis=(-2, -1))
@@ -290,5 +279,7 @@ class OBCSystem(BaseBoundarySystem):
         else:
             raise TypeError(
                 f"Expected test_solution to be of type "
-                f"xp.ndarray, tuple or list, got {type(test_solution)}"
+                f"xp.ndarray, got {type(test_solution)} instead. "
+                "This could be due to the OBCSystem being used in QTBM"
+                "with return_injected=True, which is currently not supported."
             )

@@ -173,8 +173,6 @@ out.txt
 run_script.sh
 hostfile
 .vscode/
-examples/carbon-nanotube/main.py
-examples/.file_cache.npy
 # Nsight Systems output
 *.nsys-rep
 *.sqlite

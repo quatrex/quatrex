@@ -89,7 +89,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
-        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, adaptive_points, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the polarization.
 

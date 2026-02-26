@@ -127,7 +127,6 @@ def get_local_slice(global_array: NDArray, comm: MPI.Comm = comm) -> NDArray:
     ]
 
 
-@profiler.profile(level="debug")
 def gather_array_nnz(array: NDArray, comm: MPI.Comm, sample_indices: NDArray) -> NDArray:
     """Gathers a distributed array split along nnz (ex. Sigma). I.e. nnz distribution.
 
@@ -227,7 +226,6 @@ def gather_array_nnz(array: NDArray, comm: MPI.Comm, sample_indices: NDArray) ->
     # === end new code ===
 
 
-@profiler.profile(level="debug")
 def gather_array_stack(array: NDArray, comm: MPI.Comm, sample_indices: NDArray | None = None) -> NDArray:
     """Gathers a distributed array split along energy (ex. G, P, W), i.e. stack distribution.
 
@@ -318,7 +316,6 @@ def gather_array_stack(array: NDArray, comm: MPI.Comm, sample_indices: NDArray |
         return gatherbuf
     # === end new code ===
 
-@profiler.profile(level="debug")
 def reduce_matrix_over_stack(array: NDArray, comm: MPI.Comm) -> NDArray:
     """Reduces a distributed matrix by sum(abs(A)) over all orbitals. 
     Works for stack-distributed arrays.

@@ -388,7 +388,7 @@ def _assemble_kpoint(
     num_dimensions = len(kpoint_grid)
 
     if isinstance(kshift, int):
-        kshift = xp.array([kshift for _ in range(num_dimensions)])
+        kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -411,8 +411,8 @@ def _assemble_kpoint(
         stack_index = np.array(stack_index)
         stack_index = tuple(stack_index[kpoint_grid > 1])
 
-        cells = xp.array(list(matrix_dict.keys()))
-        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+        cells = np.array(list(matrix_dict.keys()))
+        phases = np.exp(2j * xp.pi * (cells @ kpoint))
 
         # NOTE: Sparse matrix addition is slow
         # but unavoidable due to memory constraints.

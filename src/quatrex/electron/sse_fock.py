@@ -48,7 +48,7 @@ class SigmaFock(ScatteringSelfEnergy):
         """ Update energy grid """
         self.energies = electron_energies
         
-    @profiler.profile(level="api")
+    @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, use_adaptive: bool, adaptive_integration_method: str, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 
@@ -88,16 +88,15 @@ class SigmaFock(ScatteringSelfEnergy):
                     else:
                         raise ValueError(f"Invalid adaptive integration method: {adaptive_integration_method}. Must be 'trapezoid' or 'simpson'.")
                 else:
-                    
-                gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-                sigma_retarded.data += (
-                    fft_circular_convolve(
-                        gl_density,
-                        self.coulomb_matrix_data,
-                        axes=tuple(range(gl_density.ndim - 1)),
+                    gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+                    sigma_retarded.data += (
+                        fft_circular_convolve(
+                            gl_density,
+                            self.coulomb_matrix_data,
+                            axes=tuple(range(gl_density.ndim - 1)),
+                        )
+                        / self.kpoint_volume
                     )
-                    / self.kpoint_volume
-                )
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

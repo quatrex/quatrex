@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
+from quatrex.core.quatrex_config import parse_config
+
 
 class ParameterSweepPlotter:
     """
@@ -42,6 +44,8 @@ class ParameterSweepPlotter:
         self.parameter_pattern = parameter_pattern
         self.data: Dict[float, Dict[str, List[float]]] = {}
         self._parse_all_folders()
+        self.config = parse_config(self.root_folder / "seed" / "quatrex_config.toml")
+        self.lattice_vectors = np.load(self.root_folder / "seed" / "inputs" / "lattice_vectors.npy")
 
     def _find_parameter_folders(self) -> Dict[float, Path]:
         """
@@ -251,7 +255,7 @@ class ParameterSweepPlotter:
 
         return ax
 
-    def plot_bandgap_vs_parameter(self, ax=None) -> plt.Axes:
+    def plot_bandgap_vs_parameter(self, ax=None, reference_bandgap=None) -> plt.Axes:
         """
         Plot bandgap (conduction band - valence band) at the last iteration vs parameter.
 
@@ -278,15 +282,22 @@ class ParameterSweepPlotter:
         first_param = sorted(self.data.keys())[0]
         first_cb = self.data[first_param]["conduction_band"][0]
         first_vb = self.data[first_param]["valence_band"][0]
-        reference_bandgap = first_cb - first_vb
+        dft_bandgap = first_cb - first_vb
 
         ax.plot(params, bandgap, "o-", label="Bandgap (final iteration)")
         ax.axhline(
-            y=reference_bandgap,
+            y=dft_bandgap,
             color="red",
             linestyle="--",
-            label=f"Reference (initial: {reference_bandgap:.4f} eV)",
+            label=f"DFT gap (initial: {dft_bandgap:.4f} eV)",
         )
+        if reference_bandgap is not None:
+            ax.axhline(
+                y=reference_bandgap,
+                color="red",
+                linestyle="--",
+                label=f"Reference {reference_bandgap:.4f} eV)",
+            )
 
         ax.set_xlabel("Parameter Value")
         ax.set_ylabel("Bandgap (eV)")
@@ -329,12 +340,22 @@ class ParameterSweepPlotter:
             )
 
         charges = self.data[parameter_value]["charge"]
+
+        # Normalize over k-points
+        charges = np.array(charges) / np.prod(self.config.device.kpoint_grid)
+        # # Calculate the number of charge per cm^2 using the lattice vectors
+        area_per_unit_cell = np.cross(self.lattice_vectors[0], self.lattice_vectors[1])[2]  # Area in Å^2
+        area_per_unit_cell_cm2 = area_per_unit_cell * 1e-16  # Convert to cm^2
+        charge_per_cm2 = charges / area_per_unit_cell_cm2  # Charge density in e/cm^2
+        # Factor 2 for spin degeneracy
+        charge_per_cm2 *= 2
+
         iterations = np.arange(len(charges))
 
-        ax.plot(iterations, charges, "o-")
+        ax.plot(iterations, charge_per_cm2, "o-")
         ax.set_xlabel("Iteration")
-        ax.set_ylabel("Charge")
-        ax.set_title(f"Charge vs Iteration (Parameter = {parameter_value})")
+        ax.set_ylabel("Charge Density (e/cm²)")
+        ax.set_title(f"Charge Density vs Iteration (Parameter = {parameter_value})")
         ax.grid(True)
 
         return ax

@@ -299,55 +299,7 @@ class SCBA:
         self.mixing_factor = self.config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        if (self.quatrex_config.electron.energy_window_max is not None) and (
-            self.quatrex_config.electron.energy_window_min is not None
-        ):
-            if self.quatrex_config.electron.energy_window_num is not None:
-                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
-                    raise ValueError(
-                        "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
-                    )
-                self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
-                    self.quatrex_config.electron.energy_window_num,
-                )
-            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
-                energy_window_num = (
-                    self.quatrex_config.electron.energy_window_num_per_rank
-                    * comm.stack.size
-                )
-                self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
-                    energy_window_num,
-                )
-            else:
-                raise ValueError(
-                    "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
-                )
-        else:
-            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
-            if os.path.isfile(energies_path):
-                self.electron_energies = distributed_load(energies_path)
-            else:
-                if comm.rank == 0:
-                    message = f"""
-                                {'-'*40}
-                                # WARNING
-                                # since no information about electron energy grid is provided,
-                                # we decide to take an energy range enough to cover all the bands 
-                                # in the contact bandstructure. This can lead to unexpected memory usage.
-                                {'-'*40}
-                                """
-                    print(message)
-                self.electron_energies = self._determine_electron_energy_window(
-                    quatrex_config
-                )
-        
-        # initial adaptive energy grid is just the linear grid
-        if self.quatrex_config.scba.adaptive:
-            self.adaptive_electron_energies = xp.copy(self.electron_energies)
+        self.electron_energies = get_electron_energies(config)
 
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]

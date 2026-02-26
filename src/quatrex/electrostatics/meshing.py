@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-import os
-import random
-import string
+
+from tempfile import NamedTemporaryFile
 
 import gmsh
 import meshio
@@ -239,15 +238,10 @@ def generate_mesh(
     gmsh.model.mesh.optimize(method="", niter=3)
 
     # Transfer the mesh to meshio.
-    filename = (
-        "."
-        + "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
-        + ".msh"
-    )
-    gmsh.write(filename)
-    gmsh.finalize()
+    with NamedTemporaryFile(suffix=".msh") as file:
+        gmsh.write(file.name)
+        gmsh.finalize()
 
-    mesh = meshio.read(filename)
+        mesh = meshio.read(file.name)
 
-    os.remove(filename)
     return mesh

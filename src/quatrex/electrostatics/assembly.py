@@ -8,7 +8,9 @@ from skfem.helpers import dot, grad, mul
 from qttools import NDArray
 
 
-def assemble_stiffness_matrix(basis: skfem.Basis) -> sparse.csr_matrix:
+def assemble_stiffness_matrix(
+    basis: skfem.Basis, epsilon_r: NDArray | None = None
+) -> sparse.csr_matrix:
     """Assemble the stiffness matrix for a tetrahedral mesh.
 
     Parameters
@@ -17,6 +19,10 @@ def assemble_stiffness_matrix(basis: skfem.Basis) -> sparse.csr_matrix:
         The basis for the tetrahedral mesh, which contains the
         necessary information about the mesh and the finite element
         space.
+    epsilon_r : NDArray, optional
+        The relative permittivity tensor at the quadrature points. If
+        not provided, it is assumed to be the identity tensor (i.e.,
+        free space).
 
     Returns
     -------
@@ -24,8 +30,36 @@ def assemble_stiffness_matrix(basis: skfem.Basis) -> sparse.csr_matrix:
         The assembled stiffness matrix.
 
     """
+    if epsilon_r is not None:
+        # Validate the provided epsilon_r.
+        if epsilon_r.shape[-1] != basis.N:
+            raise ValueError(
+                f"Expected epsilon_r to have shape (..., {basis.N}), "
+                f"but got {epsilon_r.shape}."
+            )
 
-    epsilon_r = np.stack(basis.N * [np.eye(3)], axis=-1)
+        if epsilon_r.ndim == 3:
+            if epsilon_r.shape[:-1] != (3, 3):
+                raise ValueError(
+                    f"Expected epsilon_r to have shape (3, 3, ...), "
+                    f"but got {epsilon_r.shape}."
+                )
+        elif epsilon_r.ndim < 3:
+            if epsilon_r.ndim == 2 and epsilon_r.shape[0] != 3:
+                raise ValueError(
+                    f"Expected epsilon_r to have shape (3, ...), "
+                    f"but got {epsilon_r.shape}."
+                )
+
+            # NOTE: Broadcasting works like this for both 1D and 2D
+            # cases, since the last dimension is the number of DOFs.
+            epsilon_r = epsilon_r * np.stack(basis.N * [np.eye(3)], axis=-1)
+
+        else:
+            raise ValueError(f"epsilon_r must be 1D, 2D, or 3D, got {epsilon_r.ndim}D.")
+
+    else:
+        epsilon_r = np.stack(basis.N * [np.eye(3)], axis=-1)
 
     # Interpolate the permittivity tensor to the quadrature points.
     epsilon_r_quad = np.zeros((3, 3, *basis.basis[0][0].shape), dtype=np.float64)

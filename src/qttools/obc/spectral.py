@@ -134,7 +134,7 @@ class Spectral(OBCSolver):
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
-        return tuple(block for block in blocks if xp.any(block))
+        return tuple(block for block in blocks)
 
     def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.

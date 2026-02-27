@@ -22,12 +22,11 @@ class SigmaPhonon(ScatteringSelfEnergy):
     def __init__(
         self,
         config: QuatrexConfig,
-        compute_config,
         electron_energies: NDArray | None = None,
     ) -> None:
         """Initializes the self-energy."""
 
-        if compute_config.mixed_precision.sigma_phonon_precision == "fp32":
+        if config.compute.mixed_precision.sigma_phonon_precision == "fp32":
             self.dtype = xp.complex64
         else:
             self.dtype = xp.complex128

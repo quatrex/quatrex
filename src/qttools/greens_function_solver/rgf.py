@@ -2,7 +2,11 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.datastructures.routines import complex_gemm_to_real_with_mask
+from qttools.datastructures.routines import (
+    complex_gemm_to_real_with_mask,
+    cutoff_complex_data,
+    mask_complex_precision,
+)
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels import linalg
 from qttools.utils.solvers_utils import get_batches
@@ -149,6 +153,10 @@ class RGF(GFSolver):
         tmp_mask: str = "fp64",
         leaf_mask: str = "fp64",
         current_mask: str = "fp64",
+        buffer_real_precision: str = "fp64",
+        buffer_imag_precision: str = "fp64",
+        buffer_real_cutoff: float = 0,
+        buffer_imag_cutoff: float = 0,
     ) -> None | tuple | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -278,6 +286,18 @@ class RGF(GFSolver):
             xr_jj = linalg.inv(a_jj.astype(inv_type)).astype(tmp_type)
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_jj
+
+            xr_diag_blocks[0][:] = mask_complex_precision(
+                xr_diag_blocks[0],
+                buffer_real_precision,
+                buffer_imag_precision,
+            )
+            xr_diag_blocks[0][:] = cutoff_complex_data(
+                xr_diag_blocks[0],
+                buffer_real_cutoff,
+                buffer_imag_cutoff,
+            )
+
             temp_mult_l0 = complex_gemm_to_real_with_mask(
                 xr_jj, sl_jj, mask=self.mm_mask
             )
@@ -289,6 +309,27 @@ class RGF(GFSolver):
             )
             xg_diag_blocks[0] = complex_gemm_to_real_with_mask(
                 temp_mult_g0, xr_jj_dagger, mask=self.mm_mask
+            )
+
+            xl_diag_blocks[0][:] = mask_complex_precision(
+                xl_diag_blocks[0],
+                buffer_real_precision,
+                buffer_imag_precision,
+            )
+            xl_diag_blocks[0][:] = cutoff_complex_data(
+                xl_diag_blocks[0],
+                buffer_real_cutoff,
+                buffer_imag_cutoff,
+            )
+            xg_diag_blocks[0][:] = mask_complex_precision(
+                xg_diag_blocks[0],
+                buffer_real_precision,
+                buffer_imag_precision,
+            )
+            xg_diag_blocks[0][:] = cutoff_complex_data(
+                xg_diag_blocks[0],
+                buffer_real_cutoff,
+                buffer_imag_cutoff,
             )
 
             # Forwards sweep.
@@ -335,6 +376,17 @@ class RGF(GFSolver):
                 )
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
+
+                xr_diag_blocks[j][:] = mask_complex_precision(
+                    xr_diag_blocks[j],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xr_diag_blocks[j][:] = cutoff_complex_data(
+                    xr_diag_blocks[j],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
+                )
 
                 a_ji_xr_ii_sx_ij = complex_gemm_to_real_with_mask(
                     a_ji_xr_ii,
@@ -384,6 +436,27 @@ class RGF(GFSolver):
                 )
                 xg_diag_blocks[j] = complex_gemm_to_real_with_mask(
                     temp_xg_mult1, xr_jj_dagger, mask=self.mm_mask
+                )
+
+                xl_diag_blocks[j][:] = mask_complex_precision(
+                    xl_diag_blocks[j],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xl_diag_blocks[j][:] = cutoff_complex_data(
+                    xl_diag_blocks[j],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
+                )
+                xg_diag_blocks[j][:] = mask_complex_precision(
+                    xg_diag_blocks[j],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xg_diag_blocks[j][:] = cutoff_complex_data(
+                    xg_diag_blocks[j],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
                 )
 
             # We need to write the last diagonal blocks to the output.
@@ -483,6 +556,17 @@ class RGF(GFSolver):
                 )
                 xl_diag_blocks[i] = xl_ii + xl_diag_part + temp_1x
 
+                xl_diag_blocks[i][:] = mask_complex_precision(
+                    xl_diag_blocks[i],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xl_diag_blocks[i][:] = cutoff_complex_data(
+                    xl_diag_blocks[i],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
+                )
+
                 tmp3 = 0.5 * (
                     xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
@@ -524,6 +608,17 @@ class RGF(GFSolver):
                     temp_2x, a_ij_dagger_xr_ii_dagger, mask=self.mm_mask
                 )
                 xg_diag_blocks[i] = xg_ii + xg_diag_part + temp_1x
+
+                xg_diag_blocks[i][:] = mask_complex_precision(
+                    xg_diag_blocks[i],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xg_diag_blocks[i][:] = cutoff_complex_data(
+                    xg_diag_blocks[i],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
+                )
 
                 tmp4 = 0.5 * (
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
@@ -572,6 +667,18 @@ class RGF(GFSolver):
                     xr_ii_a_ij_xr_jj_a_ji, xr_ii, mask=self.mm_mask
                 )
                 xr_diag_blocks[i] = xr_ii + xr_final_mult
+
+                xr_diag_blocks[i][:] = mask_complex_precision(
+                    xr_diag_blocks[i],
+                    buffer_real_precision,
+                    buffer_imag_precision,
+                )
+                xr_diag_blocks[i][:] = cutoff_complex_data(
+                    xr_diag_blocks[i],
+                    buffer_real_cutoff,
+                    buffer_imag_cutoff,
+                )
+
                 if return_retarded:
                     xr_.blocks[i, i] = (xr_diag_blocks[i]).astype(in_type)
 

@@ -528,13 +528,13 @@ class ElectronSolver(SubsystemSolver):
         profiler.add_stats("system_g", self.system_matrix.data)
         self.system_matrix.data[:] = mask_complex_precision(
             self.system_matrix.data,
-            self.compute_config.mixed_precision.system_g_real_precision,
-            self.compute_config.mixed_precision.system_g_imag_precision,
+            self.config.compute.mixed_precision.system_g_real_precision,
+            self.config.compute.mixed_precision.system_g_imag_precision,
         )
         self.system_matrix.data[:] = cutoff_complex_data(
             self.system_matrix.data,
-            self.compute_config.mixed_precision.system_g_real_cutoff,
-            self.compute_config.mixed_precision.system_g_imag_cutoff,
+            self.config.compute.mixed_precision.system_g_real_cutoff,
+            self.config.compute.mixed_precision.system_g_imag_cutoff,
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -644,7 +644,7 @@ class ElectronSolver(SubsystemSolver):
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
        
-        # if self.call_count < self.compute_config.mixed_precision.start_iter:
+        # if self.call_count < self.config.compute.mixed_precision.start_iter:
         # if self.call_count == 0:       
         self._compute_obc()
 
@@ -697,6 +697,10 @@ class ElectronSolver(SubsystemSolver):
                     current_mask=self.rgf_current_mask,
                     inv_mask=self.rgf_inv_mask,
                     tmp_mask=self.rgf_tmp_mask,
+                    buffer_real_precision=self.config.compute.mixed_precision.buffer_g_real_precision,
+                    buffer_imag_precision=self.config.compute.mixed_precision.buffer_g_imag_precision,
+                    buffer_real_cutoff=self.config.compute.mixed_precision.buffer_g_real_cutoff,
+                    buffer_imag_cutoff=self.config.compute.mixed_precision.buffer_g_imag_cutoff,
                 )
 
         with profiler.profile_range(

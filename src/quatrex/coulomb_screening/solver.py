@@ -422,13 +422,13 @@ class CoulombScreeningSolver(SubsystemSolver):
         profiler.add_stats("system_w", self.system_matrix.data)
         self.system_matrix.data[:] = mask_complex_precision(
             self.system_matrix.data,
-            self.compute_config.mixed_precision.system_w_real_precision,
-            self.compute_config.mixed_precision.system_w_imag_precision,
+            self.config.compute.mixed_precision.system_w_real_precision,
+            self.config.compute.mixed_precision.system_w_imag_precision,
         )
         self.system_matrix.data[:] = cutoff_complex_data(
             self.system_matrix.data,
-            self.compute_config.mixed_precision.system_w_real_cutoff,
-            self.compute_config.mixed_precision.system_w_imag_cutoff,
+            self.config.compute.mixed_precision.system_w_real_cutoff,
+            self.config.compute.mixed_precision.system_w_imag_cutoff,
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -578,7 +578,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.block_sizes)
 
         # Apply the OBC algorithm.
-        # if self.solve_call_count < self.compute_config.mixed_precision.start_iter:        
+        # if self.solve_call_count < self.config.compute.mixed_precision.start_iter:        
         self._compute_obc()
 
         # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[0], axis=0)
@@ -630,6 +630,10 @@ class CoulombScreeningSolver(SubsystemSolver):
                     current_mask=self.rgf_current_mask,
                     inv_mask=self.rgf_inv_mask,
                     tmp_mask=self.rgf_tmp_mask,
+                    buffer_real_precision=self.config.compute.mixed_precision.buffer_w_real_precision,
+                    buffer_imag_precision=self.config.compute.mixed_precision.buffer_w_imag_precision,
+                    buffer_real_cutoff=self.config.compute.mixed_precision.buffer_w_real_cutoff,
+                    buffer_imag_cutoff=self.config.compute.mixed_precision.buffer_w_imag_cutoff,
                 )
 
         with profiler.profile_range(

@@ -882,6 +882,8 @@ class MixedPrecisionConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # start_iter: PositiveInt = 60
+
     gl_real_precision: str = "fp64"
     wl_real_precision: str = "fp64"
     pl_real_precision: str = "fp64"
@@ -977,6 +979,15 @@ class MixedPrecisionConfig(BaseModel):
     v_imag_cutoff: float = 0
     system_g_imag_cutoff: float = 0
     system_w_imag_cutoff: float = 0
+
+    buffer_g_real_precision: str = "fp64"
+    buffer_w_real_precision: str = "fp64"
+    buffer_g_imag_precision: str = "fp64"
+    buffer_w_imag_precision: str = "fp64"
+    buffer_g_real_cutoff: float = 0
+    buffer_w_real_cutoff: float = 0
+    buffer_g_imag_cutoff: float = 0
+    buffer_w_imag_cutoff: float = 0
 
     polarization_precision: Literal["fp32", "fp64"] = "fp64"
     polarization_tmp_precision: Literal["fp32", "fp64"] = "fp64"

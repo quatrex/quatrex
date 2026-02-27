@@ -202,7 +202,7 @@ class SubsystemSolver(ABC):
         return lyapunov_solver
 
     def _configure_solver(
-        self, solver_config: SolverConfig, compute_config: ComputeConfig
+        self, solver_config: SolverConfig
     ) -> GFSolver:
         """Configures the solver algorithm from the config.
 

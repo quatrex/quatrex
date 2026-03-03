@@ -348,41 +348,41 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     np.concatenate(([0], np.array(batch_counts)))
                 )
 
-            if self.apply_hilbert_correction:
-                for start, end in zip(batch_displacements, batch_displacements[1:]):
-                    self._compute_with_correction(
-                        g_lesser,
-                        g_greater,
-                        w_lesser,
-                        w_greater,
-                        out,
-                        slice(start, end),
-                    )
-            else:
-                n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
-                nk = g_lesser.data.shape[1:-1]
+                if self.apply_hilbert_correction:
+                    for start, end in zip(batch_displacements, batch_displacements[1:]):
+                        self._compute_with_correction(
+                            g_lesser,
+                            g_greater,
+                            w_lesser,
+                            w_greater,
+                            out,
+                            slice(start, end),
+                        )
+                else:
+                    n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
+                    nk = g_lesser.data.shape[1:-1]
 
-                # Add empty dimensions for each k-point.
-                energy_differences = (self.energies - self.energies[0]).reshape(
-                    -1, *(len(nk) + 1) * (1,)
-                )
-
-                # NOTE: Same eta as in the other computation, but fewer
-                # ffts are computed in this case.
-                eta = (self.energies[1] - self.energies[0]) / 2
-                hilbert_kernel_fft = xp.fft.fft(
-                    1 / (energy_differences + eta), n, axis=0
-                )
-                for start, end in zip(batch_displacements, batch_displacements[1:]):
-                    self._compute_without_correction(
-                        g_lesser,
-                        g_greater,
-                        w_lesser,
-                        w_greater,
-                        out,
-                        slice(start, end),
-                        hilbert_kernel_fft,
+                    # Add empty dimensions for each k-point.
+                    energy_differences = (self.energies - self.energies[0]).reshape(
+                        -1, *(len(nk) + 1) * (1,)
                     )
+
+                    # NOTE: Same eta as in the other computation, but fewer
+                    # ffts are computed in this case.
+                    eta = (self.energies[1] - self.energies[0]) / 2
+                    hilbert_kernel_fft = xp.fft.fft(
+                        1 / (energy_differences + eta), n, axis=0
+                    )
+                    for start, end in zip(batch_displacements, batch_displacements[1:]):
+                        self._compute_without_correction(
+                            g_lesser,
+                            g_greater,
+                            w_lesser,
+                            w_greater,
+                            out,
+                            slice(start, end),
+                            hilbert_kernel_fft,
+                        )
 
         # Transpose the matrices to stack distribution.
         with profiler.profile_range(

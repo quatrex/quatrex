@@ -466,7 +466,6 @@ class Contact:
             residual_orbitals = self._init_orbitals_transverse(
                 transport_index, residual_orbitals
             )
-
             if self._residual_coupling(residual_orbitals) == 0:
                 return transport_index
 
@@ -925,7 +924,24 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def get_coupling_matrix(self, M: sparse.spmatrix) -> NDArray:
+    def dump_matrix_elements(self):
+        from scipy import sparse as sp
+
+        """Dumps the matrix elements of the contact unit cell matrices for debugging purposes."""
+        for key, value in self.unit_cell_hamiltonian.items():
+            sp.save_npz(
+                f"{self.name}_hamiltonian_{key[0]}_{key[1]}_{key[2]}.npz",
+                value.get() if hasattr(value, "get") else value,
+            )
+        for key, value in self.unit_cell_overlap.items():
+            sp.save_npz(
+                f"{self.name}_overlap_{key[0]}_{key[1]}_{key[2]}.npz",
+                value.get() if hasattr(value, "get") else value,
+            )
+
+    def get_coupling_matrix(
+        self, M: sparse.spmatrix, transpose: bool = False
+    ) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
@@ -962,10 +978,16 @@ class Contact:
 
         # Slice block column of the matrix
         # Thus, no conjugation and transpose is needed
-        layers = [
-            M[indices, :][:, indices_zero]
-            for indices in self.orbital_indices_per_layer[1:]
-        ]
+        if not transpose:
+            layers = [
+                M[indices, :][:, indices_zero]
+                for indices in self.orbital_indices_per_layer[1:]
+            ]
+        else:
+            layers = [
+                M[:, indices][indices_zero, :].T.conj()
+                for indices in self.orbital_indices_per_layer[1:]
+            ]
 
         # NOTE: Stacking sparse matrix is slow
         coupling_matrix = []

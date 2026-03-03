@@ -375,4 +375,7 @@ class Device:
                 )
             )
 
+            if contact_config.dump_matrix_elements:
+                contacts[-1].dump_matrix_elements()
+
         self.contacts = contacts

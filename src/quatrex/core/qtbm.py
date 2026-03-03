@@ -110,6 +110,90 @@ def allocate_system_matrix(
     return system_matrix
 
 
+def get_sparse_RHS(
+    vector_per_cont: dict,
+    injection_segments: dict,
+    contacts: list,
+    i: int,
+    injection_count: dict,
+    num_orbitals: int,
+) -> sparse.csr_matrix:
+    return sparse.csr_matrix(
+        (
+            xp.concatenate(
+                list(vector_per_cont[contact][i].flatten() for contact in contacts)
+            ),
+            (
+                xp.concatenate(
+                    list(
+                        xp.repeat(
+                            xp.asarray(contact.orbital_indices),
+                            vector_per_cont[contact][i].shape[1],
+                        )
+                        for contact in contacts
+                    )
+                ),
+                xp.concatenate(
+                    list(
+                        xp.tile(
+                            xp.arange(
+                                injection_segments[contact, i].start,
+                                injection_segments[contact, i].stop,
+                            ),
+                            vector_per_cont[contact][i].shape[0],
+                        )
+                        for contact in contacts
+                    )
+                ),
+            ),
+        ),
+        shape=(num_orbitals, injection_count[i]),
+        dtype=xp.complex128,
+    )
+
+
+def get_sparse_RHS_transpose(
+    vector_per_cont: dict,
+    injection_segments: dict,
+    contacts: list,
+    i: int,
+    injection_count: dict,
+    num_orbitals: int,
+) -> sparse.csr_matrix:
+    return sparse.csr_matrix(
+        (
+            xp.concatenate(
+                list(vector_per_cont[contact][i].flatten() for contact in contacts),
+            ),
+            (
+                xp.concatenate(
+                    list(
+                        xp.repeat(
+                            xp.arange(
+                                injection_segments[contact, i].start,
+                                injection_segments[contact, i].stop,
+                            ),
+                            vector_per_cont[contact][i].shape[1],
+                        )
+                        for contact in contacts
+                    )
+                ),
+                xp.concatenate(
+                    list(
+                        xp.tile(
+                            xp.asarray(contact.orbital_indices),
+                            vector_per_cont[contact][i].shape[0],
+                        )
+                        for contact in contacts
+                    )
+                ),
+            ),
+        ),
+        shape=(injection_count[i], num_orbitals),
+        dtype=xp.complex128,
+    )
+
+
 @dataclass
 class Observables:
     """Container for transport observables from QTBM calculations.
@@ -208,20 +292,14 @@ class QTBM:
             )
 
         if self.quatrex_config.qtbm.method == "SplitSolve":
-            self.solver = self._configure_solver(
-                quatrex_config.electron.solver, hermitian_matrix=True
-            )
+            self.solver = self._configure_solver(quatrex_config.electron.solver)
         else:
-            self.solver = self._configure_solver(
-                quatrex_config.electron.solver, hermitian_matrix=False
-            )
+            self.solver = self._configure_solver(quatrex_config.electron.solver)
         self.matrix_type = preferred_matrix_type[
             quatrex_config.electron.solver.direct_solver
         ]
 
-    def _configure_solver(
-        self, solver_config: SolverConfig, hermitian_matrix: bool = True
-    ) -> WFSolver:
+    def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
 
         Parameters
@@ -236,17 +314,27 @@ class QTBM:
 
         """
         if solver_config.direct_solver == "mumps":
-            if hermitian_matrix:
-                raise ValueError("MUMPS does not support hermitian matrices.")
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                raise ValueError(
+                    "SplitSolve method is not compatible with MUMPS solver."
+                )
             return MUMPS()
         if solver_config.direct_solver == "superlu":
-            if hermitian_matrix:
-                raise ValueError("SuperLU does not support hermitian matrices.")
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                raise ValueError(
+                    "SplitSolve method is not compatible with SuperLU solver."
+                )
             return SuperLU()
         if solver_config.direct_solver == "cudss":
-            return cuDSS(hermitian_matrix=hermitian_matrix)
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                return cuDSS(matrix_type="complex_hermitian_indefinite")
+            else:
+                return cuDSS(matrix_type="complex_nonsymmetric")
         if solver_config.direct_solver == "pardiso":
-            return PARDISO(hermitian_matrix=hermitian_matrix)
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                return PARDISO(matrix_type="complex_hermitian_indefinite")
+            else:
+                return PARDISO(matrix_type="complex_structurally_symmetric")
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -432,7 +520,7 @@ class QTBM:
                 )
                 if self.quatrex_config.qtbm.method == "SplitSolve":
                     phi_ortho[orbital_indices, :] += (
-                        contact.get_coupling_matrix(overlap.T.conj()) @ phi_cont
+                        contact.get_coupling_matrix(overlap, transpose=True) @ phi_cont
                     )
             # CHECK SPILL OVER ERROR (DEBUG)
             error = (
@@ -441,7 +529,8 @@ class QTBM:
             )
             if self.quatrex_config.qtbm.method == "SplitSolve":
                 error += (
-                    contact.get_coupling_matrix(system_matrix.T.conj()) @ phi_cont
+                    contact.get_coupling_matrix(system_matrix, transpose=True)
+                    @ phi_cont
                     + (system_matrix.T.conj() - sparse.diags(system_matrix.diagonal()))[
                         orbital_indices, :
                     ]
@@ -812,45 +901,77 @@ class QTBM:
                     times.append(time.perf_counter())
 
                     # Set up sytem matrix and rhs for electron solver.
-                    injection_tot = xp.zeros(
-                        (self.num_orbitals, injection_count[i]),
-                        dtype=xp.complex128,
-                        order="F",
+                    # injection_tot = xp.zeros(
+                    #    (self.num_orbitals, injection_count[i]),
+                    #    dtype=xp.complex128,
+                    #    order="F",
+                    # )
+
+                    injection_tot = get_sparse_RHS(
+                        injection_per_contact,
+                        injection_segments,
+                        self.device.contacts,
+                        i,
+                        injection_count,
+                        self.num_orbitals,
                     )
 
                     # Add the injection vector in the contact elements
                     # of the rhs
-                    for contact in self.device.contacts:
-                        injection_tot[
-                            contact.orbital_indices, injection_segments[contact, i]
-                        ] = injection_per_contact[contact][i]
+                    # for contact in self.device.contacts:
+                    #    injection_tot[
+                    #        contact.orbital_indices, injection_segments[contact, i]
+                    #    ] += injection_per_contact[contact][i]
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
-                        reflection_tot = xp.zeros(
-                            (self.num_orbitals, reflection_count[i]),
-                            dtype=xp.complex128,
-                            order="F",
+                        # reflection_tot = xp.zeros(
+                        #    (self.num_orbitals, reflection_count[i]),
+                        #    dtype=xp.complex128,
+                        #    order="F",
+                        # )
+                        # phi_inv_tot = xp.zeros(
+                        #    (reflection_count[i], self.num_orbitals),
+                        #    dtype=xp.complex128,
+                        #    order="F",
+                        # )
+
+                        # eig_tot = xp.zeros(reflection_count[i], dtype=xp.complex128)
+
+                        # for contact in self.device.contacts:
+                        #    reflection_tot[
+                        #        contact.orbital_indices, reflection_segments[contact, i]
+                        #    ] = reflection_per_contact[contact][i]
+
+                        #    phi_inv_tot[
+                        #        reflection_segments[contact, i], contact.orbital_indices
+                        #    ] = phi_inv_ref_per_contact[contact][i]
+
+                        #    eig_tot[reflection_segments[contact, i]] = (
+                        #        eig_ref_per_contact[contact][i]
+                        #    )
+
+                        reflection_tot = get_sparse_RHS(
+                            reflection_per_contact,
+                            reflection_segments,
+                            self.device.contacts,
+                            i,
+                            reflection_count,
+                            self.num_orbitals,
                         )
-                        phi_inv_tot = xp.zeros(
-                            (reflection_count[i], self.num_orbitals),
-                            dtype=xp.complex128,
-                            order="F",
+                        phi_inv_tot = get_sparse_RHS_transpose(
+                            phi_inv_ref_per_contact,
+                            reflection_segments,
+                            self.device.contacts,
+                            i,
+                            reflection_count,
+                            self.num_orbitals,
                         )
-
-                        eig_tot = xp.zeros(reflection_count[i], dtype=xp.complex128)
-
-                        for contact in self.device.contacts:
-                            reflection_tot[
-                                contact.orbital_indices, reflection_segments[contact, i]
-                            ] = reflection_per_contact[contact][i]
-
-                            phi_inv_tot[
-                                reflection_segments[contact, i], contact.orbital_indices
-                            ] = phi_inv_ref_per_contact[contact][i]
-
-                            eig_tot[reflection_segments[contact, i]] = (
+                        eig_tot = xp.concatenate(
+                            [
                                 eig_ref_per_contact[contact][i]
-                            )
+                                for contact in self.device.contacts
+                            ]
+                        )
 
                     system_matrix.data[:] = 0
 
@@ -893,25 +1014,47 @@ class QTBM:
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
                         if injection_tot.size != 0:
-                            phi_uncorrected = self.solver.solve(
-                                system_matrix, injection_tot
+                            t1 = time.perf_counter()
+                            phi = self.solver.solve(
+                                system_matrix,
+                                injection_tot.toarray(order="F"),
+                                reuse_sym_fact=True,
+                                reuse_fact=False,
                             )
+                            t2 = time.perf_counter()
+                            print(
+                                f"Time for uncorrected solve: {t2 - t1:.2f} s",
+                                flush=True,
+                            )
+                            t1 = time.perf_counter()
                             phi_reflected = self.solver.solve(
-                                system_matrix, reflection_tot
+                                system_matrix,
+                                reflection_tot.toarray(order="F"),
+                                reuse_sym_fact=True,
+                                reuse_fact=True,
                             )
-                            phi = (
-                                phi_uncorrected
-                                + phi_reflected
-                                @ xp.linalg.inv(
-                                    xp.diag(eig_tot) - phi_inv_tot @ phi_reflected
-                                )
-                                @ phi_inv_tot
-                                @ phi_uncorrected
+                            t2 = time.perf_counter()
+                            print(
+                                f"Time for reflected solve: {t2 - t1:.2f} s", flush=True
                             )
+                            t1 = time.perf_counter()
+                            phi += phi_reflected @ xp.linalg.solve(
+                                xp.diag(eig_tot) - phi_inv_tot @ phi_reflected,
+                                phi_inv_tot @ phi,
+                            )
+                            t2 = time.perf_counter()
+                            print(f"Time for correction: {t2 - t1:.2f} s", flush=True)
+
+                            del phi_reflected
                     else:
                         # Solve for the wavefunction
                         if injection_tot.size != 0:
-                            phi = self.solver.solve(system_matrix, injection_tot)
+                            phi = self.solver.solve(
+                                system_matrix,
+                                injection_tot.toarray(order="F"),
+                                reuse_sym_fact=True,
+                                reuse_fact=False,
+                            )
 
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:

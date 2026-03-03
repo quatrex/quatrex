@@ -23,9 +23,6 @@ class MUMPS(WFSolver):
 
     Parameters
     ----------
-    reuse_analysis : bool, optional
-        If True, reuse the analysis phase for subsequent solves with the
-        same matrix structure. Default is True.
     ordering : str, optional
         The ordering method to use for the matrix factorization. Valid
         options are 'amd', 'amf', 'scotch', 'pord', 'metis', 'qamd', and
@@ -39,7 +36,6 @@ class MUMPS(WFSolver):
 
     def __init__(
         self,
-        reuse_analysis: bool = True,
         ordering: str = "metis",
         verbose: bool = False,
     ) -> None:
@@ -51,7 +47,6 @@ class MUMPS(WFSolver):
         if xp.__name__ != "numpy":
             raise ValueError("MUMPS solver requires numpy backend.")
 
-        self.reuse_analysis = reuse_analysis
         if ordering not in valid_orderings:
             raise ValueError(
                 f"Invalid ordering '{ordering}'. Valid options are: {valid_orderings}"
@@ -59,7 +54,14 @@ class MUMPS(WFSolver):
         self.ordering = ordering
         self.context = mumps.Context(verbose=verbose)
 
-    def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
+    @profiler.profile(level="api")
+    def solve(
+        self,
+        a: sparse.spmatrix,
+        b: NDArray,
+        reuse_sym_fact: bool = False,
+        reuse_fact: bool = False,
+    ) -> NDArray:
         """Solves the sparse linear system a @ x = b using MUMPS.
 
         Parameters
@@ -75,12 +77,20 @@ class MUMPS(WFSolver):
             The solution vector.
 
         """
-        if not (self.reuse_analysis and self.context.analyzed):
+
+        if not reuse_sym_fact and reuse_fact:
+            raise ValueError(
+                "Cannot reuse total factorization without reusing symbolic factorization."
+            )
+
+        if not (reuse_sym_fact and self.context.analyzed):
             self.context.analyze(a, ordering=self.ordering)
 
-        self.context.factor(
-            a=a,
-            ordering=self.ordering,
-            reuse_analysis=self.reuse_analysis,
-        )
+        if not (reuse_fact and self.context.factored):
+            self.context.factor(
+                a=a,
+                ordering=self.ordering,
+                reuse_analysis=True,
+            )
+
         return self.context.solve(b)

@@ -14,6 +14,18 @@ except ImportError:
 
 profiler = Profiler()
 
+valid_matrix_types = [
+    "real_structurally_symmetric",
+    "real_symmetric_positive_definite",
+    "real_symmetric_indefinite",
+    "complex_structurally_symmetric",
+    "complex_hermitian_positive_definite",
+    "complex_hermitian_indefinite",
+    "complex_symmetric",
+    "real_nonsymmetric",
+    "complex_nonsymmetric",
+]
+
 
 class PARDISO(WFSolver):
     """Wave function solver using PARDISO for sparse matrix solving.
@@ -24,18 +36,18 @@ class PARDISO(WFSolver):
 
     Parameters
     ----------
-    reuse_analysis : bool, optional
-        If True, reuse the analysis phase for subsequent solves with the
-        same matrix structure. Default is True.
+
+    matrix_type : str, optional
+        The type of matrix to be solved. Must be one of the valid matrix types.
+        Default is 'complex_nonsymmetric'.
     verbose : bool, optional
-        If True, enable verbose output from MUMPS. Default is False.
+        If True, enable verbose output from PARDISO. Default is False.
 
     """
 
     def __init__(
         self,
-        reuse_factorization: bool = True,
-        hermitian_matrix: bool = False,
+        matrix_type: str = None,
         verbose: bool = False,
     ) -> None:
         """Initializes the PARDISO wave function solver."""
@@ -46,13 +58,22 @@ class PARDISO(WFSolver):
         if xp.__name__ != "numpy":
             raise ValueError("PARDISO solver requires numpy backend.")
 
-        self.reuse_factorization = reuse_factorization
-        self.hermitian_matrix = hermitian_matrix
+        if matrix_type not in valid_matrix_types and matrix_type is not None:
+            raise ValueError(
+                f"Invalid matrix type '{matrix_type}'. Valid options are: {valid_matrix_types}"
+            )
+        self.matrix_type = matrix_type
         self.context = None
         self.verbose = verbose
 
     @profiler.profile(level="api")
-    def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
+    def solve(
+        self,
+        a: sparse.spmatrix,
+        b: NDArray,
+        reuse_sym_fact: bool = False,
+        reuse_fact: bool = False,
+    ) -> NDArray:
         """Solves the sparse linear system a @ x = b using PARDISO.
 
         Parameters
@@ -68,17 +89,22 @@ class PARDISO(WFSolver):
             The solution vector.
 
         """
-        if self.context is None or not self.reuse_factorization:
-            if self.hermitian_matrix:
-                type = MATRIX_TYPES["complex_hermitian_indefinite"]
+
+        if not reuse_sym_fact and reuse_fact:
+            raise ValueError(
+                "Cannot reuse total factorization without reusing symbolic factorization."
+            )
+
+        if not (reuse_sym_fact and self.context is not None):
+            if self.matrix_type is not None:
+                type = MATRIX_TYPES[self.matrix_type]
             else:
-                type = MATRIX_TYPES["complex_nonsymmetric"]
+                type = None
             self.context = MKLPardisoSolver(
                 a, matrix_type=type, factor=True, verbose=self.verbose
             )
 
-        else:
-            print("Reusing PARDISO factorization.")
+        elif not (reuse_fact and self.context._factored):
             self.context.refactor(a)
 
         return self.context.solve(b)

@@ -781,6 +781,7 @@ class ContactConfig(BaseModel):
         ]
     )
     direction: Literal["a", "b", "c"]
+    dump_matrix_elements: bool = False
 
     @model_validator(mode="after")
     def to_array(self) -> Self:

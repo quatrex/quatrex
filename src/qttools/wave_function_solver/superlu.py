@@ -18,7 +18,14 @@ class SuperLU(WFSolver):
 
     """
 
-    def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
+    @profiler.profile(level="api")
+    def solve(
+        self,
+        a: sparse.spmatrix,
+        b: NDArray,
+        reuse_sym_fact: bool = False,
+        reuse_fact: bool = False,
+    ) -> NDArray:
         """Solves the sparse system a @ x = b using LU decomposition.
 
         Parameters
@@ -34,5 +41,11 @@ class SuperLU(WFSolver):
             The solution vector.
 
         """
+
+        if reuse_sym_fact or reuse_fact:
+            print(
+                "Warning: SuperLU solver does not support factorization or sym. factorization reuse. Matrix will be refactorized."
+            )
+
         lu = linalg.splu(a)
         return lu.solve(b)

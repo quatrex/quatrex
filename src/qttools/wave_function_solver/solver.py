@@ -13,6 +13,8 @@ class WFSolver(ABC):
         self,
         a: sparse.spmatrix,
         b: NDArray,
+        reuse_sym_fact: bool = False,
+        reuse_fact: bool = False,
     ) -> NDArray:
         """Solves the sparse linear system a @ x = b.
 

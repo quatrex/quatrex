@@ -19,6 +19,15 @@ try:
 
     nvmath_available = True
 
+    matrix_combination = {
+        "real_symmetric_positive_definite": MatrixType.SYMMETRIC,
+        "real_symmetric_indefinite": MatrixType.GENERAL,
+        "complex_hermitian_positive_definite": MatrixType.HPD,
+        "complex_hermitian_indefinite": MatrixType.HERMITIAN,
+        "real_nonsymmetric": MatrixType.GENERAL,
+        "complex_nonsymmetric": MatrixType.GENERAL,
+    }
+
 except ImportError:
     nvmath_available = False
 
@@ -39,24 +48,21 @@ class cuDSS(WFSolver):
 
     Parameters
     ----------
-    explicitely_reset_operands : str, optional
-        String indicating which operands to reset explicitly. If "a" is
-        in the string, the system matrix `a` will be reset before
-        solving. If "b" is in the string, the right-hand side vector `b`
-        will be reset before solving. Default is "b", meaning only the
-        right-hand side vector will be reset.
     use_multithreading : bool, optional
         Whether to use multithreading for the solver. If True, it will
         attempt to find a suitable multithreading library. Default is
         True.
+    matrix_type : str, optional
+        The type of matrix to be solved. Must be one of the valid matrix types.
+        Default is None, which lets cuDSS choose the best type based on the
+        input matrix.
 
     """
 
     def __init__(
         self,
-        explicitely_reset_operands: str = "b",
         use_multithreading: bool = True,
-        hermitian_matrix: bool = False,
+        matrix_type: str = None,
     ) -> None:
         """Initializes the cuDSS wave function solver."""
         if not nvmath_available:
@@ -66,8 +72,7 @@ class cuDSS(WFSolver):
 
         self.direct_solver = None
         self.plan_info = None
-        self.explicitely_reset_a = "a" in explicitely_reset_operands
-        self.explicitely_reset_b = "b" in explicitely_reset_operands
+        self.factorization_info = None
 
         self.solver_options = {}
 
@@ -81,9 +86,12 @@ class cuDSS(WFSolver):
                 print("WARNING! No suitable multithreading library found for cuDSS.")
             else:
                 self.solver_options["multithreading_lib"] = multithreading_lib
-
-        if hermitian_matrix:
-            self.solver_options["sparse_system_type"] = MatrixType.HERMITIAN
+        if matrix_type is not None:
+            if matrix_type not in matrix_combination:
+                raise ValueError(
+                    f"Invalid matrix type '{matrix_type}'. Valid options are: {list(matrix_combination.keys())}"
+                )
+            self.solver_options["sparse_system_type"] = matrix_combination[matrix_type]
             self.solver_options["sparse_system_view"] = MatrixViewType.UPPER
 
     def __del__(self) -> None:
@@ -196,7 +204,14 @@ class cuDSS(WFSolver):
             stream_holder,
         )
 
-    def solve(self, a: sparse.spmatrix, b: NDArray) -> NDArray:
+    @profiler.profile(level="api")
+    def solve(
+        self,
+        a: sparse.spmatrix,
+        b: NDArray,
+        reuse_sym_fact: bool = False,
+        reuse_fact: bool = False,
+    ) -> NDArray:
         """Solves the sparse linear system a @ x = b using cuDSS.
 
         Parameters
@@ -212,25 +227,36 @@ class cuDSS(WFSolver):
             The solution vector.
 
         """
-        if self.direct_solver is None or self.plan_info is None:
+
+        # TODO: Add check to ensure that "a" did not move in memory if symbolic factorization reuse is requested
+
+        if not reuse_sym_fact and reuse_fact:
+            raise ValueError(
+                "Cannot reuse total factorization without reusing symbolic factorization."
+            )
+
+        if not reuse_sym_fact and (
+            self.direct_solver is not None and self.plan_info is not None
+        ):
+            self.direct_solver.reset_operands(a=a)
+            # After resetting a, we need to re-plan.
+            self.plan_info = self.direct_solver.plan()
+
+        if self.direct_solver is None:
             self.direct_solver = DirectSolver(a, b, options=self.solver_options)
             # NOTE: By default this uses a custom nested dissectioning
             # scheme based on METIS. Other options could in principle be
             # exposed as a parameter.
             self.plan_info = self.direct_solver.plan()
 
-        if self.explicitely_reset_a:
-            self.direct_solver.reset_operands(a=a)
-            # After resetting a, we need to re-plan.
-            self.plan_info = self.direct_solver.plan()
+        # TODO: This does not support setting a right-hand side that
+        # has a different shape or strides than the original one.
+        # Until it is fixed in nvmath, we will hack around it by
+        # resetting the operands.
+        # self.direct_solver.reset_operands(b=b)
+        self._explicitely_reset_b(b)
 
-        if self.explicitely_reset_b:
-            # TODO: This does not support setting a right-hand side that
-            # has a different shape or strides than the original one.
-            # Until it is fixed in nvmath, we will hack around it by
-            # resetting the operands.
-            # self.direct_solver.reset_operands(b=b)
-            self._explicitely_reset_b(b)
+        if not reuse_fact or self.factorization_info is None:
+            self.factorization_info = self.direct_solver.factorize()
 
-        self.direct_solver.factorize()
         return self.direct_solver.solve()

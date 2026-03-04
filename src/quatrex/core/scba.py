@@ -476,7 +476,7 @@ class SCBA:
             print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
-
+    
     @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
     def _compute_adaptive_grid(self, g_lesser_reduced: NDArray) -> NDArray:
         """Computes an adaptive energy grid based on gradient of sum(abs(VAR))."""
@@ -527,13 +527,11 @@ class SCBA:
 
             return adaptive_points, monitor, cumsum
         
-        if comm.rank == 0:
-            print("computing adaptive grid...", flush=True)
-            adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(g_lesser_reduced.flatten(),
-                                                             monitor_type='gradient',
-                                                             N_target=self.config.scba.adaptive_num_points)
-
-            return adaptive_points
+        # calling function ensures only rank 0 computes the adaptive grid
+        adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(g_lesser_reduced.flatten(),
+                                                    monitor_type='gradient',
+                                                    N_target=self.config.scba.adaptive_num_points)
+        return adaptive_points
 
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
@@ -899,7 +897,7 @@ class SCBA:
                     xp.save(self.config.output_dir /  f"g_greater_reduced_step_{i}.npy", np.array(g_greater_reduced).flatten())
                     xp.save(self.config.output_dir /  f"g_retarded_reduced_step_{i}.npy", np.array(g_retarded_reduced).flatten())
                     print(f"saved reduced g for iteration {i}", flush=True)
-                comm.barrier()
+            comm.barrier()
 
             if self.config.outputs.save_scba_iteration_data:
                 # all ranks load the random sample indices and perform gather
@@ -913,15 +911,17 @@ class SCBA:
                     xp.save(f"{archive_file_prefix}_g_greater_iter{i:02}.npy", g_greater_concat)
                     xp.save(f"{archive_file_prefix}_g_retarded_iter{i:02}.npy", g_retarded_concat)
                     print(f"saved g files for iteration {i}", flush=True)
-                comm.barrier()
 
+            comm.barrier()
             # create adaptive grid and interpolate the g functions onto the new grid
             if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration:
                 # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
+                #   but result is only placed in rank 0
                 g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
-                
-                # rank 0 computes adaptive grid and broadcast to other ranks
+
+                comm.barrier()
                 adaptive_electron_energies = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
+                # rank 0 computes adaptive grid and broadcast to other ranks
                 if comm.rank == 0:
                     adaptive_electron_energies = self._compute_adaptive_grid(g_retarded_reduced)
                 
@@ -974,6 +974,7 @@ class SCBA:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
+            comm.barrier()
             self._compute_electron_observables()
 
             # Stash current into previous self-energy buffer.

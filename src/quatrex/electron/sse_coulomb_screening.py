@@ -79,6 +79,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         electron_energies: NDArray,
     ):
         """Initializes the scattering self-energy."""
+        self.config = config
         self.energies = electron_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         # self.num_energies = self.energies.size
@@ -95,6 +96,20 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             config.coulomb_screening.apply_hilbert_correction
         )
 
+    def update_energies(self, new_energies: NDArray) -> None:
+        """Updates the energies for the Coulomb screening.
+
+        This is needed if the energies for the electron system change during
+        the self-consistent loop.
+
+        Parameters
+        ----------
+        new_energies : NDArray
+            The new energies for the electron system.
+
+        """
+        self.energies = new_energies
+
     def _compute_without_correction(
         self,
         g_lesser: DSDBSparse,
@@ -104,6 +119,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         out: tuple[DSDBSparse, ...],
         batch: slice,
         hilbert_kernel_fft: NDArray,
+        use_adaptive: bool = False
     ) -> None:
         """Computes the GW self-energy.
 
@@ -128,44 +144,77 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         """
         sigma_lesser, sigma_greater, sigma_retarded = out
 
+        # setup parameters, n=length of fft output, ne=number of energy points, nk=number of k-points
         n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
         ne = g_lesser.data.shape[0]
         nk = g_lesser.data.shape[1:-1]
 
-        g_x_fft = xp.fft.fftn(
-            g_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
-        )
-        w_lesser_fft = xp.fft.fftn(
-            w_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
-        )
-        w_greater_fft = xp.fft.fftn(
-            w_greater.data[..., batch],
-            (n,) + nk,
-            axes=tuple(range(len(nk) + 1)),
-        )
+        k = self.config.scba.adaptive_interpolation_order
 
-        sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
-        sigma_x_fft -= xp.multiply(
-            g_x_fft, w_greater_fft.conj()
-        )  # negative energy part
-        lesser = (
-            self.prefactor
-            * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
-        )
-        sigma_lesser.data[..., batch] += lesser
+        # oversampling ratio, how much to blow up the adaptive grid in interpolation
+        r = self.config.scba.adaptive_interpolation_oversampling_ratio
+        n_fine = r * ne
+        if use_adaptive:
+            fine_energies = np.linspace(self.energies[0], self.energies[-1], n_fine)
+            # Interpolate g and w to the fine grid. This is needed for the FFT-based convolution.
+            g_lesser_fine = interpolate.make_interp_spline(self.energies, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+            g_greater_fine = interpolate.make_interp_spline(self.energies, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
+            w_lesser_fine = interpolate.make_interp_spline(self.energies, w_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+            w_greater_fine = interpolate.make_interp_spline(self.energies, w_greater.data[..., batch], axis=0, k=k)(fine_energies)
 
-        g_x_fft = xp.fft.fftn(
-            g_greater.data[..., batch],
-            (n,) + nk,
-            axes=tuple(range(len(nk) + 1)),
-        )
-        sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
-        sigma_x_fft -= xp.multiply(g_x_fft, w_lesser_fft.conj())  # negative energy part
-        greater = (
-            self.prefactor
-            * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
-        )
-        sigma_greater.data[..., batch] += greater
+            # sigma_lesser
+            sigma_x_fft = xp.multiply(xp.fft.fft(g_lesser_fine, n, axis=0), xp.fft.fft(w_lesser_fine, n, axis=0))
+            sigma_x_fft -= xp.multiply(xp.fft.fft(g_lesser_fine, n, axis=0), xp.fft.fft(w_greater_fine, n, axis=0).conj())
+            
+            # liyongda (03 Mar 2026) todo: how many points do we target when going back to real space?
+            lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+            sigma_lesser.data[..., batch] += lesser
+
+            # sigma_greater
+            sigma_x_fft = xp.multiply(xp.fft.fft(g_greater_fine, n, axis=0), xp.fft.fft(w_greater_fine, n, axis=0))
+            sigma_x_fft -= xp.multiply(xp.fft.fft(g_greater_fine, n, axis=0), xp.fft.fft(w_lesser_fine, n, axis=0).conj())
+            greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+            sigma_greater.data[..., batch] += greater
+
+        else:
+            # compute transforms
+            g_x_fft = xp.fft.fftn(
+                g_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            )
+            w_lesser_fft = xp.fft.fftn(
+                w_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
+            )
+            w_greater_fft = xp.fft.fftn(
+                w_greater.data[..., batch],
+                (n,) + nk,
+                axes=tuple(range(len(nk) + 1)),
+            )
+
+            # sigma_lesser: point-wise multiplication in Fourier space and inverse transform to get convolution
+            sigma_x_fft = xp.multiply(g_x_fft, w_lesser_fft)
+            sigma_x_fft -= xp.multiply(
+                g_x_fft, w_greater_fft.conj()
+            )  # negative energy part
+            lesser = (
+                self.prefactor
+                * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
+            )
+            sigma_lesser.data[..., batch] += lesser
+
+            # compute transforms
+            g_x_fft = xp.fft.fftn(
+                g_greater.data[..., batch],
+                (n,) + nk,
+                axes=tuple(range(len(nk) + 1)),
+            )
+            # sigma_greater: point-wise multiplication in Fourier space and inverse transform to get convolution
+            sigma_x_fft = xp.multiply(g_x_fft, w_greater_fft)
+            sigma_x_fft -= xp.multiply(g_x_fft, w_lesser_fft.conj())  # negative energy part
+            greater = (
+                self.prefactor
+                * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
+            )
+            sigma_greater.data[..., batch] += greater
 
         # Compute retarded self-energy with a Hilbert transform.
         antihermitian = greater - lesser
@@ -312,6 +361,16 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             label="SigmaCoulombScreening: SSE computation", level="default", comm=comm
         ):
 
+            # liyongda (27 Feb 2026): batch_displacements was not defined when it did no hilbert correction (call is on the for loop zip)
+            #   UnboundLocalError: cannot access local variable 'batch_displacements' where it is not associated with a value   
+            #   crashed my simulation run because it was no defined
+            #   defining it here as a default value (43824 for carbon-nanotube)
+            # batch_displacements = g_greater.data.shape[-1]
+
+            # liyongda (27 Feb 2026): AlexNick said that the indentation was messed up
+            #   the entire Hilbert transform block should be 1 indentation below
+            #   aka nothing happens if the `if g_greater.data.shape[-1] != 0:` is not satisfied
+
             # Because of padding there could be no ij elements
             if g_greater.data.shape[-1] != 0:
                 if xp.__name__ == "cupy":
@@ -386,6 +445,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                             out,
                             slice(start, end),
                             hilbert_kernel_fft,
+                            use_adaptive=use_adaptive
                         )
 
         # Transpose the matrices to stack distribution.

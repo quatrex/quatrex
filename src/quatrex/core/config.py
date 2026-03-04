@@ -77,6 +77,7 @@ class SCBAConfig(BaseModel):
     adaptive_start_iteration: NonNegativeInt = 0
     adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
     adaptive_interpolation_order: Literal[1, 2, 3] = 1
+    adaptive_interpolation_oversampling_ratio: PositiveInt = 10
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""
@@ -750,6 +751,9 @@ class DeviceConfig(BaseModel):
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
 
+    # (transport direction, transverse direction 1, transverse direction 2)
+    # will add ^that many dimensions to g_lesser
+    # ex. (1, 7, 10) --> g_lesser.shape = (num_energy_points, 7, 10, num_orbitals, num_orbitals)
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 

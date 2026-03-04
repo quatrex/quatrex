@@ -7,7 +7,7 @@ formalism = "negf" # "negf" or "wf"
 transport_direction = 'x'
 
 [scba] # ===============================================================
-max_iterations = 5
+max_iterations = 3
 mixing_factor = 0.5
 
 coulomb_screening = true
@@ -15,7 +15,7 @@ phonon = true
 
 symmetric = true
 
-adaptive = false
+adaptive = true
 
 # used if adaptive = true
 
@@ -27,11 +27,11 @@ adaptive = false
 
 #   for performance comparison, do 2x separate runs
 #   fine grid with no adaptive vs coarse grid with adaptive
-adaptive_num_points = 21  # should be same as energy_window_num
+adaptive_num_points = 21  # should be same as energy_window_num, else memory buffers require resizing (not implemented) and will likely crash
 adaptive_start_iteration = 0 # iteration to start adaptive grid
 adaptive_integration_method = 'trapezoid' # method to use for adaptive integration (only SigmaFock), can be 'trapezoid' or 'simpson'
-
 adaptive_interpolation_order = 1 # order of interpolation to use for adaptive grid, can be 1 (linear), 2 (quadratic), or 3 (cubic)
+adaptive_interpolation_oversampling_ratio = 10  # how much to blow up the adaptive grid to a fine grid for fft
 
 [outputs]  # Select which outputs to write.
 electron_ldos = true
@@ -49,7 +49,7 @@ self_energy_density = true
 # numbers.
 save_profiling_results = true
 
-save_scba_iteration_data = true
+save_scba_iteration_data = false
 num_nnz_samples_scba_iteration_data = 100   # how many nnz samples to save for each SCBA iteration, can't save all 43824 nnz due to disk space 
 
 save_reduced_functions = true
@@ -73,7 +73,7 @@ band_edge_tracking = "eigenvalues"
 # Only one of these should be uncommented.
 energy_window_min = -15
 energy_window_max = 5
-energy_window_num = 201       # aim for 1-5 meV resolution
+energy_window_num = 21       # aim for 1-5 meV resolution
 # energy_window_num_per_rank = 4    # don't use if you want to visualize scba outputs
 
 solver.algorithm = "rgf"

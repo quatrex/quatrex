@@ -493,7 +493,7 @@ class SCBA:
             print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
-
+    
     @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
     def _compute_adaptive_grid(self, g_lesser_reduced: NDArray) -> NDArray:
         """Computes an adaptive energy grid based on gradient of sum(abs(VAR))."""

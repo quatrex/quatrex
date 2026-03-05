@@ -2,7 +2,6 @@
 
 import warnings
 from copy import copy
-from typing import Callable
 
 import numpy as np
 
@@ -525,10 +524,9 @@ def load_matrix(
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
-    symmetry_op: Callable = xp.conj,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
-    """Loads a matrix from file, applying symmetrization and optionally
-    using a provided sparsity pattern.
+    """Loads a hermitain matrix from file and optionally
+    apply a provided sparsity pattern.
 
     Parameters
     ----------
@@ -542,8 +540,6 @@ def load_matrix(
     shift_kpoints : bool
         Whether to "shift"/"center" the kpoints in the allocated
         DSDBSparse.
-    symmetry_op : Callable, optional
-        The symmetry operation to apply, by default xp.conj
 
     Returns
     -------
@@ -574,7 +570,10 @@ def load_matrix(
         sparsity_pattern = sparsity_pattern + sparsity_pattern.T
 
     # Symmetrize the data.
-    matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
+    # TODO: This should be avoided due to the extra copy
+    # when addressing issue #214, only the upper part should be kept
+    # as only symmetric matrices are loaded
+    matrix_sparray = 0.5 * (matrix_sparray + matrix_sparray.T.conj())
 
     matrix = config.compute.dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
@@ -582,7 +581,7 @@ def load_matrix(
         global_stack_shape=(comm.stack.size,)
         + tuple([k for k in config.device.kpoint_grid if k > 1]),
         symmetry=config.scba.symmetric,
-        symmetry_op=symmetry_op,
+        symmetry_op=xp.conj,
     )
     matrix.data[:] = 0.0  # Initialize to zero.
     if matrix_dict is None:

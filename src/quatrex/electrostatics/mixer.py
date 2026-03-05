@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-"""Different mixing schemes for the self-consistent solution of the
-Poisson equation."""
+"""Different mixing schemes for self-consistent loops."""
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -17,18 +16,18 @@ class Mixer(ABC):
         ...
 
 
-class Underrelaxation(Mixer):
-    """Simple underrelaxation mixer.
+class UnderRelaxation(Mixer):
+    """Simple under-relaxation mixer.
 
     Parameters
     ----------
     alpha : float
-        Underrelaxation factor. Should be between 0 and 1.
+        Under-relaxation factor. Should be in (0, 1].
 
     """
 
     def __init__(self, alpha: float = 0.5):
-        """Initializes the underrelaxation mixer."""
+        """Initializes the under-relaxation mixer."""
 
         if not (0 < alpha <= 1):
             raise ValueError("alpha must be between 0 and 1")
@@ -58,28 +57,56 @@ class Underrelaxation(Mixer):
 class DIIS(Mixer):
     """DIIS mixing scheme.
 
-    This implementation is a straightforward version of the DIIS
-    algorithm. It stores a history of previous values and their
+    This implementation is version of "periodic" Pulay mixing algorithm
+    [^1]. It alternates between simple under-relaxation steps and DIIS
+    extrapolation steps to improve stability, especially in the early
+    iterations when the residuals may be large and the history is not
+    yet well-established.
+
+    The mixer stores a history of previous values and their
     corresponding residuals, and uses this history to compute an optimal
     linear combination of the previous values to minimize the residual.
     The `epsilon` parameter is used for Tikhonov regularization to
     ensure numerical stability when solving the least-squares problem.
 
+    [^1]: A. S. Banerjee, P. Suryanarayana, and J. E. Pask, "Periodic
+    Pulay method for robust and efficient convergence acceleration of
+    self-consistent field iterations", Chem. Phys. Lett., 2016.
+
     Parameters
     ----------
-    max_history : int
+    max_history : int, optional
         Maximum number of previous values and residuals to store for the
         DIIS extrapolation.
-    epsilon : float
+    epsilon : float, optional
         Regularization parameter for the least-squares problem to ensure
         numerical stability.
+    alpha : float, optional
+        Under-relaxation factor to use in the early iterations or in
+        between DIIS extrapolation steps. Should be in (0, 1].
+    extrapolation_interval : int, optional
+        Number of iterations between DIIS extrapolation steps. For
+        example, if set to 3, the mixer will perform two
+        under-relaxation steps followed by a DIIS extrapolation step,
+        and then repeat this cycle. If set to 1 (the default), the Pulay
+        mixing is performed at every iteration.
 
     """
 
-    def __init__(self, max_history: int = 5, epsilon: float = 1e-10):
+    def __init__(
+        self,
+        max_history: int = 5,
+        epsilon: float = 1e-5,
+        alpha: float = 0.5,
+        extrapolation_interval: int = 1,
+    ):
         """Initializes the DIIS mixer."""
         self.max_history = max_history
         self.epsilon = epsilon
+        self.alpha = alpha
+        self.extrapolation_interval = extrapolation_interval
+
+        self.call_count = 0
 
         # NOTE: If this ends up causing memory issues, we can
         # preallocate these arrays and use a circular buffer approach.
@@ -100,7 +127,7 @@ class DIIS(Mixer):
 
         Returns
         -------
-        NDArray
+        mixed_value : NDArray
             The mixed value.
 
         """
@@ -117,12 +144,13 @@ class DIIS(Mixer):
 
         num_entries = len(self.history)
 
-        # If we don't have enough entries, fall back to underrelaxation.
-        # TODO: We could pass a parameter for the underrelaxation factor
+        # If we don't have enough entries, fall back to under-relaxation.
+        # TODO: We could pass a parameter for the under-relaxation factor
         # here, or even do a dynamic adjustment based on the norm of the
         # residuals.
-        if num_entries < 2:
-            return Underrelaxation().mix(incoming_value, previous_value)
+        if num_entries < 2 or self.call_count % self.extrapolation_interval != 0:
+            self.call_count += 1
+            return UnderRelaxation(self.alpha).mix(previous_value, incoming_value)
 
         # Construct the matrix for the least-squares problem.
         B = np.zeros((num_entries + 1, num_entries + 1))
@@ -152,7 +180,7 @@ class DIIS(Mixer):
         # Compute the mixed value.
         mixed_value = np.einsum("i,ik->k", coeffs, self.history)
 
-        # NOTE: Optionally, we could even do another underrelaxation
+        # NOTE: Optionally, we could even do another under-relaxation
         # step here to further stabilize the mixing.
-        # mixed_value = Underrelaxation(0.8).mix(mixed_value, incoming_value)
+        # mixed_value = UnderRelaxation(self.alpha).mix(previous_value, mixed_value)
         return mixed_value

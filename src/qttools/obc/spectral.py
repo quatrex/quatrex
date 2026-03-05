@@ -9,6 +9,7 @@ from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
+from qttools.utils.gpu_utils import get_host
 
 
 class Spectral(OBCSolver):
@@ -135,7 +136,7 @@ class Spectral(OBCSolver):
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
-        indices = np.where([xp.any(b) for b in blocks])[0]
+        indices = np.where([get_host(xp.any(b)) for b in blocks])[0]
 
         if indices.size == 0 or len(blocks) <= 3:
             return tuple(blocks)

@@ -386,7 +386,7 @@ def _assemble_kpoint(
     num_dimensions = len(kpoint_grid)
 
     if isinstance(kshift, int):
-        kshift = xp.array([kshift for _ in range(num_dimensions)])
+        kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -403,22 +403,25 @@ def _assemble_kpoint(
     )
     kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-    index = np.argwhere(kpoint_grid > 1)[0]
-    for stack_index in np.ndindex(kpoints.shape[:-1]):
-        kpoint = kpoints[stack_index]
-        stack_index = np.array(stack_index)
-        stack_index = tuple(stack_index[index])
+    if all(kpoint_grid == 1):
+        out_matrix.stack[(...,)] += sum(matrix_dict.values())
+    else:
+        index = np.argwhere(kpoint_grid > 1)[0]
+        for stack_index in np.ndindex(kpoints.shape[:-1]):
+            kpoint = kpoints[stack_index]
+            stack_index = np.array(stack_index)
+            stack_index = tuple(stack_index[index])
 
-        cells = np.array(list(matrix_dict.keys()))
-        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+            cells = np.array(list(matrix_dict.keys()))
+            phases = xp.exp(2j * xp.pi * (cells @ kpoint))
 
-        # NOTE: Sparse matrix addition is slow
-        # but unavoidable due to memory constraints.
-        # TODO: Could still be optimized
-        matrix_contribution = sum(
-            [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
-        )
-        out_matrix.stack[(...,) + stack_index] += matrix_contribution
+            # NOTE: Sparse matrix addition is slow
+            # but unavoidable due to memory constraints.
+            # TODO: Could still be optimized
+            matrix_contribution = sum(
+                [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
+            )
+            out_matrix.stack[(...,) + stack_index] += matrix_contribution
 
 
 def _create_matrix_from_unit_cells(

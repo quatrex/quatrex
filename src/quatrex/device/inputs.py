@@ -413,7 +413,8 @@ def _assemble_kpoint(
             stack_index = tuple(stack_index[index])
 
             cells = np.array(list(matrix_dict.keys()))
-            phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+            phases = np.exp(2j * np.pi * (cells @ kpoint))
+            phases = xp.asarray(phases)
 
             # NOTE: Sparse matrix addition is slow
             # but unavoidable due to memory constraints.

@@ -2,11 +2,14 @@
 
 import warnings
 
+import numpy as np
+
 from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels import linalg
 from qttools.nevp import NEVP
 from qttools.obc.obc import OBCSolver
+from qttools.utils.gpu_utils import get_host
 
 
 class Spectral(OBCSolver):
@@ -133,7 +136,19 @@ class Spectral(OBCSolver):
 
         # Select relevant blocks and remove empty ones.
         blocks = view[0, : -self.block_sections + 1]
-        return tuple(block for block in blocks if xp.any(block))
+        indices = np.where([get_host(xp.any(b)) for b in blocks])[0]
+
+        if indices.size == 0 or len(blocks) <= 3:
+            return tuple(blocks)
+
+        n_data = min(indices[0], len(blocks) - 1 - indices[-1])
+
+        # keep at least 3 central blocks
+        n_limit = (len(blocks) - 3) // 2
+
+        n = min(n_data, n_limit)
+
+        return tuple(blocks[n:-n]) if n > 0 else tuple(blocks)
 
     def _compute_dE_dk(self, ws: NDArray, vs: NDArray, a_xx: list[NDArray]) -> NDArray:
         """Computes the group velocity of the modes.

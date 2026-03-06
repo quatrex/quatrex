@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
+from qttools.boundary_conditions.system_reduction import SystemReducer
 from qttools.kernels import linalg
 
 
@@ -79,6 +80,7 @@ class OBCSystem(BaseBoundarySystem):
         self,
         boundary_solver: OBCSolver,
         cache_compressor: None = None,
+        system_reducer: SystemReducer | None = None,
         num_ref_iterations: int = 2,
         relative_tol: float = 2e-1,
         absolute_tol: float = 1e-6,
@@ -91,6 +93,7 @@ class OBCSystem(BaseBoundarySystem):
         super().__init__(
             boundary_solver=boundary_solver,
             cache_compressor=cache_compressor,
+            system_reducer=system_reducer,
             num_ref_iterations=num_ref_iterations,
             relative_tol=relative_tol,
             absolute_tol=absolute_tol,

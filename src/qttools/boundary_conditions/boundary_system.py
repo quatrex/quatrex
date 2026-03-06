@@ -4,6 +4,7 @@ import warnings
 from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
+from qttools.boundary_conditions.system_reduction import IdentityReducer, SystemReducer
 from qttools.comm import comm
 
 
@@ -46,6 +47,7 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_solver,
         cache_compressor: None = None,
+        system_reducer: SystemReducer | None = None,
         num_ref_iterations: int = 2,
         relative_tol: float = 2e-1,
         absolute_tol: float = 1e-6,
@@ -73,6 +75,15 @@ class BaseBoundarySystem(ABC):
         if not (0.0 <= self.agreement_threshold <= 1.0):
             raise ValueError("Memoizing tolerance must be between 0 and 1.")
 
+        self.system_reducer = system_reducer or IdentityReducer()
+
+        if not hasattr(self.system_reducer, "contract_system"):
+            raise ValueError("System reducer must have a 'contract_system' method.")
+        if not hasattr(self.system_reducer, "expand_solution"):
+            raise ValueError("System reducer must have an 'expand_solution' method.")
+        if not hasattr(self.system_reducer, "expand_residuals"):
+            raise ValueError("System reducer must have an 'expand_residuals' method.")
+
         self._cache = {}
 
         if self.num_ref_iterations < 2:
@@ -81,83 +92,6 @@ class BaseBoundarySystem(ABC):
                 RuntimeWarning,
             )
             self.num_ref_iterations = 2
-
-    @abstractmethod
-    def _contract_system(
-        self,
-        boundary_system: tuple[NDArray, ...],
-    ) -> tuple[NDArray, ...]:
-        """Contract the boundary system to a reduced system.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-
-        Returns
-        -------
-        reduced_system : tuple[NDArray, ...]
-            The reduced boundary system.
-
-        """
-        ...
-
-    @abstractmethod
-    def _expand_solution(
-        self,
-        boundary_system: tuple[NDArray, ...],
-        reduced_system: tuple[NDArray, ...],
-        reduced_solution: NDArray | tuple[NDArray, ...],
-    ) -> NDArray | tuple[NDArray, ...]:
-        """Expand the solution from the reduced system to the full system.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-        reduced_system : tuple[NDArray, ...]
-            The reduced boundary system.
-        reduced_solution : NDArray | tuple[NDArray, ...]
-            The solution of the reduced system.
-
-        Returns
-        -------
-        full_solution : NDArray | tuple[NDArray, ...]
-            The solution of the full system.
-
-        """
-        ...
-
-    @abstractmethod
-    def _expand_residuals(
-        self,
-        boundary_system: tuple[NDArray, ...],
-        reduced_system: tuple[NDArray, ...],
-        rel_residuals: NDArray,
-        abs_residuals: NDArray,
-    ) -> tuple[NDArray, NDArray]:
-        """Expand the residuals from the reduced system to the full system.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-        reduced_system : tuple[NDArray, ...]
-            The reduced boundary system.
-        rel_residuals : NDArray
-            The relative residuals of the reduced system.
-        abs_residuals : NDArray
-            The absolute residuals of the reduced system.
-
-        Returns
-        -------
-        full_rel_residuals : NDArray
-            The relative residuals of the full system.
-        full_abs_residuals : NDArray
-            The absolute residuals of the full system.
-
-        """
-        ...
 
     @abstractmethod
     def _fix_point_step(
@@ -365,7 +299,7 @@ class BaseBoundarySystem(ABC):
         """
 
         # First, deflate the system
-        reduced_system = self._contract_system(boundary_system)
+        reduced_system = self.system_reducer.contract_system(boundary_system)
 
         # memoize and cache on the reduced system
         reduced_solution = self._memoized_solve(reduced_system, contact, **kwargs)
@@ -394,12 +328,12 @@ class BaseBoundarySystem(ABC):
             self._cache[contact] = self.cache_compressor.compress(reduced_solution)
 
         # Expand the solution back to the full system
-        solution = self._expand_solution(
+        solution = self.system_reducer.expand_solution(
             boundary_system, reduced_system, reduced_solution
         )
         # Residual need to be expanded as well
         # since the reduced system can be on a different space
-        rel_residuals, abs_residuals = self._expand_residuals(
+        rel_residuals, abs_residuals = self.system_reducer.expand_residuals(
             boundary_system, reduced_system, rel_residuals, abs_residuals
         )
 

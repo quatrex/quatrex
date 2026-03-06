@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
+from qttools.boundary_conditions.system_reduction import SystemReducer
 
 
 class LyapunovSolver(ABC):
@@ -48,34 +49,11 @@ class LyapunovSolver(ABC):
         ...
 
 
-class LyapunovSystem(BaseBoundarySystem):
-    r"""A lyapunov system solver with memoization and system reduction.
-
-        The lyapyunov equation to be solved is given by:
-
-        $$\mathbf{x} = \mathbf{q} + \mathbf{a} \mathbf{x}  \mathbf{a}^H$$
+class LyapunovSystemReducer(SystemReducer):
+    r"""A lyapunov system reducer.
 
     Parameters
     ----------
-    boundary_solver : LyapunovSolver
-        The lyapunov solver to be memoized.
-    cache_compressor : object, optional
-        An object with 'compress' and 'decompress' methods to handle
-        cache compression. If None, no compression is applied.
-    num_ref_iterations : int, optional
-        The number of fixed-point iterations to refine the solution. Default is 2.
-    relative_tol : float, optional
-        The relative tolerance for convergence. Default is 0.2.
-    absolute_tol : float, optional
-        The absolute tolerance for convergence. Default is 1e-6.
-    warning_threshold : float, optional
-        The threshold for issuing a warning about high residuals. Default is 0.1.
-    mode : str, optional
-        The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
-        Default is 'auto'.
-    agreement_threshold : float, optional
-        The threshold for agreement across MPI ranks to consider a memoized solution valid.
-        Default is 0.999.
     reduce_sparsity : bool, optional
         Whether to reduce the sparsity of the system matrix.
         If sparsity of any obc is changed during runtime, then the cache
@@ -89,29 +67,12 @@ class LyapunovSystem(BaseBoundarySystem):
 
     def __init__(
         self,
-        boundary_solver: LyapunovSolver,
-        cache_compressor: None = None,
-        num_ref_iterations: int = 2,
-        relative_tol: float = 2e-1,
-        absolute_tol: float = 1e-6,
-        warning_threshold: float = 1e-1,
-        mode: str = "auto",
-        agreement_threshold: float = 0.999,
         reduce_sparsity: bool = True,
         assume_constant_sparsity: bool = True,
     ) -> None:
         """Initializes the lyapunov system."""
 
-        super().__init__(
-            boundary_solver=boundary_solver,
-            cache_compressor=cache_compressor,
-            num_ref_iterations=num_ref_iterations,
-            relative_tol=relative_tol,
-            absolute_tol=absolute_tol,
-            warning_threshold=warning_threshold,
-            mode=mode,
-            agreement_threshold=agreement_threshold,
-        )
+        super().__init__()
 
         self.number_non_zero_rows = None
         self.number_non_zero_cols = None
@@ -221,7 +182,7 @@ class LyapunovSystem(BaseBoundarySystem):
                 self.cols_reduced_system.stop - self.cols_reduced_system.start
             )
 
-    def _contract_system(
+    def contract_system(
         self,
         boundary_system: tuple[NDArray, NDArray],
     ) -> NDArray:
@@ -302,7 +263,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
         return solution
 
-    def _expand_solution(
+    def expand_solution(
         self,
         boundary_system: tuple[NDArray, NDArray],
         reduced_system: tuple[NDArray, ...],
@@ -344,7 +305,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
         return self.__expand_solution_zero_cols(boundary_system, reduced_solution)
 
-    def _expand_residuals(
+    def expand_residuals(
         self,
         boundary_system: tuple[NDArray, NDArray],
         reduced_system: tuple[NDArray, NDArray],
@@ -379,6 +340,71 @@ class LyapunovSystem(BaseBoundarySystem):
 
         """
         return rel_residuals, abs_residuals
+
+
+class LyapunovSystem(BaseBoundarySystem):
+    r"""A lyapunov system solver with memoization and system reduction.
+
+        The lyapyunov equation to be solved is given by:
+
+        $$\mathbf{x} = \mathbf{q} + \mathbf{a} \mathbf{x}  \mathbf{a}^H$$
+
+    Parameters
+    ----------
+    boundary_solver : LyapunovSolver
+        The lyapunov solver to be memoized.
+    cache_compressor : object, optional
+        An object with 'compress' and 'decompress' methods to handle
+        cache compression. If None, no compression is applied.
+    num_ref_iterations : int, optional
+        The number of fixed-point iterations to refine the solution. Default is 2.
+    relative_tol : float, optional
+        The relative tolerance for convergence. Default is 0.2.
+    absolute_tol : float, optional
+        The absolute tolerance for convergence. Default is 1e-6.
+    warning_threshold : float, optional
+        The threshold for issuing a warning about high residuals. Default is 0.1.
+    mode : str, optional
+        The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
+        Default is 'auto'.
+    agreement_threshold : float, optional
+        The threshold for agreement across MPI ranks to consider a memoized solution valid.
+        Default is 0.999.
+    reduce_sparsity : bool, optional
+        Whether to reduce the sparsity of the system matrix.
+        If sparsity of any obc is changed during runtime, then the cache
+        needs to be invalidated. Default is True.
+    assume_constant_sparsity : bool, optional
+        Whether to assume that the sparsity pattern of the system matrix
+        remains constant during runtime. If True, the sparsity pattern
+        is only computed once. Default is True.
+
+    """
+
+    def __init__(
+        self,
+        boundary_solver: LyapunovSolver,
+        cache_compressor: None = None,
+        system_reducer: SystemReducer | None = None,
+        num_ref_iterations: int = 2,
+        relative_tol: float = 2e-1,
+        absolute_tol: float = 1e-6,
+        warning_threshold: float = 1e-1,
+        mode: str = "auto",
+        agreement_threshold: float = 0.999,
+    ) -> None:
+        """Initializes the lyapunov system."""
+        super().__init__(
+            boundary_solver=boundary_solver,
+            cache_compressor=cache_compressor,
+            system_reducer=system_reducer,
+            num_ref_iterations=num_ref_iterations,
+            relative_tol=relative_tol,
+            absolute_tol=absolute_tol,
+            warning_threshold=warning_threshold,
+            mode=mode,
+            agreement_threshold=agreement_threshold,
+        )
 
     def _fix_point_step(
         self,

@@ -3,19 +3,25 @@
 import pytest
 
 from qttools import NDArray, xp
-from qttools.boundary_conditions.lyapunov import LyapunovSolver, LyapunovSystem
+from qttools.boundary_conditions.lyapunov import (
+    LyapunovSolver,
+    LyapunovSystem,
+    LyapunovSystemReducer,
+)
 
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])
 def test_correctness(
-    inputs: tuple[NDArray, NDArray],
+    inputs: tuple[NDArray, NDArray, slice, slice],
     lyapunov_solver: LyapunovSolver,
     reduce_sparsity: bool,
 ):
 
+    lyapunov_system_reducer = LyapunovSystemReducer(reduce_sparsity=reduce_sparsity)
+
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
-        reduce_sparsity=reduce_sparsity,
+        system_reducer=lyapunov_system_reducer,
         mode="off",
     )
 
@@ -28,14 +34,15 @@ def test_correctness(
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])
 def test_correctness_zeros(
-    inputs: tuple[NDArray, NDArray],
+    inputs: tuple[NDArray, NDArray, slice, slice],
     lyapunov_solver: LyapunovSolver,
     reduce_sparsity: bool,
 ):
+    lyapunov_system_reducer = LyapunovSystemReducer(reduce_sparsity=reduce_sparsity)
 
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
-        reduce_sparsity=reduce_sparsity,
+        system_reducer=lyapunov_system_reducer,
         mode="off",
     )
 
@@ -50,16 +57,18 @@ def test_correctness_zeros(
 
 @pytest.mark.parametrize("reduce_sparsity", [True, False])
 def test_memoizer(
-    inputs: tuple[NDArray, NDArray],
+    inputs: tuple[NDArray, NDArray, slice, slice],
     lyapunov_solver: LyapunovSolver,
     reduce_sparsity: bool,
 ):
     """Tests that the Lyapunov memoizer works."""
     a, q, row_slice, col_slice = inputs
 
+    lyapunov_system_reducer = LyapunovSystemReducer(reduce_sparsity=reduce_sparsity)
+
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
-        reduce_sparsity=reduce_sparsity,
+        system_reducer=lyapunov_system_reducer,
         mode="force-after-first",
     )
     x, _, _ = lyapunov_system((a, q), contact="contact")

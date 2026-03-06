@@ -141,7 +141,7 @@ class BaseBoundarySystem(ABC):
         self,
         boundary_system: tuple[NDArray, ...],
         test_solution: NDArray,
-    ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
+    ) -> tuple[NDArray, ...]:
         """Compute the residuals of a test solution.
 
         Parameters
@@ -157,7 +157,7 @@ class BaseBoundarySystem(ABC):
             The relative residuals of the test solution.
         abs_residuals : NDArray
             The absolute residuals of the test solution.
-        solution : NDArray | tuple[NDArray, ...]
+        solution : tuple[NDArray, ...]
             The (possibly refined) solution of the boundary system.
 
         """

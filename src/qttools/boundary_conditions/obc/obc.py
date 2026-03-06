@@ -104,13 +104,13 @@ class OBCSystem(BaseBoundarySystem):
 
     def _contract_system(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system.
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
 
@@ -127,7 +127,7 @@ class OBCSystem(BaseBoundarySystem):
 
     def _expand_solution(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         reduced_system: tuple[NDArray, ...],
         reduced_solution: NDArray | tuple[NDArray, ...],
     ) -> NDArray | tuple[NDArray, ...]:
@@ -135,7 +135,7 @@ class OBCSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
         reduced_system : tuple[NDArray, NDArray, NDArray]
@@ -156,7 +156,7 @@ class OBCSystem(BaseBoundarySystem):
 
     def _expand_residuals(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         reduced_system: tuple[NDArray, ...],
         rel_residuals: NDArray,
         abs_residuals: NDArray,
@@ -168,7 +168,7 @@ class OBCSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
         reduced_system : tuple[NDArray, NDArray, NDArray]
@@ -193,7 +193,7 @@ class OBCSystem(BaseBoundarySystem):
 
     def _fix_point_step(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         solution: NDArray,
     ) -> NDArray:
         r"""Perform a fixed-point iteration step to refine the solution.
@@ -203,7 +203,7 @@ class OBCSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
         solution : NDArray
@@ -220,7 +220,7 @@ class OBCSystem(BaseBoundarySystem):
 
     def _get_starting_guess(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
     ) -> NDArray:
         r"""Get a starting guess for the obc system.
 
@@ -229,7 +229,7 @@ class OBCSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
 
@@ -244,9 +244,9 @@ class OBCSystem(BaseBoundarySystem):
 
     def _get_residuals(
         self,
-        boundary_system: tuple[NDArray, NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         test_solution: NDArray,
-    ) -> tuple[NDArray, NDArray, NDArray | tuple[NDArray, ...]]:
+    ) -> tuple[NDArray, ...]:
         r"""Compute the residuals of a test solution.
 
             They are computed as follows:
@@ -256,7 +256,7 @@ class OBCSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a_ii, a_ij, a_ji)
         test_solution : NDArray
@@ -268,7 +268,7 @@ class OBCSystem(BaseBoundarySystem):
             The relative residuals of the test solution.
         abs_residuals : NDArray
             The absolute residuals of the test solution.
-        solution : NDArray | tuple[NDArray, ...]
+        solution : tuple[NDArray, ...]
             The (possibly refined) solution of the boundary system.
 
         """

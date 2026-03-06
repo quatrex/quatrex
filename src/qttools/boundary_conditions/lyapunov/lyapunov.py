@@ -83,8 +83,8 @@ class LyapunovSystemReducer(SystemReducer):
 
     def __contract_system_zero_cols(
         self,
-        boundary_system: tuple[NDArray, NDArray],
-    ) -> NDArray:
+        boundary_system: tuple[NDArray, ...],
+    ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system
         when there are zero cols in the system matrix."""
         if self.cols_reduced_system is None:
@@ -100,8 +100,8 @@ class LyapunovSystemReducer(SystemReducer):
 
     def __contract_system_zero_rows(
         self,
-        boundary_system: tuple[NDArray, NDArray],
-    ) -> NDArray:
+        boundary_system: tuple[NDArray, ...],
+    ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system
         when there are zero rows in the system matrix."""
         if self.rows_reduced_system is None:
@@ -126,7 +126,7 @@ class LyapunovSystemReducer(SystemReducer):
 
     def __compute_sparsity_pattern(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
     ) -> None:
         """Compute the sparsity pattern of the system matrix."""
         a, _ = boundary_system
@@ -184,20 +184,20 @@ class LyapunovSystemReducer(SystemReducer):
 
     def contract_system(
         self,
-        boundary_system: tuple[NDArray, NDArray],
-    ) -> NDArray:
+        boundary_system: tuple[NDArray, ...],
+    ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system.
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.
 
         Returns
         -------
-        reduced_system : NDArray
+        reduced_system : tuple[NDArray, ...]
             The reduced boundary system.
 
         """
@@ -223,7 +223,7 @@ class LyapunovSystemReducer(SystemReducer):
 
     def __expand_solution_zero_cols(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         reduced_solution: NDArray,
     ) -> NDArray:
         """Expand the solution from the reduced system to the full system
@@ -244,7 +244,7 @@ class LyapunovSystemReducer(SystemReducer):
 
     def __expand_solution_zero_rows(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         reduced_solution: NDArray,
     ) -> NDArray:
         """Expand the solution from the reduced system to the full system
@@ -265,7 +265,7 @@ class LyapunovSystemReducer(SystemReducer):
 
     def expand_solution(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         reduced_system: tuple[NDArray, ...],
         reduced_solution: NDArray,
     ) -> NDArray:
@@ -273,7 +273,7 @@ class LyapunovSystemReducer(SystemReducer):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.
@@ -307,8 +307,8 @@ class LyapunovSystemReducer(SystemReducer):
 
     def expand_residuals(
         self,
-        boundary_system: tuple[NDArray, NDArray],
-        reduced_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
+        reduced_system: tuple[NDArray, ...],
         rel_residuals: NDArray,
         abs_residuals: NDArray,
     ) -> tuple[NDArray, NDArray]:
@@ -318,7 +318,7 @@ class LyapunovSystemReducer(SystemReducer):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The full boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.
@@ -408,7 +408,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
     def _fix_point_step(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         solution: NDArray,
     ) -> NDArray:
         r"""Perform a fixed-point iteration step to refine the solution.
@@ -418,7 +418,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.
@@ -436,7 +436,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
     def _get_starting_guess(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
     ) -> NDArray:
         """Get a starting guess for the boundary system.
 
@@ -444,7 +444,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.
@@ -460,9 +460,9 @@ class LyapunovSystem(BaseBoundarySystem):
 
     def _get_residuals(
         self,
-        boundary_system: tuple[NDArray, NDArray],
+        boundary_system: tuple[NDArray, ...],
         test_solution: NDArray,
-    ) -> tuple[NDArray, NDArray, NDArray]:
+    ) -> tuple[NDArray, ...]:
         r"""Compute the residuals of a test solution.
 
             They are computed as follows:
@@ -472,7 +472,7 @@ class LyapunovSystem(BaseBoundarySystem):
 
         Parameters
         ----------
-        boundary_system : tuple[NDArray, NDArray]
+        boundary_system : tuple[NDArray, ...]
             The boundary system to solve.
             It is expected to be a tuple (a, q) where 'a' is the system matrix
             and 'q' is the right-hand side matrix.

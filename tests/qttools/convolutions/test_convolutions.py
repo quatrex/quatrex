@@ -1,5 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
 from qttools import NDArray, xp
@@ -216,9 +217,9 @@ class TestFFTConvolutions:
         # Randomly choose axes to convolve over
         # TODO: Random axes is not a good idea, since the
         # tests are not reproducible and determinstic.
-        size = xp.random.choice(xp.arange(1, len(array_shape) + 1))
+        size = np.random.choice(np.arange(1, len(array_shape) + 1))
         axes = tuple(
-            sorted(xp.random.choice(len(array_shape), size=size, replace=False))
+            sorted(np.random.choice(len(array_shape), size=size, replace=False))
         )
         result = fft_circular_convolve(a, b, axes)
         # Compare with naive circular convolve

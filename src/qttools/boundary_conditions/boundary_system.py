@@ -7,6 +7,14 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 
 
+class IdentityCompressor:
+    def compress(self, x):
+        return x.copy() if hasattr(x, "copy") else x
+
+    def decompress(self, x):
+        return x
+
+
 class BaseBoundarySystem(ABC):
     """Abstract base class to solve boundary systems with memoization and system reduction.
 
@@ -55,19 +63,12 @@ class BaseBoundarySystem(ABC):
         self.mode = mode
         self.agreement_threshold = agreement_threshold
 
-        if cache_compressor is None:
-            self.compress = lambda x: x.copy()
-            self.decompress = lambda x: x
-        else:
-            assert hasattr(
-                cache_compressor, "compress"
-            ), "Cache compressor must have a 'compress' method."
-            assert hasattr(
-                cache_compressor, "decompress"
-            ), "Cache compressor must have a 'decompress' method."
+        self.cache_compressor = cache_compressor or IdentityCompressor()
 
-            self.compress = cache_compressor.compress
-            self.decompress = cache_compressor.decompress
+        if not hasattr(self.cache_compressor, "compress"):
+            raise ValueError("Cache compressor must have a 'compress' method.")
+        if not hasattr(self.cache_compressor, "decompress"):
+            raise ValueError("Cache compressor must have a 'decompress' method.")
 
         if not (0.0 <= self.agreement_threshold <= 1.0):
             raise ValueError("Memoizing tolerance must be between 0 and 1.")
@@ -260,7 +261,7 @@ class BaseBoundarySystem(ABC):
                 raise NotImplementedError(
                     "Memoizing on multiple solution not supported."
                 )
-            self._cache[contact] = self.compress(solution)
+            self._cache[contact] = self.cache_compressor.compress(solution)
 
         return solution
 
@@ -293,7 +294,7 @@ class BaseBoundarySystem(ABC):
             return self._solve(boundary_system, contact, **kwargs)
 
         # Try to reuse the result from the cache.
-        solution = self.decompress(self._cache.get(contact, None))
+        solution = self.cache_compressor.decompress(self._cache.get(contact, None))
 
         if solution is None:
             if self.mode in ["auto", "force-after-first"]:
@@ -390,7 +391,7 @@ class BaseBoundarySystem(ABC):
                 raise NotImplementedError(
                     "Memoizing on multiple solution not supported."
                 )
-            self._cache[contact] = self.compress(reduced_solution)
+            self._cache[contact] = self.cache_compressor.compress(reduced_solution)
 
         # Expand the solution back to the full system
         solution = self._expand_solution(

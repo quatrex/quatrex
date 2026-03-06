@@ -529,8 +529,8 @@ def load_matrix(
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
-    """Loads a hermitain matrix from file and optionally
-    apply a provided sparsity pattern.
+    """Loads a Hermitian matrix from file and optionally
+    applies a provided sparsity pattern.
 
     Parameters
     ----------

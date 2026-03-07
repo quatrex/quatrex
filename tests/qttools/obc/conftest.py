@@ -80,7 +80,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     hamiltonian_sparray = sps.load_npz(
         quatrex_config.input_dir / "hamiltonian.npz"
     ).astype(xp.complex128)
-    block_sizes = get_host(np.load(quatrex_config.input_dir / "block_sizes.npy"))
+    block_sizes = get_host(np.load(quatrex_config.input_dir / "block_sizes.txt"))
 
     hamiltonian_sparray = xp.asarray(hamiltonian_sparray.toarray())
 

@@ -95,7 +95,7 @@ class SCBAData:
 
         else:
             block_sizes = get_host(
-                distributed_load(config.input_dir / "block_sizes.npy")
+                distributed_load(config.input_dir / "block_sizes.txt")
             )
 
         kpoint_grid = config.device.kpoint_grid

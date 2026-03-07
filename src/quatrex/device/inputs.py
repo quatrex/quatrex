@@ -591,7 +591,7 @@ def load_matrix(
         matrix_sparray = matrix_sparray[(0, 0, 0)]
         matrix_sparray = sparse.coo_matrix(matrix_sparray).astype(xp.complex128)
 
-        block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.npy"))
+        block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.txt"))
         matrix_dict = None
 
     # TODO: This is not efficient and will be refactored when the inputs

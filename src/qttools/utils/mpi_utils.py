@@ -88,7 +88,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix not in [".npz", ".npy", ".mat"]:
+    if path.suffix not in [".npz", ".npy", ".mat", ".txt"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
     if comm.rank == 0:
@@ -105,6 +105,9 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
                 for r, h_r in arr.items()
                 if r.startswith("[")
             }
+        elif path.suffix == ".txt":
+            # Assumes the text file contains integers.
+            arr = xp.loadtxt(path, dtype=int)
     else:
         arr = None
 

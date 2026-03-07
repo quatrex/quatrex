@@ -559,9 +559,15 @@ def load_matrix(
             config, matrix_name
         )
     else:
-        matrix_sparray = distributed_load(
-            config.input_dir / f"{matrix_name}.npz"
-        ).astype(xp.complex128)
+        matrix_sparray = distributed_load(config.input_dir / f"{matrix_name}.mat")
+        if (0, 0, 0) not in matrix_sparray.keys():
+            raise ValueError(
+                f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
+                f"Available keys: {list(matrix_sparray.keys())}"
+            )
+        matrix_sparray = matrix_sparray[(0, 0, 0)]
+        matrix_sparray = sparse.coo_matrix(matrix_sparray).astype(xp.complex128)
+
         block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.npy"))
         matrix_dict = None
 

@@ -6,6 +6,7 @@ import scipy.sparse as sps
 from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as comm
 from mpi4py.util import pkl5
+from scipy.io import loadmat
 
 from qttools import NDArray, sparse, xp
 
@@ -66,7 +67,7 @@ def get_section_sizes(
     return section_sizes, effective_num_elements
 
 
-def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
+def distributed_load(path: Path) -> sparse.spmatrix | NDArray | dict:
     """Loads an array from disk and broadcasts it to all ranks.
 
     Parameters
@@ -76,8 +77,8 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
 
     Returns
     -------
-    sparse.spmatrix | NDArray
-        The loaded array.
+    sparse.spmatrix | NDArray | dict
+        The loaded array/s.
 
     Raises
     ------
@@ -87,7 +88,7 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix not in [".npz", ".npy"]:
+    if path.suffix not in [".npz", ".npy", ".mat"]:
         raise ValueError(f"Invalid file extension: {path.suffix}")
 
     if comm.rank == 0:
@@ -97,6 +98,13 @@ def distributed_load(path: Path) -> sparse.spmatrix | NDArray:
             arr = sparse.coo_matrix(arr)
         elif path.suffix == ".npy":
             arr = xp.load(path)
+        elif path.suffix == ".mat":
+            arr = loadmat(path)
+            arr = {
+                tuple(map(int, r.strip("[]").split(","))): h_r
+                for r, h_r in arr.items()
+                if r.startswith("[")
+            }
     else:
         arr = None
 

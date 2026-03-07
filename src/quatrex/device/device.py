@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import scipy
 from mpi4py.MPI import COMM_WORLD as comm
-from scipy.io import loadmat
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
@@ -176,12 +175,7 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.mat").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        self.hamiltonians = loadmat(self.config.input_dir / "hamiltonian.mat")
-        self.hamiltonians = {
-            tuple(map(int, r.strip("[]").split(","))): h_r
-            for r, h_r in self.hamiltonians.items()
-            if r.startswith("[")
-        }
+        self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
 
         for r, h_r in self.hamiltonians.items():
             assert (
@@ -195,7 +189,7 @@ class Device:
                     f"Matrix type: {type(h_r)}"
                 )
 
-            self.hamiltonians[r] = sparse.coo_matrix((h_r)).tocsr()
+            self.hamiltonians[r] = sparse.csr_matrix((h_r))
 
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
@@ -209,12 +203,9 @@ class Device:
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.mat").exists():
-            self.overlap_matrices = loadmat(self.config.input_dir / "overlap.mat")
-            self.overlap_matrices = {
-                tuple(map(int, r.strip("[]").split(","))): s_r
-                for r, s_r in self.overlap_matrices.items()
-                if r.startswith("[")
-            }
+            self.overlap_matrices = distributed_load(
+                self.config.input_dir / "overlap.mat"
+            )
 
             for r, s_r in self.overlap_matrices.items():
                 assert (

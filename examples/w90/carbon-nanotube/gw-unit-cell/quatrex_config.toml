@@ -1,5 +1,4 @@
 simulation_dir = "."
-input_dir = "../inputs"
 
 formalism = "negf" # "negf" or "wf"
 

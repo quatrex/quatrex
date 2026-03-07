@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import warnings
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
 import scipy
@@ -11,6 +10,7 @@ from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
+from quatrex.device.inputs import distributed_read_xyz
 
 
 def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
@@ -33,58 +33,6 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
     orbitals_per_atom = list(np.diff(orbital_offsets))
     orbital_potential = xp.repeat(potential, orbitals_per_atom, axis=0)
     return orbital_potential
-
-
-def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
-    """Reads atomic structure data from an XYZ file.
-
-    Parameters
-    ----------
-    filename : Path
-        Path to the XYZ file containing the atomic structure. The file
-        should have the standard XYZ format with lattice parameters on
-        the second line.
-
-    Returns
-    -------
-    lattice : NDArray
-        3x3 array containing the lattice vectors (in rows).
-    atom_coordinates : NDArray
-        (N_atoms, 3) array containing atomic coordinates.
-    atom_types : NDArray
-        (N_atoms,) array containing atom symbol for each atom.
-
-    """
-
-    lattice_vectors = None
-    atom_coordinates = None
-    atom_types = None
-
-    if comm.rank == 0:
-        # Read only the second line of the file (this contains the
-        # lattice parameters)
-        with open(filename, "r") as f:
-            __ = f.readline()
-            lattice_line = f.readline().strip()
-
-        if not lattice_line.startswith("Lattice="):
-            raise ValueError(
-                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
-            )
-
-        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
-        lattice_vectors = np.fromstring(
-            lattice_vectors, dtype=np.float64, sep=" "
-        ).reshape(3, 3)
-        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
-        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
-
-    # Broadcast the data to all the ranks
-    lattice_vectors = comm.bcast(lattice_vectors, root=0)
-    atom_coordinates = comm.bcast(atom_coordinates, root=0)
-    atom_types = comm.bcast(atom_types, root=0)
-
-    return lattice_vectors, atom_coordinates, atom_types
 
 
 class Device:

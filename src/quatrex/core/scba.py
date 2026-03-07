@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -21,7 +22,11 @@ from quatrex.core.observables import (
 )
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device.inputs import create_coordinate_grid, load_matrix
+from quatrex.device.inputs import (
+    create_coordinate_grid,
+    distributed_read_xyz,
+    load_matrix,
+)
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -76,11 +81,28 @@ class SCBAData:
             )
 
         else:
-            grid = distributed_load(config.input_dir / "grid.npy")
+            lattice_file = config.input_dir / "lattice.xyz"
+            if not lattice_file.exists():
+                raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
+            _, atom_coordinates, atomic_species = distributed_read_xyz(lattice_file)
+            orbitals_per_atom = np.fromiter(
+                map(
+                    defaultdict(lambda: 1, config.device.num_orbitals_per_atom).get,
+                    atomic_species,
+                ),
+                dtype=np.int32,
+            )
+            orbitals_per_atom = xp.asarray(orbitals_per_atom)
+            atom_coordinates = xp.asarray(atom_coordinates)
+
+            orbital_offsets = xp.hstack(([0], xp.cumsum(orbitals_per_atom)))
+            orbitals_per_atom = list(xp.diff(orbital_offsets))
+            grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
 
             block_sizes = get_host(
                 distributed_load(config.input_dir / "block_sizes.npy")
             )
+
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0

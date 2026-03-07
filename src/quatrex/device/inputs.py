@@ -2,8 +2,10 @@
 
 import warnings
 from copy import copy
+from pathlib import Path
 
 import numpy as np
+from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -642,3 +644,55 @@ def load_matrix(
         del matrix_dict
 
     return matrix, sparsity_pattern
+
+
+def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
+    """Reads atomic structure data from an XYZ file.
+
+    Parameters
+    ----------
+    filename : Path
+        Path to the XYZ file containing the atomic structure. The file
+        should have the standard XYZ format with lattice parameters on
+        the second line.
+
+    Returns
+    -------
+    lattice : NDArray
+        3x3 array containing the lattice vectors (in rows).
+    atom_coordinates : NDArray
+        (N_atoms, 3) array containing atomic coordinates.
+    atom_types : NDArray
+        (N_atoms,) array containing atom symbol for each atom.
+
+    """
+
+    lattice_vectors = None
+    atom_coordinates = None
+    atom_types = None
+
+    if comm_world.rank == 0:
+        # Read only the second line of the file (this contains the
+        # lattice parameters)
+        with open(filename, "r") as f:
+            __ = f.readline()
+            lattice_line = f.readline().strip()
+
+        if not lattice_line.startswith("Lattice="):
+            raise ValueError(
+                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
+            )
+
+        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
+        lattice_vectors = np.fromstring(
+            lattice_vectors, dtype=np.float64, sep=" "
+        ).reshape(3, 3)
+        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
+        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
+
+    # Broadcast the data to all the ranks
+    lattice_vectors = comm_world.bcast(lattice_vectors, root=0)
+    atom_coordinates = comm_world.bcast(atom_coordinates, root=0)
+    atom_types = comm_world.bcast(atom_types, root=0)
+
+    return lattice_vectors, atom_coordinates, atom_types

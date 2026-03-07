@@ -54,10 +54,28 @@ class SCBAData:
     def __init__(self, config: QuatrexConfig, electron_energies: NDArray) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
-        if config.device.construct_from_unit_cell:
-            wannier_centers = distributed_load(config.input_dir / "wannier_centers.npy")
-            lattice_vectors = distributed_load(config.input_dir / "lattice_vectors.npy")
 
+        lattice_file = config.input_dir / "lattice.xyz"
+        if not lattice_file.exists():
+            raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
+        lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
+            lattice_file
+        )
+        orbitals_per_atom = np.fromiter(
+            map(
+                defaultdict(lambda: 1, config.device.num_orbitals_per_atom).get,
+                atomic_species,
+            ),
+            dtype=np.int32,
+        )
+        orbitals_per_atom = xp.asarray(orbitals_per_atom)
+        atom_coordinates = xp.asarray(atom_coordinates)
+
+        orbital_offsets = xp.hstack(([0], xp.cumsum(orbitals_per_atom)))
+        orbitals_per_atom = list(xp.diff(orbital_offsets))
+        grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
+
+        if config.device.construct_from_unit_cell:
             # The neighbor cell cutoff along the transport direction
             # determines the size of the transport cell.
             transport_ind = "xyz".index(config.device.transport_direction)
@@ -68,37 +86,14 @@ class SCBAData:
             device_cell = unit_cells_per_transport_cell.copy()
             device_cell[transport_ind] *= config.device.num_transport_cells
 
-            grid = create_coordinate_grid(
-                wannier_centers, tuple(device_cell), lattice_vectors
-            )
-
             block_sizes = np.array(
-                [
-                    unit_cells_per_transport_cell[transport_ind]
-                    * wannier_centers.shape[0]
-                ]
+                [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
                 * config.device.num_transport_cells
             )
 
+            grid = create_coordinate_grid(grid, tuple(device_cell), lattice_vectors)
+
         else:
-            lattice_file = config.input_dir / "lattice.xyz"
-            if not lattice_file.exists():
-                raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
-            _, atom_coordinates, atomic_species = distributed_read_xyz(lattice_file)
-            orbitals_per_atom = np.fromiter(
-                map(
-                    defaultdict(lambda: 1, config.device.num_orbitals_per_atom).get,
-                    atomic_species,
-                ),
-                dtype=np.int32,
-            )
-            orbitals_per_atom = xp.asarray(orbitals_per_atom)
-            atom_coordinates = xp.asarray(atom_coordinates)
-
-            orbital_offsets = xp.hstack(([0], xp.cumsum(orbitals_per_atom)))
-            orbitals_per_atom = list(xp.diff(orbital_offsets))
-            grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
-
             block_sizes = get_host(
                 distributed_load(config.input_dir / "block_sizes.npy")
             )

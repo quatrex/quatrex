@@ -88,7 +88,7 @@ class OBCSystem(BaseBoundarySystem):
         mode: str = "auto",
         agreement_threshold: float = 0.999,
     ) -> None:
-        """Initializes the lyapunov system."""
+        """Initializes the obc system."""
 
         super().__init__(
             boundary_solver=boundary_solver,
@@ -101,95 +101,6 @@ class OBCSystem(BaseBoundarySystem):
             mode=mode,
             agreement_threshold=agreement_threshold,
         )
-
-    def _contract_system(
-        self,
-        boundary_system: tuple[NDArray, ...],
-    ) -> tuple[NDArray, ...]:
-        """Contract the boundary system to a reduced system.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-
-        Returns
-        -------
-        reduced_system : tuple[NDArray, NDArray, NDArray]
-            The reduced boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-
-        """
-        # TODO: implement system reduction
-        # by using the periodicity in non transport directions
-        return boundary_system
-
-    def _expand_solution(
-        self,
-        boundary_system: tuple[NDArray, ...],
-        reduced_system: tuple[NDArray, ...],
-        reduced_solution: NDArray | tuple[NDArray, ...],
-    ) -> NDArray | tuple[NDArray, ...]:
-        """Expand the solution from the reduced system to the full system.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-        reduced_system : tuple[NDArray, NDArray, NDArray]
-            The reduced boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-        reduced_solution : NDArray | tuple[NDArray, ...]
-            The solution of the reduced system.
-
-        Returns
-        -------
-        full_solution : NDArray | tuple[NDArray, ...]
-            The solution of the full system.
-
-        """
-        # TODO: implement system reduction
-        # by using the periodicity in non transport directions
-        return reduced_solution
-
-    def _expand_residuals(
-        self,
-        boundary_system: tuple[NDArray, ...],
-        reduced_system: tuple[NDArray, ...],
-        rel_residuals: NDArray,
-        abs_residuals: NDArray,
-    ) -> tuple[NDArray, NDArray]:
-        """Expand the residuals from the reduced system to the full system.
-
-        TODO: If system reduction is implemented,
-        the residuals would need to be combined of the different subsystems.
-
-        Parameters
-        ----------
-        boundary_system : tuple[NDArray, ...]
-            The full boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-        reduced_system : tuple[NDArray, NDArray, NDArray]
-            The reduced boundary system.
-            It is expected to be a tuple (a_ii, a_ij, a_ji)
-        rel_residuals : NDArray
-            The relative residuals of the reduced system.
-        abs_residuals : NDArray
-            The absolute residuals of the reduced system.
-
-        Returns
-        -------
-        full_rel_residuals : NDArray
-            The relative residuals of the full system.
-        full_abs_residuals : NDArray
-            The absolute residuals of the full system.
-
-        """
-        # TODO: implement system reduction
-        # by using the periodicity in non transport directions
-        return rel_residuals, abs_residuals
 
     def _fix_point_step(
         self,

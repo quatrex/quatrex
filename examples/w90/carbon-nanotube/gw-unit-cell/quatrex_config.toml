@@ -59,7 +59,7 @@ obc.nevp_solver = "full"
 obc.block_sections = 2
 
 # Parameters for Beyn's method.
-obc.num_ref_iterations = 3
+obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
 obc.r_o = 10
@@ -67,7 +67,7 @@ obc.r_i = 0.8
 obc.m_0 = 31
 obc.num_quad_points = 31
 
-obc.memoizer.mode = "auto"
+obc.memoizer.mode = "off"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
@@ -87,7 +87,7 @@ obc.nevp_solver = "full"
 obc.block_sections = 2
 
 # Parameters for Beyn's method.
-obc.num_ref_iterations = 3
+obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
 obc.r_o = 10
@@ -96,14 +96,14 @@ obc.m_0 = 32
 obc.num_quad_points = 31
 obc.residual_tolerance = 1e-4
 
-obc.memoizer.mode = "auto"
+obc.memoizer.mode = "off"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
 
-lyapunov.memoizer.mode = "auto"
+lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6

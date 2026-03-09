@@ -5,6 +5,7 @@ formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = 'x'
+block_size = 32
 
 [scba] # ===============================================================
 max_iterations = 2

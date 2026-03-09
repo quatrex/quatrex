@@ -7,7 +7,6 @@ import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
-from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import parse_config
 
@@ -86,7 +85,16 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     hamiltonian_sparray = hamiltonian_sparray[(0, 0, 0)]
     hamiltonian_sparray = sparse.coo_matrix(hamiltonian_sparray).astype(xp.complex128)
 
-    block_sizes = get_host(np.loadtxt(config.input_dir / "block_sizes.txt", dtype=int))
+    block_sizes = config.device.block_size
+    if isinstance(block_sizes, int):
+        num_blocks, remainder = divmod(hamiltonian_sparray.shape[0], block_sizes)
+        if remainder != 0:
+            raise ValueError(
+                f"Block size {block_sizes} does not evenly divide the number of orbitals {hamiltonian_sparray.shape[0]}."
+            )
+        block_sizes = [block_sizes] * num_blocks
+
+    block_sizes = np.array(block_sizes)
 
     hamiltonian_sparray = xp.asarray(hamiltonian_sparray.toarray())
 

@@ -8,6 +8,7 @@ block_comm_size = 3
 
 [device]
 transport_direction = 'x'
+block_size = 32
 
 [scba] # ===============================================================
 max_iterations = 2

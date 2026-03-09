@@ -94,9 +94,21 @@ class SCBAData:
             grid = create_coordinate_grid(grid, tuple(device_cell), lattice_vectors)
 
         else:
-            block_sizes = get_host(
-                distributed_load(config.input_dir / "block_sizes.txt")
-            )
+            block_sizes = config.device.block_size
+            if isinstance(block_sizes, int):
+                num_blocks, remainder = divmod(grid.shape[0], block_sizes)
+                if remainder != 0:
+                    raise ValueError(
+                        f"Block size {block_sizes} does not evenly divide the number of orbitals {grid.shape[0]}."
+                    )
+                block_sizes = [block_sizes] * num_blocks
+
+            block_sizes = np.array(block_sizes)
+
+            if block_sizes.sum() != grid.shape[0]:
+                raise ValueError(
+                    f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
+                )
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.

@@ -591,7 +591,17 @@ def load_matrix(
         matrix_sparray = matrix_sparray[(0, 0, 0)]
         matrix_sparray = sparse.coo_matrix(matrix_sparray).astype(xp.complex128)
 
-        block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.txt"))
+        block_sizes = config.device.block_size
+        if isinstance(block_sizes, int):
+            num_blocks, remainder = divmod(matrix_sparray.shape[0], block_sizes)
+            if remainder != 0:
+                raise ValueError(
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {matrix_sparray.shape[0]}."
+                )
+            block_sizes = [block_sizes] * num_blocks
+
+        block_sizes = np.array(block_sizes)
+
         matrix_dict = None
 
     # TODO: This is not efficient and will be refactored when the inputs

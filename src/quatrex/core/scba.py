@@ -109,7 +109,6 @@ class SCBAData:
         if comm.rank == 0:
             print(f"Max Interaction Cutoff: {max_interaction_cutoff}", flush=True)
 
-
         with profiler.profile_range(
             label="SCBA: Sparsity Pattern", level="default", comm=comm
         ):
@@ -599,17 +598,20 @@ class SCBA:
             self.config.compute.mixed_precision.pr_imag_cutoff,
         )
 
-        # _data = comm.stack.all_gather_v(self.data.p_lesser.data, axis=0)
-        # if comm.rank == 0:
-        #     np.save(f"p_lesser_{i}.npy", _data, allow_pickle=True)
-
-        # _data = comm.stack.all_gather_v(self.data.p_greater.data, axis=0)
-        # if comm.rank == 0:
-        #     np.save(f"p_greater_{i}.npy", _data, allow_pickle=True)
-
-        # _data = comm.stack.all_gather_v(self.data.p_retarded.data, axis=0)
-        # if comm.rank == 0:
-        #     np.save(f"p_retarded_{i}.npy", _data, allow_pickle=True)
+        # self.data.p_lesser.symmetry_op = None
+        # self.data.p_greater.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"p_lesser_{comm.rank}_{i}.npy",
+        #     self.data.p_lesser.data.get(),
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"p_greater_{comm.rank}_{i}.npy",
+        #     self.data.p_greater.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.data.p_lesser.symmetry_op = lambda a: -a.conj()
+        # self.data.p_greater.symmetry_op = lambda a: -a.conj()
 
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
@@ -644,6 +646,21 @@ class SCBA:
             self.config.compute.mixed_precision.wg_imag_cutoff,
         )
 
+        # self.data.w_lesser.symmetry_op = None
+        # self.data.w_greater.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"w_lesser_{comm.rank}_{i}.npy",
+        #     self.data.w_lesser.data.get(),
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"w_greater_{comm.rank}_{i}.npy",
+        #     self.data.w_greater.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.data.w_lesser.symmetry_op = lambda a: -a.conj()
+        # self.data.w_greater.symmetry_op = lambda a: -a.conj()
+
         # _data = comm.stack.all_gather_v(self.data.w_lesser.data, axis=0)
         # if comm.rank == 0:
         #     np.save(f"w_lesser_{i}.npy", _data, allow_pickle=True)
@@ -651,7 +668,6 @@ class SCBA:
         # _data = comm.stack.all_gather_v(self.data.w_greater.data, axis=0)
         # if comm.rank == 0:
         #     np.save(f"w_greater_{i}.npy", _data, allow_pickle=True)
-
 
         self._compute_coulomb_screening_observables()
 
@@ -717,6 +733,14 @@ class SCBA:
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
 
+        # self.data.sigma_retarded.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"sigma_fock_retarded_{comm.rank}_{i}.npy",
+        #     self.data.sigma_retarded.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.data.sigma_retarded.symmetry_op = lambda a: a
+
         self.sigma_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -759,6 +783,29 @@ class SCBA:
             self.config.compute.mixed_precision.sr_real_cutoff,
             self.config.compute.mixed_precision.sr_imag_cutoff,
         )
+
+        # self.data.sigma_lesser.symmetry_op = None
+        # self.data.sigma_greater.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"sigma_gw_lesser_{comm.rank}_{i}.npy",
+        #     self.data.sigma_lesser.data.get(),
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"sigma_gw_greater_{comm.rank}_{i}.npy",
+        #     self.data.sigma_greater.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.data.sigma_lesser.symmetry_op = lambda a: -a.conj()
+        # self.data.sigma_greater.symmetry_op = lambda a: -a.conj()
+
+        # self.data.sigma_retarded.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"sigma_gw_retarded_{comm.rank}_{i}.npy",
+        #     self.data.sigma_retarded.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.data.sigma_retarded.symmetry_op = lambda a: a
 
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
@@ -1048,6 +1095,21 @@ class SCBA:
                 #         0,
                 #     )
 
+                # self.data.g_lesser.symmetry_op = None
+                # self.data.g_greater.symmetry_op = None
+                # np.save(
+                #     self.config.output_dir / f"g_lesser_{comm.rank}_{i}.npy",
+                #     self.data.g_lesser.data.get(),
+                #     allow_pickle=True
+                # )
+                # np.save(
+                #     self.config.output_dir / f"g_greater_{comm.rank}_{i}.npy",
+                #     self.data.g_greater.data.get(),
+                #     allow_pickle=True
+                # )
+                # self.data.g_lesser.symmetry_op = lambda a: -a.conj()
+                # self.data.g_greater.symmetry_op = lambda a: -a.conj()
+
                 # print("2 ", xp.linalg.norm(self.data.g_lesser.data))
 
                 # _data = comm.stack.all_gather_v(self.data.g_lesser.data, axis=0)
@@ -1057,7 +1119,6 @@ class SCBA:
                 # _data = comm.stack.all_gather_v(self.data.g_greater.data, axis=0)
                 # if comm.rank == 0:
                 #     np.save(f"g_greater_{i}.npy", _data, allow_pickle=True)
-
                 self._compute_electron_observables()
 
                 # Stash current into previous self-energy buffer.
@@ -1082,7 +1143,7 @@ class SCBA:
                         assert m.distribution_state == "nnz"
 
                 if self.config.scba.coulomb_screening:
-                    self._compute_coulomb_screening_interaction()
+                    self._compute_coulomb_screening_interaction(i)
 
                 if self.config.scba.photon:
                     self._compute_photon_interaction()
@@ -1107,8 +1168,6 @@ class SCBA:
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
 
-            
-            
             # _data = comm.stack.all_gather_v(self.data.sigma_lesser.data, axis=0)
             # if comm.rank == 0:
             #     np.save(f"sigma_lesser_{i}.npy", _data, allow_pickle=True)
@@ -1119,8 +1178,8 @@ class SCBA:
 
             # _data = comm.stack.all_gather_v(self.data.sigma_retarded.data, axis=0)
             # if comm.rank == 0:
-            #     np.save(f"sigma_retarded_{i}.npy", _data, allow_pickle=True)            
-            
+            #     np.save(f"sigma_retarded_{i}.npy", _data, allow_pickle=True)
+
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)

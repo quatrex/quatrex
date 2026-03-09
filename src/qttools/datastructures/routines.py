@@ -11,7 +11,6 @@ from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.utils.gpu_utils import synchronize_device
 
 
-
 def _mask_precision(x, mask):
     x_int = x.view(xp.uint64)
     # mask is a str, convert it to uint64
@@ -154,6 +153,17 @@ def complex_gemm_to_real_with_mask(a, b, out=None, mask=None):
                 b = xp.broadcast_to(b, (a.shape[0], b.shape[1], b.shape[2]))
             else:
                 a = xp.broadcast_to(a, (b.shape[0], a.shape[1], a.shape[2]))
+        elif a.ndim == 4 and b.ndim == 4:
+            if a.shape[0] != b.shape[0]:
+                batch_size = max(a.shape[0], b.shape[0])
+                # broadcast a and b to the same batch size
+                a = xp.broadcast_to(a, (batch_size, a.shape[1], a.shape[2], a.shape[3]))
+                b = xp.broadcast_to(b, (batch_size, b.shape[1], b.shape[2], b.shape[3]))
+        elif a.ndim == 4 or b.ndim == 4:
+            if a.ndim == 4:
+                b = xp.broadcast_to(b, (a.shape[0], a.shape[1], a.shape[2], a.shape[3]))
+            else:
+                a = xp.broadcast_to(a, (b.shape[0], a.shape[1], a.shape[2], a.shape[3]))
 
         if in_type in [xp.complex64, xp.complex128]:
             compute_type = xp.complex64
@@ -269,7 +279,6 @@ def real_gemm_fastest(a, b):
     return result
 
 
-@profiler.profile(level="api")
 def correct_out_range_index(i: int, k: int, num_blocks: int):
     # find the index of block in the matrix being repeated into open-end
     # based on the difference of row and col, ie diagonal
@@ -545,14 +554,14 @@ def bd_sandwich(
                         accumulator_dtype
                     )  # cast data type
 
-
                 else:
                     partsum += complex_gemm_to_real_with_mask(
-                        ab_ik[k], a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(), mask=assembly_w_mask
+                        ab_ik[k],
+                        a_.blocks[a_j, a_k].swapaxes(-1, -2).conj(),
+                        mask=assembly_w_mask,
                     ).astype(
                         accumulator_dtype
                     )  # cast data type
-
 
             if out_block:
                 out[i, j] = partsum
@@ -1147,6 +1156,7 @@ def bd_matmul_distr(
                             print(e)
                             raise RuntimeError(
                                 f"Something bad happened: {rank=}, {i=}, {j=}, {k=}, {i_a=}, {k_a=}, {k_b=}, {j_b=}"
+                            )
 
                 out_[i, j] = partsum
 

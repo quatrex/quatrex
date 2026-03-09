@@ -75,16 +75,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         elif config.compute.mixed_precision.screening_precision == "fp64":
             self.dtype = xp.complex128
         else:
-            raise ValueError(
-            )
+            raise ValueError()
 
         if config.compute.mixed_precision.coulomb_precision == "fp32":
             self.coulomb_dtype = xp.complex64
         elif config.compute.mixed_precision.coulomb_precision == "fp64":
             self.coulomb_dtype = xp.complex128
         else:
-            raise ValueError(
-            )
+            raise ValueError()
 
         self.scalar_type = xp.float64 if self.dtype == xp.complex128 else xp.float32
         self.assembly_w_mask = config.compute.mixed_precision.assembly_w_mask
@@ -138,8 +136,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
-            self.coulomb_matrix, self.coulomb_matrix,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
         self.system_matrix.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
@@ -179,7 +176,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.config.compute.mixed_precision.v_real_cutoff,
             self.config.compute.mixed_precision.v_imag_cutoff,
         )
-
 
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
@@ -281,8 +277,12 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the left lesser/greater boundary self-energy.
-                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1].astype(self.obc_type)
-                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1].astype(self.obc_type)
+                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1].astype(
+                    self.obc_type
+                )
+                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1].astype(
+                    self.obc_type
+                )
 
                 q_00_lesser = (
                     x_00
@@ -327,9 +327,15 @@ class CoulombScreeningSolver(SubsystemSolver):
 
                 m_mn, m_nn, m_nm = get_periodic_superblocks(
                     # Twist it, flip it, ...
-                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)).astype(self.obc_type),
-                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)).astype(self.obc_type),
-                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)).astype(self.obc_type),
+                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)).astype(
+                        self.obc_type
+                    ),
+                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)).astype(
+                        self.obc_type
+                    ),
+                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)).astype(
+                        self.obc_type
+                    ),
                     block_sections=self.block_sections,
                 )
                 # ... bop it.
@@ -356,8 +362,12 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the right lesser/greater boundary self-energy.
-                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m].astype(self.obc_type)
-                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m].astype(self.obc_type)
+                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m].astype(
+                    self.obc_type
+                )
+                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m].astype(
+                    self.obc_type
+                )
 
                 q_nn_lesser = (
                     x_nn
@@ -377,7 +387,6 @@ class CoulombScreeningSolver(SubsystemSolver):
                 )
 
                 b_nn = x_nn @ m_mn
-
 
                 q_nn = xp.stack((q_nn_lesser, q_nn_greater))
 
@@ -497,6 +506,30 @@ class CoulombScreeningSolver(SubsystemSolver):
             retarded).
 
         """
+
+        # if self.solve_call_count in [0, 1, 10, 100]:
+        #     p_lesser.symmetry_op = None
+        #     p_greater.symmetry_op = None
+        #     p_retarded.symmetry_op = None
+        #     np.save(
+        #         self.config.output_dir / f"p_lesser_{comm.rank}_{self.solve_call_count}.npy",
+        #         p_lesser,
+        #         allow_pickle=True
+        #     )
+        #     np.save(
+        #         self.config.output_dir / f"spgreater_{comm.rank}_{self.solve_call_count}.npy",
+        #         p_greater,
+        #         allow_pickle=True
+        #     )
+        #     np.save(
+        #         self.config.output_dir / f"sipetarded_{comm.rank}_{self.solve_call_count}.npy",
+        #         p_retarded,
+        #         allow_pickle=True
+        #     )
+        #     p_lesser.symmetry_op = lambda a: -a.conj()
+        #     p_greater.symmetry_op = lambda a: -a.conj()
+        #     p_retarded.symmetry_op = lambda a: a
+
         with profiler.profile_range(
             label="CoulombScreeningSolver: Set block sizes", level="default", comm=comm
         ):
@@ -560,7 +593,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.config.compute.mixed_precision.lg_imag_cutoff,
         )
 
-
         if self.flatband:
             with profiler.profile_range(
                 label="CoulombScreeningSolver: Homogenize", level="default", comm=comm
@@ -578,7 +610,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.block_sizes)
 
         # Apply the OBC algorithm.
-        # if self.solve_call_count < self.config.compute.mixed_precision.start_iter:        
+        # if self.solve_call_count < self.config.compute.mixed_precision.start_iter:
         self._compute_obc()
 
         # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[0], axis=0)
@@ -602,6 +634,31 @@ class CoulombScreeningSolver(SubsystemSolver):
         # if comm.rank == 0:
         #     np.save(f"w_obc_retarded_right_{self.solve_call_count}.npy", _data, allow_pickle=True)
 
+        # np.save(
+        #     self.config.output_dir / f"w_obc_lesser_{comm.rank}_{self.solve_call_count}.npy",
+        #     [self.obc_blocks.lesser[0].get(), self.obc_blocks.lesser[-1].get()],
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"w_obc_greater_{comm.rank}_{self.solve_call_count}.npy",
+        #     [self.obc_blocks.greater[0].get(), self.obc_blocks.greater[-1].get()],
+        #     allow_pickle=True
+        # )
+
+        # self.l_lesser.symmetry_op = None
+        # self.l_greater.symmetry_op = None
+        # np.save(
+        #     self.config.output_dir / f"l_lesser_{comm.rank}_{self.solve_call_count}.npy",
+        #     self.l_lesser.data.get(),
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"l_greater_{comm.rank}_{self.solve_call_count}.npy",
+        #     self.l_greater.data.get(),
+        #     allow_pickle=True
+        # )
+        # self.l_lesser.symmetry_op = lambda a: -a.conj()
+        # self.l_greater.symmetry_op = lambda a: -a.conj()
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Solve", level="default", comm=comm
@@ -642,7 +699,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             # Only filter the peaks for the first few iterations.
             if self.solve_call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
-
 
             # mempool = xp.get_default_memory_pool()
             # mempool.free_all_blocks()

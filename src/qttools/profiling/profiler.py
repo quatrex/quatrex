@@ -497,13 +497,9 @@ class Profiler:
             if xp.__name__ == "cupy":
                 if NVTX_AVAILABLE:
                     xp.cuda.nvtx.RangePush(label)
+                xp.cuda.runtime.deviceSynchronize()
 
-                self.start_event.record(xp.cuda.get_current_stream())
-                self.start_event.synchronize()
-                self.start_event.record(xp.cuda.get_current_stream())
-
-            else:
-                start_time = time.perf_counter()
+            start_time = time.perf_counter()
 
             yield
 
@@ -512,28 +508,15 @@ class Profiler:
             if xp.__name__ == "cupy":
                 if NVTX_AVAILABLE:
                     xp.cuda.nvtx.RangePop()
+                xp.cuda.runtime.deviceSynchronize()
 
-                self.end_event.record(xp.cuda.get_current_stream())
-                self.end_event.synchronize()
-                call_time = (
-                    xp.cuda.get_elapsed_time(self.start_event, self.end_event) * 1e-3
-                )  # Convert to seconds.
-            else:
-                call_time = time.perf_counter() - start_time
+            call_time = time.perf_counter() - start_time
 
             if comm is not None and QTX_PROFILE_COMM_SYNC:
                 comm.barrier()
                 if xp.__name__ == "cupy":
-                    self.after_barrier_event.record(xp.cuda.get_current_stream())
-                    self.after_barrier_event.synchronize()
-                    after_barrier_time = (
-                        xp.cuda.get_elapsed_time(
-                            self.start_event, self.after_barrier_event
-                        )
-                        * 1e-3
-                    )
-                else:
-                    after_barrier_time = time.perf_counter() - start_time
+                    xp.cuda.runtime.deviceSynchronize()
+                after_barrier_time = time.perf_counter() - start_time
             else:
                 after_barrier_time = call_time
 

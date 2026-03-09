@@ -657,10 +657,16 @@ class RGF(GFSolver):
                         + a_ji_xr_ii_sx_ij_curr.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij_curr
                     )
-                    temp_trace1 = complex_gemm_to_real_with_mask(sigma_greater_tilde, xl_diag_blocks[j], mask=self.current_mask)
-                    temp_trace2 = complex_gemm_to_real_with_mask(xg_diag_blocks[j], sigma_lesser_tilde, mask=self.current_mask)
+                    temp_trace1 = complex_gemm_to_real_with_mask(
+                        sigma_greater_tilde, xl_diag_blocks[j], mask=self.current_mask
+                    )
+                    temp_trace2 = complex_gemm_to_real_with_mask(
+                        xg_diag_blocks[j], sigma_lesser_tilde, mask=self.current_mask
+                    )
                     current[stack_slice, ..., i] = xp.trace(
                         temp_trace1 - temp_trace2,
+                        axis1=-2,
+                        axis2=-1,
                     )
 
                 xr_final_mult = complex_gemm_to_real_with_mask(

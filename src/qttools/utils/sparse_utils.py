@@ -4,11 +4,7 @@ import functools
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.datastructures.routines import (
-    BlockMatrix,
-    bd_matmul_distr,
-    real_gemm_high_precision,
-)
+from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
 
 
 def product_sparsity_pattern(
@@ -146,8 +142,8 @@ def product_sparsity_pattern_dsdbsparse(
                 # Right spillover
                 for i in range(a_num_diag // 2):
                     c_[num_blocks - i - 1, num_blocks - 1] += (
-                        a_[num_blocks - i - 2, num_blocks - 1].real @
-                        b_[num_blocks - 1, num_blocks - 2].real
+                        a_[num_blocks - i - 2, num_blocks - 1].real
+                        @ b_[num_blocks - 1, num_blocks - 2].real
                     )
 
         a_ = c_

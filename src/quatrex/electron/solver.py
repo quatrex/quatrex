@@ -70,7 +70,6 @@ class ElectronSolver(SubsystemSolver):
         config: QuatrexConfig,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
-        dtype: _DType = None
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(config, energies)
@@ -85,7 +84,6 @@ class ElectronSolver(SubsystemSolver):
             )
 
         self.local_energies = get_local_slice(energies, comm.stack)
-
 
         hamiltonian_type = config.compute.mixed_precision.hamiltonian_precision
         if hamiltonian_type == "fp32":
@@ -154,14 +152,13 @@ class ElectronSolver(SubsystemSolver):
             self.config.compute.mixed_precision.h_imag_cutoff,
         )
 
-
         # Allocate memory for the system matrix.
         self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
             sparsity_pattern.astype(self.dtype),
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
-            dtype=self.dtype
+            dtype=self.dtype,
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -233,9 +230,7 @@ class ElectronSolver(SubsystemSolver):
         self.block_sections = config.electron.obc.block_sections
 
         self.call_count = 0
-        self.filtering_iteration_limit = (
-            config.electron.filtering_iteration_limit
-        )
+        self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
         if self.config.compute.mixed_precision.obc_precision_g == "fp32":
             self.obc_type = xp.complex64
@@ -643,9 +638,15 @@ class ElectronSolver(SubsystemSolver):
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
-       
+                # if self.call_count in [0, 1, 10, 100]:
+                #     np.save(
+                #         self.config.output_dir / f"band_edges_{comm.rank}_{self.call_count}.npy",
+                #         xp.array([left_band_edges, right_band_edges]),
+                #         allow_pickle=True
+                #     )
+
         # if self.call_count < self.config.compute.mixed_precision.start_iter:
-        # if self.call_count == 0:       
+        # if self.call_count == 0:
         self._compute_obc()
 
         # _data = comm.stack.all_gather_v(self.obc_blocks.lesser[0], axis=0)
@@ -669,6 +670,39 @@ class ElectronSolver(SubsystemSolver):
         # if comm.rank == 0:
         #     np.save(f"g_obc_retarded_right_{self.call_count}.npy", _data, allow_pickle=True)
 
+        # if self.call_count in [0, 1, 10, 100]:
+        #     sse_lesser.symmetry_op = None
+        #     sse_greater.symmetry_op = None
+        #     sse_retarded.symmetry_op = None
+        #     np.save(
+        #         self.config.output_dir / f"sigma_lesser_{comm.rank}_{self.call_count}.npy",
+        #         sse_lesser,
+        #         allow_pickle=True
+        #     )
+        #     np.save(
+        #         self.config.output_dir / f"sigma_greater_{comm.rank}_{self.call_count}.npy",
+        #         sse_greater,
+        #         allow_pickle=True
+        #     )
+        #     np.save(
+        #         self.config.output_dir / f"sigma_retarded_{comm.rank}_{self.call_count}.npy",
+        #         sse_retarded,
+        #         allow_pickle=True
+        #     )
+        #     sse_lesser.symmetry_op = lambda a: -a.conj()
+        #     sse_greater.symmetry_op = lambda a: -a.conj()
+        #     sse_retarded.symmetry_op = lambda a: a
+
+        # np.save(
+        #     self.config.output_dir / f"g_obc_lesser_{comm.rank}_{self.call_count}.npy",
+        #     [self.obc_blocks.lesser[0].get(), self.obc_blocks.lesser[-1].get()],
+        #     allow_pickle=True
+        # )
+        # np.save(
+        #     self.config.output_dir / f"g_obc_greater_{comm.rank}_{self.call_count}.npy",
+        #     [self.obc_blocks.greater[0].get(), self.obc_blocks.greater[-1].get()],
+        #     allow_pickle=True
+        # )
 
         with profiler.profile_range(
             label="ElectronSolver: Solve", level="default", comm=comm

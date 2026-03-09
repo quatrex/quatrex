@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -61,18 +60,11 @@ class SCBAData:
         lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
             structure_file
         )
-        orbitals_per_atom = np.fromiter(
-            map(
-                defaultdict(lambda: 1, config.device.num_orbitals_per_atom).get,
-                atomic_species,
-            ),
-            dtype=np.int32,
-        )
-        orbitals_per_atom = xp.asarray(orbitals_per_atom)
-        atom_coordinates = xp.asarray(atom_coordinates)
 
-        orbital_offsets = xp.hstack(([0], xp.cumsum(orbitals_per_atom)))
-        orbitals_per_atom = list(xp.diff(orbital_offsets))
+        orbitals_per_atom = [
+            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
+        ]
+        atom_coordinates = xp.asarray(atom_coordinates)
         grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
 
         if config.device.construct_from_unit_cell:
@@ -91,7 +83,9 @@ class SCBAData:
                 * config.device.num_transport_cells
             )
 
-            grid = create_coordinate_grid(grid, tuple(device_cell), lattice_vectors)
+            grid = create_coordinate_grid(
+                grid, tuple(device_cell), xp.asarray(lattice_vectors)
+            )
 
         else:
             block_sizes = config.device.block_size

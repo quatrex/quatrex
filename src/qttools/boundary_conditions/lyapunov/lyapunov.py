@@ -549,6 +549,9 @@ class LyapunovSystem(BaseBoundarySystem):
             $$\mathbf{residual_{abs}} = \lvert \mathbf{x}_{ref} - \mathbf{x}_{test} \rvert$$
             $$\mathbf{residual_{rel}} = \frac{\mathbf{residual_{abs}}}{\lvert \mathbf{x}_{ref} \rvert}$$
 
+        Computing residuals causes an additional fixed-point iteration
+        step. The refined solution from this step is returned as well.
+
         Parameters
         ----------
         boundary_system : tuple[NDArray, ...]

@@ -173,6 +173,10 @@ class BaseBoundarySystem(ABC):
     ) -> tuple[NDArray, ...]:
         """Compute the residuals of a test solution.
 
+        Computing the residuals of a test solution involves performing
+        an additional fixed-point iteration step to refine the solution,
+        and then comparing the refined solution to the test solution.
+
         Parameters
         ----------
         boundary_system : tuple[NDArray, ...]

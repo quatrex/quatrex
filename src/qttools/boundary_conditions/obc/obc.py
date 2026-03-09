@@ -165,6 +165,9 @@ class OBCSystem(BaseBoundarySystem):
             $$\mathbf{residual_{abs}} = \lvert \mathbf{x}_{ref} - \mathbf{x}_{test} \rvert$$
             $$\mathbf{residual_{rel}} = \frac{\mathbf{residual_{abs}}}{\lvert \mathbf{x}_{ref} \rvert}$$
 
+        Computing residuals causes an additional fixed-point iteration
+        step. The refined solution from this step is returned as well.
+
         Parameters
         ----------
         boundary_system : tuple[NDArray, ...]
@@ -183,17 +186,17 @@ class OBCSystem(BaseBoundarySystem):
             The (possibly refined) solution of the boundary system.
 
         """
-        if type(test_solution) is xp.ndarray:
+        if isinstance(test_solution, xp.ndarray):
             solution_ref = self._fixed_point_step(boundary_system, test_solution)
 
             abs_residuals = xp.linalg.norm(solution_ref - test_solution, axis=(-2, -1))
             rel_residuals = abs_residuals / xp.linalg.norm(solution_ref, axis=(-2, -1))
 
             return rel_residuals, abs_residuals, solution_ref
-        else:
-            raise TypeError(
-                f"Expected test_solution to be of type "
-                f"xp.ndarray, got {type(test_solution)} instead. "
-                "This could be due to the OBCSystem being used in QTBM"
-                "with return_injected=True, which is currently not supported."
-            )
+
+        raise TypeError(
+            f"Expected test_solution to be of type "
+            f"xp.ndarray, got {type(test_solution)} instead. "
+            "This could be due to the OBCSystem being used in QTBM"
+            "with return_injected=True, which is currently not supported."
+        )

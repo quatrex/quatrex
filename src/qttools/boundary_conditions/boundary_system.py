@@ -9,10 +9,39 @@ from qttools.comm import comm
 
 
 class IdentityCompressor:
-    def compress(self, x):
+    """Identity cache compressor that does not perform any compression."""
+
+    def compress(self, x: NDArray):
+        """Compress the data to be cached.
+        In this case, it simply returns the input as is.
+
+        Parameters
+        ----------
+        x : NDArray
+            The data to be compressed.
+        Returns
+        -------
+        compressed_x : NDArray
+            The compressed data, which is the same as the input in this case, but
+            potentially copied to ensure immutability.
+
+        """
         return x.copy() if hasattr(x, "copy") else x
 
-    def decompress(self, x):
+    def decompress(self, x: NDArray):
+        """Decompress the cached data.
+        In this case, it simply returns the input as is.
+
+        Parameters
+        ----------
+        x : NDArray
+            The data to be decompressed.
+        Returns
+        -------
+        decompressed_x : NDArray
+            The decompressed data, which is the same as the input in this case.
+
+        """
         return x
 
 

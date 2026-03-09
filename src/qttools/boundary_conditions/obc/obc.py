@@ -150,7 +150,7 @@ class OBCSystem(BaseBoundarySystem):
             The starting guess for the boundary system.
 
         """
-        a_ii, _, _ = boundary_system
+        a_ii, *__ = boundary_system
         return linalg.inv(a_ii)
 
     def _get_residuals(

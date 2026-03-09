@@ -194,7 +194,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                     block_sections=self.block_sections,
                 )
 
-                x_00, _, _ = self.obc((m_00, m_01, m_10), contact="left")
+                x_00, *__ = self.obc((m_00, m_01, m_10), contact="left")
 
                 m_10_x_00 = m_10 @ x_00
                 self.obc_blocks.retarded[0] = m_10_x_00 @ m_01
@@ -228,7 +228,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 b_00 = x_00 @ m_10
                 q_00 = xp.stack((q_00_lesser, q_00_greater))
 
-                w_00, _, _ = self.lyapunov((b_00, q_00), "left")
+                w_00, *__ = self.lyapunov((b_00, q_00), "left")
                 w_00_lesser, w_00_greater = w_00
 
                 self.obc_blocks.lesser[0] = m_10 @ w_00_lesser @ m_10.conj().swapaxes(
@@ -261,7 +261,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 m_nn = xp.flip(m_nn, axis=(-2, -1))
                 m_nm = xp.flip(m_nm, axis=(-2, -1))
                 m_mn = xp.flip(m_mn, axis=(-2, -1))
-                x_nn, _, _ = self.obc(
+                x_nn, *__ = self.obc(
                     # Twist it, flip it, ...
                     (
                         xp.flip(m_nn, axis=(-2, -1)),
@@ -307,7 +307,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
                 q_nn = xp.stack((q_nn_lesser, q_nn_greater))
 
-                w_nn, _, _ = self.lyapunov((b_nn, q_nn), "right")
+                w_nn, *__ = self.lyapunov((b_nn, q_nn), "right")
                 w_nn_lesser, w_nn_greater = w_nn
 
                 self.obc_blocks.lesser[-1] = m_mn @ w_nn_lesser @ m_mn.conj().swapaxes(

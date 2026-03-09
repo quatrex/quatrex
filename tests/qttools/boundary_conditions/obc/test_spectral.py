@@ -156,7 +156,7 @@ def test_memoizer(
         (a_ji_hat, a_ii_hat, a_ij_hat), block_sections
     )
 
-    x_ii, _, _ = obc_system((a_ii, a_ij, a_ji), contact="contact")
+    x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -167,7 +167,7 @@ def test_memoizer(
         < 5e-3
     )
 
-    x_ii, _, _ = obc_system((a_ii_hat, a_ij_hat, a_ji_hat), contact="contact")
+    x_ii, *__ = obc_system((a_ii_hat, a_ij_hat, a_ji_hat), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(

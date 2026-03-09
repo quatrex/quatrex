@@ -38,7 +38,7 @@ def test_memoizer(a_xx: tuple[NDArray, ...]):
     sacho = SanchoRubio(convergence_tol=1e-10)
     obc_system = OBCSystem(sacho)
     a_ji, a_ii, a_ij = a_xx
-    x_ii, _, _ = obc_system((a_ii, a_ij, a_ji), contact="contact")
+    x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)
 
     # Add a little noise to the input matrices.
@@ -46,5 +46,5 @@ def test_memoizer(a_xx: tuple[NDArray, ...]):
     a_ii = a_ii * (1 + 1e-6)
     a_ij = a_ij * (1 + 1e-6)
 
-    x_ii, _, _ = obc_system((a_ii, a_ij, a_ji), contact="contact")
+    x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)

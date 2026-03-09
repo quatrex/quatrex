@@ -4,11 +4,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import scipy.sparse as sps
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import parse_config
 
 EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
@@ -75,12 +74,27 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     energies = xp.array(request.param)
 
     quatrex_config_path = CARBON_NANOTUBE_EXAMPLE / "quatrex_config.toml"
-    quatrex_config = parse_config(quatrex_config_path)
+    config = parse_config(quatrex_config_path)
 
-    hamiltonian_sparray = sps.load_npz(
-        quatrex_config.input_dir / "hamiltonian.npz"
-    ).astype(xp.complex128)
-    block_sizes = get_host(np.load(quatrex_config.input_dir / "block_sizes.npy"))
+    hamiltonian_sparray = distributed_load(config.input_dir / "hamiltonian.mat")
+    if (0, 0, 0) not in hamiltonian_sparray.keys():
+        raise ValueError(
+            f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
+            f"Available keys: {list(hamiltonian_sparray.keys())}"
+        )
+    hamiltonian_sparray = hamiltonian_sparray[(0, 0, 0)]
+    hamiltonian_sparray = sparse.coo_matrix(hamiltonian_sparray).astype(xp.complex128)
+
+    block_sizes = config.device.block_size
+    if isinstance(block_sizes, int):
+        num_blocks, remainder = divmod(hamiltonian_sparray.shape[0], block_sizes)
+        if remainder != 0:
+            raise ValueError(
+                f"Block size {block_sizes} does not evenly divide the number of orbitals {hamiltonian_sparray.shape[0]}."
+            )
+        block_sizes = [block_sizes] * num_blocks
+
+    block_sizes = np.array(block_sizes)
 
     hamiltonian_sparray = xp.asarray(hamiltonian_sparray.toarray())
 

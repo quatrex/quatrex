@@ -672,6 +672,22 @@ class DeviceConfig(BaseModel):
 
     transport_direction: Literal["x", "y", "z"]
 
+    block_size: PositiveInt | list[PositiveInt] | None = None
+    """The block size to use for the device Hamiltonian.
+
+    If a single integer is given, a constant block size is assumed.
+    Alternatively, a list of block sizes can be given to specify the
+    size of each block along transport direction.
+
+    This cannot be used in conjunction with
+    `construct_from_unit_cell=True` since the block sizes are determined
+    from the unit cell and the `neighbor_cell_cutoff`.
+
+    On the other hand, if `construct_from_unit_cell=False`, the block
+    size must be given.
+
+    """
+
     contacts: list[ContactConfig] = Field(default_factory=list)
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
@@ -1044,6 +1060,27 @@ class QuatrexConfig(BaseModel):
             save_path=self.outputs.profiling_path,
             save_format=self.outputs.profiling_save_format,
         )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_device_block_size(self) -> Self:
+        """Checks that block size is consistent with other parameters."""
+
+        if self.formalism == "wf":
+            # NOTE: Block sizes are not used in the wavefunction
+            # formalism.
+            return self
+
+        if self.device.construct_from_unit_cell and self.device.block_size is not None:
+            raise ValueError(
+                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+            )
+
+        if not self.device.construct_from_unit_cell and self.device.block_size is None:
+            raise ValueError(
+                "block_size must be given when construct_from_unit_cell=False."
+            )
 
         return self
 

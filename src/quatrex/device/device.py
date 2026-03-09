@@ -1,15 +1,16 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import warnings
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
+import scipy
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
+from quatrex.device.inputs import distributed_read_xyz
 
 
 def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
@@ -32,58 +33,6 @@ def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArr
     orbitals_per_atom = list(np.diff(orbital_offsets))
     orbital_potential = xp.repeat(potential, orbitals_per_atom, axis=0)
     return orbital_potential
-
-
-def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
-    """Reads atomic structure data from an XYZ file.
-
-    Parameters
-    ----------
-    filename : Path
-        Path to the XYZ file containing the atomic structure. The file
-        should have the standard XYZ format with lattice parameters on
-        the second line.
-
-    Returns
-    -------
-    lattice : NDArray
-        3x3 array containing the lattice vectors (in rows).
-    atom_coordinates : NDArray
-        (N_atoms, 3) array containing atomic coordinates.
-    atom_types : NDArray
-        (N_atoms,) array containing atom symbol for each atom.
-
-    """
-
-    lattice_vectors = None
-    atom_coordinates = None
-    atom_types = None
-
-    if comm.rank == 0:
-        # Read only the second line of the file (this contains the
-        # lattice parameters)
-        with open(filename, "r") as f:
-            __ = f.readline()
-            lattice_line = f.readline().strip()
-
-        if not lattice_line.startswith("Lattice="):
-            raise ValueError(
-                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
-            )
-
-        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
-        lattice_vectors = np.fromstring(
-            lattice_vectors, dtype=np.float64, sep=" "
-        ).reshape(3, 3)
-        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
-        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
-
-    # Broadcast the data to all the ranks
-    lattice_vectors = comm.bcast(lattice_vectors, root=0)
-    atom_coordinates = comm.bcast(atom_coordinates, root=0)
-    atom_types = comm.bcast(atom_types, root=0)
-
-    return lattice_vectors, atom_coordinates, atom_types
 
 
 class Device:
@@ -158,11 +107,10 @@ class Device:
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.
 
-        Loads sparse matrices from .npz files in the input directory.
-        Files should be named "hamiltonian_i_j_k.npz" and
-        "overlap_i_j_k.npz" where (i,j,k) represent lattice vector
-        indices. The method automatically discovers all available matrix
-        files and loads them into dictionaries.
+        Loads sparse matrices from .mat files in the input directory.
+        Files should be named "hamiltonian.mat" and
+        "overlap.mat" where the keys are strings of [i,j,k] represent
+        lattice vector indices.
 
         For missing overlap matrices, identity matrices are assumed
         (orthogonal basis). The (0,0,0) Hamiltonian matrix is mandatory
@@ -170,77 +118,88 @@ class Device:
 
         """
 
-        self.hamiltonians = {}
-        self.overlap_matrices = {}
         self.gamma_only = False
 
-        if not (self.config.input_dir / "hamiltonian_0_0_0.npz").exists():
-            raise ValueError("Hamiltonian matrix for (0,0,0) not found.")
+        if not (self.config.input_dir / "hamiltonian.mat").exists():
+            raise ValueError("Hamiltonian matrix not found.")
 
-        # Load all Hamiltonian files with format hamiltonian_x_y_z.npz
-        # Find all hamiltonian files in the input directory
-        hamiltonian_paths = self.config.input_dir.glob("hamiltonian_*_*_*.npz")
+        self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
 
-        # Parse indices from filenames and load files
-        for hamiltonian_path in hamiltonian_paths:
-
-            indices = tuple(map(int, hamiltonian_path.stem.split("_")[1:]))
-
-            self.hamiltonians[indices] = distributed_load(hamiltonian_path).tocsr()
+        for r, h_r in self.hamiltonians.items():
             assert (
-                self.hamiltonians[indices].shape[0]
-                == self.hamiltonians[indices].shape[1]
-            ), f"Hamiltonian matrix at {hamiltonian_path} is not square."
+                h_r.shape[0] == h_r.shape[1]
+            ), f"Hamiltonian matrix at index {r} is not square."
+
+            # assert all hamiltonians are sparse matrices
+            if not isinstance(h_r, scipy.sparse.spmatrix):
+                raise ValueError(
+                    f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
+                    f"Matrix type: {type(h_r)}"
+                )
+
+            self.hamiltonians[r] = sparse.csr_matrix((h_r))
 
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
-            if not all(index == 0 for index in indices):
-                self.hamiltonians[indices] = self.hamiltonians[indices].astype(
-                    xp.complex128
-                )
+            if not all(index == 0 for index in r):
+                self.hamiltonians[r] = self.hamiltonians[r].astype(xp.complex128)
 
-            if not self.hamiltonians[indices].has_canonical_format:
-                self.hamiltonians[indices].sum_duplicates()
-                self.hamiltonians[indices].sort_indices()
+            if not self.hamiltonians[r].has_canonical_format:
+                self.hamiltonians[r].sum_duplicates()
+                self.hamiltonians[r].sort_indices()
 
-            overlap_path = (
-                self.config.input_dir
-                / f"overlap_{indices[0]}_{indices[1]}_{indices[2]}.npz"
+        size = self.hamiltonians[(0, 0, 0)].shape[0]
+
+        if (self.config.input_dir / "overlap.mat").exists():
+            self.overlap_matrices = distributed_load(
+                self.config.input_dir / "overlap.mat"
             )
 
-            if overlap_path.exists():
-                self.overlap_matrices[indices] = distributed_load(overlap_path).tocsr()
+            for r, s_r in self.overlap_matrices.items():
                 assert (
-                    self.overlap_matrices[indices].shape[0]
-                    == self.overlap_matrices[indices].shape[1]
-                ), f"Overlap matrix at {overlap_path} is not square."
+                    s_r.shape[0] == s_r.shape[1]
+                ), f"Hamiltonian matrix at index {r} is not square."
 
-                if not all(index == 0 for index in indices):
-                    self.overlap_matrices[indices] = self.overlap_matrices[
-                        indices
-                    ].astype(xp.complex128)
+                assert (
+                    s_r.shape[0] == size
+                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[0]}."
 
-                if not self.overlap_matrices[indices].has_canonical_format:
-                    self.overlap_matrices[indices].sum_duplicates()
-                    self.overlap_matrices[indices].sort_indices()
+                assert (
+                    s_r.shape[1] == size
+                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[1]}."
 
-        # TODO: Mechanism to handle orthogonal basis sets.
-        if len(self.overlap_matrices) == 0:
-            # NOTE: Dangerous to automatically assume identity matrix.
-            # Better to add a config option to specify orthogonal basis.
+                # assert all overlap_matrices are sparse matrices
+                if not isinstance(s_r, scipy.sparse.spmatrix):
+                    raise ValueError(
+                        f"Hamiltonian matrix at index {r} is not a sparse matrix."
+                    )
+
+                self.overlap_matrices[r] = sparse.csr_matrix(s_r)
+
+                # TODO: Check data type handling.
+                # Gamma point can be real depending on the basis.
+                if not all(index == 0 for index in r):
+                    self.overlap_matrices[r] = self.overlap_matrices[r].astype(
+                        xp.complex128
+                    )
+
+                if not self.overlap_matrices[r].has_canonical_format:
+                    self.overlap_matrices[r].sum_duplicates()
+                    self.overlap_matrices[r].sort_indices()
+
+            if len(self.overlap_matrices) < len(self.hamiltonians):
+                raise ValueError(
+                    "Some overlap matrices are missing while others are present. All or none must be provided."
+                )
+
+        else:
             if comm.rank == 0:
                 warnings.warn(
                     "No overlap matrices found. Assuming identity matrix.",
                 )
-            size = self.hamiltonians[0, 0, 0].shape[0]
-            self.overlap_matrices[0, 0, 0] = sparse.eye(
-                size, dtype=xp.complex128, format="csr"
-            )
-
-        elif len(self.overlap_matrices) < len(self.hamiltonians):
-            raise ValueError(
-                "Some overlap matrices are missing while others are present. All or none must be provided."
-            )
+            self.overlap_matrices = {
+                (0, 0, 0): sparse.eye(size, dtype=xp.complex128, format="csr")
+            }
 
         if comm.rank == 0:
             print(f"Loaded {len(self.hamiltonians)} Hamiltonian matrices", flush=True)
@@ -254,11 +213,11 @@ class Device:
         the device."""
 
         # Load the lattice structure from file.
-        lattice_file = self.config.input_dir / "lattice.xyz"
-        if not lattice_file.exists():
-            raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
+        structure_file = self.config.input_dir / "structure.xyz"
+        if not structure_file.exists():
+            raise FileNotFoundError(f"Structure file {structure_file} not found.")
         self.lattice_vectors, self.atom_coordinates, self.atomic_species = (
-            distributed_read_xyz(lattice_file)
+            distributed_read_xyz(structure_file)
         )
 
     def _init_orbitals(self) -> None:

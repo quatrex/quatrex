@@ -21,7 +21,11 @@ from quatrex.core.observables import (
 )
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device.inputs import create_coordinate_grid, load_matrix
+from quatrex.device.inputs import (
+    create_coordinate_grid,
+    distributed_read_xyz,
+    load_matrix,
+)
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -49,10 +53,21 @@ class SCBAData:
     def __init__(self, config: QuatrexConfig, electron_energies: NDArray) -> None:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
-        if config.device.construct_from_unit_cell:
-            wannier_centers = distributed_load(config.input_dir / "wannier_centers.npy")
-            lattice_vectors = distributed_load(config.input_dir / "lattice_vectors.npy")
 
+        structure_file = config.input_dir / "structure.xyz"
+        if not structure_file.exists():
+            raise FileNotFoundError(f"Structure file {structure_file} not found.")
+        lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
+            structure_file
+        )
+
+        orbitals_per_atom = [
+            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
+        ]
+        atom_coordinates = xp.asarray(atom_coordinates)
+        grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
+
+        if config.device.construct_from_unit_cell:
             # The neighbor cell cutoff along the transport direction
             # determines the size of the transport cell.
             transport_ind = "xyz".index(config.device.transport_direction)
@@ -63,24 +78,32 @@ class SCBAData:
             device_cell = unit_cells_per_transport_cell.copy()
             device_cell[transport_ind] *= config.device.num_transport_cells
 
-            grid = create_coordinate_grid(
-                wannier_centers, tuple(device_cell), lattice_vectors
-            )
-
             block_sizes = np.array(
-                [
-                    unit_cells_per_transport_cell[transport_ind]
-                    * wannier_centers.shape[0]
-                ]
+                [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
                 * config.device.num_transport_cells
             )
 
-        else:
-            grid = distributed_load(config.input_dir / "grid.npy")
-
-            block_sizes = get_host(
-                distributed_load(config.input_dir / "block_sizes.npy")
+            grid = create_coordinate_grid(
+                grid, tuple(device_cell), xp.asarray(lattice_vectors)
             )
+
+        else:
+            block_sizes = config.device.block_size
+            if isinstance(block_sizes, int):
+                num_blocks, remainder = divmod(grid.shape[0], block_sizes)
+                if remainder != 0:
+                    raise ValueError(
+                        f"Block size {block_sizes} does not evenly divide the number of orbitals {grid.shape[0]}."
+                    )
+                block_sizes = [block_sizes] * num_blocks
+
+            block_sizes = np.array(block_sizes)
+
+            if block_sizes.sum() != grid.shape[0]:
+                raise ValueError(
+                    f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
+                )
+
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
         max_interaction_cutoff = 0.0

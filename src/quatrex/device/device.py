@@ -213,11 +213,11 @@ class Device:
         the device."""
 
         # Load the lattice structure from file.
-        lattice_file = self.config.input_dir / "lattice.xyz"
-        if not lattice_file.exists():
-            raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
+        structure_file = self.config.input_dir / "structure.xyz"
+        if not structure_file.exists():
+            raise FileNotFoundError(f"Structure file {structure_file} not found.")
         self.lattice_vectors, self.atom_coordinates, self.atomic_species = (
-            distributed_read_xyz(lattice_file)
+            distributed_read_xyz(structure_file)
         )
 
     def _init_orbitals(self) -> None:

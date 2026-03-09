@@ -55,11 +55,11 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        lattice_file = config.input_dir / "lattice.xyz"
-        if not lattice_file.exists():
-            raise FileNotFoundError(f"Lattice file {lattice_file} not found.")
+        structure_file = config.input_dir / "structure.xyz"
+        if not structure_file.exists():
+            raise FileNotFoundError(f"Structure file {structure_file} not found.")
         lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
-            lattice_file
+            structure_file
         )
         orbitals_per_atom = np.fromiter(
             map(

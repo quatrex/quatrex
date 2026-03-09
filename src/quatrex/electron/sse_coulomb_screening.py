@@ -360,17 +360,6 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         with profiler.profile_range(
             label="SigmaCoulombScreening: SSE computation", level="default", comm=comm
         ):
-
-            # liyongda (27 Feb 2026): batch_displacements was not defined when it did no hilbert correction (call is on the for loop zip)
-            #   UnboundLocalError: cannot access local variable 'batch_displacements' where it is not associated with a value   
-            #   crashed my simulation run because it was no defined
-            #   defining it here as a default value (43824 for carbon-nanotube)
-            # batch_displacements = g_greater.data.shape[-1]
-
-            # liyongda (27 Feb 2026): AlexNick said that the indentation was messed up
-            #   the entire Hilbert transform block should be 1 indentation below
-            #   aka nothing happens if the `if g_greater.data.shape[-1] != 0:` is not satisfied
-
             # Because of padding there could be no ij elements
             if g_greater.data.shape[-1] != 0:
                 if xp.__name__ == "cupy":

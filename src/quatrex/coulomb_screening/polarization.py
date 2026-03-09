@@ -184,6 +184,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
                     # Note that only the hermitian part is computed here.
 
+                    # default quatrex config compute_retarded_polarization = false
+                    # liyongda (04 Mar 2026) todo: convert Hilbert Transform in retarded polarizatoin to use adaptive grid
                     if self.compute_retarded:
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)

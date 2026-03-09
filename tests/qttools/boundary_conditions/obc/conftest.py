@@ -10,7 +10,7 @@ from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import parse_config
 
-EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
+EXAMPLES_DIR = Path(__file__).parents[4].resolve() / "examples"
 CARBON_NANOTUBE_EXAMPLE = EXAMPLES_DIR / "w90" / "carbon-nanotube" / "gw"
 
 BLOCK_SIZE = [
@@ -27,8 +27,6 @@ BATCH_SIZE = [
     pytest.param(1, id="single-batch"),
     pytest.param(3, id="three-batches"),
 ]
-
-CONTACTS = ["left", "right"]
 
 NEVP_SOLVERS = [
     pytest.param(
@@ -58,12 +56,6 @@ def block_sections(request: pytest.FixtureRequest) -> int:
 @pytest.fixture(params=BATCH_SIZE)
 def batch_size(request: pytest.FixtureRequest) -> int:
     """Returns the block size."""
-    return request.param
-
-
-@pytest.fixture(params=CONTACTS, autouse=True)
-def contact(request: pytest.FixtureRequest) -> str:
-    """Returns a contact."""
     return request.param
 
 

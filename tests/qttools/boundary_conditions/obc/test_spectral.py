@@ -3,8 +3,8 @@
 import pytest
 
 from qttools import NDArray, xp
+from qttools.boundary_conditions.obc import OBCSystem, Spectral
 from qttools.nevp import NEVP
-from qttools.obc import OBCMemoizer, Spectral
 
 
 def _make_periodic(
@@ -85,7 +85,7 @@ def test_correctness(
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
     a_ji, a_ii, a_ij = a_ji[0], a_ii[0], a_ij[0]
-    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="left")
+    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -114,7 +114,7 @@ def test_correctness_batch(
         max_decay=20,
     )
     a_ji, a_ii, a_ij = _make_periodic(a_xx, block_sections)
-    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="left")
+    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -134,7 +134,6 @@ def test_memoizer(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
     block_sections: int,
-    contact: str,
 ):
     """Tests that the Memoization works."""
     spectral = Spectral(
@@ -143,7 +142,8 @@ def test_memoizer(
         residual_tolerance=1e-1,
         max_decay=20,
     )
-    spectral = OBCMemoizer(spectral, memoizing_mode="force-after-first")
+
+    obc_system = OBCSystem(spectral, memoization_mode="force-after-first")
 
     # Add a little noise to the input matrices.
     a_ji, a_ii, a_ij = a_xx
@@ -156,7 +156,7 @@ def test_memoizer(
         (a_ji_hat, a_ii_hat, a_ij_hat), block_sections
     )
 
-    x_ii = spectral(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact=contact)
+    x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(
@@ -167,7 +167,7 @@ def test_memoizer(
         < 5e-3
     )
 
-    x_ii = spectral(a_ii=a_ii_hat, a_ij=a_ij_hat, a_ji=a_ji_hat, contact=contact)
+    x_ii, *__ = obc_system((a_ii_hat, a_ij_hat, a_ji_hat), contact="contact")
     assert xp.all(
         (
             xp.linalg.norm(

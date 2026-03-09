@@ -5,7 +5,7 @@ from itertools import product
 import pytest
 
 from qttools import NDArray, xp
-from qttools.lyapunov import Doubling, LyapunovSolver, Spectral
+from qttools.boundary_conditions.lyapunov import Doubling, LyapunovSolver, Spectral
 
 BLOCK_SIZE = [
     pytest.param(11, id="11x11"),
@@ -37,8 +37,8 @@ LYAPUNOV_SOLVERS = [
 input_params = list(product(SHAPES, ROW_REDUCTION, COL_REDUCTION))
 
 
-@pytest.fixture(params=input_params)
-def inputs(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray]:
+@pytest.fixture(params=input_params, scope="session")
+def inputs(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, slice, slice]:
     """Returns some random complex matrices."""
     shape, row_reduction, col_reduction = request.param
     a_shape, q_shape = shape[0][0][0], shape[0][0][1]

@@ -317,10 +317,9 @@ class ElectronSolver(SubsystemSolver):
                 block_sections=self.block_sections,
             )
 
-            g_00 = self.obc(
-                a_ii=m_00 + s_00,
-                a_ij=m_01 + s_01,
-                a_ji=m_10 + s_10,
+            # TODO: use residuals to filter "bad" energies
+            g_00, *__ = self.obc(
+                (m_00 + s_00, m_01 + s_01, m_10 + s_10),
                 contact="left",
             )
             # Apply the retarded boundary self-energy.
@@ -356,11 +355,13 @@ class ElectronSolver(SubsystemSolver):
             m_nn = xp.flip(m_nn, axis=(-2, -1))
             m_nm = xp.flip(m_nm, axis=(-2, -1))
             m_mn = xp.flip(m_mn, axis=(-2, -1))
-            g_nn = self.obc(
+            g_nn, *__ = self.obc(
                 # Twist it, flip it, ...
-                a_ii=xp.flip(m_nn + s_nn, axis=(-2, -1)),
-                a_ij=xp.flip(m_nm + s_nm, axis=(-2, -1)),
-                a_ji=xp.flip(m_mn + s_mn, axis=(-2, -1)),
+                (
+                    xp.flip(m_nn + s_nn, axis=(-2, -1)),
+                    xp.flip(m_nm + s_nm, axis=(-2, -1)),
+                    xp.flip(m_mn + s_mn, axis=(-2, -1)),
+                ),
                 contact="right",
             )
             # ... bop it.

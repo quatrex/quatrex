@@ -280,7 +280,7 @@ class BaseBoundarySystem(ABC):
                 | (rel_residuals < self.relative_tol)
             )
             local_memoizing = xp.array(local_memoizing, dtype=xp.int32)
-            global_memoizing = xp.array(0, dtype=xp.int32)
+            global_memoizing = xp.array([0], dtype=xp.int32)
 
             comm.stack.all_reduce(local_memoizing, global_memoizing)
 

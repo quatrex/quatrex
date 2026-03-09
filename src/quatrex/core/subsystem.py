@@ -143,7 +143,7 @@ class SubsystemSolver(ABC):
             relative_tol=obc_config.memoizer.relative_tol,
             absolute_tol=obc_config.memoizer.absolute_tol,
             warning_threshold=obc_config.memoizer.warning_threshold,
-            mode=obc_config.memoizer.mode,
+            memoization_mode=obc_config.memoizer.mode,
             agreement_threshold=obc_config.memoizer.agreement_threshold,
         )
 
@@ -199,7 +199,7 @@ class SubsystemSolver(ABC):
             relative_tol=lyapunov_config.memoizer.relative_tol,
             absolute_tol=lyapunov_config.memoizer.absolute_tol,
             warning_threshold=lyapunov_config.memoizer.warning_threshold,
-            mode=lyapunov_config.memoizer.mode,
+            memoization_mode=lyapunov_config.memoizer.mode,
             agreement_threshold=lyapunov_config.memoizer.agreement_threshold,
         )
 

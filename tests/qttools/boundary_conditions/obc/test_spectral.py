@@ -143,7 +143,7 @@ def test_memoizer(
         max_decay=20,
     )
 
-    obc_system = OBCSystem(spectral, mode="force-after-first")
+    obc_system = OBCSystem(spectral, memoization_mode="force-after-first")
 
     # Add a little noise to the input matrices.
     a_ji, a_ii, a_ij = a_xx

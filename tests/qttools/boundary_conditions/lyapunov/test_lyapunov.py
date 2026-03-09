@@ -22,7 +22,7 @@ def test_correctness(
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         system_reducer=lyapunov_system_reducer,
-        mode="off",
+        memoization_mode="off",
     )
 
     a, q, _, _ = inputs
@@ -43,7 +43,7 @@ def test_correctness_zeros(
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         system_reducer=lyapunov_system_reducer,
-        mode="off",
+        memoization_mode="off",
     )
 
     a, q, _, _ = inputs
@@ -69,7 +69,7 @@ def test_memoizer(
     lyapunov_system = LyapunovSystem(
         lyapunov_solver,
         system_reducer=lyapunov_system_reducer,
-        mode="force-after-first",
+        memoization_mode="force-after-first",
     )
     x, _, _ = lyapunov_system((a, q), contact="contact")
     assert xp.allclose(x, a @ x @ a.conj().swapaxes(-1, -2) + q)

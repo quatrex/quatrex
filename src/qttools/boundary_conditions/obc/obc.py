@@ -67,7 +67,7 @@ class OBCSystem(BaseBoundarySystem):
         The absolute tolerance for convergence. Default is 1e-6.
     warning_threshold : float, optional
         The threshold for issuing a warning about high residuals. Default is 0.1.
-    mode : str, optional
+    memoization_mode : str, optional
         The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
         Default is 'auto'.
     agreement_threshold : float, optional
@@ -85,7 +85,7 @@ class OBCSystem(BaseBoundarySystem):
         relative_tol: float = 2e-1,
         absolute_tol: float = 1e-6,
         warning_threshold: float = 1e-1,
-        mode: str = "auto",
+        memoization_mode: str = "auto",
         agreement_threshold: float = 0.999,
     ) -> None:
         """Initializes the obc system."""
@@ -98,7 +98,7 @@ class OBCSystem(BaseBoundarySystem):
             relative_tol=relative_tol,
             absolute_tol=absolute_tol,
             warning_threshold=warning_threshold,
-            mode=mode,
+            memoization_mode=memoization_mode,
             agreement_threshold=agreement_threshold,
         )
 

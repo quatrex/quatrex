@@ -63,7 +63,7 @@ class BaseBoundarySystem(ABC):
         The absolute tolerance for convergence. Default is 1e-6.
     warning_threshold : float, optional
         The threshold for issuing a warning about high residuals. Default is 0.1.
-    mode : str, optional
+    memoization_mode : str, optional
         The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
         Default is 'auto'.
     agreement_threshold : float, optional
@@ -81,7 +81,7 @@ class BaseBoundarySystem(ABC):
         relative_tol: float = 2e-1,
         absolute_tol: float = 1e-6,
         warning_threshold: float = 1e-1,
-        mode: str = "auto",
+        memoization_mode: str = "auto",
         agreement_threshold: float = 0.999,
     ) -> None:
         """Initializes the boundary method."""
@@ -91,7 +91,7 @@ class BaseBoundarySystem(ABC):
         self.relative_tol = relative_tol
         self.absolute_tol = absolute_tol
         self.warning_threshold = warning_threshold
-        self.mode = mode
+        self.memoization_mode = memoization_mode
         self.agreement_threshold = agreement_threshold
 
         self.cache_compressor = cache_compressor or IdentityCompressor()
@@ -219,7 +219,7 @@ class BaseBoundarySystem(ABC):
         """
         solution = self.boundary_solver(*boundary_system, contact, **kwargs)
 
-        if self.mode != "off":
+        if self.memoization_mode != "off":
             if type(solution) is not xp.ndarray:
                 raise NotImplementedError(
                     "Memoizing on multiple solution not supported."
@@ -253,27 +253,27 @@ class BaseBoundarySystem(ABC):
 
         """
 
-        if self.mode == "off":
+        if self.memoization_mode == "off":
             return self._solve(boundary_system, contact, **kwargs)
 
         # Try to reuse the result from the cache.
         solution = self.cache_compressor.decompress(self._cache.get(contact, None))
 
         if solution is None:
-            if self.mode in ["auto", "force-after-first"]:
+            if self.memoization_mode in ["auto", "force-after-first"]:
                 return self._solve(boundary_system, contact, **kwargs)
 
-            elif self.mode == "force":
+            elif self.memoization_mode == "force":
                 solution = self._get_starting_guess(boundary_system)
 
             else:
-                raise RuntimeError(f"Invalid memoizing mode: {self.mode}")
+                raise RuntimeError(f"Invalid memoizing mode: {self.memoization_mode}")
 
         rel_residuals, abs_residuals, solution = self._get_residuals(
             boundary_system, solution
         )
 
-        if self.mode == "auto":
+        if self.memoization_mode == "auto":
             # Check for convergence accross all MPI ranks.
             local_memoizing = xp.sum(
                 (abs_residuals < self.absolute_tol)
@@ -349,7 +349,7 @@ class BaseBoundarySystem(ABC):
                 RuntimeWarning,
             )
 
-        if self.mode != "off":
+        if self.memoization_mode != "off":
             if type(reduced_solution) is not xp.ndarray:
                 raise NotImplementedError(
                     "Memoizing on multiple solution not supported."

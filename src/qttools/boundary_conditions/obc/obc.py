@@ -102,7 +102,7 @@ class OBCSystem(BaseBoundarySystem):
             agreement_threshold=agreement_threshold,
         )
 
-    def _fix_point_step(
+    def _fixed_point_step(
         self,
         boundary_system: tuple[NDArray, ...],
         solution: NDArray,
@@ -184,7 +184,7 @@ class OBCSystem(BaseBoundarySystem):
 
         """
         if type(test_solution) is xp.ndarray:
-            solution_ref = self._fix_point_step(boundary_system, test_solution)
+            solution_ref = self._fixed_point_step(boundary_system, test_solution)
 
             abs_residuals = xp.linalg.norm(solution_ref - test_solution, axis=(-2, -1))
             rel_residuals = abs_residuals / xp.linalg.norm(solution_ref, axis=(-2, -1))

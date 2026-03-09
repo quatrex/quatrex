@@ -94,7 +94,7 @@ class BaseBoundarySystem(ABC):
             self.num_ref_iterations = 2
 
     @abstractmethod
-    def _fix_point_step(
+    def _fixed_point_step(
         self,
         boundary_system: tuple[NDArray, ...],
         solution: NDArray,
@@ -263,7 +263,7 @@ class BaseBoundarySystem(ABC):
                 return self._solve(boundary_system, contact, **kwargs)
 
         for __ in range(self.num_ref_iterations - 2):
-            solution = self._fix_point_step(boundary_system, solution)
+            solution = self._fixed_point_step(boundary_system, solution)
 
         return solution
 

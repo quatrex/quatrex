@@ -86,7 +86,7 @@ class LyapunovSystemReducer(SystemReducer):
         self.reduce_sparsity = reduce_sparsity
         self.assume_constant_sparsity = assume_constant_sparsity
 
-    def __contract_system_zero_cols(
+    def _contract_system_zero_cols(
         self,
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
@@ -118,7 +118,7 @@ class LyapunovSystemReducer(SystemReducer):
         q_hat = q[..., self.cols_reduced_system, self.cols_reduced_system]
         return a_hat, q_hat
 
-    def __contract_system_zero_rows(
+    def _contract_system_zero_rows(
         self,
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
@@ -158,7 +158,7 @@ class LyapunovSystemReducer(SystemReducer):
 
         return a_hat, q_hat
 
-    def __compute_sparsity_pattern(
+    def _compute_sparsity_pattern(
         self,
         boundary_system: tuple[NDArray, ...],
     ) -> None:
@@ -259,18 +259,18 @@ class LyapunovSystemReducer(SystemReducer):
         # allows for broadcasting of a to q shape
         assert q.ndim >= a.ndim
 
-        self.__compute_sparsity_pattern(boundary_system)
+        self._compute_sparsity_pattern(boundary_system)
 
         if self.number_non_zero_cols is None or self.number_non_zero_rows is None:
             raise ValueError("The system reduction information is missing.")
 
         # more zero rows than cols -> system was reduced by rows
         if self.number_non_zero_rows < self.number_non_zero_cols:
-            return self.__contract_system_zero_rows(boundary_system)
+            return self._contract_system_zero_rows(boundary_system)
 
-        return self.__contract_system_zero_cols(boundary_system)
+        return self._contract_system_zero_cols(boundary_system)
 
-    def __expand_solution_zero_cols(
+    def _expand_solution_zero_cols(
         self,
         boundary_system: tuple[NDArray, ...],
         reduced_solution: NDArray,
@@ -306,7 +306,7 @@ class LyapunovSystemReducer(SystemReducer):
 
         return solution
 
-    def __expand_solution_zero_rows(
+    def _expand_solution_zero_rows(
         self,
         boundary_system: tuple[NDArray, ...],
         reduced_solution: NDArray,
@@ -380,9 +380,9 @@ class LyapunovSystemReducer(SystemReducer):
 
         # more zero rows than cols -> system was reduced by rows
         if self.number_non_zero_rows < self.number_non_zero_cols:
-            return self.__expand_solution_zero_rows(boundary_system, reduced_solution)
+            return self._expand_solution_zero_rows(boundary_system, reduced_solution)
 
-        return self.__expand_solution_zero_cols(boundary_system, reduced_solution)
+        return self._expand_solution_zero_cols(boundary_system, reduced_solution)
 
     def expand_residuals(
         self,

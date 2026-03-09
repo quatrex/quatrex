@@ -6,6 +6,11 @@ from qttools import NDArray
 
 
 class SystemReducer(ABC):
+    """Interface for reducing the boundary system to a smaller system.
+    The boundary system can exhibit sparsity or symmetries, which can be
+    exploited to reduce the size of the system.
+
+    """
 
     @abstractmethod
     def contract_system(
@@ -13,6 +18,8 @@ class SystemReducer(ABC):
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system.
+        This method should identify and remove redundancies in the boundary system,
+        resulting in a smaller system that is easier to solve.
 
         Parameters
         ----------
@@ -35,6 +42,9 @@ class SystemReducer(ABC):
         reduced_solution: NDArray | tuple[NDArray, ...],
     ) -> NDArray | tuple[NDArray, ...]:
         """Expand the solution from the reduced system to the full system.
+        The method should be called after `contract_system` and solving the system.
+        It should take the solution of the reduced system and map it back to the full system,
+        filling in any missing values as necessary.
 
         Parameters
         ----------
@@ -62,6 +72,9 @@ class SystemReducer(ABC):
         abs_residuals: NDArray,
     ) -> tuple[NDArray, NDArray]:
         """Expand the residuals from the reduced system to the full system.
+        The method should be called after `contract_system` and solving the system.
+        It should take the residuals of the reduced system and map them back to the full system,
+        filling in any missing values as necessary.
 
         Parameters
         ----------
@@ -86,11 +99,15 @@ class SystemReducer(ABC):
 
 
 class IdentityReducer(SystemReducer):
+    """A system reducer that does not perform any reduction. It simply returns the input as output.
+    This can be used as a default reducer when no reduction is desired."""
+
     def contract_system(
         self,
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
-        """Contract the boundary system to a reduced system.
+        """Do not contract the boundary system, return it as is.
+        The retured system alias the input system.
 
         Parameters
         ----------
@@ -111,7 +128,8 @@ class IdentityReducer(SystemReducer):
         reduced_system: tuple[NDArray, ...],
         reduced_solution: NDArray | tuple[NDArray, ...],
     ) -> NDArray | tuple[NDArray, ...]:
-        """Expand the solution from the reduced system to the full system.
+        """Do not expand the solution, return it as is.
+        The returned solution alias the input solution.
 
         Parameters
         ----------
@@ -137,7 +155,8 @@ class IdentityReducer(SystemReducer):
         rel_residuals: NDArray,
         abs_residuals: NDArray,
     ) -> tuple[NDArray, NDArray]:
-        """Expand the residuals from the reduced system to the full system.
+        """Do not expand the residuals, return them as is.
+        The returned residuals alias the input residuals.
 
         Parameters
         ----------

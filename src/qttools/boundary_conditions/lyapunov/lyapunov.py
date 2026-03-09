@@ -52,6 +52,11 @@ class LyapunovSolver(ABC):
 class LyapunovSystemReducer(SystemReducer):
     r"""A lyapunov system reducer.
 
+    The lyapunov system can exhibit sparsity, which can be exploited to reduce the size of the system.
+    Either zero rows or zero cols in the system matrix can be reduced, depending on which is more prevalent.
+    Utilizing both would be possible but is not implemented yet, as it would require more complex bookkeeping of the reduced system.
+    In addition, such systems do currently not occure in `quatrex`.
+
     Parameters
     ----------
     reduce_sparsity : bool, optional
@@ -86,7 +91,22 @@ class LyapunovSystemReducer(SystemReducer):
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system
-        when there are zero cols in the system matrix."""
+        using zero cols in the system matrix.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system to solve.
+            It is expected to be a tuple (a, q) where 'a' is the system matrix
+            and 'q' is the right-hand side matrix.
+
+        Returns
+        -------
+        reduced_system : tuple[NDArray, ...]
+            The reduced boundary system.
+
+        """
+
         if self.cols_reduced_system is None:
             raise ValueError(
                 "The system reduction information is missing.\n"
@@ -103,7 +123,21 @@ class LyapunovSystemReducer(SystemReducer):
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system
-        when there are zero rows in the system matrix."""
+        using zero rows in the system matrix.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system to solve.
+            It is expected to be a tuple (a, q) where 'a' is the
+            system matrix and 'q' is the right-hand side matrix.
+
+        Returns
+        -------
+        reduced_system : tuple[NDArray, ...]
+            The reduced boundary system.
+
+        """
         if self.rows_reduced_system is None:
             raise ValueError(
                 "The system reduction information is missing.\n"
@@ -128,7 +162,20 @@ class LyapunovSystemReducer(SystemReducer):
         self,
         boundary_system: tuple[NDArray, ...],
     ) -> None:
-        """Compute the sparsity pattern of the system matrix."""
+        """Compute the sparsity pattern of the system matrix.
+        Determine the number of non-zero rows and cols, as well as the indices of the reduced system.
+        This method should be called before contracting the system, and it should store the necessary information for
+        the contraction and expansion methods.
+        The method should also account for the case where there are only zero rows or cols,
+        in which case the system can be reduced to a trivial system.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system to solve.
+            It is expected to be a tuple (a, q) where 'a' is the system matrix and 'q' is the right-hand side matrix.
+
+        """
         a, _ = boundary_system
         if (
             (not self.assume_constant_sparsity)
@@ -187,6 +234,8 @@ class LyapunovSystemReducer(SystemReducer):
         boundary_system: tuple[NDArray, ...],
     ) -> tuple[NDArray, ...]:
         """Contract the boundary system to a reduced system.
+        Both zero rows and zero cols can be reduced,
+        but only the one with more zero rows/cols is reduced.
 
         Parameters
         ----------
@@ -227,7 +276,22 @@ class LyapunovSystemReducer(SystemReducer):
         reduced_solution: NDArray,
     ) -> NDArray:
         """Expand the solution from the reduced system to the full system
-        when there are zero cols in the system matrix."""
+        when there are zero cols in the system matrix.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system to solve.
+            It is expected to be a tuple (a, q) where 'a' is the system matrix and 'q' is the right-hand side matrix.
+        reduced_solution : NDArray
+            The solution of the reduced system.
+
+        Returns
+        -------
+        full_solution : NDArray
+            The solution of the full system.
+
+        """
         if self.cols_reduced_system is None:
             raise ValueError(
                 "The system reduction information is missing.\n"
@@ -248,7 +312,22 @@ class LyapunovSystemReducer(SystemReducer):
         reduced_solution: NDArray,
     ) -> NDArray:
         """Expand the solution from the reduced system to the full system
-        when there are zero rows in the system matrix."""
+        when there are zero rows in the system matrix.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The full boundary system to solve.
+            It is expected to be a tuple (a, q) where 'a' is the system matrix and 'q' is the right-hand side matrix.
+        reduced_solution : NDArray
+            The solution of the reduced system.
+
+        Returns
+        -------
+        full_solution : NDArray
+            The solution of the full system.
+
+        """
         if self.rows_reduced_system is None:
             raise ValueError(
                 "The system reduction information is missing.\n"

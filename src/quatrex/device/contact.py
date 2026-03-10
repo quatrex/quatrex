@@ -762,30 +762,26 @@ class Contact:
             )
         if obc_config.nevp_solver == "full":
 
-            a_sparsity = None
+            a_xx = None
             if nevp_config.reduce_sparsity:
+                # For QTBM, we can precompute the sparsity pattern of
+                # the matrix polynomial coefficients here.
 
-                a_sparsity = [
-                    xp.zeros_like(self.unit_cell_hamiltonian[0, 0, 0].toarray())
-                    for _ in range(2 * self.num_transport_cells + 1)
-                ]
+                a_xx = [None] * (2 * self.num_transport_cells + 1)
+                for r, h_r in self.unit_cell_hamiltonian.items():
+                    s_r = self.unit_cell_overlap.get(r, 0)
+                    a_r = sparse.csc_matrix(s_r + h_r)
 
-                for key, values in self.unit_cell_hamiltonian.items():
-                    values = values.toarray()
-                    a_sparsity[self.num_transport_cells + key[0]] += values != 0
-                    a_sparsity[self.num_transport_cells - key[0]] += values.T != 0
+                    a_xx[self.num_transport_cells + r[0]] = a_r
+                    a_xx[self.num_transport_cells - r[0]] = a_r.T
 
-                for key, values in self.unit_cell_overlap.items():
-                    values = values.toarray()
-                    a_sparsity[self.num_transport_cells + key[0]] += values != 0
-                    a_sparsity[self.num_transport_cells - key[0]] += values.T != 0
-
-                a_sparsity = tuple(a_sparsity)
+                a_xx = tuple(a_xx)
 
             return Full(
                 eig_compute_location=nevp_config.eig_compute_location,
-                a_sparsity=a_sparsity,
+                use_pinned_memory=nevp_config.use_pinned_memory,
                 reduce=nevp_config.reduce_sparsity,
+                a_xx_sparsity=a_xx,
             )
 
         raise NotImplementedError(

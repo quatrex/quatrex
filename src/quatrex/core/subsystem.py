@@ -89,6 +89,7 @@ class SubsystemSolver(ABC):
         if obc_config.nevp_solver == "full":
             return Full(
                 eig_compute_location=nevp_config.eig_compute_location,
+                use_pinned_memory=nevp_config.use_pinned_memory,
                 reduce=nevp_config.reduce_sparsity,
             )
 

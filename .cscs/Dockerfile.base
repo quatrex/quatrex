@@ -1,0 +1,51 @@
+FROM docker.io/nvidia/cuda:13.1.1-devel-ubuntu24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# System deps: Python 3.13, MPI, build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    python3.13 \
+    python3.13-venv \
+    python3.13-dev \
+    git \
+    git-lfs \
+    cmake \
+    build-essential \
+    pkg-config \
+    mpich \
+    libmpich-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.13 the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+
+# Bootstrap pip (deadsnakes doesn't include pip)
+RUN python3 -m ensurepip --upgrade
+
+# Ensure mpi4py and cupy are built from source against system MPI / CUDA
+ENV MPICC=mpicc \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+
+# Build tooling + pure-Python deps from wheels
+RUN python3 -m pip install --upgrade pip setuptools wheel build \
+    numpy scipy numba pydantic matplotlib threadpoolctl typer
+
+# Build mpi4py from source (links against MPICH)
+RUN python3 -m pip install --no-binary=mpi4py mpi4py
+
+# Build cupy from source (links against CUDA toolkit in the image)
+RUN python3 -m pip install cupy
+
+# Install cuDSS.
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get -y install cudss
+
+# Install nvmath-python
+RUN python3 -m pip install nvmath-python

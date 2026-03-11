@@ -66,6 +66,6 @@ else:
 QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Some type aliases for the array module.
-type NDArray[ScalarType: xp.generic] = xp.ndarray[Any, xp.dtype[ScalarType]]
+type NDArray[ScalarType: xp.generic] = xp.ndarray[tuple[Any, ...], xp.dtype[ScalarType]]
 
 __all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]

@@ -59,11 +59,11 @@ class Full(NEVP):
                         "introduce overhead.",
                     )
             else:
-                self.zero_indices, self.nonzero_indices, self.all_indices = (
+                self.zero_inds, self.nonzero_inds, self.all_inds = (
                     self._find_zero_columns(a_xx_sparsity)
                 )
 
-                if self.zero_indices is None:
+                if self.zero_inds is None:
                     if comm.rank == 0:
                         warnings.warn(
                             "No columns are zero in the first and last blocks. "
@@ -89,11 +89,11 @@ class Full(NEVP):
 
         Returns
         -------
-        zero_indices : NDArray or None
+        zero_inds : NDArray or None
             The indices of the zero columns.
-        nonzero_indices : NDArray or None
+        nonzero_inds : NDArray or None
             The indices of the non-zero columns.
-        all_indices : NDArray or None
+        all_inds : NDArray or None
             The concatenation of zero and non-zero column indices.
 
         """
@@ -144,15 +144,13 @@ class Full(NEVP):
         if a_xx[0].ndim > 3:
             a_xx = tuple(a_x.reshape(-1, *a_x.shape[-2:]) for a_x in a_xx)
 
-        if self.reduce and not hasattr(self, "zero_indices"):
+        if self.reduce and not hasattr(self, "zero_inds"):
             # Identify zero columns at runtime if not provided at instantiation.
-            self.zero_indices, self.nonzero_indices, self.all_indices = (
-                self._find_zero_columns(
-                    tuple(sparse.csc_matrix(a_x[0]) for a_x in a_xx)
-                )
+            self.zero_inds, self.nonzero_inds, self.all_inds = self._find_zero_columns(
+                tuple(sparse.csc_matrix(a_x[0]) for a_x in a_xx)
             )
 
-            if self.zero_indices is None:
+            if self.zero_inds is None:
                 # No columns are zero.
                 if comm.rank == 0:
                     warnings.warn(
@@ -175,9 +173,9 @@ class Full(NEVP):
 
         # Concatenate and delete
         if self.reduce:
-            A_b = A[:, self.zero_indices, :][:, :, self.nonzero_indices]
-            A_c = A[:, self.zero_indices, :][:, :, self.zero_indices]
-            A = A[:, self.nonzero_indices, :][:, :, self.nonzero_indices]
+            A_b = A[:, self.zero_inds, :][:, :, self.nonzero_inds]
+            A_c = A[:, self.zero_inds, :][:, :, self.zero_inds]
+            A = A[:, self.nonzero_inds, :][:, :, self.nonzero_inds]
 
         w, v = linalg.eig(
             A,
@@ -194,7 +192,7 @@ class Full(NEVP):
 
             tmp = xp.concatenate([v, v_zero], axis=1)
             v = xp.empty_like(tmp)
-            v[:, self.all_indices, :] = tmp
+            v[:, self.all_inds, :] = tmp
 
         # Recover the original eigenvalues from the spectral transform.
         w = xp.where((xp.abs(w) == 0.0), -1.0, w)

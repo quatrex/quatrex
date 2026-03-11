@@ -9,13 +9,13 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.comm import comm
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import (
+from quatrex.core.observables import (  # current_conservation,
     contact_currents,
-    current_conservation,
     density,
     device_current,
 )
@@ -156,6 +156,7 @@ class SCBAData:
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
+            bits=config.compute.num_bits,
         )
         self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
@@ -166,6 +167,7 @@ class SCBAData:
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            bits=config.compute.num_bits,
         )
         self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
@@ -211,6 +213,7 @@ class SCBAData:
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
+                bits=config.compute.num_bits,
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
 
@@ -333,7 +336,14 @@ class SCBA:
             # TODO: Check that this is correct for kpoints.
             if not coulomb_matrix.symmetry:
                 coulomb_matrix.symmetrize()
-            coulomb_matrix._data /= config.coulomb_screening.epsilon_r
+            if config.compute.num_bits is None:
+                coulomb_matrix._data /= config.coulomb_screening.epsilon_r
+            else:
+                coulomb_matrix._data = compress(
+                    decompress(coulomb_matrix._data, config.compute.num_bits)
+                    / config.coulomb_screening.epsilon_r,
+                    config.compute.num_bits,
+                )
 
             energies_path = self.config.input_dir / "coulomb_screening_energies.npy"
             if os.path.isfile(energies_path):
@@ -430,38 +440,125 @@ class SCBA:
             self.data.sigma_retarded.symmetrize(xp.add)
 
         if self.config.coulomb_screening.discard_real_parts:
-            self.data.sigma_lesser._data.real = 0
-            self.data.sigma_greater._data.real = 0
+
+            if self.data.sigma_lesser.bits is not None:
+                _data = decompress(
+                    self.data.sigma_lesser._data, self.data.sigma_lesser.bits
+                )
+            else:
+                _data = self.data.sigma_lesser._data
+            _data.real = 0
+            if self.data.sigma_lesser.bits is not None:
+                self.data.sigma_lesser._data = compress(
+                    _data, self.data.sigma_lesser.bits
+                )
+
+            if self.data.sigma_greater.bits is not None:
+                _data = decompress(
+                    self.data.sigma_greater._data, self.data.sigma_greater.bits
+                )
+            else:
+                _data = self.data.sigma_greater._data
+            _data.real = 0
+            if self.data.sigma_greater.bits is not None:
+                self.data.sigma_greater._data = compress(
+                    _data, self.data.sigma_greater.bits
+                )
             # Make sure that the imaginary part comes only from
             # sigma_greater - sigma_lesser.
-            self.data.sigma_retarded._data.imag = 0
+            if self.data.sigma_retarded.bits is not None:
+                _data = decompress(
+                    self.data.sigma_retarded._data, self.data.sigma_retarded.bits
+                )
+            else:
+                _data = self.data.sigma_retarded._data
+            _data.imag = 0
+            if self.data.sigma_retarded.bits is not None:
+                self.data.sigma_retarded._data = compress(
+                    _data, self.data.sigma_retarded.bits
+                )
 
         # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
-        )
+        if self.data.sigma_retarded.bits is not None:
+            self.data.sigma_retarded.data = compress(
+                0.5
+                * (
+                    decompress(
+                        self.data.sigma_greater.data, self.data.sigma_greater.bits
+                    )
+                    - decompress(
+                        self.data.sigma_lesser.data, self.data.sigma_greater.bits
+                    )
+                )
+                + decompress(
+                    self.data.sigma_retarded.data, self.data.sigma_retarded.bits
+                ),
+                self.data.sigma_retarded.bits,
+            )
+        else:
+            self.data.sigma_retarded.data += 0.5 * (
+                self.data.sigma_greater.data - self.data.sigma_lesser.data
+            )
 
     @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
-        self.data.sigma_lesser.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
-        )
-        self.data.sigma_greater.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
-        )
-        self.data.sigma_retarded.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
-        )
+
+        if self.data.sigma_lesser.bits is not None:
+            bits = self.data.sigma_lesser.bits
+            self.data.sigma_lesser.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_lesser_prev.data, bits)
+                    + self.mixing_factor * decompress(self.data.sigma_lesser.data, bits)
+                ),
+                bits,
+            )
+            self.data.sigma_greater.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_greater_prev.data, bits)
+                    + self.mixing_factor
+                    * decompress(self.data.sigma_greater.data, bits)
+                ),
+                bits,
+            )
+            self.data.sigma_retarded.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_retarded_prev.data, bits)
+                    + self.mixing_factor
+                    * decompress(self.data.sigma_retarded.data, bits)
+                ),
+                bits,
+            )
+        else:
+            self.data.sigma_lesser.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
+                + self.mixing_factor * self.data.sigma_lesser.data
+            )
+            self.data.sigma_greater.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
+                + self.mixing_factor * self.data.sigma_greater.data
+            )
+            self.data.sigma_retarded.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
+                + self.mixing_factor * self.data.sigma_retarded.data
+            )
 
     @profiler.profile(label="SCBA: Convergence test", level="default", comm=comm)
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        if self.data.sigma_lesser.bits is not None:
+            diff = decompress(
+                self.data.sigma_retarded.data, self.data.sigma_lesser.bits
+            ) - decompress(
+                self.data.sigma_retarded_prev.data, self.data.sigma_lesser.bits
+            )
+        else:
+            diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+
         local_max_diff = get_host(xp.max(xp.abs(diff)))
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
@@ -472,18 +569,18 @@ class SCBA:
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
-        current_conservation_abs, current_conservation_rel = current_conservation(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.data.sigma_lesser,
-            self.data.sigma_greater,
-        )
+        # current_conservation_abs, current_conservation_rel = current_conservation(
+        #     self.data.g_lesser,
+        #     self.data.g_greater,
+        #     self.data.sigma_lesser,
+        #     self.data.sigma_greater,
+        # )
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
-            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
-            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
+            # print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
+            # print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
 

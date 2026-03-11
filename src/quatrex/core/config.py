@@ -972,11 +972,12 @@ class ComputeConfig(BaseModel):
     band_edge: BandEdgeConfig = BandEdgeConfig()
     comm: CommConfig = CommConfig()
 
-    num_mantissa_bits: PositiveInt | None = None
-    """The number of bits to use for the mantissa when compressing the data.
+    num_bits: PositiveInt | None = None
+    """The number of bits to use when compressing the data.
 
-    The exponent is stored in the same format as fp32 and together should be a multiple
-    of 8 bits to achieve alignment. Otherwise alignment can only achieved by padding.
+    The exponent is stored in the same format as fp32 and together with the mantissa
+    should be a multiple of 8 bits to achieve alignment.
+    Otherwise alignment can only achieved by padding.
     If None, no compression is applied and the data is stored in complex128.
     """
 
@@ -1016,14 +1017,15 @@ class ComputeConfig(BaseModel):
     @model_validator(mode="after")
     def set_num_mantissa_bytes(self) -> Self:
 
-        if self.num_mantissa_bits is not None:
-            # fp32 has 8 bits exponent and a single sign bit,
-            # so the number of bits for the mantissa is total bits - 9.
-            if (9 + self.num_mantissa_bits) % 8 != 0:
+        if self.num_bits is not None:
+            if self.num_bits % 8 != 0:
                 raise ValueError(
                     "The total number of bits (exponent + mantissa) should be a multiple of 8 for alignment."
-                    f"Got {9 + self.num_mantissa_bits} bits."
+                    f"Got {self.num_bits} bits."
                 )
+
+            if xp.__name__ == "numpy":
+                raise ValueError("NumPy does not support the compression.")
 
         return self
 

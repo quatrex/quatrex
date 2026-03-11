@@ -6,6 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_convolve, fft_convolve_kpoints, fft_correlate_kpoints
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
@@ -76,6 +77,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         electron_energies: NDArray,
     ):
         """Initializes the scattering self-energy."""
+        self.config = config
         self.energies = electron_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         # self.num_energies = self.energies.size
@@ -127,16 +129,27 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
         ne = g_lesser.data.shape[0]
-        nk = g_lesser.data.shape[1:-1]
 
-        g_x_fft = xp.fft.fftn(
-            g_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
-        )
-        w_lesser_fft = xp.fft.fftn(
-            w_lesser.data[..., batch], (n,) + nk, axes=tuple(range(len(nk) + 1))
-        )
+        if self.config.compute.num_bits is not None:
+            nk = g_lesser.data.shape[1:-2]
+        else:
+            nk = g_lesser.data.shape[1:-1]
+
+        if self.config.compute.num_bits is not None:
+            _g_lesser = decompress(g_lesser.data[..., batch, :], g_lesser.bits)
+            _g_greater = decompress(g_greater.data[..., batch, :], g_lesser.bits)
+            _w_lesser = decompress(w_lesser.data[..., batch, :], g_lesser.bits)
+            _w_greater = decompress(w_greater.data[..., batch, :], g_lesser.bits)
+        else:
+            _g_lesser = g_lesser.data[..., batch]
+            _g_greater = g_greater.data[..., batch]
+            _w_lesser = w_lesser.data[..., batch]
+            _w_greater = w_greater.data[..., batch]
+
+        g_x_fft = xp.fft.fftn(_g_lesser, (n,) + nk, axes=tuple(range(len(nk) + 1)))
+        w_lesser_fft = xp.fft.fftn(_w_lesser, (n,) + nk, axes=tuple(range(len(nk) + 1)))
         w_greater_fft = xp.fft.fftn(
-            w_greater.data[..., batch],
+            _w_greater,
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -149,10 +162,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
         )
-        sigma_lesser.data[..., batch] += lesser
+        if self.config.compute.num_bits is not None:
+            sigma_lesser.data[..., batch, :] = compress(
+                lesser
+                + decompress(sigma_lesser.data[..., batch, :], sigma_lesser.bits),
+                sigma_lesser.bits,
+            )
+        else:
+            sigma_lesser.data[..., batch] += lesser
 
         g_x_fft = xp.fft.fftn(
-            g_greater.data[..., batch],
+            _g_greater,
             (n,) + nk,
             axes=tuple(range(len(nk) + 1)),
         )
@@ -162,7 +182,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             self.prefactor
             * xp.fft.ifftn(sigma_x_fft, axes=tuple(range(len(nk) + 1)))[:ne]
         )
-        sigma_greater.data[..., batch] += greater
+        if self.config.compute.num_bits is not None:
+            sigma_greater.data[..., batch, :] = compress(
+                greater
+                + decompress(sigma_greater.data[..., batch, :], sigma_greater.bits),
+                sigma_greater.bits,
+            )
+        else:
+            sigma_greater.data[..., batch] += greater
 
         # Compute retarded self-energy with a Hilbert transform.
         antihermitian = greater - lesser
@@ -172,9 +199,18 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         # negative energy part
         sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-        sigma_retarded.data[..., batch] += (
+        retarded = (
             self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
         )
+
+        if self.config.compute.num_bits is not None:
+            sigma_retarded.data[..., batch, :] = compress(
+                retarded
+                + decompress(sigma_retarded.data[..., batch, :], sigma_retarded.bits),
+                sigma_retarded.bits,
+            )
+        else:
+            sigma_retarded.data[..., batch] += retarded
 
     def _compute_with_correction(
         self,
@@ -309,15 +345,24 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         ):
 
             # Because of padding there could be no ij elements
-            if g_greater.data.shape[-1] != 0:
+
+            if self.config.compute.num_bits is not None:
+                ne = g_lesser.data.shape[0]
+                nks = g_lesser.data.shape[1:-2]
+                no = g_lesser.data.shape[-2]
+            else:
+                ne = g_lesser.data.shape[0]
+                nks = g_lesser.data.shape[1:-1]
+                no = g_lesser.data.shape[-1]
+
+            nk = np.prod(nks)
+
+            if no != 0:
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
                     num_buffers = 12  # closer to 8 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
-                    ne = g_lesser.data.shape[0]
-                    nk = np.prod(g_lesser.data.shape[1:-1])
-                    no = g_lesser.data.shape[-1]
                     batch_size = avail_buffer_size // (
                         2 * ne * nk * 16
                     )  # 16 bytes for complex128
@@ -337,11 +382,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     if self.batch_size is None:
                         # NOTE: This is a temporary solution. The batch size should be
                         # calculated in the configuration.
-                        self.batch_size = g_greater.data.shape[-1]
+                        self.batch_size = no
 
                 batch_counts, _ = get_section_sizes(
-                    g_greater.data.shape[-1],
-                    int(np.ceil(g_greater.data.shape[-1] / self.batch_size)),
+                    no,
+                    int(np.ceil(no / self.batch_size)),
                 )
 
                 batch_displacements = np.cumsum(
@@ -359,12 +404,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                             slice(start, end),
                         )
                 else:
-                    n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
-                    nk = g_lesser.data.shape[1:-1]
+                    n = 2 * ne - 1
 
                     # Add empty dimensions for each k-point.
                     energy_differences = (self.energies - self.energies[0]).reshape(
-                        -1, *(len(nk) + 1) * (1,)
+                        -1, *(len(nks) + 1) * (1,)
                     )
 
                     # NOTE: Same eta as in the other computation, but fewer

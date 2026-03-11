@@ -8,6 +8,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcoo_kernels, dsdbsparse_kernels
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -50,6 +51,8 @@ class DSDBCOO(DSDBSparse):
     symmetry_op : callable, optional
         The operation to use for the symmetry. Default is
         `xp.conj`.
+    bits : int or None, optional
+        Whether to compress the data. If None, no compression is applied.
 
     """
 
@@ -63,6 +66,7 @@ class DSDBCOO(DSDBSparse):
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        bits: int | None = None,
     ):
         """Initializes a DSDBCOO matrix."""
         super().__init__(
@@ -72,6 +76,7 @@ class DSDBCOO(DSDBSparse):
             return_dense,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            bits=bits,
         )
 
         self.rows = xp.asarray(rows, dtype=xp.int32)
@@ -361,38 +366,51 @@ class DSDBCOO(DSDBSparse):
         block_slice = self._get_block_slice(row, col)
 
         if not self.return_dense:
-            if self.symmetry:
-                # TODO: If really needed, this will need some more thinking.
-                raise NotImplementedError(
-                    "Sparse blocks with symmetry not implemented."
-                )
-            if block_slice.start is None and block_slice.stop is None:
-                # No data in this block, return an empty block.
-                return xp.empty(0), xp.empty(0), xp.empty(data_stack.shape[:-1] + (0,))
+            raise NotImplementedError("Sparse blocks with symmetry not implemented.")
 
-            rows = self.rows[block_slice] - self.local_block_offsets[row]
-            cols = self.cols[block_slice] - self.local_block_offsets[col]
+        if self.bits is None:
+            block = xp.zeros(
+                data_stack.shape[:-1]
+                + (int(self.local_block_sizes[row]), int(self.local_block_sizes[col])),
+                dtype=self.dtype,
+            )
+        else:
+            block = xp.zeros(
+                data_stack.shape[:-2]
+                + (int(self.local_block_sizes[row]), int(self.local_block_sizes[col])),
+                dtype=self.dtype,
+            )
 
-            return rows, cols, data_stack[..., block_slice]
-
-        block = xp.zeros(
-            data_stack.shape[:-1]
-            + (int(self.local_block_sizes[row]), int(self.local_block_sizes[col])),
-            dtype=self.dtype,
-        )
         if block_slice.start is None and block_slice.stop is None:
             # No data in this block, return an empty block.
             return block
 
-        dsdbcoo_kernels.densify_block(
-            block,
-            self.rows,
-            self.cols,
-            data_stack,
-            block_slice,
-            self.local_block_offsets[row],
-            self.local_block_offsets[col],
-        )
+        if self.dtype != xp.complex128:
+            raise ValueError(
+                f"Only complex128 data type is supported for dense blocks. Given dtype: {self.dtype}"
+            )
+
+        if self.bits is None:
+            dsdbcoo_kernels.densify_block(
+                block,
+                self.rows,
+                self.cols,
+                data_stack[..., block_slice],
+                block_slice,
+                self.local_block_offsets[row],
+                self.local_block_offsets[col],
+            )
+        else:
+            dsdbcoo_kernels.densify_block(
+                block,
+                self.rows,
+                self.cols,
+                decompress(data_stack[..., block_slice, :], self.bits),
+                block_slice,
+                self.local_block_offsets[row],
+                self.local_block_offsets[col],
+            )
+
         if self.symmetry and (col == row):
             block += self.symmetry_op(block.swapaxes(-1, -2))
             block[..., *xp.diag_indices(block.shape[-1])] /= 2
@@ -501,12 +519,27 @@ class DSDBCOO(DSDBSparse):
             # No data in this block, nothing to do.
             return
 
-        dsdbcoo_kernels.sparsify_block(
-            block,
-            self.rows[block_slice] - self.local_block_offsets[row],
-            self.cols[block_slice] - self.local_block_offsets[col],
-            data_stack[..., block_slice],
-        )
+        if self.bits is None:
+            dsdbcoo_kernels.sparsify_block(
+                block,
+                self.rows[block_slice] - self.local_block_offsets[row],
+                self.cols[block_slice] - self.local_block_offsets[col],
+                data_stack[..., block_slice],
+            )
+        else:
+
+            out = xp.zeros(
+                data_stack[..., block_slice, :].shape[:-1], dtype=xp.complex128
+            )
+
+            # TODO: very inefficient
+            dsdbcoo_kernels.sparsify_block(
+                block,
+                self.rows[block_slice] - self.local_block_offsets[row],
+                self.cols[block_slice] - self.local_block_offsets[col],
+                out,
+            )
+            compress(out, self.bits, out=data_stack[..., block_slice, :])
 
     def _check_commensurable(self, other: "DSDBCOO") -> None:
         """Checks if the other matrix is commensurate."""
@@ -535,10 +568,19 @@ class DSDBCOO(DSDBSparse):
                     f"Sparse matrix shape does not match DSDBCOO shape: {other.shape} != {self.shape[-2:]}"
                 )
             csr = other.tocsr()
-            self.data += csr[
-                self.rows + self.global_block_offset,
-                self.cols + self.global_block_offset,
-            ]
+
+            if self.bits is None:
+                self.data += csr[
+                    self.rows + self.global_block_offset,
+                    self.cols + self.global_block_offset,
+                ]
+            else:
+                _data = csr[
+                    self.rows + self.global_block_offset,
+                    self.cols + self.global_block_offset,
+                ] + decompress(self.data, self.bits)
+
+                self.data = compress(_data, self.bits)
             return self
 
         if self.symmetry != other.symmetry or self.symmetry_op != other.symmetry_op:
@@ -547,7 +589,14 @@ class DSDBCOO(DSDBSparse):
             )
 
         self._check_commensurable(other)
-        self._data += other._data
+        if self.bits is not None:
+            # TODO: this is naive
+            # This should not create temporary memory
+            data_uncompressed = decompress(self.data, self.bits)
+            data_uncompressed += other._data
+            self.data = compress(data_uncompressed, self.bits)
+        else:
+            self._data += other._data
         return self
 
     def __isub__(self, other: "DSDBCOO | sparse.spmatrix") -> "DSDBCOO":
@@ -555,10 +604,19 @@ class DSDBCOO(DSDBSparse):
         if sparse.issparse(other):
 
             csr = other.tocsr()
-            self.data -= csr[
-                self.rows + self.global_block_offset,
-                self.cols + self.global_block_offset,
-            ]
+            if self.bits is None:
+                self.data -= csr[
+                    self.rows + self.global_block_offset,
+                    self.cols + self.global_block_offset,
+                ]
+            else:
+                _data = -csr[
+                    self.rows + self.global_block_offset,
+                    self.cols + self.global_block_offset,
+                ] + decompress(self.data, self.bits)
+
+                self.data = compress(_data, self.bits)
+
             return self
 
         if self.symmetry != other.symmetry or self.symmetry_op != other.symmetry_op:
@@ -567,7 +625,14 @@ class DSDBCOO(DSDBSparse):
             )
 
         self._check_commensurable(other)
-        self._data -= other._data
+        if self.bits is not None:
+            # TODO: this is naive
+            # This should not create temporary memory
+            data_uncompressed = decompress(self.data, self.bits)
+            data_uncompressed -= other._data
+            self.data = compress(data_uncompressed, self.bits)
+        else:
+            self._data -= other._data
         return self
 
     def __neg__(self) -> "DSDBCOO":
@@ -639,9 +704,14 @@ class DSDBCOO(DSDBSparse):
             inds_bcoo2bcoo = inds_bcoo2canonical[
                 self._block_config[num_blocks].inds_canonical2block
             ]
-            data = self.data.reshape(-1, self.data.shape[-1])
-            for stack_idx in range(data.shape[0]):
-                data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
+            if self.bits is None:
+                data = self.data.reshape(-1, self.data.shape[-1])
+                for stack_idx in range(data.shape[0]):
+                    data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
+            else:
+                data = self.data.reshape(-1, self.data.shape[-2], self.data.shape[-1])
+                for stack_idx in range(data.shape[0]):
+                    data[stack_idx] = data[stack_idx, inds_bcoo2bcoo, :]
             self.rows = self.rows[inds_bcoo2bcoo]
             self.cols = self.cols[inds_bcoo2bcoo]
             self.rows_nnz = (
@@ -687,9 +757,14 @@ class DSDBCOO(DSDBSparse):
         # Mapping directly from original block-ordering to the new
         # block-ordering is achieved by chaining the two mappings.
         inds_bcoo2bcoo = inds_bcoo2canonical[inds_canonical2bcoo]
-        data = self.data.reshape(-1, self.data.shape[-1])
-        for stack_idx in range(data.shape[0]):
-            data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
+        if self.bits is None:
+            data = self.data.reshape(-1, self.data.shape[-1])
+            for stack_idx in range(data.shape[0]):
+                data[stack_idx] = data[stack_idx, inds_bcoo2bcoo]
+        else:
+            data = self.data.reshape(-1, self.data.shape[-2], self.data.shape[-1])
+            for stack_idx in range(data.shape[0]):
+                data[stack_idx] = data[stack_idx, inds_bcoo2bcoo, :]
         self.rows = self.rows[inds_bcoo2bcoo]
         self.cols = self.cols[inds_bcoo2bcoo]
         self.rows_nnz = (
@@ -865,7 +940,10 @@ class DSDBCOO(DSDBSparse):
             return_dense=dsdbsparse.return_dense,
             symmetry=dsdbsparse.symmetry,
             symmetry_op=dsdbsparse.symmetry_op,
+            bits=dsdbsparse.bits,
         )
+        # This does directly work on the compressed data
+        # since zero is defined in the same way
         out._data[:] = 0
         return out
 
@@ -877,6 +955,7 @@ class DSDBCOO(DSDBSparse):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        bits: int | None = None,
     ) -> "DSDBCOO":
         """Constructs a DSDBCOO matrix from a COO matrix.
 
@@ -953,6 +1032,8 @@ class DSDBCOO(DSDBSparse):
         rows = _rows[local_mask] - start_idx
         cols = _cols[local_mask] - start_idx
 
+        assert coo.data.dtype == xp.complex128
+
         return cls(
             data=data,
             rows=rows,
@@ -961,6 +1042,7 @@ class DSDBCOO(DSDBSparse):
             global_stack_shape=global_stack_shape,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
+            bits=bits,
         )
 
     def to_dense(self):

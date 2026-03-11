@@ -6,6 +6,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_convolve, fft_correlate_kpoints
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.mpi_utils import get_section_sizes
@@ -73,6 +74,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self, config: QuatrexConfig, coulomb_screening_energies: NDArray
     ) -> None:
         """Initializes the polarization."""
+        self.config = config
         self.energies = coulomb_screening_energies
         self.kpoint_volume = np.prod(config.device.kpoint_grid)
         self.ne = len(self.energies)
@@ -131,14 +133,19 @@ class PCoulombScreening(ScatteringSelfEnergy):
             comm=comm,
         ):
 
-            if p_greater.data.shape[-1] != 0:
+            ne = g_lesser.data.shape[0]
+            if self.config.compute.num_bits is None:
+                no = g_greater.data.shape[-1]
+            else:
+                no = g_greater.data.shape[-2]
+
+            if no != 0:
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
                     num_buffers = 6  # closer to 4 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
-                    ne = g_lesser.data.shape[0]
-                    no = g_greater.data.shape[-1]
+
                     batch_size = avail_buffer_size // (
                         2 * ne * 16
                     )  # 16 bytes for complex128
@@ -158,11 +165,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     if self.batch_size is None:
                         # NOTE: This is a temporary solution. The batch size should be
                         # calculated in the configuration.
-                        self.batch_size = p_greater.data.shape[-1]
-
+                        self.batch_size = no
                 batch_counts, _ = get_section_sizes(
-                    p_greater.data.shape[-1],
-                    int(np.ceil(p_greater.data.shape[-1] / self.batch_size)),
+                    no,
+                    int(np.ceil(no / self.batch_size)),
                 )
 
                 batch_displacements = np.cumsum(
@@ -172,27 +178,50 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
+                    if self.config.compute.num_bits is None:
+                        _g_greater = g_greater.data[..., batch]
+                        _g_lesser = g_lesser.data[..., batch]
+                    else:
+                        _g_greater = decompress(
+                            g_greater.data[..., batch, :], self.config.compute.num_bits
+                        )
+                        _g_lesser = decompress(
+                            g_lesser.data[..., batch, :], self.config.compute.num_bits
+                        )
+
                     p_g_full = self.prefactor * fft_correlate_kpoints(
-                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
+                        _g_greater, -_g_lesser.conj()
                     )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the
                     # data. This is a workaround.
                     # Fill the matrices with the data. Take second part of the
                     # energy convolution.
-                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
-                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
-                    # Note that only the hermitian part is computed here.
+
+                    if self.discard_real_parts:
+                        p_l_full.real = 0
+                        p_l_full.real = 0
+
+                    if self.config.compute.num_bits is None:
+                        p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
+                        p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                    else:
+                        p_lesser.data[..., batch, :] = compress(
+                            p_l_full[self.ne - 1 :], self.config.compute.num_bits
+                        )
+                        p_greater.data[..., batch, :] = compress(
+                            p_g_full[self.ne - 1 :], self.config.compute.num_bits
+                        )
 
                     if self.compute_retarded:
+                        raise NotImplementedError(
+                            "The retarded polarization is not implemented yet."
+                        )
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
                                 hilbert_transform(
-                                    (
-                                        p_greater.data[..., batch]
-                                        - p_lesser.data[..., batch]
-                                    ),
+                                    (p_g_full[self.ne - 1 :] - p_l_full[self.ne - 1 :]),
                                     self.energies,
                                 )
                             )
@@ -228,10 +257,20 @@ class PCoulombScreening(ScatteringSelfEnergy):
             if not self.compute_retarded:
                 p_retarded.data[:] = 0
 
-            # Discard the real part.
-            if self.discard_real_parts:
-                p_lesser.data.real = 0
-                p_greater.data.real = 0
-                p_retarded.data.imag = 0
+            # # Discard the real part.
+            # if self.discard_real_parts:
+            #     p_lesser.data.real = 0
+            #     p_greater.data.real = 0
+            #     p_retarded.data.imag = 0
 
-            p_retarded.data += (p_greater.data - p_lesser.data) / 2
+            if self.config.compute.num_bits is None:
+                p_retarded.data += (p_greater.data - p_lesser.data) / 2
+            else:
+                p_retarded.data += compress(
+                    (
+                        decompress(p_greater.data, p_greater.bits)
+                        - decompress(p_lesser.data, p_greater.bits)
+                    )
+                    / 2,
+                    p_retarded.bits,
+                )

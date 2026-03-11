@@ -2,6 +2,7 @@
 
 from qttools import NDArray, xp
 from qttools.datastructures import DSDBSparse
+from qttools.kernels.mixed_precision import compress, decompress
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 from quatrex.core.statistics import bose_einstein
@@ -25,6 +26,8 @@ class SigmaPhonon(ScatteringSelfEnergy):
         electron_energies: NDArray | None = None,
     ) -> None:
         """Initializes the self-energy."""
+
+        self.config = config
 
         if config.phonon.model == "negf":
             raise NotImplementedError
@@ -120,7 +123,16 @@ class SigmaPhonon(ScatteringSelfEnergy):
             + (self.occupancy + 1)
             * xp.roll(g_lesser.diagonal(), -self.upshift, axis=0)[self.upslice]
         )
-        sigma_lesser.fill_diagonal(sl_diag, stack_index=self.valid_slice)
+
+        if sigma_lesser.bits is not None:
+            _data = decompress(sigma_lesser.data, sigma_lesser.bits)
+        else:
+            _data = sigma_lesser.data
+
+        sigma_lesser.fill_diagonal(sl_diag, stack_index=self.valid_slice, data=_data)
+
+        if sigma_lesser.bits is not None:
+            sigma_lesser.data = compress(_data, sigma_lesser.bits)
 
         sg_diag = sigma_greater.diagonal(stack_index=self.valid_slice)
 
@@ -130,50 +142,13 @@ class SigmaPhonon(ScatteringSelfEnergy):
             + (self.occupancy + 1)
             * xp.roll(g_greater.diagonal(), self.downshift, axis=0)[self.downslice]
         )
-        sigma_greater.fill_diagonal(sg_diag, stack_index=self.valid_slice)
 
-        # ==== Diagonal only ===========================================
-        # inds = xp.diag_indices(sigma_lesser.shape[-1])
+        if sigma_greater.bits is not None:
+            _data = decompress(sigma_greater.data, sigma_greater.bits)
+        else:
+            _data = sigma_greater.data
 
-        # sigma_lesser.stack[self.valid_slice][*inds] += self.deformation_potential**2 * (
-        #     self.occupancy
-        #     * xp.roll(g_lesser[*inds], self.downshift, axis=0)[self.downslice]
-        #     + (self.occupancy + 1)
-        #     * xp.roll(g_lesser[*inds], -self.upshift, axis=0)[self.upslice]
-        # )
-        # sigma_greater.stack[self.valid_slice][
-        #     *inds
-        # ] += self.deformation_potential**2 * (
-        #     self.occupancy
-        #     * xp.roll(g_greater[*inds], -self.upshift, axis=0)[self.upslice]
-        #     + (self.occupancy + 1)
-        #     * xp.roll(g_greater[*inds], self.downshift, axis=0)[self.downslice]
-        # )
+        sigma_greater.fill_diagonal(sg_diag, stack_index=self.valid_slice, data=_data)
 
-        # ==== Full matrices ===========================================
-        # nnz_stop = sigma_lesser.nnz_section_sizes[comm.rank]
-        # stack_padding_inds = sigma_lesser._stack_padding_mask.nonzero()[0][
-        #     self.downshift : -self.upshift
-        # ]
-        # sigma_lesser._data[stack_padding_inds, ..., :nnz_stop] = (
-        #     self.deformation_potential**2
-        #     * (
-        #         self.occupancy
-        #         * xp.roll(g_lesser.data, self.downshift, axis=0)[self.totalshift :]
-        #         + (self.occupancy + 1)
-        #         * xp.roll(g_lesser.data, -self.upshift, axis=0)[: -self.totalshift]
-        #     )
-        # )
-        # sigma_greater._data[stack_padding_inds, ..., :nnz_stop] = (
-        #     self.deformation_potential**2
-        #     * (
-        #         self.occupancy
-        #         * xp.roll(g_greater.data, -self.upshift, axis=0)[: -self.totalshift]
-        #         + (self.occupancy + 1)
-        #         * xp.roll(g_greater.data, self.downshift, axis=0)[self.totalshift :]
-        #     )
-        # )
-
-        # NOTE: The electron Green's functions and self-energies must
-        # not be transposed back to stack distribution, as they are
-        # needed in nnz distribution for the other interactions.
+        if sigma_greater.bits is not None:
+            sigma_greater.data = compress(_data, sigma_greater.bits)

@@ -7,6 +7,7 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -96,11 +97,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         # pattern of the system matrix and the l_lesser and l_greater
         # matrices.
         dummy_dsbsparse = config.compute.dsdbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.float32),
+            sparsity_pattern.astype(xp.complex128),
             block_sizes=self.small_block_sizes,
             global_stack_shape=(comm.size,),
             symmetry=config.scba.symmetric,
             symmetry_op=xp.conj,
+            bits=config.compute.num_bits,
         )
         v_times_p_sparsity_pattern = _compute_sparsity_pattern(
             dummy_dsbsparse, dummy_dsbsparse, dtype=xp.float32
@@ -113,6 +115,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
+            bits=config.compute.num_bits,
         )
         self.system_matrix.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
@@ -134,6 +137,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            bits=config.compute.num_bits,
         )
         self.l_greater = config.compute.dsdbsparse_type.zeros_like(self.l_lesser)
         # Explicitely try to free the memory for the sparsity pattern.
@@ -340,7 +344,15 @@ class CoulombScreeningSolver(SubsystemSolver):
             end_block=end_block,
             spillover_correction=True,
         )
-        xp.negative(self.system_matrix.data, out=self.system_matrix.data)
+        # TODO: inefficient
+        if self.system_matrix.bits is None:
+            xp.negative(self.system_matrix.data, out=self.system_matrix.data)
+        else:
+            tmp = xp.negative(
+                decompress(self.system_matrix.data, self.system_matrix.bits)
+            )
+            compress(tmp, self.system_matrix.bits, out=self.system_matrix.data)
+
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:

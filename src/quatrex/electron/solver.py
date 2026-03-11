@@ -6,6 +6,7 @@ from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
@@ -127,6 +128,7 @@ class ElectronSolver(SubsystemSolver):
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
+            bits=config.compute.num_bits,
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern
@@ -394,17 +396,33 @@ class ElectronSolver(SubsystemSolver):
             The retarded scattering self-energy.
 
         """
-        self.system_matrix.data = 0.0
-        if self.orthogonal_basis:
-            self.system_matrix.fill_diagonal(1.0)
+
+        self.system_matrix.data = 0
+
+        if self.config.compute.num_bits is not None:
+            _data = decompress(self.system_matrix.data, self.system_matrix.bits)
         else:
+            _data = self.system_matrix.data
+
+        if self.orthogonal_basis:
+            self.system_matrix.fill_diagonal(1.0, data=_data)
+        else:
+            raise NotImplementedError("Non-orthogonal basis not implemented.")
             # TODO: This is not correct in the case of kpoints
             self.system_matrix += self.overlap_sparray
 
-        scale_stack(
-            self.system_matrix.data,
-            self.local_energies + 1j * self.eta,
-        )
+        if self.config.compute.num_bits is not None:
+            scale_stack(
+                _data,
+                self.local_energies + 1j * self.eta,
+            )
+            self.system_matrix.data = compress(_data, self.system_matrix.bits)
+        else:
+            scale_stack(
+                self.system_matrix.data,
+                self.local_energies + 1j * self.eta,
+            )
+
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)

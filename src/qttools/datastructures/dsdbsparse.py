@@ -8,6 +8,7 @@ import numpy as np
 
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.mpi_utils import get_section_sizes
 
@@ -124,6 +125,8 @@ class DSDBSparse(ABC):
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
+    bits : int or None, optional
+        Whether to compress the data. If None, no compression is applied.
 
     """
 
@@ -135,10 +138,20 @@ class DSDBSparse(ABC):
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        bits: int | None = None,
     ):
         """Initializes a DSBDSparse matrix."""
 
         # --- Things concerning stack distribution ---------------------
+
+        if bits is None and data.dtype != xp.complex128:
+            raise ValueError(
+                "Data type must be complex128 if no compression is applied."
+            )
+        if data.dtype not in [xp.uint8, xp.complex128] and bits is not None:
+            raise ValueError(
+                "Data type must be uint8 or complex128 if compression is applied."
+            )
 
         if isinstance(global_stack_shape, int):
             global_stack_shape = (global_stack_shape,)
@@ -168,9 +181,15 @@ class DSDBSparse(ABC):
         self.stack_section_sizes = stack_section_sizes
         self.total_stack_size = total_stack_size
 
-        nnz_section_sizes, total_nnz_size = get_section_sizes(
-            data.shape[-1], comm.stack.size, strategy="greedy"
-        )
+        if data.dtype == xp.uint8:
+            nnz_section_sizes, total_nnz_size = get_section_sizes(
+                data.shape[-2], comm.stack.size, strategy="greedy"
+            )
+        else:
+            nnz_section_sizes, total_nnz_size = get_section_sizes(
+                data.shape[-1], comm.stack.size, strategy="greedy"
+            )
+
         self.nnz_section_sizes = nnz_section_sizes
         self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
         self.total_nnz_size = total_nnz_size
@@ -191,11 +210,31 @@ class DSDBSparse(ABC):
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
-        self._data = xp.zeros(
-            (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
-            dtype=data.dtype,
-        )
-        self._data[: data.shape[0], ..., : data.shape[-1]] = data
+        self.bits = bits
+        if bits is None:
+            self._data = xp.zeros(
+                (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
+                dtype=data.dtype,
+            )
+            self._data[: data.shape[0], ..., : data.shape[-1]] = data
+        else:
+            # 2*due to complex data
+            self._data = xp.zeros(
+                (
+                    max(stack_section_sizes),
+                    *global_stack_shape[1:],
+                    total_nnz_size,
+                    2 * (self.bits // 8),
+                ),
+                dtype=xp.uint8,
+            )
+
+            if data.dtype == xp.uint8:
+                self._data[: data.shape[0], ..., : data.shape[-2], :] = data
+            else:
+                data_compressed = compress(data, bits)
+                # NOTE: data.shape[-1] due to bytes in the last dimension
+                self._data[: data.shape[0], ..., : data.shape[-1], :] = data_compressed
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -206,8 +245,17 @@ class DSDBSparse(ABC):
             offset = i * max(stack_section_sizes)
             self._stack_padding_mask[offset : offset + size] = True
 
-        self.stack_shape = data.shape[:-1]
-        self.local_nnz = data.shape[-1]
+        if bits is None:
+            self.stack_shape = data.shape[:-1]
+            self.local_nnz = data.shape[-1]
+        else:
+            if data.dtype == xp.uint8:
+                self.stack_shape = data.shape[:-2]
+                self.local_nnz = data.shape[-2]
+            else:
+                self.stack_shape = data.shape[:-1]
+                self.local_nnz = data.shape[-1]
+
         # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
 
@@ -235,7 +283,7 @@ class DSDBSparse(ABC):
         self._block_config: dict[int, BlockConfig] = {}
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 
-        self.dtype = data.dtype
+        self.dtype = xp.complex128
         self.return_dense = return_dense
 
         self._block_indexer = _DSDBlockIndexer(self)
@@ -345,6 +393,7 @@ class DSDBSparse(ABC):
     @property
     def data(self) -> NDArray:
         """Returns the local slice of the data, masking the padding."""
+        # One needs to call compress oneself outside
         if self.distribution_state == "stack":
             return self._data[self.data_slice_stack]
         return self._data[self.data_slice_nnz]
@@ -533,7 +582,15 @@ class DSDBSparse(ABC):
             )
 
         self._check_commensurable(other)
-        self._data *= other._data
+        if self.bits is not None:
+            # TODO: this is naive
+            # This should not create temporary memory
+            data_uncompressed = decompress(self.data, self.bits)
+            data_uncompressed *= other._data
+            self.data = compress(data_uncompressed, self.bits)
+        else:
+            self._data *= other._data
+
         return self
 
     @abstractmethod
@@ -611,26 +668,54 @@ class DSDBSparse(ABC):
 
         # Getter
         data_stack = self.data[*stack_index]
-        if self.distribution_state == "stack":
-            local_diagonal = xp.zeros(
-                (
-                    data_stack.shape[:-1]
-                    + (sum(self.local_block_sizes[: self.num_local_blocks]),)
-                ),
-                dtype=self.dtype,
-            )
-            local_diagonal[..., self._diag_value_inds] = data_stack[
-                ..., self._diag_inds
-            ]
-            return xp.concatenate(
-                comm.block._mpi_comm.allgather(local_diagonal), axis=-1
-            )
-        else:
-            if self._diag_inds_nnz is not None:
-                return data_stack[..., self._diag_inds_nnz]
-            return xp.empty((data_stack.shape[:-1] + (0,)))
+        if self.bits is None:
+            if self.distribution_state == "stack":
+                local_diagonal = xp.zeros(
+                    (
+                        data_stack.shape[:-1]
+                        + (sum(self.local_block_sizes[: self.num_local_blocks]),)
+                    ),
+                    dtype=self.dtype,
+                )
+                local_diagonal[..., self._diag_value_inds] = data_stack[
+                    ..., self._diag_inds
+                ]
+                return xp.concatenate(
+                    comm.block._mpi_comm.allgather(local_diagonal), axis=-1
+                )
+            else:
+                if self._diag_inds_nnz is not None:
+                    return data_stack[..., self._diag_inds_nnz]
+                return xp.empty((data_stack.shape[:-1] + (0,)))
 
-    def fill_diagonal(self, val: NDArray, stack_index: tuple = (Ellipsis,)) -> NDArray:
+        else:
+            if self.distribution_state == "stack":
+                local_diagonal = xp.zeros(
+                    (
+                        data_stack.shape[:-2]
+                        + (sum(self.local_block_sizes[: self.num_local_blocks]),)
+                    ),
+                    dtype=self.dtype,
+                )
+                local_diagonal[..., self._diag_value_inds] = decompress(
+                    data_stack[..., self._diag_inds, :], self.bits
+                )
+                return xp.concatenate(
+                    comm.block._mpi_comm.allgather(local_diagonal), axis=-1
+                )
+            else:
+                if self._diag_inds_nnz is not None:
+                    return decompress(
+                        data_stack[..., self._diag_inds_nnz, :], self.bits
+                    )
+                return xp.empty((data_stack.shape[:-2] + (0,)))
+
+    def fill_diagonal(
+        self,
+        val: NDArray,
+        stack_index: tuple = (Ellipsis,),
+        data: NDArray | None = None,
+    ) -> NDArray:
         """Returns or sets the diagonal elements of the matrix.
 
         This temporarily sets the return_dense state to True. Note that
@@ -648,24 +733,30 @@ class DSDBSparse(ABC):
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
 
+        if data is not None:
+            _data = data[*stack_index]
+        else:
+            _data = self.data[*stack_index]
+
+        if _data.dtype == xp.uint8:
+            raise NotImplementedError(
+                "Filling the diagonal is not implemented for compressed data."
+            )
+
         # Setter
         val = xp.asarray(val)
         if self.distribution_state == "stack":
             if val.ndim == 0:
-                self.data[*stack_index][..., self._diag_inds] = val
+                _data[..., self._diag_inds] = val
             else:
-                self.data[*stack_index][..., self._diag_inds] = val[
-                    ..., self._diag_value_inds
-                ]
+                _data[..., self._diag_inds] = val[..., self._diag_value_inds]
             return
 
         if self._diag_inds_nnz is not None:
             if val.ndim == 0:
-                self.data[*stack_index][..., self._diag_inds_nnz] = val
+                _data[..., self._diag_inds_nnz] = val
             else:
-                self.data[*stack_index][..., self._diag_inds_nnz] = val[
-                    ..., self._diag_value_inds_nnz
-                ]
+                _data[..., self._diag_inds_nnz] = val[..., self._diag_value_inds_nnz]
         return
 
     def _dtranspose(
@@ -753,7 +844,14 @@ class DSDBSparse(ABC):
             _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
             self._data = _data
 
-            self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
+            if self.bits is None:
+                concatenate_axis = -1
+            else:
+                concatenate_axis = -2
+
+            self._dtranspose(
+                block_axis=0, concatenate_axis=concatenate_axis, discard=discard
+            )
             self.distribution_state = "stack"
 
     @abstractmethod
@@ -818,14 +916,25 @@ class DSDBSparse(ABC):
         """Allocates the local data."""
         free_mempool()
         if self._data is None:
-            self._data = xp.empty(
-                (
-                    int(max(self.stack_section_sizes)),
-                    *self.global_stack_shape[1:],
-                    self.total_nnz_size,
-                ),
-                dtype=self.dtype,
-            )
+            if self.bits is not None:
+                self._data = xp.empty(
+                    (
+                        int(max(self.stack_section_sizes)),
+                        *self.global_stack_shape[1:],
+                        self.total_nnz_size,
+                        2 * (self.bits // 8),
+                    ),
+                    dtype=xp.uint8,
+                )
+            else:
+                self._data = xp.empty(
+                    (
+                        int(max(self.stack_section_sizes)),
+                        *self.global_stack_shape[1:],
+                        self.total_nnz_size,
+                    ),
+                    dtype=self.dtype,
+                )
 
     @classmethod
     @abstractmethod
@@ -836,6 +945,7 @@ class DSDBSparse(ABC):
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
+        bits: int | None = None,
     ) -> "DSDBSparse":
         """Creates a new DSDBSparse matrix from a scipy.sparse array.
 
@@ -943,7 +1053,10 @@ class _DStackIndexer:
     ) -> None:
         """Sets a substack."""
 
-        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
+        if self._dsdbsparse.bits is None:
+            stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
+        else:
+            stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim - 1)
 
         if sparse.issparse(other):
             csr = other.tocsr()
@@ -974,7 +1087,12 @@ class _DStackView:
         self.symmetry = dsdbsparse.symmetry
         if not isinstance(stack_index, tuple):
             stack_index = (stack_index,)
-        stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
+
+        if dsdbsparse.bits is None:
+            stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
+        else:
+            stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim - 1)
+
         self._stack_index = stack_index
         self._block_indexer = _DSDBlockIndexer(
             self._dsdbsparse, self._stack_index, cache_stack=True

@@ -652,6 +652,7 @@ def assemble_matrix(
         + tuple([k for k in config.device.kpoint_grid if k > 1]),
         symmetry=config.scba.symmetric,
         symmetry_op=xp.conj,
+        bits=config.compute.num_bits,
     )
     matrix.data[:] = 0.0  # Initialize to zero.
 

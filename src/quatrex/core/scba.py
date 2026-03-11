@@ -325,6 +325,16 @@ class SCBA:
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
         )
+        
+        # initial adaptive energy grid is just the linear grid
+        if self.config.scba.adaptive:
+            self.adaptive_electron_energies = xp.copy(self.electron_energies)
+        
+        self.electron_solver = ElectronSolver(
+            self.config,
+            self.electron_energies,
+            sparsity_pattern=self.data.sparsity_pattern,
+        )
 
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:

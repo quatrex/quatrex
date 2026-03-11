@@ -3,6 +3,7 @@
 import warnings
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.kernels import linalg
 from qttools.nevp.nevp import NEVP
 
@@ -51,21 +52,23 @@ class Full(NEVP):
 
         if reduce:
             if a_xx_sparsity is None:
-                warnings.warn(
-                    "Reduction is enabled but no coefficient blocks are provided. "
-                    "Zero columns will be identified at runtime, which may "
-                    "introduce overhead.",
-                )
+                if comm.rank == 0:
+                    warnings.warn(
+                        "Reduction is enabled but no coefficient blocks are provided. "
+                        "Zero columns will be identified at runtime, which may "
+                        "introduce overhead.",
+                    )
             else:
                 self.zero_indices, self.nonzero_indices, self.all_indices = (
                     self._find_zero_columns(a_xx_sparsity)
                 )
 
                 if self.zero_indices is None:
-                    warnings.warn(
-                        "No columns are zero in the first and last blocks. "
-                        "Reduction has no effect.",
-                    )
+                    if comm.rank == 0:
+                        warnings.warn(
+                            "No columns are zero in the first and last blocks. "
+                            "Reduction has no effect.",
+                        )
                     self.reduce = False
 
     @staticmethod
@@ -151,10 +154,11 @@ class Full(NEVP):
 
             if self.zero_indices is None:
                 # No columns are zero.
-                warnings.warn(
-                    "No columns are zero in the first and last blocks. "
-                    "Reduction has no effect.",
-                )
+                if comm.rank == 0:
+                    warnings.warn(
+                        "No columns are zero in the first and last blocks. "
+                        "Reduction has no effect.",
+                    )
                 self.reduce = False
 
         inverse = linalg.inv(sum(a_xx))

@@ -2,7 +2,7 @@
 
 import os
 import warnings
-from typing import Any, TypeAlias, TypeVar
+from typing import Any
 
 from mpi4py.MPI import COMM_WORLD as global_comm
 from numpy.typing import ArrayLike
@@ -66,8 +66,6 @@ else:
 QTX_USE_CUPY_JIT = strtobool(os.getenv("QTX_USE_CUPY_JIT"), default=True)
 
 # Some type aliases for the array module.
-_ScalarType = TypeVar("ScalarType", bound=xp.generic, covariant=True)
-_DType = xp.dtype[_ScalarType]
-NDArray: TypeAlias = xp.ndarray[Any, _DType]
+type NDArray[ScalarType: xp.generic] = xp.ndarray[tuple[Any, ...], xp.dtype[ScalarType]]
 
 __all__ = ["__version__", "xp", "sparse", "NDArray", "ArrayLike"]

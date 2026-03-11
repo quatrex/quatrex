@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from qttools import NDArray, _DType, sparse, xp
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
@@ -23,7 +23,7 @@ profiler = Profiler()
 
 
 def _compute_sparsity_pattern(
-    *matrices: DSDBSparse, dtype: _DType = None
+    *matrices: DSDBSparse, dtype: xp.dtype = None
 ) -> sparse.coo_matrix:
     """Computes the sparsity pattern of the product of several DSDBSparse matrices."""
     num_blocks = matrices[0].num_blocks

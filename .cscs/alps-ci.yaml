@@ -31,14 +31,18 @@ test quatrex single:
   extends: .container-runner-daint-gh200
   image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
   script:
-    - echo "Running single-node tests..."
+    - pip list
+    - python3 -c "import numpy; numpy.show_config()"
+    - python3 -c "import cupy; cupy.show_config()"
+    - python3 -c "from nvmath.sparse.advanced.direct_solver import _check_cudss_version; _check_cudss_version()"
+    - python3 -c "import quatrex; print(quatrex.__version__)"
   variables:
     SLURM_JOB_NUM_NODES: 1
 
-test quatrex multi:
-  extends: .container-runner-daint-gh200
-  image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
-  script:
-    - echo "Running multi-node tests..."
-  variables:
-    SLURM_JOB_NUM_NODES: 4
+# test quatrex multi:
+#   extends: .container-runner-daint-gh200
+#   image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
+#   script:
+#     - echo "Running multi-node tests..."
+#   variables:
+#     SLURM_JOB_NUM_NODES: 4

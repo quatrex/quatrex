@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.nevp import NEVP, Full
 
 
@@ -39,8 +39,9 @@ def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
 
 
 @pytest.mark.parametrize("reduce", [False, True])
-def test_full(a_xx: tuple[NDArray, ...], reduce: bool):
-    """Tests that the subspace NEVP solver returns the correct result."""
+@pytest.mark.parametrize("provide_sparsity", [False, True])
+def test_full(a_xx: tuple[NDArray, ...], reduce: bool, provide_sparsity: bool):
+    """Tests that the full NEVP solver returns the correct result."""
 
     a_xx = tuple(a_x.copy() for a_x in a_xx)
 
@@ -50,12 +51,14 @@ def test_full(a_xx: tuple[NDArray, ...], reduce: bool):
         a_xx[0][..., : size // 2] = 0
         a_xx[2][..., size // 2 :] = 0
 
-    a_sparsity = tuple((a != 0).astype(xp.float32) for a in a_xx)
+    a_xx_sparsity = None
+    if provide_sparsity:
+        if len(a_xx[0].shape) > 2:
+            a_xx_sparsity = tuple(sparse.csc_matrix(a_x[0]) for a_x in a_xx)
+        else:
+            a_xx_sparsity = tuple(sparse.csc_matrix(a) for a in a_xx)
 
-    if len(a_xx[0].shape) > 2:
-        a_sparsity = tuple(xp.sum(a, axis=0) for a in a_sparsity)
-
-    full_nevp = Full(a_sparsity=a_sparsity, reduce=reduce)
+    full_nevp = Full(a_xx_sparsity=a_xx_sparsity, reduce=reduce)
     ws, vs = full_nevp(a_xx)
 
     a_ji, a_ii, a_ij = a_xx

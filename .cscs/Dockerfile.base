@@ -35,17 +35,20 @@ ENV MPICC=mpicc \
 RUN python3 -m pip install --upgrade pip setuptools wheel build \
     numpy scipy numba pydantic matplotlib threadpoolctl typer
 
+# Install cuDSS.
+RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
+    && apt-get update \
+    && apt-get -y install cudss
+
 # Build mpi4py from source (links against MPICH)
 RUN python3 -m pip install --no-binary=mpi4py mpi4py
 
 # Build cupy from source (links against CUDA toolkit in the image)
 RUN python3 -m pip install cupy
 
-# Install cuDSS.
-RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && apt-get update \
-    && apt-get -y install cudss
+
 
 # Install nvmath-python
 RUN python3 -m pip install nvmath-python

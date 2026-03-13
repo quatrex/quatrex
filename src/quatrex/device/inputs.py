@@ -49,20 +49,18 @@ def load_structure(
         # The neighbor cell cutoff along the transport direction
         # determines the size of the transport cell.
         transport_ind = "xyz".index(config.device.transport_direction)
-        unit_cells_per_transport_cell = [1, 1, 1]
-        unit_cells_per_transport_cell[transport_ind] = (
-            config.device.neighbor_cell_cutoff[transport_ind]
-        )
-        device_cell = unit_cells_per_transport_cell.copy()
-        device_cell[transport_ind] *= config.device.num_transport_cells
 
         block_sizes = np.array(
-            [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
+            [config.device.neighbor_cell_cutoff[transport_ind] * grid.shape[0]]
             * config.device.num_transport_cells
         )
 
         grid = create_coordinate_grid(
-            grid, tuple(device_cell), xp.asarray(lattice_vectors)
+            grid,
+            config.device.num_transport_cells
+            * config.device.neighbor_cell_cutoff[transport_ind],
+            transport_ind,
+            xp.asarray(lattice_vectors),
         )
 
     else:
@@ -85,99 +83,113 @@ def load_structure(
     return block_sizes, grid
 
 def create_coordinate_grid(
-    wannier_centers: NDArray,
-    supercell_size: tuple,
+    unit_cell_coords: NDArray,
+    transport_cell_size: int,
+    transport_ind: int,
     lattice_vectors: NDArray,
 ) -> NDArray:
-    """Creates a grid of coordinates for Wannier centers in a supercell.
+    """Creates a grid of coordinates for orbital centers in a transport cell.
+    Only expands in the transport direction, and assumes that the unit cell is
+    repeated in the transport direction.
 
     Parameters
     ----------
-    wannier_centers : NDArray
-        Coordinates of the Wannier centers in a unit cell.
-    supercell_size : tuple
-        Size of the supercell. E.g. (2, 2, 1) for a 2x2 xy-supercell.
+    unit_cell_coords : NDArray
+        Coordinates of the orbital centers in a unit cell.
+    transport_cell_size : int
+        Number of unit cells in the transport direction that make up the transport cell.
+    transport_ind : int
+        Index of the transport direction (0, 1, or 2).
     lattice_vectors : NDArray
         Lattice vectors of the system.
 
     Returns
     -------
     NDArray
-        The grid of coordinates for the Wannier centers in the
-        supercell.
+        The grid of coordinates for the orbital centers in the
+        transport cell.
 
     """
-    num_wann = wannier_centers.shape[0]
-    grid = xp.zeros(
-        (int(xp.prod(xp.asarray(supercell_size)) * num_wann), 3), dtype=xp.float64
-    )
-    for i, cell_ind in enumerate(np.ndindex(supercell_size)):
-        grid[i * num_wann : (i + 1) * num_wann, :] = (
-            wannier_centers + xp.asarray(cell_ind) @ lattice_vectors
+    num_coords = unit_cell_coords.shape[0]
+    grid = xp.zeros((transport_cell_size * num_coords, 3), dtype=xp.float64)
+    for i in range(transport_cell_size):
+        grid[i * num_coords : (i + 1) * num_coords, :] = (
+            unit_cell_coords + i * lattice_vectors[transport_ind]
         )
     return grid
 
 
-def _get_transport_block(
-    tight_binding_matrix: dict,
-    supercell_size: int,
-    transport_direction: int,
+def _construct_transport_cell(
+    matrix_dict: dict,
+    transport_cell_size: int,
+    transport_ind: int,
     shift: tuple,
 ) -> NDArray:
-    """Constructs a supercell block from the unit cell.
-    This is for a single hopping in non-transport direction
+    """Constructs a transport block from the unit cell.
+    This expand the unit cell matrix into a block matrix for the transport cell,
+    which is repeated in the transport direction.
 
     Parameters
     ----------
-    tight_binding_matrix : dict
-        Wannier unit cells.
-    supercell_size : int
-        Size of the supercell.
-    transport_direction : int
+    matrix_dict : dict
+        The dictionary of matrices corresponding to different periodic
+        repetitions. It is assumed that only the upper part of the (0,0,0) cell
+        and half the keys are present.
+    transport_cell_size : int
+        Size of the transport cell.
+    transport_ind : int
         Direction of transport. Can be 0, 1, 2.
     shift : tuple
-        Shift in the supercell system.
-        It is expected to be (x,y,0 / supercell_size).
+        Shift in the transport cell system.
+        It is expected to be 0 / transport_cell_size / -transport_cell_size
+        in the transport direction and arbitrary in the other directions.
+        Shift of (0,0,0) constructs the diagonal transport cell.
+        Shift of (2,2,2) constructs the second off-diagonal transport cell
+        for the connection (2,2) between the center matrix and the periodic image.
 
     Returns
     -------
     NDArray
-        The supercell hamiltonian block.
+        The transport cell hamiltonian block.
 
     """
 
-    unit_shape = tight_binding_matrix[(0, 0, 0)].shape
-    unit_dtype = tight_binding_matrix[(0, 0, 0)].dtype
+    if shift[transport_ind] not in [0, transport_cell_size, -transport_cell_size]:
+        raise ValueError(
+            f"Shift in the transport direction must be 0, transport_cell_size, or -transport_cell_size. "
+            f"Got shift={shift} and transport_cell_size={transport_cell_size}."
+        )
+
+    unit_cell_shape = matrix_dict[(0, 0, 0)].shape
+    unit_cell_dtype = matrix_dict[(0, 0, 0)].dtype
 
     rows = []
-    for r_i in range(supercell_size):
+    for r_i in range(transport_cell_size):
         row = []
-        for r_j in range(supercell_size):
+        for r_j in range(transport_cell_size):
 
             coord = list(shift)
-            coord[transport_direction] += r_j - r_i
+            coord[transport_ind] += r_j - r_i
             coord = tuple(int(i) for i in coord)
 
             fliped_coord = tuple(-int(i) for i in coord)
 
-            if coord in tight_binding_matrix:
-                block = tight_binding_matrix[coord]
-            elif fliped_coord in tight_binding_matrix and not np.all(
-                np.array(shift) == 0
-            ):
-                block = tight_binding_matrix[fliped_coord].conj().T
+            if coord in matrix_dict:
+                block = matrix_dict[coord]
+            elif fliped_coord in matrix_dict and not np.all(np.array(shift) == 0):
+                block = matrix_dict[fliped_coord].conj().T
             else:
-                block = xp.zeros(unit_shape, unit_dtype)
+                block = xp.zeros(unit_cell_shape, unit_cell_dtype)
 
             row.append(block)
         rows.append(xp.hstack(row))
     return xp.vstack(rows)
 
 
-def expand_tight_binding_matrix(
-    tight_binding_matrix: dict,
+def _expand_tight_binding_matrix(
+    matrix_dict: dict,
     num_transport_cells: int,
-    transport_direction: int | str,
+    transport_ind: int,
     block_start: int | None = None,
     block_end: int | None = None,
     periodic_shift: tuple = (0, 0, 0),
@@ -185,38 +197,38 @@ def expand_tight_binding_matrix(
     """Creates a full block-tridiagonal matrix from tight-binding matrix / Wannier Centers.
 
     The transport cell (same as supercell) is the cell that is repeated
-    in the transport direction, and is only connected to
-    nearest-neighboring cells. NOTE: interactions outside nearest
-    neighbors are not included in the block-tridiagonal Hamiltonian (see
-    below).
+    in the transport direction, and is only connected to nearest-neighboring cells.
+    NOTE: interactions outside nearest neighbors are not included
+    in the block-tridiagonal Hamiltonian (see below).
 
-    Example for a tight-binding matrix with 3 cells in transport direction for (0,0,0),
+    Example for a tight-binding matrix with 3 cells in transport direction for (0,0,0) and (0,0,1),
 
-      ------- -------
-     | o o o | o x x | x
-     | x o o | o o x | x x
-     | x x o | o o o | x x x
-      ------- ------- -------
-     | x x x | o o o | o x x |
-     | x x x | x o o | o o x |
-     | x x x | x x o | o o o |
-      ------- ------- -------
-       x x x | x x x | o o o |
-         x x | x x x | x o o |
-           x | x x x | x x o |
-              ------- -------
+      ------- -------           |   ------- -------
+     | o o o | o x x | x        |  | o o o | o x x | x
+     | x o o | o o x | x x      |  | o o o | o o x | x x
+     | x x o | o o o | x x x    |  | o o o | o o o | x x x
+      ------- ------- -------   |   ------- ------- -------
+     | x x x | o o o | o x x |  |  | o o o | o o o | o x x |
+     | x x x | x o o | o o x |  |  | x o o | o o o | o o x |
+     | x x x | x x o | o o o |  |  | x x o | o o o | o o o |
+      ------- ------- -------   |   ------- ------- -------
+       x x x | x x x | o o o |  |    x x x | o o o | o o o |
+         x x | x x x | x o o |  |      x x | x o o | o o o |
+           x | x x x | x x o |  |        x | x x o | o o o |
+              ------- -------   |           ------- -------
 
-    for other periodic shifts, the block-tridiagonal matrix will also expand the
-    lower diagonal half of the matrix.
+    for (0,0,0) only the upper diagonal part is expanded
+    while for other shifts also the lower diagonal half of the matrix
+    is expanded.
 
     Parameters
     ----------
-    tight_binding_matrix : dict
+    matrix_dict : dict
         Wannier unit cells.
     num_transport_cells : int
         Number of transport cells.
-    transport_direction : int or str
-        Direction of transport. Can be 0, 1, 2, 'x', 'y', or 'z'.
+    transport_ind : int or str
+        Direction of transport. Can be 0, 1, 2.
     block_start : int | None, optional
         Starting block index for arrow shape partition. Defaults to
         `None`.
@@ -236,11 +248,12 @@ def expand_tight_binding_matrix(
 
     """
 
-    if isinstance(transport_direction, str):
-        transport_direction = "xyz".index(transport_direction)
+    if isinstance(transport_ind, str):
+        transport_ind = "xyz".index(transport_ind)
 
-    keys = np.array(list(tight_binding_matrix.keys()))
-    supercell_size = keys.max(axis=0)[transport_direction]
+    # NOTE: Max alone is not enough since only half the keys are expected to be present.
+    transport_keys = np.array(list(matrix_dict.keys()))[:, transport_ind]
+    transport_cell_size = np.max(np.abs(transport_keys))
 
     block_start = block_start or 0
     block_end = block_end or num_transport_cells
@@ -251,40 +264,37 @@ def expand_tight_binding_matrix(
     if block_start < 0:
         raise ValueError("block_start must be greater than or equal to 0.")
 
-    # check that the shift is positive
-    if not all(np.array(periodic_shift) >= 0):
-        raise ValueError("Periodic shift needs to be positive")
-
     if len(periodic_shift) != 3:
         raise ValueError("periodic_shift must have length 3.")
 
     if all(np.array(periodic_shift) == 0):
-        blocks = [0, 1]
-        shifts = [(0, 0), (0, 1)]
-
+        transport_blocks_inds = [0, 1]
     else:
-        blocks = [-1, 0, 1]
-        shifts = [(1, 0), (0, 0), (0, 1)]
+        transport_blocks_inds = [-1, 0, 1]
 
     block_inds = []
-    for b in blocks:
+    for b in transport_blocks_inds:
         temp_list = list(periodic_shift)
-        temp_list[transport_direction] = b * supercell_size
+        temp_list[transport_ind] = b * transport_cell_size
         block_inds.append(tuple(int(i) for i in temp_list))
 
-    if block_inds[1] not in tight_binding_matrix.keys():
+    if block_inds[-1] not in matrix_dict.keys():
         warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
 
-    # Create sparse matrices of the blocks.
+    # Expand and convert to sparse matrices.
+    # TODO: assumes matrices are dense for now
     blocks = [
         sparse.coo_matrix(
-            _get_transport_block(
-                tight_binding_matrix, supercell_size, transport_direction, ind
+            _construct_transport_cell(
+                matrix_dict=matrix_dict,
+                transport_cell_size=transport_cell_size,
+                transport_ind=transport_ind,
+                shift=shift,
             )
         )
-        for ind in block_inds
+        for shift in block_inds
     ]
 
     # Canoncialize the sparse matrices.
@@ -297,18 +307,18 @@ def expand_tight_binding_matrix(
     block_size = blocks[0].shape[0]
     offsets = xp.arange(block_start, block_end) * blocks[0].shape[0]
 
-    def _tile_sparse_blocks(block, num_blocks, offsets):
-        return (
-            xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz),
-            xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz),
-            xp.tile(block.data, num_blocks),
-        )
+    if all(np.array(periodic_shift) == 0):
+        block_shifts = [(0, 0), (0, 1)]
+    else:
+        block_shifts = [(1, 0), (0, 0), (0, 1)]
 
     full_rows = []
     full_cols = []
     full_data = []
-    for block, (row_shift, col_shift) in zip(blocks, shifts):
-        rows, cols, data = _tile_sparse_blocks(block, num_blocks, offsets)
+    for block, (row_shift, col_shift) in zip(blocks, block_shifts):
+        rows = xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz)
+        cols = xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz)
+        data = xp.tile(block.data, num_blocks)
 
         # Shift rows and columns for off-diagonal blocks
         rows += row_shift * block_size
@@ -341,13 +351,15 @@ def _sum_operator(
     phases: dict | None = None,
 ):
     """Sums the contributions from different periodic repetitions
+    of a hermitian operator (e.g., Hamiltonian, overlap) to construct the matrix
+    for a specific k-point.
 
     Parameters
     ----------
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
         repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and only positive keys are present.
+        and half the keys are present.
     symmetric : bool
         Whether the resulting matrix should be symmetric. If `True`, only
         construct the upper triangular part.
@@ -361,20 +373,20 @@ def _sum_operator(
     # NOTE: Sparse matrix addition is slow
     # but unavoidable due to memory constraints.
     # TODO: Could still be optimized
-    matrix_contribution = matrix_dict[(0, 0, 0)]
+    summed_matrix = matrix_dict[(0, 0, 0)]
     for coord, matrix in matrix_dict.items():
         if coord == (0, 0, 0):
             continue
         phase = phases[coord]
-        matrix_contribution += (
-            phase * sps.triu(matrix) + (phase * sps.tril(matrix)).conj().T
+        summed_matrix += (
+            phase * sparse.triu(matrix) + (phase * sparse.tril(matrix)).conj().T
         )
 
     if not symmetric:
-        matrix_contribution = matrix_contribution + matrix_contribution.T.conj()
-        matrix_contribution.setdiag(matrix_contribution.diagonal() / 2)
+        summed_matrix = summed_matrix + summed_matrix.T.conj()
+        summed_matrix.setdiag(summed_matrix.diagonal() / 2)
 
-    return matrix_contribution
+    return summed_matrix
 
 
 def _assemble_kpoint(
@@ -394,7 +406,7 @@ def _assemble_kpoint(
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
         repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and only positive keys are present.
+        and half the keys are present.
     kpoint_grid : NDArray
         The k-point grid.
     kshift : int | NDArray
@@ -426,8 +438,6 @@ def _assemble_kpoint(
         )
         kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-        print(" kpoints = ", kpoints)
-
         index = np.argwhere(kpoint_grid > 1)[0]
         for stack_index in np.ndindex(kpoints.shape[:-1]):
             kpoint = kpoints[stack_index]
@@ -457,7 +467,7 @@ def _create_matrix_from_unit_cells(
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
         repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and only positive keys are present.
+        and half the keys are present.
 
     Returns
     -------
@@ -487,10 +497,10 @@ def _create_matrix_from_unit_cells(
         if coord[transport_ind] > 0:
             continue
 
-        matrix_sparray = expand_tight_binding_matrix(
-            tight_binding_matrix=matrix_dict,
+        matrix_sparray = _expand_tight_binding_matrix(
+            matrix_dict=matrix_dict,
             num_transport_cells=config.device.num_transport_cells,
-            transport_direction=config.device.transport_direction,
+            transport_ind=transport_ind,
             block_start=start_block,
             block_end=end_block,
             periodic_shift=coord,
@@ -500,7 +510,7 @@ def _create_matrix_from_unit_cells(
     return out_matrix_dict
 
 
-def load_transport_matrices(
+def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
 ):
@@ -568,15 +578,21 @@ def load_transport_matrices(
 
     # assert that the matrices have the same shape
     matrix_shape = matrices[(0, 0, 0)].shape
+    matrix_type = type(matrices[(0, 0, 0)])
     for coord, matrix in matrices.items():
         if matrix.shape != matrix_shape:
             raise ValueError(
                 f"Matrix at coordinate {coord} has shape {matrix.shape}, "
                 f"but expected shape is {matrix_shape}."
             )
+        if not isinstance(matrix, matrix_type):
+            raise ValueError(
+                f"Matrix at coordinate {coord} has type {type(matrix)}, "
+                f"but expected type is {matrix_type}."
+            )
 
     # only keep the upper part of the (0,0,0) matrix
-    # NOTE: this is done on the CPU to avoid memory issues
+    # NOTE: this is done on the CPU
     if isinstance(matrices[(0, 0, 0)], np.ndarray):
         matrices[(0, 0, 0)] = np.triu(matrices[(0, 0, 0)])
     elif isinstance(matrices[(0, 0, 0)], sps.spmatrix):
@@ -597,6 +613,18 @@ def load_transport_matrices(
             )
         }
 
+    # transfer the matrices to the GPU
+    if isinstance(matrices[(0, 0, 0)], np.ndarray):
+        matrices = {
+            coord: xp.asarray(matrix).astype(xp.complex128)
+            for coord, matrix in matrices.items()
+        }
+    elif isinstance(matrices[(0, 0, 0)], sps.spmatrix):
+        matrices = {
+            coord: sparse.csr_matrix(matrix).astype(xp.complex128)
+            for coord, matrix in matrices.items()
+        }
+
     # expand potentially if the system is periodic
     # and given bz unit cell matrices
     if config.device.construct_from_unit_cell:
@@ -615,7 +643,7 @@ def load_transport_matrices(
     return matrices
 
 
-def load_matrix(
+def assemble_matrix(
     config: QuatrexConfig,
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
@@ -646,7 +674,7 @@ def load_matrix(
 
     """
 
-    matrix_dict = load_transport_matrices(config, matrix_name)
+    matrix_dict = load_matrices(config, matrix_name)
 
     # load or construct the block sizes for the DSDBSparse
     if config.device.construct_from_unit_cell:

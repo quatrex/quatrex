@@ -527,21 +527,23 @@ def load_matrices(
     Returns
     -------
     dict
-        The matrix, optional k-point dictionary, and optional block sizes.
+        The dict of sparse matrices corresponding to different periodic repetitions.
+        It is assumed that only the upper part of the (0,0,0) cell and half
+        the keys are stored.
 
     """
 
     # load the matrices
-    matrices = distributed_load(config.input_dir / f"{matrix_name}.mat")
+    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.mat")
 
-    if (0, 0, 0) not in matrices.keys():
+    if (0, 0, 0) not in matrix_dict.keys():
         raise ValueError(
             f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
-            f"Available keys: {list(matrices.keys())}"
+            f"Available keys: {list(matrix_dict.keys())}"
         )
 
     # assert that the keys form a complete grid,
-    keys = np.array(list(matrices.keys()))
+    keys = np.array(list(matrix_dict.keys()))
     max_coords = keys.max(axis=0)
     min_coords = keys.min(axis=0)
 
@@ -552,7 +554,7 @@ def load_matrices(
         )
 
     expected_size = np.prod(max_coords - min_coords + 1)
-    actual_size = len(matrices)
+    actual_size = len(matrix_dict)
     if expected_size != actual_size:
         raise ValueError(
             f"Expected {expected_size} unit cells based on the detected grid shape, "
@@ -570,16 +572,16 @@ def load_matrices(
             )
 
     # drop half the keys
-    matrices = {
+    matrix_dict = {
         coord: matrix
-        for coord, matrix in matrices.items()
+        for coord, matrix in matrix_dict.items()
         if coord > (0, 0, 0) or (coord == (0, 0, 0))
     }
 
-    # assert that the matrices have the same shape
-    matrix_shape = matrices[(0, 0, 0)].shape
-    matrix_type = type(matrices[(0, 0, 0)])
-    for coord, matrix in matrices.items():
+    # assert that the matrix_dict have the same shape
+    matrix_shape = matrix_dict[(0, 0, 0)].shape
+    matrix_type = type(matrix_dict[(0, 0, 0)])
+    for coord, matrix in matrix_dict.items():
         if matrix.shape != matrix_shape:
             raise ValueError(
                 f"Matrix at coordinate {coord} has shape {matrix.shape}, "
@@ -593,54 +595,56 @@ def load_matrices(
 
     # only keep the upper part of the (0,0,0) matrix
     # NOTE: this is done on the CPU
-    if isinstance(matrices[(0, 0, 0)], np.ndarray):
-        matrices[(0, 0, 0)] = np.triu(matrices[(0, 0, 0)])
-    elif isinstance(matrices[(0, 0, 0)], sps.spmatrix):
-        matrices[(0, 0, 0)] = sps.triu(matrices[(0, 0, 0)])
+    if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
+        matrix_dict[(0, 0, 0)] = np.triu(matrix_dict[(0, 0, 0)])
+    elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
+        matrix_dict[(0, 0, 0)] = sps.triu(matrix_dict[(0, 0, 0)])
     else:
         raise ValueError(
-            f"Matrix at coordinate (0,0,0) has unsupported type {type(matrices[(0, 0, 0)])}."
+            f"Matrix at coordinate (0,0,0) has unsupported type {type(matrix_dict[(0, 0, 0)])}."
         )
 
     # drop keys out side the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:
-        matrices = {
+        matrix_dict = {
             coord: matrix
-            for coord, matrix in matrices.items()
+            for coord, matrix in matrix_dict.items()
             if all(
                 abs(c) <= config.device.neighbor_cell_cutoff[i]
                 for i, c in enumerate(coord)
             )
         }
 
-    # transfer the matrices to the GPU
-    if isinstance(matrices[(0, 0, 0)], np.ndarray):
-        matrices = {
+    # transfer the matrix_dict to the GPU
+    if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
+        matrix_dict = {
             coord: xp.asarray(matrix).astype(xp.complex128)
-            for coord, matrix in matrices.items()
+            for coord, matrix in matrix_dict.items()
         }
-    elif isinstance(matrices[(0, 0, 0)], sps.spmatrix):
-        matrices = {
+    elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
+        matrix_dict = {
             coord: sparse.csr_matrix(matrix).astype(xp.complex128)
-            for coord, matrix in matrices.items()
+            for coord, matrix in matrix_dict.items()
         }
 
     # expand potentially if the system is periodic
-    # and given bz unit cell matrices
+    # and given bz unit cell matrix_dict
     if config.device.construct_from_unit_cell:
         # raise NotImplementedError("Constructing from unit cell is not implemented yet.")
-        matrices = _create_matrix_from_unit_cells(config, matrices)
+        matrix_dict = _create_matrix_from_unit_cells(config, matrix_dict)
 
     # NOTE: for closed systems,
     # transport direction will be None
     transport_ind = "xyz".index(config.device.transport_direction)
 
     # drop keys which are bigger than zero in the transport direction
-    matrices = {
-        coord: matrix for coord, matrix in matrices.items() if coord[transport_ind] == 0
+    matrix_dict = {
+        coord: matrix
+        for coord, matrix in matrix_dict.items()
+        if coord[transport_ind] == 0
     }
 
-    return matrices
+    return matrix_dict
 
 
 def assemble_matrix(

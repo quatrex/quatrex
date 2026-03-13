@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import numpy as np
+from scipy import interpolate
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, xp
@@ -73,8 +74,9 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self, config: QuatrexConfig, coulomb_screening_energies: NDArray
     ) -> None:
         """Initializes the polarization."""
+        self.config = config        # liyongda (11 Mar 2026): just pass in the whole config, makes my life easier
         self.energies = coulomb_screening_energies
-        self.kpoint_volume = np.prod(config.device.kpoint_grid)
+        self.kpoint_volume = np.prod(config.device.kpoint_grid)     # product of array elements, Default kpoints is (1,1,1), so kpoint_volume=1
         self.ne = len(self.energies)
         self.prefactor = (
             -1j
@@ -172,9 +174,40 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    p_g_full = self.prefactor * fft_correlate_kpoints(
-                        g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
-                    )
+                    if adaptive_points is not None:
+                        # Interpolate g to the adaptive grid. This is needed for the FFT-based convolution.
+                        k = self.config.scba.adaptive_interpolation_order
+                        ne = g_lesser.data.shape[0]     # number of energy points in the original grid
+                        # oversampling ratio, how much to blow up the adaptive grid in interpolation
+                        r = self.config.scba.adaptive_interpolation_oversampling_ratio
+                        n_fine = int(r * ne)        # r could be 0.5
+                        n_conv_fine = 2*n_fine -1
+                        n_conv = 2*ne - 1
+
+                        energy_min = self.config.electron.energy_window_min
+                        energy_max = self.config.electron.energy_window_max
+
+                        # liyongda (12 Mar 2026): don't use self.energies, since it's the energies shifted to start from 0eV for Coulomb screening                        
+                        fine_energies = np.linspace(energy_min, energy_max, n_fine)        # interpolation grid
+                        fine_energies_conv = np.linspace(energy_min-energy_max, energy_max-energy_min, n_conv_fine) # convolution grid for conv(interpolated)
+                        energies_conv = np.linspace(energy_min-energy_max, energy_max-energy_min, n_conv) # convolution grid for conv(original)
+
+                        g_greater_fine = interpolate.make_interp_spline(adaptive_points, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
+                        g_lesser_fine = interpolate.make_interp_spline(adaptive_points, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+
+                        greater_fft = xp.fft.fft(g_greater_fine, n_conv_fine, axis=0)
+                        lesser_fft = xp.fft.fft(-g_lesser_fine.conj(), n_conv_fine, axis=0)
+
+                        p_g_full = xp.fft.ifft(greater_fft * lesser_fft, axis=0)
+
+                        # go back to original grid length (if different length)
+                        if (len(p_g_full) != n_conv):
+                            p_g_full = interpolate.make_interp_spline(fine_energies_conv, p_g_full, axis=0, k=k)(energies_conv)
+                        assert(len(p_g_full) == n_conv)
+                    else:
+                        p_g_full = self.prefactor * fft_correlate_kpoints(
+                            g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
+                        )
                     p_l_full = -p_g_full[::-1].conj()
                     # TODO: the datastructures does not allow for easy slicing of the
                     # data. This is a workaround.

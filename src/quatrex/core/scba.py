@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from time import sleep
 
 import numpy as np
 from scipy.interpolate import make_interp_spline    
@@ -40,6 +41,24 @@ from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
 
+# @profiler.profile(label="SCBA: compute adaptive grid", level="default", comm=comm)
+def compute_adaptive_grid(reference_func: NDArray, N_target, original_energy_grid) -> NDArray:
+    monitor = xp.abs(xp.gradient(reference_func))
+    cumsum = xp.cumsum(monitor)
+    cumsum = cumsum / cumsum[-1]    # normalize to [0,1]
+
+    # equally space the adaptive points in cumulative distribution (of monitor)
+    # N_target = 11
+    targets = xp.linspace(0, 1, N_target)
+
+    # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
+    # linear_electron_energies = xp.linspace(-15, 5, 11)
+
+    # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
+    adaptive_points = xp.interp(targets, cumsum, original_energy_grid)
+
+    return adaptive_points
+    # return xp.asarray([1])
 
 class SCBAData:
     """Data container class for the SCBA.
@@ -346,6 +365,7 @@ class SCBA:
             if os.path.isfile(energies_path):
                 self.coulomb_screening_energies = distributed_load(energies_path)
             else:
+                # liyongda (12 Mar 2026): shift the energies to start from 0
                 self.coulomb_screening_energies = (
                     self.electron_energies - self.electron_energies[0]
                 )
@@ -494,8 +514,11 @@ class SCBA:
 
         return False  # TODO: :-)
     
-    @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
-    def _compute_adaptive_grid(self, g_lesser_reduced: NDArray) -> NDArray:
+    # liyongda (12 Mar 2026): profiler has an internal sync `comm.barrier()`.
+    #   but since this function is only called by rank 0, the other ranks never arrive
+    #   and we observe an MPI stall
+    # @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
+    def _compute_adaptive_grid(self, reference_func: NDArray) -> NDArray:
         """Computes an adaptive energy grid based on gradient of sum(abs(VAR))."""
         def _monitor(x, type='gradient'):
             # lose real/imag parts here
@@ -545,10 +568,29 @@ class SCBA:
             return adaptive_points, monitor, cumsum
         
         # calling function ensures only rank 0 computes the adaptive grid
-        adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(g_lesser_reduced.flatten(),
+        adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(reference_func,
                                                     monitor_type='gradient',
                                                     N_target=self.config.scba.adaptive_num_points)
         return adaptive_points
+
+        # monitor = xp.abs(xp.gradient(reference_func))
+        # cumsum = xp.cumsum(monitor)
+        # cumsum = cumsum / cumsum[-1]    # normalize to [0,1]
+
+        # equally space the adaptive points in cumulative distribution (of monitor)
+        # N_target = self.config.scba.adaptive_num_points
+        # targets = xp.linspace(0, 1, N_target)
+
+        # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
+        # linear_electron_energies = xp.linspace(self.config.electron.energy_window_min,
+        #                                     self.config.electron.energy_window_max,
+        #                                     self.config.electron.energy_window_num)
+
+        # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
+        # adaptive_points = xp.interp(targets, cumsum, linear_electron_energies)
+
+        # return adaptive_points
+        # return xp.asarray([1])
 
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
@@ -580,7 +622,7 @@ class SCBA:
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
 
-        # pass in adaptive grid if needed, else None
+        # compute polarization, pass in adaptive grid if needed, else None
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
@@ -621,7 +663,9 @@ class SCBA:
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        # liyongda (05 Feb 2026): don't think I need to do anything special for adaptive grid here
+        # solve for w (screened Coulomb interaction) using p (polarization)
+        # liyongda (05 Feb 2026): don't think I need to do anything special for adaptive grid here\
+        # liyongda (13 Mar 2026): confirmed with Anders. No explicit energy dependence. No changes needed
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
@@ -662,6 +706,7 @@ class SCBA:
         comm.barrier()
 
         # up to the user to update the energy grid to adaptive grid before calling `sigma_fock.compute`
+        #   --> computes integral of g_lesser over the grid
         self.sigma_fock.compute(
             self.data.g_lesser,
             use_adaptive = self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration,
@@ -895,6 +940,7 @@ class SCBA:
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+                # compute the Green's function from scattering self-energies
                 # liyongda (23 Feb 2026): iteration 0, all sigma data is zero (checked with debugger and np.allclose)
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
@@ -905,6 +951,7 @@ class SCBA:
 
             comm.barrier()
 
+            # save g
             if self.config.outputs.save_reduced_functions:
                 g_lesser_reduced = reduce_matrix_over_stack(self.data.g_lesser, global_comm)
                 g_greater_reduced = reduce_matrix_over_stack(self.data.g_greater, global_comm)
@@ -940,11 +987,14 @@ class SCBA:
                 adaptive_electron_energies = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
                 # rank 0 computes adaptive grid and broadcast to other ranks
                 if comm.rank == 0:
+                    print(f"rank {comm.rank} - computing adaptive grid", flush=True)
                     adaptive_electron_energies = self._compute_adaptive_grid(g_retarded_reduced)
+                    # adaptive_electron_energies = compute_adaptive_grid(g_retarded_reduced, N_target=self.config.scba.adaptive_num_points, original_energy_grid=self.electron_energies)
+                    # sleep(2)
+                    # print(f"rank {comm.rank} - computed adaptive grid: {adaptive_electron_energies} ", flush=True)
                 
-                # broadcast adaptive grid to all ranks
-                comm.Bcast(adaptive_electron_energies, root=0)
                 comm.barrier()
+                comm.Bcast(adaptive_electron_energies, root=0)
 
                 # update adaptive grid from None to the computed grid
                 self.adaptive_electron_energies = adaptive_electron_energies
@@ -1015,6 +1065,7 @@ class SCBA:
                     m.dtranspose(discard=True)  # These can be safely discarded.
                     assert m.distribution_state == "nnz"
 
+            # compute polarization, then screened Coulomb interaction, then self-energy from the screened interaction
             if self.config.scba.coulomb_screening:
                 self._compute_coulomb_screening_interaction(
                     iteration=i,
@@ -1042,8 +1093,7 @@ class SCBA:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
-            # used for creating adaptive energy grid
-            #   also consider using ldos = density(g_retarded) --> what Anders and Han used last time
+            # save sigma
             if self.config.outputs.save_reduced_functions:
                 # save g at start of loop immediately after it's computed
                 # save p and w inside _compute_coulomb_screening_interaction because it's freed in the function

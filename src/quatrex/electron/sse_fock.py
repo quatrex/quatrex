@@ -41,6 +41,7 @@ class SigmaFock(ScatteringSelfEnergy):
             if coulomb_matrix.distribution_state != "nnz"
             else None
         )
+        # liyongda (11 Mar 2026): directly loaded from examples/w90/carbon-nanotube/inputs/coulomb_matrix.mat in scba init, and eventually passed here. No processing
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
@@ -89,14 +90,16 @@ class SigmaFock(ScatteringSelfEnergy):
                         raise ValueError(f"Invalid adaptive integration method: {adaptive_integration_method}. Must be 'trapezoid' or 'simpson'.")
                 else:
                     gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-                    sigma_retarded.data += (
-                        fft_circular_convolve(
-                            gl_density,
-                            self.coulomb_matrix_data,
-                            axes=tuple(range(gl_density.ndim - 1)),
-                        )
-                        / self.kpoint_volume
+
+                # liyongda (11 Mar 2026): I think the below computation is shared regardless of energy-grid
+                sigma_retarded.data += (
+                    fft_circular_convolve(
+                        gl_density,
+                        self.coulomb_matrix_data,       # just loaded from file, no processing, shape (nk,nk,norb,norb)
+                        axes=tuple(range(gl_density.ndim - 1)),
                     )
+                    / self.kpoint_volume
+                )
 
         # NOTE: The electron Green's functions and self-energies must
         # not be transposed back to stack distribution, as they are

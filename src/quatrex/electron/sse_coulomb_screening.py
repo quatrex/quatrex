@@ -153,8 +153,11 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
         # oversampling ratio, how much to blow up the adaptive grid in interpolation
         r = self.config.scba.adaptive_interpolation_oversampling_ratio
-        n_fine = r * ne
+        n_fine = int(r * ne)        # r could be 0.5
+        n_conv_fine = 2*n_fine -1
         if use_adaptive:
+            # self.prefactor is only computed 1x on init, assuming uniform energy grid
+            adaptive_prefactor = self.prefactor / r  # because of interpolation to a finer grid, we need to divide by the oversampling ratio to keep the prefactor consistent
             fine_energies = np.linspace(self.energies[0], self.energies[-1], n_fine)
             # Interpolate g and w to the fine grid. This is needed for the FFT-based convolution.
             g_lesser_fine = interpolate.make_interp_spline(self.energies, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
@@ -163,17 +166,25 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             w_greater_fine = interpolate.make_interp_spline(self.energies, w_greater.data[..., batch], axis=0, k=k)(fine_energies)
 
             # sigma_lesser
-            sigma_x_fft = xp.multiply(xp.fft.fft(g_lesser_fine, n, axis=0), xp.fft.fft(w_lesser_fine, n, axis=0))
-            sigma_x_fft -= xp.multiply(xp.fft.fft(g_lesser_fine, n, axis=0), xp.fft.fft(w_greater_fine, n, axis=0).conj())
+            sigma_x_fft = xp.multiply(xp.fft.fft(g_lesser_fine, n_conv_fine, axis=0), xp.fft.fft(w_lesser_fine, n_conv_fine, axis=0))
+            sigma_x_fft -= xp.multiply(xp.fft.fft(g_lesser_fine, n_conv_fine, axis=0), xp.fft.fft(w_greater_fine, n_conv_fine, axis=0).conj())
             
             # liyongda (03 Mar 2026) todo: how many points do we target when going back to real space?
-            lesser = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
-            sigma_lesser.data[..., batch] += lesser
+            lesser = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine]
 
             # sigma_greater
-            sigma_x_fft = xp.multiply(xp.fft.fft(g_greater_fine, n, axis=0), xp.fft.fft(w_greater_fine, n, axis=0))
-            sigma_x_fft -= xp.multiply(xp.fft.fft(g_greater_fine, n, axis=0), xp.fft.fft(w_lesser_fine, n, axis=0).conj())
-            greater = self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+            sigma_x_fft = xp.multiply(xp.fft.fft(g_greater_fine, n_conv_fine, axis=0), xp.fft.fft(w_greater_fine, n_conv_fine, axis=0))
+            sigma_x_fft -= xp.multiply(xp.fft.fft(g_greater_fine, n_conv_fine, axis=0), xp.fft.fft(w_lesser_fine, n_conv_fine, axis=0).conj())
+            greater = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine]
+
+            # go back to original grid (if different length)
+            if len(lesser) != ne:
+                lesser = interpolate.make_interp_spline(fine_energies, lesser, axis=0, k=k)(self.energies)
+            if len(greater) != ne:
+                greater = interpolate.make_interp_spline(fine_energies, greater, axis=0, k=k)(self.energies)
+            
+            # update self-energy data structure
+            sigma_lesser.data[..., batch] += lesser
             sigma_greater.data[..., batch] += greater
 
         else:

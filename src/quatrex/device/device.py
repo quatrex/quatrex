@@ -3,14 +3,13 @@ import warnings
 from collections import defaultdict
 
 import numpy as np
-import scipy
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
-from quatrex.device.inputs import distributed_read_xyz
+from quatrex.device.inputs import distributed_read_xyz, load_matrices
 
 
 def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
@@ -123,43 +122,33 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.mat").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
+        # NOTE: Contains half the keys
+        hamiltonians = load_matrices(self.config, "hamiltonian")
 
-        for r, h_r in self.hamiltonians.items():
-            assert (
-                h_r.shape[0] == h_r.shape[1]
-            ), f"Hamiltonian matrix at index {r} is not square."
-
-            # assert all hamiltonians are sparse matrices
-            if not isinstance(h_r, scipy.sparse.spmatrix):
-                raise ValueError(
-                    f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
-                    f"Matrix type: {type(h_r)}"
-                )
-
-            self.hamiltonians[r] = sparse.csr_matrix((h_r))
+        self.hamiltonians = {}
+        for r, h_r in hamiltonians.items():
+            hamiltonians[r] = sparse.csr_matrix((h_r))
 
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
+            # TODO: Do not unsymmetrize
             if not all(index == 0 for index in r):
-                self.hamiltonians[r] = self.hamiltonians[r].astype(xp.complex128)
-
-            if not self.hamiltonians[r].has_canonical_format:
-                self.hamiltonians[r].sum_duplicates()
-                self.hamiltonians[r].sort_indices()
+                self.hamiltonians[r] = hamiltonians[r].astype(xp.complex128)
+                # TODO: Having or not having the `sparse.csr_matrix` makes a difference
+                self.hamiltonians[tuple(-i for i in r)] = sparse.csr_matrix(
+                    hamiltonians[r].copy().astype(xp.complex128).conj().T
+                )
+            else:
+                self.hamiltonians[r] = hamiltonians[r] + hamiltonians[r].conj().T
+                self.hamiltonians[r].setdiag(self.hamiltonians[r].diagonal() / 2)
 
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.mat").exists():
-            self.overlap_matrices = distributed_load(
-                self.config.input_dir / "overlap.mat"
-            )
+            overlap_matrices = load_matrices(self.config, "overlap")
 
-            for r, s_r in self.overlap_matrices.items():
-                assert (
-                    s_r.shape[0] == s_r.shape[1]
-                ), f"Hamiltonian matrix at index {r} is not square."
-
+            self.overlap_matrices = {}
+            for r, s_r in overlap_matrices.items():
                 assert (
                     s_r.shape[0] == size
                 ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[0]}."
@@ -168,24 +157,23 @@ class Device:
                     s_r.shape[1] == size
                 ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[1]}."
 
-                # assert all overlap_matrices are sparse matrices
-                if not isinstance(s_r, scipy.sparse.spmatrix):
-                    raise ValueError(
-                        f"Hamiltonian matrix at index {r} is not a sparse matrix."
-                    )
-
-                self.overlap_matrices[r] = sparse.csr_matrix(s_r)
+                overlap_matrices[r] = sparse.csr_matrix(s_r)
 
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
+                # TODO: Do not unsymmetrize
                 if not all(index == 0 for index in r):
-                    self.overlap_matrices[r] = self.overlap_matrices[r].astype(
-                        xp.complex128
+                    self.overlap_matrices[r] = overlap_matrices[r].astype(xp.complex128)
+                    self.overlap_matrices[tuple(-i for i in r)] = sparse.csr_matrix(
+                        self.overlap_matrices[r].conj().T
                     )
-
-                if not self.overlap_matrices[r].has_canonical_format:
-                    self.overlap_matrices[r].sum_duplicates()
-                    self.overlap_matrices[r].sort_indices()
+                else:
+                    self.overlap_matrices[r] = (
+                        overlap_matrices[r] + overlap_matrices[r].conj().T
+                    )
+                    self.overlap_matrices[r].setdiag(
+                        self.overlap_matrices[r].diagonal() / 2
+                    )
 
             if len(self.overlap_matrices) < len(self.hamiltonians):
                 raise ValueError(

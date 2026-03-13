@@ -577,6 +577,12 @@ def load_matrices(
         if coord[transport_ind] == 0
     }
 
+    # make sure that the matrices are canonical
+    for matrix in matrix_dict.values():
+        if not matrix.has_canonical_format:
+            matrix.sum_duplicates()
+            matrix.sort_indices()
+
     return matrix_dict
 
 

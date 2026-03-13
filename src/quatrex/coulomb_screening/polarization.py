@@ -18,45 +18,6 @@ if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
 
 
-def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
-    """Computes the Hilbert transform of the array a, assuming the symmetries of the
-    polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
-    This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
-
-    Assumes that the first axis corresponds to the energy axis.
-
-    Parameters
-    ----------
-    a : NDArray
-        The array to transform.
-    energies : NDArray
-        The energy values corresponding to the first axis of a.
-
-    Returns
-    -------
-    NDArray
-         The Hilbert transform of a.
-
-    """
-    # eta for removing the singularity. See Cauchy principal value.
-    de = energies[1] - energies[0]
-    eta = de / 2
-    energy_differences = (
-        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
-    )
-    ne = energies.size
-
-    hilbert_kernel = 1 / energy_differences
-    b = fft_convolve(a, hilbert_kernel)[:ne]
-    # Negative frequencies of a
-    b += fft_convolve(a[::-1].conj(), hilbert_kernel)[-ne:]
-    # Negative frequencies of the kernel
-    hilbert_kernel = -hilbert_kernel[::-1]
-    b += fft_convolve(a, hilbert_kernel)[-ne:]
-
-    return b
-
-
 class PCoulombScreening(ScatteringSelfEnergy):
     """Computes the dynamic polarization from the electronic system.
 
@@ -87,6 +48,44 @@ class PCoulombScreening(ScatteringSelfEnergy):
         self.discard_real_parts = config.coulomb_screening.discard_real_parts
         self.compute_retarded = config.coulomb_screening.compute_retarded_polarization
 
+    def _hilbert_transform(self, a: NDArray, energies: NDArray) -> NDArray:
+        """Computes the Hilbert transform of the array a, assuming the symmetries of the
+        polarization, i.e \([P^{\lessgtr}_{ij}(\omega)]^{\dagger} = -P^{\gtrless}_{ij}(-\omega)\).
+        This becomes \(a(-\omega)=a^{*}(\omega)\), where a is \(a=P^>-P^<\).
+
+        Assumes that the first axis corresponds to the energy axis.
+
+        Parameters
+        ----------
+        a : NDArray
+            The array to transform.
+        energies : NDArray
+            The energy values corresponding to the first axis of a.
+
+        Returns
+        -------
+        NDArray
+            The Hilbert transform of a.
+
+        """
+        # eta for removing the singularity. See Cauchy principal value.
+        de = energies[1] - energies[0]
+        eta = de / 2
+        energy_differences = (
+            xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
+        )
+        ne = energies.size
+
+        hilbert_kernel = 1 / energy_differences
+        b = fft_convolve(a, hilbert_kernel)[:ne]
+        # Negative frequencies of a
+        b += fft_convolve(a[::-1].conj(), hilbert_kernel)[-ne:]
+        # Negative frequencies of the kernel
+        hilbert_kernel = -hilbert_kernel[::-1]
+        b += fft_convolve(a, hilbert_kernel)[-ne:]
+
+        return b
+
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
         self, g_lesser: DSDBSparse, g_greater: DSDBSparse, out: tuple[DSDBSparse, ...]
@@ -110,7 +109,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
         with profiler.profile_range(
             label="PCoulombScreening: stack->nnz transpose", level="default", comm=comm
         ):
-
             # Transpose the matrices to nnz distribution.
             for m in (g_lesser, g_greater):
                 # These should ideally already be in nnz-distribution.
@@ -130,7 +128,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
             level="default",
             comm=comm,
         ):
-
             if p_greater.data.shape[-1] != 0:
                 if xp.__name__ == "cupy":
                     free_mempool()
@@ -188,7 +185,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
-                                hilbert_transform(
+                                self._hilbert_transform(
                                     (
                                         p_greater.data[..., batch]
                                         - p_lesser.data[..., batch]
@@ -202,7 +199,6 @@ class PCoulombScreening(ScatteringSelfEnergy):
         with profiler.profile_range(
             label="PCoulombScreening: nnz->stack transpose", level="default", comm=comm
         ):
-
             # Transpose the matrices to stack distribution.
             for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None

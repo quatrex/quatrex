@@ -22,9 +22,9 @@ from quatrex.core.observables import (
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device.inputs import (
+    assemble_matrix,
     create_coordinate_grid,
     distributed_read_xyz,
-    load_matrix,
 )
 from quatrex.electron import (
     ElectronSolver,
@@ -71,20 +71,18 @@ class SCBAData:
             # The neighbor cell cutoff along the transport direction
             # determines the size of the transport cell.
             transport_ind = "xyz".index(config.device.transport_direction)
-            unit_cells_per_transport_cell = [1, 1, 1]
-            unit_cells_per_transport_cell[transport_ind] = (
-                config.device.neighbor_cell_cutoff[transport_ind]
-            )
-            device_cell = unit_cells_per_transport_cell.copy()
-            device_cell[transport_ind] *= config.device.num_transport_cells
 
             block_sizes = np.array(
-                [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
+                [config.device.neighbor_cell_cutoff[transport_ind] * grid.shape[0]]
                 * config.device.num_transport_cells
             )
 
             grid = create_coordinate_grid(
-                grid, tuple(device_cell), xp.asarray(lattice_vectors)
+                grid,
+                config.device.num_transport_cells
+                * config.device.neighbor_cell_cutoff[transport_ind],
+                transport_ind,
+                xp.asarray(lattice_vectors),
             )
 
         else:
@@ -324,7 +322,7 @@ class SCBA:
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:
             # Load the Coulomb matrix.
-            coulomb_matrix, __ = load_matrix(
+            coulomb_matrix, __ = assemble_matrix(
                 config=config,
                 matrix_name="coulomb_matrix",
                 sparsity_pattern=self.data.sparsity_pattern,

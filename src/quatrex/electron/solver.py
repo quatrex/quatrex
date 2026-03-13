@@ -18,7 +18,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import get_periodic_superblocks, homogenize
-from quatrex.device.inputs import load_matrix
+from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
 
@@ -76,7 +76,7 @@ class ElectronSolver(SubsystemSolver):
         self.local_energies = get_local_slice(energies, comm.stack)
 
         # Load the device Hamiltonian.
-        self.hamiltonian, hamiltonian_sparsity_pattern = load_matrix(
+        self.hamiltonian, hamiltonian_sparsity_pattern = assemble_matrix(
             config=config,
             matrix_name="hamiltonian",
             sparsity_pattern=None,
@@ -96,7 +96,7 @@ class ElectronSolver(SubsystemSolver):
             # should look like this.
 
             # Load the device Overlap.
-            self.overlap, overlap_sparsity_pattern = load_matrix(
+            self.overlap, overlap_sparsity_pattern = assemble_matrix(
                 config=config,
                 matrix_name="overlap",
                 sparsity_pattern=None,

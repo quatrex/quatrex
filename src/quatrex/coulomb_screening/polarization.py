@@ -200,7 +200,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
                     if self.discard_real_parts:
                         p_l_full.real = 0
-                        p_l_full.real = 0
+                        p_g_full.real = 0
 
                     if self.config.compute.num_bits is None:
                         p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]

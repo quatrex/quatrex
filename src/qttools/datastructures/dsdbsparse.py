@@ -197,20 +197,34 @@ class DSDBSparse(ABC):
         # Per default, we have the data is distributed in stack format.
         self.distribution_state = "stack"
 
-        self.data_slice_stack = (
-            slice(None, int(self.stack_section_sizes_offset)),
-            ...,
-            slice(None, int(self.nnz_section_offsets[-1])),
-        )
-        self.data_slice_nnz = (
-            slice(None, int(self.global_stack_shape[0])),
-            ...,
-            slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
-        )
+        self.bits = bits
+        if self.bits is None:
+            self.data_slice_stack = (
+                slice(None, int(self.stack_section_sizes_offset)),
+                ...,
+                slice(None, int(self.nnz_section_offsets[-1])),
+            )
+            self.data_slice_nnz = (
+                slice(None, int(self.global_stack_shape[0])),
+                ...,
+                slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
+            )
+        else:
+            self.data_slice_stack = (
+                slice(None, int(self.stack_section_sizes_offset)),
+                ...,
+                slice(None, int(self.nnz_section_offsets[-1])),
+                slice(None),
+            )
+            self.data_slice_nnz = (
+                slice(None, int(self.global_stack_shape[0])),
+                ...,
+                slice(None, int(self.nnz_section_sizes[comm.stack.rank])),
+                slice(None),
+            )
 
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
-        self.bits = bits
         if bits is None:
             self._data = xp.zeros(
                 (max(stack_section_sizes), *global_stack_shape[1:], total_nnz_size),
@@ -830,6 +844,9 @@ class DSDBSparse(ABC):
             all-to-all communication.
 
         """
+        if self.bits is not None:
+            self._data = self._data.reshape(self._data.shape[:-2] + (-1,))
+
         if self.distribution_state == "stack":
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
@@ -844,15 +861,13 @@ class DSDBSparse(ABC):
             _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
             self._data = _data
 
-            if self.bits is None:
-                concatenate_axis = -1
-            else:
-                concatenate_axis = -2
-
-            self._dtranspose(
-                block_axis=0, concatenate_axis=concatenate_axis, discard=discard
-            )
+            self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"
+
+        if self.bits is not None:
+            self._data = self._data.reshape(
+                self._data.shape[:-1] + (-1, 2 * (self.bits // 8))
+            )
 
     @abstractmethod
     def spy(self) -> tuple[NDArray, NDArray]:

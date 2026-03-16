@@ -927,14 +927,18 @@ class DSDBSparse(ABC):
         self._data = None
         free_mempool()
 
-    def allocate_data(self) -> None:
+    def allocate_data(self, stack_size: int | None = None) -> None:
         """Allocates the local data."""
         free_mempool()
+
+        if stack_size is None or stack_size == 0:
+            stack_size = int(max(self.stack_section_sizes))
+
         if self._data is None:
             if self.bits is not None:
                 self._data = xp.empty(
                     (
-                        int(max(self.stack_section_sizes)),
+                        stack_size,
                         *self.global_stack_shape[1:],
                         self.total_nnz_size,
                         2 * (self.bits // 8),
@@ -944,7 +948,7 @@ class DSDBSparse(ABC):
             else:
                 self._data = xp.empty(
                     (
-                        int(max(self.stack_section_sizes)),
+                        stack_size,
                         *self.global_stack_shape[1:],
                         self.total_nnz_size,
                     ),
@@ -1028,6 +1032,10 @@ def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:
         The stack index with the ellipsis replaced.
 
     """
+
+    if not isinstance(stack_index, tuple):
+        stack_index = (stack_index,)
+
     is_ellipsis = [i for i, ind in enumerate(stack_index) if ind is Ellipsis]
     if is_ellipsis:
         if len(is_ellipsis) > 1:
@@ -1045,6 +1053,76 @@ def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:
     return stack_index
 
 
+def _compose_single(lhs: int | slice, rhs: int | slice, length: int) -> int | slice:
+    """Composes two unidimensional indices or slices.
+
+    Example:
+        length = 30  # dimension of length 30
+        lhs = slice(2, 27, 2)  # selects indices [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
+        rhs = slice(1, 11, 3)  # selects indices [1, 4, 7, 10] from the previous selection,
+                               # i.e., [4, 10, 16, 22] from the original dimension
+        result = _compose_single(lhs, rhs, 30)
+        # result is slice(4, 22, 6), which selects indices [4, 10, 16, 22] from the original dimension.
+
+    Parameters
+    ----------
+    lhs : int | slice
+        The first index or slice.
+    rhs : int | slice
+        The second index or slice.
+    length : int
+        The length of the dimension being indexed.
+
+    Returns
+    -------
+    int | slice
+        The composed index or slice.
+    """
+    out = range(length)[lhs][rhs]
+    return out if isinstance(out, int) else slice(out.start, out.stop, out.step)
+
+
+def _compose(
+    shape: tuple[int, ...],
+    first: tuple[int, ...] | int | slice,
+    second: tuple[int, ...] | int | slice,
+) -> tuple[int | slice, ...]:
+    """Composes two multidimensional indices or slices.
+
+    Parameters
+    ----------
+    shape : tuple
+        The shape of the array being indexed.
+    first : tuple | int | slice
+        The first index or slice.
+    second : tuple | int | slice
+        The second index or slice.
+
+    Returns
+    -------
+    tuple
+        The composed index or slice.
+    """
+
+    def ensure_tuple(ndslice):
+        return ndslice if isinstance(ndslice, tuple) else (ndslice,)
+
+    # Ensure both are tuples for easier processing
+    first = ensure_tuple(first)
+    second = ensure_tuple(second)
+
+    # Initialize output with first index/slice and fill the rest with full slices
+    out = list(first) + [slice(None)] * (len(shape) - len(first))
+
+    # We only need to compose the slice dimensions (not the indices).
+    # NOTE: It is implied that for any dimensions excluded here, the corresponding index in `second` is 0.
+    remaining_dims = [i for i, s in enumerate(out) if isinstance(s, slice)]
+
+    for i, rhs in zip(remaining_dims, second):
+        out[i] = _compose_single(out[i], rhs, length=shape[i])
+    return tuple(out)
+
+
 class _DStackIndexer:
     """A utility class to locate substacks in the distributed stack.
 
@@ -1055,18 +1133,35 @@ class _DStackIndexer:
 
     """
 
-    def __init__(self, dsdbsparse: DSDBSparse) -> None:
+    def __init__(self, dsdbsparse: "DSDBSparse | _DStackView") -> None:
         """Initializes the stack indexer."""
-        self._dsdbsparse = dsdbsparse
+        if isinstance(dsdbsparse, _DStackView):
+            self._dsdbsparse = dsdbsparse._dsdbsparse
+            self._base_index = dsdbsparse._stack_index
+        else:
+            self._dsdbsparse = dsdbsparse
+            self._base_index = None
 
     def __getitem__(self, index: tuple) -> "_DStackView":
         """Gets a substack view."""
-        return _DStackView(self._dsdbsparse, index)
+        if self._base_index is not None:
+            if self._dsdbsparse.bits is None:
+                index = _replace_ellipsis(index, self._dsdbsparse.data.ndim)
+            else:
+                index = _replace_ellipsis(index, self._dsdbsparse.data.ndim - 1)
+            composition = _compose(
+                self._dsdbsparse.stack_shape, self._base_index, index
+            )
+        else:
+            composition = index
+        return _DStackView(self._dsdbsparse, composition)
 
     def __setitem__(
         self, stack_index: tuple, other: "DSDBSparse | sparse.spmatrix"
     ) -> None:
         """Sets a substack."""
+
+        assert self._base_index is None
 
         if self._dsdbsparse.bits is None:
             stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
@@ -1100,8 +1195,6 @@ class _DStackView:
         """Initializes the stack indexer."""
         self._dsdbsparse = dsdbsparse
         self.symmetry = dsdbsparse.symmetry
-        if not isinstance(stack_index, tuple):
-            stack_index = (stack_index,)
 
         if dsdbsparse.bits is None:
             stack_index = _replace_ellipsis(stack_index, self._dsdbsparse.data.ndim)
@@ -1116,6 +1209,21 @@ class _DStackView:
             self._dsdbsparse, self._stack_index, return_dense=False, cache_stack=True
         )
 
+        shape = self._dsdbsparse.shape
+        stack_size = []
+        for i, s in enumerate(stack_index):
+            if isinstance(s, slice):
+                start = s.start if s.start is not None else 0
+                stop = s.stop if s.stop is not None else shape[i]
+                stack_size.append(stop - start)
+            elif isinstance(s, int):
+                stack_size.append(1)
+            else:
+                raise IndexError(
+                    f"Expected slice or int in stack index but got {type(s)} ({s=})."
+                )
+        self.shape = tuple(stack_size) + shape[-2:]
+
     def __getitem__(self, index: tuple[ArrayLike, ArrayLike]) -> NDArray:
         """Gets the requested data from the substack."""
         rows, cols = self._dsdbsparse._normalize_index(index)
@@ -1125,6 +1233,11 @@ class _DStackView:
         """Sets the requested data in the substack."""
         rows, cols = self._dsdbsparse._normalize_index(index)
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
+
+    @property
+    def stack(self) -> "_DStackIndexer":
+        """Returns the stack indexer on the substack."""
+        return _DStackIndexer(self)
 
     def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
         """In-place addition of sparse matrix."""

@@ -9,6 +9,7 @@ from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import (
     find_band_edges,
@@ -202,6 +203,8 @@ class ElectronSolver(SubsystemSolver):
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
+        self.max_batch_size = config.electron.max_batch_size
+
     @staticmethod
     def get_block(
         coo: sparse.coo_matrix, block_sizes: NDArray, index: tuple
@@ -304,7 +307,7 @@ class ElectronSolver(SubsystemSolver):
         return block
 
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
-    def _compute_obc(self) -> None:
+    def _compute_obc(self, stack_slice: slice) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
             # Extract the overlap matrix blocks.
@@ -322,20 +325,34 @@ class ElectronSolver(SubsystemSolver):
             # TODO: use residuals to filter "bad" energies
             g_00, *__ = self.obc(
                 (m_00 + s_00, m_01 + s_01, m_10 + s_10),
-                contact="left",
+                contact="left-" + str(stack_slice),
             )
+
             # Apply the retarded boundary self-energy.
             sigma_00 = m_10 @ g_00 @ m_01
-            self.obc_blocks.retarded[0] = sigma_00
+
+            if self.obc_blocks.retarded[0] is None:
+                self.obc_blocks.retarded[0] = xp.empty(
+                    (
+                        self.local_energies.size,
+                        sigma_00.shape[-2],
+                        sigma_00.shape[-1],
+                    ),
+                    dtype=sigma_00.dtype,
+                )
+                self.obc_blocks.lesser[0] = xp.empty_like(self.obc_blocks.retarded[0])
+                self.obc_blocks.greater[0] = xp.empty_like(self.obc_blocks.retarded[0])
+
+            self.obc_blocks.retarded[0][stack_slice] = sigma_00
             gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
 
             # Compute and apply the lesser boundary self-energy.
-            self.obc_blocks.lesser[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies
+            self.obc_blocks.lesser[0][stack_slice] = 1j * scale_stack(
+                gamma_00.copy(), self.left_occupancies[stack_slice]
             )
             # Compute and apply the greater boundary self-energy.
-            self.obc_blocks.greater[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies - 1
+            self.obc_blocks.greater[0][stack_slice] = 1j * scale_stack(
+                gamma_00.copy(), self.left_occupancies[stack_slice] - 1
             )
         if comm.block.rank == comm.block.size - 1:
             # Extract the overlap matrix blocks.
@@ -364,7 +381,7 @@ class ElectronSolver(SubsystemSolver):
                     xp.flip(m_nm + s_nm, axis=(-2, -1)),
                     xp.flip(m_mn + s_mn, axis=(-2, -1)),
                 ),
-                contact="right",
+                contact="right-" + str(stack_slice),
             )
             # ... bop it.
             g_nn = xp.flip(g_nn, axis=(-2, -1))
@@ -375,19 +392,35 @@ class ElectronSolver(SubsystemSolver):
             # Apply the retarded boundary self-energy.
             sigma_nn = m_mn @ g_nn @ m_nm
 
-            self.obc_blocks.retarded[-1] = sigma_nn
+            if self.obc_blocks.retarded[-1] is None:
+                self.obc_blocks.retarded[-1] = xp.empty(
+                    (
+                        self.local_energies.size,
+                        sigma_nn.shape[-2],
+                        sigma_nn.shape[-1],
+                    ),
+                    dtype=sigma_nn.dtype,
+                )
+                self.obc_blocks.lesser[-1] = xp.empty_like(self.obc_blocks.retarded[-1])
+                self.obc_blocks.greater[-1] = xp.empty_like(
+                    self.obc_blocks.retarded[-1]
+                )
+
+            self.obc_blocks.retarded[-1][stack_slice] = sigma_nn
 
             gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
 
-            self.obc_blocks.lesser[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies
+            self.obc_blocks.lesser[-1][stack_slice] = 1j * scale_stack(
+                gamma_nn.copy(), self.right_occupancies[stack_slice]
             )
 
-            self.obc_blocks.greater[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies - 1
+            self.obc_blocks.greater[-1][stack_slice] = 1j * scale_stack(
+                gamma_nn.copy(), self.right_occupancies[stack_slice] - 1
             )
 
-    def _assemble_system_matrix(self, sse_retarded: DSDBSparse) -> None:
+    def _assemble_system_matrix(
+        self, sse_retarded: DSDBSparse, stack_slice: slice
+    ) -> None:
         """Assembles the system matrix.
 
         Parameters
@@ -420,7 +453,7 @@ class ElectronSolver(SubsystemSolver):
         else:
             scale_stack(
                 self.system_matrix.data,
-                self.local_energies + 1j * self.eta,
+                self.local_energies[stack_slice] + 1j * self.eta,
             )
 
         self.system_matrix -= sparse.diags(self.potential, format="csr")
@@ -503,60 +536,95 @@ class ElectronSolver(SubsystemSolver):
                 homogenize(sse_lesser)
                 homogenize(sse_retarded)
 
-        with profiler.profile_range(
-            label="ElectronSolver: Assemble", level="default", comm=comm
-        ):
-            self.system_matrix.allocate_data()
+        if self.max_batch_size is None:
+            max_batch_size = sse_retarded.shape[0]
+        else:
+            max_batch_size = self.max_batch_size
 
-            self._assemble_system_matrix(sse_retarded)
+        batch_sizes, batch_offsets = get_batches(sse_retarded.shape[0], max_batch_size)
 
-        if self.band_edge_tracking == "eigenvalues":
+        self.meir_wingreen_current = []
+
+        for i in range(len(batch_sizes)):
+
+            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            sse_lesser_tmp = sse_lesser.stack[stack_slice]
+            sse_greater_tmp = sse_greater.stack[stack_slice]
+            sse_retarded_tmp = sse_retarded.stack[stack_slice]
+
             with profiler.profile_range(
-                label="ElectronSolver: Band edges", level="default", comm=comm
+                label="ElectronSolver: Assemble", level="default", comm=comm
             ):
-                left_band_edges, right_band_edges = find_renormalized_eigenvalues(
-                    hamiltonian=self.hamiltonian,
-                    overlap=self.overlap_sparray,
-                    potential=self.potential,
-                    sigma_retarded=sse_retarded,
-                    energies=self.energies,
-                    conduction_band_guesses=(
-                        self.left_fermi_level + self.delta_fermi_level_conduction_band,
-                        self.right_fermi_level + self.delta_fermi_level_conduction_band,
-                    ),
-                    mid_gap_energies=(
-                        self.left_mid_gap_energy,
-                        self.right_mid_gap_energy,
-                    ),
-                    band_edge_config=self.config.compute.band_edge,
-                )
-                self._update_fermi_levels(left_band_edges, right_band_edges)
+                self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
-        self._compute_obc()
+                self._assemble_system_matrix(sse_retarded_tmp, stack_slice)
 
-        with profiler.profile_range(
-            label="ElectronSolver: Solve", level="default", comm=comm
-        ):
-            if comm.block.size > 1:
-                self.solver_dist.selected_solve(
-                    a=self.system_matrix,
-                    sigma_lesser=sse_lesser,
-                    sigma_greater=sse_greater,
-                    obc_blocks=self.obc_blocks,
-                    out=out,
-                    return_retarded=True,
-                )
+            if i == 0 and self.band_edge_tracking == "eigenvalues":
+                with profiler.profile_range(
+                    label="ElectronSolver: Band edges", level="default", comm=comm
+                ):
+                    left_band_edges, right_band_edges = find_renormalized_eigenvalues(
+                        hamiltonian=self.hamiltonian,
+                        overlap=self.overlap_sparray,
+                        potential=self.potential,
+                        sigma_retarded=sse_retarded,
+                        energies=self.energies,
+                        conduction_band_guesses=(
+                            self.left_fermi_level
+                            + self.delta_fermi_level_conduction_band,
+                            self.right_fermi_level
+                            + self.delta_fermi_level_conduction_band,
+                        ),
+                        mid_gap_energies=(
+                            self.left_mid_gap_energy,
+                            self.right_mid_gap_energy,
+                        ),
+                        band_edge_config=self.config.compute.band_edge,
+                    )
+                    self._update_fermi_levels(left_band_edges, right_band_edges)
 
-            else:
-                self.meir_wingreen_current = self.solver.selected_solve(
-                    a=self.system_matrix,
-                    sigma_lesser=sse_lesser,
-                    sigma_greater=sse_greater,
-                    obc_blocks=self.obc_blocks,
-                    out=out,
-                    return_retarded=True,
-                    return_current=self.compute_meir_wingreen_current,
-                )
+            self._compute_obc(stack_slice)
+
+            out_l, out_g, out_r = out
+            out_slice = (
+                out_l.stack[stack_slice],
+                out_g.stack[stack_slice],
+                out_r.stack[stack_slice],
+            )
+            obc_blocks_tmp = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
+            for j in range(self.system_matrix.num_local_blocks):
+                if self.obc_blocks.retarded[j] is not None:
+                    obc_blocks_tmp.retarded[j] = self.obc_blocks.retarded[j][
+                        stack_slice
+                    ]
+                    obc_blocks_tmp.lesser[j] = self.obc_blocks.lesser[j][stack_slice]
+                    obc_blocks_tmp.greater[j] = self.obc_blocks.greater[j][stack_slice]
+
+            with profiler.profile_range(
+                label="ElectronSolver: Solve", level="default", comm=comm
+            ):
+                if comm.block.size > 1:
+                    self.solver_dist.selected_solve(
+                        a=self.system_matrix,
+                        sigma_lesser=sse_lesser_tmp,
+                        sigma_greater=sse_greater_tmp,
+                        obc_blocks=self.obc_blocks_tmp,
+                        out=out_slice,
+                        return_retarded=True,
+                    )
+
+                else:
+                    self.meir_wingreen_current.append(
+                        self.solver.selected_solve(
+                            a=self.system_matrix,
+                            sigma_lesser=sse_lesser_tmp,
+                            sigma_greater=sse_greater_tmp,
+                            obc_blocks=obc_blocks_tmp,
+                            out=out_slice,
+                            return_retarded=True,
+                            return_current=self.compute_meir_wingreen_current,
+                        )
+                    )
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
@@ -618,5 +686,11 @@ class ElectronSolver(SubsystemSolver):
                 )
 
                 self._update_fermi_levels(left_band_edges, right_band_edges)
+
+        if self.compute_meir_wingreen_current:
+            self.meir_wingreen_current = xp.array(self.meir_wingreen_current)
+            self.meir_wingreen_current = self.meir_wingreen_current.reshape(
+                (-1, *self.meir_wingreen_current.shape[2:])
+            )
 
         self.call_count += 1

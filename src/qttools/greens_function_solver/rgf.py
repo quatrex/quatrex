@@ -173,10 +173,14 @@ class RGF(GFSolver):
 
         if return_current:
             # Allocate a buffer for the current.
-            current = xp.zeros((*a.shape[:-2], a.num_blocks - 1), dtype=a.dtype)
+            current = xp.zeros(
+                (*sigma_lesser.shape[:-2], a.num_blocks - 1), dtype=a.dtype
+            )
 
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+        batches_sizes, batches_slices = get_batches(
+            sigma_lesser.shape[0], self.max_batch_size
+        )
 
         # If out is not none, xr will be the third element of the tuple.
         if out is not None:

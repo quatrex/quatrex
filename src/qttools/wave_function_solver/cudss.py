@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import ctypes.util
+import time
 from collections.abc import Sequence
 
 from qttools import NDArray, sparse
@@ -247,7 +248,10 @@ class cuDSS(WFSolver):
             # NOTE: By default this uses a custom nested dissectioning
             # scheme based on METIS. Other options could in principle be
             # exposed as a parameter.
+            t1 = time.time()
             self.plan_info = self.direct_solver.plan()
+            t2 = time.time()
+            print(f"Planning time: {t2 - t1:.2f} seconds", flush=True)
 
         # TODO: This does not support setting a right-hand side that
         # has a different shape or strides than the original one.
@@ -257,6 +261,14 @@ class cuDSS(WFSolver):
         self._explicitely_reset_b(b)
 
         if not reuse_fact or self.factorization_info is None:
+            t1 = time.time()
             self.factorization_info = self.direct_solver.factorize()
+            t2 = time.time()
+            print(f"Factorization time: {t2 - t1:.2f} seconds", flush=True)
 
-        return self.direct_solver.solve()
+        t1 = time.time()
+        sol = self.direct_solver.solve()
+        t2 = time.time()
+        print(f"Solving time: {t2 - t1:.2f} seconds", flush=True)
+
+        return sol

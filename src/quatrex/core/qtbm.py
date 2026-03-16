@@ -19,6 +19,7 @@ from qttools.wave_function_solver import (
     MUMPS,
     PARDISO,
     SuperLU,
+    Thomas,
     WFSolver,
     cuDSS,
     preferred_matrix_type,
@@ -335,6 +336,9 @@ class QTBM:
                 return PARDISO(matrix_type="complex_hermitian_indefinite")
             else:
                 return PARDISO(matrix_type="complex_structurally_symmetric")
+
+        if solver_config.direct_solver == "thomas":
+            return Thomas()
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -1011,41 +1015,37 @@ class QTBM:
                         )
 
                     times.append(time.perf_counter())
+                    injected_mask = xp.arange(injection_tot.shape[1])
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
+                        print(injection_tot.shape, reflection_tot.shape)
+                        reflected_mask = (
+                            xp.arange(reflection_tot.shape[1]) + injection_tot.shape[1]
+                        )
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             phi = self.solver.solve(
                                 system_matrix,
-                                injection_tot.toarray(order="F"),
+                                sparse.hstack([injection_tot, reflection_tot]).toarray(
+                                    order="F"
+                                ),
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
                             t2 = time.perf_counter()
                             print(
-                                f"Time for uncorrected solve: {t2 - t1:.2f} s",
+                                f"Time for solve: {t2 - t1:.2f} s",
                                 flush=True,
                             )
                             t1 = time.perf_counter()
-                            phi_reflected = self.solver.solve(
-                                system_matrix,
-                                reflection_tot.toarray(order="F"),
-                                reuse_sym_fact=True,
-                                reuse_fact=True,
-                            )
-                            t2 = time.perf_counter()
-                            print(
-                                f"Time for reflected solve: {t2 - t1:.2f} s", flush=True
-                            )
-                            t1 = time.perf_counter()
-                            phi += phi_reflected @ xp.linalg.solve(
-                                xp.diag(eig_tot) - phi_inv_tot @ phi_reflected,
-                                phi_inv_tot @ phi,
+                            phi[:, injected_mask] += phi[
+                                :, reflected_mask
+                            ] @ xp.linalg.solve(
+                                xp.diag(eig_tot) - phi_inv_tot @ phi[:, reflected_mask],
+                                phi_inv_tot @ phi[:, injected_mask],
                             )
                             t2 = time.perf_counter()
                             print(f"Time for correction: {t2 - t1:.2f} s", flush=True)
-
-                            del phi_reflected
                     else:
                         # Solve for the wavefunction
                         if injection_tot.size != 0:
@@ -1084,7 +1084,7 @@ class QTBM:
                     if injection_tot.size != 0:
                         # Input
                         self._compute_observables(
-                            phi,
+                            phi[:, injected_mask],
                             injection_segments,
                             i,
                             batch_start + i,
@@ -1099,6 +1099,8 @@ class QTBM:
                             self.device.overlap_matrices,
                             k_idx,
                         )
+
+                        del phi
 
                     t_observables = time.perf_counter() - times.pop()
                     if comm.rank == 0:

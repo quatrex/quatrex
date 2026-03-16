@@ -542,6 +542,15 @@ class ElectronConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    max_batch_size: PositiveInt | None = None
+    """The maximum number of energies per batch for the electronic subsystem.
+    
+    This controls the batching of the boundary condition and Green's function
+    solvers in the electronic subsystem. If not set, all energies are computed
+    at once.
+    
+    """
+
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
@@ -703,6 +712,16 @@ class CoulombScreeningConfig(BaseModel):
             )
 
         return self
+
+    max_batch_size: PositiveInt | None = None
+    """The maximum number of energies per batch for the Coulomb screening
+    subsystem.
+
+    This controls the batching of the boundary condition and screend coulomb
+    interaction solver in the Coulomb screening subsystem. If not set, all
+    energies are computed at once.
+
+    """
 
 
 class PhotonConfig(BaseModel):

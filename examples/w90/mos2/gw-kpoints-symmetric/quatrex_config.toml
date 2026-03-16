@@ -52,6 +52,7 @@ energy_window_num = 100
 
 eta = 1e-5
 
+max_batch_size = 15
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 solver.compute_current = true # Compute Meir-Wingreen current.
@@ -84,6 +85,7 @@ epsilon_r = 100.0
 
 num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
 
+max_batch_size = 15
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 

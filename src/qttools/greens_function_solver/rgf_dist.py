@@ -4,7 +4,7 @@ import numpy as np
 
 from qttools import NDArray, xp
 from qttools.comm import comm
-from qttools.datastructures.dsdbsparse import DSDBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
 from qttools.greens_function_solver import _serinv
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.profiling import Profiler
@@ -133,10 +133,10 @@ class RGFDist(GFSolver):
 
     def selected_solve(
         self,
-        a: DSDBSparse,
-        sigma_lesser: DSDBSparse,
-        sigma_greater: DSDBSparse,
-        out: tuple[DSDBSparse, ...],
+        a: DSDBSparse | _DStackView,
+        sigma_lesser: DSDBSparse | _DStackView,
+        sigma_greater: DSDBSparse | _DStackView,
+        out: tuple[DSDBSparse, ...] | tuple[_DStackView, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
         return_current: bool = False,
@@ -196,7 +196,9 @@ class RGFDist(GFSolver):
                 # Allocate a buffer for the current. This includes current
                 # between each layer and from/to the leads (in total
                 # num_blocks + 1).
-                current = xp.zeros((*a.shape[:-2], a.num_blocks + 1), dtype=a.dtype)
+                current = xp.zeros(
+                    (*sigma_lesser.shape[:-2], a.num_blocks + 1), dtype=a.dtype
+                )
                 # TODO: Only boundary currents are currently supported.
                 # Invalidate the remaining layers by setting them to
                 # xp.nan.
@@ -208,7 +210,9 @@ class RGFDist(GFSolver):
                     raise ValueError("Invalid number of output matrices.")
                 xr_out = xr_out[0]
 
-            batch_sizes, batch_offsets = get_batches(a.shape[0], self.max_batch_size)
+            batch_sizes, batch_offsets = get_batches(
+                sigma_lesser.shape[0], self.max_batch_size
+            )
 
             for i in range(len(batch_sizes)):
                 stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))

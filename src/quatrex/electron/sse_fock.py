@@ -45,9 +45,9 @@ class SigmaFock(ScatteringSelfEnergy):
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
-    def update_energies(self, electron_energies: NDArray):
+    def update_energies(self, new_energies: NDArray):
         """ Update energy grid """
-        self.energies = electron_energies
+        self.energies = new_energies
         
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, use_adaptive: bool, adaptive_integration_method: str, out: tuple[DSDBSparse, ...]) -> None:

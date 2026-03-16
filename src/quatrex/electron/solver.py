@@ -241,14 +241,7 @@ class ElectronSolver(SubsystemSolver):
     def update_energies(self, new_energies: NDArray) -> None:
         self.energies = new_energies
         self.local_energies = get_local_slice(new_energies)
-        self.left_occupancies = fermi_dirac(
-            self.local_energies - self.left_fermi_level,
-            self.temperature,
-        )
-        self.right_occupancies = fermi_dirac(
-            self.local_energies - self.right_fermi_level,
-            self.temperature,
-        )
+        # liyongda (13 Mar 2026): fermi levels updated during _update_fermi_levels call, which is early in the electron solve function
 
     def _update_fermi_levels(
         self, left_band_edges: NDArray, right_band_edges: NDArray
@@ -505,6 +498,7 @@ class ElectronSolver(SubsystemSolver):
 
             self._assemble_system_matrix(sse_retarded)
 
+        # liyongda (13 Mar 2026): default case
         if self.band_edge_tracking == "eigenvalues":
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
@@ -613,15 +607,4 @@ class ElectronSolver(SubsystemSolver):
                 )
 
             self._update_fermi_levels(left_band_edges, right_band_edges)
-            synchronize_device()
-            t_dos_peaks_end = time.perf_counter()
-            comm.barrier()
-            t_dos_peaks_end_all = time.perf_counter()
-            if comm.rank == 0:
-                print(f"    DOS peaks: {t_dos_peaks_end-t_dos_peaks_start}", flush=True)
-                print(
-                    f"    DOS peaks all: {t_dos_peaks_end_all-t_dos_peaks_start}",
-                    flush=True,
-                )
-
         self.call_count += 1

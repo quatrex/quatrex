@@ -940,6 +940,10 @@ class SCBA:
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+                # we're in adaptive mode
+                if self.config.scba.adaptive and i >= self.config.scba.adaptive_start_iteration:
+                    self.electron_solver.update_energies(self.adaptive_electron_energies)
+                    
                 # compute the Green's function from scattering self-energies
                 # liyongda (23 Feb 2026): iteration 0, all sigma data is zero (checked with debugger and np.allclose)
                 self.electron_solver.solve(
@@ -988,6 +992,14 @@ class SCBA:
                 # rank 0 computes adaptive grid and broadcast to other ranks
                 if comm.rank == 0:
                     print(f"rank {comm.rank} - computing adaptive grid", flush=True)
+                    # with profiler.profile_range(
+                    #     label="SCBA: compute adaptive grid", level="default", comm=comm
+                    # ):
+                    # liyongda (13 Mar 2026): adding profiler decorator to function causes MPI stall, 
+                    #   because only rank 0 calls the function and there is an internal sync in the profiler
+                    #       --> other ranks never sync because they never executed the function
+                    #   tried doing the profiler with a `with`, still didn't work
+                    #   computing grid is is O(N) and not time critical. Ignoring it for now
                     adaptive_electron_energies = self._compute_adaptive_grid(g_retarded_reduced)
                     # adaptive_electron_energies = compute_adaptive_grid(g_retarded_reduced, N_target=self.config.scba.adaptive_num_points, original_energy_grid=self.electron_energies)
                     # sleep(2)
@@ -1001,7 +1013,7 @@ class SCBA:
 
                 # debugging and save
                 if comm.rank == 0:
-                    print(f"Adaptive energy grid computed with {len(adaptive_electron_energies)} points.", flush=True)
+                    print(f"Adaptive energy grid from computed g_retarded_reduced with {len(adaptive_electron_energies)} points.", flush=True)
                     print(f"Original linear grid had {len(self.electron_energies)} points from {self.electron_energies[0]} to {self.electron_energies[-1]} (dE = {self.electron_energies[1] - self.electron_energies[0]} eV)", flush=True)
                     
                     xp.save(self.config.output_dir / "adaptive_electron_energies.npy", self.adaptive_electron_energies)

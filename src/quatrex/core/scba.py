@@ -157,8 +157,8 @@ class SCBAData:
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             bits=config.compute.num_bits,
+            allocate=False,
         )
-        self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
             self.sparsity_pattern.astype(xp.complex128),
@@ -168,16 +168,24 @@ class SCBAData:
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
             bits=config.compute.num_bits,
+            allocate=False,
         )
-        self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.g_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
-        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_lesser_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.sigma_greater_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
-        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_retarded_prev = dsdbsparse_type.empty_like(
+            self.g_lesser, allocate=False
+        )
+        self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
@@ -187,9 +195,9 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -214,8 +222,9 @@ class SCBAData:
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
                 bits=config.compute.num_bits,
+                allocate=False,
             )
-            self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
+            self.w_greater = dsdbsparse_type.empty_like(self.w_lesser, allocate=False)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -422,6 +431,11 @@ class SCBA:
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
+
+        self.data.sigma_lesser_prev.allocate_data()
+        self.data.sigma_greater_prev.allocate_data()
+        self.data.sigma_retarded_prev.allocate_data()
+        # TODO: copy to the host
         self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
         self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
         self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
@@ -620,6 +634,9 @@ class SCBA:
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
 
+        # TODO: put G to the host before
+        # computing W
+
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
@@ -635,6 +652,18 @@ class SCBA:
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
+
+        with profiler.profile_range(
+            label="SCBA: sigma stack->nnz transpose", level="default", comm=comm
+        ):
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ):
+                m.allocate_data()
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "nnz"
 
         self.sigma_fock.compute(
             self.data.g_lesser,
@@ -827,12 +856,23 @@ class SCBA:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
+        self.data.g_lesser.allocate_data()
+        self.data.g_greater.allocate_data()
+        self.data.sigma_lesser.allocate_data()
+        self.data.sigma_greater.allocate_data()
+        self.data.sigma_retarded.allocate_data()
+
+        self.data.sigma_lesser.data[:] = 0.0
+        self.data.sigma_greater.data[:] = 0.0
+        self.data.sigma_retarded.data[:] = 0.0
+
         for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+                self.data.g_retarded.allocate_data()
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
@@ -840,27 +880,16 @@ class SCBA:
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
                 self._compute_electron_observables()
+                self.data.g_retarded.free_data()
 
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
 
-                with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose", level="default", comm=comm
-                ):
-                    # Transpose to nnz distribution.
-                    # NOTE: While computing all interactions, we only ever need
-                    # to access the Green's function and the self-energies in
-                    # their nnz-distributed state.
-                    for m in (self.data.g_lesser, self.data.g_greater):
-                        m.dtranspose(discard=False)  # This must not be discarded.
-                        assert m.distribution_state == "nnz"
-                    for m in (
-                        self.data.sigma_lesser,
-                        self.data.sigma_greater,
-                        self.data.sigma_retarded,
-                    ):
-                        m.dtranspose(discard=True)  # These can be safely discarded.
-                        assert m.distribution_state == "nnz"
+                # TODO: I will just allocate again in coulomb
+                # but a better abstraction should be implemented.
+                self.data.sigma_lesser.free_data()
+                self.data.sigma_greater.free_data()
+                self.data.sigma_retarded.free_data()
 
                 if self.config.scba.coulomb_screening:
                     self._compute_coulomb_screening_interaction()

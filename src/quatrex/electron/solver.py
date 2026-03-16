@@ -130,6 +130,7 @@ class ElectronSolver(SubsystemSolver):
             global_stack_shape=self.energies.shape
             + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
             bits=config.compute.num_bits,
+            allocate=False,
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern

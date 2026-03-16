@@ -117,6 +117,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             global_stack_shape=self.energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             bits=config.compute.num_bits,
+            allocate=False,
         )
         self.system_matrix.free_data()
         # Explicitely try to free the memory for the sparsity pattern.
@@ -139,8 +140,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
             bits=config.compute.num_bits,
+            allocate=False,
         )
-        self.l_greater = config.compute.dsdbsparse_type.zeros_like(self.l_lesser)
+        self.l_greater = config.compute.dsdbsparse_type.empty_like(
+            self.l_lesser, allocate=False
+        )
         # Explicitely try to free the memory for the sparsity pattern.
         del l_sparsity_pattern
         self.l_lesser.free_data()

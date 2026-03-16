@@ -555,6 +555,11 @@ class ElectronSolver(SubsystemSolver):
             with profiler.profile_range(
                 label="ElectronSolver: Assemble", level="default", comm=comm
             ):
+                reallocate = False
+                if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                    reallocate = True
+                if reallocate:
+                    self.system_matrix.free_data()
                 self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
                 self._assemble_system_matrix(sse_retarded_tmp, stack_slice)
@@ -614,17 +619,16 @@ class ElectronSolver(SubsystemSolver):
                     )
 
                 else:
-                    self.meir_wingreen_current.append(
-                        self.solver.selected_solve(
-                            a=self.system_matrix,
-                            sigma_lesser=sse_lesser_tmp,
-                            sigma_greater=sse_greater_tmp,
-                            obc_blocks=obc_blocks_tmp,
-                            out=out_slice,
-                            return_retarded=True,
-                            return_current=self.compute_meir_wingreen_current,
-                        )
+                    current = self.solver.selected_solve(
+                        a=self.system_matrix,
+                        sigma_lesser=sse_lesser_tmp,
+                        sigma_greater=sse_greater_tmp,
+                        obc_blocks=obc_blocks_tmp,
+                        out=out_slice,
+                        return_retarded=True,
+                        return_current=self.compute_meir_wingreen_current,
                     )
+                    self.meir_wingreen_current.append(current)
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
@@ -688,9 +692,12 @@ class ElectronSolver(SubsystemSolver):
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
         if self.compute_meir_wingreen_current:
-            self.meir_wingreen_current = xp.array(self.meir_wingreen_current)
+
+            self.meir_wingreen_current = xp.concatenate(
+                self.meir_wingreen_current, axis=0
+            )
             self.meir_wingreen_current = self.meir_wingreen_current.reshape(
-                (-1, *self.meir_wingreen_current.shape[2:])
+                (-1, *self.meir_wingreen_current.shape[1:])
             )
 
         self.call_count += 1

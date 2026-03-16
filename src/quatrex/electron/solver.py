@@ -447,7 +447,7 @@ class ElectronSolver(SubsystemSolver):
         if self.config.compute.num_bits is not None:
             scale_stack(
                 _data,
-                self.local_energies + 1j * self.eta,
+                self.local_energies[stack_slice] + 1j * self.eta,
             )
             self.system_matrix.data = compress(_data, self.system_matrix.bits)
         else:

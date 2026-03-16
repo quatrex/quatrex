@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import inspect
+from typing import Union
 
 from qttools import NDArray, xp
 
@@ -329,3 +330,39 @@ def free_mempool():
     if xp.__name__ == "cupy":
         mempool = xp.get_default_memory_pool()
         mempool.free_all_blocks()
+
+
+def create_stream(non_blocking: bool = True) -> "xp.cuda.Stream":
+    """Creates a new CUDA stream if using cupy.
+
+    Parameters
+    ----------
+    non_blocking : bool, optional
+        If True, the stream is created in non-blocking mode. Default is True.
+
+    Returns
+    -------
+    cupy.cuda.Stream
+        The created stream.
+
+    """
+    if xp.__name__ == "cupy":
+        return xp.cuda.Stream(non_blocking=non_blocking)
+    else:
+        return None
+
+
+def synchronize_stream(stream: Union[None, "xp.cuda.Stream"] = None):
+    """Synchronizes the input stream if using cupy.
+
+    Does nothing if using numpy. If using cupy and no stream is provided,
+    the Null stream is synchronized.
+
+    Parameters
+    ----------
+    stream : cupy.cuda.Stream, optional
+        The stream to synchronize. If not provided, the Null stream is used.
+
+    """
+    if xp.__name__ == "cupy":
+        (stream or xp.cuda.Stream.null).synchronize()

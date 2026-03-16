@@ -9,7 +9,12 @@ import numpy as np
 from qttools import ArrayLike, NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.kernels.mixed_precision import compress, decompress
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.gpu_utils import (
+    empty_like_pinned,
+    free_mempool,
+    synchronize_device,
+    synchronize_stream,
+)
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -982,6 +987,8 @@ class DSDBSparse(ABC):
         if stack_size is None or stack_size == 0:
             stack_size = int(max(self.stack_section_sizes))
 
+        assert self.distribution_state == "stack"
+
         if self._data is None:
             if self.bits is not None:
                 self._data = xp.empty(
@@ -995,6 +1002,36 @@ class DSDBSparse(ABC):
                 )
             else:
                 self._data = xp.empty(
+                    (
+                        stack_size,
+                        *self.global_stack_shape[1:],
+                        self.total_nnz_size,
+                    ),
+                    dtype=self.dtype,
+                )
+
+    def allocate_host_data(self, stack_size: int | None = None) -> None:
+        """Allocates the local data."""
+        free_mempool()
+
+        if stack_size is None or stack_size == 0:
+            stack_size = int(max(self.stack_section_sizes))
+
+        assert self.distribution_state == "stack"
+
+        if self._host_data is None:
+            if self.bits is not None:
+                self._host_data = xp.empty(
+                    (
+                        stack_size,
+                        *self.global_stack_shape[1:],
+                        self.total_nnz_size,
+                        2 * (self.bits // 8),
+                    ),
+                    dtype=xp.uint8,
+                )
+            else:
+                self._host_data = xp.empty(
                     (
                         stack_size,
                         *self.global_stack_shape[1:],
@@ -1073,28 +1110,76 @@ class DSDBSparse(ABC):
             allocate=allocate,
         )
 
-    @classmethod
-    def zeros_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
-        """Creates a new DSDBSparse matrix with the same shape and dtype.
+    def to_host(
+        self,
+        delete_device: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
+        """Transfers the data to the host memory."""
+        if xp.__name__ == "cupy":
+            if self._data is not None:
+                # NOTE: It is expected that we always copy in the same distribution (stack or nnz).
+                if not (hasattr(self, "_host_data") and self._host_data is not None):
+                    self._host_data = empty_like_pinned(self._data)
+                self._data.get(out=self._host_data, stream=stream, blocking=False)
+                if sync:
+                    synchronize_stream(stream)
+                if delete_device:
+                    # TODO: Is this safe if we are not synchronizing?
+                    # Probably yes; setting to None does not delete,
+                    # but just removes the reference to the data.
+                    # The data will be freed when the garbage collector runs.
+                    self._data = None
+                    # free_mempool()
+            else:
+                raise ValueError(
+                    "Cannot transfer data to host, no device data available. "
+                    "Call `to_device()` first."
+                )
 
-        All non-zero elements are set to zero, but the sparsity pattern
-        is preserved.
+    def to_device(
+        self,
+        delete_host: bool = True,
+        stream: "xp.cuda.Stream" = None,
+        sync: bool = True,
+    ) -> None:
+        """Transfers the data to the device memory."""
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot transfer data to device, no host data available. "
+                    "Call `to_host()` first."
+                )
+            if self._data is None:
+                # Allocate the data on the device if it is not already allocated.
+                self._data = xp.empty_like(self._host_data)
+            self._data.set(self._host_data, stream=stream)
+            if sync:
+                synchronize_stream(stream)
+            if delete_host:
+                self._host_data = None
 
-        Parameters
-        ----------
-        dsdbsparse : DSDBSparse
-            The matrix to copy the shape and dtype from.
+    def set_to_host(self) -> None:
+        """Sets the data to the host memory."""
+        if xp.__name__ == "cupy":
+            if not (hasattr(self, "_host_data") and self._host_data is not None):
+                raise ValueError(
+                    "Cannot set data to host, no host data available. "
+                    "Call `to_host()` first."
+                )
+            self._tmp_data = self._data
+            self._data = self._host_data
 
-        Returns
-        -------
-        DSDBSparse
-            The new DSDBSparse matrix.
-
-        """
-        assert False
-        out = cls.empty_like(dsdbsparse, allocate=True)
-        out._data[:] = 0
-        return out
+    def set_to_device(self) -> None:
+        """Sets the data to the device memory."""
+        if xp.__name__ == "cupy":
+            if not hasattr(self, "_tmp_data"):
+                raise ValueError(
+                    "Cannot set data to device, no tmp data available. "
+                    "Call `set_to_host()` first."
+                )
+            self._data = self._tmp_data
 
 
 def _replace_ellipsis(stack_index: tuple, ndim: int) -> tuple:

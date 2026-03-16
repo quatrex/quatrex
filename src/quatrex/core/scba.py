@@ -432,17 +432,19 @@ class SCBA:
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
 
-        self.data.sigma_lesser_prev.allocate_data()
-        self.data.sigma_greater_prev.allocate_data()
-        self.data.sigma_retarded_prev.allocate_data()
-        # TODO: copy to the host
-        self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
-        self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
-        self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
+        # cursed?
+        # does not copy the data, but just the reference to the data, so it is very cheap.
+        self.data.sigma_lesser_prev._host_data = self.data.sigma_lesser._host_data
+        self.data.sigma_greater_prev._host_data = self.data.sigma_greater._host_data
+        self.data.sigma_retarded_prev._host_data = self.data.sigma_retarded._host_data
 
-        self.data.sigma_retarded.data[:] = 0.0
-        self.data.sigma_lesser.data[:] = 0.0
-        self.data.sigma_greater.data[:] = 0.0
+        self.data.sigma_lesser._host_data = None
+        self.data.sigma_greater._host_data = None
+        self.data.sigma_retarded._host_data = None
+
+        self.data.sigma_lesser.free_data()
+        self.data.sigma_greater.free_data()
+        self.data.sigma_retarded.free_data()
 
     @profiler.profile(label="SCBA: Symmetrize Sigma", level="default", comm=comm)
     def _symmetrize_sigma(self) -> None:
@@ -880,16 +882,12 @@ class SCBA:
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
                 self._compute_electron_observables()
+                self.electron_solver.hamiltonian.set_to_device()
+
                 self.data.g_retarded.free_data()
 
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
-
-                # TODO: I will just allocate again in coulomb
-                # but a better abstraction should be implemented.
-                self.data.sigma_lesser.free_data()
-                self.data.sigma_greater.free_data()
-                self.data.sigma_retarded.free_data()
 
                 if self.config.scba.coulomb_screening:
                     self._compute_coulomb_screening_interaction()
@@ -917,6 +915,10 @@ class SCBA:
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
 
+            self.data.sigma_lesser_prev.to_device()
+            self.data.sigma_greater_prev.to_device()
+            self.data.sigma_retarded_prev.to_device()
+
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)
@@ -924,6 +926,13 @@ class SCBA:
 
             # Update self-energy for next iteration with mixing factor.
             self._update_sigma()
+
+            self.data.sigma_lesser_prev.free_data()
+            self.data.sigma_greater_prev.free_data()
+            self.data.sigma_retarded_prev.free_data()
+            self.data.sigma_lesser_prev._host_data = None
+            self.data.sigma_greater_prev._host_data = None
+            self.data.sigma_retarded_prev._host_data = None
 
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info

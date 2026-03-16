@@ -8,6 +8,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import create_stream
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
@@ -84,6 +85,7 @@ class ElectronSolver(SubsystemSolver):
             sparsity_pattern=None,
             shift_kpoints=False,
         )
+        self.hamiltonian.to_host()
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
@@ -104,6 +106,7 @@ class ElectronSolver(SubsystemSolver):
                 sparsity_pattern=None,
                 shift_kpoints=False,
             )
+            self.overlap.to_host()
 
             # Make sure that the the system matrix sparsity is a superset of
             # self-energy and overlap sparsity.
@@ -204,6 +207,8 @@ class ElectronSolver(SubsystemSolver):
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
+        self._sigma_stream = create_stream()
+        self._system_stream = create_stream()
         self.max_batch_size = config.electron.max_batch_size
 
     @staticmethod
@@ -546,6 +551,8 @@ class ElectronSolver(SubsystemSolver):
 
         self.meir_wingreen_current = []
 
+        self.hamiltonian.set_to_host()
+
         for i in range(len(batch_sizes)):
 
             stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
@@ -559,6 +566,7 @@ class ElectronSolver(SubsystemSolver):
                 reallocate = False
                 if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
                     reallocate = True
+
                 if reallocate:
                     self.system_matrix.free_data()
                 self.system_matrix.allocate_data(stack_size=batch_sizes[i])
@@ -588,6 +596,17 @@ class ElectronSolver(SubsystemSolver):
                         band_edge_config=self.config.compute.band_edge,
                     )
                     self._update_fermi_levels(left_band_edges, right_band_edges)
+
+            if i == 0:
+                sse_lesser.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
+                sse_greater.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
+                sse_retarded.to_host(
+                    delete_device=False, stream=self._sigma_stream, sync=False
+                )
 
             self._compute_obc(stack_slice)
 

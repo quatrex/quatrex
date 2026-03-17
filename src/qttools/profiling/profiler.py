@@ -401,6 +401,9 @@ class Profiler:
 
         finally:
 
+            exc_type, _, _ = sys.exc_info()
+            has_failed = exc_type is not None
+
             if xp.__name__ == "cupy":
                 xp.cuda.runtime.deviceSynchronize()
                 if NVTX_AVAILABLE:
@@ -418,12 +421,13 @@ class Profiler:
                 (timestamp, self.depth, label, call_time, after_barrier_time)
             )
 
-            if comm_world.rank == 0:
-                offset = "  " * (self.depth)
-                self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
-                if comm is not None and QTX_PROFILE_COMM_SYNC:
-                    self.print_file.write(
-                        f"{offset}{label} all : {after_barrier_time:.4f}s"
-                    )
+            if not has_failed:
+                if comm_world.rank == 0:
+                    offset = "  " * (self.depth)
+                    self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
+                    if comm is not None and QTX_PROFILE_COMM_SYNC:
+                        self.print_file.write(
+                            f"{offset}{label} all : {after_barrier_time:.4f}s"
+                        )
 
             self.depth -= 1

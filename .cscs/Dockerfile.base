@@ -1,51 +1,114 @@
-FROM docker.io/nvidia/cuda:13.1.1-devel-ubuntu24.04
+FROM docker.io/nvidia/cuda:12.9.1-devel-ubuntu24.04
 
-ARG DEBIAN_FRONTEND=noninteractive
+ARG libfabric_version=1.22.0
+ARG mpi_version=4.3.1
+ARG osu_version=7.5.1
 
-# System deps: Python 3.13, MPI, build tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Set Zurich timezone.
+ENV TZ=Europe/Zurich
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     software-properties-common \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    automake \
+    autoconf \
+    libtool \
+    make \
+    gdb \
+    strace \
     wget \
     python3.13 \
     python3.13-venv \
     python3.13-dev \
     git \
     git-lfs \
-    cmake \
-    build-essential \
-    pkg-config \
-    mpich \
-    libmpich-dev \
+    gfortran \
+    libpmi2-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Make python3.13 the default python3
+# Make python3.13 the default python3.
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
 
-# Set up a virtual environment for Python packages (optional but recommended)
+# Handle CUDA stubs for build process.
+RUN echo '/usr/local/cuda/lib64/stubs' > /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
+
+# Build xpmem.
+RUN git clone https://github.com/hpc/xpmem \
+    && cd xpmem/lib \
+    && gcc -I../include -shared -o libxpmem.so.1 libxpmem.c \
+    && ln -s libxpmem.so.1 libxpmem.so \
+    && mv libxpmem.so* /usr/lib \
+    && cp ../include/xpmem.h /usr/include/ \
+    && ldconfig \
+    && cd ../../ \
+    && rm -Rf xpmem
+
+# Build libfabric.
+RUN wget -q https://github.com/ofiwg/libfabric/archive/v${libfabric_version}.tar.gz \
+    && tar xf v${libfabric_version}.tar.gz \
+    && cd libfabric-${libfabric_version} \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr --with-cuda=/usr/local/cuda \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. \
+    && rm -rf v${libfabric_version}.tar.gz libfabric-${libfabric_version}
+
+# Build MPICH.
+RUN wget -q https://www.mpich.org/static/downloads/${mpi_version}/mpich-${mpi_version}.tar.gz \
+    && tar xf mpich-${mpi_version}.tar.gz \
+    && cd mpich-${mpi_version} \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr \
+                   --enable-fast=O3,ndebug \
+                   --enable-fortran \
+                   --enable-cxx \
+                   --with-device=ch4:ofi \
+                   --with-libfabric=/usr \
+                   --with-xpmem=/usr \
+                   --with-cuda=/usr/local/cuda \
+                   --with-pmilib=slurm \
+                   --with-pmi=pmi2 \
+                   --with-slurm=/usr \
+                   --with-pm=no \
+                   --with-pmi-lib=no \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. \
+    && rm -rf mpich-${mpi_version}.tar.gz mpich-${mpi_version}
+
+# Build OSU Micro-benchmarks using the new mpicc.
+RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-${osu_version}.tar.gz \
+    && tar xf osu-micro-benchmarks-${osu_version}.tar.gz \
+    && cd osu-micro-benchmarks-${osu_version} \
+    && ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda CC=$(which mpicc) CFLAGS=-O3 \
+    && make -j$(nproc) \
+    && make install \
+    && cd .. \
+    && rm -rf osu-micro-benchmarks-${osu_version} osu-micro-benchmarks-${osu_version}.tar.gz
+
+# Set up virtual environment.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-
-# Bootstrap pip (deadsnakes doesn't include pip)
 RUN python3 -m ensurepip --upgrade
 
-# Ensure mpi4py and cupy are built from source against system MPI / CUDA
-ENV MPICC=mpicc \
-    PIP_NO_CACHE_DIR=1
-
-# Build tooling + pure-Python deps from wheels
+# Install Python deps.
 RUN python3 -m pip install --upgrade pip setuptools wheel build \
     numpy scipy numba pydantic matplotlib threadpoolctl typer \
     pytest pytest-mpi pytest-cov pytest-xdist
 
-# Build mpi4py from source (links against MPICH)
+# Build mpi4py from source.
 RUN python3 -m pip install --no-binary=mpi4py mpi4py
 
-# Build cupy from source (links against CUDA toolkit in the image)
+# Install CuPy from source.
 RUN python3 -m pip install cupy
 
-# Install cuDSS.
+# Install cuDSS / nvmath-python.
 RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
     && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
     && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
@@ -53,5 +116,7 @@ RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_install
     && apt-get -y install cudss \
     && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb
 
-# Install nvmath-python
 RUN python3 -m pip install nvmath-python
+
+# Final cleanup of stubs
+RUN rm /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig

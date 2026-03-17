@@ -42,14 +42,16 @@ test quatrex single:
     - cd /src && ls -alh
     - quatrex --version
     - pytest --version
+    - which mpicc
+    - ldd $(which python3) | grep libfabric || true
+    - MPICH_DEBUG=1 FI_LOG_LEVEL=debug python3 -c "from mpi4py import MPI; print('MPI Initialized')"
     - pytest tests/qttools/kernels/test_operator.py --log-level=DEBUG -vv
     - quatrex --help
   variables:
-    # GIT_STRATEGY: clone
     USE_MPI: 'YES'
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
-    SLURM_TIMELIMIT: '00:30:00'
+    SLURM_TIMELIMIT: '00:05:00'
 
 # test quatrex multi:
 #   extends: .container-runner-daint-gh200

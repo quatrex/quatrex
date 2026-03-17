@@ -179,7 +179,9 @@ class SolverConfig(BaseModel):
 
     """
 
-    direct_solver: Literal["superlu", "mumps", "cudss", "pardiso", "thomas"] = "superlu"
+    direct_solver: Literal[
+        "superlu", "mumps", "cudss", "pardiso", "thomas", "cudss_v2"
+    ] = "superlu"
 
     @model_validator(mode="after")
     def set_compute_current(self) -> Self:

@@ -22,6 +22,7 @@ from qttools.wave_function_solver import (
     Thomas,
     WFSolver,
     cuDSS,
+    cudss_solver_2,
     preferred_matrix_type,
 )
 from quatrex.core.config import QuatrexConfig, SolverConfig
@@ -339,6 +340,12 @@ class QTBM:
 
         if solver_config.direct_solver == "thomas":
             return Thomas()
+
+        if solver_config.direct_solver == "cudss_v2":
+            if self.quatrex_config.qtbm.method == "SplitSolve":
+                return cudss_solver_2(matrix_type="complex_hermitian_indefinite")
+            else:
+                return cudss_solver_2(matrix_type="complex_nonsymmetric")
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 

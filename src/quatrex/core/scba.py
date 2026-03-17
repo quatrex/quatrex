@@ -11,7 +11,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import create_stream, get_host, synchronize_stream
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import (  # current_conservation,
@@ -429,6 +429,8 @@ class SCBA:
             config, electron_energies=self.electron_energies
         )  # real data
 
+        self._copy_stream = create_stream()
+
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
 
@@ -629,12 +631,20 @@ class SCBA:
         self.data.p_greater.allocate_data()
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
+        self.data.g_lesser.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
 
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
+        self.data.g_lesser.free_data()
+        self.data.g_greater.free_data()
 
         # TODO: put G to the host before
         # computing W
@@ -647,6 +657,14 @@ class SCBA:
             self.data.p_greater,
             self.data.p_retarded,
             out=(self.data.w_lesser, self.data.w_greater),
+        )
+
+        synchronize_stream(self._copy_stream)
+        self.data.g_lesser.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_device(
+            delete_host=False, stream=self._copy_stream, sync=False
         )
 
         self._compute_coulomb_screening_observables()
@@ -666,6 +684,8 @@ class SCBA:
                 m.allocate_data()
                 m.dtranspose(discard=True)  # These can be safely discarded.
                 assert m.distribution_state == "nnz"
+
+        synchronize_stream(self._copy_stream)
 
         self.sigma_fock.compute(
             self.data.g_lesser,

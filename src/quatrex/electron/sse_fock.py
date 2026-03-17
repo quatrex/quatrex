@@ -8,6 +8,7 @@ from qttools.datastructures import DSDBSparse
 from qttools.fft import fft_circular_convolve
 from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import get_device, get_host
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.sse import ScatteringSelfEnergy
 
@@ -42,7 +43,7 @@ class SigmaFock(ScatteringSelfEnergy):
             if coulomb_matrix.distribution_state != "nnz"
             else None
         )
-        self.coulomb_matrix_data = coulomb_matrix.data[0]
+        self.coulomb_matrix_data = get_host(coulomb_matrix.data[0])
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, out: tuple[DSDBSparse, ...]) -> None:
@@ -67,6 +68,8 @@ class SigmaFock(ScatteringSelfEnergy):
                 # These should both already be in nnz-distribution.
                 m.dtranspose() if m.distribution_state != "nnz" else None
 
+        coulomb_matrix_data = get_device(self.coulomb_matrix_data)
+
         # Compute the electron density by summing over energies.
         with profiler.profile_range(
             label="SigmaFock: SSE computation", level="default", comm=comm
@@ -77,7 +80,7 @@ class SigmaFock(ScatteringSelfEnergy):
                     sigma_retarded.data += (
                         fft_circular_convolve(
                             gl_density,
-                            self.coulomb_matrix_data,
+                            coulomb_matrix_data,
                             axes=tuple(range(gl_density.ndim - 1)),
                         )
                         / self.kpoint_volume
@@ -91,7 +94,7 @@ class SigmaFock(ScatteringSelfEnergy):
                         (
                             fft_circular_convolve(
                                 gl_density,
-                                decompress(self.coulomb_matrix_data, g_lesser.bits),
+                                decompress(coulomb_matrix_data, g_lesser.bits),
                                 axes=tuple(range(gl_density.ndim - 1)),
                             )
                             / self.kpoint_volume

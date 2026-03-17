@@ -9,6 +9,7 @@ from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import create_stream, synchronize_stream
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.solvers_utils import get_batches
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
@@ -67,6 +68,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         super().__init__(config, energies)
 
         self.coulomb_matrix = coulomb_matrix
+        self.coulomb_matrix.to_host()
+
         self.small_block_sizes = self.coulomb_matrix.block_sizes
 
         self.num_connected_blocks = config.coulomb_screening.num_connected_blocks
@@ -173,6 +176,8 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
 
         self.max_batch_size = config.coulomb_screening.max_batch_size
+
+        self._system_stream = create_stream()
 
     def _set_block_sizes(self, block_sizes: NDArray) -> None:
         """Sets the block sizes of all matrices.
@@ -335,6 +340,11 @@ class CoulombScreeningSolver(SubsystemSolver):
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
     )
     def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
+
+        self.coulomb_matrix.to_device(
+            delete_host=False, stream=self._system_stream, sync=False
+        )
+
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
@@ -343,6 +353,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
+        synchronize_stream(self._system_stream)
         bd_matmul_distr(
             self.coulomb_matrix,
             p_retarded,
@@ -495,6 +506,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     end_block=end_block,
                     spillover_correction=True,
                 )
+
+            self.coulomb_matrix.free_data()
 
             if self.flatband:
                 with profiler.profile_range(

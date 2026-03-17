@@ -101,6 +101,9 @@ class SCBAData:
                 raise ValueError(
                     f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
                 )
+        if comm.rank == 0:
+            print(f"Grid shape: {grid.shape}", flush=True)
+            print(f"Block size: {block_sizes[0]}", flush=True)
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
@@ -661,10 +664,10 @@ class SCBA:
 
         synchronize_stream(self._copy_stream)
         self.data.g_lesser.to_device(
-            delete_host=False, stream=self._copy_stream, sync=False
+            delete_host=True, stream=self._copy_stream, sync=False
         )
         self.data.g_greater.to_device(
-            delete_host=False, stream=self._copy_stream, sync=False
+            delete_host=True, stream=self._copy_stream, sync=False
         )
 
         self._compute_coulomb_screening_observables()
@@ -884,12 +887,13 @@ class SCBA:
         self.data.sigma_greater.allocate_data()
         self.data.sigma_retarded.allocate_data()
 
-        self.data.sigma_lesser.data[:] = 0.0
-        self.data.sigma_greater.data[:] = 0.0
-        self.data.sigma_retarded.data[:] = 0.0
-
         for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
+
+            # NOTE: benchmark mode
+            self.data.sigma_lesser.data[:] = 0.0
+            self.data.sigma_greater.data[:] = 0.0
+            self.data.sigma_retarded.data[:] = 0.0
 
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
@@ -908,6 +912,10 @@ class SCBA:
 
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
+
+                for m in (self.data.g_lesser, self.data.g_greater):
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "nnz"
 
                 if self.config.scba.coulomb_screening:
                     self._compute_coulomb_screening_interaction()

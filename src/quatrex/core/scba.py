@@ -41,25 +41,6 @@ from quatrex.photon import PhotonSolver, PiPhoton
 
 profiler = Profiler()
 
-# @profiler.profile(label="SCBA: compute adaptive grid", level="default", comm=comm)
-def compute_adaptive_grid(reference_func: NDArray, N_target, original_energy_grid) -> NDArray:
-    monitor = xp.abs(xp.gradient(reference_func))
-    cumsum = xp.cumsum(monitor)
-    cumsum = cumsum / cumsum[-1]    # normalize to [0,1]
-
-    # equally space the adaptive points in cumulative distribution (of monitor)
-    # N_target = 11
-    targets = xp.linspace(0, 1, N_target)
-
-    # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
-    # linear_electron_energies = xp.linspace(-15, 5, 11)
-
-    # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
-    adaptive_points = xp.interp(targets, cumsum, original_energy_grid)
-
-    return adaptive_points
-    # return xp.asarray([1])
-
 class SCBAData:
     """Data container class for the SCBA.
 
@@ -337,7 +318,8 @@ class SCBA:
         
         # initial adaptive energy grid is just the linear grid
         if self.config.scba.adaptive:
-            self.adaptive_electron_energies = xp.copy(self.electron_energies)
+            self.adaptive_electron_energies_for_g_sigma = xp.copy(self.electron_energies)
+            self.adaptive_electron_energies_for_p_w = xp.copy(self.electron_energies)
         
         self.electron_solver = ElectronSolver(
             self.config,
@@ -623,12 +605,96 @@ class SCBA:
         self.data.p_retarded.allocate_data()
 
         # compute polarization, pass in adaptive grid if needed, else None
+        source_adaptive_points = None
+        target_adaptive_points = None
+
+        if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration:
+            source_adaptive_points = self.adaptive_electron_energies_for_g_sigma
+            target_adaptive_points = self.adaptive_electron_energies_for_p_w
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
-            adaptive_points=self.adaptive_electron_energies if (self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration) else None,
+            source_adaptive_points=source_adaptive_points,
+            target_adaptive_points=target_adaptive_points,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded)
         )
+
+        # create adaptive grid and interpolate the p functions onto the new grid
+        #   create the grid in iteration n-1, to be used in iteration n
+        if self.config.scba.adaptive and iteration == self.config.scba.adaptive_start_iteration-1:
+
+            # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
+            #   but result is only placed in rank 0
+            p_retarded_reduced = reduce_matrix_over_stack(self.data.p_retarded, global_comm)
+
+            comm.barrier()
+            adaptive_electron_energies_for_p_w = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
+            # rank 0 computes adaptive grid and broadcast to other ranks
+            if comm.rank == 0:
+                print(f"rank {comm.rank} - computing adaptive grid", flush=True)
+                # with profiler.profile_range(
+                #     label="SCBA: compute adaptive grid", level="default", comm=comm
+                # ):
+                # liyongda (13 Mar 2026): adding profiler decorator to function causes MPI stall, 
+                #   because only rank 0 calls the function and there is an internal sync in the profiler
+                #       --> other ranks never sync because they never executed the function
+                #   tried doing the profiler with a `with`, still didn't work
+                #   computing grid is is O(N) and not time critical. Ignoring it for now
+                adaptive_electron_energies_for_p_w = self._compute_adaptive_grid(p_retarded_reduced)
+            
+            comm.barrier()
+            comm.Bcast(adaptive_electron_energies_for_p_w, root=0)
+
+            # update adaptive grid from None to the computed grid
+            self.adaptive_electron_energies_for_p_w = adaptive_electron_energies_for_p_w
+
+            # debugging and save
+            if comm.rank == 0:
+                print(f"Adaptive energy grid from computed p_retarded_reduced with {len(self.adaptive_electron_energies_for_p_w)} points.", flush=True)
+                print(f"Original linear grid had {len(self.electron_energies)} points from {self.electron_energies[0]} to {self.electron_energies[-1]} (dE = {self.electron_energies[1] - self.electron_energies[0]} eV)", flush=True)
+                
+                xp.save(self.config.output_dir / "adaptive_electron_energies_for_p_w.npy", self.adaptive_electron_energies_for_p_w)
+                print(f"Saved adaptive energy grid to output directory.", flush=True)
+            
+            # 04 Feb 2026: will get errors from resizing the memory buffer if the number of adaptive points
+            #   is different from the original grid.
+            #   solve the error by forcing number of adaptive points to be the same as the original grid
+            #   discussions with AlexMaeder, Nicolas, and Anders support this
+
+            # debugging
+            # comm.barrier() 
+            # print(f"rank {comm.rank} has g_lesser shape before interp: {self.data.g_lesser.data.shape}", flush=True)
+
+            comm.barrier()
+
+            # each rank needs all energies, but only some nnz
+            # transpose from stack to nnz distribution
+            if self.data.p_lesser.distribution_state != "nnz":
+                if comm.rank == 0:
+                    print(f"transposing p functions from stack to nnz distribution for interpolation", flush=True)
+                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "nnz"
+
+            # bsplit with k=1 for linear interpolation
+            # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
+            # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
+            k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
+            bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data, k=k)
+            bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data, k=k)
+            bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data, k=k)
+            
+            self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
+            self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
+            self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
+
+            # transpose back from nnz to stack
+            if self.data.p_lesser.distribution_state != "stack":
+                if comm.rank == 0:
+                    print(f"transposing p functions back from nnz to stack distribution after interpolation", flush=True)
+                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "stack"
 
         comm.barrier()
 
@@ -702,7 +768,7 @@ class SCBA:
 
         # update the energy grid for sigma fock computation if we have a new adaptive grid
         if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration:
-            self.sigma_fock.update_energies(self.adaptive_electron_energies)
+            self.sigma_fock.update_energies(self.adaptive_electron_energies_for_g_sigma)
         comm.barrier()
 
         # up to the user to update the energy grid to adaptive grid before calling `sigma_fock.compute`
@@ -718,7 +784,7 @@ class SCBA:
 
         # update the energy grid for sigma coulomb screening computation if we have a new adaptive grid
         if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration:
-            self.sigma_coulomb_screening.update_energies(self.adaptive_electron_energies)
+            self.sigma_coulomb_screening.update_energies(self.adaptive_electron_energies_for_g_sigma)
         comm.barrier()
 
         self.sigma_coulomb_screening.compute(
@@ -942,7 +1008,7 @@ class SCBA:
             ):
                 # we're in adaptive mode
                 if self.config.scba.adaptive and i >= self.config.scba.adaptive_start_iteration:
-                    self.electron_solver.update_energies(self.adaptive_electron_energies)
+                    self.electron_solver.update_energies(self.adaptive_electron_energies_for_g_sigma)
                     
                 # compute the Green's function from scattering self-energies
                 # liyongda (23 Feb 2026): iteration 0, all sigma data is zero (checked with debugger and np.allclose)
@@ -982,13 +1048,14 @@ class SCBA:
 
             comm.barrier()
             # create adaptive grid and interpolate the g functions onto the new grid
-            if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration:
+            #   create the grid in iteration n-1, to be used in iteration n
+            if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration-1:
                 # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
                 #   but result is only placed in rank 0
                 g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
 
                 comm.barrier()
-                adaptive_electron_energies = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
+                adaptive_electron_energies_for_g_sigma = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
                 # rank 0 computes adaptive grid and broadcast to other ranks
                 if comm.rank == 0:
                     print(f"rank {comm.rank} - computing adaptive grid", flush=True)
@@ -1000,23 +1067,20 @@ class SCBA:
                     #       --> other ranks never sync because they never executed the function
                     #   tried doing the profiler with a `with`, still didn't work
                     #   computing grid is is O(N) and not time critical. Ignoring it for now
-                    adaptive_electron_energies = self._compute_adaptive_grid(g_retarded_reduced)
-                    # adaptive_electron_energies = compute_adaptive_grid(g_retarded_reduced, N_target=self.config.scba.adaptive_num_points, original_energy_grid=self.electron_energies)
-                    # sleep(2)
-                    # print(f"rank {comm.rank} - computed adaptive grid: {adaptive_electron_energies} ", flush=True)
+                    adaptive_electron_energies_for_g_sigma = self._compute_adaptive_grid(g_retarded_reduced)
                 
                 comm.barrier()
-                comm.Bcast(adaptive_electron_energies, root=0)
+                comm.Bcast(adaptive_electron_energies_for_g_sigma, root=0)
 
                 # update adaptive grid from None to the computed grid
-                self.adaptive_electron_energies = adaptive_electron_energies
+                self.adaptive_electron_energies_for_g_sigma = adaptive_electron_energies_for_g_sigma
 
                 # debugging and save
                 if comm.rank == 0:
-                    print(f"Adaptive energy grid from computed g_retarded_reduced with {len(adaptive_electron_energies)} points.", flush=True)
+                    print(f"Adaptive energy grid from computed g_retarded_reduced with {len(self.adaptive_electron_energies_for_g_sigma)} points.", flush=True)
                     print(f"Original linear grid had {len(self.electron_energies)} points from {self.electron_energies[0]} to {self.electron_energies[-1]} (dE = {self.electron_energies[1] - self.electron_energies[0]} eV)", flush=True)
                     
-                    xp.save(self.config.output_dir / "adaptive_electron_energies.npy", self.adaptive_electron_energies)
+                    xp.save(self.config.output_dir / "adaptive_electron_energies_for_g_sigma.npy", self.adaptive_electron_energies_for_g_sigma)
                     print(f"Saved adaptive energy grid to output directory.", flush=True)
                 
                 # 04 Feb 2026: will get errors from resizing the memory buffer if the number of adaptive points
@@ -1044,9 +1108,9 @@ class SCBA:
                 bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data, k=k)
                 bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data, k=k)
                 
-                self.data.g_lesser.data = bspl_lesser(adaptive_electron_energies)
-                self.data.g_greater.data = bspl_greater(adaptive_electron_energies)
-                self.data.g_retarded.data = bspl_retarded(adaptive_electron_energies)
+                self.data.g_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
+                self.data.g_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
+                self.data.g_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
 
                 # transpose back from nnz to stack
                 for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:

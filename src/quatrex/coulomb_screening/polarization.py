@@ -91,7 +91,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
-        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, adaptive_points, out: tuple[DSDBSparse, ...]
+        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, source_adaptive_points: NDArray, target_adaptive_points: NDArray, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the polarization.
 
@@ -101,6 +101,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
             The lesser Green's function.
         g_greater : DSDBSparse
             The greater Green's function.
+        source_adaptive_points : NDArray
+            The adaptive points for the source.
+        target_adaptive_points : NDArray
+            The adaptive points for the target.
         out : tuple[DSDBSparse, ...]
             The output matrices for the polarization. The order is
             p_lesser, p_greater, p_retarded.
@@ -174,7 +178,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 for start, end in zip(batch_displacements, batch_displacements[1:]):
                     batch = slice(start, end)
 
-                    if adaptive_points is not None:
+                    if source_adaptive_points is not None:
                         # Interpolate g to the adaptive grid. This is needed for the FFT-based convolution.
                         k = self.config.scba.adaptive_interpolation_order
                         ne = g_lesser.data.shape[0]     # number of energy points in the original grid
@@ -192,8 +196,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         fine_energies_conv = np.linspace(energy_min-energy_max, energy_max-energy_min, n_conv_fine) # convolution grid for conv(interpolated)
                         energies_conv = np.linspace(energy_min-energy_max, energy_max-energy_min, n_conv) # convolution grid for conv(original)
 
-                        g_greater_fine = interpolate.make_interp_spline(adaptive_points, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
-                        g_lesser_fine = interpolate.make_interp_spline(adaptive_points, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+                        g_greater_fine = interpolate.make_interp_spline(source_adaptive_points, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
+                        g_lesser_fine = interpolate.make_interp_spline(source_adaptive_points, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
 
                         greater_fft = xp.fft.fft(g_greater_fine, n_conv_fine, axis=0)
                         lesser_fft = xp.fft.fft(-g_lesser_fine.conj(), n_conv_fine, axis=0)
@@ -219,7 +223,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
                     # default quatrex config compute_retarded_polarization = false
                     # liyongda (04 Mar 2026) todo: convert Hilbert Transform in retarded polarizatoin to use adaptive grid
+                    # liyongda (16 Mar 2026): Anders said Hilbert Transform computation is unstable. Ignoring for now. Maybe make it work in the future.
+                    #   recommended I just raise an error
                     if self.compute_retarded:
+                        if target_adaptive_points is not None:
+                            raise NotImplementedError("Retarded polarization computation with Hilbert Transform with adaptive grid is not implemented yet. Please use a uniform grid")
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (

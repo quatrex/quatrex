@@ -74,7 +74,7 @@ class SCBAConfig(BaseModel):
 
     adaptive: bool = False
     adaptive_num_points: PositiveInt = 1000
-    adaptive_start_iteration: NonNegativeInt = 0
+    adaptive_start_iteration: PositiveInt = 1   # must be iteration 1 or later, since we need iteration 0 to compute the uniform case
     adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
     adaptive_interpolation_order: Literal[1, 2, 3] = 1
     adaptive_interpolation_oversampling_ratio: NonNegativeFloat = 1.0
@@ -1125,26 +1125,30 @@ class QuatrexConfig(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def check_device_block_size(self) -> Self:
-        """Checks that block size is consistent with other parameters."""
+    # liyongda (16 Mar 2026): I have some archive Quatrex runs from before this change, where block_size=32 was not added to the quatrex_config.toml
+    #   don't want to retroactively add block_size parameter to all the .toml files
+    #   just comment out this check
+    #   https://github.com/quatrex/quatrex/commit/d5aaf6a87349a127891c19bef313879b1987c14d
+    # @model_validator(mode="after")
+    # def check_device_block_size(self) -> Self:
+    #     """Checks that block size is consistent with other parameters."""
 
-        if self.formalism == "wf":
-            # NOTE: Block sizes are not used in the wavefunction
-            # formalism.
-            return self
+    #     if self.formalism == "wf":
+    #         # NOTE: Block sizes are not used in the wavefunction
+    #         # formalism.
+    #         return self
 
-        if self.device.construct_from_unit_cell and self.device.block_size is not None:
-            raise ValueError(
-                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
-            )
+    #     if self.device.construct_from_unit_cell and self.device.block_size is not None:
+    #         raise ValueError(
+    #             "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+    #         )
 
-        if not self.device.construct_from_unit_cell and self.device.block_size is None:
-            raise ValueError(
-                "block_size must be given when construct_from_unit_cell=False."
-            )
+    #     if not self.device.construct_from_unit_cell and self.device.block_size is None:
+    #         raise ValueError(
+    #             "block_size must be given when construct_from_unit_cell=False."
+    #         )
 
-        return self
+    #     return self
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:

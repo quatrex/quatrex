@@ -9,6 +9,7 @@ from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.kernels.datastructure import dsdbcoo_kernels, dsdbsparse_kernels
 from qttools.kernels.mixed_precision import compress, decompress
+from qttools.utils.gpu_utils import get_device
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -405,11 +406,18 @@ class DSDBCOO(DSDBSparse):
                 self.local_block_offsets[col],
             )
         else:
+
+            # NOTE: this leads to copies without pinned memory
+            if isinstance(data_stack[..., block_slice, :], np.ndarray):
+                _data = get_device(data_stack[..., block_slice, :])
+            else:
+                _data = data_stack[..., block_slice, :]
+
             dsdbcoo_kernels.densify_block(
                 block,
                 self.rows,
                 self.cols,
-                decompress(data_stack[..., block_slice, :], self.bits),
+                decompress(_data, self.bits),
                 block_slice,
                 self.local_block_offsets[row],
                 self.local_block_offsets[col],

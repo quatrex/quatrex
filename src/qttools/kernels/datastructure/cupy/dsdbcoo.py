@@ -107,8 +107,8 @@ def compute_block_slice(
     row_start, row_stop = np.int32(block_offsets[row]), np.int32(block_offsets[row + 1])
     col_start, col_stop = np.int32(block_offsets[col]), np.int32(block_offsets[col + 1])
 
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
+    # rows = rows.astype(cp.int32)
+    # cols = cols.astype(cp.int32)
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._compute_coo_block_mask(

@@ -587,7 +587,7 @@ def load_matrices(
 def assemble_matrix(
     config: QuatrexConfig,
     matrix_name: str,
-    sparsity_pattern: sparse.coo_matrix | None = None,
+    sparsity_pattern=None,
     shift_kpoints: bool = False,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
     """Loads a Hermitian matrix from file and optionally
@@ -641,17 +641,27 @@ def assemble_matrix(
         matrix_sparray = _sum_operator(matrix_dict, config.scba.symmetric)
         sparsity_pattern = matrix_sparray.copy()
         sparsity_pattern.data[:] = 1
-        sparsity_pattern = sparsity_pattern + sparsity_pattern.T
+        sparsity_pattern = (sparsity_pattern + sparsity_pattern.T).tocoo()
+
+        rows = sparsity_pattern.row
+        cols = sparsity_pattern.col
+
+    else:
+        rows = sparsity_pattern[0]
+        cols = sparsity_pattern[1]
 
     matrix = config.compute.dsdbsparse_type.from_sparray(
-        sparsity_pattern.astype(xp.complex128),
+        rows,
+        cols,
         block_sizes=block_sizes,
         global_stack_shape=(comm.stack.size,)
         + tuple([k for k in config.device.kpoint_grid if k > 1]),
         symmetry=config.scba.symmetric,
         symmetry_op=xp.conj,
         bits=config.compute.num_bits,
+        # allocate=False
     )
+    matrix.allocate_data()
     matrix.data[:] = 0.0  # Initialize to zero.
 
     # Shift the k-points if requested

@@ -105,15 +105,10 @@ def compute_sparsity_pattern(
         rows.append(i + batch_rows[local_mask])
 
     rows, cols = xp.hstack(rows), xp.hstack(cols)
-    return sparse.coo_matrix(
-        (xp.ones_like(rows, dtype=xp.float32), (rows, cols)),
-        shape=(len(positions), len(positions)),
-    )
+    return rows, cols
 
 
-def compute_num_connected_blocks(
-    sparsity_pattern: sparse.coo_matrix, block_sizes: NDArray
-) -> int:
+def compute_num_connected_blocks(rows, cols, block_sizes: NDArray) -> int:
     """Computes the number of "connected" blocks in the sparsity pattern.
 
     This number of "connected" blocks is the number of blocks that need
@@ -136,6 +131,10 @@ def compute_num_connected_blocks(
         The number of connected blocks.
 
     """
+
+    sparsity_pattern = sparse.coo_matrix(
+        (xp.ones_like(rows, dtype=xp.float32), (rows, cols))
+    )
 
     s_01 = sparsity_pattern.tocsr()[
         : block_sizes[0], block_sizes[0] : int(sum(block_sizes[:2]))

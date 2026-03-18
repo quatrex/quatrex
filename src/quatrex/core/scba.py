@@ -144,50 +144,46 @@ class SCBAData:
             start_idx = block_offsets[section_offsets[comm.block.rank]]
             end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
 
-            self.sparsity_pattern = compute_sparsity_pattern(
+            rows, cols = compute_sparsity_pattern(
                 grid,
                 max_interaction_cutoff,
                 transport_direction=config.device.transport_direction,
                 start_idx=start_idx,
                 end_idx=end_idx,
             )
+            self.rows = rows
+            self.cols = cols
 
         dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            rows,
+            cols,
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             bits=config.compute.num_bits,
-            allocate=False,
         )
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            rows,
+            cols,
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
             bits=config.compute.num_bits,
-            allocate=False,
         )
-        self.g_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.g_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
-        self.sigma_lesser_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
-        self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
-        self.sigma_greater_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
-        self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.sigma_lesser_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_greater_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
-        self.sigma_retarded_prev = dsdbsparse_type.empty_like(
-            self.g_lesser, allocate=False
-        )
-        self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+        self.sigma_retarded_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser)
 
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
@@ -198,14 +194,14 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
-            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
-            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser, allocate=False)
+            self.p_retarded = dsdbsparse_type.empty_like(self.g_lesser)
+            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser)
+            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
-                    self.sparsity_pattern, block_sizes
+                    rows, cols, block_sizes
                 )
 
             if comm.rank == 0:
@@ -218,16 +214,16 @@ class SCBAData:
             )
 
             self.w_lesser = dsdbsparse_type.from_sparray(
-                self.sparsity_pattern.astype(xp.complex128),
+                rows,
+                cols,
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
                 bits=config.compute.num_bits,
-                allocate=False,
             )
-            self.w_greater = dsdbsparse_type.empty_like(self.w_lesser, allocate=False)
+            self.w_greater = dsdbsparse_type.empty_like(self.w_lesser)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -331,7 +327,8 @@ class SCBA:
         self.electron_solver = ElectronSolver(
             self.config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
+            rows=self.data.rows,
+            cols=self.data.cols,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -340,7 +337,7 @@ class SCBA:
             coulomb_matrix, __ = assemble_matrix(
                 config=config,
                 matrix_name="coulomb_matrix",
-                sparsity_pattern=self.data.sparsity_pattern,
+                sparsity_pattern=(self.data.rows, self.data.cols),
                 shift_kpoints=True,
             )
 
@@ -393,7 +390,8 @@ class SCBA:
                 self.config,
                 coulomb_matrix,
                 self.coulomb_screening_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
+                rows=self.data.rows,
+                cols=self.data.cols,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
@@ -887,13 +885,35 @@ class SCBA:
         self.data.sigma_greater.allocate_data()
         self.data.sigma_retarded.allocate_data()
 
+        if comm.rank == 0:
+            print("len(G) ", self.data.g_lesser.total_nnz_size, flush=True)
+            print(
+                "len(MG) ",
+                self.electron_solver.system_matrix.total_nnz_size,
+                flush=True,
+            )
+            print(
+                "len(H) ", self.electron_solver.hamiltonian.total_nnz_size, flush=True
+            )
+
+            print(
+                "len(MW) ",
+                self.coulomb_screening_solver.system_matrix.total_nnz_size,
+                flush=True,
+            )
+            print(
+                "len(L) ",
+                self.coulomb_screening_solver.l_lesser.total_nnz_size,
+                flush=True,
+            )
+
+        # NOTE: benchmark mode
+        self.data.sigma_lesser.data[:] = 0.0
+        self.data.sigma_greater.data[:] = 0.0
+        self.data.sigma_retarded.data[:] = 0.0
+
         for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
-
-            # NOTE: benchmark mode
-            self.data.sigma_lesser.data[:] = 0.0
-            self.data.sigma_greater.data[:] = 0.0
-            self.data.sigma_retarded.data[:] = 0.0
 
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm

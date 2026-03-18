@@ -144,8 +144,6 @@ class DSDBSparse(ABC):
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
         bits: int | None = None,
-        allocate: bool = True,
-        copy: bool = True,
     ):
         """Initializes a DSBDSparse matrix."""
 
@@ -185,18 +183,8 @@ class DSDBSparse(ABC):
                     "Argument must be a tuple of (shape, dtype) or an array."
                 )
             shape, data_type = arg
-            data = None
         elif isinstance(arg, xp.ndarray):
-            data = arg
-            if len(data.shape) > 1:
-                shape = data.shape
-            else:
-                shape = (
-                    self.stack_section_sizes_offset,
-                    *global_stack_shape[1:],
-                    data.shape[-1],
-                )
-            data_type = data.dtype
+            raise ValueError()
         else:
             raise ValueError(
                 "Data must be either an array or a tuple of (shape, dtype)."
@@ -209,19 +197,14 @@ class DSDBSparse(ABC):
             raise ValueError(
                 "Data type must be complex128 if no compression is applied."
             )
-        if data_type not in [xp.uint8, xp.complex128] and bits is not None:
+        if data_type not in [xp.complex128] and bits is not None:
             raise ValueError(
                 "Data type must be uint8 or complex128 if compression is applied."
             )
 
-        if data_type == xp.uint8:
-            nnz_section_sizes, total_nnz_size = get_section_sizes(
-                shape[-2], comm.stack.size, strategy="greedy"
-            )
-        else:
-            nnz_section_sizes, total_nnz_size = get_section_sizes(
-                shape[-1], comm.stack.size, strategy="greedy"
-            )
+        nnz_section_sizes, total_nnz_size = get_section_sizes(
+            shape[-1], comm.stack.size, strategy="greedy"
+        )
 
         self.nnz_section_sizes = nnz_section_sizes
         self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
@@ -259,46 +242,45 @@ class DSDBSparse(ABC):
         # Pad local data with zeros to ensure that all ranks have the
         # same data size for the all-to-all communication.
 
-        if bits is None:
-            padded_shape = (
-                max(stack_section_sizes),
-                *global_stack_shape[1:],
-                total_nnz_size,
-            )
-            data_dtype = data_type
-        else:
-            padded_shape = (
-                max(stack_section_sizes),
-                *global_stack_shape[1:],
-                total_nnz_size,
-                2 * (self.bits // 8),
-            )
-            data_dtype = xp.uint8
+        # if bits is None:
+        #     padded_shape = (
+        #         max(stack_section_sizes),
+        #         *global_stack_shape[1:],
+        #         total_nnz_size,
+        #     )
+        #     data_dtype = data_type
+        # else:
+        #     padded_shape = (
+        #         max(stack_section_sizes),
+        #         *global_stack_shape[1:],
+        #         total_nnz_size,
+        #         2 * (self.bits // 8),
+        #     )
+        #     data_dtype = xp.uint8
 
-        if not copy and data is not None and shape == padded_shape:
-            # If we are not copying the data and the data is already
-            # in the correct shape, we can just use it as is.
-            self._data = data
-        else:
-            # Otherwise, we need to create a new array.
-            if allocate:
+        # Otherwise, we need to create a new array.
+        # if allocate:
+        #     if not copy and data is not None and shape == padded_shape:
+        #         # If we are not copying the data and the data is already
+        #         # in the correct shape, we can just use it as is.
+        #         self._data = data
+        #     else:
+        #         self._data = xp.zeros(padded_shape, dtype=data_dtype)
 
-                self._data = xp.zeros(padded_shape, dtype=data_dtype)
-
-                if data is not None:
-                    if bits is None:
-                        self._data[: shape[0], ..., : shape[-1]] = data
-                    else:
-                        if data_type == xp.uint8:
-                            self._data[: shape[0], ..., : shape[-2], :] = data
-                        else:
-                            data_compressed = compress(data, bits)
-                            # NOTE: data.shape[-1] due to bytes in the last dimension
-                            self._data[: shape[0], ..., : shape[-1], :] = (
-                                data_compressed
-                            )
-            else:
-                self._data = None
+        #         if data is not None:
+        #             if bits is None:
+        #                 self._data[: shape[0], ..., : shape[-1]] = data
+        #             else:
+        #                 if data_type == xp.uint8:
+        #                     self._data[: shape[0], ..., : shape[-2], :] = data
+        #                 else:
+        #                     data_compressed = compress(data, bits)
+        #                     # NOTE: data.shape[-1] due to bytes in the last dimension
+        #                     self._data[: shape[0], ..., : shape[-1], :] = (
+        #                         data_compressed
+        #                     )
+        # else:
+        self._data = None
 
         # For the weird padding convention we use, we need to keep track
         # of this padding mask.
@@ -313,12 +295,8 @@ class DSDBSparse(ABC):
             self.stack_shape = shape[:-1]
             self.local_nnz = shape[-1]
         else:
-            if data_type == xp.uint8:
-                self.stack_shape = shape[:-2]
-                self.local_nnz = shape[-2]
-            else:
-                self.stack_shape = shape[:-1]
-                self.local_nnz = shape[-1]
+            self.stack_shape = shape[:-1]
+            self.local_nnz = shape[-1]
 
         # This is the shape of this matrix in the comm.stack.
         self.shape = self.stack_shape + (int(sum(block_sizes)), int(sum(block_sizes)))
@@ -1044,7 +1022,8 @@ class DSDBSparse(ABC):
     @abstractmethod
     def from_sparray(
         cls,
-        arr: sparse.spmatrix,
+        rows,
+        cols,
         block_sizes: NDArray,
         global_stack_shape: tuple,
         symmetry: bool | None = False,
@@ -1073,9 +1052,7 @@ class DSDBSparse(ABC):
         ...
 
     @classmethod
-    def empty_like(
-        cls, dsdbsparse: "DSDBSparse", allocate: bool = True
-    ) -> "DSDBSparse":
+    def empty_like(cls, dsdbsparse: "DSDBSparse") -> "DSDBSparse":
         """Creates a new DSDBSparse matrix with the same shape and dtype.
 
         All non-zero elements are set to zero, but the sparsity pattern
@@ -1085,8 +1062,6 @@ class DSDBSparse(ABC):
         ----------
         dsdbsparse : DSDBSparse
             The matrix to copy the shape and dtype from.
-        allocate : bool, optional
-            Whether to allocate memory for the data. Default is True.
 
         Returns
         -------
@@ -1107,7 +1082,6 @@ class DSDBSparse(ABC):
             symmetry=dsdbsparse.symmetry,
             symmetry_op=dsdbsparse.symmetry_op,
             bits=dsdbsparse.bits,
-            allocate=allocate,
         )
 
     def to_host(

@@ -68,10 +68,12 @@ class DSDBCOO(DSDBSparse):
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
         bits: int | None = None,
-        allocate: bool = True,
-        copy: bool = True,
     ):
         """Initializes a DSDBCOO matrix."""
+
+        if rows.dtype != np.int32 or cols.dtype != np.int32:
+            raise ValueError("Row and column indices must be of type int32.")
+
         super().__init__(
             arg,
             block_sizes,
@@ -80,12 +82,10 @@ class DSDBCOO(DSDBSparse):
             symmetry=symmetry,
             symmetry_op=symmetry_op,
             bits=bits,
-            allocate=allocate,
-            copy=copy,
         )
 
-        self.rows = xp.asarray(rows, dtype=xp.int32)
-        self.cols = xp.asarray(cols, dtype=xp.int32)
+        self.rows = rows
+        self.cols = cols
 
         # NOTE: If the symmetry is not enforced and we want to symmetrize
         # later, we need to check if the sparsity pattern is symmetric now.
@@ -923,13 +923,13 @@ class DSDBCOO(DSDBSparse):
     @classmethod
     def from_sparray(
         cls,
-        sparray: sparse.spmatrix,
+        rows,
+        cols,
         block_sizes: NDArray,
         global_stack_shape: tuple,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
         bits: int | None = None,
-        allocate: bool = True,
     ) -> "DSDBCOO":
         """Constructs a DSDBCOO matrix from a COO matrix.
 
@@ -960,13 +960,11 @@ class DSDBCOO(DSDBSparse):
         if comm.stack is None or comm.block is None:
             raise ValueError("Communicators must be initialized.")
 
-        # coo: sparse.coo_matrix = sparray.tocoo().copy()
-        coo: sparse.coo_matrix = sparray.tocoo()
-
-        # Canonicalizes the COO format.
+        coo = sparse.coo_matrix((xp.ones_like(rows, dtype=xp.float32), (rows, cols)))
         if symmetry:
             coo = sparse.triu(coo, format="coo")
 
+        # Canonicalizes the COO format.
         if not coo.has_canonical_format:
             coo.sum_duplicates()
 
@@ -975,7 +973,6 @@ class DSDBCOO(DSDBSparse):
             coo.row, coo.col, block_sizes
         )
 
-        _data = coo.data[block_sort_index]
         _rows = coo.row[block_sort_index]
         _cols = coo.col[block_sort_index]
 
@@ -992,14 +989,26 @@ class DSDBCOO(DSDBSparse):
             (_rows < end_idx) | (_cols < end_idx)
         )
 
-        data = _data[local_mask]
         rows = _rows[local_mask] - start_idx
         cols = _cols[local_mask] - start_idx
 
-        assert coo.data.dtype == xp.complex128
+        data_dtype = xp.complex128
+
+        stack_section_sizes, _ = get_section_sizes(
+            global_stack_shape[0], comm.stack.size, strategy="balanced"
+        )
+        stack_section_sizes_offset = stack_section_sizes[comm.stack.rank]
+        shape = (
+            stack_section_sizes_offset,
+            *global_stack_shape[1:],
+            rows.size,
+        )
+
+        rows = rows.astype(xp.int32)
+        cols = cols.astype(xp.int32)
 
         return cls(
-            arg=data,
+            arg=(shape, data_dtype),
             rows=rows,
             cols=cols,
             block_sizes=block_sizes,
@@ -1007,8 +1016,6 @@ class DSDBCOO(DSDBSparse):
             symmetry=symmetry,
             symmetry_op=symmetry_op,
             bits=bits,
-            allocate=allocate,
-            copy=True,
         )
 
     def to_dense(self):

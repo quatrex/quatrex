@@ -71,7 +71,8 @@ class ElectronSolver(SubsystemSolver):
         self,
         config: QuatrexConfig,
         energies: NDArray,
-        sparsity_pattern: sparse.coo_matrix,
+        rows,
+        cols,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(config, energies)
@@ -89,7 +90,13 @@ class ElectronSolver(SubsystemSolver):
 
         # Make sure that the the system matrix sparsity is a superset of
         # self-energy and Hamiltonian sparsity.
+
+        sparsity_pattern = sparse.coo_matrix(
+            (xp.ones_like(rows, dtype=xp.float32), (rows, cols))
+        )
+
         sparsity_pattern += hamiltonian_sparsity_pattern
+        sparsity_pattern = sparsity_pattern.tocoo()
 
         del hamiltonian_sparsity_pattern
         self.block_sizes = self.hamiltonian.block_sizes
@@ -103,14 +110,16 @@ class ElectronSolver(SubsystemSolver):
             self.overlap, overlap_sparsity_pattern = assemble_matrix(
                 config=config,
                 matrix_name="overlap",
-                sparsity_pattern=None,
+                sparsity_pattern=(sparsity_pattern.row, sparsity_pattern.col),
                 shift_kpoints=False,
             )
             self.overlap.to_host()
 
             # Make sure that the the system matrix sparsity is a superset of
             # self-energy and overlap sparsity.
-            sparsity_pattern += overlap_sparsity_pattern
+            # TODO: This is not correct
+            # sparsity_pattern += overlap_sparsity_pattern
+
             # Check that the overlap matrix and Hamiltonian matrix match.
             if self.overlap.shape != self.hamiltonian.shape:
                 raise ValueError(
@@ -128,12 +137,12 @@ class ElectronSolver(SubsystemSolver):
 
         # Allocate memory for the system matrix.
         self.system_matrix = config.compute.dsdbsparse_type.from_sparray(
-            sparsity_pattern.astype(xp.complex128),
+            sparsity_pattern.row,
+            sparsity_pattern.col,
             block_sizes=self.block_sizes,
             global_stack_shape=self.energies.shape
             + tuple([int(k) for k in config.device.kpoint_grid if k > 1]),
             bits=config.compute.num_bits,
-            allocate=False,
         )
         self.system_matrix.free_data()  # Free any previously allocated data
         del sparsity_pattern

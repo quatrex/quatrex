@@ -34,21 +34,15 @@ test quatrex single:
     - which quatrex
     - which python
     - which pytest
+    - pip list
     - python3 -c "import numpy; numpy.show_config()"
     - python3 -c "import cupy; cupy.show_config()"
-    - pip list
-    - ls -alh
-    - pwd
+    - MPI4PY_RC_INITIALIZE=0 quatrex --version
+    - MPI4PY_RC_INITIALIZE=1 MPICH_DEBUG=1 FI_LOG_LEVEL=debug python3 -c "from mpi4py import MPI; print('MPI Initialized')"
     - cd /src && ls -alh
-    - quatrex --version
-    - pytest --version
-    - which mpicc
-    - ldd $(which python3) | grep libfabric || true
-    - MPICH_DEBUG=1 FI_LOG_LEVEL=debug python3 -c "from mpi4py import MPI; print('MPI Initialized')"
-    - pytest tests/qttools/kernels/test_operator.py --log-level=DEBUG -vv
-    - quatrex --help
+    - MPI4PY_RC_INITIALIZE=1 pytest --version
+    - MPI4PY_RC_INITIALIZE=1 pytest tests/qttools/kernels/test_operator.py --log-level=DEBUG -vv
   variables:
-    USE_MPI: 'YES'
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
     SLURM_TIMELIMIT: '00:05:00'

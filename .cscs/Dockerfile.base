@@ -1,9 +1,5 @@
 FROM docker.io/nvidia/cuda:12.9.1-devel-ubuntu24.04
 
-ARG libfabric_version=1.22.0
-ARG mpi_version=4.3.1
-ARG osu_version=7.5.1
-
 # Set Zurich timezone.
 ENV TZ=Europe/Zurich
 
@@ -26,71 +22,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     git \
     git-lfs \
     gfortran \
-    libpmi2-0-dev \
+    libmpich-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.13 the default python3.
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
-
-# Handle CUDA stubs for build process.
-RUN echo '/usr/local/cuda/lib64/stubs' > /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
-
-# Build xpmem.
-RUN git clone https://github.com/hpc/xpmem \
-    && cd xpmem/lib \
-    && gcc -I../include -shared -o libxpmem.so.1 libxpmem.c \
-    && ln -s libxpmem.so.1 libxpmem.so \
-    && mv libxpmem.so* /usr/lib \
-    && cp ../include/xpmem.h /usr/include/ \
-    && ldconfig \
-    && cd ../../ \
-    && rm -Rf xpmem
-
-# Build libfabric.
-RUN wget -q https://github.com/ofiwg/libfabric/archive/v${libfabric_version}.tar.gz \
-    && tar xf v${libfabric_version}.tar.gz \
-    && cd libfabric-${libfabric_version} \
-    && ./autogen.sh \
-    && ./configure --prefix=/usr --with-cuda=/usr/local/cuda \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && cd .. \
-    && rm -rf v${libfabric_version}.tar.gz libfabric-${libfabric_version}
-
-# Build MPICH.
-RUN wget -q https://www.mpich.org/static/downloads/${mpi_version}/mpich-${mpi_version}.tar.gz \
-    && tar xf mpich-${mpi_version}.tar.gz \
-    && cd mpich-${mpi_version} \
-    && ./autogen.sh \
-    && ./configure --prefix=/usr \
-                   --enable-fast=O3,ndebug \
-                   --enable-fortran \
-                   --enable-cxx \
-                   --with-device=ch4:ofi \
-                   --with-libfabric=/usr \
-                   --with-xpmem=/usr \
-                   --with-cuda=/usr/local/cuda \
-                   --with-pmilib=slurm \
-                   --with-pmi=pmi2 \
-                   --with-slurm=/usr \
-                   --with-pm=no \
-                   --with-pmi-lib=no \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && cd .. \
-    && rm -rf mpich-${mpi_version}.tar.gz mpich-${mpi_version}
-
-# Build OSU Micro-benchmarks using the new mpicc.
-RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-${osu_version}.tar.gz \
-    && tar xf osu-micro-benchmarks-${osu_version}.tar.gz \
-    && cd osu-micro-benchmarks-${osu_version} \
-    && ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda CC=$(which mpicc) CFLAGS=-O3 \
-    && make -j$(nproc) \
-    && make install \
-    && cd .. \
-    && rm -rf osu-micro-benchmarks-${osu_version} osu-micro-benchmarks-${osu_version}.tar.gz
 
 # Set up virtual environment.
 RUN python3 -m venv /opt/venv
@@ -117,6 +53,3 @@ RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_install
     && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb
 
 RUN python3 -m pip install nvmath-python
-
-# Final cleanup of stubs
-RUN rm /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig

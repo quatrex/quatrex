@@ -1446,14 +1446,36 @@ class _DStackView:
             if hasattr(self._dsdbsparse, "rows") and hasattr(self._dsdbsparse, "cols"):
                 # If the view has rows and cols attributes, we can use them to
                 # directly index into the sparse matrix.
-                self._dsdbsparse.data[self._stack_index] += xp.squeeze(
-                    xp.asarray(
-                        csr[
-                            getattr(self._dsdbsparse, "rows"),
-                            getattr(self._dsdbsparse, "cols"),
-                        ]
+
+                if self._dsdbsparse.bits is None:
+
+                    self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                        xp.asarray(
+                            csr[
+                                getattr(self._dsdbsparse, "rows"),
+                                getattr(self._dsdbsparse, "cols"),
+                            ]
+                        )
                     )
-                )
+
+                else:
+
+                    _data = decompress(
+                        self._dsdbsparse.data[self._stack_index], self._dsdbsparse.bits
+                    )
+
+                    _data += xp.squeeze(
+                        xp.asarray(
+                            csr[
+                                getattr(self._dsdbsparse, "rows"),
+                                getattr(self._dsdbsparse, "cols"),
+                            ]
+                        )
+                    )
+                    self._dsdbsparse.data[self._stack_index] = compress(
+                        _data, self._dsdbsparse.bits
+                    )
+
                 return self._dsdbsparse
 
             else:

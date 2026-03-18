@@ -496,9 +496,7 @@ def load_matrices(
 
     # assert that more than the neighbor cell cutoff is available if the cutoff is requested
     if config.device.neighbor_cell_cutoff is not None:
-        if any(
-            max_coords[i] < 2 * config.device.neighbor_cell_cutoff[i] for i in range(3)
-        ):
+        if any(max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)):
             raise ValueError(
                 "Matrix contains fewer neighbor cells than requested."
                 f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"

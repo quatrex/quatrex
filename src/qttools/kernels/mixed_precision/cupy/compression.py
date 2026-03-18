@@ -12,14 +12,14 @@ cuda_source = f"""
 
 template<int T>
 __global__
-void _compress(unsigned char* out, const complex<double>* inp, const int N) {{
+void _compress(unsigned char* out, const complex<double>* inp, const size_t N) {{
     static const int num_bytes = T / 8;
     __shared__ unsigned char s_out[{BLOCK_SIZE} * num_bytes * 2];
 
-    int tile = blockIdx.x;
-    int idx = tile * {BLOCK_SIZE} + threadIdx.x;
+    size_t tile = blockIdx.x;
+    size_t idx = tile * {BLOCK_SIZE} + threadIdx.x;
 
-    for (int i = 0; i < num_bytes * 2; ++i) {{
+    for (size_t i = 0; i < num_bytes * 2; ++i) {{
         s_out[threadIdx.x * num_bytes * 2 + i] = 0;
     }}
 
@@ -71,49 +71,49 @@ void _compress(unsigned char* out, const complex<double>* inp, const int N) {{
         }}
 
         // Store into shared memory (Little-endian)
-        for (int i = 0; i < num_bytes; i++) {{
+        for (size_t i = 0; i < num_bytes; i++) {{
             s_out[threadIdx.x * num_bytes * 2 + i] = (packed_vals[0] >> (8 * i)) & 0xFF;
             s_out[threadIdx.x * num_bytes * 2 + num_bytes + i] = (packed_vals[1] >> (8 * i)) & 0xFF;
         }}
     }}
     __syncthreads();
 
-    int start_idx = tile * {BLOCK_SIZE} * num_bytes * 2;
-    int end_idx = min(N * num_bytes * 2, start_idx + {BLOCK_SIZE} * num_bytes * 2);
-    for (int i = start_idx + threadIdx.x; i < end_idx; i += {BLOCK_SIZE}) {{
+    size_t start_idx = tile * {BLOCK_SIZE} * num_bytes * 2;
+    size_t end_idx = min(N * num_bytes * 2, start_idx + {BLOCK_SIZE} * num_bytes * 2);
+    for (size_t i = start_idx + threadIdx.x; i < end_idx; i += {BLOCK_SIZE}) {{
         out[i] = s_out[i - start_idx];
     }}
 }}
 
-extern "C" __global__ void _compress_fp16(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<16>(out, inp, N); }}
-extern "C" __global__ void _compress_fp24(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<24>(out, inp, N); }}
-extern "C" __global__ void _compress_fp32(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<32>(out, inp, N); }}
-extern "C" __global__ void _compress_fp40(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<40>(out, inp, N); }}
-extern "C" __global__ void _compress_fp48(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<48>(out, inp, N); }}
-extern "C" __global__ void _compress_fp56(unsigned char* out, const complex<double>* inp, const int N) {{ _compress<56>(out, inp, N); }}
+extern "C" __global__ void _compress_fp16(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<16>(out, inp, N); }}
+extern "C" __global__ void _compress_fp24(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<24>(out, inp, N); }}
+extern "C" __global__ void _compress_fp32(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<32>(out, inp, N); }}
+extern "C" __global__ void _compress_fp40(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<40>(out, inp, N); }}
+extern "C" __global__ void _compress_fp48(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<48>(out, inp, N); }}
+extern "C" __global__ void _compress_fp56(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<56>(out, inp, N); }}
 
 template<int T>
 __global__
-void _decompress(complex<double>* out, const unsigned char* inp, const int N) {{
+void _decompress(complex<double>* out, const unsigned char* inp, const size_t N) {{
     static const int num_bytes = T / 8;
     __shared__ unsigned char s_inp[{BLOCK_SIZE} * num_bytes * 2];
 
-    int tile = blockIdx.x;
-    int idx = tile * {BLOCK_SIZE} + threadIdx.x;
+    size_t tile = blockIdx.x;
+    size_t idx = tile * {BLOCK_SIZE} + threadIdx.x;
 
-    int start_idx = tile * {BLOCK_SIZE} * num_bytes * 2;
-    int end_idx = min(N * num_bytes * 2, start_idx + {BLOCK_SIZE} * num_bytes * 2);
+    size_t start_idx = tile * {BLOCK_SIZE} * num_bytes * 2;
+    size_t end_idx = min(N * num_bytes * 2, start_idx + {BLOCK_SIZE} * num_bytes * 2);
     
-    for (int i = threadIdx.x; (start_idx + i) < end_idx; i += {BLOCK_SIZE}) {{
+    for (size_t i = threadIdx.x; (start_idx + i) < end_idx; i += {BLOCK_SIZE}) {{
         s_inp[i] = inp[start_idx + i];
     }}
     __syncthreads();
 
     if (idx < N) {{
-        auto unpack = [&](int offset) -> double {{
+        auto unpack = [&](size_t offset) -> double {{
             unsigned long long packed = 0;
-            int base_s_idx = threadIdx.x * num_bytes * 2 + offset;
-            for (int i = 0; i < num_bytes; i++) {{
+            size_t base_s_idx = threadIdx.x * num_bytes * 2 + offset;
+            for (size_t i = 0; i < num_bytes; i++) {{
                 packed |= (unsigned long long)s_inp[base_s_idx + i] << (8 * i);
             }}
 
@@ -139,12 +139,12 @@ void _decompress(complex<double>* out, const unsigned char* inp, const int N) {{
     }}
 }}
 
-extern "C" __global__ void _decompress_fp16(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<16>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp24(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<24>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp32(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<32>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp40(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<40>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp48(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<48>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp56(complex<double>* out, const unsigned char* inp, const int N) {{ _decompress<56>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp16(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<16>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp24(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<24>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp32(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<32>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp40(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<40>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp48(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<48>(out, inp, N); }}
+extern "C" __global__ void _decompress_fp56(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<56>(out, inp, N); }}
 """
 
 module = cp.RawModule(code=cuda_source, options=("--std=c++11",))

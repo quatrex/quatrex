@@ -431,7 +431,7 @@ class SCBA:
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        if self.config.coulomb_screening.discard_real_parts:
+        if self.config.scba.use_sigma_approximation:
             self.data.sigma_lesser._data.real = 0
             self.data.sigma_greater._data.real = 0
             # Make sure that the imaginary part comes only from

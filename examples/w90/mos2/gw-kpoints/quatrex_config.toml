@@ -19,6 +19,7 @@ mixing_factor = 0.5
 coulomb_screening = true
 phonon = true
 
+use_sigma_approximation = false
 
 [outputs]  # Select which outputs to write.
 electron_ldos = true

@@ -72,6 +72,16 @@ class SCBAConfig(BaseModel):
 
     symmetric: bool = False
 
+    use_sigma_approximation: bool = True
+    r"""Whether to discard parts of the self-energies.
+
+    This affects the self-energies in the following way:
+    The real parts of the lesser/greater self-energies are discarded
+    and the imaginary part of retarded self-energy computed only from
+    the lesser and greater parts by $\frac{\mathbf{\Sigma}^> - \mathbf{\Sigma}^<}{2}$.
+
+    """
+
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""

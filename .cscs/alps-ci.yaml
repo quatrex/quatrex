@@ -31,30 +31,29 @@ test quatrex single:
   extends: .container-runner-daint-gh200
   image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
   script:
-    - which quatrex
-    - which python
-    - which pytest
-    - pip list
+    - . /opt/venv/bin/activate
     - python3 -c "import numpy; numpy.show_config()"
     - python3 -c "import cupy; cupy.show_config()"
-    - MPI4PY_RC_INITIALIZE=0 quatrex --version
-    - MPI4PY_RC_INITIALIZE=1 MPICH_DEBUG=1 FI_LOG_LEVEL=debug python3 -c "from mpi4py import MPI; print('MPI Initialized')"
-    - cd /src && ls -alh
-    - MPI4PY_RC_INITIALIZE=1 pytest --version
-    - MPI4PY_RC_INITIALIZE=1 pytest tests/qttools/kernels/test_operator.py --log-level=DEBUG -vv
+    - cd /opt/repo && ls -alh
+    - pytest tests/quatrex/reference
   variables:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
-    SLURM_TIMELIMIT: '00:05:00'
+    SLURM_TIMELIMIT: '00:30:00'
 
-# test quatrex multi:
-#   extends: .container-runner-daint-gh200
-#   image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
-#   script:
-#     - python3 -c "import numpy; numpy.show_config()"
-#     - python3 -c "import cupy; cupy.show_config()"
-#     - ls -alh
-#     - pwd
-#     - pytest tests/ --only-mpi
-#   variables:
-#     SLURM_JOB_NUM_NODES: 4
+
+test quatrex multi:
+  extends: .container-runner-daint-gh200
+  image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
+  script:
+    - . /opt/venv/bin/activate
+    - python3 -c "import numpy; numpy.show_config()"
+    - python3 -c "import cupy; cupy.show_config()"
+    - cd /opt/repo && ls -alh
+    - pytest tests/qttools --only-mpi -n 0
+  variables:
+    SLURM_JOB_NUM_NODES: 2
+    SLURM_NTASKS: 6
+    CUDA_VISIBLE_DEVICES: $SLURM_LOCALID
+    SLURM_TIMELIMIT: '00:30:00'
+

@@ -1,10 +1,8 @@
 ARG BASE_IMG
 FROM $BASE_IMG
 
-COPY . /src
-WORKDIR /src
+COPY . /opt/repo
+WORKDIR /opt/repo
 
-ENV PYTHONFAULTHANDLER=1
-
-# Install quatrex.
-RUN python3 -m pip install .
+# Install quatrex into the virtual environment.
+RUN . /opt/venv/bin/activate && python3 -m pip install .

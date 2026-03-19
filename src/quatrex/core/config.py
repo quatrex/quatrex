@@ -180,7 +180,11 @@ class SolverConfig(BaseModel):
     """
 
     direct_solver: Literal[
-        "superlu", "mumps", "cudss", "pardiso", "thomas", "cudss_v2"
+        "superlu",
+        "mumps",
+        "cudss",
+        "pardiso",
+        "thomas",
     ] = "superlu"
 
     @model_validator(mode="after")

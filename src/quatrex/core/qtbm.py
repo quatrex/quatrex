@@ -22,7 +22,6 @@ from qttools.wave_function_solver import (
     Thomas,
     WFSolver,
     cuDSS,
-    cudss_solver_2,
     preferred_matrix_type,
 )
 from quatrex.core.config import QuatrexConfig, SolverConfig
@@ -30,6 +29,19 @@ from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Device
 from quatrex.grid import get_electron_energies, monkhorst_pack
+
+
+def get_cpu_memory_gb() -> float:
+    """Get current CPU memory usage in GB."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    # VmRSS is in kB
+                    return int(line.split()[1]) / 1024 / 1024
+    except FileNotFoundError:
+        pass
+    return 0.0
 
 
 def allocate_system_matrix(
@@ -339,13 +351,10 @@ class QTBM:
                 return PARDISO(matrix_type="complex_structurally_symmetric")
 
         if solver_config.direct_solver == "thomas":
-            return Thomas()
-
-        if solver_config.direct_solver == "cudss_v2":
             if self.quatrex_config.qtbm.method == "SplitSolve":
-                return cudss_solver_2(matrix_type="complex_hermitian_indefinite")
+                return Thomas(sym=True, view="up")
             else:
-                return cudss_solver_2(matrix_type="complex_nonsymmetric")
+                return Thomas(sym=False, view="default")
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -832,6 +841,8 @@ class QTBM:
                 times.append(time.perf_counter())
 
                 times.append(time.perf_counter())
+                if xp.__name__ == "cupy":
+                    xp.cuda.Stream.null.synchronize()
 
                 injection_per_contact = {}
                 phi_inj_per_contact = {}
@@ -866,6 +877,8 @@ class QTBM:
                             bloch_per_contact[contact],
                         ) = contact.compute_boundary(k * 2 * np.pi, energy_batch)
 
+                    if xp.__name__ == "cupy":
+                        xp.cuda.Stream.null.synchronize()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
@@ -903,6 +916,8 @@ class QTBM:
 
                         reflection_count += modes_per_energy
 
+                if xp.__name__ == "cupy":
+                    xp.cuda.Stream.null.synchronize()
                 t_solve = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(f"Time for OBC: {t_solve:.2f} s", flush=True)
@@ -1015,6 +1030,8 @@ class QTBM:
                                     contact.transverse_repetition_grid,
                                 )
 
+                    if xp.__name__ == "cupy":
+                        xp.cuda.Stream.null.synchronize()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
@@ -1039,11 +1056,15 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
+                            if xp.__name__ == "cupy":
+                                xp.cuda.Stream.null.synchronize()
                             t2 = time.perf_counter()
                             print(
                                 f"Time for solve: {t2 - t1:.2f} s",
                                 flush=True,
                             )
+                            if xp.__name__ == "cupy":
+                                xp.cuda.Stream.null.synchronize()
                             t1 = time.perf_counter()
                             phi[:, injected_mask] += phi[
                                 :, reflected_mask
@@ -1051,6 +1072,8 @@ class QTBM:
                                 xp.diag(eig_tot) - phi_inv_tot @ phi[:, reflected_mask],
                                 phi_inv_tot @ phi[:, injected_mask],
                             )
+                            if xp.__name__ == "cupy":
+                                xp.cuda.Stream.null.synchronize()
                             t2 = time.perf_counter()
                             print(f"Time for correction: {t2 - t1:.2f} s", flush=True)
                     else:
@@ -1062,7 +1085,8 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
-
+                    if xp.__name__ == "cupy":
+                        xp.cuda.Stream.null.synchronize()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
@@ -1109,12 +1133,33 @@ class QTBM:
 
                         del phi
 
+                    if xp.__name__ == "cupy":
+                        xp.cuda.Stream.null.synchronize()
                     t_observables = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
                             f"Time for computing observables: {t_observables:.2f} s",
                             flush=True,
                         )
+
+                    # Print memory usage at end of energy iteration
+                    if comm.rank == 0:
+                        cpu_mem_gb = get_cpu_memory_gb()
+                        if xp.__name__ == "cupy":
+                            gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
+                            gpu_mem_used_gb = (
+                                (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
+                            )
+                            gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
+                            print(
+                                f"Energy {batch_start + i}: CPU memory: {cpu_mem_gb:.2f} GB, GPU memory: {gpu_mem_used_gb:.2f}/{gpu_mem_total_gb:.2f} GB",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"Energy {batch_start + i}: CPU memory: {cpu_mem_gb:.2f} GB",
+                                flush=True,
+                            )
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:

@@ -20,13 +20,34 @@ profiler = Profiler()
 class Thomas(WFSolver):
     """Wave function solver using block thomas algorithm."""
 
-    def __init__(self):
+    def __init__(self, sym: bool = False, view: str = "default"):
+        if view not in ["default", "up", "down"]:
+            raise ValueError(
+                f"Invalid view: {view}. Must be 'default', 'up', or 'down'."
+            )
+        if not sym and view != "default":
+            raise ValueError(
+                f"Invalid view: {view}. Must be 'default' when sym is False."
+            )
+        if view == "down":
+            raise NotImplementedError(
+                "Downward view is not implemented for Thomas solver."
+            )
+        self.sym = sym
+        self.view = view
         self.blocks = None
         self.schur = None
         self._triu_cache = {}
 
     def _symmetrize_from_upper_inplace(self, block: NDArray) -> None:
-        """Fill lower triangle from upper triangle: block[j,i] = conj(block[i,j])."""
+        """Make block Hermitian by folding the lower triangle into the upper one.
+
+        For each off-diagonal pair (i, j) with i < j:
+            block[i, j] += conj(block[j, i])   # accumulate lower into upper
+            block[j, i]  = conj(block[i, j])   # mirror back
+        This handles permuted Hamiltonians where the lower triangle may carry
+        values that have no corresponding entry in the upper triangle.
+        """
         n = block.shape[0]
         if n <= 1:
             return
@@ -53,25 +74,32 @@ class Thomas(WFSolver):
 
         n = a.shape[0]
 
-        frontier = xp.zeros(n, dtype=bool)
-        visited = xp.zeros(n, dtype=bool)
-        frontier[0] = True
-
         self.blocks = []
 
-        while xp.any(frontier):
-            current_block = xp.where(frontier)[0]
+        visited_max = -1
+        frontier_max = 0
+
+        while frontier_max > visited_max:
+            start = visited_max + 1
+            stop = frontier_max + 1
+
+            current_block = xp.arange(start, stop)
             self.blocks.append(current_block)
-            visited |= frontier
 
-            new_frontier = xp.zeros(n, dtype=bool)
-            for node in current_block.tolist():
-                new_frontier[a.indices[a.indptr[node] : a.indptr[node + 1]]] = True
+            next_max = frontier_max
+            for node in range(start, stop):
+                row_start = a.indptr[node]
+                row_stop = a.indptr[node + 1]
+                if row_stop > row_start:
+                    row_max = int(a.indices[row_stop - 1])
+                    next_max = max(next_max, row_max)
 
-            frontier = new_frontier & (~visited)
+            visited_max = frontier_max
+            frontier_max = min(next_max, n - 1)
 
-        self.blocks[1] = xp.hstack([self.blocks[0], self.blocks[1]])
-        self.blocks.pop(0)
+        if len(self.blocks) > 1:
+            self.blocks[1] = xp.hstack([self.blocks[0], self.blocks[1]])
+            self.blocks.pop(0)
 
     def _run_forward(self, a, b):
         """
@@ -90,11 +118,9 @@ class Thomas(WFSolver):
 
         # First iteration
         a00 = densify(a[self.blocks[0], :][:, self.blocks[0]])
-        self._symmetrize_from_upper_inplace(a00)
-        a01 = (
-            densify(a[self.blocks[0], :][:, self.blocks[1]])
-            + densify(a[self.blocks[1], :][:, self.blocks[0]]).T.conj()
-        )
+        if self.sym and self.view == "up":
+            self._symmetrize_from_upper_inplace(a00)
+        a01 = densify(a[self.blocks[0], :][:, self.blocks[1]])
 
         # LU factorization of the first block
         a00, piv = lu_factor(a00, overwrite_a=False)
@@ -104,14 +130,14 @@ class Thomas(WFSolver):
         self.schur.append(lu_solve((a00, piv), a01, overwrite_b=False))
 
         for i in range(1, len(self.blocks) - 1):
-
-            a10 = a01.T.conj()
+            if self.sym and self.view == "up":
+                a10 = a01.T.conj()
+            else:
+                a10 = densify(a[self.blocks[i], :][:, self.blocks[i - 1]])
             a00 = densify(a[self.blocks[i], :][:, self.blocks[i]])
-            self._symmetrize_from_upper_inplace(a00)
-            a01 = (
-                densify(a[self.blocks[i], :][:, self.blocks[i + 1]])
-                + densify(a[self.blocks[i + 1], :][:, self.blocks[i]]).T.conj()
-            )
+            if self.sym and self.view == "up":
+                self._symmetrize_from_upper_inplace(a00)
+            a01 = densify(a[self.blocks[i], :][:, self.blocks[i + 1]])
             # Update the current block with the Schur complement
             a00 -= a10 @ self.schur[i - 1]
             # LU factorization of the current block
@@ -126,9 +152,13 @@ class Thomas(WFSolver):
             self.schur.append(lu_solve((a00, piv), a01, overwrite_b=False))
 
         # Lu factorization of the last block
-        a10 = a01.T.conj()
+        if self.sym and self.view == "up":
+            a10 = a01.T.conj()
+        else:
+            a10 = densify(a[self.blocks[-1], :][:, self.blocks[-2]])
         a00 = densify(a[self.blocks[-1], :][:, self.blocks[-1]])
-        self._symmetrize_from_upper_inplace(a00)
+        if self.sym and self.view == "up":
+            self._symmetrize_from_upper_inplace(a00)
         a00 -= a10 @ self.schur[-1]
         a00, piv = lu_factor(a00, overwrite_a=False)
         # Solve for the last block

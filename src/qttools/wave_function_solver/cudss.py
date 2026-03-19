@@ -1,22 +1,9 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import ctypes.util
-import time
-from collections.abc import Sequence
-
-from qttools import NDArray, sparse
-from qttools.wave_function_solver.solver import WFSolver
-
 try:
+    import nvmath
     from nvmath.bindings import cudss
     from nvmath.bindings.cudss import MatrixType, MatrixViewType
-    from nvmath.internal import tensor_wrapper, utils
-    from nvmath.sparse._internal import cudss_utils
-    from nvmath.sparse.advanced import DirectSolver
-    from nvmath.sparse.advanced.direct_solver import (
-        axis_order_in_memory,
-        calculate_strides,
-    )
 
     nvmath_available = True
 
@@ -32,178 +19,133 @@ try:
 except ImportError:
     nvmath_available = False
 
+import time
 
-# Possible multithreading libraries for cuDSS in descending order of
-# preference.
-_mtlayer_libs = [
-    "libcudss_mtlayer_gomp.so.0",
-    "libcudss_mtlayer_gomp.so.0.5.0",
-]
+from qttools import NDArray, sparse, xp
+from qttools.profiling import Profiler
+from qttools.wave_function_solver.solver import WFSolver
+
+profiler = Profiler()
 
 
 class cuDSS(WFSolver):
-    """Wave function solver using cuDSS for sparse matrix solving.
 
-    This solver uses the cuDSS library to solve sparse linear systems
-    on NVIDIA GPUs.
+    def _set_A(self, a: sparse.csr_matrix):
+        n = a.shape[0]
+        nnz = a.nnz
+        self.A = cudss.matrix_create_csr(
+            n,  # nrows
+            n,  # ncols
+            nnz,  # nnz
+            a.indptr.data.ptr,  # row_start (beginning of row offset array)
+            0,  # row_end (NULL/0 - not used in standard CSR)
+            a.indices.data.ptr,  # column indices
+            a.data.data.ptr,  # values
+            nvmath.CudaDataType.CUDA_R_32I,  # index type (int32)
+            nvmath.CudaDataType.CUDA_C_64F,  # value type (complex128)
+            self.M_type,  # matrix type (general)
+            self.M_view,  # matrix view (full)
+            cudss.IndexBase.ZERO,  # 0-based indexing
+        )
 
-    Parameters
-    ----------
-    use_multithreading : bool, optional
-        Whether to use multithreading for the solver. If True, it will
-        attempt to find a suitable multithreading library. Default is
-        True.
-    matrix_type : str, optional
-        The type of matrix to be solved. Must be one of the valid matrix types.
-        Default is None, which lets cuDSS choose the best type based on the
-        input matrix.
+    def _set_b(self, b: NDArray):
+        n = b.shape[0]
+        batchsize = b.shape[1]
+        self.B = cudss.matrix_create_dn(
+            n,  # nrows
+            batchsize,  # ncols (number of RHS)
+            n,  # leading dimension
+            b.data.ptr,  # values
+            nvmath.CudaDataType.CUDA_C_64F,  # complex128
+            cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
+        )
 
-    """
+    def _set_x(self, x: NDArray):
+        n = x.shape[0]
+        batchsize = x.shape[1]
+        self.X = cudss.matrix_create_dn(
+            n,  # nrows
+            batchsize,  # ncols (number of RHS)
+            n,  # leading dimension
+            x.data.ptr,  # values (will be allocated by cuDSS)
+            nvmath.CudaDataType.CUDA_C_64F,  # complex128
+            cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
+        )
 
     def __init__(
         self,
-        use_multithreading: bool = True,
         matrix_type: str = None,
-    ) -> None:
-        """Initializes the cuDSS wave function solver."""
+    ):
         if not nvmath_available:
             raise ImportError(
-                "cuDSS is not available. Please install it to use this solver."
+                "nvmath or its cudss bindings are not available. Please install them to use this solver."
             )
 
-        self.direct_solver = None
-        self.plan_info = None
-        self.factorization_info = None
+        self.sym_factorized = False
+        self.factorized = False
 
-        self.solver_options = {}
-
-        if use_multithreading:
-            # Try to find a multithreading library for cuDSS.
-            multithreading_lib = [
-                ctypes.util.find_library(lib) for lib in _mtlayer_libs
-            ].pop(0)
-
-            if multithreading_lib is None:
-                print("WARNING! No suitable multithreading library found for cuDSS.")
-            else:
-                self.solver_options["multithreading_lib"] = multithreading_lib
         if matrix_type is not None:
             if matrix_type not in matrix_combination:
                 raise ValueError(
                     f"Invalid matrix type '{matrix_type}'. Valid options are: {list(matrix_combination.keys())}"
                 )
-            self.solver_options["sparse_system_type"] = matrix_combination[matrix_type]
-            self.solver_options["sparse_system_view"] = MatrixViewType.UPPER
+            self.M_type = matrix_combination[matrix_type]
+            self.M_view = MatrixViewType.UPPER
 
-    def __del__(self) -> None:
-        """Cleans up the cuDSS solver context."""
-        if self.direct_solver is not None:
-            self.direct_solver.free()
-            self.direct_solver = None
+        self.cudss_handle = cudss.create()
+        self.cudss_config = cudss.config_create()
+        self.cudss_data = cudss.data_create(self.cudss_handle)
 
-    def _explicitely_reset_b(self, b: NDArray) -> None:
-        """Resets the right-hand side in the direct solver.
-
-        This is a workaround for the current limitation in nvmath where
-        resetting the right-hand side does not support different shapes
-        or strides than the original one.
-
-        Parameters
-        ----------
-        b : NDArray
-            The new right-hand side vector to set.
-
-        """
-        ds = self.direct_solver
-
-        stream_holder = utils.get_or_create_stream(
-            device_id=ds.device_id, stream=None, op_package=ds.rhs_package
+    def analyse(self):
+        xp.cuda.Stream.null.synchronize()
+        analysis_tic = time.perf_counter()
+        cudss.execute(
+            self.cudss_handle,
+            cudss.Phase.ANALYSIS,
+            self.cudss_config,
+            self.cudss_data,
+            self.A,
+            self.X,
+            self.B,
         )
+        xp.cuda.Stream.null.synchronize()
+        analysis_toc = time.perf_counter()
 
-        # Do the checks that nvmath does too.
-        # NOTE: Check the direct_solver.py source code for the original
-        # implementation.
-        explicitly_batched = isinstance(b, Sequence)
-        if explicitly_batched:
-            raise NotImplementedError(
-                "Explicitly batched right-hand sides are not supported."
-            )
-        b = tensor_wrapper.wrap_operand(b)
-        rhs_package = utils.infer_object_package(b.tensor)
+        return analysis_toc - analysis_tic
 
-        device_id = b.device_id
-        memory_space = b.device
-        value_type = b.dtype
-        shape = b.shape
-        strides = b.strides
-
-        # Handle cupy <> numpy asymmetry. See note #2.
-        if rhs_package == "numpy":
-            rhs_package = "cupy"
-
-        # Check package, device ID, shape, strides, and dtype.
-        if rhs_package != ds.rhs_package:
-            raise TypeError(
-                f"The package for 'b' ({rhs_package}) doesn't match the original one ({ds.rhs_package})."
-            )
-        if memory_space != ds.memory_space:
-            raise TypeError(
-                f"The memory space for 'b' ({memory_space}) doesn't match the original one ({ds.memory_space})."
-            )
-        if device_id != "cpu" and device_id != ds.device_id:
-            raise TypeError(
-                f"The device id for 'b' ({device_id}) doesn't match the original one ({ds.device_id})."
-            )
-        if value_type != ds.value_type:
-            raise TypeError(
-                f"The dtype for 'b' ({value_type}) doesn't match the original one ({ds.value_type})."
-            )
-
-        if ds.copy_across_memspace:
-            raise NotImplementedError(
-                "Copying across memory spaces is not supported for resetting the right-hand side."
-            )
-        ds.b = b
-
-        # Update the rhs and result shape and strides.
-        ds.rhs_shape = shape
-        ds.rhs_strides = strides
-
-        ds.result_shape = shape
-        # NOTE: I do not know what these two lines do.
-        # For single or implicitly-batched RHS, the matrix may not be
-        # compact so we use the axis ordering to determine the strides.
-        axis_order = axis_order_in_memory(ds.rhs_shape, ds.rhs_strides)
-        ds.result_strides = calculate_strides(ds.rhs_shape, axis_order)
-
-        # NOTE: Now it is not enough to just update the pointer
-        # references, and keep reference to the internal buffers.
-        # Instead, we need to destroy the existing resources and create
-        # new ones with the updated right-hand side.
-
-        # Free matrix pointers.
-        cudss.matrix_destroy(ds.x_ptr)
-        cudss.matrix_destroy(ds.b_ptr)
-
-        ds.resources_b, ds.b_ptr = cudss_utils.create_cudss_dense_wrapper(
-            ds.cuda_index_type,
-            ds.cuda_value_type,
-            ds.index_type,
-            ds.batch_indices,
-            ds.b,
-            stream_holder,
+    def factorize(self):
+        xp.cuda.Stream.null.synchronize()
+        numeric_tic = time.perf_counter()
+        cudss.execute(
+            self.cudss_handle,
+            cudss.Phase.FACTORIZATION,
+            self.cudss_config,
+            self.cudss_data,
+            self.A,
+            self.X,
+            self.B,
         )
-        # Use `b` for creating the (potentially explicitly or implicitly
-        # batched) solution matrix or vector. The pointers will be
-        # updated later in execute.
-        ds.resources_x, ds.x_ptr = cudss_utils.create_cudss_dense_wrapper(
-            ds.cuda_index_type,
-            ds.cuda_value_type,
-            ds.index_type,
-            ds.batch_indices,
-            ds.b,
-            stream_holder,
+        xp.cuda.Stream.null.synchronize()
+        numeric_toc = time.perf_counter()
+
+        return numeric_toc - numeric_tic
+
+    def _solve(self):
+        xp.cuda.Stream.null.synchronize()
+        solve_tic = time.perf_counter()
+        cudss.execute(
+            self.cudss_handle,
+            cudss.Phase.SOLVE,
+            self.cudss_config,
+            self.cudss_data,
+            self.A,
+            self.X,
+            self.B,
         )
+        xp.cuda.Stream.null.synchronize()
+        solve_toc = time.perf_counter()
+
+        return solve_toc - solve_tic
 
     @profiler.profile(level="api")
     def solve(
@@ -212,63 +154,30 @@ class cuDSS(WFSolver):
         b: NDArray,
         reuse_sym_fact: bool = False,
         reuse_fact: bool = False,
-    ) -> NDArray:
-        """Solves the sparse linear system a @ x = b using cuDSS.
+    ):
 
-        Parameters
-        ----------
-        a : sparse.spmatrix
-            The sparse system matrix.
-        b : NDArray
-            The right-hand side vector.
+        x = xp.zeros_like(b)
 
-        Returns
-        -------
-        x : NDArray
-            The solution vector.
-
-        """
-
-        # TODO: Add check to ensure that "a" did not move in memory if symbolic factorization reuse is requested
+        self._set_A(a)
+        self._set_b(b)
+        self._set_x(x)
 
         if not reuse_sym_fact and reuse_fact:
             raise ValueError(
                 "Cannot reuse total factorization without reusing symbolic factorization."
             )
 
-        if not reuse_sym_fact and (
-            self.direct_solver is not None and self.plan_info is not None
-        ):
-            self.direct_solver.reset_operands(a=a)
-            # After resetting a, we need to re-plan.
-            self.plan_info = self.direct_solver.plan()
+        if not reuse_sym_fact or not self.sym_factorized:
+            analysis_time = self.analyse()
+            print(f"Analysis time: {analysis_time:.6f} seconds", flush=True)
+            self.sym_factorized = True
 
-        if self.direct_solver is None:
-            self.direct_solver = DirectSolver(a, b, options=self.solver_options)
-            # NOTE: By default this uses a custom nested dissectioning
-            # scheme based on METIS. Other options could in principle be
-            # exposed as a parameter.
-            t1 = time.time()
-            self.plan_info = self.direct_solver.plan()
-            t2 = time.time()
-            print(f"Planning time: {t2 - t1:.2f} seconds", flush=True)
+        if not reuse_fact or not self.factorized:
+            factorization_time = self.factorize()
+            print(f"Factorization time: {factorization_time:.6f} seconds", flush=True)
+            self.factorized = True
 
-        # TODO: This does not support setting a right-hand side that
-        # has a different shape or strides than the original one.
-        # Until it is fixed in nvmath, we will hack around it by
-        # resetting the operands.
-        # self.direct_solver.reset_operands(b=b)
-        self._explicitely_reset_b(b)
+        solve_time = self._solve()
+        print(f"Solve time: {solve_time:.6f} seconds", flush=True)
 
-        if not reuse_fact or self.factorization_info is None:
-            t1 = time.time()
-            self.factorization_info = self.direct_solver.factorize()
-            t2 = time.time()
-            print(f"Factorization time: {t2 - t1:.2f} seconds", flush=True)
-
-        t1 = time.time()
-        sol = self.direct_solver.solve()
-        t2 = time.time()
-        print(f"Solving time: {t2 - t1:.2f} seconds", flush=True)
-
-        return sol
+        return x

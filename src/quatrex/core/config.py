@@ -546,17 +546,17 @@ class CoulombScreeningConfig(BaseModel):
     Computing the correction is slightly more expensive.
     """
 
-    discard_real_parts: bool = True
-    r"""Whether to discard the real parts of the lesser/greater polarization and self-energy.
+    use_polarization_approximation: bool = True
+    r"""Whether to discard parts of the polarization.
 
-    This affects the retarded parts in the following way:
-    For Polarization and Coulomb Screening Self-Energy if the `discard_real_parts` flag is set,
-    the imaginary part is only computed from only the lesser and greater parts by $\frac{\mathbf{X}^> - \mathbf{X}^<}{2}$.
-    Else, the imaginary part can also contain contributions from the Hilbert transformation.
+    This affects the polarization in the following way:
+    The real parts of the lesser/greater polarization are discarded
+    and the imaginary part of retarded self-energy computed only from
+    the lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
 
     """
 
-    compute_retarded_polarization: bool = False
+    compute_hilbert_retarded_polarization: bool = False
     r"""Whether to compute the Hilbert part of the retarded polarization function.
     
     If not set, the retarded polarization is computed only from

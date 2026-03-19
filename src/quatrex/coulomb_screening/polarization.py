@@ -84,8 +84,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
         )
         self.batch_size = config.compute.convolve.batch_size
 
-        self.discard_real_parts = config.coulomb_screening.discard_real_parts
-        self.compute_retarded = config.coulomb_screening.compute_retarded_polarization
+        self.use_approximation = config.coulomb_screening.use_polarization_approximation
+        self.compute_hilbert_retarded = (
+            config.coulomb_screening.compute_hilbert_retarded_polarization
+        )
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
@@ -118,7 +120,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
-            if self.compute_retarded:
+            if self.compute_hilbert_retarded:
                 (
                     p_retarded.dtranspose(discard=True)
                     if (p_retarded.distribution_state != "nnz")
@@ -184,7 +186,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
                     # Note that only the hermitian part is computed here.
 
-                    if self.compute_retarded:
+                    if self.compute_hilbert_retarded:
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
@@ -206,7 +208,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             # Transpose the matrices to stack distribution.
             for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None
-            if self.compute_retarded:
+            if self.compute_hilbert_retarded:
                 (
                     p_retarded.dtranspose()
                     if (p_retarded.distribution_state != "stack")
@@ -225,11 +227,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 p_greater.symmetrize(xp.subtract)
                 p_retarded.symmetrize(xp.add)
 
-            if not self.compute_retarded:
+            if not self.compute_hilbert_retarded:
                 p_retarded.data[:] = 0
 
             # Discard the real part.
-            if self.discard_real_parts:
+            if self.use_approximation:
                 p_lesser.data.real = 0
                 p_greater.data.real = 0
                 p_retarded.data.imag = 0

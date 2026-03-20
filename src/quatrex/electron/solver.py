@@ -651,6 +651,8 @@ class ElectronSolver(SubsystemSolver):
                         out=out_slice,
                         return_retarded=True,
                         return_current=self.compute_meir_wingreen_current,
+                        ozaki=self.config.compute.g_rgf_ozaki,
+                        slices=self.config.compute.g_rgf_slices,
                     )
                     self.meir_wingreen_current.append(current)
 
@@ -658,8 +660,8 @@ class ElectronSolver(SubsystemSolver):
             label="ElectronSolver: Filter", level="default", comm=comm
         ):
             self.system_matrix.free_data()
-            if self.call_count < self.filtering_iteration_limit:
-                self._filter_peaks(out)
+            # if self.call_count < self.filtering_iteration_limit:
+            #     self._filter_peaks(out)
 
         if self.band_edge_tracking == "dos-peaks":
 

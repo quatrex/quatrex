@@ -366,6 +366,8 @@ class CoulombScreeningSolver(SubsystemSolver):
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
+            ozaki=self.config.compute.w_assembly_ozaki,
+            slices=self.config.compute.w_assembly_slices,
         )
         # TODO: inefficient
         if self.system_matrix.bits is None:
@@ -502,6 +504,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     start_block=start_block,
                     end_block=end_block,
                     spillover_correction=True,
+                    ozaki=self.config.compute.w_assembly_ozaki,
+                    slices=self.config.compute.w_assembly_slices,
                 )
                 bd_sandwich_distr(
                     self.coulomb_matrix,
@@ -510,6 +514,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     start_block=start_block,
                     end_block=end_block,
                     spillover_correction=True,
+                    ozaki=self.config.compute.w_assembly_ozaki,
+                    slices=self.config.compute.w_assembly_slices,
                 )
 
             self.coulomb_matrix.free_data()
@@ -563,14 +569,16 @@ class CoulombScreeningSolver(SubsystemSolver):
                         obc_blocks=self.obc_blocks,
                         out=out_slice,
                         return_retarded=False,
+                        ozaki=self.config.compute.w_rgf_ozaki,
+                        slices=self.config.compute.w_rgf_slices,
                     )
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Filter", level="default", comm=comm
         ):
             # Only filter the peaks for the first few iterations.
-            if self.solve_call_count < self.filtering_iteration_limit:
-                self._filter_peaks(out)
+            # if self.solve_call_count < self.filtering_iteration_limit:
+            #     self._filter_peaks(out)
 
             self.system_matrix.free_data()
             self.l_lesser.free_data()

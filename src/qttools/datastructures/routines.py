@@ -8,6 +8,7 @@ from qttools import xp
 from qttools.comm import comm
 from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures.dsdbsparse import DSDBSparse
+from qttools.kernels.linalg.gemm import matmul
 from qttools.utils.gpu_utils import synchronize_device
 
 
@@ -667,6 +668,8 @@ def bd_matmul_distr(
     end_block: int = None,
     spillover_correction: bool = False,
     accumulator_dtype=None,
+    ozaki: None | int = None,
+    slices: None | int = None,
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -793,11 +796,19 @@ def bd_matmul_distr(
                             k_b, j_b = k, j
                         try:
                             if partsum is None:
-                                partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(
-                                    accumulator_dtype
+                                partsum = matmul(
+                                    a_[i_a, k_a],
+                                    b_[k_b, j_b],
+                                    ozaki=ozaki,
+                                    slices=slices,
                                 )
                             else:
-                                partsum += a_[i_a, k_a] @ b_[k_b, j_b]
+                                partsum += matmul(
+                                    a_[i_a, k_a],
+                                    b_[k_b, j_b],
+                                    ozaki=ozaki,
+                                    slices=slices,
+                                )
                         except Exception as e:
                             rank = comm.block.rank if comm.block is not None else 0
                             print(e)
@@ -820,6 +831,8 @@ def bd_sandwich_distr(
     end_block: int = None,
     spillover_correction: bool = False,
     accumulator_dtype=None,
+    ozaki: None | int = None,
+    slices: None | int = None,
 ):
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
@@ -878,6 +891,8 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
+        ozaki=ozaki,
+        slices=slices,
     )
     out_ = bd_matmul_distr(
         tmp,
@@ -890,6 +905,8 @@ def bd_sandwich_distr(
         end_block,
         False,
         accumulator_dtype,
+        ozaki=ozaki,
+        slices=slices,
     )
 
     if spillover_correction:
@@ -901,24 +918,74 @@ def bd_sandwich_distr(
         # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
         if start_block == 0:
             out_[0, 0] += (
-                a_[1, 0] @ b_[0, 1] @ a_[0, 0]
-                + a_[0, 0] @ b_[1, 0] @ a_[0, 1]
-                + a_[1, 0] @ b_[0, 0] @ a_[0, 1]
+                matmul(
+                    matmul(a_[1, 0], b_[0, 1], ozaki=ozaki, slices=slices),
+                    a_[0, 0],
+                    ozaki=ozaki,
+                    slices=slices,
+                )
+                + matmul(
+                    a_[0, 0],
+                    matmul(b_[1, 0], a_[0, 1], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
+                + matmul(
+                    a_[1, 0],
+                    matmul(b_[0, 0], a_[0, 1], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
             )
-            out_[0, 1] += a_[1, 0] @ b_[0, 1] @ a_[0, 1]
+            out_[0, 1] += matmul(
+                a_[1, 0],
+                matmul(b_[0, 1], a_[0, 1], ozaki=ozaki, slices=slices),
+                ozaki=ozaki,
+                slices=slices,
+            )
             if not out_.dsdbsparse.symmetry:
-                out_[1, 0] += a_[1, 0] @ b_[1, 0] @ a_[0, 1]
+                out_[1, 0] += matmul(
+                    a_[1, 0],
+                    matmul(b_[1, 0], a_[0, 1], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
 
         if end_block == a.num_blocks:
             m1 = a.num_blocks - 1
             m2 = a.num_blocks - 2
             out_[m1, m1] += (
-                a_[m2, m1] @ b_[m1, m2] @ a_[m1, m1]
-                + a_[m1, m1] @ b_[m2, m1] @ a_[m1, m2]
-                + a_[m2, m1] @ b_[m1, m1] @ a_[m1, m2]
+                matmul(
+                    matmul(a_[m2, m1], b_[m1, m2], ozaki=ozaki, slices=slices),
+                    a_[m1, m1],
+                    ozaki=ozaki,
+                    slices=slices,
+                )
+                + matmul(
+                    a_[m1, m1],
+                    matmul(b_[m2, m1], a_[m1, m2], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
+                + matmul(
+                    a_[m2, m1],
+                    matmul(b_[m1, m1], a_[m1, m2], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
             )
-            out_[m1, m2] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m2]
+            out_[m1, m2] += matmul(
+                a_[m2, m1],
+                matmul(b_[m1, m2], a_[m1, m2], ozaki=ozaki, slices=slices),
+                ozaki=ozaki,
+                slices=slices,
+            )
             if not out_.dsdbsparse.symmetry:
-                out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
+                out_[m2, m1] += matmul(
+                    a_[m2, m1],
+                    matmul(b_[m2, m1], a_[m1, m2], ozaki=ozaki, slices=slices),
+                    ozaki=ozaki,
+                    slices=slices,
+                )
 
     return out_

@@ -985,6 +985,14 @@ class ComputeConfig(BaseModel):
     If None, no compression is applied and the data is stored in complex128.
     """
 
+    w_assembly_ozaki: None | int = None
+    g_rgf_ozaki: None | int = None
+    w_rgf_ozaki: None | int = None
+
+    w_assembly_slices: None | int = None
+    g_rgf_slices: None | int = None
+    w_rgf_slices: None | int = None
+
     @field_validator("dsdbsparse_type", mode="before")
     def set_dsdbsparse(cls, value) -> DSDBSparse:
         """Converts the string value to the corresponding DSDBSparse object."""

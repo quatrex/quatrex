@@ -178,6 +178,10 @@ class Thomas(WFSolver):
         for i in range(len(self.blocks) - 2, -1, -1):
             b[self.blocks[i]] -= self.schur[i] @ b[self.blocks[i + 1]]
 
+    def _free_memory(self):
+        """Free memory used for intermediate computations."""
+        self.schur = None
+
     @profiler.profile(level="api")
     def solve(
         self,
@@ -215,5 +219,7 @@ class Thomas(WFSolver):
 
         self._run_forward(a, b)
         self._run_backward(b)
+
+        self._free_memory()
 
         return b

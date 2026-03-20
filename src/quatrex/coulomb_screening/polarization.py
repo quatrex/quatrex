@@ -230,7 +230,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             if not self.compute_hilbert_retarded:
                 p_retarded.data[:] = 0
 
-            # Discard the real part.
+            # Discard the real part of lesser/greater and imag part of retarded
             if self.use_approximation:
                 p_lesser.data.real = 0
                 p_greater.data.real = 0

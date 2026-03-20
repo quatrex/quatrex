@@ -550,10 +550,10 @@ class CoulombScreeningConfig(BaseModel):
     r"""Whether to discard parts of the polarization.
 
     This affects the polarization in the following way:
-    The real parts of the lesser/greater polarization are discarded
-    and the imaginary part of retarded self-energy computed only from
-    the lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
-
+    The real parts of the lesser/greater polarization are discarded. 
+    The imaginary part of the retarded polarization from previous computation is zeroed.
+    The retarded polarization is computed only using lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
+    Thus, the retarded polarization is ensured to have zero real part and only an imaginary part.
     """
 
     compute_hilbert_retarded_polarization: bool = False

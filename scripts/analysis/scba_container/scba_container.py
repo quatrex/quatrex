@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -13,6 +14,7 @@ class SCBAContainer:
         energy_window_max: int,
         energy_window_num: int,
         num_samples: int,
+        config=None,
     ):
         self.g_lesser = np.empty(
             [max_iterations, energy_window_num, num_samples], dtype=np.complex128
@@ -57,8 +59,8 @@ class SCBAContainer:
             energy_window_min, energy_window_max, energy_window_num, endpoint=True
         )
 
-    def load_sample_indices(self, archive_file_prefix: str):
-        self.sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+        self.adaptive_electron_energies_for_g_sigma = None
+        self.adaptive_electron_energies_for_p_w = None
 
     def load_g_data(self, archive_file_prefix: str, iteration: int):
         self.g_lesser[iteration, :, :] = np.load(
@@ -101,16 +103,45 @@ class SCBAContainer:
             f"{archive_file_prefix}_sigma_retarded_iter{iteration:02}.npy"
         )
 
+    def load_sample_indices(self, archive_file_prefix: str):
+        if os.path.exists(f"{archive_file_prefix}_sample_indices.npy"):
+            self.sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+        else:
+            print(
+                f"Warning: sample indices file {archive_file_prefix}_sample_indices.npy not found. Sample indices will be None."
+            )
+
+    def load_adaptive_grids(self, data_dir: str):
+        if os.path.exists(f"{data_dir}/adaptive_electron_energies_for_g_sigma.npy"):
+            self.adaptive_electron_energies_for_g_sigma = np.load(
+                f"{data_dir}/adaptive_electron_energies_for_g_sigma.npy"
+            )
+        else:
+            print(
+                f"Warning: adaptive electron energies for g and sigma file {data_dir}/adaptive_electron_energies_for_g_sigma.npy not found. This data will be None."
+            )
+        
+        if os.path.exists(f"{data_dir}/adaptive_electron_energies_for_p_w.npy"):
+            self.adaptive_electron_energies_for_p_w = np.load(
+                f"{data_dir}/adaptive_electron_energies_for_p_w.npy"
+            )
+        else:
+            print(
+                f"Warning: adaptive electron energies for p and w file {data_dir}/adaptive_electron_energies_for_p_w.npy not found. This data will be None."
+            )
+
     def plot_iteration(
         self,
         axs,
         iteration,
         idx,
+        adaptive_start_iteration=100,
         alpha=1.0,
         colorReal=None,
         colorImag=None,
         linewidthReal=1,
         linewidthImag=1,
+        markersize=1
     ):
         """expect 4,3 subplot axs
         axs: np.ndarray
@@ -126,18 +157,41 @@ class SCBAContainer:
 
         conv_energies = np.linspace(0, max(self.energies) - min(self.energies), len(self.energies))
 
-        axs[0, 0].set_title("G Lesser")
+        # if there's a lot of points, make the makersize smaller
+        if len(self.energies) > 10000:
+            markersize = 1
+        elif len(self.energies) > 1000:
+            markersize = 3
+        else:
+            markersize = 5
+
+        # uniform grid
+        if iteration < adaptive_start_iteration or self.adaptive_electron_energies_for_g_sigma is None:
+            x_axis = self.energies
+            linestyle = "-"
+            title_suffix = ""
+        # adaptive grid
+        else:
+            x_axis = self.adaptive_electron_energies_for_g_sigma
+            linestyle = "."
+            title_suffix = " (adaptive grid)"
+        
+        axs[0, 0].set_title(f"G Lesser{title_suffix}")
         axs[0, 0].plot(
-            self.energies,
+            x_axis,
             np.real(self.g_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[0, 0].plot(
-            self.energies,
+            x_axis,
             np.imag(self.g_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -146,18 +200,22 @@ class SCBAContainer:
         axs[0, 0].grid()
         axs[0, 0].legend()
 
-        axs[0, 1].set_title("G Greater")
+        axs[0, 1].set_title(f"G Greater{title_suffix}")
         axs[0, 1].plot(
-            self.energies,
+            x_axis,
             np.real(self.g_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[0, 1].plot(
-            self.energies,
+            x_axis,
             np.imag(self.g_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -166,18 +224,22 @@ class SCBAContainer:
         axs[0, 1].grid()
         axs[0, 1].legend()
 
-        axs[0, 2].set_title("G Retarded")
+        axs[0, 2].set_title(f"G Retarded{title_suffix}")
         axs[0, 2].plot(
-            self.energies,
+            x_axis,
             np.real(self.g_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[0, 2].plot(
-            self.energies,
+            x_axis,
             np.imag(self.g_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -186,10 +248,23 @@ class SCBAContainer:
         axs[0, 2].grid()
         axs[0, 2].legend()
 
-        axs[1, 0].set_title("P Lesser")
+        # uniform grid
+        if iteration < adaptive_start_iteration or self.adaptive_electron_energies_for_p_w is None:
+            conv_energies = np.linspace(0, max(self.energies) - min(self.energies), len(self.energies))
+            linestyle = "-"
+            title_suffix = ""
+        # adaptive grid
+        else:
+            conv_energies = self.adaptive_electron_energies_for_p_w
+            linestyle = "."
+            title_suffix = " (adaptive grid)"
+
+        axs[1, 0].set_title(f"P Lesser{title_suffix}")
         axs[1, 0].plot(
             conv_energies,
             np.real(self.p_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
@@ -198,6 +273,8 @@ class SCBAContainer:
         axs[1, 0].plot(
             conv_energies,
             np.imag(self.p_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -206,10 +283,12 @@ class SCBAContainer:
         axs[1, 0].grid()
         axs[1, 0].legend()
 
-        axs[1, 1].set_title("P Greater")
+        axs[1, 1].set_title(f"P Greater{title_suffix}")
         axs[1, 1].plot(
             conv_energies,
             np.real(self.p_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
@@ -218,6 +297,8 @@ class SCBAContainer:
         axs[1, 1].plot(
             conv_energies,
             np.imag(self.p_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -226,10 +307,12 @@ class SCBAContainer:
         axs[1, 1].grid()
         axs[1, 1].legend()
 
-        axs[1, 2].set_title("P Retarded")
+        axs[1, 2].set_title(f"P Retarded{title_suffix}")
         axs[1, 2].plot(
             conv_energies,
             np.real(self.p_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
@@ -238,6 +321,8 @@ class SCBAContainer:
         axs[1, 2].plot(
             conv_energies,
             np.imag(self.p_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -246,10 +331,21 @@ class SCBAContainer:
         axs[1, 2].grid()
         axs[1, 2].legend()
 
-        axs[2, 0].set_title("W Lesser")
+        if iteration < adaptive_start_iteration or self.adaptive_electron_energies_for_p_w is None:
+            conv_energies = np.linspace(0, max(self.energies) - min(self.energies), len(self.energies))
+            linestyle = "-"
+            title_suffix = ""
+        else:
+            conv_energies = self.adaptive_electron_energies_for_p_w
+            linestyle = "."
+            title_suffix = " (adaptive grid)"
+
+        axs[2, 0].set_title(f"W Lesser{title_suffix}")
         axs[2, 0].plot(
             conv_energies,
             np.real(self.w_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
@@ -258,6 +354,8 @@ class SCBAContainer:
         axs[2, 0].plot(
             conv_energies,
             np.imag(self.w_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -266,10 +364,12 @@ class SCBAContainer:
         axs[2, 0].grid()
         axs[2, 0].legend()
 
-        axs[2, 1].set_title("W Greater")
+        axs[2, 1].set_title(f"W Greater{title_suffix}")
         axs[2, 1].plot(
             conv_energies,
             np.real(self.w_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
@@ -278,6 +378,8 @@ class SCBAContainer:
         axs[2, 1].plot(
             conv_energies,
             np.imag(self.w_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -286,18 +388,31 @@ class SCBAContainer:
         axs[2, 1].grid()
         axs[2, 1].legend()
 
-        axs[3, 0].set_title("Sigma Lesser")
+        if iteration < adaptive_start_iteration or self.adaptive_electron_energies_for_g_sigma is None:
+            x_axis = self.energies
+            linestyle = "-"
+            title_suffix = ""
+        else:
+            x_axis = self.adaptive_electron_energies_for_g_sigma
+            linestyle = "."
+            title_suffix = " (adaptive grid)"
+
+        axs[3, 0].set_title(f"Sigma Lesser{title_suffix}")
         axs[3, 0].plot(
-            self.energies,
+            x_axis,
             np.real(self.sigma_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[3, 0].plot(
-            self.energies,
+            x_axis,
             np.imag(self.sigma_lesser[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -306,18 +421,22 @@ class SCBAContainer:
         axs[3, 0].grid()
         axs[3, 0].legend()
 
-        axs[3, 1].set_title("Sigma Greater")
+        axs[3, 1].set_title(f"Sigma Greater{title_suffix}")
         axs[3, 1].plot(
-            self.energies,
+            x_axis,
             np.real(self.sigma_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[3, 1].plot(
-            self.energies,
+            x_axis,
             np.imag(self.sigma_greater[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,
@@ -326,18 +445,22 @@ class SCBAContainer:
         axs[3, 1].grid()
         axs[3, 1].legend()
 
-        axs[3, 2].set_title("Sigma Retarded")
+        axs[3, 2].set_title(f"Sigma Retarded{title_suffix}")
         axs[3, 2].plot(
-            self.energies,
+            x_axis,
             np.real(self.sigma_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorReal,
             linewidth=linewidthReal,
             label=f"real Iter {iteration}",
         )
         axs[3, 2].plot(
-            self.energies,
+            x_axis,
             np.imag(self.sigma_retarded[iteration, :, idx]),
+            linestyle,
+            markersize=markersize,
             alpha=alpha,
             color=colorImag,
             linewidth=linewidthImag,

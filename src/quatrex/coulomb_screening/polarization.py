@@ -91,7 +91,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
     def compute(
-        self, g_lesser: DSDBSparse, g_greater: DSDBSparse, source_adaptive_points: NDArray, target_adaptive_points: NDArray, out: tuple[DSDBSparse, ...]
+        self, iteration: int, g_lesser: DSDBSparse, g_greater: DSDBSparse, source_adaptive_points: NDArray, target_adaptive_points: NDArray, out: tuple[DSDBSparse, ...]
     ) -> None:
         """Computes the polarization.
 
@@ -188,6 +188,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         n_conv_fine = 2*n_fine -1
                         n_conv = 2*ne - 1
 
+                        # self.prefactor is only computed 1x on init, assuming uniform energy grid
+                        adaptive_prefactor = self.prefactor / r  # because of interpolation to a finer grid, we need to divide by the oversampling ratio to keep the prefactor consistent
+                        
+                        # self.energies is the shifted energy grid to start from 0eV, directly use the quatrex config to create the min/max
                         energy_min = self.config.electron.energy_window_min
                         energy_max = self.config.electron.energy_window_max
 
@@ -202,24 +206,64 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         greater_fft = xp.fft.fft(g_greater_fine, n_conv_fine, axis=0)
                         lesser_fft = xp.fft.fft(-g_lesser_fine.conj(), n_conv_fine, axis=0)
 
-                        p_g_full = xp.fft.ifft(greater_fft * lesser_fft, axis=0)
+                        p_g_full = xp.fft.ifft(greater_fft * lesser_fft, axis=0) * adaptive_prefactor
+                        # p_l_full = -p_g_full[::-1].conj()
+
+                        # liyongda (19 Mar 2026): debugging saves, only run with 1 rank
+                        xp.save(self.config.output_dir /  f"p_g_full_adaptive_iter{iteration}.npy", p_g_full)
+                        xp.save(self.config.output_dir /  f"energies_conv_adaptive_iter{iteration}.npy", fine_energies_conv)
+                            
+                        assert(p_g_full.shape[0] == n_conv_fine)
 
                         # go back to original grid length (if different length)
-                        if (len(p_g_full) != n_conv):
-                            p_g_full = interpolate.make_interp_spline(fine_energies_conv, p_g_full, axis=0, k=k)(energies_conv)
-                        assert(len(p_g_full) == n_conv)
+                        # liyongda(17 Mar 2026): going to uniform grid for P, crutch solution
+                        # if (len(p_g_full) != n_conv):
+                        #     p_g_full = interpolate.make_interp_spline(fine_energies_conv, p_g_full, axis=0, k=k)(energies_conv)
+                        # assert(len(p_g_full) == n_conv)
+
+                        # liyongda (17 Mar 2026): map full interpolated convolution to adaptive grid
+                        # find index for zero in convolution grid
+                        zero_index = np.argmin(np.abs(fine_energies_conv))
+                        
+                        # only go ne points (not necessarily the full half)
+                        # liyongda (17 Mar 2026): lesser_unifrom directly uses p_g_full without intermediate p_l_full
+                        #   tested to work in `/usr/scratch/mont-fort8/yongli/document/sandbox/fft_libraries/adaptive_integration/interpolation.ipynb`
+                        greater_uniform = p_g_full[zero_index:zero_index+ne]
+                        lesser_uniform = -p_g_full[::-1][zero_index:zero_index+ne].conj()  # don't create extra p_l_full, just use p_g_full with the symmetry relation       
+
+                        fine_energies_lesser = -fine_energies_conv[zero_index:zero_index+ne][::-1]
+                        fine_energies_greater = fine_energies_conv[zero_index:zero_index+ne]
+
+                        # interpolate the target grid
+                        # target target_adaptive_points (-15 to 5 eV) 
+                        # fine_energies_greater (0 to 20 eV)
+                        # fine_energies_lesser (-20 to 0 eV)
+                        fine_energies_greater += target_adaptive_points[0]      # map to same range as target_adaptive_points
+                        fine_energies_lesser += target_adaptive_points[-1]
+                        p_greater.data[..., batch] = interpolate.make_interp_spline(fine_energies_greater, greater_uniform, axis=0, k=k)(target_adaptive_points)
+                        p_lesser.data[..., batch] = interpolate.make_interp_spline(fine_energies_lesser, lesser_uniform, axis=0, k=k)(target_adaptive_points)
+
                     else:
                         p_g_full = self.prefactor * fft_correlate_kpoints(
                             g_greater.data[..., batch], -g_lesser.data[..., batch].conj()
                         )
-                    p_l_full = -p_g_full[::-1].conj()
-                    # TODO: the datastructures does not allow for easy slicing of the
-                    # data. This is a workaround.
-                    # Fill the matrices with the data. Take second part of the
-                    # energy convolution.
-                    p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
-                    p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
-                    # Note that only the hermitian part is computed here.
+                        p_l_full = -p_g_full[::-1].conj()
+                        # TODO: the datastructures does not allow for easy slicing of the
+                        # data. This is a workaround.
+                        # Fill the matrices with the data. Take second part of the
+                        # energy convolution.
+                        p_lesser.data[..., batch] = p_l_full[self.ne - 1 :]
+                        p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
+                        # Note that only the hermitian part is computed here.
+
+                        # liyongda (19 Mar 2026): debugging saves, only run with 1 rank
+                        energy_min = self.config.electron.energy_window_min
+                        energy_max = self.config.electron.energy_window_max
+                        ne = g_lesser.data.shape[0]
+                        energies_conv = xp.linspace(energy_min-energy_max, energy_max-energy_min, 2*ne-1)
+
+                        xp.save(self.config.output_dir /  f"p_g_full_iter{iteration}.npy", p_g_full)
+                        xp.save(self.config.output_dir /  f"energies_conv_iter{iteration}.npy", energies_conv)
 
                     # default quatrex config compute_retarded_polarization = false
                     # liyongda (04 Mar 2026) todo: convert Hilbert Transform in retarded polarizatoin to use adaptive grid

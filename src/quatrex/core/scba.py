@@ -555,25 +555,6 @@ class SCBA:
                                                     N_target=self.config.scba.adaptive_num_points)
         return adaptive_points
 
-        # monitor = xp.abs(xp.gradient(reference_func))
-        # cumsum = xp.cumsum(monitor)
-        # cumsum = cumsum / cumsum[-1]    # normalize to [0,1]
-
-        # equally space the adaptive points in cumulative distribution (of monitor)
-        # N_target = self.config.scba.adaptive_num_points
-        # targets = xp.linspace(0, 1, N_target)
-
-        # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
-        # linear_electron_energies = xp.linspace(self.config.electron.energy_window_min,
-        #                                     self.config.electron.energy_window_max,
-        #                                     self.config.electron.energy_window_num)
-
-        # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
-        # adaptive_points = xp.interp(targets, cumsum, linear_electron_energies)
-
-        # return adaptive_points
-        # return xp.asarray([1])
-
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
@@ -608,10 +589,55 @@ class SCBA:
         source_adaptive_points = None
         target_adaptive_points = None
 
+        # we're in adaptive mode
+        # 1. setup source and target points for PCoulomb_screening.compute() 
         if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration:
             source_adaptive_points = self.adaptive_electron_energies_for_g_sigma
             target_adaptive_points = self.adaptive_electron_energies_for_p_w
+
+        # 2. (on first time) interpolate the p functions onto the adaptive grid
+        if self.config.scba.adaptive and iteration == self.config.scba.adaptive_start_iteration:
+            # each rank needs all energies, but only some nnz
+            # transpose from stack to nnz distribution
+            if self.data.p_lesser.distribution_state != "nnz":
+                if comm.rank == 0:
+                    print(f"transposing p functions from stack to nnz distribution for interpolation", flush=True)
+                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "nnz"
+
+            # bsplit with k=1 for linear interpolation
+            # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
+            # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
+            k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
+
+            print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
+            # for nnz in range (self.data.p_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster
+            #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data[:, nnz], k=k)
+            #     bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data[:, nnz], k=k)
+            #     bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data[:, nnz], k=k)
+
+            #     self.data.p_lesser.data[:, nnz] = bspl_lesser(self.adaptive_electron_energies_for_p_w)
+            #     self.data.p_greater.data[:, nnz] = bspl_greater(self.adaptive_electron_energies_for_p_w)
+            #     self.data.p_retarded.data[:, nnz] = bspl_retarded(self.adaptive_electron_energies_for_p_w)
+            bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data, k=k)
+            bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data, k=k)
+            bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data, k=k)
+
+            self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
+            self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
+            self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
+
+            # transpose back from nnz to stack
+            if self.data.p_lesser.distribution_state != "stack":
+                if comm.rank == 0:
+                    print(f"transposing p functions back from nnz to stack distribution after interpolation", flush=True)
+                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "stack"
+
         self.p_coulomb_screening.compute(
+            iteration,
             self.data.g_lesser,
             self.data.g_greater,
             source_adaptive_points=source_adaptive_points,
@@ -619,10 +645,37 @@ class SCBA:
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded)
         )
 
+        # save p (polarization)
+        if self.config.outputs.save_reduced_functions:
+            p_lesser_reduced = reduce_matrix_over_stack(self.data.p_lesser, global_comm)
+            p_greater_reduced = reduce_matrix_over_stack(self.data.p_greater, global_comm)
+            p_retarded_reduced = reduce_matrix_over_stack(self.data.p_retarded, global_comm)
+            if comm.rank == 0:
+                xp.save(self.config.output_dir / f"p_lesser_reduced_step_{iteration}.npy", np.array(p_lesser_reduced).flatten())
+                xp.save(self.config.output_dir / f"p_greater_reduced_step_{iteration}.npy", np.array(p_greater_reduced).flatten())
+                xp.save(self.config.output_dir / f"p_retarded_reduced_step_{iteration}.npy", np.array(p_retarded_reduced).flatten())
+                print(f"saved reduced p for iteration {iteration}", flush=True)
+            comm.barrier()
+
+        if self.config.outputs.save_scba_iteration_data:
+            # all ranks load the random sample indices and perform gather
+            sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+
+            p_lesser_concat = gather_array_stack(self.data.p_lesser.data, global_comm, sample_indices)
+            p_greater_concat = gather_array_stack(self.data.p_greater.data, global_comm, sample_indices)
+            p_retarded_concat = gather_array_stack(self.data.p_retarded.data, global_comm, sample_indices)
+            if comm.rank == 0:
+                xp.save(f"{archive_file_prefix}_p_lesser_iter{iteration:02}.npy", p_lesser_concat)
+                xp.save(f"{archive_file_prefix}_p_greater_iter{iteration:02}.npy", p_greater_concat)
+                xp.save(f"{archive_file_prefix}_p_retarded_iter{iteration:02}.npy", p_retarded_concat)
+                print(f"saved p files for iteration {iteration}", flush=True)
+            comm.barrier()
+
+        comm.barrier()
+
         # create adaptive grid and interpolate the p functions onto the new grid
         #   create the grid in iteration n-1, to be used in iteration n
         if self.config.scba.adaptive and iteration == self.config.scba.adaptive_start_iteration-1:
-
             # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
             #   but result is only placed in rank 0
             p_retarded_reduced = reduce_matrix_over_stack(self.data.p_retarded, global_comm)
@@ -664,66 +717,6 @@ class SCBA:
             # debugging
             # comm.barrier() 
             # print(f"rank {comm.rank} has g_lesser shape before interp: {self.data.g_lesser.data.shape}", flush=True)
-
-            comm.barrier()
-
-            # each rank needs all energies, but only some nnz
-            # transpose from stack to nnz distribution
-            if self.data.p_lesser.distribution_state != "nnz":
-                if comm.rank == 0:
-                    print(f"transposing p functions from stack to nnz distribution for interpolation", flush=True)
-                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "nnz"
-
-            # bsplit with k=1 for linear interpolation
-            # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
-            # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
-            k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
-            bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data, k=k)
-            bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data, k=k)
-            bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data, k=k)
-            
-            self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
-            self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
-            self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
-
-            # transpose back from nnz to stack
-            if self.data.p_lesser.distribution_state != "stack":
-                if comm.rank == 0:
-                    print(f"transposing p functions back from nnz to stack distribution after interpolation", flush=True)
-                for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "stack"
-
-        comm.barrier()
-
-        # save p (polarization)
-        if self.config.outputs.save_reduced_functions:
-            p_lesser_reduced = reduce_matrix_over_stack(self.data.p_lesser, global_comm)
-            p_greater_reduced = reduce_matrix_over_stack(self.data.p_greater, global_comm)
-            p_retarded_reduced = reduce_matrix_over_stack(self.data.p_retarded, global_comm)
-            if comm.rank == 0:
-                xp.save(self.config.output_dir / f"p_lesser_reduced_step_{iteration}.npy", np.array(p_lesser_reduced).flatten())
-                xp.save(self.config.output_dir / f"p_greater_reduced_step_{iteration}.npy", np.array(p_greater_reduced).flatten())
-                xp.save(self.config.output_dir / f"p_retarded_reduced_step_{iteration}.npy", np.array(p_retarded_reduced).flatten())
-                print(f"saved reduced p for iteration {iteration}", flush=True)
-            comm.barrier()
-
-        if self.config.outputs.save_scba_iteration_data:
-            # all ranks load the random sample indices and perform gather
-            sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
-
-            p_lesser_concat = gather_array_stack(self.data.p_lesser.data, global_comm, sample_indices)
-            p_greater_concat = gather_array_stack(self.data.p_greater.data, global_comm, sample_indices)
-            p_retarded_concat = gather_array_stack(self.data.p_retarded.data, global_comm, sample_indices)
-            if comm.rank == 0:
-                xp.save(f"{archive_file_prefix}_p_lesser_iter{iteration:02}.npy", p_lesser_concat)
-                xp.save(f"{archive_file_prefix}_p_greater_iter{iteration:02}.npy", p_greater_concat)
-                xp.save(f"{archive_file_prefix}_p_retarded_iter{iteration:02}.npy", p_retarded_concat)
-                print(f"saved p files for iteration {iteration}", flush=True)
-            comm.barrier()
-
         comm.barrier()
 
         self.data.w_greater.allocate_data()
@@ -787,17 +780,25 @@ class SCBA:
             self.sigma_coulomb_screening.update_energies(self.adaptive_electron_energies_for_g_sigma)
         comm.barrier()
 
+        # liyongda (18 Mar 2026): need to pass in source grid for g, source grid for w (different), and then target grid for sigma (same as g)
+        source_grid1 = self.adaptive_electron_energies_for_g_sigma if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
+        source_grid2 = self.adaptive_electron_energies_for_p_w if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
+        target_grid = self.adaptive_electron_energies_for_g_sigma if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
+
         self.sigma_coulomb_screening.compute(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.data.w_lesser,
-            self.data.w_greater,
+            g_lesser = self.data.g_lesser,
+            g_greater = self.data.g_greater,
+            source_grid1 = source_grid1,
+            w_lesser = self.data.w_lesser,
+            w_greater = self.data.w_greater,
+            source_grid2 = source_grid2,
             out=(
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
                 self.data.sigma_retarded,
             ),
-            use_adaptive = self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration
+            target_grid = target_grid,
+            use_adaptive = self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration,
         )
 
         comm.barrier()
@@ -1007,8 +1008,45 @@ class SCBA:
                 label="SCBA: Iteration", level="default", comm=comm
             ):
                 # we're in adaptive mode
+                # 1. setup adaptive energy grids
                 if self.config.scba.adaptive and i >= self.config.scba.adaptive_start_iteration:
                     self.electron_solver.update_energies(self.adaptive_electron_energies_for_g_sigma)
+
+                # 2. (on first time) interpolate the g functions onto the adaptive grid
+                if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration:
+                    # each rank needs all energies, but only some nnz
+                    # transpose from stack to nnz distribution
+                    for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "nnz"
+
+                    # bsplit with k=1 for linear interpolation
+                    # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
+                    # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
+                    k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
+
+                    print(f"rank {comm.rank} iteration {i} - interpolating g functions onto adaptive grid with order {k}, nnz={self.data.g_lesser.data.shape[1]}", flush=True)
+                    # for nnz in range (self.data.g_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster                        
+                    #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data[:, nnz], k=k)
+                    #     bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data[:, nnz], k=k)
+                    #     bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data[:, nnz], k=k)
+                        
+                    #     self.data.g_lesser.data[:, nnz] = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
+                    #     self.data.g_greater.data[:, nnz] = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
+                    #     self.data.g_retarded.data[:, nnz] = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
+
+                    bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data, k=k)
+                    bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data, k=k)
+                    bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data, k=k)
+                    
+                    self.data.g_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
+                    self.data.g_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
+                    self.data.g_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
+
+                    # transpose back from nnz to stack
+                    for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "stack"
                     
                 # compute the Green's function from scattering self-energies
                 # liyongda (23 Feb 2026): iteration 0, all sigma data is zero (checked with debugger and np.allclose)
@@ -1019,224 +1057,200 @@ class SCBA:
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded)
                 )
 
-            comm.barrier()
+                comm.barrier()
 
-            # save g
-            if self.config.outputs.save_reduced_functions:
-                g_lesser_reduced = reduce_matrix_over_stack(self.data.g_lesser, global_comm)
-                g_greater_reduced = reduce_matrix_over_stack(self.data.g_greater, global_comm)
-                g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
-                if comm.rank == 0:
-                    xp.save(self.config.output_dir /  f"g_lesser_reduced_step_{i}.npy", np.array(g_lesser_reduced).flatten())
-                    xp.save(self.config.output_dir /  f"g_greater_reduced_step_{i}.npy", np.array(g_greater_reduced).flatten())
-                    xp.save(self.config.output_dir /  f"g_retarded_reduced_step_{i}.npy", np.array(g_retarded_reduced).flatten())
-                    print(f"saved reduced g for iteration {i}", flush=True)
-            comm.barrier()
+                # save g
+                if self.config.outputs.save_reduced_functions:
+                    g_lesser_reduced = reduce_matrix_over_stack(self.data.g_lesser, global_comm)
+                    g_greater_reduced = reduce_matrix_over_stack(self.data.g_greater, global_comm)
+                    g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
+                    if comm.rank == 0:
+                        xp.save(self.config.output_dir /  f"g_lesser_reduced_step_{i}.npy", np.array(g_lesser_reduced).flatten())
+                        xp.save(self.config.output_dir /  f"g_greater_reduced_step_{i}.npy", np.array(g_greater_reduced).flatten())
+                        xp.save(self.config.output_dir /  f"g_retarded_reduced_step_{i}.npy", np.array(g_retarded_reduced).flatten())
+                        print(f"saved reduced g for iteration {i}", flush=True)
+                comm.barrier()
 
-            if self.config.outputs.save_scba_iteration_data:
-                # all ranks load the random sample indices and perform gather
-                sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+                if self.config.outputs.save_scba_iteration_data:
+                    # all ranks load the random sample indices and perform gather
+                    sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
 
-                g_lesser_concat = gather_array_stack(self.data.g_lesser.data, global_comm, sample_indices)
-                g_greater_concat = gather_array_stack(self.data.g_greater.data, global_comm, sample_indices)
-                g_retarded_concat = gather_array_stack(self.data.g_retarded.data, global_comm, sample_indices)
-                if comm.rank == 0:
-                    xp.save(f"{archive_file_prefix}_g_lesser_iter{i:02}.npy", g_lesser_concat)
-                    xp.save(f"{archive_file_prefix}_g_greater_iter{i:02}.npy", g_greater_concat)
-                    xp.save(f"{archive_file_prefix}_g_retarded_iter{i:02}.npy", g_retarded_concat)
-                    print(f"saved g files for iteration {i}", flush=True)
-
-            comm.barrier()
-            # create adaptive grid and interpolate the g functions onto the new grid
-            #   create the grid in iteration n-1, to be used in iteration n
-            if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration-1:
-                # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
-                #   but result is only placed in rank 0
-                g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
+                    g_lesser_concat = gather_array_stack(self.data.g_lesser.data, global_comm, sample_indices)
+                    g_greater_concat = gather_array_stack(self.data.g_greater.data, global_comm, sample_indices)
+                    g_retarded_concat = gather_array_stack(self.data.g_retarded.data, global_comm, sample_indices)
+                    if comm.rank == 0:
+                        xp.save(f"{archive_file_prefix}_g_lesser_iter{i:02}.npy", g_lesser_concat)
+                        xp.save(f"{archive_file_prefix}_g_greater_iter{i:02}.npy", g_greater_concat)
+                        xp.save(f"{archive_file_prefix}_g_retarded_iter{i:02}.npy", g_retarded_concat)
+                        print(f"saved g files for iteration {i}", flush=True)
 
                 comm.barrier()
-                adaptive_electron_energies_for_g_sigma = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
-                # rank 0 computes adaptive grid and broadcast to other ranks
-                if comm.rank == 0:
-                    print(f"rank {comm.rank} - computing adaptive grid", flush=True)
-                    # with profiler.profile_range(
-                    #     label="SCBA: compute adaptive grid", level="default", comm=comm
-                    # ):
-                    # liyongda (13 Mar 2026): adding profiler decorator to function causes MPI stall, 
-                    #   because only rank 0 calls the function and there is an internal sync in the profiler
-                    #       --> other ranks never sync because they never executed the function
-                    #   tried doing the profiler with a `with`, still didn't work
-                    #   computing grid is is O(N) and not time critical. Ignoring it for now
-                    adaptive_electron_energies_for_g_sigma = self._compute_adaptive_grid(g_retarded_reduced)
-                
-                comm.barrier()
-                comm.Bcast(adaptive_electron_energies_for_g_sigma, root=0)
+                # create adaptive grid and interpolate the g functions onto the new grid
+                #   create the grid in iteration n-1, to be used in iteration n
+                #   adaptve_start_iteration restricted to int 1 or greater in config validation
+                if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration-1:
+                    # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
+                    #   but result is only placed in rank 0
+                    g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
 
-                # update adaptive grid from None to the computed grid
-                self.adaptive_electron_energies_for_g_sigma = adaptive_electron_energies_for_g_sigma
-
-                # debugging and save
-                if comm.rank == 0:
-                    print(f"Adaptive energy grid from computed g_retarded_reduced with {len(self.adaptive_electron_energies_for_g_sigma)} points.", flush=True)
-                    print(f"Original linear grid had {len(self.electron_energies)} points from {self.electron_energies[0]} to {self.electron_energies[-1]} (dE = {self.electron_energies[1] - self.electron_energies[0]} eV)", flush=True)
+                    comm.barrier()
+                    adaptive_electron_energies_for_g_sigma = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
+                    # rank 0 computes adaptive grid and broadcast to other ranks
+                    if comm.rank == 0:
+                        print(f"rank {comm.rank} - computing adaptive grid", flush=True)
+                        # with profiler.profile_range(
+                        #     label="SCBA: compute adaptive grid", level="default", comm=comm
+                        # ):
+                        # liyongda (13 Mar 2026): adding profiler decorator to function causes MPI stall, 
+                        #   because only rank 0 calls the function and there is an internal sync in the profiler
+                        #       --> other ranks never sync because they never executed the function
+                        #   tried doing the profiler with a `with`, still didn't work
+                        #   computing grid is is O(N) and not time critical. Ignoring it for now
+                        adaptive_electron_energies_for_g_sigma = self._compute_adaptive_grid(g_retarded_reduced)
                     
-                    xp.save(self.config.output_dir / "adaptive_electron_energies_for_g_sigma.npy", self.adaptive_electron_energies_for_g_sigma)
-                    print(f"Saved adaptive energy grid to output directory.", flush=True)
-                
-                # 04 Feb 2026: will get errors from resizing the memory buffer if the number of adaptive points
-                #   is different from the original grid.
-                #   solve the error by forcing number of adaptive points to be the same as the original grid
-                #   discussions with AlexMaeder, Nicolas, and Anders support this
+                    comm.barrier()
+                    comm.Bcast(adaptive_electron_energies_for_g_sigma, root=0)
 
-                # debugging
-                # comm.barrier() 
-                # print(f"rank {comm.rank} has g_lesser shape before interp: {self.data.g_lesser.data.shape}", flush=True)
+                    # update adaptive grid from None to the computed grid
+                    self.adaptive_electron_energies_for_g_sigma = adaptive_electron_energies_for_g_sigma
+
+                    # debugging and save
+                    if comm.rank == 0:
+                        print(f"Adaptive energy grid from computed g_retarded_reduced with {len(self.adaptive_electron_energies_for_g_sigma)} points.", flush=True)
+                        print(f"Original linear grid had {len(self.electron_energies)} points from {self.electron_energies[0]} to {self.electron_energies[-1]} (dE = {self.electron_energies[1] - self.electron_energies[0]} eV)", flush=True)
+                        
+                        xp.save(self.config.output_dir / "adaptive_electron_energies_for_g_sigma.npy", self.adaptive_electron_energies_for_g_sigma)
+                        print(f"Saved adaptive energy grid to output directory.", flush=True)
+                    
+                    # 04 Feb 2026: will get errors from resizing the memory buffer if the number of adaptive points
+                    #   is different from the original grid.
+                    #   solve the error by forcing number of adaptive points to be the same as the original grid
+                    #   discussions with AlexMaeder, Nicolas, and Anders support this
+
+                    # debugging
+                    # comm.barrier() 
+                    # print(f"rank {comm.rank} has g_lesser shape before interp: {self.data.g_lesser.data.shape}", flush=True)
 
                 comm.barrier()
+                self._compute_electron_observables()
 
-                # each rank needs all energies, but only some nnz
-                # transpose from stack to nnz distribution
-                for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "nnz"
+                # Stash current into previous self-energy buffer.
+                self._stash_sigma()
 
-                # bsplit with k=1 for linear interpolation
-                # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
-                # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
-                k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
-                bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data, k=k)
-                bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data, k=k)
-                bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data, k=k)
-                
-                self.data.g_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
-                self.data.g_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
-                self.data.g_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
-
-                # transpose back from nnz to stack
-                for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "stack"
-
-            comm.barrier()
-            self._compute_electron_observables()
-
-            # Stash current into previous self-energy buffer.
-            self._stash_sigma()
-
-            with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose", level="default", comm=comm
-            ):
-                # Transpose to nnz distribution.
-                # NOTE: While computing all interactions, we only ever need
-                # to access the Green's function and the self-energies in
-                # their nnz-distributed state.
-                for m in (self.data.g_lesser, self.data.g_greater):
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "nnz"
-                for m in (
-                    self.data.sigma_lesser,
-                    self.data.sigma_greater,
-                    self.data.sigma_retarded,
+                with profiler.profile_range(
+                        label="SCBA: stack->nnz transpose", level="default", comm=comm
                 ):
-                    m.dtranspose(discard=True)  # These can be safely discarded.
-                    assert m.distribution_state == "nnz"
+                    # Transpose to nnz distribution.
+                    # NOTE: While computing all interactions, we only ever need
+                    # to access the Green's function and the self-energies in
+                    # their nnz-distributed state.
+                    for m in (self.data.g_lesser, self.data.g_greater):
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "nnz"
+                    for m in (
+                        self.data.sigma_lesser,
+                        self.data.sigma_greater,
+                        self.data.sigma_retarded,
+                    ):
+                        m.dtranspose(discard=True)  # These can be safely discarded.
+                        assert m.distribution_state == "nnz"
 
-            # compute polarization, then screened Coulomb interaction, then self-energy from the screened interaction
-            if self.config.scba.coulomb_screening:
-                self._compute_coulomb_screening_interaction(
-                    iteration=i,
-                    archive_file_prefix=archive_file_prefix
-                )
-
-            if self.config.scba.photon:
-                self._compute_photon_interaction()
-
-            if self.config.scba.phonon:
-                self._compute_phonon_interaction()
-
-            with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose back", level="default", comm=comm
-                ):
-                # Transpose back to stack distribution.
-                for m in (self.data.g_lesser, self.data.g_greater):
-                    m.dtranspose(discard=True)  # These can be safely discarded.
-                    assert m.distribution_state == "stack"
-                for m in (
-                    self.data.sigma_lesser,
-                    self.data.sigma_greater,
-                    self.data.sigma_retarded,
-                ):
-                    m.dtranspose(discard=False)  # This must not be discarded.
-                    assert m.distribution_state == "stack"
-
-            # save sigma
-            if self.config.outputs.save_reduced_functions:
-                # save g at start of loop immediately after it's computed
-                # save p and w inside _compute_coulomb_screening_interaction because it's freed in the function
-
-                # save Sigma after it's been transposed back to stack distribution
-                sigma_lesser_reduced = reduce_matrix_over_stack(self.data.sigma_lesser, global_comm)
-                sigma_greater_reduced = reduce_matrix_over_stack(self.data.sigma_greater, global_comm)
-                sigma_retarded_reduced = reduce_matrix_over_stack(self.data.sigma_retarded, global_comm)
-                if comm.rank == 0:
-                    # save to file
-                    xp.save(self.config.output_dir /  f"sigma_lesser_reduced_step_{i}.npy", np.array(sigma_lesser_reduced).flatten())
-                    xp.save(self.config.output_dir /  f"sigma_greater_reduced_step_{i}.npy", np.array(sigma_greater_reduced).flatten())
-                    xp.save(self.config.output_dir /  f"sigma_retarded_reduced_step_{i}.npy", np.array(sigma_retarded_reduced).flatten())
-                    print(f"saved reduced sigma for iteration {i}", flush=True)
-                comm.barrier()
-
-            if self.config.outputs.save_scba_iteration_data:
-                # save g at start of loop immediately after it's computed
-                # save p and w inside _compute_coulomb_screening_interaction because it's freed right after use
-
-                # save Sigma after it's been transposed back to stack distribution
-                sigma_lesser_concat = gather_array_stack(self.data.sigma_lesser.data, global_comm, sample_indices)
-                sigma_greater_concat = gather_array_stack(self.data.sigma_greater.data, global_comm, sample_indices)
-                sigma_retarded_concat = gather_array_stack(self.data.sigma_retarded.data, global_comm, sample_indices)
-                if comm.rank == 0:
-                    xp.save(f"{archive_file_prefix}_sigma_lesser_iter{i:02}.npy", sigma_lesser_concat)
-                    xp.save(f"{archive_file_prefix}_sigma_greater_iter{i:02}.npy", sigma_greater_concat)
-                    xp.save(f"{archive_file_prefix}_sigma_retarded_iter{i:02}.npy", sigma_retarded_concat)
-
-                print(f"saved sigma files for iteration {i}", flush=True) if comm.rank == 0 else None
-                comm.barrier()
-
-
-            comm.barrier()
-
-            # Symmetrize the self-energy.
-            self._symmetrize_sigma()
-
-            if self._has_converged():
-                if comm.rank == 0:
-                    print(f"SCBA converged after {i} iterations.", flush=True)
-                break
-
-            # Update self-energy for next iteration with mixing factor.
-            self._update_sigma()
-
-            if xp.__name__ == "cupy":
-                free_memory, total_memory = xp.cuda.Device().mem_info
-                usage = np.array((total_memory - free_memory) / total_memory)
-                average_usage = np.empty(1)
-                max_usage = np.empty(1)
-                global_comm.Allreduce(usage, average_usage, op=MPI.SUM)
-                global_comm.Allreduce(usage, max_usage, op=MPI.MAX)
-                average_usage /= comm.size
-
-                if comm.rank == 0:
-                    print(
-                        f"Rank-average device memory usage: {average_usage[0] * 100:.4f}%",
-                        flush=True,
-                    )
-                    print(
-                        f"Max device memory usage: {max_usage[0] * 100:.4f}%",
-                        flush=True,
+                # compute polarization, then screened Coulomb interaction, then self-energy from the screened interaction
+                if self.config.scba.coulomb_screening:
+                    self._compute_coulomb_screening_interaction(
+                        iteration=i,
+                        archive_file_prefix=archive_file_prefix
                     )
 
-            if i % self.config.scba.output_interval == 0:
-                self._write_iteration_outputs(i)
+                if self.config.scba.photon:
+                    self._compute_photon_interaction()
+
+                if self.config.scba.phonon:
+                    self._compute_phonon_interaction()
+
+                with profiler.profile_range(
+                        label="SCBA: stack->nnz transpose back", level="default", comm=comm
+                    ):
+                    # Transpose back to stack distribution.
+                    for m in (self.data.g_lesser, self.data.g_greater):
+                        m.dtranspose(discard=True)  # These can be safely discarded.
+                        assert m.distribution_state == "stack"
+                    for m in (
+                        self.data.sigma_lesser,
+                        self.data.sigma_greater,
+                        self.data.sigma_retarded,
+                    ):
+                        m.dtranspose(discard=False)  # This must not be discarded.
+                        assert m.distribution_state == "stack"
+
+                # save sigma
+                if self.config.outputs.save_reduced_functions:
+                    # save g at start of loop immediately after it's computed
+                    # save p and w inside _compute_coulomb_screening_interaction because it's freed in the function
+
+                    # save Sigma after it's been transposed back to stack distribution
+                    sigma_lesser_reduced = reduce_matrix_over_stack(self.data.sigma_lesser, global_comm)
+                    sigma_greater_reduced = reduce_matrix_over_stack(self.data.sigma_greater, global_comm)
+                    sigma_retarded_reduced = reduce_matrix_over_stack(self.data.sigma_retarded, global_comm)
+                    if comm.rank == 0:
+                        # save to file
+                        xp.save(self.config.output_dir /  f"sigma_lesser_reduced_step_{i}.npy", np.array(sigma_lesser_reduced).flatten())
+                        xp.save(self.config.output_dir /  f"sigma_greater_reduced_step_{i}.npy", np.array(sigma_greater_reduced).flatten())
+                        xp.save(self.config.output_dir /  f"sigma_retarded_reduced_step_{i}.npy", np.array(sigma_retarded_reduced).flatten())
+                        print(f"saved reduced sigma for iteration {i}", flush=True)
+                    comm.barrier()
+
+                if self.config.outputs.save_scba_iteration_data:
+                    # save g at start of loop immediately after it's computed
+                    # save p and w inside _compute_coulomb_screening_interaction because it's freed right after use
+
+                    # save Sigma after it's been transposed back to stack distribution
+                    sigma_lesser_concat = gather_array_stack(self.data.sigma_lesser.data, global_comm, sample_indices)
+                    sigma_greater_concat = gather_array_stack(self.data.sigma_greater.data, global_comm, sample_indices)
+                    sigma_retarded_concat = gather_array_stack(self.data.sigma_retarded.data, global_comm, sample_indices)
+                    if comm.rank == 0:
+                        xp.save(f"{archive_file_prefix}_sigma_lesser_iter{i:02}.npy", sigma_lesser_concat)
+                        xp.save(f"{archive_file_prefix}_sigma_greater_iter{i:02}.npy", sigma_greater_concat)
+                        xp.save(f"{archive_file_prefix}_sigma_retarded_iter{i:02}.npy", sigma_retarded_concat)
+
+                    print(f"saved sigma files for iteration {i}", flush=True) if comm.rank == 0 else None
+                    comm.barrier()
+
+
+                comm.barrier()
+
+                # Symmetrize the self-energy.
+                self._symmetrize_sigma()
+
+                if self._has_converged():
+                    if comm.rank == 0:
+                        print(f"SCBA converged after {i} iterations.", flush=True)
+                    break
+
+                # Update self-energy for next iteration with mixing factor.
+                self._update_sigma()
+
+                if xp.__name__ == "cupy":
+                    free_memory, total_memory = xp.cuda.Device().mem_info
+                    usage = np.array((total_memory - free_memory) / total_memory)
+                    average_usage = np.empty(1)
+                    max_usage = np.empty(1)
+                    global_comm.Allreduce(usage, average_usage, op=MPI.SUM)
+                    global_comm.Allreduce(usage, max_usage, op=MPI.MAX)
+                    average_usage /= comm.size
+
+                    if comm.rank == 0:
+                        print(
+                            f"Rank-average device memory usage: {average_usage[0] * 100:.4f}%",
+                            flush=True,
+                        )
+                        print(
+                            f"Max device memory usage: {max_usage[0] * 100:.4f}%",
+                            flush=True,
+                        )
+
+                if i % self.config.scba.output_interval == 0:
+                    self._write_iteration_outputs(i)
 
         else:  # Did not break, i.e. max_iterations reached.
             if comm.rank == 0:

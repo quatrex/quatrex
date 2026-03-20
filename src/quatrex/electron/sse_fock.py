@@ -83,9 +83,9 @@ class SigmaFock(ScatteringSelfEnergy):
             if g_lesser.data.shape[-1] != 0:
                 if use_adaptive:
                     if adaptive_integration_method == "trapezoid":
-                        gl_density = self.prefactor * trapezoid(g_lesser.data, self.energies, axis=0)
+                        gl_density = 1j / (2 * xp.pi) * trapezoid(g_lesser.data, self.energies, axis=0)
                     elif adaptive_integration_method == "simpson":
-                        gl_density = self.prefactor * simpson(g_lesser.data, self.energies, axis=0)
+                        gl_density = 1j / (2 * xp.pi) * simpson(g_lesser.data, self.energies, axis=0)
                     else:
                         raise ValueError(f"Invalid adaptive integration method: {adaptive_integration_method}. Must be 'trapezoid' or 'simpson'.")
                 else:

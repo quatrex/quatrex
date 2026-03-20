@@ -114,12 +114,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self,
         g_lesser: DSDBSparse,
         g_greater: DSDBSparse,
+        source_grid1: NDArray,
         w_lesser: DSDBSparse,
         w_greater: DSDBSparse,
+        source_grid2: NDArray,
         out: tuple[DSDBSparse, ...],
         batch: slice,
         hilbert_kernel_fft: NDArray,
-        use_adaptive: bool = False
+        target_grid: NDArray,
+        use_adaptive: bool = False,
     ) -> None:
         """Computes the GW self-energy.
 
@@ -129,10 +132,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             The lesser Green's function.
         g_greater : DSDBSparse
             The greater Green's function.
+        source_grid1: NDArray
+            The energy grid corresponding to g_lesser and g_greater.
         w_lesser : DSDBSparse
             The lesser screened Coulomb interaction.
         w_greater : DSDBSparse
             The greater screened Coulomb interaction.
+        source_grid2: NDArray
+            The energy grid corresponding to w_lesser and w_greater.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
             sigma_lesser, sigma_greater, sigma_retarded.
@@ -140,7 +147,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             The batch slice for the current computation.
         hilbert_kernel_fft : NDArray
             The precomputed Hilbert kernel in Fourier space.
-
+        target_grid: NDArray
+            The energy grid corresponding to the output self-energies.
+        use_adaptive: bool
+            Whether to use adaptive interpolation for the convolution.
         """
         sigma_lesser, sigma_greater, sigma_retarded = out
 
@@ -160,10 +170,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             adaptive_prefactor = self.prefactor / r  # because of interpolation to a finer grid, we need to divide by the oversampling ratio to keep the prefactor consistent
             fine_energies = np.linspace(self.energies[0], self.energies[-1], n_fine)
             # Interpolate g and w to the fine grid. This is needed for the FFT-based convolution.
-            g_lesser_fine = interpolate.make_interp_spline(self.energies, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
-            g_greater_fine = interpolate.make_interp_spline(self.energies, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
-            w_lesser_fine = interpolate.make_interp_spline(self.energies, w_lesser.data[..., batch], axis=0, k=k)(fine_energies)
-            w_greater_fine = interpolate.make_interp_spline(self.energies, w_greater.data[..., batch], axis=0, k=k)(fine_energies)
+            g_lesser_fine = interpolate.make_interp_spline(source_grid1, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+            g_greater_fine = interpolate.make_interp_spline(source_grid1, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
+            w_lesser_fine = interpolate.make_interp_spline(source_grid2, w_lesser.data[..., batch], axis=0, k=k)(fine_energies)
+            w_greater_fine = interpolate.make_interp_spline(source_grid2, w_greater.data[..., batch], axis=0, k=k)(fine_energies)
 
             # sigma_lesser
             sigma_x_fft = xp.multiply(xp.fft.fft(g_lesser_fine, n_conv_fine, axis=0), xp.fft.fft(w_lesser_fine, n_conv_fine, axis=0))
@@ -177,11 +187,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_x_fft -= xp.multiply(xp.fft.fft(g_greater_fine, n_conv_fine, axis=0), xp.fft.fft(w_lesser_fine, n_conv_fine, axis=0).conj())
             greater = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine]
 
-            # go back to original grid (if different length)
-            if len(lesser) != ne:
-                lesser = interpolate.make_interp_spline(fine_energies, lesser, axis=0, k=k)(self.energies)
-            if len(greater) != ne:
-                greater = interpolate.make_interp_spline(fine_energies, greater, axis=0, k=k)(self.energies)
+            # interpolate to target grid
+            lesser = interpolate.make_interp_spline(fine_energies, lesser, axis=0, k=k)(target_grid)
+            greater = interpolate.make_interp_spline(fine_energies, greater, axis=0, k=k)(target_grid)
             
             # update self-energy data structure
             sigma_lesser.data[..., batch] += lesser
@@ -308,10 +316,13 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self,
         g_lesser: DSDBSparse,
         g_greater: DSDBSparse,
+        source_grid1: NDArray,
         w_lesser: DSDBSparse,
         w_greater: DSDBSparse,
+        source_grid2: NDArray,
         out: tuple[DSDBSparse, ...],
-        use_adaptive: bool = False
+        target_grid: NDArray,
+        use_adaptive: bool = False,
     ) -> None:
         """Computes the GW self-energy.
 
@@ -438,14 +449,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     )
                     for start, end in zip(batch_displacements, batch_displacements[1:]):
                         self._compute_without_correction(
-                            g_lesser,
-                            g_greater,
-                            w_lesser,
-                            w_greater,
-                            out,
-                            slice(start, end),
-                            hilbert_kernel_fft,
-                            use_adaptive=use_adaptive
+                            g_lesser = g_lesser,
+                            g_greater = g_greater,
+                            source_grid1 = source_grid1,
+                            w_lesser = w_lesser,
+                            w_greater = w_greater,
+                            source_grid2 = source_grid2,
+                            out = out,
+                            batch = slice(start, end),
+                            hilbert_kernel_fft = hilbert_kernel_fft,
+                            target_grid = target_grid,
+                            use_adaptive = use_adaptive,
                         )
 
         # Transpose the matrices to stack distribution.

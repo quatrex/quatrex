@@ -124,11 +124,11 @@ def _compute_eigenvalues(
     sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
 
     h_0 = sum(
-        h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
+        h_00[:, :, i * small_blocksize : (i + 1) * small_blocksize]
         for i in range(1, block_sections)
     )
     h_0 += sum(
-        h_01[:, i * small_blocksize : (i + 1) * small_blocksize]
+        h_01[:, :, i * small_blocksize : (i + 1) * small_blocksize]
         for i in range(block_sections)
     )
     h_0 += sum(
@@ -140,7 +140,7 @@ def _compute_eigenvalues(
         for i in range(block_sections)
     )
     h_0 += h_0.conj().swapaxes(-2, -1)
-    h_0 += h_00[:, :small_blocksize]
+    h_0 += h_00[:, :, :small_blocksize]
     h_0 += sigma_00[:, :small_blocksize]
     h_0 += potential
 

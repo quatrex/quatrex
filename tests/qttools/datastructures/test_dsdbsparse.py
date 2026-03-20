@@ -605,6 +605,9 @@ class TestArithmetic:
         if symmetry_type[0]:
             pytest.skip("Symmetric DSDBSparse does not support in-place addition.")
 
+        if dsdbsparse_type.__name__ == "DSDBCSR":
+            pytest.skip("DSDBCSR does not support in-place addition.")
+
         coo, dsdbsparse = _create_coo_dsdbsparse(
             dsdbsparse_type,
             block_sizes,

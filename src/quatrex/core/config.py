@@ -434,6 +434,8 @@ class ElectronConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    max_batch_size: PositiveInt | None = None
+
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
@@ -553,6 +555,8 @@ class CoulombScreeningConfig(BaseModel):
     the lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
 
     """
+
+    max_batch_size: PositiveInt | None = None
 
 
 class PhotonConfig(BaseModel):
@@ -694,15 +698,14 @@ class DeviceConfig(BaseModel):
     ) = None
     """The number of neighbor cells to consider along each lattice direction.
 
-    !!! note
-
-        Currently, this parameter is only used if
-        `construct_from_unit_cell` is `True`.
-
     If set to `None`, all neighbor cells are considered. A
     `neighbor_cell_cutoff` of zero means that only the unit cell itself
-    is considered. Along the transport direction, at least one
-    neighboring cell must be included.
+    is considered. 
+    
+    Along the transport direction, at least one neighboring cell must be
+    included if `construct_from_unit_cell` is `True`. If
+    `construct_from_unit_cell` is `False`, no neighboring cells should be
+    included along the transport direction.
 
     If more neighbor cells are requested than present in the input
     Hamiltonian, a `ValueError` is raised.
@@ -767,20 +770,37 @@ class DeviceConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def check_kpoint_grid(self) -> Self:
+        """Checks that the k-point grid is 1 along the transport direction."""
+
+        ind = "xyz".index(self.transport_direction)
+        if self.kpoint_grid[ind] != 1:
+            raise ValueError(
+                f"Along the transport direction ('{self.transport_direction}'), the k-point grid must be 1."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def check_connecting_cells(self) -> Self:
         """Checks that num_connecting_cells is not zero in transport direction."""
-        if not self.construct_from_unit_cell:
-            return self
 
         if self.neighbor_cell_cutoff is None:
             return self
 
         ind = "xyz".index(self.transport_direction)
-        if self.neighbor_cell_cutoff[ind] < 1:
-            raise ValueError(
-                f"At least one neighboring cell in transport direction "
-                f"('{self.transport_direction}') must be included."
-            )
+        if not self.construct_from_unit_cell:
+            if self.neighbor_cell_cutoff[ind] != 0:
+                raise ValueError(
+                    f"Along the transport direction ('{self.transport_direction}'),"
+                    "no neighboring cells should be included if `construct_from_unit_cell` is False."
+                )
+        else:
+            if self.neighbor_cell_cutoff[ind] < 1:
+                raise ValueError(
+                    f"At least one neighboring cell in transport direction "
+                    f"('{self.transport_direction}') must be included."
+                )
 
         return self
 
@@ -956,6 +976,23 @@ class ComputeConfig(BaseModel):
     band_edge: BandEdgeConfig = BandEdgeConfig()
     comm: CommConfig = CommConfig()
 
+    num_bits: PositiveInt | None = None
+    """The number of bits to use when compressing the data.
+
+    The exponent is stored in the same format as fp32 and together with the mantissa
+    should be a multiple of 8 bits to achieve alignment.
+    Otherwise alignment can only achieved by padding.
+    If None, no compression is applied and the data is stored in complex128.
+    """
+
+    w_assembly_ozaki: None | int = None
+    g_rgf_ozaki: None | int = None
+    w_rgf_ozaki: None | int = None
+
+    w_assembly_slices: None | int = None
+    g_rgf_slices: None | int = None
+    w_rgf_slices: None | int = None
+
     @field_validator("dsdbsparse_type", mode="before")
     def set_dsdbsparse(cls, value) -> DSDBSparse:
         """Converts the string value to the corresponding DSDBSparse object."""
@@ -986,6 +1023,21 @@ class ComputeConfig(BaseModel):
                     "The CPU code will run sequentially which may impact performance.",
                     UserWarning,
                 )
+
+        return self
+
+    @model_validator(mode="after")
+    def set_num_mantissa_bytes(self) -> Self:
+
+        if self.num_bits is not None:
+            if self.num_bits % 8 != 0:
+                raise ValueError(
+                    "The total number of bits (exponent + mantissa) should be a multiple of 8 for alignment."
+                    f"Got {self.num_bits} bits."
+                )
+
+            if xp.__name__ == "numpy":
+                raise ValueError("NumPy does not support the compression.")
 
         return self
 

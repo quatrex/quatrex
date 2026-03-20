@@ -5,17 +5,19 @@ import numpy as np
 from qttools import NDArray
 
 
-def monkhorst_pack(size: tuple[int], shift: tuple[float]) -> NDArray:
+def monkhorst_pack(
+    size: tuple[int] | NDArray, shift: tuple[float] | NDArray
+) -> NDArray:
     """Constructs a Monkhorst-Pack grid of k-points.
 
     This is implemented to produce arbitrary dimensions of k-point grids.
 
     Parameters
     ----------
-    size : tuple[int]
+    size : tuple[int] | NDArray
         Grid dimensions specifying the number of
         k-points along each reciprocal lattice direction.
-    shift : tuple[float]
+    shift : tuple[float] | NDArray
         Shift of the grid in each direction. Each component should be in the range (-1, 1).
 
     Returns

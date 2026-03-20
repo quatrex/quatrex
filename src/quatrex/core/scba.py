@@ -9,22 +9,22 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, xp
 from qttools.comm import comm
+from qttools.kernels.mixed_precision import compress, decompress
 from qttools.profiling import Profiler
-from qttools.utils.gpu_utils import get_host
+from qttools.utils.gpu_utils import create_stream, get_host, synchronize_stream
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import (
+from quatrex.core.observables import (  # current_conservation,
     contact_currents,
-    current_conservation,
     density,
     device_current,
 )
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device.inputs import (
+    assemble_matrix,
     create_coordinate_grid,
     distributed_read_xyz,
-    load_matrix,
 )
 from quatrex.electron import (
     ElectronSolver,
@@ -71,20 +71,18 @@ class SCBAData:
             # The neighbor cell cutoff along the transport direction
             # determines the size of the transport cell.
             transport_ind = "xyz".index(config.device.transport_direction)
-            unit_cells_per_transport_cell = [1, 1, 1]
-            unit_cells_per_transport_cell[transport_ind] = (
-                config.device.neighbor_cell_cutoff[transport_ind]
-            )
-            device_cell = unit_cells_per_transport_cell.copy()
-            device_cell[transport_ind] *= config.device.num_transport_cells
 
             block_sizes = np.array(
-                [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
+                [config.device.neighbor_cell_cutoff[transport_ind] * grid.shape[0]]
                 * config.device.num_transport_cells
             )
 
             grid = create_coordinate_grid(
-                grid, tuple(device_cell), xp.asarray(lattice_vectors)
+                grid,
+                config.device.num_transport_cells
+                * config.device.neighbor_cell_cutoff[transport_ind],
+                transport_ind,
+                xp.asarray(lattice_vectors),
             )
 
         else:
@@ -103,6 +101,9 @@ class SCBAData:
                 raise ValueError(
                     f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
                 )
+        if comm.rank == 0:
+            print(f"Grid shape: {grid.shape}", flush=True)
+            print(f"Block size: {block_sizes[0]}", flush=True)
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
@@ -143,41 +144,47 @@ class SCBAData:
             start_idx = block_offsets[section_offsets[comm.block.rank]]
             end_idx = block_offsets[section_offsets[comm.block.rank + 1]]
 
-            self.sparsity_pattern = compute_sparsity_pattern(
+            rows, cols = compute_sparsity_pattern(
                 grid,
                 max_interaction_cutoff,
                 transport_direction=config.device.transport_direction,
                 start_idx=start_idx,
                 end_idx=end_idx,
             )
+            self.rows = rows
+            self.cols = cols
 
         dsdbsparse_type = config.compute.dsdbsparse_type
 
         self.g_retarded = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            rows,
+            cols,
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
+            bits=config.compute.num_bits,
         )
-        self.g_retarded.data[:] = 0.0  # Initialize to zero.
 
         self.g_lesser = dsdbsparse_type.from_sparray(
-            self.sparsity_pattern.astype(xp.complex128),
+            rows,
+            cols,
             block_sizes=block_sizes,
             global_stack_shape=electron_energies.shape
             + tuple([k for k in kpoint_grid if k > 1]),
             symmetry=config.scba.symmetric,
             symmetry_op=lambda a: -a.conj(),
+            bits=config.compute.num_bits,
         )
-        self.g_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.g_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
-        self.sigma_lesser_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_lesser_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_lesser = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_greater_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
-        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_retarded_prev = dsdbsparse_type.empty_like(self.g_lesser)
+        self.sigma_retarded = dsdbsparse_type.empty_like(self.g_lesser)
+
         if config.scba.symmetric:
             self.sigma_retarded.symmetry_op = lambda a: a
             self.sigma_retarded_prev.symmetry_op = lambda a: a
@@ -187,14 +194,14 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
-            self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_retarded = dsdbsparse_type.empty_like(self.g_lesser)
+            self.p_lesser = dsdbsparse_type.empty_like(self.g_lesser)
+            self.p_greater = dsdbsparse_type.empty_like(self.g_lesser)
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
                 num_connected_blocks = compute_num_connected_blocks(
-                    self.sparsity_pattern, block_sizes
+                    rows, cols, block_sizes
                 )
 
             if comm.rank == 0:
@@ -207,14 +214,16 @@ class SCBAData:
             )
 
             self.w_lesser = dsdbsparse_type.from_sparray(
-                self.sparsity_pattern.astype(xp.complex128),
+                rows,
+                cols,
                 block_sizes=coulomb_screening_block_sizes,
                 global_stack_shape=electron_energies.shape
                 + tuple([k for k in kpoint_grid if k > 1]),
                 symmetry=config.scba.symmetric,
                 symmetry_op=lambda a: -a.conj(),
+                bits=config.compute.num_bits,
             )
-            self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
+            self.w_greater = dsdbsparse_type.empty_like(self.w_lesser)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -318,16 +327,17 @@ class SCBA:
         self.electron_solver = ElectronSolver(
             self.config,
             self.electron_energies,
-            sparsity_pattern=self.data.sparsity_pattern,
+            rows=self.data.rows,
+            cols=self.data.cols,
         )
 
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:
             # Load the Coulomb matrix.
-            coulomb_matrix, __ = load_matrix(
+            coulomb_matrix, __ = assemble_matrix(
                 config=config,
                 matrix_name="coulomb_matrix",
-                sparsity_pattern=self.data.sparsity_pattern,
+                sparsity_pattern=(self.data.rows, self.data.cols),
                 shift_kpoints=True,
             )
 
@@ -335,7 +345,14 @@ class SCBA:
             # TODO: Check that this is correct for kpoints.
             if not coulomb_matrix.symmetry:
                 coulomb_matrix.symmetrize()
-            coulomb_matrix._data /= config.coulomb_screening.epsilon_r
+            if config.compute.num_bits is None:
+                coulomb_matrix._data /= config.coulomb_screening.epsilon_r
+            else:
+                coulomb_matrix._data = compress(
+                    decompress(coulomb_matrix._data, config.compute.num_bits)
+                    / config.coulomb_screening.epsilon_r,
+                    config.compute.num_bits,
+                )
 
             energies_path = self.config.input_dir / "coulomb_screening_energies.npy"
             if os.path.isfile(energies_path):
@@ -373,7 +390,8 @@ class SCBA:
                 self.config,
                 coulomb_matrix,
                 self.coulomb_screening_energies,
-                sparsity_pattern=self.data.sparsity_pattern,
+                rows=self.data.rows,
+                cols=self.data.cols,
             )
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
@@ -412,15 +430,24 @@ class SCBA:
             config, electron_energies=self.electron_energies
         )  # real data
 
+        self._copy_stream = create_stream()
+
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
-        self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
-        self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
-        self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
 
-        self.data.sigma_retarded.data[:] = 0.0
-        self.data.sigma_lesser.data[:] = 0.0
-        self.data.sigma_greater.data[:] = 0.0
+        # cursed?
+        # does not copy the data, but just the reference to the data, so it is very cheap.
+        self.data.sigma_lesser_prev._host_data = self.data.sigma_lesser._host_data
+        self.data.sigma_greater_prev._host_data = self.data.sigma_greater._host_data
+        self.data.sigma_retarded_prev._host_data = self.data.sigma_retarded._host_data
+
+        self.data.sigma_lesser._host_data = None
+        self.data.sigma_greater._host_data = None
+        self.data.sigma_retarded._host_data = None
+
+        self.data.sigma_lesser.free_data()
+        self.data.sigma_greater.free_data()
+        self.data.sigma_retarded.free_data()
 
     @profiler.profile(label="SCBA: Symmetrize Sigma", level="default", comm=comm)
     def _symmetrize_sigma(self) -> None:
@@ -432,38 +459,125 @@ class SCBA:
             self.data.sigma_retarded.symmetrize(xp.add)
 
         if self.config.coulomb_screening.discard_real_parts:
-            self.data.sigma_lesser._data.real = 0
-            self.data.sigma_greater._data.real = 0
+
+            if self.data.sigma_lesser.bits is not None:
+                _data = decompress(
+                    self.data.sigma_lesser._data, self.data.sigma_lesser.bits
+                )
+            else:
+                _data = self.data.sigma_lesser._data
+            _data.real = 0
+            if self.data.sigma_lesser.bits is not None:
+                self.data.sigma_lesser._data = compress(
+                    _data, self.data.sigma_lesser.bits
+                )
+
+            if self.data.sigma_greater.bits is not None:
+                _data = decompress(
+                    self.data.sigma_greater._data, self.data.sigma_greater.bits
+                )
+            else:
+                _data = self.data.sigma_greater._data
+            _data.real = 0
+            if self.data.sigma_greater.bits is not None:
+                self.data.sigma_greater._data = compress(
+                    _data, self.data.sigma_greater.bits
+                )
             # Make sure that the imaginary part comes only from
             # sigma_greater - sigma_lesser.
-            self.data.sigma_retarded._data.imag = 0
+            if self.data.sigma_retarded.bits is not None:
+                _data = decompress(
+                    self.data.sigma_retarded._data, self.data.sigma_retarded.bits
+                )
+            else:
+                _data = self.data.sigma_retarded._data
+            _data.imag = 0
+            if self.data.sigma_retarded.bits is not None:
+                self.data.sigma_retarded._data = compress(
+                    _data, self.data.sigma_retarded.bits
+                )
 
         # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
-        )
+        if self.data.sigma_retarded.bits is not None:
+            self.data.sigma_retarded.data = compress(
+                0.5
+                * (
+                    decompress(
+                        self.data.sigma_greater.data, self.data.sigma_greater.bits
+                    )
+                    - decompress(
+                        self.data.sigma_lesser.data, self.data.sigma_greater.bits
+                    )
+                )
+                + decompress(
+                    self.data.sigma_retarded.data, self.data.sigma_retarded.bits
+                ),
+                self.data.sigma_retarded.bits,
+            )
+        else:
+            self.data.sigma_retarded.data += 0.5 * (
+                self.data.sigma_greater.data - self.data.sigma_lesser.data
+            )
 
     @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
-        self.data.sigma_lesser.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-            + self.mixing_factor * self.data.sigma_lesser.data
-        )
-        self.data.sigma_greater.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-            + self.mixing_factor * self.data.sigma_greater.data
-        )
-        self.data.sigma_retarded.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
-        )
+
+        if self.data.sigma_lesser.bits is not None:
+            bits = self.data.sigma_lesser.bits
+            self.data.sigma_lesser.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_lesser_prev.data, bits)
+                    + self.mixing_factor * decompress(self.data.sigma_lesser.data, bits)
+                ),
+                bits,
+            )
+            self.data.sigma_greater.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_greater_prev.data, bits)
+                    + self.mixing_factor
+                    * decompress(self.data.sigma_greater.data, bits)
+                ),
+                bits,
+            )
+            self.data.sigma_retarded.data[:] = compress(
+                (
+                    (1 - self.mixing_factor)
+                    * decompress(self.data.sigma_retarded_prev.data, bits)
+                    + self.mixing_factor
+                    * decompress(self.data.sigma_retarded.data, bits)
+                ),
+                bits,
+            )
+        else:
+            self.data.sigma_lesser.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
+                + self.mixing_factor * self.data.sigma_lesser.data
+            )
+            self.data.sigma_greater.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
+                + self.mixing_factor * self.data.sigma_greater.data
+            )
+            self.data.sigma_retarded.data[:] = (
+                (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
+                + self.mixing_factor * self.data.sigma_retarded.data
+            )
 
     @profiler.profile(label="SCBA: Convergence test", level="default", comm=comm)
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        if self.data.sigma_lesser.bits is not None:
+            diff = decompress(
+                self.data.sigma_retarded.data, self.data.sigma_lesser.bits
+            ) - decompress(
+                self.data.sigma_retarded_prev.data, self.data.sigma_lesser.bits
+            )
+        else:
+            diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+
         local_max_diff = get_host(xp.max(xp.abs(diff)))
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
@@ -474,18 +588,18 @@ class SCBA:
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
 
-        current_conservation_abs, current_conservation_rel = current_conservation(
-            self.data.g_lesser,
-            self.data.g_greater,
-            self.data.sigma_lesser,
-            self.data.sigma_greater,
-        )
+        # current_conservation_abs, current_conservation_rel = current_conservation(
+        #     self.data.g_lesser,
+        #     self.data.g_greater,
+        #     self.data.sigma_lesser,
+        #     self.data.sigma_greater,
+        # )
 
         if comm.rank == 0:
             print(f"Maximum Self-Energy Update: {max_diff}", flush=True)
             print(f"Contact Current Difference: {current_diff}", flush=True)
-            print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
-            print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
+            # print(f"Current Conservation abs: {current_conservation_abs}", flush=True)
+            # print(f"Current Conservation rel: {current_conservation_rel}", flush=True)
 
         return False  # TODO: :-)
 
@@ -518,12 +632,23 @@ class SCBA:
         self.data.p_greater.allocate_data()
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
+        self.data.g_lesser.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_host(
+            delete_device=False, stream=self._copy_stream, sync=False
+        )
 
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
             out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
+        self.data.g_lesser.free_data()
+        self.data.g_greater.free_data()
+
+        # TODO: put G to the host before
+        # computing W
 
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
@@ -535,11 +660,33 @@ class SCBA:
             out=(self.data.w_lesser, self.data.w_greater),
         )
 
+        synchronize_stream(self._copy_stream)
+        self.data.g_lesser.to_device(
+            delete_host=True, stream=self._copy_stream, sync=False
+        )
+        self.data.g_greater.to_device(
+            delete_host=True, stream=self._copy_stream, sync=False
+        )
+
         self._compute_coulomb_screening_observables()
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
+
+        with profiler.profile_range(
+            label="SCBA: sigma stack->nnz transpose", level="default", comm=comm
+        ):
+            for m in (
+                self.data.sigma_lesser,
+                self.data.sigma_greater,
+                self.data.sigma_retarded,
+            ):
+                m.allocate_data()
+                m.dtranspose(discard=True)  # These can be safely discarded.
+                assert m.distribution_state == "nnz"
+
+        synchronize_stream(self._copy_stream)
 
         self.sigma_fock.compute(
             self.data.g_lesser,
@@ -732,12 +879,46 @@ class SCBA:
         """Runs the SCBA to convergence."""
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
+        self.data.g_lesser.allocate_data()
+        self.data.g_greater.allocate_data()
+        self.data.sigma_lesser.allocate_data()
+        self.data.sigma_greater.allocate_data()
+        self.data.sigma_retarded.allocate_data()
+
+        if comm.rank == 0:
+            print("len(G) ", self.data.g_lesser.total_nnz_size, flush=True)
+            print(
+                "len(MG) ",
+                self.electron_solver.system_matrix.total_nnz_size,
+                flush=True,
+            )
+            print(
+                "len(H) ", self.electron_solver.hamiltonian.total_nnz_size, flush=True
+            )
+
+            print(
+                "len(MW) ",
+                self.coulomb_screening_solver.system_matrix.total_nnz_size,
+                flush=True,
+            )
+            print(
+                "len(L) ",
+                self.coulomb_screening_solver.l_lesser.total_nnz_size,
+                flush=True,
+            )
+
+        # NOTE: benchmark mode
+        self.data.sigma_lesser.data[:] = 0.0
+        self.data.sigma_greater.data[:] = 0.0
+        self.data.sigma_retarded.data[:] = 0.0
+
         for i in range(self.config.scba.max_iterations):
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(
                 label="SCBA: Iteration", level="default", comm=comm
             ):
+                self.data.g_retarded.allocate_data()
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
@@ -745,27 +926,16 @@ class SCBA:
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
                 self._compute_electron_observables()
+                self.electron_solver.hamiltonian.set_to_device()
+
+                self.data.g_retarded.free_data()
 
                 # Stash current into previous self-energy buffer.
                 self._stash_sigma()
 
-                with profiler.profile_range(
-                    label="SCBA: stack->nnz transpose", level="default", comm=comm
-                ):
-                    # Transpose to nnz distribution.
-                    # NOTE: While computing all interactions, we only ever need
-                    # to access the Green's function and the self-energies in
-                    # their nnz-distributed state.
-                    for m in (self.data.g_lesser, self.data.g_greater):
-                        m.dtranspose(discard=False)  # This must not be discarded.
-                        assert m.distribution_state == "nnz"
-                    for m in (
-                        self.data.sigma_lesser,
-                        self.data.sigma_greater,
-                        self.data.sigma_retarded,
-                    ):
-                        m.dtranspose(discard=True)  # These can be safely discarded.
-                        assert m.distribution_state == "nnz"
+                for m in (self.data.g_lesser, self.data.g_greater):
+                    m.dtranspose(discard=False)  # This must not be discarded.
+                    assert m.distribution_state == "nnz"
 
                 if self.config.scba.coulomb_screening:
                     self._compute_coulomb_screening_interaction()
@@ -793,6 +963,10 @@ class SCBA:
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
 
+            self.data.sigma_lesser_prev.to_device()
+            self.data.sigma_greater_prev.to_device()
+            self.data.sigma_retarded_prev.to_device()
+
             if self._has_converged():
                 if comm.rank == 0:
                     print(f"SCBA converged after {i} iterations.", flush=True)
@@ -800,6 +974,13 @@ class SCBA:
 
             # Update self-energy for next iteration with mixing factor.
             self._update_sigma()
+
+            self.data.sigma_lesser_prev.free_data()
+            self.data.sigma_greater_prev.free_data()
+            self.data.sigma_retarded_prev.free_data()
+            self.data.sigma_lesser_prev._host_data = None
+            self.data.sigma_greater_prev._host_data = None
+            self.data.sigma_retarded_prev._host_data = None
 
             if xp.__name__ == "cupy":
                 free_memory, total_memory = xp.cuda.Device().mem_info

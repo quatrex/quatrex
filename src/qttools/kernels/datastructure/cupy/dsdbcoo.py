@@ -107,8 +107,8 @@ def compute_block_slice(
     row_start, row_stop = np.int32(block_offsets[row]), np.int32(block_offsets[row + 1])
     col_start, col_stop = np.int32(block_offsets[col]), np.int32(block_offsets[col + 1])
 
-    rows = rows.astype(cp.int32)
-    cols = cols.astype(cp.int32)
+    # rows = rows.astype(cp.int32)
+    # cols = cols.astype(cp.int32)
 
     blocks_per_grid = (rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._compute_coo_block_mask(
@@ -174,37 +174,7 @@ def densify_block(
     """
 
     # TODO: Needs profilig to see if this is faster than the raw kernel.
-    if not use_kernel:
-        block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = (
-            data[..., block_slice]
-        )
-
-    else:
-        stack_size = data.size // data.shape[-1]
-        stack_stride = data.shape[-1]
-        block_start = block_slice.start or 0
-        nnz_per_block = block_slice.stop - block_start
-        num_blocks = (
-            stack_size * nnz_per_block + THREADS_PER_BLOCK - 1
-        ) // THREADS_PER_BLOCK
-        cupy_backend._densify_block(
-            (num_blocks,),
-            (THREADS_PER_BLOCK,),
-            (
-                block.reshape(-1),
-                rows,
-                cols,
-                data.reshape(-1),
-                np.int32(stack_size),
-                np.int32(stack_stride),
-                np.int32(nnz_per_block),
-                np.int32(block.shape[-2]),
-                np.int32(block.shape[-1]),
-                np.int32(block_start),
-                np.int32(row_offset),
-                np.int32(col_offset),
-            ),
-        )
+    block[..., rows[block_slice] - row_offset, cols[block_slice] - col_offset] = data
 
 
 def sparsify_block(block: NDArray, rows: NDArray, cols: NDArray, data: NDArray):

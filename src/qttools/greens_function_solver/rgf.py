@@ -4,6 +4,7 @@ from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver.solver import GFSolver, OBCBlocks
 from qttools.kernels import linalg
+from qttools.kernels.linalg.gemm import matmul
 from qttools.utils.solvers_utils import get_batches
 
 
@@ -121,6 +122,8 @@ class RGF(GFSolver):
         out: tuple[DSDBSparse, ...] | None = None,
         return_retarded: bool = False,
         return_current: bool = False,
+        ozaki: None | int = None,
+        slices: None | int = None,
     ) -> None | tuple | NDArray:
         r"""Produces elements of the solution to the congruence equation.
 
@@ -173,10 +176,14 @@ class RGF(GFSolver):
 
         if return_current:
             # Allocate a buffer for the current.
-            current = xp.zeros((*a.shape[:-2], a.num_blocks - 1), dtype=a.dtype)
+            current = xp.zeros(
+                (*sigma_lesser.shape[:-2], a.num_blocks - 1), dtype=a.dtype
+            )
 
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+        batches_sizes, batches_slices = get_batches(
+            sigma_lesser.shape[0], self.max_batch_size
+        )
 
         # If out is not none, xr will be the third element of the tuple.
         if out is not None:
@@ -227,8 +234,18 @@ class RGF(GFSolver):
             xr_jj = linalg.inv(a_jj)
             xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
             xr_diag_blocks[0] = xr_jj
-            xl_diag_blocks[0] = xr_jj @ sl_jj @ xr_jj_dagger
-            xg_diag_blocks[0] = xr_jj @ sg_jj @ xr_jj_dagger
+            xl_diag_blocks[0] = matmul(
+                matmul(xr_jj, sl_jj, ozaki=ozaki, slices=slices),
+                xr_jj_dagger,
+                ozaki=ozaki,
+                slices=slices,
+            )
+            xg_diag_blocks[0] = matmul(
+                matmul(xr_jj, sg_jj, ozaki=ozaki, slices=slices),
+                xr_jj_dagger,
+                ozaki=ozaki,
+                slices=slices,
+            )
 
             # Forwards sweep.
             for i in range(a.num_blocks - 1):
@@ -262,36 +279,61 @@ class RGF(GFSolver):
                 a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
 
                 # Precompute some terms that are used multiple times.
-                a_ji_xr_ii = a_ji @ xr_ii
+                a_ji_xr_ii = matmul(a_ji, xr_ii, ozaki=ozaki, slices=slices)
 
-                xr_jj = linalg.inv(a_jj - a_ji_xr_ii @ a_.blocks[i, j])
+                xr_jj = linalg.inv(
+                    a_jj
+                    - matmul(a_ji_xr_ii, a_.blocks[i, j], ozaki=ozaki, slices=slices)
+                )
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
                 xr_diag_blocks[j] = xr_jj
 
-                a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_.blocks[i, j]
+                a_ji_xr_ii_sx_ij = matmul(
+                    a_ji_xr_ii, sigma_lesser_.blocks[i, j], ozaki=ozaki, slices=slices
+                )
 
                 xl_diag_blocks[j] = (
                     xr_jj
                     @ (
                         sl_jj
-                        + a_ji @ xl_diag_blocks[i] @ a_ji_dagger
+                        + matmul(
+                            matmul(a_ji, xl_diag_blocks[i], ozaki=ozaki, slices=slices),
+                            a_ji_dagger,
+                            ozaki=ozaki,
+                            slices=slices,
+                        )
                         + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij
                     )
                     @ xr_jj_dagger
                 )
 
-                a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_.blocks[i, j]
+                a_ji_xr_ii_sx_ij = matmul(
+                    a_ji_xr_ii, sigma_greater_.blocks[i, j], ozaki=ozaki, slices=slices
+                )
 
-                xg_diag_blocks[j] = (
-                    xr_jj
-                    @ (
-                        sg_jj
-                        + a_ji @ xg_diag_blocks[i] @ a_ji_dagger
-                        + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
-                        - a_ji_xr_ii_sx_ij
-                    )
-                    @ xr_jj_dagger
+                xg_diag_blocks[j] = matmul(
+                    matmul(
+                        xr_jj,
+                        (
+                            sg_jj
+                            + matmul(
+                                matmul(
+                                    a_ji, xg_diag_blocks[i], ozaki=ozaki, slices=slices
+                                ),
+                                a_ji_dagger,
+                                ozaki=ozaki,
+                                slices=slices,
+                            )
+                            + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
+                            - a_ji_xr_ii_sx_ij
+                        ),
+                        ozaki=ozaki,
+                        slices=slices,
+                    ),
+                    xr_jj_dagger,
+                    ozaki=ozaki,
+                    slices=slices,
                 )
 
             # We need to write the last diagonal blocks to the output.
@@ -324,82 +366,144 @@ class RGF(GFSolver):
                 xr_jj_dagger = xr_jj.conj().swapaxes(-2, -1)
 
                 # Precompute the terms that are used multiple times.
-                xr_ii_a_ij = xr_ii @ a_ij
+                xr_ii_a_ij = matmul(xr_ii, a_ij, ozaki=ozaki, slices=slices)
                 a_ij_dagger_xr_ii_dagger = xr_ii_a_ij.conj().swapaxes(-2, -1)
-                xr_jj_a_ji = xr_jj @ a_ji
+                xr_jj_a_ji = matmul(xr_jj, a_ji, ozaki=ozaki, slices=slices)
                 a_ji_dagger_xr_jj_dagger = xr_jj_a_ji.conj().swapaxes(-2, -1)
-                xr_ii_a_ij_xr_jj = xr_ii_a_ij @ xr_jj
+                xr_ii_a_ij_xr_jj = matmul(xr_ii_a_ij, xr_jj, ozaki=ozaki, slices=slices)
                 xr_jj_dagger_a_ij_dagger_xr_ii_dagger = (
                     xr_ii_a_ij_xr_jj.conj().swapaxes(-2, -1)
                 )
-                xr_ii_a_ij_xr_jj_a_ji = xr_ii_a_ij @ xr_jj_a_ji
+                xr_ii_a_ij_xr_jj_a_ji = matmul(
+                    xr_ii_a_ij, xr_jj_a_ji, ozaki=ozaki, slices=slices
+                )
 
-                temp_1x = (
-                    xr_ii_a_ij_xr_jj_a_ji @ xl_ii
-                    - xr_ii @ sigma_lesser_ij @ xr_jj_dagger_a_ij_dagger_xr_ii_dagger
+                temp_1x = matmul(
+                    xr_ii_a_ij_xr_jj_a_ji, xl_ii, ozaki=ozaki, slices=slices
+                ) - matmul(
+                    matmul(xr_ii, sigma_lesser_ij, ozaki=ozaki, slices=slices),
+                    xr_jj_dagger_a_ij_dagger_xr_ii_dagger,
+                    ozaki=ozaki,
+                    slices=slices,
                 )
                 temp_1x -= temp_1x.conj().swapaxes(-2, -1)
-                temp_2x = xr_ii_a_ij @ xl_jj
+                temp_2x = matmul(xr_ii_a_ij, xl_jj, ozaki=ozaki, slices=slices)
 
                 xl_ij = (
                     -temp_2x
-                    - xl_ii @ a_ji_dagger_xr_jj_dagger
-                    + xr_ii @ sigma_lesser_ij @ xr_jj_dagger
+                    - matmul(
+                        xl_ii, a_ji_dagger_xr_jj_dagger, ozaki=ozaki, slices=slices
+                    )
+                    + matmul(
+                        matmul(xr_ii, sigma_lesser_ij, ozaki=ozaki, slices=slices),
+                        xr_jj_dagger,
+                        ozaki=ozaki,
+                        slices=slices,
+                    )
                 )
 
                 xl_.blocks[i, j] = xl_ij
                 if not xl_.symmetry:
                     xl_.blocks[j, i] = -xl_ij.conj().swapaxes(-2, -1)
 
-                xl_diag_blocks[i] = xl_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
+                xl_diag_blocks[i] = (
+                    xl_ii
+                    + matmul(
+                        temp_2x, a_ij_dagger_xr_ii_dagger, ozaki=ozaki, slices=slices
+                    )
+                    + temp_1x
+                )
                 xl_.blocks[i, i] = 0.5 * (
                     xl_diag_blocks[i] - xl_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
-                temp_1x = (
-                    xr_ii_a_ij_xr_jj_a_ji @ xg_ii
-                    - xr_ii @ sigma_greater_ij @ xr_jj_dagger_a_ij_dagger_xr_ii_dagger
+                temp_1x = matmul(
+                    xr_ii_a_ij_xr_jj_a_ji, xg_ii, ozaki=ozaki, slices=slices
+                ) - matmul(
+                    matmul(xr_ii, sigma_greater_ij, ozaki=ozaki, slices=slices),
+                    xr_jj_dagger_a_ij_dagger_xr_ii_dagger,
+                    ozaki=ozaki,
+                    slices=slices,
                 )
                 temp_1x -= temp_1x.conj().swapaxes(-2, -1)
-                temp_2x = xr_ii_a_ij @ xg_jj
+                temp_2x = matmul(xr_ii_a_ij, xg_jj, ozaki=ozaki, slices=slices)
 
                 xg_ij = (
                     -temp_2x
-                    - xg_ii @ a_ji_dagger_xr_jj_dagger
-                    + xr_ii @ sigma_greater_ij @ xr_jj_dagger
+                    - matmul(
+                        xg_ii, a_ji_dagger_xr_jj_dagger, ozaki=ozaki, slices=slices
+                    )
+                    + matmul(
+                        matmul(xr_ii, sigma_greater_ij, ozaki=ozaki, slices=slices),
+                        xr_jj_dagger,
+                        ozaki=ozaki,
+                        slices=slices,
+                    )
                 )
 
                 xg_.blocks[i, j] = xg_ij
                 if not xg_.symmetry:
                     xg_.blocks[j, i] = -xg_ij.conj().swapaxes(-2, -1)
 
-                xg_diag_blocks[i] = xg_ii + temp_2x @ a_ij_dagger_xr_ii_dagger + temp_1x
+                xg_diag_blocks[i] = (
+                    xg_ii
+                    + matmul(
+                        temp_2x, a_ij_dagger_xr_ii_dagger, ozaki=ozaki, slices=slices
+                    )
+                    + temp_1x
+                )
                 xg_.blocks[i, i] = 0.5 * (
                     xg_diag_blocks[i] - xg_diag_blocks[i].conj().swapaxes(-2, -1)
                 )
 
                 if return_current:
-                    a_ji_xr_ii = a_ji @ xr_ii
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
+                    a_ji_xr_ii = matmul(a_ji, xr_ii, ozaki=ozaki, slices=slices)
+                    a_ji_xr_ii_sx_ij = matmul(
+                        a_ji_xr_ii, sigma_lesser_ij, ozaki=ozaki, slices=slices
+                    )
                     sigma_lesser_tilde = (
-                        a_ji @ xl_ii @ a_ji_dagger
+                        matmul(
+                            matmul(a_ji, xl_ii, ozaki=ozaki, slices=slices),
+                            a_ji_dagger,
+                            ozaki=ozaki,
+                            slices=slices,
+                        )
                         + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij
                     )
-                    a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_greater_ij
+                    a_ji_xr_ii_sx_ij = matmul(
+                        a_ji_xr_ii, sigma_greater_ij, ozaki=ozaki, slices=slices
+                    )
                     sigma_greater_tilde = (
-                        a_ji @ xg_ii @ a_ji_dagger
+                        matmul(
+                            matmul(a_ji, xg_ii, ozaki=ozaki, slices=slices),
+                            a_ji_dagger,
+                            ozaki=ozaki,
+                            slices=slices,
+                        )
                         + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij
                     )
                     current[stack_slice, ..., i] = xp.trace(
-                        sigma_greater_tilde @ xl_diag_blocks[j]
-                        - xg_diag_blocks[j] @ sigma_lesser_tilde,
+                        matmul(
+                            sigma_greater_tilde,
+                            xl_diag_blocks[j],
+                            ozaki=ozaki,
+                            slices=slices,
+                        )
+                        - matmul(
+                            xg_diag_blocks[j],
+                            sigma_lesser_tilde,
+                            ozaki=ozaki,
+                            slices=slices,
+                        ),
                         axis1=-2,
                         axis2=-1,
                     )
 
-                xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
+                xr_diag_blocks[i] = xr_ii + matmul(
+                    xr_ii_a_ij_xr_jj_a_ji, xr_ii, ozaki=ozaki, slices=slices
+                )
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
 

@@ -452,26 +452,21 @@ class ElectronSolver(SubsystemSolver):
         else:
             _data = self.system_matrix.data
 
-        if self.orthogonal_basis:
-            self.system_matrix.fill_diagonal(1.0, data=_data)
-        else:
+        if not self.orthogonal_basis:
             raise NotImplementedError("Non-orthogonal basis not implemented.")
             # TODO: This is not correct in the case of kpoints
             self.system_matrix += self.overlap_sparray
 
-        if self.config.compute.num_bits is not None:
-            scale_stack(
-                _data,
-                self.local_energies[stack_slice] + 1j * self.eta,
-            )
-            self.system_matrix.data = compress(_data, self.system_matrix.bits)
-        else:
-            scale_stack(
-                self.system_matrix.data,
-                self.local_energies[stack_slice] + 1j * self.eta,
-            )
+        tmp = (
+            self.local_energies[stack_slice][:, None]
+            + 1j * self.eta
+            - self.potential[None, :]
+        )
+        self.system_matrix.fill_diagonal(tmp, data=_data)
 
-        self.system_matrix -= sparse.diags(self.potential, format="csr")
+        if self.config.compute.num_bits is not None:
+            self.system_matrix.data = compress(_data, self.system_matrix.bits)
+
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 

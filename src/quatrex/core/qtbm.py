@@ -1042,7 +1042,6 @@ class QTBM:
                     injected_mask = xp.arange(injection_tot.shape[1])
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
-                        print(injection_tot.shape, reflection_tot.shape)
                         reflected_mask = (
                             xp.arange(reflection_tot.shape[1]) + injection_tot.shape[1]
                         )
@@ -1059,10 +1058,11 @@ class QTBM:
                             if xp.__name__ == "cupy":
                                 xp.cuda.Stream.null.synchronize()
                             t2 = time.perf_counter()
-                            print(
-                                f"Time for solve: {t2 - t1:.2f} s",
-                                flush=True,
-                            )
+                            if comm.rank == 0:
+                                print(
+                                    f"Time for solve: {t2 - t1:.2f} s",
+                                    flush=True,
+                                )
                             if xp.__name__ == "cupy":
                                 xp.cuda.Stream.null.synchronize()
                             t1 = time.perf_counter()
@@ -1075,7 +1075,10 @@ class QTBM:
                             if xp.__name__ == "cupy":
                                 xp.cuda.Stream.null.synchronize()
                             t2 = time.perf_counter()
-                            print(f"Time for correction: {t2 - t1:.2f} s", flush=True)
+                            if comm.rank == 0:
+                                print(
+                                    f"Time for correction: {t2 - t1:.2f} s", flush=True
+                                )
                     else:
                         # Solve for the wavefunction
                         if injection_tot.size != 0:

@@ -21,6 +21,8 @@ except ImportError:
 
 import time
 
+from mpi4py.MPI import COMM_WORLD as comm
+
 from qttools import NDArray, sparse, xp
 from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
@@ -169,15 +171,23 @@ class cuDSS(WFSolver):
 
         if not reuse_sym_fact or not self.sym_factorized:
             analysis_time = self.analyse()
-            print(f"Analysis time: {analysis_time:.6f} seconds", flush=True)
+            if comm.rank == 0:
+                print(
+                    f"    CUDSS: Analysis time: {analysis_time:.6f} seconds", flush=True
+                )
             self.sym_factorized = True
 
         if not reuse_fact or not self.factorized:
             factorization_time = self.factorize()
-            print(f"Factorization time: {factorization_time:.6f} seconds", flush=True)
+            if comm.rank == 0:
+                print(
+                    f"    CUDSS: Factorization time: {factorization_time:.6f} seconds",
+                    flush=True,
+                )
             self.factorized = True
 
         solve_time = self._solve()
-        print(f"Solve time: {solve_time:.6f} seconds", flush=True)
+        if comm.rank == 0:
+            print(f"    CUDSS: Solve time: {solve_time:.6f} seconds", flush=True)
 
         return x

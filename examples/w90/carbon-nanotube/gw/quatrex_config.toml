@@ -77,6 +77,10 @@ energy_window_max = 5
 energy_window_num = 21       # aim for 1-5 meV resolution
 # energy_window_num_per_rank = 4    # don't use if you want to visualize scba outputs
 
+# peak filtering
+# dos_peak_limit = 100.0            # default 100.0
+filtering_iteration_limit = 100     # default 1
+
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 solver.compute_current = true # Compute Meir-Wingreen current.

@@ -72,13 +72,18 @@ class SCBAConfig(BaseModel):
 
     symmetric: bool = False
 
-    use_sigma_approximation: bool = True
-    r"""Whether to discard parts of the self-energies.
+    align_self_energy_to_complex_axes: bool = True
+    r"""Whether to discard parts of the self-energy.
 
-    This affects the self-energies in the following way:
-    The real parts of the lesser/greater self-energies are discarded
-    and the imaginary part of retarded self-energy computed only from
-    the lesser and greater parts by $\frac{\mathbf{\Sigma}^> - \mathbf{\Sigma}^<}{2}$.
+    This affects the self-energy in the following way:
+    - The real parts of the lesser/greater self-energy are discarded.
+    - The imaginary part of the retarded self-energy from any previous
+    computation is zeroed.
+
+    This happens before the imaginary part of the retarded self-energy
+    is computed from the lesser and greater parts as
+    $$\mathrm{Im}\left[\mathbf{\Sigma}^R\right] =
+    \frac{\mathbf{\Sigma}^> - \mathbf{\Sigma}^<}{2i}$$.
 
     """
 
@@ -112,7 +117,7 @@ class MemoizerConfig(BaseModel):
 
     mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
     """The memoization mode to determine when to do fixed-point iterations.
-    
+
     - "auto": Automatically decides whether to use memoization based on the
         specified tolerances. Only useful if all ranks memoize.
     - "force": Always use memoization.
@@ -125,7 +130,7 @@ class MemoizerConfig(BaseModel):
 
     relative_tol: PositiveFloat = 2e-1
     """The relative tolerance for the fixed-point iterations.
-    
+
     Only used if `mode` is set to "auto".
     """
 
@@ -172,7 +177,7 @@ class OBCConfig(BaseModel):
 
     algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
     """The OBC algorithm to use.
-    
+
     - "sancho-rubio": Uses the Sancho-Rubio iterative scheme to compute the
         surface Green's functions. This method achieves exponential convergence
         compared to the linear convergence of fixed-point iterations.
@@ -231,14 +236,14 @@ class OBCConfig(BaseModel):
     $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
 
     This is needed to improve the accuracy of the surface Green's functions
-    if not enough eigenpairs are considered. 
+    if not enough eigenpairs are considered.
 
     Only used if `algorithm` is set to "spectral".
     """
 
     min_propagation: PositiveFloat = 1e-2
     r"""The minimum propagation speed for propagating modes.
-    
+
     The propagation speed is computed as:
 
     $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
@@ -247,7 +252,7 @@ class OBCConfig(BaseModel):
 
     residual_tolerance: PositiveFloat = 1e-3
     r"""The tolerance for the residual of the eigenpairs.
-    
+
     The residuals are computed as:
 
     $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} \vec{v} \rvert $$
@@ -259,7 +264,7 @@ class OBCConfig(BaseModel):
 
     residual_normalization: bool = True
     """Whether to normalize the residuals by the norm of the eigenvalue.
-    
+
     This is useful to avoid that large eigenvalues have large residuals
     and small eigenvalues have small residuals.
     """
@@ -271,7 +276,7 @@ class OBCConfig(BaseModel):
     The residual is computed as:
 
     $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
-    
+
     This parameter is only used if the `formalism` is `wf`. Otherwise, the memoizer
     is responsible for residual checking and warnings.
     """
@@ -281,9 +286,9 @@ class OBCConfig(BaseModel):
         non-decaying ones in the spectral OBC solver.
 
     Modes that are very close to the unit contour could be misclassified
-    with 'min_decay' and 'min_propagation' conditions i.e. 
+    with 'min_decay' and 'min_propagation' conditions i.e.
     when their decay is smaller than 'min_decay' but they are not propagating fast enough.
-    The not fast enough propagating ones with decay smaller than 'eta_decay' are 
+    The not fast enough propagating ones with decay smaller than 'eta_decay' are
     considered as well decaying modes.
     """
 
@@ -297,7 +302,7 @@ class OBCConfig(BaseModel):
     # Parameters for subspace NEVP solvers.
     r_o: PositiveFloat = 10.0
     """The outer radius of the contour in the complex plane for the contour methods.
-    
+
     This parameter should not be too large to avoid having too many eigenpairs
     inside the contour. It should also not be too small to avoid missing important
     eigenpairs. If a eigenpair is too close to the contour,
@@ -313,7 +318,7 @@ class OBCConfig(BaseModel):
 
     m_0: PositiveInt = 10
     """The subspace guess in the contour methods.
-    
+
     The guess has to be larger than the expected number of eigenvalues
     inside the contour. If too small, the method will fail. If too large, the method
     will be not/less efficient.
@@ -370,7 +375,7 @@ class LyapunovConfig(BaseModel):
 
     reduce_sparsity: bool = True
     r"""Whether to use the sparsity of $\mathbf{A}$ to accelerate the Lyapunov solver.
-    
+
     This is done by removing zero rows and columns from $\mathbf{A}$, solving the reduced
     Lyapunov equation, and then expanding the solution back to the original size.
     """
@@ -400,7 +405,7 @@ class LyapunovConfig(BaseModel):
         of the solution of the spectral Lyapunov solver.
 
     This is not used in the doubling method. Additionally, the number of iterations in
-    the memoizer is also independent of this parameter.  
+    the memoizer is also independent of this parameter.
     """
 
     memoizer: MemoizerConfig = MemoizerConfig()
@@ -539,30 +544,72 @@ class CoulombScreeningConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    align_polarization_to_complex_axes: bool = True
+    r"""Whether to discard parts of the polarization.
+
+    This affects the polarization in the following way:
+    - The real parts of the lesser/greater polarization are discarded.
+    - The imaginary part of the retarded polarization from previous
+    computation is zeroed.
+
+    This happens before the imaginary part of the retarded polarization
+    is computed from the lesser and greater parts as
+    $$\mathrm{Im}\left[\mathbf{P}^R\right] = \frac{\mathbf{P}^> -
+    \mathbf{P}^<}{2i}$$.
+
+    """
+
+    include_energy_renormalization: Literal["self-energy", "polarization", "both"] = (
+        "self-energy"
+    )
+    r"""Whether to compute the real part of the retarded polarization and/or self-energy.
+
+    Possible values are `"self-energy"`, `"polarization"`, and `"both"`.
+
+    The full retarded interaction quantities are complex-valued, where
+    the real part is computed from the imaginary part using the
+    Kramers-Kronig relations:
+
+    $$\mathbf{X}^{R} = \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{2} +
+    \frac{1}{2\pi} \mathrm{p.v.} \int_{-\infty}^{\infty}  dE' \,
+    \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{E^{'} - E}$$
+
+    The real part only leads to only a shift in the energy, so it is
+    often neglected:
+
+    $$\mathbf{X}^{R} \approx \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{2}$$
+
+    The default is to only include the real part in the Coulomb
+    screening self-energy and not in the polarization.
+
+    The real part is computed using a Hilbert transform. For the Coulomb
+    screening self-energy, this Hilbert transform can lead to errors at
+    the edges of the energy window. The `apply_hilbert_correction`
+    option can be used to apply a correction to the Hilbert transform to
+    mitigate these errors.
+
+    """
+
     apply_hilbert_correction: bool = False
     """Whether to apply the corrections for the edges of the energy window
     to the hilbert transform when computing the retarded self-energy.
 
     Computing the correction is slightly more expensive.
-    """
-
-    use_polarization_approximation: bool = True
-    r"""Whether to discard parts of the polarization.
-
-    This affects the polarization in the following way:
-    The real parts of the lesser/greater polarization are discarded. 
-    The imaginary part of the retarded polarization from previous computation is zeroed.
-    The retarded polarization is computed only using lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
-    Thus, the retarded polarization is ensured to have zero real part and only an imaginary part.
-    """
-
-    compute_hilbert_retarded_polarization: bool = False
-    r"""Whether to compute the Hilbert part of the retarded polarization function.
-    
-    If not set, the retarded polarization is computed only from
-    the lesser and greater parts by $\frac{\mathbf{P}^> - \mathbf{P}^<}{2}$.
 
     """
+
+    @model_validator(mode="after")
+    def check_hilbert_correction_applicable(self) -> Self:
+        """Checks if the Hilbert correction can be applied."""
+        if (
+            self.apply_hilbert_correction
+            and self.include_energy_renormalization not in ["self-energy", "both"]
+        ):
+            raise ValueError(
+                "Hilbert correction can only be applied if the real part of the self-energy is included."
+            )
+
+        return self
 
 
 class PhotonConfig(BaseModel):
@@ -763,7 +810,7 @@ class DeviceConfig(BaseModel):
     !!! warning
 
         Currently, `False` is not supported since
-        the code does not correctly handle overlap matrices in the case 
+        the code does not correctly handle overlap matrices in the case
         of kpoints.
 
     """

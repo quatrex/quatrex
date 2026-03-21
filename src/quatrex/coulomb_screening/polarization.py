@@ -84,9 +84,12 @@ class PCoulombScreening(ScatteringSelfEnergy):
         )
         self.batch_size = config.compute.convolve.batch_size
 
-        self.use_approximation = config.coulomb_screening.use_polarization_approximation
-        self.compute_hilbert_retarded = (
-            config.coulomb_screening.compute_hilbert_retarded_polarization
+        self.align_to_complex_axes = (
+            config.coulomb_screening.align_polarization_to_complex_axes
+        )
+        self.include_energy_renormalization = (
+            config.coulomb_screening.include_energy_renormalization
+            in ("polarization", "both")
         )
 
     @profiler.profile(label="PCoulombScreening", level="default", comm=comm)
@@ -120,7 +123,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             for m in (p_lesser, p_greater):
                 # These only need the correct shape, so discard the data.
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
-            if self.compute_hilbert_retarded:
+            if self.include_energy_renormalization:
                 (
                     p_retarded.dtranspose(discard=True)
                     if (p_retarded.distribution_state != "nnz")
@@ -186,7 +189,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
                     # Note that only the hermitian part is computed here.
 
-                    if self.compute_hilbert_retarded:
+                    if self.include_energy_renormalization:
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
@@ -208,7 +211,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             # Transpose the matrices to stack distribution.
             for m in (p_lesser, p_greater):
                 m.dtranspose() if m.distribution_state != "stack" else None
-            if self.compute_hilbert_retarded:
+            if self.include_energy_renormalization:
                 (
                     p_retarded.dtranspose()
                     if (p_retarded.distribution_state != "stack")
@@ -227,11 +230,11 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 p_greater.symmetrize(xp.subtract)
                 p_retarded.symmetrize(xp.add)
 
-            if not self.compute_hilbert_retarded:
+            if not self.include_energy_renormalization:
                 p_retarded.data[:] = 0
 
             # Discard the real part of lesser/greater and imag part of retarded
-            if self.use_approximation:
+            if self.align_to_complex_axes:
                 p_lesser.data.real = 0
                 p_greater.data.real = 0
                 p_retarded.data.imag = 0

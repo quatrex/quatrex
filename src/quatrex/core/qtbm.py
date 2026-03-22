@@ -44,6 +44,37 @@ def get_cpu_memory_gb() -> float:
     return 0.0
 
 
+def print_memory_usage(stage: str, energy_index: int | None = None) -> None:
+    """Print CPU/GPU memory usage for rank 0.
+
+    Parameters
+    ----------
+    stage : str
+        Human-readable stage label.
+    energy_index : int | None, optional
+        Global energy index to include in the message.
+    """
+    if comm.rank != 0:
+        return
+
+    prefix = f"[Memory] {stage}"
+    if energy_index is not None:
+        prefix += f" (energy {energy_index})"
+
+    cpu_mem_gb = get_cpu_memory_gb()
+    if xp.__name__ == "cupy":
+        xp.cuda.Stream.null.synchronize()
+        gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
+        gpu_mem_used_gb = (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
+        gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
+        print(
+            f"{prefix}: CPU {cpu_mem_gb:.2f} GB, GPU {gpu_mem_used_gb:.2f}/{gpu_mem_total_gb:.2f} GB",
+            flush=True,
+        )
+    else:
+        print(f"{prefix}: CPU {cpu_mem_gb:.2f} GB", flush=True)
+
+
 def allocate_system_matrix(
     hamiltonians: dict, overlap_matrices: dict, contacts: list = []
 ) -> sparse.csr_matrix:
@@ -410,17 +441,14 @@ class QTBM:
             # Compute the transmission
             if phi_nt.size != 0:
 
-                S_P = xp.zeros_like(phi_nt)
-
                 if self.quatrex_config.qtbm.method == "SplitSolve":
-                    S_P = (
-                        reflection_per_contact[contact_out]
-                        @ xp.diag(1 / eig_ref_per_contact[contact_out])
-                        @ phi_inv_ref_per_contact[contact_out]
-                        @ phi_nt
+                    S_P = reflection_per_contact[contact_out] @ (
+                        xp.diag(1 / eig_ref_per_contact[contact_out])
+                        @ (phi_inv_ref_per_contact[contact_out] @ phi_nt)
                     )
 
                 else:
+                    S_P = xp.zeros_like(phi_nt)
                     # This upscales the self-energy if the contact
                     # has periodicity in the transverse directions
                     ny, nz = contact_out.transverse_repetition_grid
@@ -492,12 +520,11 @@ class QTBM:
         # diag(phi^H @ S @ phi)
         # S @ phi needs to consider that
         # the overlap matrices are infinite
-
         phi_ortho = xp.zeros_like(phi)
         for overlap in overlap_matrices.values():
             phi_ortho += overlap @ phi
             if self.quatrex_config.qtbm.method == "SplitSolve":
-                phi_ortho += overlap.T.conj() @ phi
+                phi_ortho += (phi.T.conj() @ overlap).T.conj()
                 phi_ortho -= sparse.diags(overlap.diagonal()) @ phi
 
         for contact in self.device.contacts:
@@ -509,11 +536,9 @@ class QTBM:
             phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
 
             if self.quatrex_config.qtbm.method == "SplitSolve":
-                phi_cont += (
-                    phi_ref_per_contact[contact]
-                    @ xp.diag(1 / eig_ref_per_contact[contact])
-                    @ phi_inv_ref_per_contact[contact]
-                    @ phi[orbital_indices, :]
+                phi_cont += phi_ref_per_contact[contact] @ (
+                    xp.diag(1 / eig_ref_per_contact[contact])
+                    @ (phi_inv_ref_per_contact[contact] @ phi[orbital_indices, :])
                 )
 
             else:
@@ -543,15 +568,17 @@ class QTBM:
                         contact.get_coupling_matrix(overlap, transpose=True) @ phi_cont
                     )
             # CHECK SPILL OVER ERROR (DEBUG)
-            error = (
-                contact.get_coupling_matrix(system_matrix) @ phi_cont
-                + system_matrix[orbital_indices, :] @ phi
+            error = contact.get_coupling_matrix(system_matrix) @ phi_cont
+            error += (
+                # system_matrix[orbital_indices, :] @ phi
+                (system_matrix @ phi)[orbital_indices, :]
             )
             if self.quatrex_config.qtbm.method == "SplitSolve":
                 error += (
                     contact.get_coupling_matrix(system_matrix, transpose=True)
                     @ phi_cont
-                    + (system_matrix.T.conj() - sparse.diags(system_matrix.diagonal()))[
+                    + system_matrix[:, orbital_indices].T.conj() @ phi
+                    - sparse.diags(system_matrix.diagonal(), format="csr")[
                         orbital_indices, :
                     ]
                     @ phi
@@ -688,7 +715,6 @@ class QTBM:
             phi_inv_ref_per_contact,
             k_idx,
         )
-
         # Compute the DOS
         self._compute_ldos(
             phi,
@@ -1039,12 +1065,9 @@ class QTBM:
                         )
 
                     times.append(time.perf_counter())
-                    injected_mask = xp.arange(injection_tot.shape[1])
+                    n_injected = injection_tot.shape[1]
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
-                        reflected_mask = (
-                            xp.arange(reflection_tot.shape[1]) + injection_tot.shape[1]
-                        )
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             phi = self.solver.solve(
@@ -1066,11 +1089,11 @@ class QTBM:
                             if xp.__name__ == "cupy":
                                 xp.cuda.Stream.null.synchronize()
                             t1 = time.perf_counter()
-                            phi[:, injected_mask] += phi[
-                                :, reflected_mask
+                            phi[:, :n_injected] += phi[
+                                :, n_injected:
                             ] @ xp.linalg.solve(
-                                xp.diag(eig_tot) - phi_inv_tot @ phi[:, reflected_mask],
-                                phi_inv_tot @ phi[:, injected_mask],
+                                xp.diag(eig_tot) - phi_inv_tot @ phi[:, n_injected:],
+                                phi_inv_tot @ phi[:, :n_injected],
                             )
                             if xp.__name__ == "cupy":
                                 xp.cuda.Stream.null.synchronize()
@@ -1118,7 +1141,7 @@ class QTBM:
                     if injection_tot.size != 0:
                         # Input
                         self._compute_observables(
-                            phi[:, injected_mask],
+                            phi[:, :n_injected],
                             injection_segments,
                             i,
                             batch_start + i,
@@ -1145,24 +1168,8 @@ class QTBM:
                             flush=True,
                         )
 
-                    # Print memory usage at end of energy iteration
-                    if comm.rank == 0:
-                        cpu_mem_gb = get_cpu_memory_gb()
-                        if xp.__name__ == "cupy":
-                            gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
-                            gpu_mem_used_gb = (
-                                (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
-                            )
-                            gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
-                            print(
-                                f"Energy {batch_start + i}: CPU memory: {cpu_mem_gb:.2f} GB, GPU memory: {gpu_mem_used_gb:.2f}/{gpu_mem_total_gb:.2f} GB",
-                                flush=True,
-                            )
-                        else:
-                            print(
-                                f"Energy {batch_start + i}: CPU memory: {cpu_mem_gb:.2f} GB",
-                                flush=True,
-                            )
+                    # Keep an end-of-energy memory report for all methods.
+                    print_memory_usage("End of energy iteration", batch_start + i)
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:

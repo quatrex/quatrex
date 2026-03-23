@@ -1,6 +1,7 @@
 """Parameter sweep plotter for analyzing SLURM simulation outputs."""
 
 import os
+import glob
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -29,7 +30,7 @@ class ParameterSweepPlotter:
         Extracted data organized by parameter value
     """
 
-    def __init__(self, root_folder: str, parameter_pattern: str):
+    def __init__(self, root_folder: str, parameter_pattern: str) -> None:
         """
         Initialize the ParameterSweepPlotter.
 
@@ -43,9 +44,16 @@ class ParameterSweepPlotter:
         self.root_folder = Path(root_folder)
         self.parameter_pattern = parameter_pattern
         self.data: Dict[float, Dict[str, List[float]]] = {}
-        self._parse_all_folders()
-        self.config = parse_config(self.root_folder / "seed" / "quatrex_config.toml")
-        self.lattice_vectors = np.load(self.root_folder / "seed" / "inputs" / "lattice_vectors.npy")
+        conf_folder = self._parse_all_folders()
+        self.config = parse_config(conf_folder / "quatrex_config.toml")
+        self.energies = np.linspace(
+            self.config.electron.energy_window_min,
+            self.config.electron.energy_window_max,
+            self.config.electron.energy_window_num,
+        )
+        self.lattice_vectors = np.load(
+            conf_folder / "inputs" / "lattice_vectors.npy"
+        )
 
     def _find_parameter_folders(self) -> Dict[float, Path]:
         """
@@ -125,15 +133,11 @@ class ParameterSweepPlotter:
             float_pattern = r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
 
             # Extract Conduction Band Edge
-            matches = re.findall(
-                rf"Conduction Band Edge:\s*{float_pattern}", content
-            )
+            matches = re.findall(rf"Conduction Band Edge:\s*{float_pattern}", content)
             extracted_data["conduction_band"] = [float(m) for m in matches]
 
             # Extract Valence Band Edge
-            matches = re.findall(
-                rf"Valence Band Edge:\s*{float_pattern}", content
-            )
+            matches = re.findall(rf"Valence Band Edge:\s*{float_pattern}", content)
             extracted_data["valence_band"] = [float(m) for m in matches]
 
             # Extract Fermi level
@@ -173,7 +177,9 @@ class ParameterSweepPlotter:
         """Parse all parameter folders and extract data."""
         parameter_folders = self._find_parameter_folders()
         if not parameter_folders:
-            print(f"No parameter folders found matching pattern '{self.parameter_pattern}' in {self.root_folder}")
+            print(
+                f"No parameter folders found matching pattern '{self.parameter_pattern}' in {self.root_folder}"
+            )
             return
 
         for param_value, folder in sorted(parameter_folders.items()):
@@ -182,6 +188,8 @@ class ParameterSweepPlotter:
                 self.data[param_value] = self._extract_values_from_slurm(slurm_file)
             else:
                 print(f"Warning: No SLURM file found in {folder}")
+        # Return a folder for additional processing of shared data
+        return list(parameter_folders.values())[0]
 
     def _get_last_values(
         self,
@@ -307,9 +315,7 @@ class ParameterSweepPlotter:
 
         return ax
 
-    def plot_charge_vs_iteration(
-        self, parameter_value: float, ax=None
-    ) -> plt.Axes:
+    def plot_charge_vs_iteration(self, parameter_value: float, ax=None) -> plt.Axes:
         """
         Plot charge as a function of iteration for a specific parameter value.
 
@@ -344,7 +350,9 @@ class ParameterSweepPlotter:
         # Normalize over k-points
         charges = np.array(charges) / np.prod(self.config.device.kpoint_grid)
         # # Calculate the number of charge per cm^2 using the lattice vectors
-        area_per_unit_cell = np.cross(self.lattice_vectors[0], self.lattice_vectors[1])[2]  # Area in Å^2
+        area_per_unit_cell = np.cross(self.lattice_vectors[0], self.lattice_vectors[1])[
+            2
+        ]  # Area in Å^2
         area_per_unit_cell_cm2 = area_per_unit_cell * 1e-16  # Convert to cm^2
         charge_per_cm2 = charges / area_per_unit_cell_cm2  # Charge density in e/cm^2
         # Factor 2 for spin degeneracy
@@ -360,7 +368,9 @@ class ParameterSweepPlotter:
 
         return ax
 
-    def plot_valley_differences(self, kq_ref: float = None, kg_ref: float = None) -> Tuple[plt.Axes, plt.Axes]:
+    def plot_valley_differences(
+        self, kq_ref: float = None, kg_ref: float = None
+    ) -> Tuple[plt.Axes, plt.Axes]:
         """
         Plot valley differences as a function of parameter in side-by-side subplots.
 
@@ -403,7 +413,11 @@ class ParameterSweepPlotter:
             y=reference_k_q,
             color="red",
             linestyle="--",
-            label=f"Reference (initial: {reference_k_q:.4f} eV)" if reference_k_q is not None else "Reference (initial: N/A)",
+            label=(
+                f"Reference (initial: {reference_k_q:.4f} eV)"
+                if reference_k_q is not None
+                else "Reference (initial: N/A)"
+            ),
         )
         if kq_ref is not None:
             ax_k_q.axhline(
@@ -424,7 +438,11 @@ class ParameterSweepPlotter:
             y=reference_k_g,
             color="red",
             linestyle="--",
-            label=f"Reference (initial: {reference_k_g:.4f} eV)" if reference_k_g is not None else "Reference (initial: N/A)",
+            label=(
+                f"Reference (initial: {reference_k_g:.4f} eV)"
+                if reference_k_g is not None
+                else "Reference (initial: N/A)"
+            ),
         )
         if kg_ref is not None:
             ax_k_g.axhline(
@@ -484,6 +502,107 @@ class ParameterSweepPlotter:
         ax.grid(True)
 
         return ax
+
+    def plot_dos(self, parameter_value: str, iteration: int, ax=None, kp: tuple[int, int] = None) -> plt.Axes:
+        """
+        Plot density of states (DOS) for a specific parameter value.
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to plot
+        iteration : int
+            The iteration number to plot the DOS for
+        ax : matplotlib.axes.Axes, optional
+            Axes object to plot on. If None, creates a new figure.
+        kp : tuple[int, int], optional
+            The k-point indices to plot. If None, plots the sum over all k-points.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes object containing the plot
+
+        Raises
+        ------
+        ValueError
+            If the parameter value is not found in the data or if DOS data is not available
+        """
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        dos_energy = self.energies
+        dos_file = (
+            self.root_folder
+            / self.parameter_pattern.replace("*", parameter_value)
+            / "outputs"
+            / f"electron_ldos_{iteration}.npy"
+        )
+        # Have first iteration as reference
+        dos_ref_file = (
+            self.root_folder
+            / self.parameter_pattern.replace("*", parameter_value)
+            / "outputs"
+            / f"electron_ldos_0.npy"
+        )
+        if kp is None:
+            # Sum over k-points
+            dos_values = np.load(dos_file).mean(axis=(-2, -1))
+            dos_ref = np.load(dos_ref_file).mean(axis=(-2, -1))
+        else:
+            dos_values = np.load(dos_file)[:, kp[0], kp[1]]
+            dos_ref = np.load(dos_ref_file)[:, kp[0], kp[1]]
+
+        ax.plot(dos_energy, dos_ref, label="Reference (Iteration 0)", color="lightgray", alpha=0.7)
+        ax.plot(dos_energy, dos_values, label=f"Iteration {iteration}")
+        ax.set_xlabel("Energy (eV)")
+        ax.set_ylabel("Density of States")
+        ax.set_title(f"Density of States (Parameter = {parameter_value})")
+        ax.grid(True)
+
+        return ax
+
+    def get_total_num_states(self, parameter_value: str) -> int:
+        """
+        Get the total number of states for a specific parameter value.
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to get the total number of states for
+
+        Returns
+        -------
+        int
+            The total number of states for the given parameter value
+        """
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        dos_energy = self.energies
+        folder = self.root_folder / self.parameter_pattern.replace("*", parameter_value) / "outputs"
+        dos_files = list(folder.glob(f"electron_ldos_*.npy"))
+        if not dos_files:
+            raise ValueError(f"No DOS files found for parameter value {parameter_value}")
+        
+        # Sort files by iteration number
+        dos_files.sort(key=lambda f: int(re.search(r"electron_ldos_(\d+).npy", f.name).group(1)))
+        dos_e = np.array([np.load(f).mean(axis=(-2, -1)) for f in dos_files])  # Shape: (num_iterations, num_energies)
+        # Sum over energies to get total number of states
+        de = dos_energy[1] - dos_energy[0]
+        num_states = np.sum(dos_e, axis=1) * de / (np.pi)  # Sum over energy bins to get total number of states
+        return num_states
 
     def get_available_parameters(self) -> List[float]:
         """

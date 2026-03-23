@@ -431,17 +431,12 @@ class SCBA:
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        if self.config.coulomb_screening.discard_real_parts:
+        if self.config.scba.align_self_energy_to_complex_axes:
             self.data.sigma_lesser._data.real = 0
             self.data.sigma_greater._data.real = 0
             # Make sure that the imaginary part comes only from
             # sigma_greater - sigma_lesser.
             self.data.sigma_retarded._data.imag = 0
-
-        # Now add the imaginary, skew-Hermitian part back.
-        self.data.sigma_retarded.data += 0.5 * (
-            self.data.sigma_greater.data - self.data.sigma_lesser.data
-        )
 
     @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
@@ -792,6 +787,11 @@ class SCBA:
 
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
+
+            # Add the anti-Hermitian part to the retarded self-energy.
+            self.data.sigma_retarded.data += 0.5 * (
+                self.data.sigma_greater.data - self.data.sigma_lesser.data
+            )
 
             if self._has_converged():
                 if comm.rank == 0:

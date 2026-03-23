@@ -19,6 +19,7 @@ mixing_factor = 0.5
 coulomb_screening = true
 phonon = true
 
+align_self_energy_to_complex_axes = false
 
 [outputs]  # Select which outputs to write.
 electron_ldos = true
@@ -75,9 +76,8 @@ obc.memoizer.absolute_tol = 1e-8
 obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ===============================================
-discard_real_parts = false
+align_polarization_to_complex_axes = false
 apply_hilbert_correction = true
-compute_retarded_polarization = false
 interaction_cutoff = 8 #12 # Å
 
 epsilon_r = 100.0

@@ -88,6 +88,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.big_block_sizes = None
         self.batch_size = config.compute.convolve.batch_size
 
+        self.include_energy_renormalization = (
+            config.coulomb_screening.include_energy_renormalization
+            in ("self-energy", "both")
+        )
         self.apply_hilbert_correction = (
             config.coulomb_screening.apply_hilbert_correction
         )
@@ -164,17 +168,23 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         )
         sigma_greater.data[..., batch] += greater
 
-        # Compute retarded self-energy with a Hilbert transform.
-        antihermitian = greater - lesser
-        antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+        if self.include_energy_renormalization:
+            # Compute retarded self-energy with a Hilbert transform.
+            antihermitian = greater - lesser
+            antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
 
-        sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-        # negative energy part
-        sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+            # negative energy part
+            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-        sigma_retarded.data[..., batch] += (
-            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
-        )
+            # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
+            # part of the retarded self-energy is added outside in the
+            # main SCBA loop, so it is not added here.
+            sigma_retarded.data[..., batch] += (
+                self.prefactor
+                * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                * self.kpoint_volume
+            )
 
     def _compute_with_correction(
         self,
@@ -234,11 +244,15 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         sigma_lesser.data[..., batch] += sl[-ne:]
         sigma_greater.data[..., batch] += sg[:ne]
 
-        sigma_retarded.data[..., batch] += (
-            self.prefactor
-            * hilbert_transform(sl, sg, self.energies)
-            * self.kpoint_volume
-        )
+        if self.include_energy_renormalization:
+            # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
+            # part of the retarded self-energy is added outside in the
+            # main SCBA loop, so it is not added here.
+            sigma_retarded.data[..., batch] += (
+                self.prefactor
+                * hilbert_transform(sl, sg, self.energies)
+                * self.kpoint_volume
+            )
 
     @profiler.profile(label="SigmaCoulombScreening", level="default", comm=comm)
     def compute(

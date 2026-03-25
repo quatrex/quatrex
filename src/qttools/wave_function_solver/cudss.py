@@ -149,6 +149,11 @@ class cuDSS(WFSolver):
 
         return solve_toc - solve_tic
 
+    def _destroy_data_wrappers(self):
+        cudss.matrix_destroy(self.A)
+        cudss.matrix_destroy(self.B)
+        cudss.matrix_destroy(self.X)
+
     @profiler.profile(level="api")
     def solve(
         self,
@@ -189,5 +194,7 @@ class cuDSS(WFSolver):
         solve_time = self._solve()
         if comm.rank == 0:
             print(f"    CUDSS: Solve time: {solve_time:.6f} seconds", flush=True)
+
+        self._destroy_data_wrappers()
 
         return x

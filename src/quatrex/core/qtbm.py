@@ -10,6 +10,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
+from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.inplace_utils import (
     compute_update_indices_dense,
     compute_update_indices_sparse,
@@ -830,6 +831,7 @@ class QTBM:
                     system_matrix, contact.orbital_indices
                 )
 
+        free_mempool()
         for k_idx in range(self.num_kpoints):
 
             if comm.rank == 0:
@@ -929,6 +931,7 @@ class QTBM:
 
                 if self.quatrex_config.qtbm.method == "SplitSolve":
                     reflection_segments = {}
+                    reflection_segments_translated = {}
                     reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
                     for contact in self.device.contacts:
                         modes_per_energy = np.array(
@@ -938,6 +941,10 @@ class QTBM:
                             start = reflection_count[i]
                             reflection_segments[contact, i] = slice(
                                 start, start + num_modes
+                            )
+                            reflection_segments_translated[contact, i] = slice(
+                                start + injection_count[i],
+                                start + injection_count[i] + num_modes,
                             )
 
                         reflection_count += modes_per_energy
@@ -952,64 +959,35 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    # Set up sytem matrix and rhs for electron solver.
-                    # injection_tot = xp.zeros(
-                    #    (self.num_orbitals, injection_count[i]),
-                    #    dtype=xp.complex128,
-                    #    order="F",
-                    # )
-
-                    injection_tot = get_sparse_RHS(
-                        injection_per_contact,
-                        injection_segments,
-                        self.device.contacts,
-                        i,
-                        injection_count,
-                        self.num_orbitals,
-                    )
+                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                        injection_tot = xp.zeros(
+                            (self.num_orbitals, injection_count[i]),
+                            dtype=xp.complex128,
+                            order="F",
+                        )
+                    else:
+                        injection_tot = xp.zeros(
+                            (
+                                self.num_orbitals,
+                                injection_count[i] + reflection_count[i],
+                            ),
+                            dtype=xp.complex128,
+                            order="F",
+                        )
 
                     # Add the injection vector in the contact elements
                     # of the rhs
-                    # for contact in self.device.contacts:
-                    #    injection_tot[
-                    #        contact.orbital_indices, injection_segments[contact, i]
-                    #    ] += injection_per_contact[contact][i]
+                    for contact in self.device.contacts:
+                        injection_tot[
+                            contact.orbital_indices, injection_segments[contact, i]
+                        ] = injection_per_contact[contact][i]
+                        if self.quatrex_config.qtbm.method == "SplitSolve":
+                            injection_tot[
+                                contact.orbital_indices,
+                                reflection_segments_translated[contact, i],
+                            ] = reflection_per_contact[contact][i]
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
-                        # reflection_tot = xp.zeros(
-                        #    (self.num_orbitals, reflection_count[i]),
-                        #    dtype=xp.complex128,
-                        #    order="F",
-                        # )
-                        # phi_inv_tot = xp.zeros(
-                        #    (reflection_count[i], self.num_orbitals),
-                        #    dtype=xp.complex128,
-                        #    order="F",
-                        # )
-
-                        # eig_tot = xp.zeros(reflection_count[i], dtype=xp.complex128)
-
-                        # for contact in self.device.contacts:
-                        #    reflection_tot[
-                        #        contact.orbital_indices, reflection_segments[contact, i]
-                        #    ] = reflection_per_contact[contact][i]
-
-                        #    phi_inv_tot[
-                        #        reflection_segments[contact, i], contact.orbital_indices
-                        #    ] = phi_inv_ref_per_contact[contact][i]
-
-                        #    eig_tot[reflection_segments[contact, i]] = (
-                        #        eig_ref_per_contact[contact][i]
-                        #    )
-
-                        reflection_tot = get_sparse_RHS(
-                            reflection_per_contact,
-                            reflection_segments,
-                            self.device.contacts,
-                            i,
-                            reflection_count,
-                            self.num_orbitals,
-                        )
                         phi_inv_tot = get_sparse_RHS_transpose(
                             phi_inv_ref_per_contact,
                             reflection_segments,
@@ -1065,16 +1043,14 @@ class QTBM:
                         )
 
                     times.append(time.perf_counter())
-                    n_injected = injection_tot.shape[1]
+                    n_injected = injection_count[i]
 
                     if self.quatrex_config.qtbm.method == "SplitSolve":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             phi = self.solver.solve(
                                 system_matrix,
-                                sparse.hstack([injection_tot, reflection_tot]).toarray(
-                                    order="F"
-                                ),
+                                injection_tot,
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
@@ -1107,7 +1083,7 @@ class QTBM:
                         if injection_tot.size != 0:
                             phi = self.solver.solve(
                                 system_matrix,
-                                injection_tot.toarray(order="F"),
+                                injection_tot,
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
@@ -1159,6 +1135,11 @@ class QTBM:
 
                         del phi
 
+                    del injection_tot
+                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                        del phi_inv_tot
+                        del eig_tot
+
                     if xp.__name__ == "cupy":
                         xp.cuda.Stream.null.synchronize()
                     t_observables = time.perf_counter() - times.pop()
@@ -1170,6 +1151,18 @@ class QTBM:
 
                     # Keep an end-of-energy memory report for all methods.
                     print_memory_usage("End of energy iteration", batch_start + i)
+                    free_mempool()
+
+                del injection_per_contact
+                del phi_inj_per_contact
+                del bloch_per_contact
+                del sigma_obc_per_contact
+
+                del reflection_per_contact
+                del phi_ref_per_contact
+                del eig_ref_per_contact
+                del phi_inv_ref_per_contact
+                free_mempool()
 
                 t_iteration = time.perf_counter() - times.pop()
                 if comm.rank == 0:

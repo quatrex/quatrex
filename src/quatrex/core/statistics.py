@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
+import math
+
 from qttools import NDArray, xp
 from quatrex.core.constants import k_B
 
@@ -39,5 +41,10 @@ def bose_einstein(energy: float | NDArray, temperature: float) -> float | NDArra
         Bose-Einstein occupancy.
 
     """
+    if xp.isscalar(energy):
+        if energy == 0:
+            return 0.0
+        return 1.0 / math.expm1(energy / (k_B * temperature))
+
     # If a zero energy is encountered, return zero occupancy to avoid division by zero.
-    return xp.where(energy == 0, 0, 1 / (xp.exp(energy / (k_B * temperature)) - 1))
+    return xp.where(energy == 0, 0, 1 / xp.expm1(energy / (k_B * temperature)))

@@ -23,54 +23,57 @@ void _compress(unsigned char* out, const complex<double>* inp, const size_t N) {
         s_out[threadIdx.x * num_bytes * 2 + i] = 0;
     }}
 
-
     if (idx < N) {{
         complex<double> r_inp = inp[idx];
-
-        // Process Real and Imaginary parts
         double vals[2] = {{r_inp.real(), r_inp.imag()}};
         unsigned long long packed_vals[2];
 
         for(int v=0; v<2; ++v) {{
             unsigned long long bits_64 = __double_as_longlong(vals[v]);
-            
-            // 1. Extract Sign (bit 63)
             unsigned long long sign = (bits_64 >> 63) & 0x1ULL;
-            
-            // 2. Extract Exponent (bits 62-52)
             unsigned long long exp_64 = (bits_64 >> 52) & 0x7FFULL;
-            
-            // 3. Extract Mantissa (bits 51-0)
             unsigned long long mant_64 = bits_64 & 0xFFFFFFFFFFFFFULL;
 
-            // 4. Convert 11-bit Double Bias (1023) to 8-bit Float Bias (127)
+            const int num_exponent_bits = 9; 
+            const int num_mantissa_bits = T - num_exponent_bits;
+            const int shift = 52 - num_mantissa_bits;
+            
             unsigned int exp_f;
-            if (exp_64 == 0) {{
-                exp_f = 0; // Zero or Subnormal
-            }} else if (exp_64 == 0x7FFULL) {{
-                exp_f = 0xFF; // Infinity or NaN
+            unsigned long long mant_trunc = mant_64 >> shift;
+
+            if (exp_64 == 0x7FFULL) {{
+                exp_f = 0xFF;
+                if (mant_64 != 0) {{
+                    mant_trunc = (1ULL << (num_mantissa_bits - 1));
+                }}
             }} else {{
                 int unbiased_exp = (int)exp_64 - 1023;
                 int biased_f = unbiased_exp + 127;
-                // Underflow to zero
-                if (biased_f <= 0) exp_f = 0; 
-                // Overflow to infinity
-                else if (biased_f >= 0xFF) exp_f = 0xFF;
-                else exp_f = (unsigned int)biased_f;
+
+                if (biased_f <= 0) {{
+                    exp_f = 0;
+                    mant_trunc = 0;
+                }} else if (biased_f >= 0xFF) {{
+                    exp_f = 0xFF;
+                    mant_trunc = 0;
+                }} else {{
+                    exp_f = (unsigned int)biased_f;
+                    // Round to Nearest Even
+                    unsigned long long guard_bit = 1ULL << (shift - 1);
+                    unsigned long long sticky_mask = guard_bit - 1;
+                    if ((bits_64 & guard_bit) && ((bits_64 & sticky_mask) || (mant_trunc & 1))) {{
+                        mant_trunc++;
+                        if (mant_trunc >= (1ULL << num_mantissa_bits)) {{
+                            mant_trunc = 0; exp_f++;
+                            if (exp_f >= 0xFF) {{ exp_f = 0xFF; mant_trunc = 0; }}
+                        }}
+                    }}
+                }}
             }}
-
-            // Combine Sign (1 bit) and Exponent (8 bits)
             unsigned int sgn_exp = (static_cast<unsigned int>(sign) << 8) | (exp_f & 0xFF);
-
-            // 5. Truncate Mantissa to fit T bits
-            int num_exponent_bits = 9; 
-            int num_mantissa_bits = T - num_exponent_bits;
-            unsigned long long mant_trunc = mant_64 >> (52 - num_mantissa_bits);
-
-            packed_vals[v] = ((unsigned long long)sgn_exp << num_mantissa_bits) | mant_trunc;
+            packed_vals[v] = ((unsigned long long)sgn_exp << num_mantissa_bits) | (mant_trunc & ((1ULL << num_mantissa_bits) - 1));
         }}
 
-        // Store into shared memory (Little-endian)
         for (size_t i = 0; i < num_bytes; i++) {{
             s_out[threadIdx.x * num_bytes * 2 + i] = (packed_vals[0] >> (8 * i)) & 0xFF;
             s_out[threadIdx.x * num_bytes * 2 + num_bytes + i] = (packed_vals[1] >> (8 * i)) & 0xFF;
@@ -85,13 +88,6 @@ void _compress(unsigned char* out, const complex<double>* inp, const size_t N) {
     }}
 }}
 
-extern "C" __global__ void _compress_fp16(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<16>(out, inp, N); }}
-extern "C" __global__ void _compress_fp24(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<24>(out, inp, N); }}
-extern "C" __global__ void _compress_fp32(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<32>(out, inp, N); }}
-extern "C" __global__ void _compress_fp40(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<40>(out, inp, N); }}
-extern "C" __global__ void _compress_fp48(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<48>(out, inp, N); }}
-extern "C" __global__ void _compress_fp56(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<56>(out, inp, N); }}
-
 template<int T>
 __global__
 void _decompress(complex<double>* out, const unsigned char* inp, const size_t N) {{
@@ -100,7 +96,6 @@ void _decompress(complex<double>* out, const unsigned char* inp, const size_t N)
 
     size_t tile = blockIdx.x;
     size_t idx = tile * {BLOCK_SIZE} + threadIdx.x;
-
     size_t start_idx = tile * {BLOCK_SIZE} * num_bytes * 2;
     size_t end_idx = min(N * num_bytes * 2, start_idx + {BLOCK_SIZE} * num_bytes * 2);
     
@@ -119,6 +114,7 @@ void _decompress(complex<double>* out, const unsigned char* inp, const size_t N)
 
             const int num_exponent_bits = 9;
             const int num_mantissa_bits = T - num_exponent_bits;
+            const int shift = 52 - num_mantissa_bits;
 
             unsigned int sgn_exp_f = (unsigned int)(packed >> num_mantissa_bits);
             unsigned long long sign = (sgn_exp_f >> 8) & 1;
@@ -126,45 +122,54 @@ void _decompress(complex<double>* out, const unsigned char* inp, const size_t N)
             unsigned long long mant_bits = packed & ((1ULL << num_mantissa_bits) - 1);
 
             unsigned long long exp_d;
-            if (exp_f == 0) exp_d = 0;
-            else if (exp_f == 255) exp_d = 2047;
-            else exp_d = exp_f + (1023 - 127);
-
-            unsigned long long mant_d = mant_bits << (52 - num_mantissa_bits);
+            if (exp_f == 0xFF) {{
+                exp_d = 0x7FF;
+                if (mant_bits != 0) {{
+                    mant_bits = (1ULL << (num_mantissa_bits - 1));
+                }} else {{
+                    mant_bits = 0;
+                }}
+            }}
+            else{{
+                if (exp_f == 0) exp_d = 0;
+                //else if (exp_f == 0xFF) exp_d = 0x7FF;
+                else exp_d = exp_f + (1023 - 127);
+            }}
+            // Shift bits back to the high-order position of the 52-bit mantissa
+            unsigned long long mant_d = mant_bits << shift;
             unsigned long long res = (sign << 63) | (exp_d << 52) | mant_d;
             return __longlong_as_double(res);
         }};
-
         out[idx] = complex<double>(unpack(0), unpack(num_bytes));
     }}
 }}
 
-extern "C" __global__ void _decompress_fp16(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<16>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp24(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<24>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp32(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<32>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp40(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<40>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp48(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<48>(out, inp, N); }}
-extern "C" __global__ void _decompress_fp56(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<56>(out, inp, N); }}
+extern "C" {{
+    __global__ void _compress_fp16(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<16>(out, inp, N); }}
+    __global__ void _compress_fp24(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<24>(out, inp, N); }}
+    __global__ void _compress_fp32(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<32>(out, inp, N); }}
+    __global__ void _compress_fp40(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<40>(out, inp, N); }}
+    __global__ void _compress_fp48(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<48>(out, inp, N); }}
+    __global__ void _compress_fp56(unsigned char* out, const complex<double>* inp, const size_t N) {{ _compress<56>(out, inp, N); }}
+
+    __global__ void _decompress_fp16(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<16>(out, inp, N); }}
+    __global__ void _decompress_fp24(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<24>(out, inp, N); }}
+    __global__ void _decompress_fp32(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<32>(out, inp, N); }}
+    __global__ void _decompress_fp40(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<40>(out, inp, N); }}
+    __global__ void _decompress_fp48(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<48>(out, inp, N); }}
+    __global__ void _decompress_fp56(complex<double>* out, const unsigned char* inp, const size_t N) {{ _decompress<56>(out, inp, N); }}
+}}
 """
 
 module = cp.RawModule(code=cuda_source, options=("--std=c++11",))
 
-_compress = {
-    16: module.get_function("_compress_fp16"),
-    24: module.get_function("_compress_fp24"),
-    32: module.get_function("_compress_fp32"),
-    40: module.get_function("_compress_fp40"),
-    48: module.get_function("_compress_fp48"),
-    56: module.get_function("_compress_fp56"),
-}
-
-_decompress = {
-    16: module.get_function("_decompress_fp16"),
-    24: module.get_function("_decompress_fp24"),
-    32: module.get_function("_decompress_fp32"),
-    40: module.get_function("_decompress_fp40"),
-    48: module.get_function("_decompress_fp48"),
-    56: module.get_function("_decompress_fp56"),
+_kernels = {
+    "compress": {
+        b: module.get_function(f"_compress_fp{b}") for b in [16, 24, 32, 40, 48, 56]
+    },
+    "decompress": {
+        b: module.get_function(f"_decompress_fp{b}") for b in [16, 24, 32, 40, 48, 56]
+    },
 }
 
 
@@ -199,9 +204,9 @@ def compress(inp: NDArray, bits: int, out: NDArray | None = None) -> NDArray:
             f"Input array must have dtype cp.complex128 but got {inp.dtype}."
         )
 
-    if bits not in _compress.keys():
+    if bits not in _kernels["compress"].keys():
         raise ValueError(
-            f"Unsupported bit width: {bits}. Supported values are {list(_compress.keys())}."
+            f"Unsupported bit width: {bits}. Supported values are {list(_kernels['compress'].keys())}."
         )
 
     inp = cp.ascontiguousarray(inp)
@@ -232,7 +237,7 @@ def compress(inp: NDArray, bits: int, out: NDArray | None = None) -> NDArray:
     if not inp.flags["C_CONTIGUOUS"]:
         raise ValueError("Must be contiguous")
 
-    _compress[bits](
+    _kernels["compress"][bits](
         ((N + BLOCK_SIZE - 1) // BLOCK_SIZE,), (BLOCK_SIZE,), (_out, inp, N)
     )
 
@@ -268,9 +273,9 @@ def decompress(inp: NDArray, bits: int, out: NDArray | None = None) -> NDArray:
 
     """
 
-    if bits not in _decompress.keys():
+    if bits not in _kernels["decompress"].keys():
         raise ValueError(
-            f"Unsupported bit width: {bits}. Supported values are {list(_decompress.keys())}."
+            f"Unsupported bit width: {bits}. Supported values are {list(_kernels['decompress'].keys())}."
         )
 
     if inp.dtype != cp.uint8:
@@ -303,7 +308,7 @@ def decompress(inp: NDArray, bits: int, out: NDArray | None = None) -> NDArray:
     if not inp.flags["C_CONTIGUOUS"]:
         raise ValueError("Must be contiguous")
 
-    _decompress[bits](
+    _kernels["decompress"][bits](
         ((N + BLOCK_SIZE - 1) // BLOCK_SIZE,), (BLOCK_SIZE,), (out, inp, N)
     )
 

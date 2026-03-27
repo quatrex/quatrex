@@ -10,7 +10,7 @@ from mpi4py.MPI import COMM_WORLD as comm
 from qttools import NDArray, sparse, xp
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
-from qttools.utils.gpu_utils import free_mempool
+from qttools.utils.gpu_utils import free_mempool, synchronize_device
 from qttools.utils.inplace_utils import (
     compute_update_indices_dense,
     compute_update_indices_sparse,
@@ -64,7 +64,7 @@ def print_memory_usage(stage: str, energy_index: int | None = None) -> None:
 
     cpu_mem_gb = get_cpu_memory_gb()
     if xp.__name__ == "cupy":
-        xp.cuda.Stream.null.synchronize()
+        synchronize_device()
         gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
         gpu_mem_used_gb = (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
         gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
@@ -869,8 +869,8 @@ class QTBM:
                 times.append(time.perf_counter())
 
                 times.append(time.perf_counter())
-                if xp.__name__ == "cupy":
-                    xp.cuda.Stream.null.synchronize()
+
+                synchronize_device()
 
                 injection_per_contact = {}
                 phi_inj_per_contact = {}
@@ -905,8 +905,7 @@ class QTBM:
                             bloch_per_contact[contact],
                         ) = contact.compute_boundary(k * 2 * np.pi, energy_batch)
 
-                    if xp.__name__ == "cupy":
-                        xp.cuda.Stream.null.synchronize()
+                    synchronize_device()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
@@ -949,8 +948,7 @@ class QTBM:
 
                         reflection_count += modes_per_energy
 
-                if xp.__name__ == "cupy":
-                    xp.cuda.Stream.null.synchronize()
+                synchronize_device()
                 t_solve = time.perf_counter() - times.pop()
                 if comm.rank == 0:
                     print(f"Time for OBC: {t_solve:.2f} s", flush=True)
@@ -1034,8 +1032,7 @@ class QTBM:
                                     contact.transverse_repetition_grid,
                                 )
 
-                    if xp.__name__ == "cupy":
-                        xp.cuda.Stream.null.synchronize()
+                    synchronize_device()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
@@ -1054,16 +1051,14 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
-                            if xp.__name__ == "cupy":
-                                xp.cuda.Stream.null.synchronize()
+                            synchronize_device()
                             t2 = time.perf_counter()
                             if comm.rank == 0:
                                 print(
                                     f"Time for solve: {t2 - t1:.2f} s",
                                     flush=True,
                                 )
-                            if xp.__name__ == "cupy":
-                                xp.cuda.Stream.null.synchronize()
+                            synchronize_device()
                             t1 = time.perf_counter()
                             phi[:, :n_injected] += phi[
                                 :, n_injected:
@@ -1071,8 +1066,7 @@ class QTBM:
                                 xp.diag(eig_tot) - phi_inv_tot @ phi[:, n_injected:],
                                 phi_inv_tot @ phi[:, :n_injected],
                             )
-                            if xp.__name__ == "cupy":
-                                xp.cuda.Stream.null.synchronize()
+                            synchronize_device()
                             t2 = time.perf_counter()
                             if comm.rank == 0:
                                 print(
@@ -1087,8 +1081,7 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
-                    if xp.__name__ == "cupy":
-                        xp.cuda.Stream.null.synchronize()
+                    synchronize_device()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
@@ -1140,8 +1133,7 @@ class QTBM:
                         del phi_inv_tot
                         del eig_tot
 
-                    if xp.__name__ == "cupy":
-                        xp.cuda.Stream.null.synchronize()
+                    synchronize_device()
                     t_observables = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(

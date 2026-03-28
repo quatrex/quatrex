@@ -273,6 +273,10 @@ class BaseBoundarySystem(ABC):
             else:
                 raise RuntimeError(f"Invalid memoizing mode: {self.memoization_mode}")
 
+        # If the sparsity pattern changed
+        if solution.shape[-1] != boundary_system[0].shape[-1]:
+            return self._solve(boundary_system, contact, **kwargs)
+
         rel_residuals, abs_residuals, solution = self._get_residuals(
             boundary_system, solution
         )

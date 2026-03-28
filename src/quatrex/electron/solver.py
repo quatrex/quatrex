@@ -629,6 +629,26 @@ class ElectronSolver(SubsystemSolver):
                     obc_blocks_tmp.lesser[j] = self.obc_blocks.lesser[j][stack_slice]
                     obc_blocks_tmp.greater[j] = self.obc_blocks.greater[j][stack_slice]
 
+            if self.system_matrix.bits is not None:
+                _tmp = decompress(self.system_matrix.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in system G. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+                _tmp = decompress(sse_lesser_tmp.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in sse lesser. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+                _tmp = decompress(sse_greater_tmp.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in sse greater. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+
             with profiler.profile_range(
                 label="ElectronSolver: Solve", level="default", comm=comm
             ):
@@ -655,6 +675,32 @@ class ElectronSolver(SubsystemSolver):
                         slices=self.config.compute.g_rgf_slices,
                     )
                     self.meir_wingreen_current.append(current)
+
+            if self.system_matrix.bits is not None:
+                g_lesser_, g_greater_, g_retarded_ = out_slice
+
+                _tmp = decompress(g_lesser_.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))} detected in lesser Green's function. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+                    g_lesser_.data = 0
+
+                _tmp = decompress(g_greater_.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in greater Green's function. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+                    g_greater_.data = 0
+                _tmp = decompress(g_retarded_.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in retarded Green's function. {comm.rank} {self.call_count}",
+                        flush=True,
+                    )
+                    g_retarded_.data = 0
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm

@@ -547,6 +547,26 @@ class CoulombScreeningSolver(SubsystemSolver):
                 out_g.stack[stack_slice],
             )
 
+            if self.system_matrix.bits is not None:
+                _tmp = decompress(self.system_matrix.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in system W {comm.rank} {self.solve_call_count}.",
+                        flush=True,
+                    )
+                _tmp = decompress(l_lesser_tmp.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in l_lesser_tmp {comm.rank} {self.solve_call_count}.",
+                        flush=True,
+                    )
+                _tmp = decompress(l_greater_tmp.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in l_greater_tmp {comm.rank} {self.solve_call_count}.",
+                        flush=True,
+                    )
+
             with profiler.profile_range(
                 label="CoulombScreeningSolver: Solve", level="default", comm=comm
             ):
@@ -571,6 +591,22 @@ class CoulombScreeningSolver(SubsystemSolver):
                         return_retarded=False,
                         ozaki=self.config.compute.w_rgf_ozaki,
                         slices=self.config.compute.w_rgf_slices,
+                    )
+
+            if self.system_matrix.bits is not None:
+                w_lesser_, w_greater_ = out_slice
+
+                _tmp = decompress(w_lesser_.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in lesser W's function {comm.rank} {self.solve_call_count}.",
+                        flush=True,
+                    )
+                _tmp = decompress(w_greater_.data, self.system_matrix.bits)
+                if not xp.all(xp.isfinite(_tmp)):
+                    print(
+                        f"Warning: Non-finite values {xp.any(xp.isnan(_tmp))} {xp.any(xp.isinf(_tmp))}  detected in greater W's function {comm.rank} {self.solve_call_count}.",
+                        flush=True,
                     )
 
         with profiler.profile_range(

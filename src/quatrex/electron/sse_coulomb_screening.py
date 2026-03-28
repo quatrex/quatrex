@@ -361,10 +361,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 if xp.__name__ == "cupy":
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
-                    num_buffers = 12  # closer to 8 but overapproximating
+                    num_buffers = 35  # closer to 8 but overapproximating
                     avail_buffer_size = free_memory // num_buffers
                     batch_size = avail_buffer_size // (
-                        2 * ne * nk * 16
+                        2 * ne * nk * 50
                     )  # 16 bytes for complex128
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))

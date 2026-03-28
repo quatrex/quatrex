@@ -783,6 +783,8 @@ class DSDBSparse(ABC):
         else:
             _data = self.data[*stack_index]
 
+        assert _data.dtype == xp.complex128
+
         if _data.dtype == xp.uint8:
             raise NotImplementedError(
                 "Filling the diagonal is not implemented for compressed data."
@@ -794,7 +796,8 @@ class DSDBSparse(ABC):
             if val.ndim == 0:
                 _data[..., self._diag_inds] = val
             else:
-                _data[..., self._diag_inds] = val[..., self._diag_value_inds]
+                # _data[..., self._diag_inds] = val[..., self._diag_value_inds]
+                _data[..., self._diag_inds] = val
             return
 
         if self._diag_inds_nnz is not None:
@@ -875,22 +878,35 @@ class DSDBSparse(ABC):
             all-to-all communication.
 
         """
+
+        free_mempool()
+
         if self.bits is not None:
             self._data = self._data.reshape(self._data.shape[:-2] + (-1,))
 
         if self.distribution_state == "stack":
             self._dtranspose(block_axis=-1, concatenate_axis=0, discard=discard)
             self.distribution_state = "nnz"
-            # Shuffle data to make it contiguous in memory
-            _data = xp.zeros_like(self._data)
-            _data[: self.global_stack_shape[0]] = self._data[self._stack_padding_mask]
-            self._data = _data
+            if not discard:
+                # Shuffle data to make it contiguous in memory
+                _data = xp.zeros_like(self._data)
+                chunk_size = _data.shape[1] // 10
+                for i in range(0, _data.shape[1], chunk_size):
+                    _data[: self.global_stack_shape[0], i : i + chunk_size] = (
+                        self._data[self._stack_padding_mask, i : i + chunk_size]
+                    )
+                self._data = _data
 
         else:
-            # Undo the shuffle
-            _data = xp.zeros_like(self._data)
-            _data[self._stack_padding_mask] = self._data[: self.global_stack_shape[0]]
-            self._data = _data
+            if not discard:
+                # Undo the shuffle
+                _data = xp.zeros_like(self._data)
+                chunk_size = _data.shape[1] // 10
+                for i in range(0, _data.shape[1], chunk_size):
+                    _data[self._stack_padding_mask, i : i + chunk_size] = self._data[
+                        : self.global_stack_shape[0], i : i + chunk_size
+                    ]
+                self._data = _data
 
             self._dtranspose(block_axis=0, concatenate_axis=-1, discard=discard)
             self.distribution_state = "stack"

@@ -377,6 +377,9 @@ class ElectronConfig(BaseModel):
 
     filtering_iteration_limit: PositiveInt = 1
 
+    fermi_level_mixing: float = 1.0
+    """The mixing factor for the Fermi level updates in the OBC solver."""
+
     @model_validator(mode="after")
     def set_left_right_fermi_levels(self) -> Self:
         """Sets the left and right Fermi levels if not already set."""
@@ -478,6 +481,11 @@ class CoulombScreeningConfig(BaseModel):
     to the hilbert transform when computing the retarded self-energy.
 
     Computing the correction is slightly more expensive.
+    """
+
+    compute_real_part_self_energy: bool = True
+    r"""Whether to compute the real part of the Coulomb screening self-energy.
+    If not set, the real part is computed from the Hilbert transformation of the lesser and greater parts.
     """
 
     discard_real_parts: bool = True

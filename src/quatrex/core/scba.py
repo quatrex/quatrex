@@ -369,11 +369,12 @@ class SCBA:
                 if coulomb_matrix.distribution_state != "nnz"
                 else None
             )
-            self.sigma_fock = SigmaFock(
-                self.quatrex_config,
-                coulomb_matrix,
-                self.electron_energies,
-            )
+            if self.quatrex_config.coulomb_screening.compute_real_part_self_energy:
+                self.sigma_fock = SigmaFock(
+                    self.quatrex_config,
+                    coulomb_matrix,
+                    self.electron_energies,
+                )
             # Have to transpose the coulomb matrix back to the original distribution.
             (
                 coulomb_matrix.dtranspose()
@@ -605,24 +606,25 @@ class SCBA:
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
 
-        t_sigma_fock_start = time.perf_counter()
-        self.sigma_fock.compute(
-            self.data.g_lesser,
-            out=(self.data.sigma_retarded,),
-        )
-        synchronize_device()
-        t_sigma_fock_end = time.perf_counter()
-        comm.barrier()
-        t_sigma_fock_end_all = time.perf_counter()
-        if comm.rank == 0:
-            print(
-                f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s",
-                flush=True,
+        if self.quatrex_config.coulomb_screening.compute_real_part_self_energy:
+            t_sigma_fock_start = time.perf_counter()
+            self.sigma_fock.compute(
+                self.data.g_lesser,
+                out=(self.data.sigma_retarded,),
             )
-            print(
-                f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s",
-                flush=True,
-            )
+            synchronize_device()
+            t_sigma_fock_end = time.perf_counter()
+            comm.barrier()
+            t_sigma_fock_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(
+                    f"  Time for Fock self-energy: {t_sigma_fock_end - t_sigma_fock_start:.3f} s",
+                    flush=True,
+                )
+                print(
+                    f"  Time for Fock self-energy all: {t_sigma_fock_end_all - t_sigma_fock_start:.3f} s",
+                    flush=True,
+                )
 
         t_sigma_start = time.perf_counter()
         self.sigma_coulomb_screening.compute(

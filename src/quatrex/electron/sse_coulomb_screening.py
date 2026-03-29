@@ -97,6 +97,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.apply_hilbert_correction = (
             quatrex_config.coulomb_screening.apply_hilbert_correction
         )
+        self.compute_real_part = quatrex_config.coulomb_screening.compute_real_part_self_energy
 
     def _compute_without_correction(
         self,
@@ -170,17 +171,18 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         )
         sigma_greater.data[..., batch] += greater
 
-        # Compute retarded self-energy with a Hilbert transform.
-        antihermitian = greater - lesser
-        antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+        if self.compute_real_part:
+            # Compute retarded self-energy with a Hilbert transform.
+            antihermitian = greater - lesser
+            antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
 
-        sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-        # negative energy part
-        sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+            # negative energy part
+            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-        sigma_retarded.data[..., batch] += (
-            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
-        )
+            sigma_retarded.data[..., batch] += (
+                self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
+            )
 
     def _compute_with_correction(
         self,
@@ -240,11 +242,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         sigma_lesser.data[..., batch] += sl[-ne:]
         sigma_greater.data[..., batch] += sg[:ne]
 
-        sigma_retarded.data[..., batch] += (
-            self.prefactor
-            * hilbert_transform(sl, sg, self.energies)
-            * self.kpoint_volume
-        )
+        if self.compute_real_part:
+            sigma_retarded.data[..., batch] += (
+                self.prefactor
+                * hilbert_transform(sl, sg, self.energies)
+                * self.kpoint_volume
+            )
 
     @profiler.profile(level="api")
     def compute(

@@ -234,6 +234,8 @@ class ElectronSolver(SubsystemSolver):
             "xyz".index(quatrex_config.device.transport_direction)
         ]
 
+        self.fermi_level_mixing = quatrex_config.electron.fermi_level_mixing
+
         self.call_count = 0
         self.filtering_iteration_limit = (
             quatrex_config.electron.filtering_iteration_limit
@@ -561,7 +563,14 @@ class ElectronSolver(SubsystemSolver):
                 block_sections=self.block_sections_contact_gf,
                 side="left",
             )
-            self.left_fermi_level = left_fermi_level
+            if self.call_count > 0:
+                # Mix the Fermi level with the previous one.
+                self.left_fermi_level = (
+                    self.fermi_level_mixing * left_fermi_level
+                    + (1 - self.fermi_level_mixing) * self.left_fermi_level
+                )
+            else:
+                self.left_fermi_level = left_fermi_level
             self.left_mid_gap_energy = left_mid_gap_energy
 
             self.right_mid_gap_energy = self.left_mid_gap_energy - self.bias
@@ -750,8 +759,12 @@ class ElectronSolver(SubsystemSolver):
                 self._update_fermi_levels(left_band_edges, right_band_edges)
             else:  # charge-neutrality
                 comm.block.bcast(left_fermi_level, root=0, backend="device_mpi")
-                self.left_fermi_level = left_fermi_level
-                self.right_fermi_level = left_fermi_level - self.bias
+                # Mix the Fermi level with the previous one.
+                self.left_fermi_level = (
+                    self.fermi_level_mixing * left_fermi_level
+                    + (1 - self.fermi_level_mixing) * self.left_fermi_level
+                )
+                self.right_fermi_level = self.left_fermi_level - self.bias
                 self.left_occupancies = fermi_dirac(
                     self.local_energies - self.left_fermi_level,
                     self.temperature,

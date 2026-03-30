@@ -74,6 +74,9 @@ def test_single_rank(example: tuple[Path, bool], tmp_path: Path):
         ), f"Value mismatch for '{output_file.name}'"
 
 
+# NOTE: Skip this if already running in an MPI environment, to avoid
+# nested MPI runs.
+@pytest.mark.mpi_skip()
 def test_distributed(example: tuple[Path, bool], tmp_path: Path):
     """Tests that the distributed example runs and matches reference observables."""
 

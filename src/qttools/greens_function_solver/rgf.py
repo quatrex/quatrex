@@ -172,8 +172,10 @@ class RGF(GFSolver):
             obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
 
         if return_current:
-            # Allocate a buffer for the current.
-            current = xp.zeros((*a.shape[:-2], a.num_blocks - 1), dtype=a.dtype)
+            # Allocate a buffer for the current. This includes current
+            # between each layer and from/to the leads (in total
+            # num_blocks + 1).
+            current = xp.zeros((*a.shape[:-2], a.num_blocks + 1), dtype=a.dtype)
 
         # Get list of batches to perform
         batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
@@ -379,6 +381,7 @@ class RGF(GFSolver):
                 )
 
                 if return_current:
+                    a_ji_dagger = a_ji.conj().swapaxes(-2, -1)
                     a_ji_xr_ii = a_ji @ xr_ii
                     a_ji_xr_ii_sx_ij = a_ji_xr_ii @ sigma_lesser_ij
                     sigma_lesser_tilde = (
@@ -392,7 +395,7 @@ class RGF(GFSolver):
                         + a_ji_xr_ii_sx_ij.conj().swapaxes(-2, -1)
                         - a_ji_xr_ii_sx_ij
                     )
-                    current[stack_slice, ..., i] = xp.trace(
+                    current[stack_slice, ..., j] = xp.trace(
                         sigma_greater_tilde @ xl_diag_blocks[j]
                         - xg_diag_blocks[j] @ sigma_lesser_tilde,
                         axis1=-2,
@@ -402,6 +405,22 @@ class RGF(GFSolver):
                 xr_diag_blocks[i] = xr_ii + xr_ii_a_ij_xr_jj_a_ji @ xr_ii
                 if return_retarded:
                     xr_.blocks[i, i] = xr_diag_blocks[i]
+
+        if return_current:
+            current[..., 0] = xp.trace(
+                obc_blocks.greater[0] @ xl_diag_blocks[0]
+                - xg_diag_blocks[0] @ obc_blocks.lesser[0],
+                axis1=-2,
+                axis2=-1,
+            )
+            # NOTE: Negative sign is needed to get the current flowing
+            # in the correct direction (positive from left to right).
+            current[..., -1] = -xp.trace(
+                obc_blocks.greater[-1] @ xl_diag_blocks[-1]
+                - xg_diag_blocks[-1] @ obc_blocks.lesser[-1],
+                axis1=-2,
+                axis2=-1,
+            )
 
         if out is None:
             if return_retarded:

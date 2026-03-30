@@ -13,12 +13,7 @@ from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
-from quatrex.core.observables import (
-    contact_currents,
-    current_conservation,
-    density,
-    device_current,
-)
+from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device.inputs import (
@@ -463,11 +458,14 @@ class SCBA:
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
 
-        i_left = xp.real(self.observables.electron_current.get("left", 0.0))
-        i_right = xp.real(self.observables.electron_current.get("right", 0.0))
+        meir_wingreen_current = self.observables.electron_current.get(
+            "meir-wingreen", [0, 0]
+        )
+        i_left = xp.real(meir_wingreen_current[0])
+        i_right = xp.real(meir_wingreen_current[-1])
 
         dE = self.electron_energies[1] - self.electron_energies[0]
-        current_diff = xp.abs(xp.sum(i_left) * dE + xp.sum(i_right) * dE)
+        current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
 
         current_conservation_abs, current_conservation_rel = current_conservation(
             self.data.g_lesser,
@@ -580,17 +578,6 @@ class SCBA:
                 overlap,
             ) / (2 * xp.pi)
 
-        if self.config.outputs.contact_currents:
-            self.observables.electron_current = dict(
-                zip(
-                    ("left", "right"),
-                    contact_currents(
-                        self.data.g_lesser,
-                        self.data.g_greater,
-                        self.electron_solver.obc_blocks,
-                    ),
-                )
-            )
         if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(
                 self.data.g_lesser, self.electron_solver.hamiltonian
@@ -667,13 +654,6 @@ class SCBA:
         if self.config.outputs.hole_density:
             outputs[f"hole_density_{iteration}.npy"] = self.observables.hole_density
 
-        if self.config.outputs.contact_currents:
-            outputs.update(
-                {
-                    f"i_{contact}_{iteration}.npy": current
-                    for contact, current in self.observables.electron_current.items()
-                }
-            )
         if self.config.outputs.device_currents:
             outputs[f"device_current_{iteration}.npy"] = (
                 self.observables.electron_current["device"]

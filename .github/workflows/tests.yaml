@@ -41,15 +41,15 @@ jobs:
       - name: Run NUMBA Tests (QTTools Kernels)
         if: success() || failure()
         run: |
-          coverage run --source=src --parallel-mode -m pytest --with-mpi tests/qttools/kernels
+          coverage run --source=src --parallel-mode -m pytest tests/qttools/kernels
 
       - name: Run QTTools Tests
         if: success() || failure()
         run: |
-          NUMBA_DISABLE_JIT=1 coverage run --source=src --parallel-mode -m pytest --with-mpi tests/qttools
+          NUMBA_DISABLE_JIT=1 coverage run --source=src --parallel-mode -m pytest tests/qttools
       
       - name: Run QuaTrEx Tests and Determine Coverage
         if: success() || failure()
         run: |
-          coverage run --source=src --parallel-mode -m pytest --with-mpi tests/quatrex
+          coverage run --source=src --parallel-mode -m pytest tests/quatrex
           coverage combine .; coverage report; coverage xml

@@ -74,7 +74,7 @@ obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Å
-epsilon_r = 4.0
+epsilon_r = 10.0
 
 num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
 

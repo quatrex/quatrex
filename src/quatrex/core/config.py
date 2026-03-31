@@ -833,20 +833,6 @@ class DeviceConfig(BaseModel):
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    orthogonal_basis: bool = True
-    """Whether the basis set is orthogonal.
-
-    This affects how the overlap matrix is handled.
-    In the case of `True`, the overlap matrix is identity.
-
-    !!! warning
-
-        Currently, `False` is not supported since
-        the code does not correctly handle overlap matrices in the case
-        of kpoints.
-
-    """
-
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
         """Transforms list to tuple."""

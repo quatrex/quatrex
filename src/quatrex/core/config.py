@@ -1129,26 +1129,27 @@ class QuatrexConfig(BaseModel):
     #   don't want to retroactively add block_size parameter to all the .toml files
     #   just comment out this check
     #   https://github.com/quatrex/quatrex/commit/d5aaf6a87349a127891c19bef313879b1987c14d
-    # @model_validator(mode="after")
-    # def check_device_block_size(self) -> Self:
-    #     """Checks that block size is consistent with other parameters."""
+    # liyongda (30 Mar 2026): I cleaned up old archive Quatrex runs. Now all archive runs have the block_size parameter in the .toml files, so I will uncomment this check again
+    @model_validator(mode="after")
+    def check_device_block_size(self) -> Self:
+        """Checks that block size is consistent with other parameters."""
 
-    #     if self.formalism == "wf":
-    #         # NOTE: Block sizes are not used in the wavefunction
-    #         # formalism.
-    #         return self
+        if self.formalism == "wf":
+            # NOTE: Block sizes are not used in the wavefunction
+            # formalism.
+            return self
 
-    #     if self.device.construct_from_unit_cell and self.device.block_size is not None:
-    #         raise ValueError(
-    #             "block_size cannot be used in conjunction with construct_from_unit_cell=True."
-    #         )
+        if self.device.construct_from_unit_cell and self.device.block_size is not None:
+            raise ValueError(
+                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+            )
 
-    #     if not self.device.construct_from_unit_cell and self.device.block_size is None:
-    #         raise ValueError(
-    #             "block_size must be given when construct_from_unit_cell=False."
-    #         )
+        if not self.device.construct_from_unit_cell and self.device.block_size is None:
+            raise ValueError(
+                "block_size must be given when construct_from_unit_cell=False."
+            )
 
-    #     return self
+        return self
 
 
 def parse_config(config_file: Path) -> QuatrexConfig:

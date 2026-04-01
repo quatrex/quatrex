@@ -168,12 +168,22 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         if use_adaptive:
             # self.prefactor is only computed 1x on init, assuming uniform energy grid
             adaptive_prefactor = self.prefactor / r  # because of interpolation to a finer grid, we need to divide by the oversampling ratio to keep the prefactor consistent
-            fine_energies = np.linspace(self.energies[0], self.energies[-1], n_fine)
+            fine_energies_g = np.linspace(source_grid1[0], source_grid1[-1], n_fine)
+            fine_energies_w = np.linspace(source_grid2[0], source_grid2[-1], n_fine)
             # Interpolate g and w to the fine grid. This is needed for the FFT-based convolution.
-            g_lesser_fine = interpolate.make_interp_spline(source_grid1, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
-            g_greater_fine = interpolate.make_interp_spline(source_grid1, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
-            w_lesser_fine = interpolate.make_interp_spline(source_grid2, w_lesser.data[..., batch], axis=0, k=k)(fine_energies)
-            w_greater_fine = interpolate.make_interp_spline(source_grid2, w_greater.data[..., batch], axis=0, k=k)(fine_energies)
+            g_lesser_fine = interpolate.make_interp_spline(source_grid1, g_lesser.data[..., batch], axis=0, k=k)(fine_energies_g)
+            g_greater_fine = interpolate.make_interp_spline(source_grid1, g_greater.data[..., batch], axis=0, k=k)(fine_energies_g)
+            w_lesser_fine = interpolate.make_interp_spline(source_grid2, w_lesser.data[..., batch], axis=0, k=k)(fine_energies_w)
+            w_greater_fine = interpolate.make_interp_spline(source_grid2, w_greater.data[..., batch], axis=0, k=k)(fine_energies_w)
+
+            # liyongda (23 Mar 2026):
+            # G grid is -15 to 5 eV
+            # W grid is 0 to 20 eV
+            # W data ends at 0 eV, but need to extrapolate to -15 eV
+            #   it just takes a linear interpolation of the last segment --> straight line
+            # if we need to extrapolate anything, set it to 0
+            # w_lesser_fine [fine_energies < source_grid2[0]] = 0
+            # w_greater_fine [fine_energies < source_grid2[0]] = 0
 
             # sigma_lesser
             sigma_x_fft = xp.multiply(xp.fft.fft(g_lesser_fine, n_conv_fine, axis=0), xp.fft.fft(w_lesser_fine, n_conv_fine, axis=0))
@@ -188,12 +198,28 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             greater = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine]
 
             # interpolate to target grid
-            lesser = interpolate.make_interp_spline(fine_energies, lesser, axis=0, k=k)(target_grid)
-            greater = interpolate.make_interp_spline(fine_energies, greater, axis=0, k=k)(target_grid)
+            ## liyongda (23 Mar 2026): what is the source grid for the interpolation here...?
+            lesser_projected = interpolate.make_interp_spline(fine_energies_g, lesser, axis=0, k=k)(target_grid)
+            greater_projected = interpolate.make_interp_spline(fine_energies_g, greater, axis=0, k=k)(target_grid)
             
             # update self-energy data structure
-            sigma_lesser.data[..., batch] += lesser
-            sigma_greater.data[..., batch] += greater
+            sigma_lesser.data[..., batch] += lesser_projected
+            sigma_greater.data[..., batch] += greater_projected
+
+
+            # Compute retarded self-energy with a Hilbert transform
+            # liyongda (01 Apr 2026): use the blown up dense grid for Hilbert transform (requires uniform grid)
+            #   Hilbert kernel is already adjusted for the interpolation grid
+            antihermitian = greater - lesser
+            antihermitian_fft = xp.fft.fft(antihermitian, n_conv_fine, axis=0)
+
+            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+            # negative energy part
+            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+
+            retarded = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine] * self.kpoint_volume
+            retarded_projected = interpolate.make_interp_spline(fine_energies_g, retarded, axis=0, k=k)(target_grid)
+            sigma_retarded.data[..., batch] += retarded_projected
 
         else:
             # compute transforms
@@ -235,17 +261,17 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             )
             sigma_greater.data[..., batch] += greater
 
-        # Compute retarded self-energy with a Hilbert transform.
-        antihermitian = greater - lesser
-        antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+            # Compute retarded self-energy with a Hilbert transform.
+            antihermitian = greater - lesser
+            antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
 
-        sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-        # negative energy part
-        sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+            # negative energy part
+            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-        sigma_retarded.data[..., batch] += (
-            self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
-        )
+            sigma_retarded.data[..., batch] += (
+                self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
+            )
 
     def _compute_with_correction(
         self,
@@ -423,6 +449,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 )
 
                 if self.apply_hilbert_correction:
+                    if target_grid is not None:
+                        raise NotImplementedError(
+                            "Scattering Self Energy computation Hilbert correction with non-uniform target grid is not implemented. Please use a uniform grid."
+                        )
                     for start, end in zip(batch_displacements, batch_displacements[1:]):
                         self._compute_with_correction(
                             g_lesser,
@@ -437,9 +467,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     nk = g_lesser.data.shape[1:-1]
 
                     # Add empty dimensions for each k-point.
+                    # liyongda (25 Mar 2026): Hilbert kernel dE should be the fine grid dE
+                    r = self.config.scba.adaptive_interpolation_oversampling_ratio
+                    if r is None:       # non-adaptive case
+                        r = 1
                     energy_differences = (self.energies - self.energies[0]).reshape(
                         -1, *(len(nk) + 1) * (1,)
                     )
+                    energy_differences = energy_differences / r # interpolation to a finer grid, use the finer grid dE for Hilbert kernel
 
                     # NOTE: Same eta as in the other computation, but fewer
                     # ffts are computed in this case.

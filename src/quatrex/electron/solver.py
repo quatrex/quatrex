@@ -242,6 +242,7 @@ class ElectronSolver(SubsystemSolver):
         self.energies = new_energies
         self.local_energies = get_local_slice(new_energies)
         # liyongda (13 Mar 2026): fermi levels updated during _update_fermi_levels call, which is early in the electron solve function
+        #   don't need to update fermi levels here
 
     def _update_fermi_levels(
         self, left_band_edges: NDArray, right_band_edges: NDArray

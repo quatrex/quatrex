@@ -500,7 +500,7 @@ class SCBA:
     #   but since this function is only called by rank 0, the other ranks never arrive
     #   and we observe an MPI stall
     # @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
-    def _compute_adaptive_grid(self, reference_func: NDArray) -> NDArray:
+    def _compute_adaptive_grid(self, reference_func: NDArray, original_grid) -> NDArray:
         """Computes an adaptive energy grid based on gradient of sum(abs(VAR))."""
         def _monitor(x, type='gradient'):
             # lose real/imag parts here
@@ -511,7 +511,7 @@ class SCBA:
             else:
                 raise ValueError("type must be 'gradient' or 'curvature'")
             
-        def _adaptive_grid_from_monitor(x, monitor_type='gradient', N_target=1000):
+        def _adaptive_grid_from_monitor(x, original_grid, monitor_type='gradient', N_target=1000):
             """Generate adaptive points based on the monitor function
             
             Parameters
@@ -539,21 +539,31 @@ class SCBA:
             # equally space the adaptive points in cumulative distribution (of monitor)
             targets = xp.linspace(0, 1, N_target)
 
-            # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
-            linear_electron_energies = xp.linspace(self.config.electron.energy_window_min,
-                                             self.config.electron.energy_window_max,
-                                             self.config.electron.energy_window_num)
+            if original_grid is None:
+                # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
+                #   this is assuming G/sigma grid, -15 to 5 eV, not 0 to 20 eV
+                linear_grid = xp.linspace(self.config.electron.energy_window_min,
+                                                self.config.electron.energy_window_max,
+                                                self.config.electron.energy_window_num)
+            else:
+                linear_grid = original_grid
+
 
             # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
-            adaptive_points = xp.interp(targets, cumsum, linear_electron_energies)
+            adaptive_points = xp.interp(targets, cumsum, linear_grid)
 
             return adaptive_points, monitor, cumsum
         
         # calling function ensures only rank 0 computes the adaptive grid
         adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(reference_func,
+                                                    original_grid = original_grid,
                                                     monitor_type='gradient',
                                                     N_target=self.config.scba.adaptive_num_points)
+        
+        # liyongda (20 Mar 2026): debugging, return uniform grid. Should give identical results
+        # return original_grid
         return adaptive_points
+
 
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
@@ -611,7 +621,7 @@ class SCBA:
             # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
             k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
 
-            print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
             # for nnz in range (self.data.p_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster
             #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data[:, nnz], k=k)
             #     bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data[:, nnz], k=k)
@@ -620,9 +630,9 @@ class SCBA:
             #     self.data.p_lesser.data[:, nnz] = bspl_lesser(self.adaptive_electron_energies_for_p_w)
             #     self.data.p_greater.data[:, nnz] = bspl_greater(self.adaptive_electron_energies_for_p_w)
             #     self.data.p_retarded.data[:, nnz] = bspl_retarded(self.adaptive_electron_energies_for_p_w)
-            bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data, k=k)
-            bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data, k=k)
-            bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data, k=k)
+            bspl_lesser = make_interp_spline(self.coulomb_screening_energies, self.data.p_lesser.data, k=k)
+            bspl_greater = make_interp_spline(self.coulomb_screening_energies, self.data.p_greater.data, k=k)
+            bspl_retarded = make_interp_spline(self.coulomb_screening_energies, self.data.p_retarded.data, k=k)
 
             self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
             self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
@@ -636,6 +646,7 @@ class SCBA:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
+        comm.barrier()
         self.p_coulomb_screening.compute(
             iteration,
             self.data.g_lesser,
@@ -693,7 +704,7 @@ class SCBA:
                 #       --> other ranks never sync because they never executed the function
                 #   tried doing the profiler with a `with`, still didn't work
                 #   computing grid is is O(N) and not time critical. Ignoring it for now
-                adaptive_electron_energies_for_p_w = self._compute_adaptive_grid(p_retarded_reduced)
+                adaptive_electron_energies_for_p_w = self._compute_adaptive_grid(p_retarded_reduced, self.coulomb_screening_energies)  # use shifted energy grid that starts at 0 eV
             
             comm.barrier()
             comm.Bcast(adaptive_electron_energies_for_p_w, root=0)
@@ -723,7 +734,7 @@ class SCBA:
         self.data.w_lesser.allocate_data()
 
         # solve for w (screened Coulomb interaction) using p (polarization)
-        # liyongda (05 Feb 2026): don't think I need to do anything special for adaptive grid here\
+        # liyongda (05 Feb 2026): don't think I need to do anything special for adaptive grid here
         # liyongda (13 Mar 2026): confirmed with Anders. No explicit energy dependence. No changes needed
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
@@ -781,9 +792,15 @@ class SCBA:
         comm.barrier()
 
         # liyongda (18 Mar 2026): need to pass in source grid for g, source grid for w (different), and then target grid for sigma (same as g)
-        source_grid1 = self.adaptive_electron_energies_for_g_sigma if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
-        source_grid2 = self.adaptive_electron_energies_for_p_w if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
-        target_grid = self.adaptive_electron_energies_for_g_sigma if self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration else None
+        adaptive_mode = self.config.scba.adaptive and iteration >= self.config.scba.adaptive_start_iteration
+        if adaptive_mode:
+            source_grid1 = self.adaptive_electron_energies_for_g_sigma
+            source_grid2 = self.adaptive_electron_energies_for_p_w
+            target_grid = self.adaptive_electron_energies_for_g_sigma
+        else:
+            source_grid1 = None
+            source_grid2 = None
+            target_grid = None
 
         self.sigma_coulomb_screening.compute(
             g_lesser = self.data.g_lesser,
@@ -1025,7 +1042,7 @@ class SCBA:
                     # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
                     k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
 
-                    print(f"rank {comm.rank} iteration {i} - interpolating g functions onto adaptive grid with order {k}, nnz={self.data.g_lesser.data.shape[1]}", flush=True)
+                    # print(f"rank {comm.rank} iteration {i} - interpolating g functions onto adaptive grid with order {k}, nnz={self.data.g_lesser.data.shape[1]}", flush=True)
                     # for nnz in range (self.data.g_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster                        
                     #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data[:, nnz], k=k)
                     #     bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data[:, nnz], k=k)
@@ -1092,6 +1109,7 @@ class SCBA:
                     # reduction must be called by all ranks, will hang if it's in a if comm.rank==0 block
                     #   but result is only placed in rank 0
                     g_retarded_reduced = reduce_matrix_over_stack(self.data.g_retarded, global_comm)
+                    sigma_retarded_reduced = reduce_matrix_over_stack(self.data.sigma_retarded, global_comm)
 
                     comm.barrier()
                     adaptive_electron_energies_for_g_sigma = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
@@ -1106,7 +1124,11 @@ class SCBA:
                         #       --> other ranks never sync because they never executed the function
                         #   tried doing the profiler with a `with`, still didn't work
                         #   computing grid is is O(N) and not time critical. Ignoring it for now
-                        adaptive_electron_energies_for_g_sigma = self._compute_adaptive_grid(g_retarded_reduced)
+
+                        # liyongda (30 Mar 2026): must be in rank 0 block because only rank 0 has those variables. Otherwise NoneType + NoneType unsupported operand error
+                        source_points = g_retarded_reduced
+                        # source_points = g_retarded_reduced + sigma_retarded_reduced   # use g+sigma as the source for computing the adaptive grid
+                        adaptive_electron_energies_for_g_sigma = self._compute_adaptive_grid(source_points, self.electron_energies)
                     
                     comm.barrier()
                     comm.Bcast(adaptive_electron_energies_for_g_sigma, root=0)

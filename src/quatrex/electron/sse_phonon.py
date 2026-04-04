@@ -124,15 +124,20 @@ class SigmaPhonon(ScatteringSelfEnergy):
             * xp.roll(g_lesser.diagonal(), -self.upshift, axis=0)[self.upslice]
         )
 
-        if sigma_lesser.bits is not None:
-            _data = decompress(sigma_lesser.data, sigma_lesser.bits)
-        else:
-            _data = sigma_lesser.data
+        for i in range(sigma_lesser.data[self.valid_slice].shape[0]):
+            if sigma_lesser.bits is not None:
+                _data = decompress(
+                    sigma_lesser.data[self.valid_slice][i : i + 1], sigma_lesser.bits
+                )
+            else:
+                _data = sigma_lesser.data[self.valid_slice][i : i + 1]
 
-        sigma_lesser.fill_diagonal(sl_diag, stack_index=self.valid_slice, data=_data)
+            sigma_lesser.fill_diagonal(sl_diag[i : i + 1], data=_data)
 
-        if sigma_lesser.bits is not None:
-            sigma_lesser.data = compress(_data, sigma_lesser.bits)
+            if sigma_lesser.bits is not None:
+                sigma_lesser.data[self.valid_slice][i : i + 1] = compress(
+                    _data, sigma_lesser.bits
+                )
 
         sg_diag = sigma_greater.diagonal(stack_index=self.valid_slice)
 
@@ -143,12 +148,17 @@ class SigmaPhonon(ScatteringSelfEnergy):
             * xp.roll(g_greater.diagonal(), self.downshift, axis=0)[self.downslice]
         )
 
-        if sigma_greater.bits is not None:
-            _data = decompress(sigma_greater.data, sigma_greater.bits)
-        else:
-            _data = sigma_greater.data
+        for i in range(sigma_greater.data[self.valid_slice].shape[0]):
+            if sigma_greater.bits is not None:
+                _data = decompress(
+                    sigma_greater.data[self.valid_slice][i : i + 1], sigma_greater.bits
+                )
+            else:
+                _data = sigma_greater.data[self.valid_slice][i : i + 1]
 
-        sigma_greater.fill_diagonal(sg_diag, stack_index=self.valid_slice, data=_data)
+            sigma_greater.fill_diagonal(sg_diag[i : i + 1], data=_data)
 
-        if sigma_greater.bits is not None:
-            sigma_greater.data = compress(_data, sigma_greater.bits)
+            if sigma_greater.bits is not None:
+                sigma_greater.data[self.valid_slice][i : i + 1] = compress(
+                    _data, sigma_greater.bits
+                )

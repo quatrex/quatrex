@@ -132,6 +132,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
             level="default",
             comm=comm,
         ):
+            cache.clear()
 
             ne = g_lesser.data.shape[0]
             if self.config.compute.num_bits is None:
@@ -152,8 +153,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
-                    if self.batch_size is not None and batch_size < self.batch_size:
-                        cache.clear()
+                    # if self.batch_size is not None and batch_size < self.batch_size:
+                    #     cache.clear()
                     self.batch_size = batch_size
                     if comm.rank == 0:
                         print(
@@ -227,7 +228,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                             )
                             * self.kpoint_volume
                         )
-
+            cache.clear()
         with profiler.profile_range(
             label="PCoulombScreening: nnz->stack transpose", level="default", comm=comm
         ):
@@ -254,23 +255,24 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 p_greater.symmetrize(xp.subtract)
                 p_retarded.symmetrize(xp.add)
 
-            if not self.compute_retarded:
-                p_retarded.data[:] = 0
+            for i in range(p_retarded.shape[0]):
+                if not self.compute_retarded:
+                    p_retarded.data[i] = 0
 
-            # # Discard the real part.
-            # if self.discard_real_parts:
-            #     p_lesser.data.real = 0
-            #     p_greater.data.real = 0
-            #     p_retarded.data.imag = 0
+                # # Discard the real part.
+                # if self.discard_real_parts:
+                #     p_lesser.data.real = 0
+                #     p_greater.data.real = 0
+                #     p_retarded.data.imag = 0
 
-            if self.config.compute.num_bits is None:
-                p_retarded.data += (p_greater.data - p_lesser.data) / 2
-            else:
-                p_retarded.data += compress(
-                    (
-                        decompress(p_greater.data, p_greater.bits)
-                        - decompress(p_lesser.data, p_greater.bits)
+                if self.config.compute.num_bits is None:
+                    p_retarded.data[i] += (p_greater.data[i] - p_lesser.data[i]) / 2
+                else:
+                    p_retarded.data[i] += compress(
+                        (
+                            decompress(p_greater.data[i], p_greater.bits)
+                            - decompress(p_lesser.data[i], p_greater.bits)
+                        )
+                        / 2,
+                        p_retarded.bits,
                     )
-                    / 2,
-                    p_retarded.bits,
-                )

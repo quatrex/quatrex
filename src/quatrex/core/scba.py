@@ -458,127 +458,152 @@ class SCBA:
             # Make the self-energy Hermitian (removing the skew-Hermitian part).
             self.data.sigma_retarded.symmetrize(xp.add)
 
-        if self.config.coulomb_screening.discard_real_parts:
+        for i in range(self.data.sigma_lesser._data.shape[0]):
 
-            if self.data.sigma_lesser.bits is not None:
-                _data = decompress(
-                    self.data.sigma_lesser._data, self.data.sigma_lesser.bits
-                )
-            else:
-                _data = self.data.sigma_lesser._data
-            _data.real = 0
-            if self.data.sigma_lesser.bits is not None:
-                self.data.sigma_lesser._data = compress(
-                    _data, self.data.sigma_lesser.bits
-                )
+            if self.config.coulomb_screening.discard_real_parts:
 
-            if self.data.sigma_greater.bits is not None:
-                _data = decompress(
-                    self.data.sigma_greater._data, self.data.sigma_greater.bits
-                )
-            else:
-                _data = self.data.sigma_greater._data
-            _data.real = 0
-            if self.data.sigma_greater.bits is not None:
-                self.data.sigma_greater._data = compress(
-                    _data, self.data.sigma_greater.bits
-                )
-            # Make sure that the imaginary part comes only from
-            # sigma_greater - sigma_lesser.
-            if self.data.sigma_retarded.bits is not None:
-                _data = decompress(
-                    self.data.sigma_retarded._data, self.data.sigma_retarded.bits
-                )
-            else:
-                _data = self.data.sigma_retarded._data
-            _data.imag = 0
-            if self.data.sigma_retarded.bits is not None:
-                self.data.sigma_retarded._data = compress(
-                    _data, self.data.sigma_retarded.bits
-                )
+                if self.data.sigma_lesser.bits is not None:
+                    _data = decompress(
+                        self.data.sigma_lesser._data[i], self.data.sigma_lesser.bits
+                    )
+                else:
+                    _data = self.data.sigma_lesser._data[i]
+                _data.real = 0
+                if self.data.sigma_lesser.bits is not None:
+                    self.data.sigma_lesser._data[i] = compress(
+                        _data, self.data.sigma_lesser.bits
+                    )
+
+                if self.data.sigma_greater.bits is not None:
+                    _data = decompress(
+                        self.data.sigma_greater._data[i], self.data.sigma_greater.bits
+                    )
+                else:
+                    _data = self.data.sigma_greater._data[i]
+                _data.real = 0
+                if self.data.sigma_greater.bits is not None:
+                    self.data.sigma_greater._data[i] = compress(
+                        _data, self.data.sigma_greater.bits
+                    )
+                # Make sure that the imaginary part comes only from
+                # sigma_greater - sigma_lesser.
+                if self.data.sigma_retarded.bits is not None:
+                    _data = decompress(
+                        self.data.sigma_retarded._data[i], self.data.sigma_retarded.bits
+                    )
+                else:
+                    _data = self.data.sigma_retarded._data[i]
+                _data.imag = 0
+                if self.data.sigma_retarded.bits is not None:
+                    self.data.sigma_retarded._data[i] = compress(
+                        _data, self.data.sigma_retarded.bits
+                    )
 
         # Now add the imaginary, skew-Hermitian part back.
-        if self.data.sigma_retarded.bits is not None:
-            self.data.sigma_retarded.data = compress(
-                0.5
-                * (
-                    decompress(
-                        self.data.sigma_greater.data, self.data.sigma_greater.bits
+        for i in range(self.data.sigma_lesser.shape[0]):
+            # Now add the imaginary, skew-Hermitian part back.
+            if self.data.sigma_retarded.bits is not None:
+                self.data.sigma_retarded.data[i] = compress(
+                    0.5
+                    * (
+                        decompress(
+                            self.data.sigma_greater.data[i],
+                            self.data.sigma_greater.bits,
+                        )
+                        - decompress(
+                            self.data.sigma_lesser.data[i], self.data.sigma_greater.bits
+                        )
                     )
-                    - decompress(
-                        self.data.sigma_lesser.data, self.data.sigma_greater.bits
-                    )
+                    + decompress(
+                        self.data.sigma_retarded.data[i], self.data.sigma_retarded.bits
+                    ),
+                    self.data.sigma_retarded.bits,
                 )
-                + decompress(
-                    self.data.sigma_retarded.data, self.data.sigma_retarded.bits
-                ),
-                self.data.sigma_retarded.bits,
-            )
-        else:
-            self.data.sigma_retarded.data += 0.5 * (
-                self.data.sigma_greater.data - self.data.sigma_lesser.data
-            )
+            else:
+                self.data.sigma_retarded.data[i] += 0.5 * (
+                    self.data.sigma_greater.data[i] - self.data.sigma_lesser.data[i]
+                )
 
     @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
         """Updates the self-energy with a mixing factor."""
 
-        if self.data.sigma_lesser.bits is not None:
-            bits = self.data.sigma_lesser.bits
-            self.data.sigma_lesser.data[:] = compress(
-                (
-                    (1 - self.mixing_factor)
-                    * decompress(self.data.sigma_lesser_prev.data, bits)
-                    + self.mixing_factor * decompress(self.data.sigma_lesser.data, bits)
-                ),
-                bits,
-            )
-            self.data.sigma_greater.data[:] = compress(
-                (
-                    (1 - self.mixing_factor)
-                    * decompress(self.data.sigma_greater_prev.data, bits)
-                    + self.mixing_factor
-                    * decompress(self.data.sigma_greater.data, bits)
-                ),
-                bits,
-            )
-            self.data.sigma_retarded.data[:] = compress(
-                (
-                    (1 - self.mixing_factor)
-                    * decompress(self.data.sigma_retarded_prev.data, bits)
-                    + self.mixing_factor
-                    * decompress(self.data.sigma_retarded.data, bits)
-                ),
-                bits,
-            )
-        else:
-            self.data.sigma_lesser.data[:] = (
-                (1 - self.mixing_factor) * self.data.sigma_lesser_prev.data
-                + self.mixing_factor * self.data.sigma_lesser.data
-            )
-            self.data.sigma_greater.data[:] = (
-                (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
-                + self.mixing_factor * self.data.sigma_greater.data
-            )
-            self.data.sigma_retarded.data[:] = (
-                (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-                + self.mixing_factor * self.data.sigma_retarded.data
-            )
+        for i in range(self.data.sigma_lesser.shape[0]):
+
+            if self.data.sigma_lesser.bits is not None:
+                bits = self.data.sigma_lesser.bits
+                self.data.sigma_lesser.data[i] = compress(
+                    (
+                        (1 - self.mixing_factor)
+                        * decompress(self.data.sigma_lesser_prev.data[i], bits)
+                        + self.mixing_factor
+                        * decompress(self.data.sigma_lesser.data[i], bits)
+                    ),
+                    bits,
+                )
+                self.data.sigma_greater.data[i] = compress(
+                    (
+                        (1 - self.mixing_factor)
+                        * decompress(self.data.sigma_greater_prev.data[i], bits)
+                        + self.mixing_factor
+                        * decompress(self.data.sigma_greater.data[i], bits)
+                    ),
+                    bits,
+                )
+                self.data.sigma_retarded.data[i] = compress(
+                    (
+                        (1 - self.mixing_factor)
+                        * decompress(self.data.sigma_retarded_prev.data[i], bits)
+                        + self.mixing_factor
+                        * decompress(self.data.sigma_retarded.data[i], bits)
+                    ),
+                    bits,
+                )
+            else:
+                self.data.sigma_lesser.data[i] = (
+                    1 - self.mixing_factor
+                ) * self.data.sigma_lesser_prev.data[
+                    i
+                ] + self.mixing_factor * self.data.sigma_lesser.data[
+                    i
+                ]
+                self.data.sigma_greater.data[i] = (
+                    1 - self.mixing_factor
+                ) * self.data.sigma_greater_prev.data[
+                    i
+                ] + self.mixing_factor * self.data.sigma_greater.data[
+                    i
+                ]
+                self.data.sigma_retarded.data[i] = (
+                    1 - self.mixing_factor
+                ) * self.data.sigma_retarded_prev.data[
+                    i
+                ] + self.mixing_factor * self.data.sigma_retarded.data[
+                    i
+                ]
 
     @profiler.profile(label="SCBA: Convergence test", level="default", comm=comm)
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        if self.data.sigma_lesser.bits is not None:
-            diff = decompress(
-                self.data.sigma_retarded.data, self.data.sigma_lesser.bits
-            ) - decompress(
-                self.data.sigma_retarded_prev.data, self.data.sigma_lesser.bits
-            )
-        else:
-            diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        local_max_diff = np.zeros(1)
 
-        local_max_diff = get_host(xp.max(xp.abs(diff)))
+        for i in range(self.data.sigma_retarded.shape[0]):
+            if self.data.sigma_lesser.bits is not None:
+                diff = decompress(
+                    self.data.sigma_retarded.data[i], self.data.sigma_lesser.bits
+                ) - decompress(
+                    self.data.sigma_retarded_prev.data[i], self.data.sigma_lesser.bits
+                )
+            else:
+                diff = (
+                    self.data.sigma_retarded.data[i]
+                    - self.data.sigma_retarded_prev.data[i]
+                )
+
+            local_max_diff = np.maximum(local_max_diff, get_host(xp.max(xp.abs(diff))))
+
+        # local_max_diff = get_host(xp.max(xp.abs(diff)))
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
 
@@ -960,6 +985,7 @@ class SCBA:
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "stack"
 
+                comm.barrier()
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
 

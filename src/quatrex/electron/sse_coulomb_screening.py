@@ -359,6 +359,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
 
             if no != 0:
                 if xp.__name__ == "cupy":
+                    cache.clear()
                     free_mempool()
                     free_memory, _ = xp.cuda.Device().mem_info
                     num_buffers = 35  # closer to 8 but overapproximating
@@ -369,8 +370,8 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     batch_size = max(min(batch_size, no), 1)
                     batches = int(np.ceil(no / batch_size))
                     batch_size = int(np.ceil(no / batches))  # Balance last batch
-                    if self.batch_size is not None and batch_size < self.batch_size:
-                        cache.clear()
+                    # if self.batch_size is not None and batch_size < self.batch_size:
+                    #     cache.clear()
                     self.batch_size = batch_size
                     if comm.rank == 0:
                         print(
@@ -427,7 +428,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                             slice(start, end),
                             hilbert_kernel_fft,
                         )
-
+            cache.clear()
         # Transpose the matrices to stack distribution.
         with profiler.profile_range(
             label="SigmaCoulombScreening: nnz->stack transpose",

@@ -161,7 +161,7 @@ extern "C" {{
 }}
 """
 
-module = cp.RawModule(code=cuda_source, options=("--std=c++11",))
+module = cp.RawModule(code=cuda_source, options=("--std=c++17",))
 
 _kernels = {
     "compress": {

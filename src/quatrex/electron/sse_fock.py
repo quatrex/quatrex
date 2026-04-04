@@ -76,7 +76,11 @@ class SigmaFock(ScatteringSelfEnergy):
         ):
             if g_lesser.data.shape[-1] != 0:
                 if self.config.compute.num_bits is None:
-                    gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+                    gl_density = 0
+                    for i in range(g_lesser.data.shape[0]):
+                        gl_density += self.prefactor * g_lesser.data[i : i + 1].sum(
+                            axis=0
+                        )
                     sigma_retarded.data += (
                         fft_circular_convolve(
                             gl_density,
@@ -87,9 +91,11 @@ class SigmaFock(ScatteringSelfEnergy):
                     )
 
                 else:
-                    gl_density = self.prefactor * decompress(
-                        g_lesser.data, g_lesser.bits
-                    ).sum(axis=0)
+                    gl_density = 0
+                    for i in range(g_lesser.data.shape[0]):
+                        gl_density += self.prefactor * decompress(
+                            g_lesser.data[i : i + 1], g_lesser.bits
+                        ).sum(axis=0)
                     sigma_retarded.data += compress(
                         (
                             fft_circular_convolve(

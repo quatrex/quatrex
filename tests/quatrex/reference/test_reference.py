@@ -41,6 +41,9 @@ def _adjust_config_paths(quatrex_config_path: Path, tmp_config_path: Path):
     tmp_config_path.write_text(config_text)
 
 
+# NOTE: Skip this if running in an MPI environment. These should be run
+# in a single process only.
+@pytest.mark.mpi_skip()
 def test_single_rank(example: tuple[Path, bool], tmp_path: Path):
     """Tests that the example runs and matches reference observables."""
 
@@ -74,6 +77,9 @@ def test_single_rank(example: tuple[Path, bool], tmp_path: Path):
         ), f"Value mismatch for '{output_file.name}'"
 
 
+# NOTE: Skip this if already running in an MPI environment, to avoid
+# nested MPI runs.
+@pytest.mark.mpi_skip()
 def test_distributed(example: tuple[Path, bool], tmp_path: Path):
     """Tests that the distributed example runs and matches reference observables."""
 

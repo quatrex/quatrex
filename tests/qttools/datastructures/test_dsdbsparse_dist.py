@@ -107,7 +107,6 @@ def _create_coo_dsdbsparse(
     return coo, dsdbsparse
 
 
-@pytest.mark.mpi
 class TestCreation:
     """Tests the creation methods of DSDBSparse."""
 
@@ -146,7 +145,13 @@ class TestCreation:
         assert zeros.shape == dsdbsparse.shape
 
 
-@pytest.mark.mpi
+@pytest.mark.mpi(min_size=2)
+class TestCreationDist(TestCreation):
+    """Tests all tests of TestCreation in distributed setting."""
+
+    pass
+
+
 class TestConversion:
     """Tests for the conversion methods of DSDBSparse."""
 
@@ -196,6 +201,13 @@ class TestConversion:
         dsdbsparse.symmetrize(op)
 
         assert xp.allclose(reference, dsdbsparse.to_dense())
+
+
+@pytest.mark.mpi(min_size=2)
+class TestConversionDist(TestConversion):
+    """Tests all tests of TestConversion in distributed setting."""
+
+    pass
 
 
 def _create_new_block_sizes(
@@ -264,7 +276,6 @@ def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
     return index, in_bounds
 
 
-@pytest.mark.mpi
 class TestAccess:
     """Tests for the access methods of DSDBSparse."""
 
@@ -732,6 +743,13 @@ class TestAccess:
 
         reference = xp.diagonal(dense, axis1=-2, axis2=-1)
         assert xp.allclose(reference, dsdbsparse.diagonal())
+
+
+@pytest.mark.mpi(min_size=2)
+class TestAccessDist(TestAccess):
+    """Tests all tests of TestAccess in distributed setting."""
+
+    pass
 
 
 @pytest.mark.mpi(min_size=3)

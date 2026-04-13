@@ -21,7 +21,6 @@ symmetric = true
 
 [outputs] # Select which outputs to write.
 electron_ldos = true
-contact_currents = true
 device_currents = true
 electron_density = false
 hole_density = false

@@ -461,8 +461,8 @@ class SCBA:
         meir_wingreen_current = self.observables.electron_current.get(
             "meir-wingreen", [0, 0]
         )
-        i_left = xp.real(meir_wingreen_current[0])
-        i_right = xp.real(meir_wingreen_current[-1])
+        i_left = xp.real(meir_wingreen_current[..., 0])
+        i_right = xp.real(meir_wingreen_current[..., -1])
 
         dE = self.electron_energies[1] - self.electron_energies[0]
         current_diff = xp.abs(xp.sum(i_left) * dE - xp.sum(i_right) * dE)
@@ -583,10 +583,6 @@ class SCBA:
                 self.data.g_lesser, self.electron_solver.hamiltonian
             )
             if self.config.electron.solver.compute_current:
-                if comm.block.size > 1:
-                    raise NotImplementedError(
-                        "Meir-Wingreen current is not implemented for distributed SCBA."
-                    )
 
                 local_current = self.electron_solver.meir_wingreen_current
                 meir_wingreen_current = comm.stack.all_gather_v(
@@ -659,11 +655,6 @@ class SCBA:
                 self.observables.electron_current["device"]
             )
             if self.config.electron.solver.compute_current:
-                if comm.block.size > 1:
-                    raise NotImplementedError(
-                        "Meir-Wingreen current is not implemented for distributed SCBA."
-                    )
-
                 outputs[f"meir_wingreen_current_{iteration}.npy"] = (
                     self.observables.electron_current["meir-wingreen"]
                 )

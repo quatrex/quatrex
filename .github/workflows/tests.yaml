@@ -1,7 +1,13 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 name: Run Basic Tests and Determine Code Coverage
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
 
 jobs:
   test-cov:

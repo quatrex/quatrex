@@ -1,7 +1,12 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 name: Run Pre-Commit and Determine Code Quality
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
 
 jobs:
   test-linting:

@@ -11,6 +11,7 @@ from typing import Literal
 
 import numba as nb
 import numpy as np
+from mpi4py.MPI import COMM_WORLD as mpi_comm_world
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -1225,6 +1226,10 @@ class QuatrexConfig(BaseModel):
 def parse_config(config_file: Path) -> QuatrexConfig:
     """Reads the TOML config file.
 
+    Only rank 0 process reads the config file. It is then broadcasted to
+    the other processes. Each process then parses the config into a
+    `QuatrexConfig` object.
+
     Parameters
     ----------
     config_file : Path
@@ -1236,19 +1241,22 @@ def parse_config(config_file: Path) -> QuatrexConfig:
         The parsed configuration object.
 
     """
+    config = None
+    if mpi_comm_world.rank == 0:
+        config_file = Path(config_file).resolve()
 
-    config_file = Path(config_file).resolve()
+        with open(config_file, "rb") as f:
+            config = tomllib.load(f)
 
-    with open(config_file, "rb") as f:
-        config = tomllib.load(f)
+        if "simulation_dir" in config:
+            simulation_dir = config["simulation_dir"]
+            if not os.path.isabs(simulation_dir):
+                parent_dir = os.path.dirname(os.path.abspath(config_file))
+                simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
+                config["simulation_dir"] = simulation_dir
 
-    if "simulation_dir" in config:
-        simulation_dir = config["simulation_dir"]
-        if not os.path.isabs(simulation_dir):
-            parent_dir = os.path.dirname(os.path.abspath(config_file))
-            simulation_dir = Path(os.path.join(parent_dir, simulation_dir))
-            config["simulation_dir"] = simulation_dir
+        config["config_dir"] = config_file.parent
 
-    config["config_dir"] = config_file.parent
+    config = mpi_comm_world.bcast(config, root=0)
 
     return QuatrexConfig(**config)

@@ -5,7 +5,6 @@ from functools import partial
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.greens_function_solver.solver import OBCBlocks
 
 
 def get_block(
@@ -127,68 +126,6 @@ def density(
     )
 
 
-def contact_currents(
-    x_lesser: DSDBSparse, x_greater: DSDBSparse, sigma_obc_blocks: OBCBlocks
-) -> tuple[NDArray, NDArray]:
-    """Computes the contact currents.
-
-    Parameters
-    ----------
-    x_lesser : DSDBSparse
-        The lesser Green's function.
-    x_greater : DSDBSparse
-        The greater Green's function.
-    sigma_obc_blocks : OBCBlocks
-        The OBC self-energy blocks.
-
-
-    Returns
-    -------
-    NDArray
-        The contact currents, gathered across all participating ranks.
-
-    """
-    if comm.block.rank == 0:
-        i_left = xp.trace(
-            sigma_obc_blocks.greater[0] @ x_lesser.blocks[0, 0]
-            - x_greater.blocks[0, 0] @ sigma_obc_blocks.lesser[0],
-            axis1=-2,
-            axis2=-1,
-        )
-    else:
-        i_left = xp.empty(x_lesser.stack_shape, dtype=x_lesser.dtype)
-
-    if comm.block.rank == comm.block.size - 1:
-        n = x_lesser.num_local_blocks - 1
-        i_right = xp.trace(
-            sigma_obc_blocks.greater[-1] @ x_lesser.blocks[n, n]
-            - x_greater.blocks[n, n] @ sigma_obc_blocks.lesser[-1],
-            axis1=-2,
-            axis2=-1,
-        )
-    else:
-        i_right = xp.empty(x_lesser.stack_shape, dtype=x_lesser.dtype)
-
-    comm.block.bcast(i_left, root=0)
-    comm.block.bcast(i_right, root=comm.block.size - 1)
-
-    full_i_left = comm.stack.all_gather_v(
-        i_left,
-        axis=0,
-        mask=x_lesser._stack_padding_mask,
-    )
-    full_i_right = comm.stack.all_gather_v(
-        i_right,
-        axis=0,
-        mask=x_lesser._stack_padding_mask,
-    )
-
-    return (
-        full_i_left,
-        full_i_right,
-    )
-
-
 def device_current(
     x_lesser: DSDBSparse, operator: sparse.spmatrix | DSDBSparse
 ) -> NDArray:
@@ -248,7 +185,7 @@ def current_conservation(
     se_int_lesser: DSDBSparse,
     se_int_greater: DSDBSparse,
 ) -> NDArray:
-    """Checks current conservation.
+    r"""Checks current conservation.
     See eq. (12.34) in H. Haug and A.-P. Jauho,
     "Quantum Kinetics in Transport and Optics of Semiconductors"
 

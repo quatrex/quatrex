@@ -25,15 +25,6 @@ num_orbitals_per_atom = { "X" = 1 }
 [qtbm] # ===============================================================
 max_batch_size = 1
 
-
-[outputs] # Select which outputs to write.
-electron_ldos = true
-contact_currents = true
-device_currents = true
-electron_density = true
-hole_density = true
-
-
 [electron] # ===========================================================
 # 0.2 V Potential difference.
 left_fermi_level = -3.6  # eV

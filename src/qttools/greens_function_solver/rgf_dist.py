@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from qttools import NDArray
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 from qttools.greens_function_solver import _serinv
@@ -139,6 +139,7 @@ class RGFDist(GFSolver):
         out: tuple[DSDBSparse, ...],
         obc_blocks: OBCBlocks | None = None,
         return_retarded: bool = False,
+        return_current: bool = False,
     ):
         r"""Performs selected inversion of a block-tridiagonal matrix.
 
@@ -163,6 +164,11 @@ class RGFDist(GFSolver):
         return_retarded : bool, optional
             Wether the retarded Green's function should be returned
             along with lesser and greater, by default False
+        return_current : bool, optional
+            Whether to compute and return the current for each layer via
+            the Meir-Wingreen formula. By default False. Note that this
+            is currently only partially supported, and only the boundary
+            currents are computed correctly.
 
         """
 
@@ -185,6 +191,16 @@ class RGFDist(GFSolver):
 
             if obc_blocks is None:
                 obc_blocks = OBCBlocks(num_blocks=a.num_local_blocks)
+
+            if return_current:
+                # Allocate a buffer for the current. This includes current
+                # between each layer and from/to the leads (in total
+                # num_blocks + 1).
+                current = xp.zeros((*a.shape[:-2], a.num_blocks + 1), dtype=a.dtype)
+                # TODO: Only boundary currents are currently supported.
+                # Invalidate the remaining layers by setting them to
+                # xp.nan.
+                current[..., 1:-1] = xp.nan
 
             xl_out, xg_out, *xr_out = out
             if return_retarded:
@@ -382,3 +398,28 @@ class RGFDist(GFSolver):
                     selected_solve=True,
                     return_retarded=return_retarded,
                 )
+
+        if return_current:
+            if comm.block.rank == 0:
+                current[..., 0] = xp.trace(
+                    obc_blocks.greater[0] @ xl_diag_blocks[0]
+                    - xg_diag_blocks[0] @ obc_blocks.lesser[0],
+                    axis1=-2,
+                    axis2=-1,
+                )
+            if comm.block.rank == comm.block.size - 1:
+                # NOTE: Negative sign is needed to get the current flowing
+                # in the correct direction (positive from left to right).
+                current[..., -1] = -xp.trace(
+                    obc_blocks.greater[-1] @ xl_diag_blocks[-1]
+                    - xg_diag_blocks[-1] @ obc_blocks.lesser[-1],
+                    axis1=-2,
+                    axis2=-1,
+                )
+
+            # Now we need to allreduce the current across the block
+            # communicator to get the total current for each layer.
+            total_current = xp.empty_like(current)
+            comm.block.all_reduce(current, total_current, op="sum")
+
+            return total_current

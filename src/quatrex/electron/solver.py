@@ -157,11 +157,6 @@ class ElectronSolver(SubsystemSolver):
         if self.flatband and comm.rank == 0:
             print("Flatband conditions detected", flush=True)
 
-        if config.electron.solver.compute_current and comm.block.size > 1:
-            raise NotImplementedError(
-                "Current computation not implemented in distributed mode."
-            )
-
         self.compute_meir_wingreen_current = config.electron.solver.compute_current
 
         self.dos_peak_limit = config.electron.dos_peak_limit
@@ -520,13 +515,14 @@ class ElectronSolver(SubsystemSolver):
             label="ElectronSolver: Solve", level="default", comm=comm
         ):
             if comm.block.size > 1:
-                self.solver_dist.selected_solve(
+                self.meir_wingreen_current = self.solver_dist.selected_solve(
                     a=self.system_matrix,
                     sigma_lesser=sse_lesser,
                     sigma_greater=sse_greater,
                     obc_blocks=self.obc_blocks,
                     out=out,
                     return_retarded=True,
+                    return_current=self.compute_meir_wingreen_current,
                 )
 
             else:

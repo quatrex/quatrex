@@ -158,10 +158,42 @@ class SolverConfig(BaseModel):
     # The maximum number of energies per batch.
     max_batch_size: PositiveInt = 100
 
-    # Whether to compute the current via the Meir-Wingreen formula.
-    compute_current: bool = False
+    compute_current: bool | None = None
+    """Whether to compute the current via the Meir-Wingreen formula.
+
+    This is only supported for the `"rgf"` algorithm. If not set, it is
+    automatically determined based on the algorithm. (i.e. `True` for
+    `"rgf"` and `False` for `"inv"`)
+
+    If `True`, the current is computed between each layer and from/to the
+    leads. This way of computing the current is usually preferable as it
+    is independet of any interaction cutoffs, since it is computed from
+    the temporarily densified Green's functions and self-energies.
+
+    !!! note
+        This is parameter is only used in the Electron Solver. The
+        Coulomb screening solver does not compute currents, so this
+        parameter is ignored for the Coulomb screening solver.
+
+    """
 
     direct_solver: Literal["superlu", "mumps", "cudss"] = "superlu"
+
+    @model_validator(mode="after")
+    def set_compute_current(self) -> Self:
+        """Sets the `compute_current` parameter based on the algorithm."""
+        if self.compute_current is None:
+            if self.algorithm == "rgf":
+                self.compute_current = True
+            else:
+                self.compute_current = False
+
+        if self.compute_current and self.algorithm != "rgf":
+            raise ValueError(
+                "Current computation is only supported for the RGF algorithm."
+            )
+
+        return self
 
 
 class OBCConfig(BaseModel):
@@ -657,7 +689,6 @@ class OutputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Only the spectral currents are saved by default.
-    contact_currents: bool = True
     device_currents: bool = True
 
     potential: bool = False

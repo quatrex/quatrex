@@ -107,5 +107,5 @@ def test_distributed(example: tuple[Path, bool], tmp_path: Path):
             reference.shape == test.shape
         ), f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
         assert np.allclose(
-            reference, test, rtol=1e-3, atol=1e-4
+            reference, test, rtol=1e-3, atol=1e-4, equal_nan=True
         ), f"Value mismatch for '{output_file.name}'"

@@ -1,5 +1,5 @@
 include:
-  - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
+  - remote: "https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml"
 
 stages:
   - build_base
@@ -27,33 +27,45 @@ build quatrex:
     PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
     DOCKER_BUILD_ARGS: '["BASE_IMG=$BASE_IMAGE"]'
 
-test quatrex single:
+.test-common:
+  stage: test
   extends: .container-runner-daint-gh200
   image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
-  script:
+  before_script:
+    # Activate the virtual environment and cd to the repo.
     - . /opt/venv/bin/activate
-    - python3 -c "import numpy; numpy.show_config()"
-    - python3 -c "import cupy; cupy.show_config()"
-    - cd /opt/repo && ls -alh
-    - pytest tests/quatrex/reference
+    - cd /opt/repo
+    # Set up the visible devices.
+    - export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
   variables:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
-    SLURM_TIMELIMIT: '00:30:00'
+    SLURM_GPUS_PER_TASK: 1
+    SLURM_TIMELIMIT: '00:20:00'
+    SLURM_PARTITION: debug
 
-
-test quatrex multi:
-  extends: .container-runner-daint-gh200
-  image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
+test quatrex single:
+  extends: .test-common
   script:
-    - . /opt/venv/bin/activate
-    - python3 -c "import numpy; numpy.show_config()"
-    - python3 -c "import cupy; cupy.show_config()"
-    - cd /opt/repo && ls -alh
-    - pytest tests/qttools --only-mpi -n 0
+    - coverage run --source=src --parallel-mode -m pytest tests/quatrex
+
+test qttools single:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest tests/qttools
+
+test quatrex dist:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/quatrex
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6
-    CUDA_VISIBLE_DEVICES: $SLURM_LOCALID
-    SLURM_TIMELIMIT: '00:30:00'
 
+test qttools dist:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/qttools
+  variables:
+    SLURM_JOB_NUM_NODES: 2
+    SLURM_NTASKS: 6

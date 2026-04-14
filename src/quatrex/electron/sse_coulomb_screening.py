@@ -21,6 +21,45 @@ if xp.__name__ == "cupy":
     cache = xp.fft.config.get_plan_cache()
 
 
+def create_hilbert_kernel(energies: NDArray, nk: tuple, r: float) -> NDArray:
+    """Creates the FFT(Hilbert kernel) for the given energy grid and oversampling ratio.
+    
+    Parameters
+    ----------
+    energies : NDArray
+        The energy values.
+    nk : tuple
+        The k-point grid dimensions.
+    r : float
+        The oversampling ratio.
+
+    Returns
+    -------
+    NDArray
+        The Hilbert kernel and its FFT.
+    """
+    # liyongda (25 Mar 2026): Hilbert kernel dE should be the fine grid dE
+    ne = energies.size
+    ne_fine = int(r * ne)
+    n_conv = 2*ne_fine - 1      # length of convolution output
+
+    energies_fine = np.linspace(energies[0], energies[-1], ne_fine)
+
+    # eta for removing the singularity. See Cauchy principal value.
+    eta = (energies_fine[1] - energies_fine[0]) / 2
+
+    # Add empty dimensions for each k-point.
+    energy_differences = (energies_fine - energies_fine[0]).reshape(-1, *(len(nk) + 1) * (1,))
+
+    # Create the Hilbert kernel in real space.    
+    hilbert_kernel = 1 / (energy_differences + eta)
+
+    # Transform to Fourier space.
+    hilbert_kernel_fft = xp.fft.fft(hilbert_kernel, n_conv, axis=0)
+
+    return hilbert_kernel, hilbert_kernel_fft
+
+
 def hilbert_transform(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
     """Computes the Hilbert transform.
 
@@ -43,11 +82,8 @@ def hilbert_transform(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
     """
     ne = energies.size
     nk = sg.shape[1:-1]
-    # Add empty dimensions for each k-point.
-    energy_differences = (energies - energies[0]).reshape(-1, *(len(nk) + 1) * (1,))
-    # eta for removing the singularity. See Cauchy principal value.
-    eta = (energies[1] - energies[0]) / 2
-    hilbert_kernel = 1 / (energy_differences + eta)
+
+    hilbert_kernel, _ = create_hilbert_kernel(energies, nk, r=1)
 
     sr = fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[:ne]
     # Correct for left edge
@@ -463,25 +499,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                             slice(start, end),
                         )
                 else:
-                    n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
                     nk = g_lesser.data.shape[1:-1]
+                    r = self.config.scba.adaptive_interpolation_oversampling_ratio if use_adaptive else 1
+                    _, hilbert_kernel_fft = create_hilbert_kernel(self.energies, nk, r)
 
-                    # Add empty dimensions for each k-point.
-                    # liyongda (25 Mar 2026): Hilbert kernel dE should be the fine grid dE
-                    r = self.config.scba.adaptive_interpolation_oversampling_ratio
-                    if r is None:       # non-adaptive case
-                        r = 1
-                    energy_differences = (self.energies - self.energies[0]).reshape(
-                        -1, *(len(nk) + 1) * (1,)
-                    )
-                    energy_differences = energy_differences / r # interpolation to a finer grid, use the finer grid dE for Hilbert kernel
-
-                    # NOTE: Same eta as in the other computation, but fewer
-                    # ffts are computed in this case.
-                    eta = (self.energies[1] - self.energies[0]) / 2
-                    hilbert_kernel_fft = xp.fft.fft(
-                        1 / (energy_differences + eta), n, axis=0
-                    )
                     for start, end in zip(batch_displacements, batch_displacements[1:]):
                         self._compute_without_correction(
                             g_lesser = g_lesser,

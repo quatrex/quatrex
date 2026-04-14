@@ -25,3 +25,16 @@ def test_configure_qtx(example: tuple[Path, bool]):
         quatrex_config = example_path / "quatrex_config.toml"
         config = parse_config(quatrex_config)
         configure_qtx(config)
+
+
+@pytest.mark.mpi(min_size=3)
+def test_configure_qtx_dist(example: tuple[Path, bool]):
+    """Tests that the quatrex configuration can be parsed and configured."""
+    example_path, dist = example
+    quatrex_config = example_path / "quatrex_config.toml"
+    config = parse_config(quatrex_config)
+
+    # NOTE: this is expected to fail
+    # if the comm size is not a multiple of
+    # the comm block size
+    configure_qtx(config)

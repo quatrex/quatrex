@@ -611,7 +611,7 @@ class SCBA:
             # transpose from stack to nnz distribution
             if self.data.p_lesser.distribution_state != "nnz":
                 if comm.rank == 0:
-                    print(f"transposing p functions from stack to nnz distribution for interpolation", flush=True)
+                    print(f"=== transposing p functions from stack to nnz distribution for interpolation ===", flush=True)
                 for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "nnz"
@@ -622,30 +622,41 @@ class SCBA:
             k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
 
             # print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
-            # for nnz in range (self.data.p_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster
-            #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.p_lesser.data[:, nnz], k=k)
-            #     bspl_greater = make_interp_spline(self.electron_energies, self.data.p_greater.data[:, nnz], k=k)
-            #     bspl_retarded = make_interp_spline(self.electron_energies, self.data.p_retarded.data[:, nnz], k=k)
 
-            #     self.data.p_lesser.data[:, nnz] = bspl_lesser(self.adaptive_electron_energies_for_p_w)
-            #     self.data.p_greater.data[:, nnz] = bspl_greater(self.adaptive_electron_energies_for_p_w)
-            #     self.data.p_retarded.data[:, nnz] = bspl_retarded(self.adaptive_electron_energies_for_p_w)
+            print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}", flush=True)
             bspl_lesser = make_interp_spline(self.coulomb_screening_energies, self.data.p_lesser.data, k=k)
             bspl_greater = make_interp_spline(self.coulomb_screening_energies, self.data.p_greater.data, k=k)
             bspl_retarded = make_interp_spline(self.coulomb_screening_energies, self.data.p_retarded.data, k=k)
 
+            # liyongda (14 Apr 2026): MPI stall on high rank usage and higher adaptive_start_iteration
+            #   one rank is lagging on make_interp_spline
+            #   adding intermediate comm.barrier() helps synchronize the ranks and avoid the stall
+            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline", flush=True)
+            comm.barrier()
+
+            print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)
             self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
             self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
             self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
 
+            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after evaluating interp spline on adaptive grid", flush=True)
+            comm.barrier()
+
             # transpose back from nnz to stack
             if self.data.p_lesser.distribution_state != "stack":
                 if comm.rank == 0:
-                    print(f"transposing p functions back from nnz to stack distribution after interpolation", flush=True)
+                    print(f"=== transposing p functions back from nnz to stack distribution after interpolation ===", flush=True)
+
+                # spin forever so I can inspect output
+                # while(True):
+                #     continue
+
+                # print(f"rank {comm.rank} iteration {iteration} - transposing p functions back to stack distribution after interpolation", flush=True)
                 for m in [ self.data.p_lesser, self.data.p_greater, self.data.p_retarded ]:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
+        print(f"rank {comm.rank} iteration {iteration} - waiting at barrier before computing p_coulomb_screening",flush=True)
         comm.barrier()
         self.p_coulomb_screening.compute(
             iteration,

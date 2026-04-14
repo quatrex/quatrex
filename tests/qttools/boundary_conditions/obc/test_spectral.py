@@ -131,9 +131,7 @@ def test_correctness_batch(
     "block_sections",
 )
 def test_memoizer(
-    a_xx: tuple[NDArray, ...],
-    nevp: NEVP,
-    block_sections: int,
+    a_xx: tuple[NDArray, ...], nevp: NEVP, block_sections: int, memoization_mode: str
 ):
     """Tests that the Memoization works."""
     spectral = Spectral(
@@ -143,7 +141,7 @@ def test_memoizer(
         max_decay=20,
     )
 
-    obc_system = OBCSystem(spectral, memoization_mode="force-after-first")
+    obc_system = OBCSystem(spectral, memoization_mode=memoization_mode)
 
     # Add a little noise to the input matrices.
     a_ji, a_ii, a_ij = a_xx

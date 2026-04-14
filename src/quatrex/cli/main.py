@@ -135,11 +135,12 @@ def run(
             )
 
     from qttools.profiling import Profiler
-    from quatrex.core.config import parse_config
+    from quatrex.core.config import configure_qtx, parse_config
 
     profiler = Profiler()
 
     config = parse_config(config)
+    configure_qtx(config)
 
     secho_header()
 

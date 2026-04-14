@@ -33,10 +33,10 @@ def test_max_iterations(a_xx: tuple[NDArray, ...]):
         sancho_rubio(a_ii=a_ii, a_ij=a_ij, a_ji=a_ji, contact="")
 
 
-def test_memoizer(a_xx: tuple[NDArray, ...]):
+def test_memoizer(a_xx: tuple[NDArray, ...], memoization_mode: str):
     """Tests that the Memoization works."""
     sacho = SanchoRubio(convergence_tol=1e-10)
-    obc_system = OBCSystem(sacho)
+    obc_system = OBCSystem(sacho, memoization_mode=memoization_mode)
     a_ji, a_ii, a_ij = a_xx
     x_ii, *__ = obc_system((a_ii, a_ij, a_ji), contact="contact")
     assert xp.allclose(x_ii, xp.linalg.inv(a_ii - a_ji @ x_ii @ a_ij), atol=1e-5)

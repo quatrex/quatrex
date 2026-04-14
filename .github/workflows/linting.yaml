@@ -3,6 +3,7 @@ name: Run Pre-Commit and Determine Code Quality
 
 on:
   pull_request:
+  push:
     branches:
       - dev
       - main

@@ -3,6 +3,7 @@ name: Run Basic Tests and Determine Code Coverage
 
 on:
   pull_request:
+  push:
     branches:
       - dev
       - main

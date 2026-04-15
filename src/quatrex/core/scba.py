@@ -623,7 +623,7 @@ class SCBA:
 
             # print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
 
-            print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}", flush=True)
+            print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             bspl_lesser = make_interp_spline(self.coulomb_screening_energies, self.data.p_lesser.data, k=k)
             bspl_greater = make_interp_spline(self.coulomb_screening_energies, self.data.p_greater.data, k=k)
             bspl_retarded = make_interp_spline(self.coulomb_screening_energies, self.data.p_retarded.data, k=k)
@@ -631,7 +631,7 @@ class SCBA:
             # liyongda (14 Apr 2026): MPI stall on high rank usage and higher adaptive_start_iteration
             #   one rank is lagging on make_interp_spline
             #   adding intermediate comm.barrier() helps synchronize the ranks and avoid the stall
-            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline", flush=True)
+            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             comm.barrier()
 
             print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)

@@ -8,7 +8,7 @@ import pytest
 from qttools import NDArray, sparse, xp
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.utils.mpi_utils import distributed_load
-from quatrex.core.config import configure_qtx, parse_config
+from quatrex.core.config import parse_config, setup_context
 
 EXAMPLES_DIR = Path(__file__).parents[4].resolve() / "examples"
 CARBON_NANOTUBE_EXAMPLE = EXAMPLES_DIR / "w90" / "carbon-nanotube" / "gw"
@@ -72,7 +72,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
 
     quatrex_config_path = CARBON_NANOTUBE_EXAMPLE / "quatrex_config.toml"
     config = parse_config(quatrex_config_path)
-    configure_qtx(config)
+    setup_context(config)
 
     hamiltonian_sparray = distributed_load(config.input_dir / "hamiltonian.mat")
     if (0, 0, 0) not in hamiltonian_sparray.keys():

@@ -26,7 +26,7 @@ from pydantic import (
 from typing_extensions import Self
 
 from qttools import xp
-from qttools.comm import comm as qtx_comm
+from qttools.comm import comm
 from qttools.datastructures import DSDBCOO, DSDBSparse
 from qttools.profiling import Profiler
 
@@ -1175,8 +1175,8 @@ def parse_config(config_file: Path) -> QuatrexConfig:
     return QuatrexConfig(**config)
 
 
-def _configure_profiler(config: QuatrexConfig) -> None:
-    """Configures the profiler based on the given configuration.
+def _setup_profiler(config: QuatrexConfig) -> None:
+    """Sets up the profiler based on the given configuration.
 
     Parameters
     ----------
@@ -1198,8 +1198,8 @@ def _configure_profiler(config: QuatrexConfig) -> None:
     )
 
 
-def _configure_comm(comm_config: CommConfig) -> None:
-    """Configures the communication for the simulation based on the given configuration.
+def _setup_comm(comm_config: CommConfig) -> None:
+    """Sets up the communication backend.
 
     Parameters
     ----------
@@ -1207,38 +1207,23 @@ def _configure_comm(comm_config: CommConfig) -> None:
         The communication configuration containing the communication settings.
 
     """
+    default_backend = "host_mpi" if xp.__name__ == "cupy" else "device_mpi"
 
-    if xp.__name__ == "cupy":
-        block_comm_config = {
-            "all_to_all": comm_config.block_all_to_all or "host_mpi",
-            "all_gather": comm_config.block_all_gather or "host_mpi",
-            "all_reduce": comm_config.block_all_reduce or "host_mpi",
-            "bcast": comm_config.block_bcast or "host_mpi",
-        }
+    block_comm_config = {
+        "all_to_all": comm_config.block_all_to_all or default_backend,
+        "all_gather": comm_config.block_all_gather or default_backend,
+        "all_reduce": comm_config.block_all_reduce or default_backend,
+        "bcast": comm_config.block_bcast or default_backend,
+    }
 
-        stack_comm_config = {
-            "all_to_all": comm_config.stack_all_to_all or "host_mpi",
-            "all_gather": comm_config.stack_all_gather or "host_mpi",
-            "all_reduce": comm_config.stack_all_reduce or "host_mpi",
-            "bcast": comm_config.stack_bcast or "host_mpi",
-        }
-    else:
-        block_comm_config = {
-            "all_to_all": comm_config.block_all_to_all or "device_mpi",
-            "all_gather": comm_config.block_all_gather or "device_mpi",
-            "all_reduce": comm_config.block_all_reduce or "device_mpi",
-            "bcast": comm_config.block_bcast or "device_mpi",
-        }
+    stack_comm_config = {
+        "all_to_all": comm_config.stack_all_to_all or default_backend,
+        "all_gather": comm_config.stack_all_gather or default_backend,
+        "all_reduce": comm_config.stack_all_reduce or default_backend,
+        "bcast": comm_config.stack_bcast or default_backend,
+    }
 
-        stack_comm_config = {
-            "all_to_all": comm_config.stack_all_to_all or "device_mpi",
-            "all_gather": comm_config.stack_all_gather or "device_mpi",
-            "all_reduce": comm_config.stack_all_reduce or "device_mpi",
-            "bcast": comm_config.stack_bcast or "device_mpi",
-        }
-
-    # configure the comm
-    qtx_comm.configure(
+    comm.configure(
         block_comm_size=comm_config.block_comm_size,
         block_comm_config=block_comm_config,
         stack_comm_config=stack_comm_config,
@@ -1246,8 +1231,8 @@ def _configure_comm(comm_config: CommConfig) -> None:
     )
 
 
-def _configure_threading(compute_config: ComputeConfig):
-    """Configures the threading for Numba and BLAS based on the given configuration.
+def _setup_threading(compute_config: ComputeConfig):
+    """Sets up the threading layer.
 
     Parameters
     ----------
@@ -1272,24 +1257,26 @@ def _configure_threading(compute_config: ComputeConfig):
         "sequential_blas_under_openmp",
         1,
     ]:
-        if qtx_comm.rank == 0:
+        if comm.rank == 0:
             warnings.warn(
                 "The CPU code will run sequentially which may impact performance.",
                 UserWarning,
             )
 
 
-def configure_qtx(config: QuatrexConfig) -> None:
-    """Configures the quatrex environment based on the given configuration.
+def setup_context(config: QuatrexConfig) -> None:
+    """Sets up the simulation context based on the given configuration.
 
-    This includes configuring the profiler, communication, and threading.
+    This includes setting up the profiler, the communication backend,
+    and the threading layer.
 
     Parameters
     ----------
     config : QuatrexConfig
-        The configuration object containing all the settings for the simulation.
+        The configuration object containing the settings for the
+        simulation context.
 
     """
-    _configure_profiler(config)
-    _configure_comm(config.compute.comm)
-    _configure_threading(config.compute)
+    _setup_profiler(config)
+    _setup_comm(config.compute.comm)
+    _setup_threading(config.compute)

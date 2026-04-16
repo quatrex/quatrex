@@ -1,68 +1,18 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-from functools import partial
-
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 
 
-def get_block(
-    coo: sparse.coo_matrix | DSDBSparse,
-    block_sizes: NDArray,
-    block_offsets: NDArray,
-    index: tuple,
-) -> NDArray:
-    """Gets a block from a COO matrix.
-
-    Parameters
-    ----------
-    coo : sparse.coo_matrix
-        The COO matrix.
-    block_sizes : NDArray
-        The block sizes.
-    block_offsets : NDArray
-        The block offsets.
-    index : tuple
-        The index of the block to extract.
-
-    Returns
-    -------
-    block : NDArray
-        The requested, dense block.
-
-    """
-    row, col = index
-
-    if isinstance(coo, DSDBSparse):
-        start_block = coo.block_section_offsets[comm.block.rank]
-        return coo.blocks[row - start_block, col - start_block]
-
-    mask = (
-        (block_offsets[row] <= coo.row)
-        & (coo.row < block_offsets[row + 1])
-        & (block_offsets[col] <= coo.col)
-        & (coo.col < block_offsets[col + 1])
-    )
-    block = xp.zeros((int(block_sizes[row]), int(block_sizes[col])), dtype=coo.dtype)
-    block[
-        coo.row[mask] - block_offsets[row],
-        coo.col[mask] - block_offsets[col],
-    ] = coo.data[mask]
-
-    return block
-
-
-def density(
-    x: DSDBSparse, overlap: sparse.spmatrix | DSDBSparse | None = None
-) -> NDArray:
+def density(x: DSDBSparse, overlap: DSDBSparse | None = None) -> NDArray:
     """Computes the density from Green's function and overlap matrix.
 
     Parameters
     ----------
     x : DSDBSparse
         The Green's function.
-    overlap : sparse.spmatrix | DSDBSparse, optional
+    overlap : DSDBSparse, optional
         The overlap matrix, by default None.
 
     Returns
@@ -79,16 +29,6 @@ def density(
             axis=0,
             mask=x._stack_padding_mask,
         )
-    elif isinstance(overlap, sparse.spmatrix):
-        overlap = overlap.tocoo()
-        _overlap_block = partial(get_block, overlap, x.block_sizes, x.block_offsets)
-    elif isinstance(overlap, DSDBSparse):
-        # _overlap_block =  lambda index: overlap.blocks[index[0], index[1]]
-        def _overlap_block(index):
-            return overlap.blocks[index[0], index[1]]
-
-    else:
-        raise TypeError("Overlap must be a sparse matrix or DSDBSparse.")
 
     if comm.block.size > 1:
         raise NotImplementedError(
@@ -98,19 +38,19 @@ def density(
     local_density = []
     for i in range(x.num_blocks):
         local_density_slice = xp.diagonal(
-            x.blocks[i, i] @ _overlap_block((i, i)),
+            x.blocks[i, i] @ overlap.blocks[i, i],
             axis1=-2,
             axis2=-1,
         ).copy()
         if i < x.num_blocks - 1:
             local_density_slice += xp.diagonal(
-                x.blocks[i, i + 1] @ _overlap_block((i + 1, i)),
+                x.blocks[i, i + 1] @ overlap.blocks[i + 1, i],
                 axis1=-2,
                 axis2=-1,
             )
         if i > 0:
             local_density_slice += xp.diagonal(
-                x.blocks[i, i - 1] @ _overlap_block((i - 1, i)),
+                x.blocks[i, i - 1] @ overlap.blocks[i - 1, i],
                 axis1=-2,
                 axis2=-1,
             )
@@ -126,16 +66,14 @@ def density(
     )
 
 
-def device_current(
-    x_lesser: DSDBSparse, operator: sparse.spmatrix | DSDBSparse
-) -> NDArray:
+def device_current(x_lesser: DSDBSparse, operator: DSDBSparse) -> NDArray:
     """Computes the current from the lesser Green's function.
 
     Parameters
     ----------
     x_lesser : DSDBSparse
         The lesser Green's function.
-    operator : sparse.spmatrix
+    operator : DSDBSparse
         The operator that governs the system dynamics.
 
     Returns
@@ -144,26 +82,17 @@ def device_current(
         The current, gathered across all participating ranks.
 
     """
-    if isinstance(operator, sparse.spmatrix):
-        operator = operator.tocoo()
-    _operator_block = partial(
-        get_block, operator, x_lesser.block_sizes, x_lesser.block_offsets
-    )
 
     local_current = []
-    start_block = x_lesser.block_section_offsets[comm.block.rank]
     num_offdiags = x_lesser.num_local_blocks
-
     if comm.block.rank == comm.block.size - 1:
         num_offdiags -= 1
 
     for i in range(num_offdiags):
         j = i + 1
         layer_current = (
-            _operator_block((i + start_block, j + start_block))
-            * x_lesser.blocks[j, i].swapaxes(-2, -1)
-            - x_lesser.blocks[i, j]
-            * _operator_block((j + start_block, i + start_block)).swapaxes(-2, -1)
+            operator.blocks[i, j] * x_lesser.blocks[j, i].swapaxes(-2, -1)
+            - x_lesser.blocks[i, j] * operator.blocks[j, i].swapaxes(-2, -1)
         ).sum(axis=(-1, -2))
         local_current.append(layer_current)
 

@@ -9,11 +9,7 @@ from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
-from quatrex.bandstructure.band_edges import (
-    find_band_edges,
-    find_dos_peaks,
-    find_renormalized_eigenvalues,
-)
+from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
@@ -182,17 +178,11 @@ class ElectronSolver(SubsystemSolver):
                     "Overlap matrix and Hamiltonian matrix have different shapes."
                 )
 
-            self.orthogonal_basis = False
             if comm.rank == 0:
                 print("Non-orthogonal basis detected.", flush=True)
 
         except FileNotFoundError:
-            self.overlap_sparray = sparse.eye(
-                self.hamiltonian.shape[-2],
-                format="coo",
-                dtype=self.hamiltonian.dtype,
-            )
-            self.orthogonal_basis = True
+            self.overlap = None
             if comm.rank == 0:
                 print("No overlap matrix found. Assuming orthogonal basis.", flush=True)
 
@@ -270,31 +260,6 @@ class ElectronSolver(SubsystemSolver):
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
-    @staticmethod
-    def get_block(
-        coo: sparse.coo_matrix, block_sizes: NDArray, index: tuple
-    ) -> NDArray:
-        """Gets a block from a COO matrix."""
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)))
-        row, col = index
-        row = row + len(block_sizes) if row < 0 else row
-        col = col + len(block_sizes) if col < 0 else col
-        mask = (
-            (block_offsets[row] <= coo.row)
-            & (coo.row < block_offsets[row + 1])
-            & (block_offsets[col] <= coo.col)
-            & (coo.col < block_offsets[col + 1])
-        )
-        block = xp.zeros(
-            (int(block_sizes[row]), int(block_sizes[col])), dtype=coo.dtype
-        )
-        block[
-            coo.row[mask] - block_offsets[row],
-            coo.col[mask] - block_offsets[col],
-        ] = coo.data[mask]
-
-        return block
-
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 
@@ -350,27 +315,6 @@ class ElectronSolver(SubsystemSolver):
             self.temperature,
         )
 
-    def _get_block(self, coo: sparse.coo_matrix, index: tuple) -> NDArray:
-        """Gets a block from a COO matrix."""
-        row, col = index
-        row = row + len(self.block_sizes) if row < 0 else row
-        col = col + len(self.block_sizes) if col < 0 else col
-        mask = (
-            (self.block_offsets[row] <= coo.row)
-            & (coo.row < self.block_offsets[row + 1])
-            & (self.block_offsets[col] <= coo.col)
-            & (coo.col < self.block_offsets[col + 1])
-        )
-        block = xp.zeros(
-            (int(self.block_sizes[row]), int(self.block_sizes[col])), dtype=coo.dtype
-        )
-        block[
-            coo.row[mask] - self.block_offsets[row],
-            coo.col[mask] - self.block_offsets[col],
-        ] = coo.data[mask]
-
-        return block
-
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
@@ -383,7 +327,7 @@ class ElectronSolver(SubsystemSolver):
                 block_sections=self.block_sections,
             )
 
-            if self.orthogonal_basis:
+            if self.overlap is None:
                 s_00 = 1j * self.eta_obc * xp.eye(m_00.shape[-1], dtype=m_00.dtype)
                 s_01 = xp.zeros_like(m_01, dtype=m_01.dtype)
                 s_10 = xp.zeros_like(m_10, dtype=m_10.dtype)
@@ -423,7 +367,7 @@ class ElectronSolver(SubsystemSolver):
                 block_sections=self.block_sections,
             )
 
-            if self.orthogonal_basis:
+            if self.overlap is None:
                 s_nn = 1j * self.eta_obc * xp.eye(m_nn.shape[-1], dtype=m_nn.dtype)
                 s_nm = xp.zeros_like(m_nm, dtype=m_nm.dtype)
                 s_mn = xp.zeros_like(m_mn, dtype=m_mn.dtype)
@@ -477,7 +421,7 @@ class ElectronSolver(SubsystemSolver):
 
         """
         self.system_matrix.data = 0.0
-        if self.orthogonal_basis:
+        if self.overlap is None:
             self.system_matrix.fill_diagonal(1.0)
         else:
             _btd_add(self.system_matrix, self.overlap)
@@ -487,7 +431,7 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies + 1j * self.eta,
         )
 
-        if self.orthogonal_basis:
+        if self.overlap is None:
             self.system_matrix -= sparse.diags(self.potential, format="csr")
         else:
             _btd_apply_potential(self.system_matrix, self.overlap, self.potential)
@@ -578,13 +522,13 @@ class ElectronSolver(SubsystemSolver):
 
             self._assemble_system_matrix(sse_retarded)
 
-        if self.band_edge_tracking == "eigenvalues":
+        if self.band_edge_tracking:
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
             ):
                 left_band_edges, right_band_edges = find_renormalized_eigenvalues(
                     hamiltonian=self.hamiltonian,
-                    overlap=self.overlap_sparray,
+                    overlap=self.overlap,
                     potential=self.potential,
                     sigma_retarded=sse_retarded,
                     energies=self.energies,
@@ -633,59 +577,5 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.free_data()
             if self.call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
-
-        if self.band_edge_tracking == "dos-peaks":
-
-            with profiler.profile_range(
-                label="ElectronSolver: DOS peaks", level="default", comm=comm
-            ):
-                _, _, g_retarded = out
-                left_band_edges = np.empty((2,), dtype=float)
-                right_band_edges = np.empty((2,), dtype=float)
-
-                if comm.block.rank == 0:
-                    s_00 = self._get_block(self.overlap_sparray, (0, 0))
-                    g_00 = g_retarded.blocks[0, 0]
-
-                    local_left_dos = -xp.mean(
-                        xp.diagonal(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=-1
-                    )
-
-                    left_dos = comm.stack.all_gather_v(
-                        local_left_dos,
-                        axis=0,
-                        mask=g_retarded._stack_padding_mask,
-                    )
-
-                    e_0_left = find_dos_peaks(left_dos, self.energies)
-                    left_band_edges = np.array(
-                        find_band_edges(e_0_left, self.left_mid_gap_energy)
-                    )
-
-                if comm.block.rank == comm.block.size - 1:
-                    s_nn = self._get_block(self.overlap_sparray, (-1, -1))
-                    n = g_retarded.num_local_blocks - 1
-                    g_nn = g_retarded.blocks[n, n]
-                    local_right_dos = -xp.mean(
-                        xp.diagonal(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=-1
-                    )
-
-                    right_dos = comm.stack.all_gather_v(
-                        local_right_dos,
-                        axis=0,
-                        mask=g_retarded._stack_padding_mask,
-                    )
-
-                    e_0_right = find_dos_peaks(right_dos, self.energies)
-                    right_band_edges = np.array(
-                        find_band_edges(e_0_right, self.right_mid_gap_energy)
-                    )
-
-                comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
-                comm.block.bcast(
-                    right_band_edges, root=comm.block.size - 1, backend="device_mpi"
-                )
-
-                self._update_fermi_levels(left_band_edges, right_band_edges)
 
         self.call_count += 1

@@ -1,8 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-from functools import partial
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.kernels.linalg import eigvalsh
@@ -15,54 +14,6 @@ elif xp.__name__ == "cupy":
     from cupyx.scipy.signal import find_peaks
 else:
     raise ImportError("Unknown backend.")
-
-
-def get_block(
-    coo: sparse.coo_matrix | DSDBSparse,
-    block_sizes: NDArray,
-    block_offsets: NDArray,
-    index: tuple,
-) -> NDArray:
-    """Gets a block from a COO matrix.
-
-    Parameters
-    ----------
-    coo : sparse.coo_matrix
-        The COO matrix.
-    block_sizes : NDArray
-        The block sizes.
-    block_offsets : NDArray
-        The block offsets.
-    index : tuple
-        The index of the block to extract.
-
-    Returns
-    -------
-    block : NDArray
-        The requested, dense block.
-
-    """
-    row, col = index
-    row = row + len(block_sizes) if row < 0 else row
-    col = col + len(block_sizes) if col < 0 else col
-
-    if isinstance(coo, DSDBSparse):
-        start_block = coo.block_section_offsets[comm.block.rank]
-        return coo.blocks[row - start_block, col - start_block]
-
-    mask = (
-        (block_offsets[row] <= coo.row)
-        & (coo.row < block_offsets[row + 1])
-        & (block_offsets[col] <= coo.col)
-        & (coo.col < block_offsets[col + 1])
-    )
-    block = xp.zeros((int(block_sizes[row]), int(block_sizes[col])), dtype=coo.dtype)
-    block[
-        coo.row[mask] - block_offsets[row],
-        coo.col[mask] - block_offsets[col],
-    ] = coo.data[mask]
-
-    return block
 
 
 def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
@@ -86,15 +37,47 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
 
 
 def _compute_eigenvalues(
-    hamiltonian: sparse.spmatrix | DSDBSparse,
-    overlap: sparse.spmatrix,
+    hamiltonian: DSDBSparse,
+    overlap: DSDBSparse | None,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
     ind: tuple[int, ...],
     side: str,
     band_edge_config: BandEdgeConfig = BandEdgeConfig(),
 ):
-    """Computes the eigenvalues for the left or right contact."""
+    """Computes the eigenvalues for the left or right contact.
+
+    Parameters
+    ----------
+    hamiltonian : DSDBSparse
+        The Hamiltonian.
+    overlap : DSDBSparse | None
+        The overlap matrix. If None, the basis is assumed to be
+        orthogonal.
+    potential : NDArray
+        The potential.
+    sigma_retarded : DSDBSparse
+        The retarded self-energy.
+    ind : tuple[int, ...]
+        The local (E, k) index where the eigenvalues should be computed.
+        This is a guess that should be as close as possible to where the
+        band edge is to determine the correct band edge in this
+        non-linear EVP. An outer loop should be used to refine this
+        guess.
+    side : str
+        The side for which the eigenvalues should be computed. Should be
+        either "left" or "right".
+    band_edge_config : BandEdgeConfig, optional
+        The configuration for the band edge tracking, by default
+        BandEdgeConfig().
+
+    Returns
+    -------
+    e_0 : NDArray
+        The eigenvalues at the given (E, k) index sorted by energy in
+        ascending order.
+
+    """
     big_blocksize = sigma_retarded.block_sizes[0]
     block_sections = band_edge_config.block_sections
     small_blocksize = big_blocksize // block_sections
@@ -104,24 +87,28 @@ def _compute_eigenvalues(
         potential = xp.diag(potential[:small_blocksize])
         row_slice = slice(0, small_blocksize)
     elif side == "right":
-        blocks = [(-1, -1), (-1, -2)]  # , (n-2, n-1)]
+        num_blocks = len(sigma_retarded.block_sizes)
+        start_block = sigma_retarded.block_section_offsets[comm.block.rank]
+        n = (num_blocks - 1) - start_block
+        m = (num_blocks - 2) - start_block
+        blocks = [(n, n), (m, n)]  # , (n, m)]
         potential = xp.diag(potential[-small_blocksize:])
         row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
     else:
         raise ValueError(f"Unknown side '{side}'.")
 
-    _get_block = partial(
-        get_block,
-        block_sizes=sigma_retarded.block_sizes,
-        block_offsets=sigma_retarded.block_offsets,
-    )
+    h_00 = hamiltonian.blocks[blocks[0]][:, *ind[1:], row_slice]
+    h_01 = hamiltonian.blocks[blocks[1]][:, *ind[1:], row_slice]
+    if overlap is None:
+        s_00 = xp.zeros_like(h_00)
+        s_00[:, :small_blocksize] = xp.eye(small_blocksize)
+        s_01 = xp.zeros_like(h_01)
+    else:
+        s_00 = overlap.blocks[blocks[0]][row_slice]
+        s_01 = overlap.blocks[blocks[1]][row_slice]
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[:, *ind[1:], row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[:, *ind[1:], row_slice]
-    s_00 = _get_block(overlap, index=blocks[0])[row_slice]
-    s_01 = _get_block(overlap, index=blocks[1])[row_slice]
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
+    sigma_00 = xp.real(sigma_retarded.blocks[blocks[0]][*ind, row_slice])
+    sigma_01 = xp.real(sigma_retarded.blocks[blocks[1]][*ind, row_slice])
 
     h_0 = sum(
         h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
@@ -173,8 +160,8 @@ def _compute_eigenvalues(
 
 
 def find_renormalized_eigenvalues(
-    hamiltonian: sparse.spmatrix | DSDBSparse,
-    overlap: sparse.spmatrix,
+    hamiltonian: DSDBSparse,
+    overlap: DSDBSparse | None,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
     energies: NDArray,
@@ -187,10 +174,11 @@ def find_renormalized_eigenvalues(
 
     Parameters
     ----------
-    hamiltonian : sparse.spmatrix
+    hamiltonian : DSDBSparse
         The Hamiltonian.
-    overlap : sparse.spmatrix
-        The overlap matrix.
+    overlap : DSDBSparse | None
+        The overlap matrix. If None, the basis is assumed to be
+        orthogonal.
     sigma_lesser : DSDBSparse
         The lesser self-energy.
     sigma_greater : DSDBSparse

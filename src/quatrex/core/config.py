@@ -464,7 +464,24 @@ class ElectronConfig(BaseModel):
     left_fermi_level: float | None = None
     right_fermi_level: float | None = None
 
-    band_edge_tracking: Literal["dos-peaks", "eigenvalues"] | None = None
+    band_edge_tracking: bool = False
+    """Whether to track the band edges during the SCBA iterations.
+
+    This is setting is only useful if the considered interactions result
+    in energy renormalization in the electronic subsystem, which is
+    primarily the screened Coulomb interaction.
+
+    If set to `True`, the band edges are tracked during the SCBA
+    iterations by computing the eigenvalues of the Hamiltonian
+    renormalized with the current self-energy.
+
+    The Fermi levels are then set to be a fixed distance from the band
+    edges, which is determined by the initial Fermi level and band
+    edges. For example, if the initial Fermi level is 0.5 eV above the
+    conduction band edge, the Fermi level is always set to be 0.5 eV
+    above the conduction band edge during the SCBA iterations.
+
+    """
 
     temperature: PositiveFloat = 300.0  # K
 

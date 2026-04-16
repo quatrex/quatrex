@@ -549,25 +549,20 @@ class SCBA:
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
-        overlap = (
-            None
-            if self.electron_solver.orthogonal_basis
-            else self.electron_solver.overlap
-        )
         if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
         if self.config.outputs.device_currents:
@@ -590,15 +585,15 @@ class SCBA:
         if self.config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)

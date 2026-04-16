@@ -26,7 +26,7 @@ from pydantic import (
 from typing_extensions import Self
 
 from qttools import xp
-from qttools.comm import comm as qtx_comm
+from qttools.comm import comm
 from qttools.datastructures import DSDBCOO, DSDBSparse
 from qttools.profiling import Profiler
 
@@ -981,50 +981,6 @@ class CommConfig(BaseModel):
     stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
 
-    block_comm_config: dict[str, str] = {}
-    stack_comm_config: dict[str, str] = {}
-
-    @model_validator(mode="after")
-    def set_defaults(self) -> Self:
-        if xp.__name__ == "cupy":
-            self.block_comm_config = {
-                "all_to_all": self.block_all_to_all or "host_mpi",
-                "all_gather": self.block_all_gather or "host_mpi",
-                "all_reduce": self.block_all_reduce or "host_mpi",
-                "bcast": self.block_bcast or "host_mpi",
-            }
-
-            self.stack_comm_config = {
-                "all_to_all": self.stack_all_to_all or "host_mpi",
-                "all_gather": self.stack_all_gather or "host_mpi",
-                "all_reduce": self.stack_all_reduce or "host_mpi",
-                "bcast": self.stack_bcast or "host_mpi",
-            }
-        else:
-            self.block_comm_config = {
-                "all_to_all": self.block_all_to_all or "device_mpi",
-                "all_gather": self.block_all_gather or "device_mpi",
-                "all_reduce": self.block_all_reduce or "device_mpi",
-                "bcast": self.block_bcast or "device_mpi",
-            }
-
-            self.stack_comm_config = {
-                "all_to_all": self.stack_all_to_all or "device_mpi",
-                "all_gather": self.stack_all_gather or "device_mpi",
-                "all_reduce": self.stack_all_reduce or "device_mpi",
-                "bcast": self.stack_bcast or "device_mpi",
-            }
-
-        # configure the comm
-        qtx_comm.configure(
-            block_comm_size=self.block_comm_size,
-            block_comm_config=self.block_comm_config,
-            stack_comm_config=self.stack_comm_config,
-            override=True,
-        )
-
-        return self
-
 
 class ComputeConfig(BaseModel):
     """All configurations concerning computational details."""
@@ -1051,32 +1007,6 @@ class ComputeConfig(BaseModel):
         if value == "DSDBCOO":
             return DSDBCOO
         raise ValueError(f"Invalid value '{value}' for dbsparse")
-
-    @model_validator(mode="after")
-    def set_threading(self) -> Self:
-
-        # TODO: set the number of threads automatically based on the available cores
-        # problems is that we do not know yet how many energy points there will be
-        # has to be after unifying the configs
-        if self.numba_num_threads is None:
-            self.numba_num_threads = 1
-        if self.blas_num_threads is None:
-            self.blas_num_threads = 1
-
-        nb.set_num_threads(self.numba_num_threads)
-        nb.config.THREADING_LAYER = self.numba_threading_layer
-
-        if self.numba_num_threads == 1 and self.blas_num_threads in [
-            "sequential_blas_under_openmp",
-            1,
-        ]:
-            if qtx_comm.rank == 0:
-                warnings.warn(
-                    "The CPU code will run sequentially which may impact performance.",
-                    UserWarning,
-                )
-
-        return self
 
 
 class QuatrexConfig(BaseModel):
@@ -1185,23 +1115,6 @@ class QuatrexConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def resolve_profiler_path(self):
-        """Resolves the simulation directory path."""
-        if not self.outputs.profiling_path.is_absolute():
-            self.outputs.profiling_path = (
-                self.config_dir / self.outputs.profiling_path
-            ).resolve()
-
-        # Saving will strip the extension
-        profiler.set_parameters(
-            print_path=self.outputs.profiling_path,
-            save_path=self.outputs.profiling_path,
-            save_format=self.outputs.profiling_save_format,
-        )
-
-        return self
-
-    @model_validator(mode="after")
     def check_device_block_size(self) -> Self:
         """Checks that block size is consistent with other parameters."""
 
@@ -1260,3 +1173,110 @@ def parse_config(config_file: Path) -> QuatrexConfig:
     config = mpi_comm_world.bcast(config, root=0)
 
     return QuatrexConfig(**config)
+
+
+def _setup_profiler(config: QuatrexConfig) -> None:
+    """Sets up the profiler based on the given configuration.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The configuration object containing the profiling settings.
+
+    """
+
+    if not config.outputs.profiling_path.is_absolute():
+        config.outputs.profiling_path = (
+            config.config_dir / config.outputs.profiling_path
+        ).resolve()
+
+    # Saving will strip the extension
+    profiler.set_parameters(
+        print_path=config.outputs.profiling_path,
+        save_path=config.outputs.profiling_path,
+        save_format=config.outputs.profiling_save_format,
+    )
+
+
+def _setup_comm(comm_config: CommConfig) -> None:
+    """Sets up the communication backend.
+
+    Parameters
+    ----------
+    comm_config : CommConfig
+        The communication configuration containing the communication settings.
+
+    """
+    default_backend = "host_mpi" if xp.__name__ == "cupy" else "device_mpi"
+
+    block_comm_config = {
+        "all_to_all": comm_config.block_all_to_all or default_backend,
+        "all_gather": comm_config.block_all_gather or default_backend,
+        "all_reduce": comm_config.block_all_reduce or default_backend,
+        "bcast": comm_config.block_bcast or default_backend,
+    }
+
+    stack_comm_config = {
+        "all_to_all": comm_config.stack_all_to_all or default_backend,
+        "all_gather": comm_config.stack_all_gather or default_backend,
+        "all_reduce": comm_config.stack_all_reduce or default_backend,
+        "bcast": comm_config.stack_bcast or default_backend,
+    }
+
+    comm.configure(
+        block_comm_size=comm_config.block_comm_size,
+        block_comm_config=block_comm_config,
+        stack_comm_config=stack_comm_config,
+        override=True,
+    )
+
+
+def _setup_threading(compute_config: ComputeConfig):
+    """Sets up the threading layer.
+
+    Parameters
+    ----------
+    compute_config : ComputeConfig
+        The compute configuration containing the threading settings.
+
+    """
+
+    # TODO: set the number of threads automatically based on the available cores
+    # problems is that we do not know yet how many energy points there will be
+    # has to be after unifying the configs
+    # NOTE: here we could now do this tuening
+    if compute_config.numba_num_threads is None:
+        compute_config.numba_num_threads = 1
+    if compute_config.blas_num_threads is None:
+        compute_config.blas_num_threads = 1
+
+    nb.set_num_threads(compute_config.numba_num_threads)
+    nb.config.THREADING_LAYER = compute_config.numba_threading_layer
+
+    if compute_config.numba_num_threads == 1 and compute_config.blas_num_threads in [
+        "sequential_blas_under_openmp",
+        1,
+    ]:
+        if comm.rank == 0:
+            warnings.warn(
+                "The CPU code will run sequentially which may impact performance.",
+                UserWarning,
+            )
+
+
+def setup_context(config: QuatrexConfig) -> None:
+    """Sets up the simulation context based on the given configuration.
+
+    This includes setting up the profiler, the communication backend,
+    and the threading layer.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The configuration object containing the settings for the
+        simulation context.
+
+    """
+    _setup_profiler(config)
+    _setup_comm(config.compute.comm)
+    _setup_threading(config.compute)

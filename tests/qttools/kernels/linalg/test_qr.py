@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 import numpy as np
-import pytest
 
 from qttools import xp
 from qttools.kernels import linalg
@@ -11,7 +10,6 @@ if xp.__name__ == "cupy":
     import cupy as cp
 
 
-@pytest.mark.usefixtures("m", "n", "batch_shape")
 def test_qr_numba_ndarray(m: int, n: int, batch_shape: tuple[int, ...]):
     """Tests the _qr_numba_ndarray function."""
 
@@ -28,9 +26,6 @@ def test_qr_numba_ndarray(m: int, n: int, batch_shape: tuple[int, ...]):
     assert xp.allclose(A, q @ r)
 
 
-@pytest.mark.usefixtures(
-    "m", "n", "compute_module", "input_module", "output_module", "use_pinned_memory"
-)
 def test_qr(
     m: int,
     n: int,
@@ -68,16 +63,6 @@ def test_qr(
     assert xp.allclose(A, q @ r)
 
 
-@pytest.mark.usefixtures(
-    "m",
-    "n",
-    "batch_shape",
-    "full_matrices",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 def test_qr_batched(
     m: int,
     n: int,

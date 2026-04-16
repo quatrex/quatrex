@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import pytest
 
 from qttools import NDArray, xp
 from qttools.fft.convolve import _naive_convolve
@@ -21,7 +20,6 @@ def naive_hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
     return result[2 * ne : 3 * ne]
 
 
-@pytest.mark.usefixtures("array_shape")
 def test_hilbert_transform(array_shape):
     # Use the symmetry of the polarization $a(-\omega)=a^{*}(\omega)$
     ne = array_shape[0]

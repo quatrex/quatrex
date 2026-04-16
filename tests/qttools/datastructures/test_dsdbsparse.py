@@ -142,7 +142,6 @@ def _get_block_inds(block: tuple, block_sizes: NDArray) -> tuple:
 class TestAccess:
     """Tests for the access methods of DSDBSparse."""
 
-    @pytest.mark.usefixtures("accessed_element")
     def test_getitem(
         self,
         dsdbsparse_type: DSDBSparse,
@@ -163,7 +162,6 @@ class TestAccess:
         reference = dense[..., *accessed_element]
         assert xp.allclose(reference, dsdbsparse[accessed_element])
 
-    @pytest.mark.usefixtures("num_inds")
     def test_getitem_with_array(
         self,
         dsdbsparse_type: DSDBSparse,
@@ -192,7 +190,6 @@ class TestAccess:
         )
         assert xp.allclose(reference, dsdbsparse[rows, cols])
 
-    @pytest.mark.usefixtures("accessed_element")
     def test_setitem(
         self,
         dsdbsparse_type: DSDBSparse,
@@ -730,7 +727,7 @@ class TestArithmetic:
 ARRAY_SHAPE = (12, 10, 30)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def array() -> NDArray:
     """Returns a random dense array."""
     return xp.random.rand(*ARRAY_SHAPE)

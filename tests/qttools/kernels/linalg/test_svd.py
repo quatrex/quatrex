@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 import numpy as np
-import pytest
 
 from qttools import xp
 from qttools.kernels import linalg
@@ -11,7 +10,6 @@ if xp.__name__ == "cupy":
     import cupy as cp
 
 
-@pytest.mark.usefixtures("m", "n", "full_matrices", "batch_shape")
 def test_svd_numba_ndarray(
     m: int, n: int, full_matrices: bool, batch_shape: tuple[int, ...]
 ):
@@ -41,15 +39,6 @@ def test_svd_numba_ndarray(
     assert xp.allclose(A, u @ s_dense @ vh)
 
 
-@pytest.mark.usefixtures(
-    "m",
-    "n",
-    "full_matrices",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 def test_svd(
     m: int,
     n: int,
@@ -95,16 +84,6 @@ def test_svd(
     assert xp.allclose(A, u @ np.diag(s) @ vh)
 
 
-@pytest.mark.usefixtures(
-    "m",
-    "n",
-    "batch_shape",
-    "full_matrices",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 def test_svd_batched(
     m: int,
     n: int,

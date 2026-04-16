@@ -40,17 +40,17 @@ GLOBAL_STACK_SHAPES = [
 ]
 
 
-@pytest.fixture(params=BLOCK_SIZES, autouse=True)
+@pytest.fixture(params=BLOCK_SIZES)
 def block_sizes(request: pytest.FixtureRequest) -> NDArray:
     return request.param
 
 
-@pytest.fixture(params=GFSOLVERS_TYPE, autouse=True)
+@pytest.fixture(params=GFSOLVERS_TYPE)
 def gfsolver_type(request: pytest.FixtureRequest) -> GFSolver:
     return request.param
 
 
-@pytest.fixture(params=DSBSPARSE_TYPES, autouse=True)
+@pytest.fixture(params=DSBSPARSE_TYPES)
 def dsdbsparse_type(request: pytest.FixtureRequest) -> DSDBSparse:
     return request.param
 
@@ -62,7 +62,7 @@ def _random_block(m: int, n: int) -> NDArray:
     return coo.toarray()
 
 
-@pytest.fixture(scope="function", autouse=False)
+@pytest.fixture(scope="function")
 def bt_dense(block_sizes: NDArray) -> NDArray:
     """Generates a random block-tridiagonal matrix."""
     block_offsets = xp.hstack(([0], xp.cumsum(xp.asarray(block_sizes))))
@@ -104,21 +104,21 @@ def bt_dense(block_sizes: NDArray) -> NDArray:
     return arr
 
 
-@pytest.fixture(params=BATCHING_TYPE, autouse=True)
+@pytest.fixture(params=BATCHING_TYPE)
 def max_batch_size(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=OUT, autouse=True)
+@pytest.fixture(params=OUT)
 def out(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
-@pytest.fixture(params=RETURN_RETARDED, autouse=True)
+@pytest.fixture(params=RETURN_RETARDED)
 def return_retarded(request: pytest.FixtureRequest) -> bool:
     return request.param
 
 
-@pytest.fixture(params=GLOBAL_STACK_SHAPES, autouse=True)
+@pytest.fixture(params=GLOBAL_STACK_SHAPES)
 def global_stack_shape(request: pytest.FixtureRequest) -> tuple:
     return request.param

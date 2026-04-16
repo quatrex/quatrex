@@ -11,13 +11,13 @@ NUM_RHS = [
 ]
 
 
-@pytest.fixture(params=NUM_ROWS, autouse=True)
+@pytest.fixture(params=NUM_ROWS)
 def n(request: pytest.FixtureRequest) -> int:
     """Fixture to provide the number of rows for the sparse matrix."""
     return request.param
 
 
-@pytest.fixture(params=NUM_RHS, autouse=True)
+@pytest.fixture(params=NUM_RHS)
 def m(request: pytest.FixtureRequest) -> int:
     """Fixture to provide the number of right-hand sides for the solver."""
     return request.param

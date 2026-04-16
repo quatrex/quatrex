@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import pytest
 
 from qttools import NDArray, xp
 from qttools.boundary_conditions.obc import OBCSystem, Spectral
@@ -69,10 +68,6 @@ def _make_periodic(
     return a_ji_hat, a_ii_hat, a_ij_hat
 
 
-@pytest.mark.usefixtures(
-    "nevp",
-    "block_sections",
-)
 def test_correctness(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
@@ -97,10 +92,6 @@ def test_correctness(
     )
 
 
-@pytest.mark.usefixtures(
-    "nevp",
-    "block_sections",
-)
 def test_correctness_batch(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,
@@ -126,10 +117,6 @@ def test_correctness_batch(
     )
 
 
-@pytest.mark.usefixtures(
-    "nevp",
-    "block_sections",
-)
 def test_memoizer(
     a_xx: tuple[NDArray, ...], nevp: NEVP, block_sections: int, memoization_mode: str
 ):
@@ -178,12 +165,6 @@ def test_memoizer(
     )
 
 
-@pytest.mark.usefixtures(
-    "block_size",
-    "batch_size",
-    "nevp",
-    "block_sections",
-)
 def test_upscaling(
     block_size: int,
     batch_size: int,
@@ -217,9 +198,6 @@ def test_upscaling(
     assert xp.allclose(vs_upscaled, vs_upscaled_ref)
 
 
-@pytest.mark.usefixtures(
-    "nevp",
-)
 def test_compute_dE_dk(
     a_xx: tuple[NDArray, ...],
     nevp: NEVP,

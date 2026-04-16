@@ -5,17 +5,18 @@ formalism = "negf" # "negf" or "wf"
 
 [device]
 transport_direction = 'x'
+block_size = 32
 
 [scba] # ===============================================================
-max_iterations = 5
+max_iterations = 100
 mixing_factor = 0.5
 
 coulomb_screening = true
 phonon = true
 
-symmetric = true
+symmetric = false       # liyongda (02 Apr 2026): turn off symmmetrization so g_retarded.data.shape is the same size as g_lesser.data.shape --> can save corresponding nnz indices
 
-adaptive = false
+adaptive = true
 
 # used if adaptive = true
 
@@ -27,18 +28,18 @@ adaptive = false
 
 #   for performance comparison, do 2x separate runs
 #   fine grid with no adaptive vs coarse grid with adaptive
-adaptive_num_points = 21  # should be same as energy_window_num
-adaptive_start_iteration = 0 # iteration to start adaptive grid
+adaptive_num_points = 2001  # should be same as energy_window_num, else memory buffers require resizing (not implemented) and will likely crash
+adaptive_start_iteration = 1 # iteration to start adaptive grid
 adaptive_integration_method = 'trapezoid' # method to use for adaptive integration (only SigmaFock), can be 'trapezoid' or 'simpson'
-
 adaptive_interpolation_order = 1 # order of interpolation to use for adaptive grid, can be 1 (linear), 2 (quadratic), or 3 (cubic)
+adaptive_interpolation_oversampling_ratio = 1  # how much to blow up the adaptive grid to a fine grid for fft
 
 [outputs]  # Select which outputs to write.
 electron_ldos = true
 contact_currents = true
 device_currents = true
-electron_density = false
-hole_density = false
+electron_density = true
+hole_density = true
 
 polarization_density = true
 coulomb_screening_density = true
@@ -73,19 +74,23 @@ band_edge_tracking = "eigenvalues"
 # Only one of these should be uncommented.
 energy_window_min = -15
 energy_window_max = 5
-energy_window_num = 201       # aim for 1-5 meV resolution
+energy_window_num = 2001      # aim for 1-5 meV resolution
 # energy_window_num_per_rank = 4    # don't use if you want to visualize scba outputs
+
+# peak filtering
+# dos_peak_limit = 100.0            # default 100.0
+filtering_iteration_limit = 100     # default 1
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 solver.compute_current = true # Compute Meir-Wingreen current.
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
+obc.nevp_solver = "full"        # 'beyn' or 'full'
 obc.block_sections = 1
 
-# Parameters for Beyn's method.
-obc.num_ref_iterations = 3
+# Parameters for full's method.
+obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
 obc.r_o = 10
@@ -93,7 +98,7 @@ obc.r_i = 0.8
 obc.m_0 = 31
 obc.num_quad_points = 31
 
-obc.memoizer.mode = "auto"
+obc.memoizer.mode = "off"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
@@ -108,11 +113,11 @@ solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
+obc.nevp_solver = "full"        # 'beyn' or 'full'
 obc.block_sections = 2
 
-# Parameters for Beyn's method.
-obc.num_ref_iterations = 3
+# Parameters for full's method.
+obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
 obc.r_o = 10
@@ -121,14 +126,15 @@ obc.m_0 = 32
 obc.num_quad_points = 31
 obc.residual_tolerance = 1e-4
 
-obc.memoizer.mode = "auto"
+obc.memoizer.mode = "off"
 obc.memoizer.num_ref_iterations = 3
 obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
+lyapunov.num_ref_iterations = 1
 
-lyapunov.memoizer.mode = "auto"
+lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6

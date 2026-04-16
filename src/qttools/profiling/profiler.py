@@ -206,15 +206,6 @@ class Profiler:
         supported:
         - `"pickle"`: The profiling data is saved as a pickle file.
         - `"json"`: The profiling data is saved as a json file.
-    start_event : cupy.cuda.Event
-        The CUDA event used to record the start time of a profiled function.
-        Only relevant for GPU computations.
-    end_event : cupy.cuda.Event
-        The CUDA event used to record the end time of a profiled function.
-        Only relevant for GPU computations.
-    after_barrier_event : cupy.cuda.Event
-        The CUDA event used to record the time after the barrier of a profiled function.
-        Only relevant for GPU computations.
 
     """
 
@@ -229,13 +220,6 @@ class Profiler:
             cls._instance.print_file = _OutputFile(sys.stdout)
             cls._instance.save_path = None
             cls._instance.save_format = None
-
-            if xp.__name__ == "cupy":
-                # NOTE: this consumes some resources
-                # could be moved to the __init__ of the Profiler class
-                cls._instance.start_event = xp.cuda.stream.Event()
-                cls._instance.end_event = xp.cuda.stream.Event()
-                cls._instance.after_barrier_event = xp.cuda.stream.Event()
 
         return cls._instance
 
@@ -408,45 +392,25 @@ class Profiler:
             # NOTE: We maybe need to barrier before starting the timer
 
             if xp.__name__ == "cupy":
+                xp.cuda.runtime.deviceSynchronize()
                 if NVTX_AVAILABLE:
                     xp.cuda.nvtx.RangePush(label)
-
-                self.start_event.record(xp.cuda.get_current_stream())
-                self.start_event.synchronize()
-                self.start_event.record(xp.cuda.get_current_stream())
-
-            else:
-                start_time = time.perf_counter()
+            start_time = time.perf_counter()
 
             yield
 
         finally:
 
             if xp.__name__ == "cupy":
+                xp.cuda.runtime.deviceSynchronize()
                 if NVTX_AVAILABLE:
                     xp.cuda.nvtx.RangePop()
 
-                self.end_event.record(xp.cuda.get_current_stream())
-                self.end_event.synchronize()
-                call_time = (
-                    xp.cuda.get_elapsed_time(self.start_event, self.end_event) * 1e-3
-                )  # Convert to seconds.
-            else:
-                call_time = time.perf_counter() - start_time
+            call_time = time.perf_counter() - start_time
 
             if comm is not None and QTX_PROFILE_COMM_SYNC:
                 comm.barrier()
-                if xp.__name__ == "cupy":
-                    self.after_barrier_event.record(xp.cuda.get_current_stream())
-                    self.after_barrier_event.synchronize()
-                    after_barrier_time = (
-                        xp.cuda.get_elapsed_time(
-                            self.start_event, self.after_barrier_event
-                        )
-                        * 1e-3
-                    )
-                else:
-                    after_barrier_time = time.perf_counter() - start_time
+                after_barrier_time = time.perf_counter() - start_time
             else:
                 after_barrier_time = call_time
 

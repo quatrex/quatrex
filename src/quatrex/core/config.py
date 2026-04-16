@@ -74,9 +74,10 @@ class SCBAConfig(BaseModel):
 
     adaptive: bool = False
     adaptive_num_points: PositiveInt = 1000
-    adaptive_start_iteration: NonNegativeInt = 0
+    adaptive_start_iteration: PositiveInt = 1   # must be iteration 1 or later, since we need iteration 0 to compute the uniform case
     adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
     adaptive_interpolation_order: Literal[1, 2, 3] = 1
+    adaptive_interpolation_oversampling_ratio: NonNegativeFloat = 1.0
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""
@@ -131,9 +132,11 @@ class MemoizerConfig(BaseModel):
     """
 
     warning_threshold: PositiveFloat = 1e-1
-    """The threshold for issuing a warning if the surface Green's functions
+    """The threshold for issuing a warning if the memoized functions
         residual is above this value after the fixed-point iterations.
     """
+
+    agreement_threshold: float = Field(default=0.999, ge=0, le=1)
 
 
 class SolverConfig(BaseModel):
@@ -264,6 +267,9 @@ class OBCConfig(BaseModel):
     The residual is computed as:
 
     $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
+    
+    This parameter is only used if the `formalism` is `wf`. Otherwise, the memoizer
+    is responsible for residual checking and warnings.
     """
 
     eta_decay: PositiveFloat = 1e-12
@@ -315,6 +321,7 @@ class OBCConfig(BaseModel):
     # Parameters for reusing surface Green's functions from previous
     # SCBA iterations.
     memoizer: MemoizerConfig = MemoizerConfig()
+    """Options for memoizing the surface Green's functions."""
 
     @model_validator(mode="after")
     def set_max_decay(self) -> Self:
@@ -334,23 +341,66 @@ class OBCConfig(BaseModel):
 
 
 class LyapunovConfig(BaseModel):
-    """Options for solving the Lyapunov equation."""
+    r"""Options for solving the Lyapunov equation.
+    The discrete Lyapunov equation arises in the computation of
+    the boundary conditions for quantities such as W.
+
+    The discrete Lyapunov equation has the form:
+
+    $$ \mathbf{A} \mathbf{X} \mathbf{A}^{\dagger} - \mathbf{X} = - \mathbf{Q} $$
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["spectral", "doubling"] = "spectral"
+    r"""The Lyapunov solver algorithm used
+
+    - "spectral": Uses the eigenvalue decomposition to solve the Lyapunov equation.
+        This method is more expensive since a full eigendecomposition is required.
+    - "doubling": Uses the doubling method to iteratively solve the Lyapunov equation.
+        This method should exponentially converge, but it is not stable if $\mathbf{A}$
+        has eigenvalues outside the unit circle.
+
+    """
+
     reduce_sparsity: bool = True
+    r"""Whether to use the sparsity of $\mathbf{A}$ to accelerate the Lyapunov solver.
+    
+    This is done by removing zero rows and columns from $\mathbf{A}$, solving the reduced
+    Lyapunov equation, and then expanding the solution back to the original size.
+    """
+
+    assume_constant_sparsity: bool = False
+    r"""Whether to assume that the sparsity pattern of $\mathbf{A}$ is constant
+    during the SCBA iterations.
+    In practice, this should be the case, but not guaranteed.
+
+    If set to True, the sparsity pattern is only computed once during
+    the first SCBA iteration and reused for subsequent iterations.
+    """
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 100
+    """The maximum number of iterations for the doubling method."""
+
     relative_tol: PositiveFloat = 1e-4
+    """The relative tolerance for the doubling method."""
+
     absolute_tol: PositiveFloat = 1e-8
+    """The absolute tolerance for the doubling method."""
 
     # Parameter for spectral Lyapunov solver.
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
-    warning_threshold: PositiveFloat = 1e-1
+    """The number of fixed-point iterations used to refine the solution
+        of the solution of the spectral Lyapunov solver.
+
+    This is not used in the doubling method. Additionally, the number of iterations in
+    the memoizer is also independent of this parameter.  
+    """
 
     memoizer: MemoizerConfig = MemoizerConfig()
+    """Options for memoizing the Lyapunov solver."""
 
 
 class ElectronConfig(BaseModel):
@@ -681,10 +731,29 @@ class DeviceConfig(BaseModel):
 
     transport_direction: Literal["x", "y", "z"]
 
+    block_size: PositiveInt | list[PositiveInt] | None = None
+    """The block size to use for the device Hamiltonian.
+
+    If a single integer is given, a constant block size is assumed.
+    Alternatively, a list of block sizes can be given to specify the
+    size of each block along transport direction.
+
+    This cannot be used in conjunction with
+    `construct_from_unit_cell=True` since the block sizes are determined
+    from the unit cell and the `neighbor_cell_cutoff`.
+
+    On the other hand, if `construct_from_unit_cell=False`, the block
+    size must be given.
+
+    """
+
     contacts: list[ContactConfig] = Field(default_factory=list)
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
 
+    # (transport direction, transverse direction 1, transverse direction 2)
+    # will add ^that many dimensions to g_lesser
+    # ex. (1, 7, 10) --> g_lesser.shape = (num_energy_points, 7, 10, num_orbitals, num_orbitals)
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
@@ -1053,6 +1122,32 @@ class QuatrexConfig(BaseModel):
             save_path=self.outputs.profiling_path,
             save_format=self.outputs.profiling_save_format,
         )
+
+        return self
+
+    # liyongda (16 Mar 2026): I have some archive Quatrex runs from before this change, where block_size=32 was not added to the quatrex_config.toml
+    #   don't want to retroactively add block_size parameter to all the .toml files
+    #   just comment out this check
+    #   https://github.com/quatrex/quatrex/commit/d5aaf6a87349a127891c19bef313879b1987c14d
+    # liyongda (30 Mar 2026): I cleaned up old archive Quatrex runs. Now all archive runs have the block_size parameter in the .toml files, so I will uncomment this check again
+    @model_validator(mode="after")
+    def check_device_block_size(self) -> Self:
+        """Checks that block size is consistent with other parameters."""
+
+        if self.formalism == "wf":
+            # NOTE: Block sizes are not used in the wavefunction
+            # formalism.
+            return self
+
+        if self.device.construct_from_unit_cell and self.device.block_size is not None:
+            raise ValueError(
+                "block_size cannot be used in conjunction with construct_from_unit_cell=True."
+            )
+
+        if not self.device.construct_from_unit_cell and self.device.block_size is None:
+            raise ValueError(
+                "block_size must be given when construct_from_unit_cell=False."
+            )
 
         return self
 

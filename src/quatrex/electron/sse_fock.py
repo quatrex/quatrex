@@ -41,14 +41,15 @@ class SigmaFock(ScatteringSelfEnergy):
             if coulomb_matrix.distribution_state != "nnz"
             else None
         )
+        # liyongda (11 Mar 2026): directly loaded from examples/w90/carbon-nanotube/inputs/coulomb_matrix.mat in scba init, and eventually passed here. No processing
         self.coulomb_matrix_data = coulomb_matrix.data[0]
 
     @profiler.profile(label="SigmaFock", level="default", comm=comm)
-    def update_energies(self, electron_energies: NDArray):
+    def update_energies(self, new_energies: NDArray):
         """ Update energy grid """
-        self.energies = electron_energies
+        self.energies = new_energies
         
-    @profiler.profile(level="api")
+    @profiler.profile(label="SigmaFock", level="default", comm=comm)
     def compute(self, g_lesser: DSDBSparse, use_adaptive: bool, adaptive_integration_method: str, out: tuple[DSDBSparse, ...]) -> None:
         """Computes the Fock self-energy.
 
@@ -82,18 +83,19 @@ class SigmaFock(ScatteringSelfEnergy):
             if g_lesser.data.shape[-1] != 0:
                 if use_adaptive:
                     if adaptive_integration_method == "trapezoid":
-                        gl_density = self.prefactor * trapezoid(g_lesser.data, self.energies, axis=0)
+                        gl_density = 1j / (2 * xp.pi) * trapezoid(g_lesser.data, self.energies, axis=0)
                     elif adaptive_integration_method == "simpson":
-                        gl_density = self.prefactor * simpson(g_lesser.data, self.energies, axis=0)
+                        gl_density = 1j / (2 * xp.pi) * simpson(g_lesser.data, self.energies, axis=0)
                     else:
                         raise ValueError(f"Invalid adaptive integration method: {adaptive_integration_method}. Must be 'trapezoid' or 'simpson'.")
                 else:
-                    
-                gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+                    gl_density = self.prefactor * g_lesser.data.sum(axis=0)
+
+                # liyongda (11 Mar 2026): I think the below computation is shared regardless of energy-grid
                 sigma_retarded.data += (
                     fft_circular_convolve(
                         gl_density,
-                        self.coulomb_matrix_data,
+                        self.coulomb_matrix_data,       # just loaded from file, no processing, shape (nk,nk,norb,norb)
                         axes=tuple(range(gl_density.ndim - 1)),
                     )
                     / self.kpoint_volume

@@ -2,9 +2,10 @@
 
 import warnings
 from copy import copy
-from typing import Callable
+from pathlib import Path
 
 import numpy as np
+from mpi4py.MPI import COMM_WORLD as comm_world
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
@@ -387,7 +388,7 @@ def _assemble_kpoint(
     num_dimensions = len(kpoint_grid)
 
     if isinstance(kshift, int):
-        kshift = xp.array([kshift for _ in range(num_dimensions)])
+        kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -404,22 +405,26 @@ def _assemble_kpoint(
     )
     kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
-    index = np.argwhere(kpoint_grid > 1)[0]
-    for stack_index in np.ndindex(kpoints.shape[:-1]):
-        kpoint = kpoints[stack_index]
-        stack_index = np.array(stack_index)
-        stack_index = tuple(stack_index[index])
+    if all(kpoint_grid == 1):
+        out_matrix.stack[(...,)] += sum(matrix_dict.values())
+    else:
+        index = np.argwhere(kpoint_grid > 1)[0]
+        for stack_index in np.ndindex(kpoints.shape[:-1]):
+            kpoint = kpoints[stack_index]
+            stack_index = np.array(stack_index)
+            stack_index = tuple(stack_index[index])
 
-        cells = np.array(list(matrix_dict.keys()))
-        phases = xp.exp(2j * xp.pi * (cells @ kpoint))
+            cells = np.array(list(matrix_dict.keys()))
+            phases = np.exp(2j * np.pi * (cells @ kpoint))
+            phases = xp.asarray(phases)
 
-        # NOTE: Sparse matrix addition is slow
-        # but unavoidable due to memory constraints.
-        # TODO: Could still be optimized
-        matrix_contribution = sum(
-            [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
-        )
-        out_matrix.stack[(...,) + stack_index] += matrix_contribution
+            # NOTE: Sparse matrix addition is slow
+            # but unavoidable due to memory constraints.
+            # TODO: Could still be optimized
+            matrix_contribution = sum(
+                [phase * matrix for phase, matrix in zip(phases, matrix_dict.values())]
+            )
+            out_matrix.stack[(...,) + stack_index] += matrix_contribution
 
 
 def _create_matrix_from_unit_cells(
@@ -507,9 +512,30 @@ def _load_matrix_from_unit_cell(
         The matrix, optional k-point dictionary, and optional block sizes.
 
     """
-    unit_cells = distributed_load(
-        config.input_dir / f"{matrix_name}_unit_cells.npy"
-    ).astype(xp.complex128)
+    matrices = distributed_load(config.input_dir / f"{matrix_name}.mat")
+
+    keys = np.array(list(matrices.keys()))
+
+    min_coords = keys.min(axis=0)
+    max_coords = keys.max(axis=0)
+    grid_shape = max_coords - min_coords + 1
+
+    expected_size = np.prod(grid_shape)
+    actual_size = len(matrices)
+    if expected_size != actual_size:
+        raise ValueError(
+            f"Expected {expected_size} unit cells based on the detected grid shape, "
+            f"but found {actual_size} unit cells in the matrix file."
+        )
+
+    first_matrix = next(iter(matrices.values()))
+    matrix_shape = first_matrix.shape
+    unit_cells = xp.zeros(
+        tuple(grid_shape) + tuple(matrix_shape), dtype=first_matrix.dtype
+    )
+
+    for coord, matrix in matrices.items():
+        unit_cells[coord] = xp.asarray(matrix).astype(xp.complex128)
 
     # Apply cutoff if requested and available
     trimmed_unit_cells = trim_tight_binding_matrix(
@@ -525,10 +551,9 @@ def load_matrix(
     matrix_name: str,
     sparsity_pattern: sparse.coo_matrix | None = None,
     shift_kpoints: bool = False,
-    symmetry_op: Callable = xp.conj,
 ) -> tuple[DSDBSparse, sparse.coo_matrix]:
-    """Loads a matrix from file, applying symmetrization and optionally
-    using a provided sparsity pattern.
+    """Loads a Hermitian matrix from file and optionally
+    applies a provided sparsity pattern.
 
     Parameters
     ----------
@@ -542,8 +567,6 @@ def load_matrix(
     shift_kpoints : bool
         Whether to "shift"/"center" the kpoints in the allocated
         DSDBSparse.
-    symmetry_op : Callable, optional
-        The symmetry operation to apply, by default xp.conj
 
     Returns
     -------
@@ -559,10 +582,26 @@ def load_matrix(
             config, matrix_name
         )
     else:
-        matrix_sparray = distributed_load(
-            config.input_dir / f"{matrix_name}.npz"
-        ).astype(xp.complex128)
-        block_sizes = get_host(distributed_load(config.input_dir / "block_sizes.npy"))
+        matrix_sparray = distributed_load(config.input_dir / f"{matrix_name}.mat")
+        if (0, 0, 0) not in matrix_sparray.keys():
+            raise ValueError(
+                f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
+                f"Available keys: {list(matrix_sparray.keys())}"
+            )
+        matrix_sparray = matrix_sparray[(0, 0, 0)]
+        matrix_sparray = sparse.coo_matrix(matrix_sparray).astype(xp.complex128)
+
+        block_sizes = config.device.block_size
+        if isinstance(block_sizes, int):
+            num_blocks, remainder = divmod(matrix_sparray.shape[0], block_sizes)
+            if remainder != 0:
+                raise ValueError(
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {matrix_sparray.shape[0]}."
+                )
+            block_sizes = [block_sizes] * num_blocks
+
+        block_sizes = np.array(block_sizes)
+
         matrix_dict = None
 
     # TODO: This is not efficient and will be refactored when the inputs
@@ -574,7 +613,10 @@ def load_matrix(
         sparsity_pattern = sparsity_pattern + sparsity_pattern.T
 
     # Symmetrize the data.
-    matrix_sparray = 0.5 * (matrix_sparray + symmetry_op(matrix_sparray).T)
+    # TODO: This should be avoided due to the extra copy
+    # when addressing issue #214, only the upper part should be kept
+    # as only symmetric matrices are loaded
+    matrix_sparray = 0.5 * (matrix_sparray + matrix_sparray.T.conj())
 
     matrix = config.compute.dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
@@ -582,7 +624,7 @@ def load_matrix(
         global_stack_shape=(comm.stack.size,)
         + tuple([k for k in config.device.kpoint_grid if k > 1]),
         symmetry=config.scba.symmetric,
-        symmetry_op=symmetry_op,
+        symmetry_op=xp.conj,
     )
     matrix.data[:] = 0.0  # Initialize to zero.
     if matrix_dict is None:
@@ -612,3 +654,55 @@ def load_matrix(
         del matrix_dict
 
     return matrix, sparsity_pattern
+
+
+def distributed_read_xyz(filename: Path) -> tuple[NDArray, NDArray, NDArray]:
+    """Reads atomic structure data from an XYZ file.
+
+    Parameters
+    ----------
+    filename : Path
+        Path to the XYZ file containing the atomic structure. The file
+        should have the standard XYZ format with lattice parameters on
+        the second line.
+
+    Returns
+    -------
+    lattice : NDArray
+        3x3 array containing the lattice vectors (in rows).
+    atom_coordinates : NDArray
+        (N_atoms, 3) array containing atomic coordinates.
+    atom_types : NDArray
+        (N_atoms,) array containing atom symbol for each atom.
+
+    """
+
+    lattice_vectors = None
+    atom_coordinates = None
+    atom_types = None
+
+    if comm_world.rank == 0:
+        # Read only the second line of the file (this contains the
+        # lattice parameters)
+        with open(filename, "r") as f:
+            __ = f.readline()
+            lattice_line = f.readline().strip()
+
+        if not lattice_line.startswith("Lattice="):
+            raise ValueError(
+                f"Invalid lattice line in {filename}. Expected 'Lattice=', got '{lattice_line}'"
+            )
+
+        lattice_vectors = lattice_line.split("=")[1].strip().split('"')[1]
+        lattice_vectors = np.fromstring(
+            lattice_vectors, dtype=np.float64, sep=" "
+        ).reshape(3, 3)
+        atom_coordinates = np.loadtxt(filename, skiprows=2, usecols=(1, 2, 3))
+        atom_types = np.loadtxt(filename, skiprows=2, usecols=(0,), dtype=str)
+
+    # Broadcast the data to all the ranks
+    lattice_vectors = comm_world.bcast(lattice_vectors, root=0)
+    atom_coordinates = comm_world.bcast(atom_coordinates, root=0)
+    atom_types = comm_world.bcast(atom_types, root=0)
+
+    return lattice_vectors, atom_coordinates, atom_types

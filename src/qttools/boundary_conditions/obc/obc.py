@@ -1,0 +1,202 @@
+# Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
+from abc import ABC, abstractmethod
+
+from qttools import NDArray, xp
+from qttools.boundary_conditions.boundary_system import BaseBoundarySystem
+from qttools.boundary_conditions.system_reduction import SystemReducer
+from qttools.kernels import linalg
+
+
+class OBCSolver(ABC):
+    r"""Abstract base class for the open-boundary condition solver.
+
+    The recursion relation for the surface Green's function is given by:
+
+    \[
+        x_{ii} = (a_{ii} - a_{ji} x_{ii} a_{ij})^{-1}
+    \]
+
+    """
+
+    @abstractmethod
+    def __call__(
+        self,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
+        contact: str,
+    ) -> NDArray:
+        """Returns the surface Green's function.
+
+        Parameters
+        ----------
+        a_ii : NDArray
+            Diagonal boundary block of a system matrix.
+        a_ij : NDArray
+            Superdiagonal boundary block of a system matrix.
+        a_ji : NDArray
+            Subdiagonal boundary block of a system matrix.
+        contact : str
+            The contact to which the boundary blocks belong.
+
+        Returns
+        -------
+        x_ii : NDArray
+            The system's surface Green's function.
+
+        """
+        ...
+
+
+class OBCSystem(BaseBoundarySystem):
+    """An obc system solver with memoization and system reduction.
+
+    Parameters
+    ----------
+    boundary_solver : OBCSolver
+        The obc solver to be memoized.
+    cache_compressor : object, optional
+        An object with 'compress' and 'decompress' methods to handle
+        cache compression. If None, no compression is applied.
+    num_ref_iterations : int, optional
+        The number of fixed-point iterations to refine the solution. Default is 2.
+    relative_tol : float, optional
+        The relative tolerance for convergence. Default is 0.2.
+    absolute_tol : float, optional
+        The absolute tolerance for convergence. Default is 1e-6.
+    warning_threshold : float, optional
+        The threshold for issuing a warning about high residuals. Default is 0.1.
+    memoization_mode : str, optional
+        The memoization mode. Can be 'off', 'auto', 'force-after-first', or 'force'.
+        Default is 'auto'.
+    agreement_threshold : float, optional
+        The threshold for agreement across MPI ranks to consider a memoized solution valid.
+        Default is 0.999.
+
+    """
+
+    def __init__(
+        self,
+        boundary_solver: OBCSolver,
+        cache_compressor: None = None,
+        system_reducer: SystemReducer | None = None,
+        num_ref_iterations: int = 2,
+        relative_tol: float = 2e-1,
+        absolute_tol: float = 1e-6,
+        warning_threshold: float = 1e-1,
+        memoization_mode: str = "auto",
+        agreement_threshold: float = 0.999,
+    ) -> None:
+        """Initializes the obc system."""
+
+        super().__init__(
+            boundary_solver=boundary_solver,
+            cache_compressor=cache_compressor,
+            system_reducer=system_reducer,
+            num_ref_iterations=num_ref_iterations,
+            relative_tol=relative_tol,
+            absolute_tol=absolute_tol,
+            warning_threshold=warning_threshold,
+            memoization_mode=memoization_mode,
+            agreement_threshold=agreement_threshold,
+        )
+
+    def _fixed_point_step(
+        self,
+        boundary_system: tuple[NDArray, ...],
+        solution: NDArray,
+    ) -> NDArray:
+        r"""Perform a fixed-point iteration step to refine the solution.
+
+        The fix-point iteration is given by:
+        $$\mathbf{x}_{n+1} = [\mathbf{a}_{ii} - \mathbf{a}_{ji} \mathbf{x}_{n} \mathbf{a}_{ij}]^{-1}$$
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+            It is expected to be a tuple (a_ii, a_ij, a_ji)
+        solution : NDArray
+            The current solution to refine.
+
+        Returns
+        -------
+        refined_solution : NDArray
+            The refined solution after one fixed-point iteration step.
+
+        """
+        a_ii, a_ij, a_ji = boundary_system
+        return linalg.inv(a_ii - a_ji @ solution @ a_ij)
+
+    def _get_starting_guess(
+        self,
+        boundary_system: tuple[NDArray, ...],
+    ) -> NDArray:
+        r"""Get a starting guess for the obc system.
+
+        For the obc, a good starting guess is the inverse of the
+        diagonal block $\mathbf{a}_{ii}$.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+            It is expected to be a tuple (a_ii, a_ij, a_ji)
+
+        Returns
+        -------
+        starting_guess : NDArray
+            The starting guess for the boundary system.
+
+        """
+        a_ii, *__ = boundary_system
+        return linalg.inv(a_ii)
+
+    def _get_residuals(
+        self,
+        boundary_system: tuple[NDArray, ...],
+        test_solution: NDArray,
+    ) -> tuple[NDArray, ...]:
+        r"""Compute the residuals of a test solution.
+
+            They are computed as follows:
+            $$\mathbf{x}_{ref} = [\mathbf{a}_{ii} - \mathbf{a}_{ji} \mathbf{x}_{test} \mathbf{a}_{ij}]^{-1}$$
+            $$\mathbf{residual_{abs}} = \lvert \mathbf{x}_{ref} - \mathbf{x}_{test} \rvert$$
+            $$\mathbf{residual_{rel}} = \frac{\mathbf{residual_{abs}}}{\lvert \mathbf{x}_{ref} \rvert}$$
+
+        Computing residuals causes an additional fixed-point iteration
+        step. The refined solution from this step is returned as well.
+
+        Parameters
+        ----------
+        boundary_system : tuple[NDArray, ...]
+            The boundary system to solve.
+            It is expected to be a tuple (a_ii, a_ij, a_ji)
+        test_solution : NDArray
+            The test solution to evaluate.
+
+        Returns
+        -------
+        rel_residuals : NDArray
+            The relative residuals of the test solution.
+        abs_residuals : NDArray
+            The absolute residuals of the test solution.
+        solution : tuple[NDArray, ...]
+            The (possibly refined) solution of the boundary system.
+
+        """
+        if isinstance(test_solution, xp.ndarray):
+            solution_ref = self._fixed_point_step(boundary_system, test_solution)
+
+            abs_residuals = xp.linalg.norm(solution_ref - test_solution, axis=(-2, -1))
+            rel_residuals = abs_residuals / xp.linalg.norm(solution_ref, axis=(-2, -1))
+
+            return rel_residuals, abs_residuals, solution_ref
+
+        raise TypeError(
+            f"Expected test_solution to be of type "
+            f"xp.ndarray, got {type(test_solution)} instead. "
+            "This could be due to the OBCSystem being used in QTBM"
+            "with return_injected=True, which is currently not supported."
+        )

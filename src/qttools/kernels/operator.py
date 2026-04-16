@@ -4,11 +4,11 @@ from qttools import QTX_USE_CUPY_JIT, NDArray, xp
 from qttools.kernels import linalg
 
 if xp.__name__ == "cupy":
-    import cupyx as cpx
+    from cupyx import jit
 
     if QTX_USE_CUPY_JIT:
 
-        @cpx.jit.rawkernel()
+        @jit.rawkernel()
         def _contour_operator(
             output: NDArray,
             a_xx: NDArray,
@@ -20,7 +20,7 @@ if xp.__name__ == "cupy":
         ):
             # assumes c order of output and a_xx
 
-            idx = int(cpx.jit.blockIdx.x * cpx.jit.blockDim.x + cpx.jit.threadIdx.x)
+            idx = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
             if idx < batchsize * num_quatrature_points * blocksize * blocksize:
 
                 # batch index

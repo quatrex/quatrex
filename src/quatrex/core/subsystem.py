@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 
-from qttools import NDArray, lyapunov, obc
+from qttools import NDArray
+from qttools.boundary_conditions import lyapunov, obc
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver import RGF, GFSolver, Inv, RGFDist
 from qttools.nevp import NEVP, Beyn, Full
@@ -97,7 +98,7 @@ class SubsystemSolver(ABC):
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig
-    ) -> obc.OBCSolver:
+    ) -> obc.OBCSystem:
         """Configures the OBC algorithm from the config.
 
         Parameters
@@ -107,7 +108,7 @@ class SubsystemSolver(ABC):
 
         Returns
         -------
-        obc.OBCSolver
+        obc.OBCSystem
             The configured OBC solver.
 
         """
@@ -127,7 +128,6 @@ class SubsystemSolver(ABC):
                 min_propagation=obc_config.min_propagation,
                 residual_tolerance=obc_config.residual_tolerance,
                 residual_normalization=obc_config.residual_normalization,
-                warning_threshold=obc_config.warning_threshold,
                 eta_decay=obc_config.eta_decay,
             )
 
@@ -136,15 +136,16 @@ class SubsystemSolver(ABC):
                 f"OBC algorithm '{obc_config.algorithm}' not implemented."
             )
 
-        if obc_config.memoizer.mode != "off":
-            obc_solver = obc.OBCMemoizer(
-                obc_solver=obc_solver,
-                num_ref_iterations=obc_config.memoizer.num_ref_iterations,
-                memoize_rel_tol=obc_config.memoizer.relative_tol,
-                memoize_abs_tol=obc_config.memoizer.absolute_tol,
-                warning_threshold=obc_config.memoizer.warning_threshold,
-                memoizing_mode=obc_config.memoizer.mode,
-            )
+        # NOTE: wrapper handles if the memoizer is off
+        obc_solver = obc.OBCSystem(
+            boundary_solver=obc_solver,
+            num_ref_iterations=obc_config.memoizer.num_ref_iterations,
+            relative_tol=obc_config.memoizer.relative_tol,
+            absolute_tol=obc_config.memoizer.absolute_tol,
+            warning_threshold=obc_config.memoizer.warning_threshold,
+            memoization_mode=obc_config.memoizer.mode,
+            agreement_threshold=obc_config.memoizer.agreement_threshold,
+        )
 
         return obc_solver
 
@@ -152,7 +153,7 @@ class SubsystemSolver(ABC):
         self,
         lyapunov_config: LyapunovConfig,
         lyapunov_compute_config: LyapunovComputeConfig,
-    ) -> lyapunov.LyapunovSolver:
+    ) -> lyapunov.LyapunovSystem:
         """Configures the Lyapunov solver from the config.
 
         Parameters
@@ -164,16 +165,14 @@ class SubsystemSolver(ABC):
 
         Returns
         -------
-        lyapunov.LyapunovSolver
+        lyapunov.LyapunovSystem
             The configured Lyapunov solver.
 
         """
         if lyapunov_config.algorithm == "spectral":
             lyapunov_solver = lyapunov.Spectral(
                 num_ref_iterations=lyapunov_config.num_ref_iterations,
-                warning_threshold=lyapunov_config.warning_threshold,
                 eig_compute_location=lyapunov_compute_config.eig_compute_location,
-                reduce_sparsity=lyapunov_config.reduce_sparsity,
                 use_pinned_memory=lyapunov_compute_config.use_pinned_memory,
             )
         elif lyapunov_config.algorithm == "doubling":
@@ -181,23 +180,29 @@ class SubsystemSolver(ABC):
                 max_iterations=lyapunov_config.max_iterations,
                 convergence_rel_tol=lyapunov_config.relative_tol,
                 convergence_abs_tol=lyapunov_config.absolute_tol,
-                reduce_sparsity=lyapunov_config.reduce_sparsity,
             )
         else:
             raise NotImplementedError(
                 f"Lyapunov algorithm '{lyapunov_config.algorithm}' not implemented."
             )
 
-        if lyapunov_config.memoizer.mode != "off":
-            lyapunov_solver = lyapunov.LyapunovMemoizer(
-                lyapunov_solver=lyapunov_solver,
-                num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
-                memoize_rel_tol=lyapunov_config.memoizer.relative_tol,
-                memoize_abs_tol=lyapunov_config.memoizer.absolute_tol,
-                warning_threshold=lyapunov_config.memoizer.warning_threshold,
-                memoizing_mode=lyapunov_config.memoizer.mode,
-                reduce_sparsity=lyapunov_config.reduce_sparsity,
-            )
+        lyapunov_system_reducer = lyapunov.LyapunovSystemReducer(
+            reduce_sparsity=lyapunov_config.reduce_sparsity,
+            assume_constant_sparsity=lyapunov_config.assume_constant_sparsity,
+        )
+
+        # NOTE: wrapper handles if the memoizer is off
+        lyapunov_solver = lyapunov.LyapunovSystem(
+            boundary_solver=lyapunov_solver,
+            system_reducer=lyapunov_system_reducer,
+            num_ref_iterations=lyapunov_config.memoizer.num_ref_iterations,
+            relative_tol=lyapunov_config.memoizer.relative_tol,
+            absolute_tol=lyapunov_config.memoizer.absolute_tol,
+            warning_threshold=lyapunov_config.memoizer.warning_threshold,
+            memoization_mode=lyapunov_config.memoizer.mode,
+            agreement_threshold=lyapunov_config.memoizer.agreement_threshold,
+        )
+
         return lyapunov_solver
 
     def _configure_solver(self, solver_config: SolverConfig) -> GFSolver:

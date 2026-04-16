@@ -1,12 +1,47 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import subprocess
+import tomllib
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 
-def test_single_rank(example: tuple[Path, bool]):
+def _adjust_config_paths(quatrex_config_path: Path, tmp_config_path: Path):
+    """Adjusts the input directory path in the temporary config to point
+    to the example's input directory.
+
+    Parameters
+    ----------
+    quatrex_config_path : Path
+        The path to the original config file in the example directory.
+    tmp_config_path : Path
+        The path to the temporary config file that will be used for
+        testing.
+
+    """
+    # Read the original config to find the input directory.
+    with open(quatrex_config_path, "rb") as f:
+        config = tomllib.load(f)
+
+    config_text = quatrex_config_path.read_text()
+
+    input_dir = config.get("input_dir")
+    if input_dir is None:
+        # If the input directory is not specified, we assume it is
+        # "inputs" relative to the config file.
+        abs_input_dir = str((quatrex_config_path.parent / "inputs").resolve())
+        config_text = f'input_dir = "{abs_input_dir}"\n' + config_text
+
+    elif not Path(input_dir).is_absolute():
+        abs_input_dir = str((quatrex_config_path.parent / input_dir).resolve())
+        config_text = config_text.replace(input_dir, abs_input_dir)
+
+    # Copy the config and replace the input directory with the absolute path.
+    tmp_config_path.write_text(config_text)
+
+
+def test_single_rank(example: tuple[Path, bool], tmp_path: Path):
     """Tests that the example runs and matches reference observables."""
 
     example_path, distributed = example
@@ -14,13 +49,17 @@ def test_single_rank(example: tuple[Path, bool]):
     if distributed:
         pytest.skip("Skipping single-rank test for distributed example.")
 
+    # Set up reference and temporary configs.
     quatrex_config_path = example_path / "quatrex_config.toml"
+    tmp_config_path = tmp_path / "quatrex_config.toml"
+    _adjust_config_paths(quatrex_config_path, tmp_config_path)
 
+    # Run the example using the CLI.
     from quatrex.cli.main import run
 
-    run(quatrex_config_path)
+    run(tmp_config_path)
 
-    output_dir = example_path / "outputs"
+    output_dir = tmp_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
 
     for output_file in output_dir.glob("*.npy"):
@@ -35,20 +74,23 @@ def test_single_rank(example: tuple[Path, bool]):
         ), f"Value mismatch for '{output_file.name}'"
 
 
-def test_distributed(example: tuple[Path, bool]):
+def test_distributed(example: tuple[Path, bool], tmp_path: Path):
     """Tests that the distributed example runs and matches reference observables."""
 
     example_path, distributed = example
 
+    # Set up reference and temporary configs.
     quatrex_config_path = example_path / "quatrex_config.toml"
+    tmp_config_path = tmp_path / "quatrex_config.toml"
+    _adjust_config_paths(quatrex_config_path, tmp_config_path)
 
     # TODO: This is not compatible with SLURM yet.
     # This needs to be adapted when running on a cluster.
-    args = ["mpiexec", "-n", "6", "quatrex", "run", str(quatrex_config_path)]
+    args = ["mpiexec", "-n", "6", "quatrex", "run", str(tmp_config_path)]
 
     subprocess.run(args, check=True, stdout=None, stderr=None)
 
-    output_dir = example_path / "outputs"
+    output_dir = tmp_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
 
     for output_file in output_dir.glob("*.npy"):

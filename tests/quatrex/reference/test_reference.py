@@ -1,5 +1,4 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -31,7 +30,6 @@ def test_single_rank(
     adjust_config_paths(quatrex_config_path, tmp_config_path)
 
     # Run the example using the CLI.
-
     cli_run(tmp_config_path)
 
     output_dir = tmp_path / "outputs"

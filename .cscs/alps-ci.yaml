@@ -1,0 +1,71 @@
+include:
+  - remote: "https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml"
+
+stages:
+  - build_base
+  - build
+  - test
+
+build base:
+  extends: .container-builder-cscs-gh200
+  stage: build_base
+  before_script:
+    - DOCKER_TAG=`cat .cscs/Dockerfile.base | sha256sum - | head -c 16`
+    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/base/quatrex:$DOCKER_TAG
+    - echo "BASE_IMAGE=$PERSIST_IMAGE_NAME" > build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+  variables:
+    DOCKERFILE: .cscs/Dockerfile.base
+
+build quatrex:
+  extends: .container-builder-cscs-gh200
+  stage: build
+  variables:
+    DOCKERFILE: .cscs/Dockerfile
+    PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
+    DOCKER_BUILD_ARGS: '["BASE_IMG=$BASE_IMAGE"]'
+
+.test-common:
+  stage: test
+  extends: .container-runner-daint-gh200
+  image: $CSCS_REGISTRY_PATH/software/quatrex:$CI_COMMIT_SHORT_SHA
+  before_script:
+    # Activate the virtual environment and cd to the repo.
+    - . /opt/venv/bin/activate
+    - cd /opt/repo
+    # Set up the visible devices.
+    - export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
+  variables:
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
+    SLURM_GPUS_PER_TASK: 1
+    SLURM_TIMELIMIT: '00:20:00'
+    SLURM_PARTITION: debug
+
+test quatrex single:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest tests/quatrex
+
+test qttools single:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest tests/qttools
+
+test quatrex dist:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/quatrex
+  variables:
+    SLURM_JOB_NUM_NODES: 2
+    SLURM_NTASKS: 6
+
+test qttools dist:
+  extends: .test-common
+  script:
+    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/qttools
+  variables:
+    SLURM_JOB_NUM_NODES: 2
+    SLURM_NTASKS: 6

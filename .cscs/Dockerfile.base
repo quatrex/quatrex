@@ -1,0 +1,104 @@
+FROM jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+ARG libfabric_version=1.22.0
+ARG mpi_version=4.3.1
+ARG osu_version=7.5.1
+
+# workaround ubuntu ports slowing us down
+RUN sed -i -e 's|http://archive.ubuntu.com/ubuntu|https://jfrog.svc.cscs.ch/artifactory/ubuntu|' -e 's|http://security.ubuntu.com/ubuntu|https://jfrog.svc.cscs.ch/artifactory/ubuntu|' -e 's|http://ports.ubuntu.com/ubuntu-ports|https://jfrog.svc.cscs.ch/artifactory/ubuntu-ports|' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf '%s\n%s' "Acquire::http::AllowRedirect "true";" "Acquire::http::Pipeline-Depth "0";" > /etc/apt/apt.conf.d/99-jfrog-proxy \
+    && apt -o "Acquire::https::Verify-Peer=false" update \
+    && apt -o "Acquire::https::Verify-Peer=false" install ca-certificates
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    automake \
+    autoconf \
+    libtool \
+    make \
+    gdb \
+    strace \
+    wget \
+    python3.13 \
+    python3.13-venv \
+    python3.13-dev \
+    git \
+    git-lfs \
+    gfortran \
+    && rm -rf /var/lib/apt/lists/*
+
+# When building on a machine without a GPU, during the build process on
+# Daint the GPU driver and libraries are not imported into the build
+# process
+RUN echo '/usr/local/cuda/lib64/stubs' > /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
+
+RUN git clone https://github.com/hpc/xpmem \
+    && cd xpmem/lib \
+    && gcc -I../include -shared -o libxpmem.so.1 libxpmem.c \
+    && ln -s libxpmem.so.1 libxpmem.so \
+    && mv libxpmem.so* /usr/lib \
+    && cp ../include/xpmem.h /usr/include/ \
+    && ldconfig \
+    && cd ../../ \
+    && rm -Rf xpmem
+
+RUN wget -q https://github.com/ofiwg/libfabric/archive/v${libfabric_version}.tar.gz \
+    && tar xf v${libfabric_version}.tar.gz \
+    && cd libfabric-${libfabric_version} \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr --with-cuda=/usr/local/cuda \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. \
+    && rm -rf v${libfabric_version}.tar.gz libfabric-${libfabric_version}
+
+RUN wget -q https://www.mpich.org/static/downloads/${mpi_version}/mpich-${mpi_version}.tar.gz \
+    && tar xf mpich-${mpi_version}.tar.gz \
+    && cd mpich-${mpi_version} \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr --enable-fast=O3,ndebug --enable-fortran --enable-cxx --with-device=ch4:ofi --with-libfabric=/usr --with-xpmem=/usr --with-cuda=/usr/local/cuda \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. \
+    && rm -rf mpich-${mpi_version}.tar.gz mpich-${mpi_version}
+
+RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-v${osu_version}.tar.gz \
+    && tar xf osu-micro-benchmarks-v${osu_version}.tar.gz \
+    && cd osu-micro-benchmarks-v${osu_version} \
+    && ./configure --prefix=/usr/local --with-cuda=/usr/local/cuda CC=$(which mpicc) CFLAGS=-O3 \
+    && make -j$(nproc) \
+    && make install \
+    && cd .. \
+    && rm -rf osu-micro-benchmarks-v${osu_version} osu-micro-benchmarks-v${osu_version}.tar.gz
+
+# Make python3.13 the default python3.
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 \
+    && python3 -m ensurepip --upgrade
+
+# Install Python dependencies.
+RUN python3 -m venv /opt/venv \
+    && . /opt/venv/bin/activate \
+    && python3 -m pip install --no-binary=mpi4py mpi4py \
+    && python3 -m pip install cupy \
+    && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
+    && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist
+
+
+# Install cuDSS / nvmath-python.
+RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
+    && apt-get update \
+    && apt-get -y install cudss \
+    && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && python3 -m pip install nvmath-python
+
+# Get rid of the stubs libraries, because at runtime the CUDA driver and
+# libraries will be available
+RUN rm /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig

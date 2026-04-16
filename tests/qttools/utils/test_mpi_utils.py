@@ -4,12 +4,20 @@ from pathlib import Path
 
 import pytest
 import scipy.sparse as sps
+from mpi4py import MPI
 from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import sparse as sparse
 from qttools import xp
 from qttools.comm import comm
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+
+
+def _is_multi_node() -> bool:
+    """Checks if the MPI program is running on multiple nodes."""
+    host = MPI.Get_processor_name().strip().lower()
+    hosts = set(global_comm.allgather(host))
+    return len(hosts) > 1
 
 
 def setup_module():
@@ -64,10 +72,13 @@ def test_get_section_sizes(
     )
 
 
+@pytest.mark.skipif(
+    _is_multi_node(),
+    reason="This test only works if all ranks see the same file system.",
+)
 @pytest.mark.mpi(min_size=2)
 def test_distributed_load_npy(mpi_tmp_path: Path):
     """Test the distributed_load function."""
-    # NOTE: This test only works if all ranks see the same file system.
     arr = None
     if global_comm.rank == 0:
         arr = xp.random.rand(10)
@@ -78,10 +89,13 @@ def test_distributed_load_npy(mpi_tmp_path: Path):
     assert xp.allclose(arr, loaded_arr)
 
 
+@pytest.mark.skipif(
+    _is_multi_node(),
+    reason="This test only works if all ranks see the same file system.",
+)
 @pytest.mark.mpi(min_size=2)
 def test_distributed_load_npz(mpi_tmp_path: Path):
     """Test the distributed_load function."""
-    # NOTE: This test only works if all ranks see the same file system.
     coo = None
     if global_comm.rank == 0:
         coo = sps.random(10, 10, density=0.5)

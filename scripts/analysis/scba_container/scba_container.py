@@ -419,9 +419,9 @@ class SCBAContainer:
             linewidth=linewidthImag,
             label=f"imag Iter {iteration}",
         )
-        min_sigma_lesser = min(np.min(np.real(self.sigma_lesser[iteration, :, idx])), np.min(np.imag(self.sigma_lesser[iteration, :, idx])))
-        max_sigma_lesser = max(np.max(np.real(self.sigma_lesser[iteration, :, idx])), np.max(np.imag(self.sigma_lesser[iteration, :, idx])))
-        axs[3, 0].vlines(fermi_level, min_sigma_lesser, max_sigma_lesser, color="tab:green", linewidth=1)
+        # min_sigma_lesser = min(np.min(np.real(self.sigma_lesser[iteration, :, idx])), np.min(np.imag(self.sigma_lesser[iteration, :, idx])))
+        # max_sigma_lesser = max(np.max(np.real(self.sigma_lesser[iteration, :, idx])), np.max(np.imag(self.sigma_lesser[iteration, :, idx])))
+        # axs[3, 0].vlines(fermi_level, min_sigma_lesser, max_sigma_lesser, color="tab:green", linewidth=1)
         axs[3, 0].grid()
         axs[3, 0].legend()
 
@@ -446,9 +446,9 @@ class SCBAContainer:
             linewidth=linewidthImag,
             label=f"imag Iter {iteration}",
         )
-        min_sigma_greater = min(np.min(np.real(self.sigma_greater[iteration, :, idx])), np.min(np.imag(self.sigma_greater[iteration, :, idx])))
-        max_sigma_greater = max(np.max(np.real(self.sigma_greater[iteration, :, idx])), np.max(np.imag(self.sigma_greater[iteration, :, idx])))
-        axs[3, 1].vlines(fermi_level, min_sigma_greater, max_sigma_greater, color="tab:green", linewidth=1)
+        # min_sigma_greater = min(np.min(np.real(self.sigma_greater[iteration, :, idx])), np.min(np.imag(self.sigma_greater[iteration, :, idx])))
+        # max_sigma_greater = max(np.max(np.real(self.sigma_greater[iteration, :, idx])), np.max(np.imag(self.sigma_greater[iteration, :, idx])))
+        # axs[3, 1].vlines(fermi_level, min_sigma_greater, max_sigma_greater, color="tab:green", linewidth=1)
         axs[3, 1].grid()
         axs[3, 1].legend()
 

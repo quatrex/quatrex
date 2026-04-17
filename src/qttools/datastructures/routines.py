@@ -405,44 +405,70 @@ def btd_sandwich(
     out_.blocks[-2, -1] += a_.blocks[-2, -1] @ b_.blocks[-2, -1] @ a_.blocks[-1, -2]
 
 
-class BlockMatrix(dict):
+class BlockMatrix:
+    """Block-sparse matrix class, including halo blocks for communication.
+
+    Any local block keys are stored in the blocks of the dsdbsparse,
+    while non-local block keys are stored in a separate dictionary.
+
+    Parameters
+    ----------
+    dsdbsparse : DSDBSparse
+        The underlying DSDBSparse matrix.
+    local_keys : set[tuple[int, int]]
+        The set of block keys that are local to the current rank.
+    origin : tuple[int, int]
+        The block index corresponding to the (0, 0) block of the
+        dsdbsparse. This is used to determine the local block keys.
+    mapping : dict[tuple[int, int], xp.ndarray], optional
+        A mapping from non-local block keys to their corresponding data
+        arrays. This is used to store halo blocks that are communicated
+        between ranks. The default is None, which means that there are
+        no non-local blocks.
+
+    """
 
     def __init__(
         self,
         dsdbsparse: DSDBSparse,
         local_keys: set[tuple[int, int]],
         origin: tuple[int, int],
-        mapping=None,
+        mapping: dict | None = None,
     ):
+        """Initializes the BlockMatrix."""
         self.dsdbsparse = dsdbsparse
         self.local_keys = local_keys
         self.origin = origin
-        mapping = mapping or {}
-        super(BlockMatrix, self).__init__(mapping)
         self.blocks = self.dsdbsparse.blocks
 
+        # Cache for non-local blocks.
+        self._cache = dict(mapping or {})
+
     def __getitem__(self, key):
-        if super(BlockMatrix, self).__contains__(key):
-            return super(BlockMatrix, self).__getitem__(key)
+        """Gets the block corresponding to the given key."""
+        if key in self._cache:
+            return self._cache[key]
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             return self.blocks[key]
+
         rank = comm.block.rank if comm.block is not None else 0
-        print(f"Something bad happened: {rank=}, {key=}, {self.origin=}")
-        # return None
-        raise KeyError(key)
-        # return xp.zeros((int(self.dbsparse.block_sizes[key[0]]),
-        #                  int(self.dbsparse.block_sizes[key[1]])),
-        #                 dtype=self.dbsparse.local_data.dtype)
+        raise KeyError(f"Something bad happened: {rank=}, {key=}, {self.origin=}")
 
     def __setitem__(self, key, val):
+        """Sets the block corresponding to the given key."""
         if key in self.local_keys:
             key = (key[0] - self.origin[0], key[1] - self.origin[1])
             self.blocks[key] = val
         else:
-            return super(BlockMatrix, self).__setitem__(key, val)
+            self._cache[key] = val
 
     def toarray(self):
+        """Converts the BlockMatrix to a dense array.
+
+        Debugging method to check the correctness of the block matrix.
+
+        """
         size = int(sum(self.dsdbsparse.block_sizes))
         out = xp.zeros((size, size), dtype=self.dsdbsparse.data.dtype)
         for i, (isz, ioff) in enumerate(

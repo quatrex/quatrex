@@ -94,7 +94,6 @@ def _reference_compute_block_slice(rows, cols, block_offsets, row, col):
     return inds[0], inds[-1] + 1
 
 
-@pytest.mark.usefixtures("shape", "num_inds")
 def test_find_inds(shape: tuple[int, int], num_inds: int):
     """Tests that the indices are found correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
@@ -113,7 +112,6 @@ def test_find_inds(shape: tuple[int, int], num_inds: int):
     assert xp.all(value_inds == reference_value_inds)
 
 
-@pytest.mark.usefixtures("shape", "num_blocks", "block_coords")
 def test_compute_block_slice(
     shape: tuple[int, int], num_blocks: int, block_coords: tuple[int, int]
 ):
@@ -139,7 +137,6 @@ def test_compute_block_slice(
     assert block_slice == reference_block_slice
 
 
-@pytest.mark.usefixtures("shape")
 @pytest.mark.parametrize("use_kernel", [True, False])
 def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     """Tests that the block gets densified correctly."""
@@ -168,7 +165,6 @@ def test_densify_block(shape: tuple[int, int], use_kernel: bool):
     assert xp.allclose(block, reference_block)
 
 
-@pytest.mark.usefixtures("shape")
 def test_sparsify_block(shape: tuple[int, int]):
     """Tests that the block gets sparsified correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
@@ -180,7 +176,6 @@ def test_sparsify_block(shape: tuple[int, int]):
     assert xp.allclose(data, coo.data)
 
 
-@pytest.mark.usefixtures("shape", "num_blocks")
 def test_compute_block_sort_index(shape: tuple[int, int], num_blocks: int):
     """Tests that the block sort is computed correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")

@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
-import pytest
 
 from qttools import NDArray, sparse, xp
 from qttools.kernels.datastructure import dsdbcsr_kernels
@@ -120,7 +119,6 @@ def _reference_find_inds(
     return xp.array(inds, dtype=int), xp.array(value_inds, dtype=int)
 
 
-@pytest.mark.usefixtures("shape", "num_inds", "num_blocks")
 def test_find_inds(shape: tuple[int, int], num_inds: int, num_blocks: int):
     """Tests the that we find the correct indices."""
     coo = sparse.random(*shape, density=0.25, format="coo")
@@ -149,7 +147,6 @@ def test_find_inds(shape: tuple[int, int], num_inds: int, num_blocks: int):
     assert xp.all(value_inds == reference_value_inds)
 
 
-@pytest.mark.usefixtures("shape")
 def test_densify_block(shape: tuple[int, int]):
     """Tests that the block is densified correctly."""
     csr = sparse.random(*shape, density=0.25, format="csr")
@@ -162,7 +159,6 @@ def test_densify_block(shape: tuple[int, int]):
     assert xp.allclose(block, reference_block)
 
 
-@pytest.mark.usefixtures("shape")
 def test_sparsify_block(shape: tuple[int, int]):
     """Tests that the block is sparsified correctly."""
     csr = sparse.random(*shape, density=0.25, format="csr")
@@ -173,7 +169,6 @@ def test_sparsify_block(shape: tuple[int, int]):
     assert xp.allclose(data, csr.data)
 
 
-@pytest.mark.usefixtures("shape", "num_blocks")
 def test_compute_rowptr_map(shape: tuple[int, int], num_blocks: int):
     """Tests that the row pointer map is computed correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")

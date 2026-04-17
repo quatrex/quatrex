@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
-import pytest
 
 from qttools import xp
 from qttools.utils.gpu_utils import (
@@ -14,9 +13,6 @@ from qttools.utils.gpu_utils import (
 )
 
 
-@pytest.mark.usefixtures(
-    "shape", "dtype", "order", "input_module", "output_module", "use_pinned_memory"
-)
 def test_get_any_location(
     shape: int | tuple[int, ...],
     dtype: type | str,
@@ -64,7 +60,6 @@ def test_get_any_location(
     assert np.allclose(out, arr)
 
 
-@pytest.mark.usefixtures("shape", "dtype", "order")
 def test_empty_pinned(
     shape: int | tuple[int, ...],
     dtype: type | str,
@@ -77,7 +72,6 @@ def test_empty_pinned(
     assert arr.flags["C_CONTIGUOUS"] if order == "C" else arr.flags["F_CONTIGUOUS"]
 
 
-@pytest.mark.usefixtures("shape", "dtype", "order")
 def test_zeros_pinned(
     shape: int | tuple[int, ...],
     dtype: type | str,
@@ -91,7 +85,6 @@ def test_zeros_pinned(
     assert xp.allclose(arr, np.zeros(shape, dtype=dtype))
 
 
-@pytest.mark.usefixtures("shape", "dtype", "order")
 def test_empty_like_pinned(
     shape: int | tuple[int, ...],
     dtype: type | str,
@@ -109,7 +102,6 @@ def test_empty_like_pinned(
     )
 
 
-@pytest.mark.usefixtures("shape", "dtype", "order")
 def test_zeros_like_pinned(
     shape: int | tuple[int, ...],
     dtype: type | str,

@@ -18,7 +18,7 @@ EXAMPLES = [
 ]
 
 
-@pytest.fixture(params=EXAMPLES, autouse=True, scope="function")
+@pytest.fixture(params=EXAMPLES, scope="function")
 def example(request: pytest.FixtureRequest) -> tuple[Path, bool]:
     return request.param
 

@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import pytest
 
 from qttools import NDArray, xp
 from qttools.fft.convolve import _naive_convolve
@@ -17,7 +16,6 @@ def naive_hilbert_transform(a_full: NDArray, energies: NDArray) -> NDArray:
     return result[2 * ne : 3 * ne]
 
 
-@pytest.mark.usefixtures("array_shape")
 def test_hilbert_transform(array_shape):
     ne = array_shape[0]
     # Also add orbital dimension at the end

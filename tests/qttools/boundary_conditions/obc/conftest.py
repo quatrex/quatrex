@@ -64,7 +64,7 @@ def batch_size(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-@pytest.fixture(params=ENERGIES, autouse=True, scope="session")
+@pytest.fixture(params=ENERGIES, scope="session")
 def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     """Returns some boundary blocks for the carbon nanotube example."""
 

@@ -7,7 +7,6 @@ from qttools import NDArray, sparse, xp
 from qttools.nevp import NEVP, Full
 
 
-@pytest.mark.usefixtures("nevp")
 def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
     """Tests that the subspace NEVP solver returns the correct result."""
     ws, vs = nevp(a_xx)

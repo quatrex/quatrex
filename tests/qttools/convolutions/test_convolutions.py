@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import numpy as np
-import pytest
 
 from qttools import NDArray, xp
 from qttools.fft import (
@@ -201,7 +200,6 @@ class TestNaiveConvolutions:
 
 
 class TestFFTConvolutions:
-    @pytest.mark.usefixtures("array_shape")
     def test_fft_convolve(self, array_shape):
         a = xp.random.random(array_shape)
         b = xp.random.random(array_shape)
@@ -210,7 +208,6 @@ class TestFFTConvolutions:
         expected = _naive_convolve(a, b)
         assert xp.allclose(result, expected)
 
-    @pytest.mark.usefixtures("array_shape")
     def test_fft_circular_convolve(self, array_shape):
         a = xp.random.random(array_shape)
         b = xp.random.random(array_shape)
@@ -226,7 +223,6 @@ class TestFFTConvolutions:
         expected = naive_circular_convolve(a, b, axes)
         assert xp.allclose(result, expected)
 
-    @pytest.mark.usefixtures("array_shape")
     def test_fft_convolve_kpoints(self, array_shape):
         a = xp.random.random(array_shape)
         b = xp.random.random(array_shape)
@@ -235,7 +231,6 @@ class TestFFTConvolutions:
         expected = naive_convolve_kpoints(a, b)
         assert xp.allclose(result, expected)
 
-    @pytest.mark.usefixtures("array_shape")
     def test_fft_correlate_kpoints(self, array_shape):
         a = xp.random.random(array_shape)
         b = xp.random.random(array_shape)

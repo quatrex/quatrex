@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 import numpy as np
-import pytest
 import scipy
 
 from qttools import xp
@@ -8,9 +7,6 @@ from qttools.kernels import linalg
 from qttools.utils.gpu_utils import get_device, get_host
 
 
-@pytest.mark.usefixtures(
-    "n", "compute_module", "input_module", "output_module", "use_pinned_memory"
-)
 def test_eigvalsh(
     n: int,
     compute_module: str,
@@ -53,14 +49,6 @@ def test_eigvalsh(
     assert xp.allclose(w, w_ref)
 
 
-@pytest.mark.usefixtures(
-    "n",
-    "batch_shape",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 def test_eigvalsh_batched(
     n: int,
     batch_shape: tuple[int, ...],
@@ -107,7 +95,6 @@ def test_eigvalsh_batched(
     assert xp.allclose(w, w_ref)
 
 
-@pytest.mark.usefixtures("n", "compute_module", "input_module", "output_module")
 def test_eigvalsh_generalized(
     n: int,
     compute_module: str,
@@ -156,14 +143,6 @@ def test_eigvalsh_generalized(
     assert xp.allclose(w, w_ref)
 
 
-@pytest.mark.usefixtures(
-    "n",
-    "batch_shape",
-    "compute_module",
-    "input_module",
-    "output_module",
-    "use_pinned_memory",
-)
 def test_eigvalsh_generalized_batched(
     n: int,
     batch_shape: tuple[int, ...],

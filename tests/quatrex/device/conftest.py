@@ -12,7 +12,7 @@ EXAMPLES_DIR = Path(__file__).parents[3].resolve() / "examples"
 MOS2_EXAMPLE = EXAMPLES_DIR / "w90" / "mos2" / "inputs"
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(scope="session")
 def unit_cells(request: pytest.FixtureRequest) -> NDArray:
     """Returns the wannier tight binding matrix of the mos2 example"""
 

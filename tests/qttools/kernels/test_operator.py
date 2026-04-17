@@ -1,17 +1,10 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import pytest
 
 from qttools import xp
 from qttools.kernels.operator import operator_inverse
 
 
-@pytest.mark.usefixtures(
-    "batchsize",
-    "n",
-    "num_quatrature_points",
-    "num_blocks",
-)
 def test_operator_inverse(
     batchsize,
     n,

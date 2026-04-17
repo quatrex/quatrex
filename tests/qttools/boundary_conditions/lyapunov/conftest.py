@@ -65,7 +65,7 @@ def inputs(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, slice, sli
     return a, q, row_slice, col_slice
 
 
-@pytest.fixture(params=LYAPUNOV_SOLVERS, autouse=True)
+@pytest.fixture(params=LYAPUNOV_SOLVERS)
 def lyapunov_solver(request: pytest.FixtureRequest) -> LyapunovSolver:
     """Returns a Lyapunov solver."""
     return request.param

@@ -380,7 +380,7 @@ class SCBA:
             energies_path = self.config.input_dir / "photon_energies.npy"
             self.photon_energies = distributed_load(energies_path)
             self.pi_photon = PiPhoton(...)
-            self.photon_solver = PhotonSolver(...)
+            self.photon_solver = PhotonSolver(self.config, self.photon_energies)
             self.sigma_photon = SigmaPhoton(...)
 
         # ----- Phonons ------------------------------------------------

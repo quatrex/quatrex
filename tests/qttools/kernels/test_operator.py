@@ -8,7 +8,7 @@ from qttools.kernels.operator import operator_inverse
 def test_operator_inverse(
     batchsize,
     n,
-    num_quatrature_points,
+    num_quadrature_points,
     num_blocks,
 ):
 
@@ -22,8 +22,8 @@ def test_operator_inverse(
     )
 
     z = rng.random(
-        (1, num_quatrature_points, 1, 1), dtype=xp.float64
-    ) + 1j * rng.random((1, num_quatrature_points, 1, 1), dtype=xp.float64)
+        (1, num_quadrature_points, 1, 1), dtype=xp.float64
+    ) + 1j * rng.random((1, num_quadrature_points, 1, 1), dtype=xp.float64)
 
     operator_inv = operator_inverse(a_xx, z, z.dtype, z.dtype)
 

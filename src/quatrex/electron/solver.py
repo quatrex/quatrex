@@ -120,6 +120,55 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
         a_.blocks[j, i] -= b_.blocks[j, i]
 
 
+def _btd_subtract_sigma(
+    system_matrix: DSDBSparse,
+    see_retarded: DSDBSparse,
+    see_lesser: DSDBSparse,
+    see_greater: DSDBSparse,
+) -> None:
+    r"""Subtracts the self-energy from the system matrix on the block-tridiagonal.
+
+    $$\mathbf{M} \mathrel{{-}{=}} \mathbf{\Sigma}^R + \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right) $$
+
+    This is an in-place operation, i.e. the system matrix is modified.
+
+    Parameters
+    ----------
+    system_matrix : DSDBSparse
+        The system matrix to subtract from.
+    see_retarded : DSDBSparse
+        The retarded self-energy to subtract.
+    see_lesser : DSDBSparse
+        The lesser self-energy to subtract.
+    see_greater : DSDBSparse
+        The greater self-energy to subtract.
+
+    """
+    system_matrix_ = system_matrix.stack[...]
+    see_retarded_ = see_retarded.stack[...]
+    see_lesser_ = see_lesser.stack[...]
+    see_greater_ = see_greater.stack[...]
+    for i in range(system_matrix.num_local_blocks):
+        j = i + 1
+        system_matrix_.blocks[i, i] -= see_retarded_.blocks[i, i] + 0.5 * (
+            see_greater_.blocks[i, i] - see_lesser_.blocks[i, i]
+        )
+
+        if (
+            j >= system_matrix.num_local_blocks
+            and comm.block.rank == comm.block.size - 1
+        ):
+            # The last rank does not have these blocks.
+            continue
+
+        system_matrix_.blocks[i, j] -= see_retarded_.blocks[i, j] + 0.5 * (
+            see_greater_.blocks[i, j] - see_lesser_.blocks[i, j]
+        )
+        system_matrix_.blocks[j, i] -= see_retarded_.blocks[j, i] + 0.5 * (
+            see_greater_.blocks[j, i] - see_lesser_.blocks[j, i]
+        )
+
+
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 
@@ -412,13 +461,19 @@ class ElectronSolver(SubsystemSolver):
                 gamma_nn.copy(), self.right_occupancies - 1
             )
 
-    def _assemble_system_matrix(self, sse_retarded: DSDBSparse) -> None:
+    def _assemble_system_matrix(
+        self, sse_retarded: DSDBSparse, sse_lesser: DSDBSparse, sse_greater: DSDBSparse
+    ) -> None:
         """Assembles the system matrix.
 
         Parameters
         ----------
         sse_retarded : DSDBSparse
             The retarded scattering self-energy.
+        sse_lesser : DSDBSparse
+            The lesser scattering self-energy.
+        sse_greater : DSDBSparse
+            The greater scattering self-energy.
 
         """
         self.system_matrix.data = 0.0
@@ -437,7 +492,7 @@ class ElectronSolver(SubsystemSolver):
         else:
             _btd_apply_potential(self.system_matrix, self.overlap, self.potential)
 
-        _btd_subtract(self.system_matrix, sse_retarded)
+        _btd_subtract_sigma(self.system_matrix, sse_retarded, sse_lesser, sse_greater)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -521,7 +576,7 @@ class ElectronSolver(SubsystemSolver):
         ):
             self.system_matrix.allocate_data()
 
-            self._assemble_system_matrix(sse_retarded)
+            self._assemble_system_matrix(sse_retarded, sse_lesser, sse_greater)
 
         if self.band_edge_tracking:
             with profiler.profile_range(

@@ -931,7 +931,7 @@ class BandEdgeConfig(BaseModel):
 
     @field_validator("use_eigvalsh", mode="after")
     @classmethod
-    def check_use_eigvalsh(cls, value, info) -> bool:
+    def check_use_eigvalsh(cls, value) -> bool:
         if not value:
             raise NotImplementedError(
                 "Only use_eigvalsh=True is supported at the moment."

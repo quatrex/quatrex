@@ -63,8 +63,6 @@ def test_selected_solve(
     # (3) A * Xg * A^T = Bg
     ref_Xg = ref_Xr @ xp.asarray(coo_Bg.toarray()) @ ref_Xr.conj().T
 
-    block_sizes = block_sizes
-
     A = dsdbsparse_type.from_sparray(coo_A, block_sizes, global_stack_shape)
     Bl = dsdbsparse_type.from_sparray(coo_Bl, block_sizes, global_stack_shape)
     Bg = dsdbsparse_type.from_sparray(coo_Bg, block_sizes, global_stack_shape)

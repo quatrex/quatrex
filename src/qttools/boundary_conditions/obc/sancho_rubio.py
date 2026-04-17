@@ -61,7 +61,6 @@ class SanchoRubio(OBCSolver):
         alpha = a_ji.copy()
         beta = a_ij.copy()
 
-        delta = float("inf")
         for __ in range(self.max_iterations):
             inverse = linalg.inv(epsilon)
 

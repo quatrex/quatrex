@@ -49,7 +49,6 @@ def test_selected_inv(
 
     coo = sparse.coo_matrix(bt_dense)
 
-    block_sizes = block_sizes
     dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
 
     solver = gfsolver_type(max_batch_size=max_batch_size)

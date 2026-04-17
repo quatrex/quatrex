@@ -50,7 +50,7 @@ M = [
     pytest.param(10, id="10"),
 ]
 
-NUM_QUATRATURE_POINTS = [
+NUM_QUADRATURE_POINTS = [
     pytest.param(5, id="5"),
     pytest.param(10, id="10"),
 ]
@@ -129,8 +129,8 @@ def batchsize(request: pytest.FixtureRequest):
     return request.param
 
 
-@pytest.fixture(params=NUM_QUATRATURE_POINTS)
-def num_quatrature_points(request: pytest.FixtureRequest):
+@pytest.fixture(params=NUM_QUADRATURE_POINTS)
+def num_quadrature_points(request: pytest.FixtureRequest):
     return request.param
 
 

@@ -380,11 +380,7 @@ class SCBA:
             energies_path = self.config.input_dir / "photon_energies.npy"
             self.photon_energies = distributed_load(energies_path)
             self.pi_photon = PiPhoton(...)
-            self.photon_solver = PhotonSolver(
-                self.config,
-                self.photon_energies,
-                ...,
-            )
+            self.photon_solver = PhotonSolver(self.config, self.photon_energies)
             self.sigma_photon = SigmaPhoton(...)
 
         # ----- Phonons ------------------------------------------------
@@ -393,11 +389,7 @@ class SCBA:
                 energies_path = self.config.input_dir / "phonon_energies.npy"
                 self.phonon_energies = distributed_load(energies_path)
                 self.pi_phonon = PiPhonon(...)
-                self.phonon_solver = PhononSolver(
-                    self.config,
-                    self.phonon_energies,
-                    ...,
-                )
+                self.phonon_solver = PhononSolver(config, self.phonon_energies)
                 self.sigma_phonon = SigmaPhonon(...)
 
             elif self.config.phonon.model == "pseudo-scattering":

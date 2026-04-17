@@ -930,7 +930,8 @@ class BandEdgeConfig(BaseModel):
     block_sections: PositiveInt = 1
 
     @field_validator("use_eigvalsh", mode="after")
-    def check_use_eigvalsh(cls, value, info) -> bool:
+    @classmethod
+    def check_use_eigvalsh(cls, value) -> bool:
         if not value:
             raise NotImplementedError(
                 "Only use_eigvalsh=True is supported at the moment."
@@ -938,6 +939,7 @@ class BandEdgeConfig(BaseModel):
         return value
 
     @field_validator("eigvalsh_compute_location", mode="after")
+    @classmethod
     def check_eigvalsh_location(cls, value) -> Literal["numpy", "cupy"]:
         if value == "cupy" and xp.__name__ != "cupy":
             warnings.warn(
@@ -1002,6 +1004,7 @@ class ComputeConfig(BaseModel):
     comm: CommConfig = CommConfig()
 
     @field_validator("dsdbsparse_type", mode="before")
+    @classmethod
     def set_dsdbsparse(cls, value) -> DSDBSparse:
         """Converts the string value to the corresponding DSDBSparse object."""
         if value == "DSDBCOO":

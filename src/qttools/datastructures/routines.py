@@ -418,8 +418,8 @@ class BlockMatrix:
     local_keys : set[tuple[int, int]]
         The set of block keys that are local to the current rank.
     origin : tuple[int, int]
-        The block index corresponding to the (0, 0) block of the
-        dsdbsparse. This is used to determine the local block keys.
+        The global index of the first local block. This is used to
+        compute the local block keys from the global block keys.
     mapping : dict[tuple[int, int], xp.ndarray], optional
         A mapping from non-local block keys to their corresponding data
         arrays. This is used to store halo blocks that are communicated

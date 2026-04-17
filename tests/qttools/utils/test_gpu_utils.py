@@ -41,7 +41,7 @@ def test_get_any_location(
 
     out = get_any_location(arr, output_module, use_pinned_memory=use_pinned_memory)
 
-    xp.allclose(out_ref, out)
+    assert xp.allclose(out_ref, out)
 
     # test that pinned memory was returned
     if output_module == "numpy" and output_module != input_module and use_pinned_memory:

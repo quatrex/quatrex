@@ -49,7 +49,7 @@ def find_inds(
     cols = cols.astype(cp.int32)
     full_inds = cp.zeros(self_rows.shape[0], dtype=cp.int32)
     counts = cp.zeros(self_rows.shape[0], dtype=cp.int16)
-    THREADS_PER_BLOCK
+
     blocks_per_grid = (self_rows.shape[0] + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     cupy_backend._find_inds(
         (blocks_per_grid,),

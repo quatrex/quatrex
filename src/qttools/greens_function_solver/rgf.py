@@ -194,8 +194,8 @@ class RGF(GFSolver):
                 xr = a.__class__.zeros_like(a)
 
         # Perform the selected solve by batches.
-        for i in range(len(batches_sizes)):
-            stack_slice = slice(int(batches_slices[i]), int(batches_slices[i + 1]), 1)
+        for b in range(len(batches_sizes)):
+            stack_slice = slice(int(batches_slices[b]), int(batches_slices[b + 1]), 1)
 
             a_ = a.stack[stack_slice]
             sigma_lesser_ = sigma_lesser.stack[stack_slice]

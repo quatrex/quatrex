@@ -60,25 +60,29 @@ def test_construct_transport_cell(
 
 
 @pytest.mark.parametrize(
-    "coords, transport_cell_size, transport_ind, lat_vecs",
+    "unit_cell_coords, num_unit_cells, transport_ind, lat_vecs",
     [
         (xp.ones((10, 3)), 2, 2, xp.eye(3)),
     ],
 )
 def test_create_coordinate_grid(
-    coords: NDArray, transport_cell_size: int, transport_ind: int, lat_vecs: NDArray
+    unit_cell_coords: NDArray,
+    num_unit_cells: int,
+    transport_ind: int,
+    lat_vecs: NDArray,
 ):
     """Tests the creation of a coordinate grid for a transport cell."""
-    grid = create_coordinate_grid(coords, transport_cell_size, transport_ind, lat_vecs)
-    assert grid.shape == (transport_cell_size * 10, 3)
 
-    transport_cell = [1, 1, 1]
-    transport_cell[transport_ind] = transport_cell_size
-    transport_cell = tuple(transport_cell)
+    num_coords = unit_cell_coords.shape[0]
+    grid = create_coordinate_grid(
+        unit_cell_coords, num_unit_cells, transport_ind, lat_vecs
+    )
+    assert grid.shape == (num_unit_cells * num_coords, 3)
 
-    for ind in xp.ndindex(transport_cell):
-        row_ind = xp.ravel_multi_index(xp.asarray(ind), transport_cell)
-        assert xp.allclose(grid[row_ind * 10 : (row_ind + 1) * 10], 1 + xp.array(ind))
+    for i in range(num_unit_cells):
+        ref = unit_cell_coords.copy()
+        ref[:, :] += i * lat_vecs[transport_ind][None, :]
+        assert xp.allclose(grid[i * num_coords : (i + 1) * num_coords], ref)
 
 
 @pytest.mark.parametrize(

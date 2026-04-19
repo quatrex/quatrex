@@ -84,7 +84,7 @@ def load_structure(
 
 def create_coordinate_grid(
     unit_cell_coords: NDArray,
-    transport_cell_size: int,
+    num_unit_cells: int,
     transport_ind: int,
     lattice_vectors: NDArray,
 ) -> NDArray:
@@ -96,7 +96,7 @@ def create_coordinate_grid(
     ----------
     unit_cell_coords : NDArray
         Coordinates of the orbital centers in a unit cell.
-    transport_cell_size : int
+    num_unit_cells : int
         Number of unit cells in the transport direction that make up the transport cell.
     transport_ind : int
         Index of the transport direction (0, 1, or 2).
@@ -111,8 +111,8 @@ def create_coordinate_grid(
 
     """
     num_coords = unit_cell_coords.shape[0]
-    grid = xp.zeros((transport_cell_size * num_coords, 3), dtype=xp.float64)
-    for i in range(transport_cell_size):
+    grid = xp.zeros((num_unit_cells * num_coords, 3), dtype=xp.float64)
+    for i in range(num_unit_cells):
         grid[i * num_coords : (i + 1) * num_coords, :] = (
             unit_cell_coords + i * lattice_vectors[transport_ind]
         )
@@ -494,7 +494,7 @@ def _create_matrix_from_unit_cells(
 
         # Do not expand multiple time in
         # transport direction
-        if coord[transport_ind] > 0:
+        if coord[transport_ind] != 0:
             continue
 
         matrix_sparray = _expand_tight_binding_matrix(
@@ -602,7 +602,7 @@ def load_matrices(
             f"Matrix at coordinate (0,0,0) has unsupported type {type(matrix_dict[(0, 0, 0)])}."
         )
 
-    # drop keys out side the neighbor cell cutoff if requested
+    # drop keys outside the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:
         matrix_dict = {
             coord: matrix

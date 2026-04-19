@@ -133,8 +133,7 @@ def _construct_transport_cell(
     ----------
     matrix_dict : dict
         The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and half the keys are present.
+        repetitions. It is assumed that only the upper parts are present.
     transport_cell_size : int
         Size of the transport cell.
     transport_ind : int
@@ -172,18 +171,21 @@ def _construct_transport_cell(
             coord[transport_ind] += r_j - r_i
             coord = tuple(int(i) for i in coord)
 
-            fliped_coord = tuple(-int(i) for i in coord)
+            flipped_coord = tuple(-int(i) for i in coord)
 
             if coord in matrix_dict:
                 block = matrix_dict[coord]
-            elif fliped_coord in matrix_dict and not np.all(np.array(shift) == 0):
-                block = matrix_dict[fliped_coord].conj().T
+                block_flipped = matrix_dict[flipped_coord]
+                block = block + xp.triu(block_flipped, k=1).conj().T
             else:
                 block = xp.zeros(unit_cell_shape, unit_cell_dtype)
 
             row.append(block)
         rows.append(xp.hstack(row))
-    return xp.vstack(rows)
+    cell = xp.vstack(rows)
+    if shift[transport_ind] == 0:
+        cell = xp.triu(cell)
+    return cell
 
 
 def _expand_tight_binding_matrix(
@@ -201,25 +203,23 @@ def _expand_tight_binding_matrix(
     NOTE: interactions outside nearest neighbors are not included
     in the block-tridiagonal Hamiltonian (see below).
 
-    Example for a tight-binding matrix with 3 cells in transport direction for (0,0,0) and (0,0,1),
+    Example for a tight-binding matrix with 3 cells in transport direction,
 
-      ------- -------           |   ------- -------
-     | o o o | o x x | x        |  | o o o | o x x | x
-     | x o o | o o x | x x      |  | o o o | o o x | x x
-     | x x o | o o o | x x x    |  | o o o | o o o | x x x
-      ------- ------- -------   |   ------- ------- -------
-     | x x x | o o o | o x x |  |  | o o o | o o o | o x x |
-     | x x x | x o o | o o x |  |  | x o o | o o o | o o x |
-     | x x x | x x o | o o o |  |  | x x o | o o o | o o o |
-      ------- ------- -------   |   ------- ------- -------
-       x x x | x x x | o o o |  |    x x x | o o o | o o o |
-         x x | x x x | x o o |  |      x x | x o o | o o o |
-           x | x x x | x x o |  |        x | x x o | o o o |
-              ------- -------   |           ------- -------
+      ------- -------
+     | o o o | o x x | x
+     | x o o | o o x | x x
+     | x x o | o o o | x x x
+      ------- ------- -------
+     | x x x | o o o | o x x |
+     | x x x | x o o | o o x |
+     | x x x | x x o | o o o |
+      ------- ------- -------
+       x x x | x x x | o o o |
+         x x | x x x | x o o |
+           x | x x x | x x o |
+              ------- -------
 
-    for (0,0,0) only the upper diagonal part is expanded
-    while for other shifts also the lower diagonal half of the matrix
-    is expanded.
+    only the upper diagonal part is expanded.
 
     Parameters
     ----------
@@ -251,7 +251,6 @@ def _expand_tight_binding_matrix(
     if isinstance(transport_ind, str):
         transport_ind = "xyz".index(transport_ind)
 
-    # NOTE: Max alone is not enough since only half the keys are expected to be present.
     transport_keys = np.array(list(matrix_dict.keys()))[:, transport_ind]
     transport_cell_size = np.max(np.abs(transport_keys))
 
@@ -267,13 +266,8 @@ def _expand_tight_binding_matrix(
     if len(periodic_shift) != 3:
         raise ValueError("periodic_shift must have length 3.")
 
-    if all(np.array(periodic_shift) == 0):
-        transport_blocks_inds = [0, 1]
-    else:
-        transport_blocks_inds = [-1, 0, 1]
-
     block_inds = []
-    for b in transport_blocks_inds:
+    for b in [0, 1]:
         temp_list = list(periodic_shift)
         temp_list[transport_ind] = b * transport_cell_size
         block_inds.append(tuple(int(i) for i in temp_list))
@@ -307,15 +301,10 @@ def _expand_tight_binding_matrix(
     block_size = blocks[0].shape[0]
     offsets = xp.arange(block_start, block_end) * blocks[0].shape[0]
 
-    if all(np.array(periodic_shift) == 0):
-        block_shifts = [(0, 0), (0, 1)]
-    else:
-        block_shifts = [(1, 0), (0, 0), (0, 1)]
-
     full_rows = []
     full_cols = []
     full_data = []
-    for block, (row_shift, col_shift) in zip(blocks, block_shifts):
+    for block, (row_shift, col_shift) in zip(blocks, [(0, 0), (0, 1)]):
         rows = xp.tile(block.row, num_blocks) + xp.repeat(offsets, block.nnz)
         cols = xp.tile(block.col, num_blocks) + xp.repeat(offsets, block.nnz)
         data = xp.tile(block.data, num_blocks)
@@ -358,8 +347,7 @@ def _sum_operator(
     ----------
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and half the keys are present.
+        repetitions. It is assumed that only the upper parts are present.
     symmetric : bool
         Whether the resulting matrix should be symmetric. If `True`, only
         construct the upper triangular part.
@@ -373,14 +361,7 @@ def _sum_operator(
     # NOTE: Sparse matrix addition is slow
     # but unavoidable due to memory constraints.
     # TODO: Could still be optimized
-    summed_matrix = matrix_dict[(0, 0, 0)]
-    for coord, matrix in matrix_dict.items():
-        if coord == (0, 0, 0):
-            continue
-        phase = phases[coord]
-        summed_matrix += (
-            phase * sparse.triu(matrix) + (phase * sparse.tril(matrix)).conj().T
-        )
+    summed_matrix = sum(phases[coord] * matrix for coord, matrix in matrix_dict.items())
 
     if not symmetric:
         summed_matrix = summed_matrix + summed_matrix.T.conj()
@@ -405,8 +386,7 @@ def _assemble_kpoint(
         The matrix to assemble into.
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and half the keys are present.
+        repetitions. It is assumed that only the upper parts are present.
     kpoint_grid : NDArray
         The k-point grid.
     kshift : int | NDArray
@@ -466,8 +446,7 @@ def _create_matrix_from_unit_cells(
         The quatrex simulation configuration.
     matrix_dict : dict[tuple, sparse.csr_matrix | NDArray]
         The dictionary of matrices corresponding to different periodic
-        repetitions. It is assumed that only the upper part of the (0,0,0) cell
-        and half the keys are present.
+        repetitions. It is assumed that only the upper parts are present.
 
     Returns
     -------
@@ -528,8 +507,7 @@ def load_matrices(
     -------
     dict
         The dict of sparse matrices corresponding to different periodic repetitions.
-        It is assumed that only the upper part of the (0,0,0) cell and half
-        the keys are stored.
+        It is assumed that only the upper parts are stored.
 
     """
 
@@ -569,11 +547,11 @@ def load_matrices(
                 f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
             )
 
-    # drop half the keys
+    # drop half the matrices
+    # NOTE: this is done on the CPU
     matrix_dict = {
-        coord: matrix
+        coord: np.triu(matrix) if isinstance(matrix, np.ndarray) else sps.triu(matrix)
         for coord, matrix in matrix_dict.items()
-        if coord > (0, 0, 0) or (coord == (0, 0, 0))
     }
 
     # assert that the matrix_dict have the same shape
@@ -590,17 +568,6 @@ def load_matrices(
                 f"Matrix at coordinate {coord} has type {type(matrix)}, "
                 f"but expected type is {matrix_type}."
             )
-
-    # only keep the upper part of the (0,0,0) matrix
-    # NOTE: this is done on the CPU
-    if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
-        matrix_dict[(0, 0, 0)] = np.triu(matrix_dict[(0, 0, 0)])
-    elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
-        matrix_dict[(0, 0, 0)] = sps.triu(matrix_dict[(0, 0, 0)])
-    else:
-        raise ValueError(
-            f"Matrix at coordinate (0,0,0) has unsupported type {type(matrix_dict[(0, 0, 0)])}."
-        )
 
     # drop keys outside the neighbor cell cutoff if requested
     if config.device.neighbor_cell_cutoff is not None:

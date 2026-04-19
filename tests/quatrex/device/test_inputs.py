@@ -54,6 +54,12 @@ def test_construct_transport_cell(
 
             ref_block = matrix_dict.get(target_ind, xp.zeros((bs, bs)))
 
+            if bc > br:
+                ref_block = ref_block + ref_block.conj().T
+                xp.fill_diagonal(ref_block, ref_block.diagonal() / 2)
+            elif bc < br:
+                ref_block = xp.zeros_like(ref_block)
+
             assert xp.allclose(
                 test_block[br * bs : (br + 1) * bs, bc * bs : (bc + 1) * bs], ref_block
             )
@@ -113,19 +119,10 @@ def test_expand_tight_binding_matrix(
     }
 
     for ind in list(matrix_dict.keys()):
-        for axis in range(3):
-            neg_ind = list(ind)
-            neg_ind[axis] = -ind[axis]
-            matrix_dict[tuple(neg_ind)] = block
+        neg_ind = tuple(-i for i in ind)
+        matrix_dict[tuple(neg_ind)] = block
 
-    matrix_dict[(0, 0, 0)] = xp.triu(block)
-
-    # drop half the keys
-    matrix_dict = {
-        coord: matrix
-        for coord, matrix in matrix_dict.items()
-        if coord > (0, 0, 0) or (coord == (0, 0, 0))
-    }
+    matrix_dict = {coord: xp.triu(matrix) for coord, matrix in matrix_dict.items()}
 
     sparse_hamiltonian = _expand_tight_binding_matrix(
         matrix_dict=matrix_dict,
@@ -156,20 +153,14 @@ def test_expand_tight_binding_matrix(
         block_slice = slice(i * transport_cell_size, (i + 1) * transport_cell_size)
 
         # Assume cut-off is large enough to include all interaction in diagonal blocks
-        if np.all(np.array(periodic_shift) == 0):
-            assert xp.allclose(
-                xp.triu(sparse_hamiltonian[block_slice, block_slice].todense()),
-                xp.triu(xp.ones((transport_cell_size, transport_cell_size))),
-            )
-            assert xp.allclose(
-                xp.tril(sparse_hamiltonian[block_slice, block_slice].todense(), k=-1),
-                xp.zeros((transport_cell_size, transport_cell_size)),
-            )
-        else:
-            assert xp.allclose(
-                sparse_hamiltonian[block_slice, block_slice].todense(),
-                1,
-            )
+        assert xp.allclose(
+            xp.triu(sparse_hamiltonian[block_slice, block_slice].todense()),
+            xp.triu(xp.ones((transport_cell_size, transport_cell_size))),
+        )
+        assert xp.allclose(
+            xp.tril(sparse_hamiltonian[block_slice, block_slice].todense(), k=-1),
+            xp.zeros((transport_cell_size, transport_cell_size)),
+        )
 
         if i < num_transport_cells - 1:
             off_diagonal_block_slice = slice(
@@ -178,11 +169,6 @@ def test_expand_tight_binding_matrix(
             h_upper = sparse_hamiltonian[
                 block_slice, off_diagonal_block_slice
             ].todense()
-
-            if not np.all(np.array(periodic_shift) == 0):
-                h_lower = sparse_hamiltonian[
-                    off_diagonal_block_slice, block_slice
-                ].todense()
 
             for r in range(num_unit_cells):
                 row_unit_slice = slice(r * unit_cell_size, (r + 1) * unit_cell_size)
@@ -197,13 +183,3 @@ def test_expand_tight_binding_matrix(
                         assert xp.allclose(
                             h_upper[block_slice][row_unit_slice, col_unit_slice], 1
                         )
-
-                    if not np.all(np.array(periodic_shift) == 0):
-                        if r < c:
-                            assert xp.allclose(
-                                h_lower[block_slice][col_unit_slice, row_unit_slice], 0
-                            )
-                        else:
-                            assert xp.allclose(
-                                h_lower[block_slice][col_unit_slice, row_unit_slice], 1
-                            )

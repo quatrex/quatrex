@@ -122,25 +122,25 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.mat").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        # NOTE: Contains half the keys
+        # NOTE: Contains only the upper triangular parts of the matrices.
         hamiltonians = load_matrices(self.config, "hamiltonian")
 
         self.hamiltonians = {}
         for r, h_r in hamiltonians.items():
-            hamiltonians[r] = sparse.csr_matrix((h_r))
-
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
             # TODO: Do not unsymmetrize
             if not all(index == 0 for index in r):
-                self.hamiltonians[r] = hamiltonians[r].astype(xp.complex128)
-                # TODO: Having or not having the `sparse.csr_matrix` makes a difference
-                self.hamiltonians[tuple(-i for i in r)] = sparse.csr_matrix(
-                    hamiltonians[r].copy().astype(xp.complex128).conj().T
+                flipped_r = tuple(-i for i in r)
+                hamiltonian_flipped = hamiltonians[flipped_r]
+                self.hamiltonians[r] = (
+                    hamiltonians[r] + sparse.triu(hamiltonian_flipped, k=1).conj().T
                 )
             else:
                 self.hamiltonians[r] = hamiltonians[r] + hamiltonians[r].conj().T
                 self.hamiltonians[r].setdiag(self.hamiltonians[r].diagonal() / 2)
+        for r in hamiltonians.keys():
+            self.hamiltonians[r] = sparse.csr_matrix(self.hamiltonians[r])
 
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
@@ -157,15 +157,15 @@ class Device:
                     s_r.shape[1] == size
                 ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[1]}."
 
-                overlap_matrices[r] = sparse.csr_matrix(s_r)
-
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
                 # TODO: Do not unsymmetrize
                 if not all(index == 0 for index in r):
-                    self.overlap_matrices[r] = overlap_matrices[r].astype(xp.complex128)
-                    self.overlap_matrices[tuple(-i for i in r)] = sparse.csr_matrix(
-                        self.overlap_matrices[r].conj().T
+                    flipped_r = tuple(-i for i in r)
+                    overlap_matrix_flipped = overlap_matrices[flipped_r]
+                    self.overlap_matrices[r] = (
+                        overlap_matrices[r]
+                        + sparse.triu(overlap_matrix_flipped, k=1).conj().T
                     )
                 else:
                     self.overlap_matrices[r] = (
@@ -179,6 +179,8 @@ class Device:
                 raise ValueError(
                     "Some overlap matrices are missing while others are present. All or none must be provided."
                 )
+            for r in overlap_matrices.keys():
+                self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
 
         else:
             if comm.rank == 0:

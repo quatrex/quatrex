@@ -1041,7 +1041,20 @@ class QTBM:
 
                     times.append(time.perf_counter())
                     n_injected = injection_count[i]
+                    if self.quatrex_config.qtbm.dump_system_matrix:
+                        if comm.rank == 0:
+                            print("Dumping system matrix...", flush=True)
+                        if xp.__name__ == "cupy":
+                            system_matrix_cpu = system_matrix.get()
+                        else:
+                            system_matrix_cpu = system_matrix
 
+                        from scipy import sparse as sp_sparse
+
+                        sp_sparse.save_npz(
+                            f"{self.quatrex_config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
+                            system_matrix_cpu,
+                        )
                     if self.quatrex_config.qtbm.method == "SplitSolve":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()

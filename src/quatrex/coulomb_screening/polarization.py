@@ -203,99 +203,27 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         g_greater_fine = interpolate.make_interp_spline(source_adaptive_points, g_greater.data[..., batch], axis=0, k=k)(fine_energies)
                         g_lesser_fine = interpolate.make_interp_spline(source_adaptive_points, g_lesser.data[..., batch], axis=0, k=k)(fine_energies)
 
-                        # liyongda (25 Mar 2026): debugging with r=1 and sanity check _compute_adaptive_grid
-                        #   should always return true since fine grid and source grid are the same
-                        # if comm.Get_size() == 1:  # only do sanity check with 1 rank, otherwise it's batched and nnz range is different
-                            # assert(xp.allclose(fine_energies, source_adaptive_points)), "Fine energies and source adaptive points should be the same for sanity check"
-                            # atol=1e-5
-                            # for nnz in range(g_greater_fine.shape[1]):
-                            #     assert xp.allclose(
-                            #         g_greater.data[:,nnz],
-                            #         g_greater_fine[:,nnz],
-                            #         atol=atol
-                            #     ), f"Greater part interpolation failed for nnz={nnz}"
-                            #     assert xp.allclose(
-                            #         g_lesser.data[:,nnz],
-                            #         g_lesser_fine[:,nnz],
-                            #         atol=atol
-                            #     ), f"Lesser part interpolation failed for nnz={nnz}"
-
                         # add a flip to lesser
                         greater_fft = xp.fft.fft(g_greater_fine, n_conv_fine, axis=0)
                         lesser_fft = xp.fft.fft(-g_lesser_fine[::-1].conj(), n_conv_fine, axis=0)
 
                         p_g_full = xp.fft.ifft(greater_fft * lesser_fft, axis=0) * adaptive_prefactor
-                        # p_l_full = -p_g_full[::-1].conj()
-
-                        # liyongda (19 Mar 2026): debugging saves, only run with 1 rank
-                        # xp.save(self.config.output_dir /  f"p_g_full_adaptive_iter{iteration}.npy", p_g_full)
-                        # xp.save(self.config.output_dir /  f"energies_conv_adaptive_iter{iteration}.npy", fine_energies_conv)
-                        
-                        # # before interpolation
-                        # xp.save(self.config.output_dir /  f"source_adaptive_points_iter{iteration}.npy", source_adaptive_points)
-                        # xp.save(self.config.output_dir /  f"g_greater_{iteration}.npy", g_greater.data[..., batch])
-                        # xp.save(self.config.output_dir /  f"g_lesser_{iteration}.npy", g_lesser.data[..., batch])
-                        
-                        # # after interpolation
-                        # xp.save(self.config.output_dir /  f"g_greater_fine_adaptive_iter{iteration}.npy", g_greater_fine)
-                        # xp.save(self.config.output_dir /  f"g_lesser_fine_adaptive_iter{iteration}.npy", g_lesser_fine)
-                        # xp.save(self.config.output_dir /  f"fine_energies_adaptive_iter{iteration}.npy", fine_energies)
-
 
                         assert(p_g_full.shape[0] == n_conv_fine)
-
-                        # go back to original grid length (if different length)
-                        # liyongda(17 Mar 2026): going to uniform grid for P, crutch solution
-                        # if (len(p_g_full) != n_conv):
-                        #     p_g_full = interpolate.make_interp_spline(fine_energies_conv, p_g_full, axis=0, k=k)(energies_conv)
-                        # assert(len(p_g_full) == n_conv)
-
-                        # liyongda (17 Mar 2026): map full interpolated convolution to adaptive grid
-                        # find index for zero in convolution grid
-                        zero_index = np.argmin(np.abs(fine_energies_conv))
-                        
-                        # only go ne points (not necessarily the full half)
-                        # liyongda (17 Mar 2026): lesser_unifrom directly uses p_g_full without intermediate p_l_full
-                        #   tested to work in `/usr/scratch/mont-fort8/yongli/document/sandbox/fft_libraries/adaptive_integration/interpolation.ipynb`
-                        
-                        # liyongda (25 Mar 2026): the problem is the below slicing
-                        # greater_uniform = p_g_full[zero_index:zero_index+n_fine]
-                        # lesser_uniform = -p_g_full[::-1][zero_index:zero_index+n_fine].conj()  # don't create extra p_l_full, just use p_g_full with the symmetry relation       
                         
                         p_l_full = -p_g_full[::-1].conj()
                         greater_uniform = p_g_full[n_fine-1:]
                         lesser_uniform = p_l_full[n_fine-1:]
 
-                        # fine_energies_lesser = -fine_energies_conv[zero_index:zero_index+n_fine][::-1]
-                        # fine_energies_greater = fine_energies_conv[zero_index:zero_index+n_fine]
-                        fine_energies_p = fine_energies - fine_energies[0]  # shift to start at 0 eV
+                        # shift to start at 0 eV
+                        fine_energies_p = fine_energies - fine_energies[0]  
 
                         # interpolate the target grid
                         # target target_adaptive_points (0 to 20 eV) 
                         # fine_energies_greater (0 to 20 eV)
                         # fine_energies_lesser (-20 to 0 eV)
-                        # fine_energies_greater += target_adaptive_points[0]      # map to same range as target_adaptive_points
-                        # fine_energies_lesser += target_adaptive_points[-1]
-                        # p_greater.data[..., batch] = interpolate.make_interp_spline(fine_energies_greater, greater_uniform, axis=0, k=k)(target_adaptive_points)
-                        # p_lesser.data[..., batch] = interpolate.make_interp_spline(fine_energies_lesser, lesser_uniform, axis=0, k=k)(target_adaptive_points)
                         p_greater.data[..., batch] = interpolate.make_interp_spline(fine_energies_p, greater_uniform, axis=0, k=k)(target_adaptive_points)
                         p_lesser.data[..., batch] = interpolate.make_interp_spline(fine_energies_p, lesser_uniform, axis=0, k=k)(target_adaptive_points)
-
-                        # liyongda (25 Mar 2026): debugging with r=1 and sanity check _compute_adaptive_grid
-                        #   should always return true since fine grid and target grid are the same
-                        # if comm.Get_size() == 1:  # only do sanity check with 1 rank, otherwise it's batched and nnz range is different
-                        #     atol=1e-5
-                        #     for nnz in range(p_greater.shape[1]):
-                        #         assert xp.allclose(
-                        #             p_greater.data[:,nnz],
-                        #             greater_uniform[:,nnz],
-                        #             atol=atol
-                        #         ), f"Greater part interpolation failed for nnz={nnz}"
-                        #         assert xp.allclose(
-                        #             p_lesser.data[:,nnz],
-                        #             lesser_uniform[:,nnz],
-                        #             atol=atol
-                        #         ), f"Lesser part interpolation failed for nnz={nnz}"
 
                     else:
                         p_g_full = self.prefactor * fft_correlate_kpoints(
@@ -310,24 +238,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
                         p_greater.data[..., batch] = p_g_full[self.ne - 1 :]
                         # Note that only the hermitian part is computed here.
 
-                        # liyongda (19 Mar 2026): debugging saves, only run with 1 rank
-                        # energy_min = self.config.electron.energy_window_min
-                        # energy_max = self.config.electron.energy_window_max
-                        # ne = g_lesser.data.shape[0]
-                        # energies_conv = xp.linspace(energy_min-energy_max, energy_max-energy_min, 2*ne-1)
-
-                        # xp.save(self.config.output_dir /  f"p_g_full_iter{iteration}.npy", p_g_full)
-                        # xp.save(self.config.output_dir /  f"energies_conv_iter{iteration}.npy", energies_conv)
-                        # xp.save(self.config.output_dir /  f"g_greater_{iteration}.npy", g_greater.data[..., batch])
-                        # xp.save(self.config.output_dir /  f"g_lesser_{iteration}.npy", g_lesser.data[..., batch])
-
                     # default quatrex config compute_retarded_polarization = false
                     # liyongda (04 Mar 2026) todo: convert Hilbert Transform in retarded polarizatoin to use adaptive grid
                     # liyongda (16 Mar 2026): Anders said Hilbert Transform computation is unstable. Ignoring for now. Maybe make it work in the future.
                     #   recommended I just raise an error
                     if self.compute_retarded:
-                        if target_adaptive_points is not None:
-                            raise NotImplementedError("Retarded polarization computation with Hilbert Transform with adaptive grid is not implemented yet. Please use a uniform grid")
+                        if target_adaptive_points is not None: 
+                            raise NotImplementedError("Polarization computation with Hilbert Transform with adaptive grid is not implemented yet. Please use a uniform grid or change the config setting 'include_energy_renormalization' to 'self-energy'")
                         p_retarded.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (

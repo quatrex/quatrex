@@ -171,6 +171,7 @@ notebooks/
 **/plots
 out.txt
 run_script.sh
+
 hostfile
 .vscode/
 # Nsight Systems output

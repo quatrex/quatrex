@@ -299,27 +299,27 @@ class SCBA:
         self.mixing_factor = self.config.scba.mixing_factor
 
         # ----- Electrons ----------------------------------------------
-        if (self.quatrex_config.electron.energy_window_max is not None) and (
-            self.quatrex_config.electron.energy_window_min is not None
+        if (self.config.electron.energy_window_max is not None) and (
+            self.config.electron.energy_window_min is not None
         ):
-            if self.quatrex_config.electron.energy_window_num is not None:
-                if self.quatrex_config.electron.energy_window_num_per_rank is not None:
+            if self.config.electron.energy_window_num is not None:
+                if self.config.electron.energy_window_num_per_rank is not None:
                     raise ValueError(
                         "Should **exclusively** set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
                     )
                 self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
-                    self.quatrex_config.electron.energy_window_num,
+                    self.config.electron.energy_window_min,
+                    self.config.electron.energy_window_max,
+                    self.config.electron.energy_window_num,
                 )
-            elif self.quatrex_config.electron.energy_window_num_per_rank is not None:
+            elif self.config.electron.energy_window_num_per_rank is not None:
                 energy_window_num = (
-                    self.quatrex_config.electron.energy_window_num_per_rank
+                    self.config.electron.energy_window_num_per_rank
                     * comm.stack.size
                 )
                 self.electron_energies = xp.linspace(
-                    self.quatrex_config.electron.energy_window_min,
-                    self.quatrex_config.electron.energy_window_max,
+                    self.config.electron.energy_window_min,
+                    self.config.electron.energy_window_max,
                     energy_window_num,
                 )
             else:
@@ -327,7 +327,7 @@ class SCBA:
                     "Should set electron `energy_window_num` or `energy_window_num_per_rank` in the config."
                 )
         else:
-            energies_path = self.quatrex_config.input_dir / "electron_energies.npy"
+            energies_path = self.config.input_dir / "electron_energies.npy"
             if os.path.isfile(energies_path):
                 self.electron_energies = distributed_load(energies_path)
             else:
@@ -342,11 +342,11 @@ class SCBA:
                                 """
                     print(message)
                 self.electron_energies = self._determine_electron_energy_window(
-                    quatrex_config
+                    config
                 )
         
         # initial adaptive energy grid is just the linear grid
-        if self.quatrex_config.scba.adaptive:
+        if self.config.scba.adaptive:
             self.adaptive_electron_energies = xp.copy(self.electron_energies)
 
         min_energy = self.electron_energies[0]
@@ -544,6 +544,74 @@ class SCBA:
 
         return False  # TODO: :-)
 
+    # liyongda (12 Mar 2026): profiler has an internal sync `comm.barrier()`.
+    #   but since this function is only called by rank 0, the other ranks never arrive
+    #   and we observe an MPI stall
+    # @profiler.profile(label="SCBA: Compute adaptive grid", level="default", comm=comm)
+    def _compute_adaptive_grid(self, reference_func: NDArray, original_grid) -> NDArray:
+        """Computes an adaptive energy grid based on gradient of sum(abs(VAR))."""
+        def _monitor(x, type='gradient'):
+            # lose real/imag parts here
+            if type == 'gradient':
+                return xp.abs(xp.gradient(x))
+            elif type == 'curvature':
+                return xp.abs(xp.gradient(xp.gradient(x)))
+            else:
+                raise ValueError("type must be 'gradient' or 'curvature'")
+            
+        def _adaptive_grid_from_monitor(x, original_grid, monitor_type='gradient', N_target=1000):
+            """Generate adaptive points based on the monitor function
+            
+            Parameters
+            ----------
+            x : np.ndarray
+                The input data array.
+            monitor_type : str, optional
+                The type of monitor function to use ('gradient' or 'curvature'), by default 'gradient'.
+            N_target : int, optional
+                The number of target adaptive points, by default 1000.
+
+            Returns
+            -------
+            adaptive_points : np.ndarray
+                The adaptive grid points.
+            monitor : np.ndarray
+                The monitor function values.
+            cumsum : np.ndarray
+                The cumulative distribution function of the monitor.
+            """
+            monitor = _monitor(x, type=monitor_type)
+            cumsum = xp.cumsum(monitor)
+            cumsum = cumsum / cumsum[-1]    # normalize to [0,1]
+
+            # equally space the adaptive points in cumulative distribution (of monitor)
+            targets = xp.linspace(0, 1, N_target)
+
+            if original_grid is None:
+                # force use linearly spaced energy grid (self.electron_energies may be non-uniform)
+                #   this is assuming G/sigma grid, -15 to 5 eV, not 0 to 20 eV
+                linear_grid = xp.linspace(self.config.electron.energy_window_min,
+                                                self.config.electron.energy_window_max,
+                                                self.config.electron.energy_window_num)
+            else:
+                linear_grid = original_grid
+
+
+            # reverse the (x,y) to (y,x) for interpolation back to the original x-axis
+            adaptive_points = xp.interp(targets, cumsum, linear_grid)
+
+            return adaptive_points, monitor, cumsum
+        
+        # calling function ensures only rank 0 computes the adaptive grid
+        adaptive_points, monitor, cumsum = _adaptive_grid_from_monitor(reference_func,
+                                                    original_grid = original_grid,
+                                                    monitor_type='gradient',
+                                                    N_target=self.config.scba.adaptive_num_points)
+        
+        # liyongda (20 Mar 2026): debugging, return uniform grid. Should give identical results
+        # return original_grid
+        return adaptive_points
+
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
         """Computes the phonon interaction."""
@@ -602,7 +670,7 @@ class SCBA:
 
             # print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
 
-            print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             bspl_lesser = make_interp_spline(self.coulomb_screening_energies, self.data.p_lesser.data, k=k)
             bspl_greater = make_interp_spline(self.coulomb_screening_energies, self.data.p_greater.data, k=k)
             bspl_retarded = make_interp_spline(self.coulomb_screening_energies, self.data.p_retarded.data, k=k)
@@ -610,15 +678,15 @@ class SCBA:
             # liyongda (14 Apr 2026): MPI stall on high rank usage and higher adaptive_start_iteration
             #   one rank is lagging on make_interp_spline
             #   adding intermediate comm.barrier() helps synchronize the ranks and avoid the stall
-            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             comm.barrier()
 
-            print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)
             self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
             self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
             self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
 
-            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after evaluating interp spline on adaptive grid", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after evaluating interp spline on adaptive grid", flush=True)
             comm.barrier()
 
             # transpose back from nnz to stack
@@ -635,7 +703,7 @@ class SCBA:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
-        print(f"rank {comm.rank} iteration {iteration} - waiting at barrier before computing p_coulomb_screening",flush=True)
+        # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier before computing p_coulomb_screening",flush=True)
         comm.barrier()
         self.p_coulomb_screening.compute(
             iteration,
@@ -1146,9 +1214,8 @@ class SCBA:
                 comm.barrier()
                 self._compute_electron_observables()
 
-            # Stash current into previous self-energy buffer.
-            t_stash_start = time.perf_counter()
-            self._stash_sigma()
+                # Stash current into previous self-energy buffer.
+                self._stash_sigma()
 
                 with profiler.profile_range(
                         label="SCBA: stack->nnz transpose", level="default", comm=comm
@@ -1178,8 +1245,8 @@ class SCBA:
                 if self.config.scba.photon:
                     self._compute_photon_interaction()
 
-            if self.quatrex_config.scba.phonon:
-                self._compute_phonon_interaction()
+                if self.config.scba.phonon:
+                    self._compute_phonon_interaction()
 
                 with profiler.profile_range(
                         label="SCBA: stack->nnz transpose back", level="default", comm=comm

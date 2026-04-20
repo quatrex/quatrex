@@ -8,7 +8,7 @@ transport_direction = 'x'
 block_size = 32
 
 [scba] # ===============================================================
-max_iterations = 100
+max_iterations = 20
 mixing_factor = 0.5
 
 coulomb_screening = true
@@ -89,7 +89,7 @@ obc.algorithm = "spectral"
 obc.nevp_solver = "full"        # 'beyn' or 'full'
 obc.block_sections = 1
 
-# Parameters for full's method.
+# Parameters for Beyn's method.
 obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3
@@ -113,10 +113,10 @@ solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "full"        # 'beyn' or 'full'
-obc.block_sections = 2
+obc.nevp_solver = "full"        # "beyn" or "full"
+obc.block_sections = 1
 
-# Parameters for full's method.
+# Parameters for Beyn's method.
 obc.num_ref_iterations = 2
 obc.max_decay = 15
 obc.min_decay = 1e-3

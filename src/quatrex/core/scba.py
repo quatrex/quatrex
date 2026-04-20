@@ -344,10 +344,6 @@ class SCBA:
                 self.electron_energies = self._determine_electron_energy_window(
                     config
                 )
-        
-        # initial adaptive energy grid is just the linear grid
-        if self.config.scba.adaptive:
-            self.adaptive_electron_energies = xp.copy(self.electron_energies)
 
         min_energy = self.electron_energies[0]
         max_energy = self.electron_energies[-1]

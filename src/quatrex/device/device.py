@@ -246,7 +246,7 @@ class Device:
 
             self.hamiltonians[r] = sparse.csr_matrix((h_r))
 
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 # Hamiltonian and system-matrix are hermitian, only the higher half of the matrix is stored.
                 self.hamiltonians[r] = sparse.triu(self.hamiltonians[r], format="csr")
 
@@ -278,7 +278,7 @@ class Device:
 
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
-                if self.config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.OBC_rank == "reduced":
                     # Overlap is hermitian, only the higher half of the matrix is stored.
                     self.overlap_matrices[r] = sparse.triu(
                         self.overlap_matrices[r], format="csr"

@@ -5,7 +5,7 @@ formalism = "wf"
 
 [qtbm]
 max_batch_size = 2
-method = "SplitSolve"
+method = "reduced"
 [device]
 transport_direction = 'x'
 num_orbitals_per_atom = {"Si"=4}

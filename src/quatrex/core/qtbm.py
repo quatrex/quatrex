@@ -338,7 +338,7 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        if self.config.qtbm.method == "SplitSolve":
+        if self.config.qtbm.OBC_rank == "reduced":
             self.solver = self._configure_solver(self.config.electron.solver)
         else:
             self.solver = self._configure_solver(self.config.electron.solver)
@@ -361,30 +361,28 @@ class QTBM:
 
         """
         if solver_config.direct_solver == "mumps":
-            if self.config.qtbm.method == "SplitSolve":
-                raise ValueError(
-                    "SplitSolve method is not compatible with MUMPS solver."
-                )
+            if self.config.qtbm.OBC_rank == "reduced":
+                raise ValueError("reduced method is not compatible with MUMPS solver.")
             return MUMPS()
         if solver_config.direct_solver == "superlu":
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 raise ValueError(
-                    "SplitSolve method is not compatible with SuperLU solver."
+                    "reduced method is not compatible with SuperLU solver."
                 )
             return SuperLU()
         if solver_config.direct_solver == "cudss":
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 return cuDSS(matrix_type="complex_hermitian_indefinite")
             else:
                 return cuDSS(matrix_type="complex_nonsymmetric")
         if solver_config.direct_solver == "pardiso":
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 return PARDISO(matrix_type="complex_hermitian_indefinite")
             else:
                 return PARDISO(matrix_type="complex_structurally_symmetric")
 
         if solver_config.direct_solver == "thomas":
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 return Thomas(sym=True, view="up")
             else:
                 return Thomas(sym=False, view="default")
@@ -418,11 +416,11 @@ class QTBM:
             Self-energy matrices for each contact, used for transmission
             calculations.
         reflection_per_contact : dict
-            Reflection matrices for each contact, used in SplitSolve method.
+            Reflection matrices for each contact, used in reduced method.
         eig_ref_per_contact : dict
-            Eigenvalues of the reflected wavefunctions for each contact, used in SplitSolve method.
+            Eigenvalues of the reflected wavefunctions for each contact, used in reduced method.
         phi_inv_ref_per_contact : dict
-            Inverse of the reflected wavefunctions for each contact, used in SplitSolve method.
+            Inverse of the reflected wavefunctions for each contact, used in reduced method.
         k_idx : int
             Index of the current k-point being processed.
 
@@ -443,7 +441,7 @@ class QTBM:
             # Compute the transmission
             if phi_nt.size != 0:
 
-                if self.config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.OBC_rank == "reduced":
                     S_P = reflection_per_contact[contact_out] @ (
                         xp.diag(1 / eig_ref_per_contact[contact_out])
                         @ (phi_inv_ref_per_contact[contact_out] @ phi_nt)
@@ -525,7 +523,7 @@ class QTBM:
         phi_ortho = xp.zeros_like(phi)
         for overlap in overlap_matrices.values():
             phi_ortho += overlap @ phi
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 phi_ortho += (phi.T.conj() @ overlap).T.conj()
                 phi_ortho -= sparse.diags(overlap.diagonal()) @ phi
 
@@ -537,7 +535,7 @@ class QTBM:
             )
             phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
 
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 phi_cont += phi_ref_per_contact[contact] @ (
                     xp.diag(1 / eig_ref_per_contact[contact])
                     @ (phi_inv_ref_per_contact[contact] @ phi[orbital_indices, :])
@@ -565,7 +563,7 @@ class QTBM:
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap) @ phi_cont
                 )
-                if self.config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.OBC_rank == "reduced":
                     phi_ortho[orbital_indices, :] += (
                         contact.get_coupling_matrix(overlap, transpose=True) @ phi_cont
                     )
@@ -575,7 +573,7 @@ class QTBM:
                 # system_matrix[orbital_indices, :] @ phi
                 (system_matrix @ phi)[orbital_indices, :]
             )
-            if self.config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.OBC_rank == "reduced":
                 error += (
                     contact.get_coupling_matrix(system_matrix, transpose=True)
                     @ phi_cont
@@ -802,7 +800,7 @@ class QTBM:
         comm.Barrier()
 
         # Allocate indices to update the system matrix in-place
-        if self.config.qtbm.method == "SplitSolve":
+        if self.config.qtbm.OBC_rank == "reduced":
             system_matrix = allocate_system_matrix(
                 self.device.hamiltonians, self.device.overlap_matrices
             )  # Initialize the system matrix without boundary self energies
@@ -825,7 +823,7 @@ class QTBM:
                 system_matrix, s_r
             )
 
-        if self.config.qtbm.method != "SplitSolve":
+        if self.config.qtbm.OBC_rank != "reduced":
             sigma_obc_update_indices = {}
             for contact in self.device.contacts:
                 sigma_obc_update_indices[contact] = compute_update_indices_dense(
@@ -887,7 +885,7 @@ class QTBM:
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
-                    if self.config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.OBC_rank == "reduced":
                         (
                             injection_per_contact[contact],
                             phi_inj_per_contact[contact],
@@ -929,7 +927,7 @@ class QTBM:
 
                     injection_count += modes_per_energy
 
-                if self.config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.OBC_rank == "reduced":
                     reflection_segments = {}
                     reflection_segments_translated = {}
                     reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
@@ -958,7 +956,7 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    if self.config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.OBC_rank != "reduced":
                         injection_tot = xp.zeros(
                             (self.num_orbitals, injection_count[i]),
                             dtype=xp.complex128,
@@ -980,13 +978,13 @@ class QTBM:
                         injection_tot[
                             contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
-                        if self.config.qtbm.method == "SplitSolve":
+                        if self.config.qtbm.OBC_rank == "reduced":
                             injection_tot[
                                 contact.orbital_indices,
                                 reflection_segments_translated[contact, i],
                             ] = reflection_per_contact[contact][i]
 
-                    if self.config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.OBC_rank == "reduced":
                         phi_inv_tot = get_sparse_RHS_transpose(
                             phi_inv_ref_per_contact,
                             reflection_segments,
@@ -1021,7 +1019,7 @@ class QTBM:
                             system_matrix.data, s_r.data, overlap_update_indices[r]
                         )
 
-                    if self.config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.OBC_rank != "reduced":
                         # Add the boundary self-energy contributions
                         for contact, sigma_obc in sigma_obc_per_contact.items():
                             for k_t, sigma_obc_k in sigma_obc.items():
@@ -1056,7 +1054,7 @@ class QTBM:
                             f"{self.config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
                             system_matrix_cpu,
                         )
-                    if self.config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.OBC_rank == "reduced":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             phi = self.solver.solve(
@@ -1104,7 +1102,7 @@ class QTBM:
                     # Get the bare system matrix back, needed for
                     # transmission calculation
 
-                    if self.config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.OBC_rank != "reduced":
                         # Subtract the open boundary conditions
                         for contact, sigma_obc in sigma_obc_per_contact.items():
                             for k_t, sigma_obc_k in sigma_obc.items():
@@ -1143,7 +1141,7 @@ class QTBM:
                         del phi
 
                     del injection_tot
-                    if self.config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.OBC_rank == "reduced":
                         del phi_inv_tot
                         del eig_tot
 

@@ -337,12 +337,12 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        if self.quatrex_config.qtbm.method == "SplitSolve":
-            self.solver = self._configure_solver(quatrex_config.electron.solver)
+        if self.config.qtbm.method == "SplitSolve":
+            self.solver = self._configure_solver(self.config.electron.solver)
         else:
-            self.solver = self._configure_solver(quatrex_config.electron.solver)
+            self.solver = self._configure_solver(self.config.electron.solver)
         self.matrix_type = preferred_matrix_type[
-            quatrex_config.electron.solver.direct_solver
+            self.config.electron.solver.direct_solver
         ]
 
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
@@ -360,30 +360,30 @@ class QTBM:
 
         """
         if solver_config.direct_solver == "mumps":
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 raise ValueError(
                     "SplitSolve method is not compatible with MUMPS solver."
                 )
             return MUMPS()
         if solver_config.direct_solver == "superlu":
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 raise ValueError(
                     "SplitSolve method is not compatible with SuperLU solver."
                 )
             return SuperLU()
         if solver_config.direct_solver == "cudss":
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 return cuDSS(matrix_type="complex_hermitian_indefinite")
             else:
                 return cuDSS(matrix_type="complex_nonsymmetric")
         if solver_config.direct_solver == "pardiso":
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 return PARDISO(matrix_type="complex_hermitian_indefinite")
             else:
                 return PARDISO(matrix_type="complex_structurally_symmetric")
 
         if solver_config.direct_solver == "thomas":
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 return Thomas(sym=True, view="up")
             else:
                 return Thomas(sym=False, view="default")
@@ -442,7 +442,7 @@ class QTBM:
             # Compute the transmission
             if phi_nt.size != 0:
 
-                if self.quatrex_config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.method == "SplitSolve":
                     S_P = reflection_per_contact[contact_out] @ (
                         xp.diag(1 / eig_ref_per_contact[contact_out])
                         @ (phi_inv_ref_per_contact[contact_out] @ phi_nt)
@@ -524,7 +524,7 @@ class QTBM:
         phi_ortho = xp.zeros_like(phi)
         for overlap in overlap_matrices.values():
             phi_ortho += overlap @ phi
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 phi_ortho += (phi.T.conj() @ overlap).T.conj()
                 phi_ortho -= sparse.diags(overlap.diagonal()) @ phi
 
@@ -536,7 +536,7 @@ class QTBM:
             )
             phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
 
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 phi_cont += phi_ref_per_contact[contact] @ (
                     xp.diag(1 / eig_ref_per_contact[contact])
                     @ (phi_inv_ref_per_contact[contact] @ phi[orbital_indices, :])
@@ -564,7 +564,7 @@ class QTBM:
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap) @ phi_cont
                 )
-                if self.quatrex_config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.method == "SplitSolve":
                     phi_ortho[orbital_indices, :] += (
                         contact.get_coupling_matrix(overlap, transpose=True) @ phi_cont
                     )
@@ -574,7 +574,7 @@ class QTBM:
                 # system_matrix[orbital_indices, :] @ phi
                 (system_matrix @ phi)[orbital_indices, :]
             )
-            if self.quatrex_config.qtbm.method == "SplitSolve":
+            if self.config.qtbm.method == "SplitSolve":
                 error += (
                     contact.get_coupling_matrix(system_matrix, transpose=True)
                     @ phi_cont
@@ -801,7 +801,7 @@ class QTBM:
         comm.Barrier()
 
         # Allocate indices to update the system matrix in-place
-        if self.quatrex_config.qtbm.method == "SplitSolve":
+        if self.config.qtbm.method == "SplitSolve":
             system_matrix = allocate_system_matrix(
                 self.device.hamiltonians, self.device.overlap_matrices
             )  # Initialize the system matrix without boundary self energies
@@ -824,7 +824,7 @@ class QTBM:
                 system_matrix, s_r
             )
 
-        if self.quatrex_config.qtbm.method != "SplitSolve":
+        if self.config.qtbm.method != "SplitSolve":
             sigma_obc_update_indices = {}
             for contact in self.device.contacts:
                 sigma_obc_update_indices[contact] = compute_update_indices_dense(
@@ -886,7 +886,7 @@ class QTBM:
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
-                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.method == "SplitSolve":
                         (
                             injection_per_contact[contact],
                             phi_inj_per_contact[contact],
@@ -928,7 +928,7 @@ class QTBM:
 
                     injection_count += modes_per_energy
 
-                if self.quatrex_config.qtbm.method == "SplitSolve":
+                if self.config.qtbm.method == "SplitSolve":
                     reflection_segments = {}
                     reflection_segments_translated = {}
                     reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
@@ -957,7 +957,7 @@ class QTBM:
 
                     times.append(time.perf_counter())
 
-                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.method != "SplitSolve":
                         injection_tot = xp.zeros(
                             (self.num_orbitals, injection_count[i]),
                             dtype=xp.complex128,
@@ -979,13 +979,13 @@ class QTBM:
                         injection_tot[
                             contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
-                        if self.quatrex_config.qtbm.method == "SplitSolve":
+                        if self.config.qtbm.method == "SplitSolve":
                             injection_tot[
                                 contact.orbital_indices,
                                 reflection_segments_translated[contact, i],
                             ] = reflection_per_contact[contact][i]
 
-                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.method == "SplitSolve":
                         phi_inv_tot = get_sparse_RHS_transpose(
                             phi_inv_ref_per_contact,
                             reflection_segments,
@@ -1020,7 +1020,7 @@ class QTBM:
                             system_matrix.data, s_r.data, overlap_update_indices[r]
                         )
 
-                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.method != "SplitSolve":
                         # Add the boundary self-energy contributions
                         for contact, sigma_obc in sigma_obc_per_contact.items():
                             for k_t, sigma_obc_k in sigma_obc.items():
@@ -1041,7 +1041,7 @@ class QTBM:
 
                     times.append(time.perf_counter())
                     n_injected = injection_count[i]
-                    if self.quatrex_config.qtbm.dump_system_matrix:
+                    if self.config.qtbm.dump_system_matrix:
                         if comm.rank == 0:
                             print("Dumping system matrix...", flush=True)
                         if xp.__name__ == "cupy":
@@ -1052,10 +1052,10 @@ class QTBM:
                         from scipy import sparse as sp_sparse
 
                         sp_sparse.save_npz(
-                            f"{self.quatrex_config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
+                            f"{self.config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
                             system_matrix_cpu,
                         )
-                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.method == "SplitSolve":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             phi = self.solver.solve(
@@ -1103,7 +1103,7 @@ class QTBM:
                     # Get the bare system matrix back, needed for
                     # transmission calculation
 
-                    if self.quatrex_config.qtbm.method != "SplitSolve":
+                    if self.config.qtbm.method != "SplitSolve":
                         # Subtract the open boundary conditions
                         for contact, sigma_obc in sigma_obc_per_contact.items():
                             for k_t, sigma_obc_k in sigma_obc.items():
@@ -1142,7 +1142,7 @@ class QTBM:
                         del phi
 
                     del injection_tot
-                    if self.quatrex_config.qtbm.method == "SplitSolve":
+                    if self.config.qtbm.method == "SplitSolve":
                         del phi_inv_tot
                         del eig_tot
 

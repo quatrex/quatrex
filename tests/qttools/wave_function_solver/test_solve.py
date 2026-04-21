@@ -68,7 +68,7 @@ class TestMUMPS:
         """Tests the wave function solver."""
         a, b = _assemble_system(n, m, format="coo")
 
-        solver = MUMPS(reuse_analysis=False)
+        solver = MUMPS()
         x = solver.solve(a, b)
 
         assert x.shape == (n, m)
@@ -78,7 +78,7 @@ class TestMUMPS:
         """Tests the wave function solver with reuse of analysis."""
         a, b = _assemble_system(n, m, format="coo")
 
-        solver = MUMPS(reuse_analysis=True)
+        solver = MUMPS()
         x1 = solver.solve(a, b)
         assert np.allclose(a @ x1, b, atol=1e-6)
 
@@ -87,7 +87,7 @@ class TestMUMPS:
 
         __, b = _assemble_system(n, 2 * m, format="coo")
 
-        x2 = solver.solve(a, b)
+        x2 = solver.solve(a, b, reuse_sym_fact=True)
         assert np.allclose(a @ x2, b, atol=1e-6)
 
     def test_explicit_ordering(self, n: int, m: int):

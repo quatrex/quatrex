@@ -182,7 +182,6 @@ class Thomas(WFSolver):
         """Free memory used for intermediate computations."""
         self.schur = None
 
-    @profiler.profile(level="api")
     def solve(
         self,
         a: sparse.spmatrix,

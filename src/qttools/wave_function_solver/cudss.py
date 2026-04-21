@@ -154,7 +154,6 @@ class cuDSS(WFSolver):
         cudss.matrix_destroy(self.B)
         cudss.matrix_destroy(self.X)
 
-    @profiler.profile(level="api")
     def solve(
         self,
         a: sparse.spmatrix,

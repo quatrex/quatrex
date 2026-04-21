@@ -66,7 +66,6 @@ class PARDISO(WFSolver):
         self.context = None
         self.verbose = verbose
 
-    @profiler.profile(level="api")
     def solve(
         self,
         a: sparse.spmatrix,

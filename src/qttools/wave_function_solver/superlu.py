@@ -18,7 +18,6 @@ class SuperLU(WFSolver):
 
     """
 
-    @profiler.profile(level="api")
     def solve(
         self,
         a: sparse.spmatrix,

@@ -473,7 +473,6 @@ class Spectral(OBCSolver):
         # Calculate the surface Green's function.
         return phi_inv_reflected
 
-    @profiler.profile(level="api")
     def __call__(
         self,
         a_ii: NDArray,
@@ -568,7 +567,7 @@ class Spectral(OBCSolver):
                     )
 
         # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
-        
+
         if return_injected:
             b_injected = []
 

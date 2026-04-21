@@ -54,7 +54,6 @@ class MUMPS(WFSolver):
         self.ordering = ordering
         self.context = mumps.Context(verbose=verbose)
 
-    @profiler.profile(level="api")
     def solve(
         self,
         a: sparse.spmatrix,

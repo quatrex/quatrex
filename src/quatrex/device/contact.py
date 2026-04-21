@@ -749,7 +749,7 @@ class Contact:
         hopping_matrix = (
             hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
         )
-        if self.device.quatrex_config.qtbm.method == "SplitSolve":
+        if self.device.config.qtbm.method == "SplitSolve":
             opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
             # In SplitSolve, the coupling is only given by the upper triangular part of the Hamiltonian.
             # We need to add the lower part to get the full coupling.
@@ -800,7 +800,7 @@ class Contact:
 
         """
 
-        if self.device.quatrex_config.qtbm.method == "SplitSolve":
+        if self.device.config.qtbm.method == "SplitSolve":
             # In SplitSolve, the coupling is only given by the upper triangular part of the Hamiltonian.
             # We need to check both the upper and lower part to find all couplings.
             return (

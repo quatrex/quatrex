@@ -1,5 +1,4 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
-
 import os
 from dataclasses import dataclass, field
 from time import sleep
@@ -552,11 +551,37 @@ class SCBA:
                                                     original_grid = original_grid,
                                                     monitor_type='gradient',
                                                     N_target=self.config.scba.adaptive_num_points)
-        
+        # liyongda (22 Apr 2026): clean up duplicates
+        #   if there are duplicates, replace the values with a linear grid from their neigbours
+        adaptive_points = adaptive_points.tolist()  # convert to list for easier manipulation
+        duplicates = [x for x in set(adaptive_points) if adaptive_points.count(x) > 1]
+
+        for duplicate in duplicates:
+            print(f"Found duplicate adaptive point: {duplicate}", flush=True)
+            indices = [i for i, x in enumerate(adaptive_points) if x == duplicate]
+            for i, idx in enumerate(indices):
+                print(f"  array[{idx}]: {adaptive_points[idx]}", flush=True)
+            left_idx = indices[0] - 1 if indices[0] > 0 else 0
+            right_idx = indices[-1] + 1 if indices[-1] < len(adaptive_points) - 1 else len(adaptive_points) - 1
+            # print(f"  Left neighbor index: {left_idx}, value: {adaptive_points[left_idx]}", flush=True)
+            # print(f"  Right neighbor index: {right_idx}, value: {adaptive_points[right_idx]}", flush=True)
+
+            # replace the duplicate values with linearly spaced values between the left and right neighbors
+            replacement = np.linspace(adaptive_points[left_idx], adaptive_points[right_idx], len(indices)+1, endpoint=True)
+            # print(f"  Replacement values: {replacement}", flush=True)
+
+            # replace the middle values
+            for i in range(left_idx, right_idx + 1):
+                adaptive_points[i] = replacement[i - left_idx].item()
+            
+            print(f"Duplicates in adaptive grid generation were replaced with a linear grid between their neighbors: {replacement}", flush=True)
+
+        # convert back to numpy array
+        adaptive_points = np.array(adaptive_points)
+
         # liyongda (20 Mar 2026): debugging, return uniform grid. Should give identical results
         # return original_grid
         return adaptive_points
-
 
     @profiler.profile(label="SCBA: Phonon interactions", level="default", comm=comm)
     def _compute_phonon_interaction(self):
@@ -616,7 +641,7 @@ class SCBA:
 
             # print(f"rank {comm.rank} iteration {iteration} - interpolating p functions onto adaptive grid with order {k}, nnz={self.data.p_lesser.data.shape[1]}", flush=True)
 
-            print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - making interp spline with order {k}, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             bspl_lesser = make_interp_spline(self.coulomb_screening_energies, self.data.p_lesser.data, k=k)
             bspl_greater = make_interp_spline(self.coulomb_screening_energies, self.data.p_greater.data, k=k)
             bspl_retarded = make_interp_spline(self.coulomb_screening_energies, self.data.p_retarded.data, k=k)
@@ -624,15 +649,15 @@ class SCBA:
             # liyongda (14 Apr 2026): MPI stall on high rank usage and higher adaptive_start_iteration
             #   one rank is lagging on make_interp_spline
             #   adding intermediate comm.barrier() helps synchronize the ranks and avoid the stall
-            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after making interp spline, p_greater.data.shape={self.data.p_greater.data.shape}", flush=True)
             comm.barrier()
 
-            print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - evaluating interp spline on adaptive grid", flush=True)
             self.data.p_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_p_w)
             self.data.p_greater.data = bspl_greater(self.adaptive_electron_energies_for_p_w)
             self.data.p_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_p_w)
 
-            print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after evaluating interp spline on adaptive grid", flush=True)
+            # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier after evaluating interp spline on adaptive grid", flush=True)
             comm.barrier()
 
             # transpose back from nnz to stack
@@ -649,7 +674,7 @@ class SCBA:
                     m.dtranspose(discard=False)  # This must not be discarded.
                     assert m.distribution_state == "stack"
 
-        print(f"rank {comm.rank} iteration {iteration} - waiting at barrier before computing p_coulomb_screening",flush=True)
+        # print(f"rank {comm.rank} iteration {iteration} - waiting at barrier before computing p_coulomb_screening",flush=True)
         comm.barrier()
         self.p_coulomb_screening.compute(
             iteration,
@@ -699,7 +724,7 @@ class SCBA:
             adaptive_electron_energies_for_p_w = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
             # rank 0 computes adaptive grid and broadcast to other ranks
             if comm.rank == 0:
-                print(f"rank {comm.rank} - computing adaptive grid", flush=True)
+                print(f"rank {comm.rank} - computing adaptive grid for p/w", flush=True)
                 # with profiler.profile_range(
                 #     label="SCBA: compute adaptive grid", level="default", comm=comm
                 # ):
@@ -1006,11 +1031,11 @@ class SCBA:
                 if self.config.scba.adaptive and i >= self.config.scba.adaptive_start_iteration:
                     self.electron_solver.update_energies(self.adaptive_electron_energies_for_g_sigma)
 
-                # 2. (on first time) interpolate the g functions onto the adaptive grid
+                # 2. (on first time) interpolate the Sigma functions onto the adaptive grid --> used to compute G, first thing in the SCBA loop
                 if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration:
                     # each rank needs all energies, but only some nnz
                     # transpose from stack to nnz distribution
-                    for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
+                    for m in [ self.data.sigma_lesser, self.data.sigma_greater, self.data.sigma_retarded ]:
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "nnz"
 
@@ -1019,26 +1044,16 @@ class SCBA:
                     # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#batches-of-y
                     k = self.config.scba.adaptive_interpolation_order   # 1 (linear), 2 (quadratic), 3 (cubic)
 
-                    # print(f"rank {comm.rank} iteration {i} - interpolating g functions onto adaptive grid with order {k}, nnz={self.data.g_lesser.data.shape[1]}", flush=True)
-                    # for nnz in range (self.data.g_lesser.data.shape[1]):       # liyongda (18 Mar 2026): could be vectorized to be faster                        
-                    #     bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data[:, nnz], k=k)
-                    #     bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data[:, nnz], k=k)
-                    #     bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data[:, nnz], k=k)
-                        
-                    #     self.data.g_lesser.data[:, nnz] = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
-                    #     self.data.g_greater.data[:, nnz] = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
-                    #     self.data.g_retarded.data[:, nnz] = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
-
-                    bspl_lesser = make_interp_spline(self.electron_energies, self.data.g_lesser.data, k=k)
-                    bspl_greater = make_interp_spline(self.electron_energies, self.data.g_greater.data, k=k)
-                    bspl_retarded = make_interp_spline(self.electron_energies, self.data.g_retarded.data, k=k)
+                    bspl_lesser = make_interp_spline(self.electron_energies, self.data.sigma_lesser.data, k=k)
+                    bspl_greater = make_interp_spline(self.electron_energies, self.data.sigma_greater.data, k=k)
+                    bspl_retarded = make_interp_spline(self.electron_energies, self.data.sigma_retarded.data, k=k)
                     
-                    self.data.g_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
-                    self.data.g_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
-                    self.data.g_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
+                    self.data.sigma_lesser.data = bspl_lesser(self.adaptive_electron_energies_for_g_sigma)
+                    self.data.sigma_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
+                    self.data.sigma_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
 
                     # transpose back from nnz to stack
-                    for m in [ self.data.g_lesser, self.data.g_greater, self.data.g_retarded ]:
+                    for m in [ self.data.sigma_lesser, self.data.sigma_greater, self.data.sigma_retarded ]:
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "stack"
                     
@@ -1092,7 +1107,7 @@ class SCBA:
                     adaptive_electron_energies_for_g_sigma = np.empty(self.config.scba.adaptive_num_points, dtype=np.float64)
                     # rank 0 computes adaptive grid and broadcast to other ranks
                     if comm.rank == 0:
-                        print(f"rank {comm.rank} - computing adaptive grid", flush=True)
+                        print(f"rank {comm.rank} - computing adaptive grid for g/sigma", flush=True)
                         # with profiler.profile_range(
                         #     label="SCBA: compute adaptive grid", level="default", comm=comm
                         # ):

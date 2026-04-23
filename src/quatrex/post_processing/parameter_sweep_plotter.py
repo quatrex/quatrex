@@ -569,6 +569,70 @@ class ParameterSweepPlotter:
 
         return ax
 
+    def plot_fermi_level_vs_parameter(self, exclude_params: List[str] = None, ax=None) -> plt.Axes:
+        """
+        Plot Fermi level as a function of all parameter values. Also plots the same thing but as a function of the 
+        Fermi level difference to the conduction band edge.
+
+        In the plot is also the energy minimums of the K and Q valleys, so that one can easily see how the Fermi 
+        level moves with respect to the band edges.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Axes object to plot on. If None, creates a new figure.
+        exclude_params : list of str, optional
+            List of parameter values to exclude from the plot (e.g., [0, 1e12])
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes object containing the plot
+        """
+        if ax is None:
+            fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+
+        params, conduction_band, _, fermi, K_Q_valley_diff, _ = self._get_last_values()
+        if exclude_params:
+            mask = [p not in exclude_params for p in params]
+            params = params[mask]
+            fermi = fermi[mask]
+            conduction_band = conduction_band[mask]
+            K_Q_valley_diff = K_Q_valley_diff[mask]
+
+        # Calculate K and Q valley minimums from conduction band edge and K-Q valley difference
+        K_valley_min = np.zeros_like(conduction_band)
+        Q_valley_min = np.zeros_like(conduction_band)
+        for i, diff in enumerate(K_Q_valley_diff):
+            if diff < 0:
+                # K valley is lower than Q valley and thus the conduction band minimum
+                K_valley_min[i] = conduction_band[i]
+                Q_valley_min[i] = conduction_band[i] - diff
+            else:
+                # Q valley is lower than K valley and thus the conduction band minimum
+                Q_valley_min[i] = conduction_band[i]
+                K_valley_min[i] = conduction_band[i] + diff
+
+        ax[0].plot(params, fermi, "o-", label="Fermi Level")
+        ax[0].plot(params, K_valley_min, "--", label="K Valley Minimum")
+        ax[0].plot(params, Q_valley_min, "--", label="Q Valley Minimum")
+        ax[0].set_xlabel("Parameter Value")
+        ax[0].set_ylabel("Fermi Level (eV)")
+        ax[0].set_title("Fermi Level vs Parameter")
+        ax[0].legend()
+        ax[0].grid(True)
+        # Fermi level difference to conduction band edge
+        fermi_diff_cb = fermi - conduction_band
+        ax[1].plot(params, fermi_diff_cb, "o-", label="Fermi Level - Conduction Band Edge")
+        ax[1].plot(params, K_valley_min - conduction_band, "--", label="K Valley Minimum - Conduction Band Edge")
+        ax[1].plot(params, Q_valley_min - conduction_band, "--", label="Q Valley Minimum - Conduction Band Edge")
+        ax[1].set_xlabel("Parameter Value")
+        ax[1].set_ylabel("Energy Difference (eV)")
+        ax[1].set_title("Fermi Level Difference to Conduction Band Edge vs Parameter")
+        ax[1].legend()
+        ax[1].grid(True)
+        return ax
+
     def get_total_num_states(self, parameter_value: str) -> int:
         """
         Get the total number of states for a specific parameter value.

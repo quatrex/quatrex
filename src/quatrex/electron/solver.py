@@ -499,23 +499,37 @@ class ElectronSolver(SubsystemSolver):
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
             ):
-                left_band_edges, right_band_edges = find_renormalized_eigenvalues(
-                    hamiltonian=self.hamiltonian,
-                    overlap=self.overlap_sparray,
-                    potential=self.potential,
-                    sigma_retarded=sse_retarded,
-                    energies=self.energies,
-                    conduction_band_guesses=(
-                        self.left_fermi_level + self.delta_fermi_level_conduction_band,
-                        self.right_fermi_level + self.delta_fermi_level_conduction_band,
-                    ),
-                    mid_gap_energies=(
-                        self.left_mid_gap_energy,
-                        self.right_mid_gap_energy,
-                    ),
-                    band_edge_config=self.config.compute.band_edge,
-                )
-                self._update_fermi_levels(left_band_edges, right_band_edges)
+                # liyongda (24 Apr 2026): only update band edges during uniform energy iterations
+                #   assume that it's converged by the time we switch to adaptive
+                #   prevent band edge wobbling (seen in adaptive iterations)
+                #   (this was AlexMaeder's idea)
+                if self.call_count < self.config.scba.adaptive_start_iteration:
+                    left_band_edges, right_band_edges = find_renormalized_eigenvalues(
+                        hamiltonian=self.hamiltonian,
+                        overlap=self.overlap_sparray,
+                        potential=self.potential,
+                        sigma_retarded=sse_retarded,
+                        energies=self.energies,
+                        conduction_band_guesses=(
+                            self.left_fermi_level + self.delta_fermi_level_conduction_band,
+                            self.right_fermi_level + self.delta_fermi_level_conduction_band,
+                        ),
+                        mid_gap_energies=(
+                            self.left_mid_gap_energy,
+                            self.right_mid_gap_energy,
+                        ),
+                        band_edge_config=self.config.compute.band_edge,
+                    )
+
+                    self._update_fermi_levels(left_band_edges, right_band_edges)
+
+                else:
+                    # liyongda (24 Apr 2026): I still want the print statement that's in self._update_fermi_levels, copy-pasted here
+                    if comm.rank == 0:
+                        print(
+                            f"Updating conduction band edges: Adaptive iteration {self.call_count - self.config.scba.adaptive_start_iteration} - band edges are frozen from iteration {self.config.scba.adaptive_start_iteration-1}",
+                            flush=True,
+                        )
 
         self._compute_obc()
 

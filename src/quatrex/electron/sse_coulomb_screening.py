@@ -128,6 +128,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.big_block_sizes = None
         self.batch_size = config.compute.convolve.batch_size
 
+        # liyongda (21 Apr 2026): boolean True/False, determined from main config
         self.include_energy_renormalization = (
             config.coulomb_screening.include_energy_renormalization
             in ("self-energy", "both")
@@ -246,20 +247,20 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_lesser.data[..., batch] += lesser_projected
             sigma_greater.data[..., batch] += greater_projected
 
+            if self.include_energy_renormalization:
+                # Compute retarded self-energy with a Hilbert transform
+                # liyongda (01 Apr 2026): use the blown up dense grid for Hilbert transform (requires uniform grid)
+                #   Hilbert kernel is already adjusted for the interpolation grid
+                antihermitian = greater - lesser
+                antihermitian_fft = xp.fft.fft(antihermitian, n_conv_fine, axis=0)
 
-            # Compute retarded self-energy with a Hilbert transform
-            # liyongda (01 Apr 2026): use the blown up dense grid for Hilbert transform (requires uniform grid)
-            #   Hilbert kernel is already adjusted for the interpolation grid
-            antihermitian = greater - lesser
-            antihermitian_fft = xp.fft.fft(antihermitian, n_conv_fine, axis=0)
+                sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+                # negative energy part
+                sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-            # negative energy part
-            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
-
-            retarded = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine] * self.kpoint_volume
-            retarded_projected = interpolate.make_interp_spline(fine_energies_g, retarded, axis=0, k=k)(target_grid)
-            sigma_retarded.data[..., batch] += retarded_projected
+                retarded = adaptive_prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:n_fine] * self.kpoint_volume
+                retarded_projected = interpolate.make_interp_spline(fine_energies_g, retarded, axis=0, k=k)(target_grid)
+                sigma_retarded.data[..., batch] += retarded_projected
 
         else:
             # compute transforms
@@ -301,23 +302,23 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             )
             sigma_greater.data[..., batch] += greater
 
-        if self.include_energy_renormalization:
-            # Compute retarded self-energy with a Hilbert transform.
-            antihermitian = greater - lesser
-            antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
+            if self.include_energy_renormalization:
+                # Compute retarded self-energy with a Hilbert transform.
+                antihermitian = greater - lesser
+                antihermitian_fft = xp.fft.fft(antihermitian, n, axis=0)
 
-            sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
-            # negative energy part
-            sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
+                sigma_x_fft = xp.multiply(antihermitian_fft, hilbert_kernel_fft)
+                # negative energy part
+                sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
-            # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
-            # part of the retarded self-energy is added outside in the
-            # main SCBA loop, so it is not added here.
-            sigma_retarded.data[..., batch] += (
-                self.prefactor
-                * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
-                * self.kpoint_volume
-            )
+                # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
+                # part of the retarded self-energy is added outside in the
+                # main SCBA loop, so it is not added here.
+                sigma_retarded.data[..., batch] += (
+                    self.prefactor
+                    * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                    * self.kpoint_volume
+                )
 
     def _compute_with_correction(
         self,

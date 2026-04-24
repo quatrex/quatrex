@@ -12,7 +12,7 @@ from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.profiling import Profiler
 from qttools.utils.gpu_utils import get_host
-from qttools.utils.mpi_utils import distributed_load, get_section_sizes, gather_array_stack, get_section_sizes, reduce_matrix_over_stack
+from qttools.utils.mpi_utils import distributed_load, gather_array_nnz, get_section_sizes, gather_array_stack, get_section_sizes, reduce_matrix_over_stack
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
@@ -1030,6 +1030,7 @@ class SCBA:
                 # 1. setup adaptive energy grids
                 if self.config.scba.adaptive and i >= self.config.scba.adaptive_start_iteration:
                     self.electron_solver.update_energies(self.adaptive_electron_energies_for_g_sigma)
+                    # print(f"rank {comm.rank} - updated electron energies for g/sigma to adaptive grid with {len(self.adaptive_electron_energies_for_g_sigma)} points for iteration {i}", flush=True)
 
                 # 2. (on first time) interpolate the Sigma functions onto the adaptive grid --> used to compute G, first thing in the SCBA loop
                 if self.config.scba.adaptive and i == self.config.scba.adaptive_start_iteration:
@@ -1038,6 +1039,19 @@ class SCBA:
                     for m in [ self.data.sigma_lesser, self.data.sigma_greater, self.data.sigma_retarded ]:
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "nnz"
+
+                    # liyongda (24 Apr 2026): debugging, save the sigma_* data immediately before inteprolation
+                    # sample_indices = np.load(f"{archive_file_prefix}_sample_indices.npy")
+                    # comm.barrier() # make sure all ranks have loaded the sample indices before gather
+                    # sigma_lesser_concat_before_interp = gather_array_nnz(self.data.sigma_lesser.data, global_comm, sample_indices)
+                    # sigma_greater_concat_before_interp = gather_array_nnz(self.data.sigma_greater.data, global_comm, sample_indices)
+                    # sigma_retarded_concat_before_interp = gather_array_nnz(self.data.sigma_retarded.data, global_comm, sample_indices)
+                    # if comm.rank == 0:
+                    #     xp.save(self.config.output_dir /  f"sigma_lesser_before_interp_step_{i}.npy", np.array(sigma_lesser_concat_before_interp))
+                    #     xp.save(self.config.output_dir /  f"sigma_greater_before_interp_step_{i}.npy", np.array(sigma_greater_concat_before_interp))
+                    #     xp.save(self.config.output_dir /  f"sigma_retarded_before_interp_step_{i}.npy", np.array(sigma_retarded_concat_before_interp))
+                    #     print(f"DEBUGGING: saved reduced sigma immediately before interpolation for iteration {i}", flush=True)
+                    # comm.barrier()
 
                     # bsplit with k=1 for linear interpolation
                     # able to be batched, ex. x=(11,), y=(11,1000), 1000 sets of y-data to be interpolated on the same x-axis
@@ -1052,10 +1066,22 @@ class SCBA:
                     self.data.sigma_greater.data = bspl_greater(self.adaptive_electron_energies_for_g_sigma)
                     self.data.sigma_retarded.data = bspl_retarded(self.adaptive_electron_energies_for_g_sigma)
 
+                    # liyongda (23 Apr 2026): debugging, save the interpolated sigma so we can see the diff from the uniform\
+                    # sigma_lesser_interp_concat = gather_array_nnz(self.data.sigma_lesser.data, global_comm, sample_indices)
+                    # sigma_greater_interp_concat = gather_array_nnz(self.data.sigma_greater.data, global_comm, sample_indices)
+                    # sigma_retarded_interp_concat = gather_array_nnz(self.data.sigma_retarded.data, global_comm, sample_indices)
+                    # if comm.rank == 0:
+                    #     xp.save(self.config.output_dir /  f"sigma_lesser_interp_step_{i}.npy", np.array(sigma_lesser_interp_concat))
+                    #     xp.save(self.config.output_dir /  f"sigma_greater_interp_step_{i}.npy", np.array(sigma_greater_interp_concat))
+                    #     xp.save(self.config.output_dir /  f"sigma_retarded_interp_step_{i}.npy", np.array(sigma_retarded_interp_concat))
+                    #     print(f"DEBUGGING: saved interpolated reduced sigma for iteration {i}", flush=True)
+                    # comm.barrier()
+
                     # transpose back from nnz to stack
                     for m in [ self.data.sigma_lesser, self.data.sigma_greater, self.data.sigma_retarded ]:
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "stack"
+
                     
                 # compute the Green's function from scattering self-energies
                 # liyongda (23 Feb 2026): iteration 0, all sigma data is zero (checked with debugger and np.allclose)

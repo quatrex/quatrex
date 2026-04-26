@@ -2,11 +2,12 @@
 import math
 
 import numba as nb
+import numpy as np
 
 from qttools import NDArray
 
 
-def iadd(a: NDArray, b: NDArray, inds: NDArray) -> None:
+def iadd(a: NDArray, b: NDArray, inds: NDArray, alpha: np.complex128 = 1.0) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
 
     Parameters
@@ -19,7 +20,7 @@ def iadd(a: NDArray, b: NDArray, inds: NDArray) -> None:
         The indices at which to add `b` to `a`.
 
     """
-    a[inds] += b
+    a[inds] += alpha * b
 
 
 @nb.njit(parallel=True)
@@ -37,7 +38,7 @@ def iadd_obc(
     a : NDArray
         The array to be updated.
     b : NDArray
-        The array to be subtracted from `a`.
+        The array to be added from `a`.
     inds : NDArray
         The indices at which to subtract `b` from `a`.
     k : tuple[float, float]
@@ -83,7 +84,7 @@ def iadd_obc(
         a[inds[i]] += b[s_idx] * (c + 1j * s)
 
 
-def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
+def isub(a: NDArray, b: NDArray, inds: NDArray, alpha: np.complex128 = 1.0) -> None:
     """Subtracts array `b` from array `a` at indices `inds` in-place.
 
     Parameters
@@ -96,7 +97,7 @@ def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
         The indices at which to subtract `b` from `a`.
 
     """
-    a[inds] -= b
+    a[inds] -= alpha * b
 
 
 @nb.njit(parallel=True)

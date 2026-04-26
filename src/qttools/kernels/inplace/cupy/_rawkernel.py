@@ -7,10 +7,10 @@ _iadd_comp = cp.RawKernel(
     #include <cupy/complex.cuh>
     extern "C" __global__
     void _iadd_comp(complex<double>* M, const complex<double>* U,
-                const long long* ind, const int N) {
+                const long long* ind, const int N, const complex<double> alpha) {
         int i = blockDim.x * blockIdx.x + threadIdx.x;
         if (i < N) {
-            M[ind[i]] += U[i];
+            M[ind[i]] += alpha * U[i];
         }
     }
     """,
@@ -22,10 +22,10 @@ _iadd_real = cp.RawKernel(
     #include <cupy/complex.cuh>
     extern "C" __global__
     void _iadd_real(complex<double>* M, const double* U,
-                const long long* ind, const int N) {
+                const long long* ind, const int N, const complex<double> alpha) {
         int i = blockDim.x * blockIdx.x + threadIdx.x;
         if (i < N) {
-        M[ind[i]] += U[i];
+        M[ind[i]] += alpha * U[i];
         }
     }
     """,
@@ -87,10 +87,10 @@ _isub_comp = cp.RawKernel(
     #include <cupy/complex.cuh>
     extern "C" __global__
     void _isub_comp(complex<double>* M, const complex<double>* U,
-                const long long* ind, const int N) {
+                const long long* ind, const int N, const complex<double> alpha) {
         int i = blockDim.x * blockIdx.x + threadIdx.x;
         if (i < N) {
-        M[ind[i]] -= U[i];
+        M[ind[i]] -= alpha * U[i];
         }
     }
     """,
@@ -101,15 +101,15 @@ _isub_real = cp.RawKernel(
     r"""
     #include <cupy/complex.cuh>
     extern "C" __global__
-    void sub_real_func(complex<double>* M, const double* U,
-                const long long* ind, const int N) {
+    void _isub_real(complex<double>* M, const double* U,
+                const long long* ind, const int N, const complex<double> alpha) {
         int i = blockDim.x * blockIdx.x + threadIdx.x;
         if (i < N) {
-        M[ind[i]] -= U[i];
+        M[ind[i]] -= alpha * U[i];
         }
     }
     """,
-    "sub_real_func",
+    "_isub_real",
 )
 
 _isub_obc = cp.RawKernel(

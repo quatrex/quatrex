@@ -7,7 +7,7 @@ from qttools.kernels.inplace.cupy import _rawkernel
 THREADS_PER_BLOCK = 1024
 
 
-def iadd(a: NDArray, b: NDArray, inds: NDArray) -> None:
+def iadd(a: NDArray, b: NDArray, inds: NDArray, alpha: cp.complex128 = 1.0) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
 
     Parameters
@@ -18,20 +18,23 @@ def iadd(a: NDArray, b: NDArray, inds: NDArray) -> None:
         The array to be added to `a`.
     inds : NDArray
         The indices at which to add `b` to `a`.
+    alpha : complex, optional
+        The scalar multiplier for `b` before adding it to `a`.
 
     """
 
+    alpha = cp.complex128(alpha)
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     if a.dtype != cp.complex128:
         raise ValueError("In-place addition kernel requires a to be complex128.")
     if b.dtype == cp.complex128:
         _rawkernel._iadd_comp(
-            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds)
+            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds, alpha)
         )
     elif b.dtype == cp.float64:
         _rawkernel._iadd_real(
-            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds)
+            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds, alpha)
         )
     else:
         raise ValueError("Unsupported dtype for b in in-place addition.")
@@ -86,7 +89,7 @@ def iadd_obc(
     )
 
 
-def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
+def isub(a: NDArray, b: NDArray, inds: NDArray, alpha: cp.complex128 = 1.0) -> None:
     """Subtracts array `b` from array `a` at indices `inds` in-place.
 
     Parameters
@@ -97,19 +100,21 @@ def isub(a: NDArray, b: NDArray, inds: NDArray) -> None:
         The array to be subtracted from `a`.
     inds : NDArray
         The indices at which to subtract `b` from `a`.
-
+    alpha : complex, optional
+        The scalar multiplier for `b` before subtracting it from `a`.
     """
+    alpha = cp.complex128(alpha)
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     if a.dtype != cp.complex128:
         raise ValueError("In-place subtraction kernel requires `a` to be complex128.")
     if b.dtype == cp.complex128:
         _rawkernel._isub_comp(
-            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds)
+            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds, alpha)
         )
     elif b.dtype == cp.float64:
         _rawkernel._isub_real(
-            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds)
+            (blocks_per_grid,), (THREADS_PER_BLOCK,), (a, b, inds, num_inds, alpha)
         )
     else:
         raise ValueError("Unsupported dtype for `b` in in-place subtraction.")

@@ -749,31 +749,27 @@ class Contact:
         hopping_matrix = (
             hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
         )
-        if self.device.config.qtbm.OBC_rank == "reduced":
-            opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
-            # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
-            # We need to add the lower part to get the full coupling.
-            unit = (
-                sparse.csr_matrix(
-                    hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
-                )
-                + sparse.csr_matrix(
-                    opposite_hopping_matrix[orbital_indices, :][
-                        :, self.origin_orbital_indices
-                    ]
-                ).T.conj()
-            )
-            if (transport_index, y, z) == (0, 0, 0):
 
-                unit -= sparse.diags(
-                    hopping_matrix[self.origin_orbital_indices, :][
-                        :, orbital_indices
-                    ].diagonal(),
-                    format="csr",
-                )
-        else:
-            unit = sparse.csr_matrix(
+        opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
+        # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
+        # We need to add the lower part to get the full coupling.
+        unit = (
+            sparse.csr_matrix(
                 hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+            )
+            + sparse.csr_matrix(
+                opposite_hopping_matrix[orbital_indices, :][
+                    :, self.origin_orbital_indices
+                ]
+            ).T.conj()
+        )
+        if (transport_index, y, z) == (0, 0, 0):
+
+            unit -= sparse.diags(
+                hopping_matrix[self.origin_orbital_indices, :][
+                    :, orbital_indices
+                ].diagonal(),
+                format="csr",
             )
 
         if unit.nnz == 0:
@@ -800,21 +796,14 @@ class Contact:
 
         """
 
-        if self.device.config.qtbm.OBC_rank == "reduced":
-            # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
-            # We need to check both the upper and lower part to find all couplings.
-            return (
-                self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
-                    :, residual_orbitals
-                ].nnz
-                + self.device.hamiltonians[0, 0, 0][residual_orbitals, :][
-                    :, self.origin_orbital_indices
-                ].nnz
-            )
-        else:
-            return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
+        return (
+            self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
                 :, residual_orbitals
             ].nnz
+            + self.device.hamiltonians[0, 0, 0][residual_orbitals, :][
+                :, self.origin_orbital_indices
+            ].nnz
+        )
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig

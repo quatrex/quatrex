@@ -28,7 +28,7 @@ kpoint_shift = [0.0,0.1,0]
 
 
 [electron]
-    solver.direct_solver = "superlu"
+    solver.direct_solver = "pardiso"
     conduction_band_edge = -2.4
     valence_band_edge = -2.5
 

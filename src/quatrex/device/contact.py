@@ -763,8 +763,8 @@ class Contact:
                 ]
             ).T.conj()
         )
-        if (transport_index, y, z) == (0, 0, 0):
 
+        if np.array_equal(self.origin_orbital_indices, orbital_indices):
             unit -= sparse.diags(
                 hopping_matrix[self.origin_orbital_indices, :][
                     :, orbital_indices

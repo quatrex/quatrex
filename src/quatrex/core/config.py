@@ -554,6 +554,76 @@ class CoulombScreeningConfig(BaseModel):
 
     """
 
+    polarization_method: Literal["negf", "rpa"] = "negf"
+    dielectric_environment: bool = False
+    dielectric_method: Literal["rpa"] | None = None
+
+    hamiltonian_matrix_name: str = "hamiltonian"
+    coulomb_matrix_name: str = "coulomb_matrix"
+
+    num_k_points: PositiveInt | None = None
+    num_q_points: PositiveInt | None = None
+    num_frequencies: PositiveInt | None = None
+    max_frequency: NonNegativeFloat | None = None
+
+    include_zero_q: bool = True
+
+    periodic_axis: NonNegativeInt | None = Field(default=None, le=2)
+    lattice_constant: PositiveFloat = 1.0
+
+    chemical_potential: float | None = None
+    broadening: NonNegativeFloat = 0.0
+
+    q_index: NonNegativeInt = 0
+    frequency_index: NonNegativeInt = 0
+
+    spin_degeneracy: PositiveFloat = 1.0
+    valley_degeneracy: PositiveFloat = 1.0
+
+    @model_validator(mode="after")
+    def normalize_dielectric_configuration(self) -> Self:
+        """Map legacy screening switches onto the explicit dielectric configuration."""
+
+        if self.polarization_method == "rpa":
+            self.dielectric_environment = True
+            self.dielectric_method = self.dielectric_method or "rpa"
+        elif self.dielectric_environment and self.dielectric_method is None:
+            raise ValueError(
+                "When dielectric_environment=True, coulomb_screening.dielectric_method must be set."
+            )
+        elif (not self.dielectric_environment) and self.dielectric_method is not None:
+            raise ValueError(
+                "coulomb_screening.dielectric_method requires dielectric_environment=True."
+            )
+
+        # Keep the legacy field aligned with the explicit configuration so existing
+        # code paths and configs remain backward compatible during the transition.
+        self.polarization_method = "rpa" if self.dielectric_environment else "negf"
+        return self
+
+    @model_validator(mode="after")
+    def validate_rpa_parameters(self) -> Self:
+        """Ensure RPA-specific parameters are set when the dielectric RPA path is selected."""
+
+        if not self.dielectric_environment or self.dielectric_method != "rpa":
+            return self
+
+        required_fields = {
+            "num_k_points": self.num_k_points,
+            "num_frequencies": self.num_frequencies,
+            "max_frequency": self.max_frequency,
+        }
+        missing_fields = [
+            field_name for field_name, value in required_fields.items() if value is None
+        ]
+        if missing_fields:
+            raise ValueError(
+                "The following coulomb_screening fields are required for dielectric_method='rpa': "
+                + ", ".join(missing_fields)
+            )
+
+        return self
+
 
 class PhotonConfig(BaseModel):
     """Options for the optical degrees of freedom."""
@@ -610,6 +680,7 @@ class OutputConfig(BaseModel):
     hole_density: bool = False
 
     polarization_density: bool = False
+    full_polarization: bool = False
     coulomb_screening_density: bool = False
 
     self_energy_density: bool = False
@@ -687,6 +758,7 @@ class DeviceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     construct_from_unit_cell: bool = False
+    structure_file: str = "structure.xyz"
 
     # --- Device geometry ---------------------------------------------
     neighbor_cell_cutoff: (
@@ -783,6 +855,50 @@ class DeviceConfig(BaseModel):
             )
 
         return self
+
+
+class EnvironmentConfig(BaseModel):
+    """Options for an explicitly modeled dielectric environment subsystem."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    input_dir: Path
+
+    hamiltonian_matrix_name: str = "hamiltonian"
+    coulomb_matrix_name: str = "coulomb_matrix"
+    structure_file: str | None = None
+
+    construct_from_unit_cell: bool = True
+    neighbor_cell_cutoff: (
+        tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
+    ) = None
+    num_transport_cells: PositiveInt = 1
+    transport_direction: Literal["x", "y", "z"]
+    block_size: PositiveInt | list[PositiveInt] | None = None
+
+    kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    orthogonal_basis: bool = True
+
+    @model_validator(mode="after")
+    def to_tuple(self) -> Self:
+        """Transforms list-valued options to tuples."""
+        if self.neighbor_cell_cutoff is not None:
+            self.neighbor_cell_cutoff = tuple(self.neighbor_cell_cutoff)
+        self.kpoint_grid = tuple(self.kpoint_grid)
+        self.kpoint_shift = tuple(self.kpoint_shift)
+        return self
+
+
+class EnvironmentCouplingConfig(BaseModel):
+    """Options for central/environment Coulomb coupling blocks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["zero", "file"] = "zero"
+    v_ce_file: Path | None = None
+    v_ec_file: Path | None = None
 
 
 class LyapunovComputeConfig(BaseModel):
@@ -1021,6 +1137,8 @@ class QuatrexConfig(BaseModel):
     phonon: PhononConfig | None = None
     coulomb_screening: CoulombScreeningConfig | None = None
     photon: PhotonConfig | None = None
+    environment: EnvironmentConfig | None = None
+    environment_coupling: EnvironmentCouplingConfig = EnvironmentCouplingConfig()
 
     # --- Directory paths ----------------------------------------------
     config_dir: Path
@@ -1077,8 +1195,52 @@ class QuatrexConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def resolve_environment_paths(self) -> Self:
+        """Resolves environment subsystem paths."""
+        if self.environment is not None:
+            if self.environment.input_dir.is_absolute():
+                self.environment.input_dir = self.environment.input_dir.resolve()
+            else:
+                self.environment.input_dir = (
+                    self.config_dir / self.environment.input_dir
+                ).resolve()
+
+        for field_name in ("v_ce_file", "v_ec_file"):
+            path = getattr(self.environment_coupling, field_name)
+            if path is None:
+                continue
+            path = Path(path)
+            if path.is_absolute():
+                setattr(self.environment_coupling, field_name, path.resolve())
+            else:
+                setattr(
+                    self.environment_coupling,
+                    field_name,
+                    (self.config_dir / path).resolve(),
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_paths(self) -> Self:
         """Validates the input file paths."""
+
+        if (
+            self.formalism == "negf"
+            and self.scba.coulomb_screening
+            and self.coulomb_screening is not None
+            and self.coulomb_screening.dielectric_environment
+            and self.coulomb_screening.dielectric_method == "rpa"
+        ):
+            required_matrices = (
+                self.coulomb_screening.hamiltonian_matrix_name,
+                self.coulomb_screening.coulomb_matrix_name,
+            )
+            for matrix_name in required_matrices:
+                matrix_path = (self.input_dir / f"{matrix_name}.mat").resolve()
+                if not matrix_path.is_file():
+                    raise ValueError(
+                        f"Required RPA screening input file '{matrix_path}' does not exist."
+                    )
 
         if (
             self.electron.energy_window_min is None
@@ -1092,6 +1254,47 @@ class QuatrexConfig(BaseModel):
                 )
 
         # TODO: extend this to other paths, not only energies
+
+        if self.environment is not None and self.environment.enabled:
+            required_matrices = (
+                self.environment.hamiltonian_matrix_name,
+                self.environment.coulomb_matrix_name,
+            )
+            for matrix_name in required_matrices:
+                matrix_path = self.environment.input_dir / f"{matrix_name}.mat"
+                if not matrix_path.is_file():
+                    raise ValueError(
+                        f"Required environment input file '{matrix_path}' does not exist."
+                    )
+
+            if (
+                self.environment.structure_file is not None
+                and not (
+                    self.environment.input_dir / self.environment.structure_file
+                ).is_file()
+            ):
+                raise ValueError(
+                    "Required environment structure file "
+                    f"'{self.environment.input_dir / self.environment.structure_file}' "
+                    "does not exist."
+                )
+
+        if self.environment_coupling.mode == "file":
+            if (
+                self.environment_coupling.v_ce_file is None
+                or self.environment_coupling.v_ec_file is None
+            ):
+                raise ValueError(
+                    "environment_coupling.mode='file' requires v_ce_file and v_ec_file."
+                )
+            for path in (
+                self.environment_coupling.v_ce_file,
+                self.environment_coupling.v_ec_file,
+            ):
+                if not path.is_file():
+                    raise ValueError(
+                        f"Required environment coupling file '{path}' does not exist."
+                    )
 
         return self
 

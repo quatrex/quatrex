@@ -1,61 +1,68 @@
 simulation_dir = "."
-input_dir = "../inputs"
+input_dir = "/usr/scratch/mont-fort11/awinka/for_cal/hBN/inputs"
+output_dir = "./outputs"
 
 formalism = "negf" # "negf" or "wf"
 
 [device]
-transport_direction = 'x'
-block_size = 32
+structure_file = "lattice.xyz"
+transport_direction = "x"
+construct_from_unit_cell = true
+num_transport_cells = 3
+neighbor_cell_cutoff = [3, 3, 0]
+kpoint_grid = [1, 1, 1]
+kpoint_shift = [0.0, 0.0, 0.0]
+orthogonal_basis = true
 
 [scba] # ===============================================================
-max_iterations = 4
-mixing_factor = 0.5
+max_iterations = 5
+mixing_factor = 0.25 # Stronger damping for the screened SCBA fixed-point iteration
 
-coulomb_screening = true
-phonon = true
+coulomb_screening = true  # Re-enabled with lower mixing factor
+phonon = false
 
 symmetric = true
 
 [outputs] # Select which outputs to write.
 electron_ldos = true
-contact_currents = true
-device_currents = true
-electron_density = false
-hole_density = false
+contact_currents = false
+device_currents = false
+electron_density = true
+hole_density = true
 
 polarization_density = true
+full_polarization = true
 coulomb_screening_density = true
 
 self_energy_density = true
 
 # If enabled, the profiling stats will take a bit of time to crunch the
 # numbers.
-save_profiling_results = true
+save_profiling_results = false
 
 
 [electron] # ===========================================================
-# 0.2 V Potential difference.
-left_fermi_level = -3.6  # eV
-right_fermi_level = -3.8 # eV
+fermi_level = -2.0 # eV
+left_fermi_level = -2.0
+right_fermi_level = -2.0
+flatband = false
 
-fermi_level = -3.6                        # eV
-conduction_band_edge = -3.566382123573606 # eV
-valence_band_edge = -4.174109778287768    # eV
-
+conduction_band_edge = 0.75 # eV
+valence_band_edge = -3.75   # eV
 band_edge_tracking = "eigenvalues"
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 0
-energy_window_num = 200
+energy_window_min = -12.0
+energy_window_max = 14
+energy_window_num = 1001
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
-solver.compute_current = true # Compute Meir-Wingreen current.
+solver.compute_current = false
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
-obc.block_sections = 1
+obc.nevp_solver = "full"
+obc.block_sections = 2
 
 # Parameters for Beyn's method.
 obc.num_ref_iterations = 2
@@ -73,15 +80,16 @@ obc.memoizer.absolute_tol = 1e-8
 obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
-interaction_cutoff = 8 # Å
+interaction_cutoff = 8 # Angstrom
+epsilon_r = 1
 
-num_connected_blocks = 2 # Can be 1, 2, 3, or "auto"
+num_connected_blocks = 1 # Can be 1, 2, 3, or "auto"
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
+obc.nevp_solver = "full"
 obc.block_sections = 2
 
 # Parameters for Beyn's method.
@@ -100,16 +108,8 @@ obc.memoizer.relative_tol = 1e-2
 obc.memoizer.absolute_tol = 1e-8
 
 lyapunov.algorithm = "spectral"
-lyapunov.num_ref_iterations = 1
 
 lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6
-
-
-[phonon]
-interaction_cutoff = 5.5     # Å
-model = "pseudo-scattering"
-phonon_energy = 50e-3
-deformation_potential = 5e-3

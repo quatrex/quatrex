@@ -5,7 +5,11 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import (
+    bd_matmul_distr,
+    bd_sandwich,
+    bd_sandwich_distr,
+)
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.utils.mpi_utils import get_section_sizes
@@ -323,9 +327,14 @@ class CoulombScreeningSolver(SubsystemSolver):
     @profiler.profile(
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
     )
-    def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
+    def _assemble_system_matrix(
+        self,
+        p_retarded: DSDBSparse,
+        interaction_retarded: DSDBSparse | None = None,
+    ) -> None:
         """Assembles the system matrix."""
         self.system_matrix.data = 0.0
+        interaction_retarded = interaction_retarded or self.coulomb_matrix
         local_blocks, _ = get_section_sizes(
             len(self.system_matrix.block_sizes), comm.block.size
         )
@@ -333,7 +342,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         end_block = start_block + local_blocks[comm.block.rank]
 
         bd_matmul_distr(
-            self.coulomb_matrix,
+            interaction_retarded,
             p_retarded,
             out=self.system_matrix,
             start_block=start_block,
@@ -342,6 +351,62 @@ class CoulombScreeningSolver(SubsystemSolver):
         )
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
+
+    def _assemble_scattering_source(
+        self,
+        p_lesser: DSDBSparse,
+        p_greater: DSDBSparse,
+        interaction_retarded: DSDBSparse | None = None,
+        interaction_lesser: DSDBSparse | None = None,
+        interaction_greater: DSDBSparse | None = None,
+    ) -> None:
+        """Assemble the lesser/greater source terms for the screening solve."""
+        interaction_retarded = interaction_retarded or self.coulomb_matrix
+
+        if interaction_retarded is self.coulomb_matrix:
+            local_blocks, _ = get_section_sizes(
+                len(self.coulomb_matrix.block_sizes), comm.block.size
+            )
+            start_block = sum(local_blocks[: comm.block.rank])
+            end_block = start_block + local_blocks[comm.block.rank]
+            bd_sandwich_distr(
+                interaction_retarded,
+                p_lesser,
+                out=self.l_lesser,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+            bd_sandwich_distr(
+                interaction_retarded,
+                p_greater,
+                out=self.l_greater,
+                start_block=start_block,
+                end_block=end_block,
+                spillover_correction=True,
+            )
+        else:
+            if comm.block.size > 1:
+                raise NotImplementedError(
+                    "Environment-screened baseline interactions are currently supported only for block_comm_size=1."
+                )
+            bd_sandwich(
+                interaction_retarded,
+                p_lesser,
+                out=self.l_lesser,
+                spillover_correction=True,
+            )
+            bd_sandwich(
+                interaction_retarded,
+                p_greater,
+                out=self.l_greater,
+                spillover_correction=True,
+            )
+
+        if interaction_lesser is not None:
+            self.l_lesser.data += interaction_lesser.data
+        if interaction_greater is not None:
+            self.l_greater.data += interaction_greater.data
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -393,6 +458,9 @@ class CoulombScreeningSolver(SubsystemSolver):
         p_greater: DSDBSparse,
         p_retarded: DSDBSparse,
         out: tuple[DSDBSparse, ...],
+        interaction_retarded: DSDBSparse | None = None,
+        interaction_lesser: DSDBSparse | None = None,
+        interaction_greater: DSDBSparse | None = None,
     ) -> None:
         """Solves for the screened Coulomb interaction.
 
@@ -419,31 +487,17 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.small_block_sizes)
 
         # Assemble the system matrix (Includes matrix multiplication).
-        self._assemble_system_matrix(p_retarded)
+        self._assemble_system_matrix(p_retarded, interaction_retarded)
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Sandwich", level="default", comm=comm
         ):
-            local_blocks, _ = get_section_sizes(
-                len(self.coulomb_matrix.block_sizes), comm.block.size
-            )
-            start_block = sum(local_blocks[: comm.block.rank])
-            end_block = start_block + local_blocks[comm.block.rank]
-            bd_sandwich_distr(
-                self.coulomb_matrix,
+            self._assemble_scattering_source(
                 p_lesser,
-                out=self.l_lesser,
-                start_block=start_block,
-                end_block=end_block,
-                spillover_correction=True,
-            )
-            bd_sandwich_distr(
-                self.coulomb_matrix,
                 p_greater,
-                out=self.l_greater,
-                start_block=start_block,
-                end_block=end_block,
-                spillover_correction=True,
+                interaction_retarded=interaction_retarded,
+                interaction_lesser=interaction_lesser,
+                interaction_greater=interaction_greater,
             )
 
         if self.flatband:

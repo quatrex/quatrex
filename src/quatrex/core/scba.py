@@ -21,6 +21,9 @@ from quatrex.core.observables import (
 )
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
+from quatrex.coulomb_screening.dielectric_screening.negf_bridge import (
+    EquilibriumRPAScreeningBridge,
+)
 from quatrex.device.inputs import (
     create_coordinate_grid,
     distributed_read_xyz,
@@ -54,7 +57,7 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        structure_file = config.input_dir / "structure.xyz"
+        structure_file = config.input_dir / config.device.structure_file
         if not structure_file.exists():
             raise FileNotFoundError(f"Structure file {structure_file} not found.")
         lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
@@ -215,6 +218,19 @@ class SCBAData:
                 symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
+            if (
+                config.coulomb_screening.dielectric_environment
+                and config.coulomb_screening.dielectric_method == "rpa"
+            ):
+                self.w_environment_retarded = dsdbsparse_type.from_sparray(
+                    self.sparsity_pattern.astype(xp.complex128),
+                    block_sizes=block_sizes,
+                    global_stack_shape=electron_energies.shape
+                    + tuple([k for k in kpoint_grid if k > 1]),
+                    symmetry=False,
+                )
+                self.w_environment_lesser = dsdbsparse_type.zeros_like(self.p_lesser)
+                self.w_environment_greater = dsdbsparse_type.zeros_like(self.p_greater)
 
         # TODO: The interactions with photons and phonons are not yet
         # implemented.
@@ -296,6 +312,7 @@ class SCBA:
         electron_energies = xp.zeros((comm.size,))
         self.data = SCBAData(config, electron_energies=electron_energies)  # dummy data
         self.mixing_factor = self.config.scba.mixing_factor
+        self.rpa_coulomb_screening_bridge = None
 
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
@@ -323,6 +340,10 @@ class SCBA:
 
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:
+            self.has_dielectric_environment = (
+                self.config.coulomb_screening.dielectric_environment
+            )
+            self.dielectric_method = self.config.coulomb_screening.dielectric_method
             # Load the Coulomb matrix.
             coulomb_matrix, __ = load_matrix(
                 config=config,
@@ -364,7 +385,9 @@ class SCBA:
                 else None
             )
 
-            # NOTE: No sparsity information required here.
+            # The transport-region polarization is always computed from the
+            # NEGF Green's functions. The optional RPA branch adds a fixed
+            # environment contribution on top of the iterative device screening.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
                 self.coulomb_screening_energies,
@@ -375,6 +398,12 @@ class SCBA:
                 self.coulomb_screening_energies,
                 sparsity_pattern=self.data.sparsity_pattern,
             )
+
+            if self.has_dielectric_environment and self.dielectric_method != "rpa":
+                raise NotImplementedError(
+                    f"Unsupported dielectric screening method '{self.dielectric_method}'."
+                )
+
             self.sigma_coulomb_screening = SigmaCoulombScreening(
                 self.config,
                 self.electron_energies,
@@ -411,6 +440,17 @@ class SCBA:
         self.data = SCBAData(
             config, electron_energies=self.electron_energies
         )  # real data
+
+        if (
+            self.config.scba.coulomb_screening
+            and self.has_dielectric_environment
+            and self.dielectric_method == "rpa"
+        ):
+            self.rpa_coulomb_screening_bridge = EquilibriumRPAScreeningBridge(
+                self.config,
+                self.coulomb_screening_energies,
+                self.data.p_lesser,
+            )
 
     def _stash_sigma(self) -> None:
         """Stash the current into the previous self-energy buffers."""
@@ -528,14 +568,33 @@ class SCBA:
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        self.coulomb_screening_solver.solve(
-            self.data.p_lesser,
-            self.data.p_greater,
-            self.data.p_retarded,
-            out=(self.data.w_lesser, self.data.w_greater),
-        )
+        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+            self.rpa_coulomb_screening_bridge.populate(
+                self.data.w_environment_retarded,
+                self.data.w_environment_lesser,
+                self.data.w_environment_greater,
+            )
+            self.coulomb_screening_solver.solve(
+                self.data.p_lesser,
+                self.data.p_greater,
+                self.data.p_retarded,
+                out=(self.data.w_lesser, self.data.w_greater),
+                interaction_retarded=self.data.w_environment_retarded,
+                interaction_lesser=self.data.w_environment_lesser,
+                interaction_greater=self.data.w_environment_greater,
+            )
+        else:
+            self.coulomb_screening_solver.solve(
+                self.data.p_lesser,
+                self.data.p_greater,
+                self.data.p_retarded,
+                out=(self.data.w_lesser, self.data.w_greater),
+            )
 
         self._compute_coulomb_screening_observables()
+
+        if self.config.outputs.full_polarization:
+            self._write_full_polarization(self.iteration)
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
@@ -560,6 +619,35 @@ class SCBA:
 
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
+        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+            self.data.w_environment_retarded.free_data()
+            self.data.w_environment_greater.free_data()
+            self.data.w_environment_lesser.free_data()
+
+    @profiler.profile(label="SCBA: Full polarization output", level="default", comm=comm)
+    def _write_full_polarization(self, iteration: int) -> None:
+        """Writes full dense polarization stacks for the current iteration."""
+
+        if self.data.p_lesser.distribution_state != "stack":
+            raise ValueError("Full polarization output requires stack-distributed P.")
+
+        output_dir = self.config.output_dir
+        if comm.rank == 0:
+            os.makedirs(output_dir, exist_ok=True)
+
+        for name, matrix in (
+            ("p_lesser", self.data.p_lesser),
+            ("p_greater", self.data.p_greater),
+            ("p_retarded", self.data.p_retarded),
+        ):
+            dense_local = matrix.to_dense()
+            dense = comm.stack.all_gather_v(
+                dense_local,
+                axis=0,
+                mask=matrix._stack_padding_mask,
+            )
+            if comm.rank == 0:
+                xp.save(output_dir / f"{name}_full_{iteration}.npy", dense)
 
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
@@ -733,6 +821,7 @@ class SCBA:
         print("Entering SCBA loop...", flush=True) if comm.rank == 0 else None
 
         for i in range(self.config.scba.max_iterations):
+            self.iteration = i
             print(f"Iteration {i}", flush=True) if comm.rank == 0 else None
 
             with profiler.profile_range(

@@ -74,7 +74,7 @@ def density(
 
     """
     if overlap is None:
-        local_density = x.diagonal().imag
+        local_density = x.diagonal()
         return comm.stack.all_gather_v(
             local_density,
             axis=0,
@@ -116,7 +116,7 @@ def density(
                 axis2=-1,
             )
 
-        local_density.append(local_density_slice.imag)
+        local_density.append(local_density_slice)
 
     local_density = xp.concatenate(local_density, axis=-1)
 

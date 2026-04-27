@@ -155,6 +155,43 @@ def run(
         profiler.dump_stats()
 
 
+@quatrex_cli.command("export-environment")
+def export_environment(
+    config: Annotated[
+        Path,
+        typer.Argument(
+            ...,
+            help="Path to a Quatrex TOML configuration with an [environment] section.",
+            dir_okay=False,
+            resolve_path=True,
+            exists=True,
+        ),
+    ],
+    output_dir: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output-dir",
+            help="Directory for exported environment arrays.",
+            resolve_path=True,
+        ),
+    ] = None,
+):
+    """Exports environment polarization and dielectric-input arrays."""
+
+    from quatrex.core.config import parse_config
+    from quatrex.coulomb_screening.environment_export import (
+        export_environment_screening,
+    )
+
+    config = parse_config(config)
+    secho_header()
+
+    result = export_environment_screening(config, output_dir=output_dir)
+
+    if comm.rank == 0:
+        typer.secho(f"Wrote environment screening export to {result.output_dir}")
+
+
 @quatrex_cli.callback(no_args_is_help=True)
 def main(
     version: Annotated[

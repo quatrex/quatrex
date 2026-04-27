@@ -213,7 +213,7 @@ class Device:
         the device."""
 
         # Load the lattice structure from file.
-        structure_file = self.config.input_dir / "structure.xyz"
+        structure_file = self.config.input_dir / self.config.device.structure_file
         if not structure_file.exists():
             raise FileNotFoundError(f"Structure file {structure_file} not found.")
         self.lattice_vectors, self.atom_coordinates, self.atomic_species = (

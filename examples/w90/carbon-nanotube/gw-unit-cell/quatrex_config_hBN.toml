@@ -1,6 +1,6 @@
 simulation_dir = "."
 input_dir = "/usr/scratch/mont-fort11/awinka/for_cal/hBN/inputs"
-output_dir = "./outputs"
+output_dir = "./outputs_hBN"
 
 formalism = "negf" # "negf" or "wf"
 
@@ -42,13 +42,13 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-fermi_level = 0.0 # eV
-left_fermi_level = 0.0
-right_fermi_level = 0.0
+fermi_level = 2 # eV
+left_fermi_level = 2 # eV
+right_fermi_level = 2 # eV
 flatband = false
 
-conduction_band_edge = 0.3 # eV  # Adjusted from 2.49 to ~0.3 based on convergence
-valence_band_edge = -0.3   # eV
+conduction_band_edge = 5 # eV
+valence_band_edge = -1   # eV
 band_edge_tracking = "eigenvalues"
 
 # Energy grid.

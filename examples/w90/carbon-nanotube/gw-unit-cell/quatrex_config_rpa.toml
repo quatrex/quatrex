@@ -24,7 +24,7 @@ device_currents = true
 electron_density = true
 hole_density = true
 
-polarization_density = true
+polarization_density = false
 coulomb_screening_density = true
 
 self_energy_density = true
@@ -76,9 +76,20 @@ obc.residual_tolerance = 1e-4
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Å
 epsilon_r = 4
-compute_retarded_polarization = true
+polarization_method = "rpa"
 
 num_connected_blocks = 1 # Can be 1, 2, 3, or "auto"
+
+num_k_points = 100
+num_q_points = 100
+num_frequencies = 100
+max_frequency = 10.0
+
+include_zero_q = true
+periodic_axis = 2
+lattice_constant = 1.0
+chemical_potential = -3.6
+broadening = 0.0
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000

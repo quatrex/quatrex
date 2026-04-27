@@ -1,30 +1,37 @@
 simulation_dir = "."
+input_dir = "/usr/scratch/mont-fort11/awinka/for_cal/hBN/inputs"
+output_dir = "./outputs"
 
 formalism = "negf" # "negf" or "wf"
 
 [device]
-transport_direction = 'z'
+structure_file = "lattice.xyz"
+transport_direction = "x"
 construct_from_unit_cell = true
-num_transport_cells = 12
-neighbor_cell_cutoff = [0, 0, 2]
+num_transport_cells = 3
+neighbor_cell_cutoff = [8, 8, 0]
+kpoint_grid = [1, 1, 1]
+kpoint_shift = [0.0, 0.0, 0.0]
+orthogonal_basis = true
 
 [scba] # ===============================================================
 max_iterations = 2
-mixing_factor = 0.5
+mixing_factor = 0.5  # Reduced to dampen oscillations
 
-coulomb_screening = true
-phonon = true
+coulomb_screening = true  # Re-enabled with lower mixing factor
+phonon = false
 
 symmetric = true
 
 [outputs] # Select which outputs to write.
 electron_ldos = true
-contact_currents = true
-device_currents = true
+contact_currents = false
+device_currents = false
 electron_density = true
 hole_density = true
 
 polarization_density = true
+full_polarization = true
 coulomb_screening_density = true
 
 self_energy_density = true
@@ -35,24 +42,23 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-# 0.2 V Potential difference.
-left_fermi_level = -3.6  # eV
-right_fermi_level = -3.8 # eV
+fermi_level = 0.0 # eV
+left_fermi_level = 0.0
+right_fermi_level = 0.0
+flatband = false
 
-fermi_level = -3.6                        # eV
-conduction_band_edge = -3.566382123573606 # eV
-valence_band_edge = -4.174109778287768    # eV
-
+conduction_band_edge = 0.3 # eV  # Adjusted from 2.49 to ~0.3 based on convergence
+valence_band_edge = -0.3   # eV
 band_edge_tracking = "eigenvalues"
 
 # Energy grid.
-energy_window_min = -10
-energy_window_max = 0
-energy_window_num = 100
+energy_window_min = -12
+energy_window_max = 14
+energy_window_num = 1001
 
 solver.algorithm = "rgf"
 solver.max_batch_size = 1000
-solver.compute_current = true # Compute Meir-Wingreen current.
+solver.compute_current = false
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "full"
@@ -74,7 +80,7 @@ obc.memoizer.absolute_tol = 1e-8
 obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
-interaction_cutoff = 8 # Å
+interaction_cutoff = 8 # Angstrom
 epsilon_r = 4
 compute_retarded_polarization = true
 
@@ -108,10 +114,3 @@ lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6
-
-
-[phonon]
-interaction_cutoff = 5.5     # Å
-model = "pseudo-scattering"
-phonon_energy = 50e-3
-deformation_potential = 5e-3

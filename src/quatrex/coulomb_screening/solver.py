@@ -171,6 +171,17 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
 
         self.block_sections = config.coulomb_screening.obc.block_sections
+        if (
+            self.block_sections % self.num_connected_blocks != 0
+            and self.block_sections != 1
+        ):
+            raise ValueError(
+                f"Block sections must be divisible by {self.num_connected_blocks} or equal to 1."
+            )
+        if self.block_sections == 1:
+            self.small_block_sections = 1
+        else:
+            self.small_block_sections = self.block_sections // self.num_connected_blocks
 
         self.flatband = config.electron.flatband
         self.solve_call_count = 0
@@ -191,23 +202,137 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
+    def _get_periodic_superblocks(
+        self, m_ji: NDArray, m_ii: NDArray, m_ij: NDArray, lower=False
+    ) -> tuple[NDArray, NDArray, NDArray]:
+        """Constructs the periodic superblocks for the given blocks."""
+
+        new_shape = list(m_ii.shape)
+        new_shape[-1] = new_shape[-1] * self.num_connected_blocks
+        new_shape[-2] = new_shape[-2] * self.num_connected_blocks
+
+        m_ji_out = xp.zeros_like(m_ji, shape=new_shape)
+        m_ii_out = xp.zeros_like(m_ii, shape=new_shape)
+        m_ij_out = xp.zeros_like(m_ij, shape=new_shape)
+
+        m_ji_tmp, m_ii_tmp, m_ij_tmp = get_periodic_superblocks(
+            a_ji=m_ji if not lower else xp.flip(m_ji, axis=(-2, -1)),
+            a_ii=m_ii if not lower else xp.flip(m_ii, axis=(-2, -1)),
+            a_ij=m_ij if not lower else xp.flip(m_ij, axis=(-2, -1)),
+            block_sections=self.small_block_sections,
+        )
+
+        for i in range(self.num_connected_blocks):
+            m_ii_out[
+                ...,
+                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
+                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
+            ] = m_ii_tmp
+
+        for i in range(self.num_connected_blocks - 1):
+            m_ii_out[
+                ...,
+                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
+                (i + 1) * m_ii.shape[-1] : (i + 2) * m_ii.shape[-1],
+            ] = m_ij_tmp
+            m_ii_out[
+                ...,
+                (i + 1) * m_ii.shape[-1] : (i + 2) * m_ii.shape[-1],
+                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
+            ] = m_ji_tmp
+
+        m_ij_out[..., -m_ij.shape[-1] :, : m_ij.shape[-1]] = m_ij_tmp
+        m_ji_out[..., : m_ji.shape[-1], -m_ji.shape[-1] :] = m_ji_tmp
+
+        m_ji_out = m_ji_out if not lower else xp.flip(m_ji_out, axis=(-2, -1))
+        m_ii_out = m_ii_out if not lower else xp.flip(m_ii_out, axis=(-2, -1))
+        m_ij_out = m_ij_out if not lower else xp.flip(m_ij_out, axis=(-2, -1))
+
+        return m_ji_out, m_ii_out, m_ij_out
+
     @profiler.profile(label="CoulombScreeningSolver: OBC", level="default", comm=comm)
-    def _compute_obc(self) -> None:
+    def _compute_obc(self, p_lesser, p_greater, p_retarded) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
+
+            with profiler.profile_range(
+                label="CoulombScreeningSolver: Get blocks left",
+                level="default",
+                comm=comm.stack,
+            ):
+
+                p_retarded_10, p_retarded_00, p_retarded_01 = (
+                    self._get_periodic_superblocks(
+                        m_ji=p_retarded.blocks[1, 0],
+                        m_ii=p_retarded.blocks[0, 0],
+                        m_ij=p_retarded.blocks[0, 1],
+                    )
+                )
+                v_10, v_00, v_01 = self._get_periodic_superblocks(
+                    m_ji=self.coulomb_matrix.blocks[1, 0],
+                    m_ii=self.coulomb_matrix.blocks[0, 0],
+                    m_ij=self.coulomb_matrix.blocks[0, 1],
+                )
+
+                m_00 = (
+                    xp.eye(p_retarded_00.shape[-1])
+                    - v_10 @ p_retarded_01
+                    - v_00 @ p_retarded_00
+                    - v_01 @ p_retarded_10
+                )
+                m_01 = -v_00 @ p_retarded_01 - v_01 @ p_retarded_00
+                m_10 = -v_10 @ p_retarded_00 - v_00 @ p_retarded_10
+
+                p_lesser_10, p_lesser_00, p_lesser_01 = self._get_periodic_superblocks(
+                    m_ji=p_lesser.blocks[1, 0],
+                    m_ii=p_lesser.blocks[0, 0],
+                    m_ij=p_lesser.blocks[0, 1],
+                )
+                p_greater_10, p_greater_00, p_greater_01 = (
+                    self._get_periodic_superblocks(
+                        m_ji=p_greater.blocks[1, 0],
+                        m_ii=p_greater.blocks[0, 0],
+                        m_ij=p_greater.blocks[0, 1],
+                    )
+                )
+                l_lesser_00 = (
+                    v_10 @ p_lesser_00 @ v_01
+                    + v_10 @ p_lesser_01 @ v_00
+                    + v_00 @ p_lesser_10 @ v_01
+                    + v_00 @ p_lesser_00 @ v_00
+                    + v_00 @ p_lesser_01 @ v_10
+                    + v_01 @ p_lesser_10 @ v_00
+                    + v_01 @ p_lesser_00 @ v_10
+                )
+                l_lesser_01 = (
+                    v_10 @ p_lesser_01 @ v_01
+                    + v_00 @ p_lesser_00 @ v_01
+                    + v_00 @ p_lesser_01 @ v_00
+                    + v_01 @ p_lesser_10 @ v_01
+                    + v_01 @ p_lesser_00 @ v_00
+                )
+                l_greater_00 = (
+                    v_10 @ p_greater_00 @ v_01
+                    + v_10 @ p_greater_01 @ v_00
+                    + v_00 @ p_greater_10 @ v_01
+                    + v_00 @ p_greater_00 @ v_00
+                    + v_00 @ p_greater_01 @ v_10
+                    + v_01 @ p_greater_10 @ v_00
+                    + v_01 @ p_greater_00 @ v_10
+                )
+                l_greater_01 = (
+                    v_10 @ p_greater_01 @ v_01
+                    + v_00 @ p_greater_00 @ v_01
+                    + v_00 @ p_greater_01 @ v_00
+                    + v_01 @ p_greater_10 @ v_01
+                    + v_01 @ p_greater_00 @ v_00
+                )
 
             with profiler.profile_range(
                 label="CoulombScreeningSolver: OBCR left",
                 level="default",
                 comm=comm.stack,
             ):
-
-                m_10, m_00, m_01 = get_periodic_superblocks(
-                    a_ii=self.system_matrix.blocks[0, 0],
-                    a_ji=self.system_matrix.blocks[1, 0],
-                    a_ij=self.system_matrix.blocks[0, 1],
-                    block_sections=self.block_sections,
-                )
 
                 x_00, *__ = self.obc((m_00, m_01, m_10), contact="left")
 
@@ -220,13 +345,13 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the left lesser/greater boundary self-energy.
-                a_00_lesser = m_10_x_00 @ self.l_lesser.blocks[0, 1]
-                a_00_greater = m_10_x_00 @ self.l_greater.blocks[0, 1]
+                a_00_lesser = m_10_x_00 @ l_lesser_01
+                a_00_greater = m_10_x_00 @ l_greater_01
 
                 q_00_lesser = (
                     x_00
                     @ (
-                        self.l_lesser.blocks[0, 0]
+                        l_lesser_00
                         - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
                     )
                     @ x_00.conj().swapaxes(-1, -2)
@@ -234,7 +359,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 q_00_greater = (
                     x_00
                     @ (
-                        self.l_greater.blocks[0, 0]
+                        l_greater_00
                         - (a_00_greater - a_00_greater.conj().swapaxes(-1, -2))
                     )
                     @ x_00.conj().swapaxes(-1, -2)
@@ -257,25 +382,91 @@ class CoulombScreeningSolver(SubsystemSolver):
         if comm.block.rank == comm.block.size - 1:
 
             with profiler.profile_range(
+                label="CoulombScreeningSolver: Get blocks right",
+                level="default",
+                comm=comm.stack,
+            ):
+
+                n = p_retarded.num_local_blocks - 1
+                m = n - 1
+
+                p_retarded_mn, p_retarded_nn, p_retarded_nm = (
+                    self._get_periodic_superblocks(
+                        m_ji=p_retarded.blocks[m, n],
+                        m_ii=p_retarded.blocks[n, n],
+                        m_ij=p_retarded.blocks[n, m],
+                        lower=True,
+                    )
+                )
+                v_mn, v_nn, v_nm = self._get_periodic_superblocks(
+                    m_ji=self.coulomb_matrix.blocks[m, n],
+                    m_ii=self.coulomb_matrix.blocks[n, n],
+                    m_ij=self.coulomb_matrix.blocks[n, m],
+                    lower=True,
+                )
+
+                m_nn = (
+                    xp.eye(p_retarded_nn.shape[-1])
+                    - v_mn @ p_retarded_nm
+                    - v_nn @ p_retarded_nn
+                    - v_nm @ p_retarded_mn
+                )
+                m_nm = -v_nn @ p_retarded_nm - v_nm @ p_retarded_nn
+                m_mn = -v_mn @ p_retarded_nn - v_nn @ p_retarded_mn
+
+                p_lesser_mn, p_lesser_nn, p_lesser_nm = self._get_periodic_superblocks(
+                    m_ji=p_lesser.blocks[m, n],
+                    m_ii=p_lesser.blocks[n, n],
+                    m_ij=p_lesser.blocks[n, m],
+                    lower=True,
+                )
+                p_greater_mn, p_greater_nn, p_greater_nm = (
+                    self._get_periodic_superblocks(
+                        m_ji=p_greater.blocks[m, n],
+                        m_ii=p_greater.blocks[n, n],
+                        m_ij=p_greater.blocks[n, m],
+                        lower=True,
+                    )
+                )
+                l_lesser_nn = (
+                    v_mn @ p_lesser_nn @ v_nm
+                    + v_mn @ p_lesser_nm @ v_nn
+                    + v_nn @ p_lesser_mn @ v_nm
+                    + v_nn @ p_lesser_nn @ v_nn
+                    + v_nn @ p_lesser_nm @ v_mn
+                    + v_nm @ p_lesser_mn @ v_nn
+                    + v_nm @ p_lesser_nn @ v_mn
+                )
+                l_lesser_nm = (
+                    v_mn @ p_lesser_nm @ v_nm
+                    + v_nn @ p_lesser_nn @ v_nm
+                    + v_nn @ p_lesser_nm @ v_nn
+                    + v_nm @ p_lesser_mn @ v_nm
+                    + v_nm @ p_lesser_nn @ v_nn
+                )
+                l_greater_nn = (
+                    v_mn @ p_greater_nn @ v_nm
+                    + v_mn @ p_greater_nm @ v_nn
+                    + v_nn @ p_greater_mn @ v_nm
+                    + v_nn @ p_greater_nn @ v_nn
+                    + v_nn @ p_greater_nm @ v_mn
+                    + v_nm @ p_greater_mn @ v_nn
+                    + v_nm @ p_greater_nn @ v_mn
+                )
+                l_greater_nm = (
+                    v_mn @ p_greater_nm @ v_nm
+                    + v_nn @ p_greater_nn @ v_nm
+                    + v_nn @ p_greater_nm @ v_nn
+                    + v_nm @ p_greater_mn @ v_nm
+                    + v_nm @ p_greater_nn @ v_nn
+                )
+
+            with profiler.profile_range(
                 label="CoulombScreeningSolver: OBCR right",
                 level="default",
                 comm=comm.stack,
             ):
 
-                n = self.system_matrix.num_local_blocks - 1
-                m = n - 1
-
-                m_mn, m_nn, m_nm = get_periodic_superblocks(
-                    # Twist it, flip it, ...
-                    a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                    a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                    a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
-                    block_sections=self.block_sections,
-                )
-                # ... bop it.
-                m_nn = xp.flip(m_nn, axis=(-2, -1))
-                m_nm = xp.flip(m_nm, axis=(-2, -1))
-                m_mn = xp.flip(m_mn, axis=(-2, -1))
                 x_nn, *__ = self.obc(
                     # Twist it, flip it, ...
                     (
@@ -298,13 +489,13 @@ class CoulombScreeningSolver(SubsystemSolver):
                 comm=comm.stack,
             ):
                 # Compute and apply the right lesser/greater boundary self-energy.
-                a_nn_lesser = m_mn_x_nn @ self.l_lesser.blocks[n, m]
-                a_nn_greater = m_mn_x_nn @ self.l_greater.blocks[n, m]
+                a_nn_lesser = m_mn_x_nn @ l_lesser_nm
+                a_nn_greater = m_mn_x_nn @ l_greater_nm
 
                 q_nn_lesser = (
                     x_nn
                     @ (
-                        self.l_lesser.blocks[n, n]
+                        l_lesser_nn
                         - (a_nn_lesser - a_nn_lesser.conj().swapaxes(-1, -2))
                     )
                     @ x_nn.conj().swapaxes(-1, -2)
@@ -312,7 +503,7 @@ class CoulombScreeningSolver(SubsystemSolver):
                 q_nn_greater = (
                     x_nn
                     @ (
-                        self.l_greater.blocks[n, n]
+                        l_greater_nn
                         - (a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2))
                     )
                     @ x_nn.conj().swapaxes(-1, -2)
@@ -382,6 +573,54 @@ class CoulombScreeningSolver(SubsystemSolver):
                 p_greater_.blocks[j, i] - p_lesser_.blocks[j, i]
             )
 
+    def _contact_spillover_matmul(
+        self,
+        diagonal_inds: tuple,
+        upper_inds: tuple,
+        order: str | NDArray | None = None,
+    ):
+        r"""Applies the spillover correction to
+
+        $$\mathbf{V} \mathbf{P}^{R}$$
+
+        for a specific contact.
+
+        Parameters
+        ----------
+        diagonal_inds : tuple
+            The indices of the diagonal blocks corresponding to the contact.
+        upper_inds : tuple
+            The indices of the upper off-diagonal blocks corresponding to the contact.
+        order : str | NDArray | None, optional
+            The permutation of the blocks to achieve the same order as the canonical left contact.
+            If None, the left contact order is assumed.
+            Instead of an explicit permutation, the string "reverse" can be passed
+            to reverse the order of the blocks, which is equivalent to the right contact order.
+
+        """
+
+        def _order_block(block):
+            if order is None:
+                return block
+            elif order == "reverse":
+                return xp.flip(block, axis=(-2, -1))
+            else:
+                return block[..., :, order][..., order, :]
+
+        v_10, __, __ = get_periodic_superblocks(
+            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds]),
+            a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]]),
+            a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds]),
+            block_sections=self.small_block_sections,
+        )
+        __, __, p_01 = get_periodic_superblocks(
+            a_ii=_order_block(self.p_retarded.blocks[*diagonal_inds]),
+            a_ji=_order_block(self.p_retarded.blocks[*upper_inds[::-1]]),
+            a_ij=_order_block(self.p_retarded.blocks[*upper_inds]),
+            block_sections=self.small_block_sections,
+        )
+        self.system_matrix.blocks[*diagonal_inds] += _order_block(v_10 @ p_01)
+
     @profiler.profile(
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
     )
@@ -424,12 +663,143 @@ class CoulombScreeningSolver(SubsystemSolver):
             out=self.system_matrix,
             start_block=start_block,
             end_block=end_block,
-            spillover_correction=True,
+            spillover_correction=False,
         )
+        # apply spillover correction to the system matrix.
+        # This is necessary because infinite leads are assumed.
+        if comm.block.rank == 0:
+            self._contact_spillover_matmul(
+                diagonal_inds=(0, 0),
+                upper_inds=(0, 1),
+            )
+
+        if comm.block.rank == comm.block.size - 1:
+            n = self.system_matrix.num_local_blocks - 1
+            m = n - 1
+            self._contact_spillover_matmul(
+                diagonal_inds=(n, n),
+                upper_inds=(n, m),
+                order="reverse",
+            )
+
         self.p_retarded.free_data()
+
 
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
+
+    def _contact_spillover_sandwich(
+        self,
+        p_: DSDBSparse,
+        l_: DSDBSparse,
+        diagonal_inds: tuple,
+        upper_inds: tuple,
+        order: str | NDArray | None = None,
+    ) -> None:
+        r"""Applies the spillover correction to
+
+        $$\mathbf{L}^{\lessgtr} = \mathbf{V} \mathbf{P}^{\lessgtr} \mathbf{V}^{\dagger}$$
+
+        for either the lesser or the greater component at a specific contact.
+
+        Parameters
+        ----------
+        p_ : DSDBSparse
+            The polarization (either lesser or greater).
+        l_ : DSDBSparse
+            The matrix to which the spillover correction will be applied (either
+            `l_lesser` or `l_greater`).
+        diagonal_inds : tuple
+            The indices of the diagonal blocks corresponding to the contact.
+        upper_inds : tuple
+            The indices of the upper off-diagonal blocks corresponding to the contact.
+        order : str | NDArray | None, optional
+            The permutation of the blocks to achieve the same order as the canonical left contact.
+            If None, the left contact order is assumed.
+            Instead of an explicit permutation, the string "reverse" can be passed
+            to reverse the order of the blocks, which is equivalent to the right contact order.
+
+        """
+
+        if isinstance(order, str) and order not in ["reverse"]:
+            raise ValueError(
+                f"Invalid order string: {order}. Must be 'reverse' or None."
+            )
+        elif isinstance(order, xp.ndarray) and order.ndim != 1:
+            raise ValueError(
+                f"Order array must be 1-dimensional, got shape {order.shape}."
+            )
+
+        def _order_block(block):
+            if order is None:
+                return block
+            elif order == "reverse":
+                return xp.flip(block, axis=(-2, -1))
+            else:
+                return block[..., :, order][..., order, :]
+
+        v_10, v_00, v_01 = get_periodic_superblocks(
+            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds]),
+            a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]]),
+            a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds]),
+            block_sections=self.small_block_sections,
+        )
+
+        p_10, p_00, p_01 = get_periodic_superblocks(
+            a_ii=_order_block(p_.blocks[*diagonal_inds]),
+            a_ji=_order_block(p_.blocks[*upper_inds[::-1]]),
+            a_ij=_order_block(p_.blocks[*upper_inds]),
+            block_sections=self.small_block_sections,
+        )
+
+        l_.blocks[*diagonal_inds] += _order_block(
+            v_10 @ p_01 @ v_00 + v_00 @ p_10 @ v_01 + v_10 @ p_00 @ v_01
+        )
+        l_.blocks[*upper_inds] += _order_block(v_10 @ p_01 @ v_01)
+        if not l_.symmetry:
+            l_.blocks[*upper_inds[::-1]] += _order_block(v_10 @ p_10 @ v_01)
+
+    def _apply_spillover_sandwich(
+        self,
+        p_: DSDBSparse,
+        l_: DSDBSparse,
+    ) -> None:
+        r"""Applies the spillover correction to
+
+        $$\mathbf{L}^{\lessgtr} = \mathbf{V} \mathbf{P}^{\lessgtr} \mathbf{V}^{\dagger}$$
+
+        for either the lesser or the greater component at all contacts.
+
+        Parameters
+        ----------
+        p_ : DSDBSparse
+            The polarization (either lesser or greater).
+        l_ : DSDBSparse
+            The matrix to which the spillover correction will be applied (either
+            `l_lesser` or `l_greater`).
+
+        """
+
+        if comm.block.rank == 0:
+            self._contact_spillover_sandwich(
+                p_=p_,
+                l_=l_,
+                diagonal_inds=(0, 0),
+                upper_inds=(0, 1),
+            )
+
+        if comm.block.rank == comm.block.size - 1:
+            n = self.system_matrix.num_local_blocks - 1
+            m = n - 1
+            self._contact_spillover_sandwich(
+                p_=p_,
+                l_=l_,
+                # NOTE: Order of inds is reversed for the right contact
+                # i.e. `upper_inds` is not `(m, n)`
+                diagonal_inds=(n, n),
+                upper_inds=(n, m),
+                order="reverse",
+            )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
         """Filters out peaks in the Green's functions.
@@ -524,16 +894,19 @@ class CoulombScreeningSolver(SubsystemSolver):
                 out=self.l_lesser,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=True,
+                spillover_correction=False,
             )
+            self._apply_spillover_sandwich(p_lesser, self.l_lesser)
+
             bd_sandwich_distr(
                 self.coulomb_matrix,
                 p_greater,
                 out=self.l_greater,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=True,
+                spillover_correction=False,
             )
+            self._apply_spillover_sandwich(p_greater, self.l_greater)
 
         if self.flatband:
             with profiler.profile_range(
@@ -552,7 +925,11 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.block_sizes)
 
         # Apply the OBC algorithm.
-        self._compute_obc()
+        self._compute_obc(
+            p_lesser,
+            p_greater,
+            p_retarded,
+        )
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Solve", level="default", comm=comm

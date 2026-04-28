@@ -8,12 +8,15 @@ from quatrex.electron.sse_coulomb_screening import hilbert_transform
 
 def naive_hilbert_transform(a_full: NDArray, energies: NDArray) -> NDArray:
     """Naive implementation of Hilbert transform for testing purposes."""
-    de = energies[1] - energies[0]
     ne = energies.size
-    energy_differences = energies - energies[0] + de / 2
-    hilbert_kernel = 1 / xp.concatenate([-energy_differences[::-1], energy_differences])
+    energy_differences = energies - energies[0]
+    # Remove the singularity by setting the energy difference to inf at the singularity.
+    energy_differences[0] = xp.inf
+    hilbert_kernel = 1 / xp.concatenate(
+        [-energy_differences[-1:0:-1], energy_differences]
+    )
     result = _naive_convolve(a_full, hilbert_kernel)
-    return result[2 * ne : 3 * ne]
+    return result[2 * ne - 1 : 3 * ne - 1]
 
 
 def test_hilbert_transform(array_shape):

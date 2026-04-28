@@ -39,11 +39,9 @@ def hilbert_transform(a: NDArray, energies: NDArray) -> NDArray:
 
     """
     # eta for removing the singularity. See Cauchy principal value.
-    de = energies[1] - energies[0]
-    eta = de / 2
-    energy_differences = (
-        xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim))) + eta
-    )
+    energy_differences = xp.expand_dims(energies - energies[0], tuple(range(1, a.ndim)))
+    # Set energy differences to inf at the singularity to avoid division by zero.
+    energy_differences[0] = xp.inf
     ne = energies.size
 
     hilbert_kernel = 1 / energy_differences

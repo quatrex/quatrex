@@ -121,13 +121,13 @@ class TestNaiveConvolutions:
         a = xp.array([1, 2, 3], dtype=xp.float64)
         b = xp.array([0, 1, 0.5], dtype=xp.float64)
         result = _naive_convolve(a, b)
-        # NOTE: No -1 length here, needed for correct hilbert transform later on.
-        expected = xp.array([0, 1, 2.5, 4, 1.5, 0], dtype=xp.float64)
+        expected = xp.array([0, 1, 2.5, 4, 1.5], dtype=xp.float64)
         assert xp.allclose(result, expected)
         na = a.shape[0]
         nb = b.shape[0]
-        # NOTE: No na+nb-1 length here, needed for correct hilbert transform later on.
-        expected_fft = xp.fft.ifft(xp.fft.fft(a, n=na + nb) * xp.fft.fft(b, n=na + nb))
+        expected_fft = xp.fft.ifft(
+            xp.fft.fft(a, n=na + nb - 1) * xp.fft.fft(b, n=na + nb - 1)
+        )
         assert xp.allclose(result, expected_fft)
 
     @staticmethod

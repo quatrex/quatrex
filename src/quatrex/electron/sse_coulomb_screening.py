@@ -42,18 +42,18 @@ def hilbert_transform(sl: NDArray, sg: NDArray, energies: NDArray) -> NDArray:
     nk = sg.shape[1:-1]
     # Add empty dimensions for each k-point.
     energy_differences = (energies - energies[0]).reshape(-1, *(len(nk) + 1) * (1,))
-    # eta for removing the singularity. See Cauchy principal value.
-    eta = (energies[1] - energies[0]) / 2
-    hilbert_kernel = 1 / (energy_differences + eta)
+    # Set energy differences to inf at the singularity to avoid division by zero.
+    energy_differences[0] = np.inf
+    hilbert_kernel = 1 / (energy_differences)
 
     sr = fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[:ne]
     # Correct for left edge
-    sr += fft_convolve(-sl[:ne], hilbert_kernel)[-ne:]
+    sr[:-1] += fft_convolve(-sl[:ne], hilbert_kernel)[-ne + 1 :]
     # Next account for negative frequencies
     hilbert_kernel = -hilbert_kernel[::-1]
     sr += fft_convolve(sg[:ne] - sl[-ne:], hilbert_kernel)[-ne:]
     # Correct for right edge
-    sr += fft_convolve(sg[-ne:], hilbert_kernel)[:ne]
+    sr[1:] += fft_convolve(sg[-ne:], hilbert_kernel)[: ne - 1]
 
     return sr
 
@@ -380,13 +380,10 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                     energy_differences = (self.energies - self.energies[0]).reshape(
                         -1, *(len(nk) + 1) * (1,)
                     )
+                    # Set energy differences to inf at the singularity to avoid division by zero.
+                    energy_differences[0] = np.inf
 
-                    # NOTE: Same eta as in the other computation, but fewer
-                    # ffts are computed in this case.
-                    eta = (self.energies[1] - self.energies[0]) / 2
-                    hilbert_kernel_fft = xp.fft.fft(
-                        1 / (energy_differences + eta), n, axis=0
-                    )
+                    hilbert_kernel_fft = xp.fft.fft(1 / energy_differences, n, axis=0)
                     for start, end in zip(batch_displacements, batch_displacements[1:]):
                         self._compute_without_correction(
                             g_lesser,

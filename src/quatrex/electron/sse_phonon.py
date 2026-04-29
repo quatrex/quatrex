@@ -87,7 +87,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             # These should ideally already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
 
-        ne = g_lesser.shape[0]
+        ne = g_lesser.data.shape[0]
 
         sl_diag = sigma_lesser.diagonal()
         gl_diag = g_lesser.diagonal()

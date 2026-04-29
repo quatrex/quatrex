@@ -232,6 +232,51 @@ def run(
         raise
 
 
+@quatrex_cli.command()
+def mesh(
+    config: Annotated[
+        Path,
+        typer.Argument(
+            ...,
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
+            resolve_path=True,
+            exists=True,
+        ),
+    ],
+    off_screen: Annotated[
+        bool,
+        typer.Option(
+            "--off-screen",
+            is_flag=True,
+            help="Whether to use off-screen rendering.",
+        ),
+    ] = False,
+):
+    """Generates and visualizes the device mesh based on the provided configuration.
+
+    This can only be run on a single process.
+
+    """
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError("The 'mesh' command can only be run on a single process.")
+
+    from quatrex.core.config import parse_config, setup_context
+
+    config = parse_config(config)
+    setup_context(config)
+
+    secho_header()
+
+    from quatrex.electrostatics.meshing import DeviceMesh
+
+    # Trigger mesh generation and visualization.
+    device_mesh = DeviceMesh(config)
+    device_mesh.generate_mesh()
+    device_mesh.visualize(off_screen=off_screen)
+
+
 @quatrex_cli.callback(no_args_is_help=True)
 def main(
     version: Annotated[

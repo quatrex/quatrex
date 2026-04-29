@@ -29,6 +29,7 @@ from qttools import xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBCOO, DSDBSparse
 from qttools.profiling import Profiler
+from quatrex.electrostatics.geometry_config import GeometryConfig, parse_geometry_config
 
 profiler = Profiler()
 
@@ -1262,6 +1263,9 @@ def parse_config(config_file: Path) -> QuatrexConfig:
         config["config_dir"] = config_file.parent
 
     config = mpi_comm_world.bcast(config, root=0)
+
+    # Resolve the geometry config.
+    config["device"]["geometry"] = parse_geometry_config(config["device"])
 
     return QuatrexConfig(**config)
 

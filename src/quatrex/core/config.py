@@ -94,6 +94,7 @@ class SCBAConfig(BaseModel):
     adaptive_integration_method: Literal["trapezoid", "simpson"] = "trapezoid"      # only used in SigmaFock
     adaptive_interpolation_order: Literal[1, 2, 3] = 1
     adaptive_interpolation_oversampling_ratio: NonNegativeFloat = 1.0
+    adaptive_freeze_band_edges: bool = False    # when adaptive iterations start, stop updating the band edges (to hopefully avoid instabilities)
 
 class PoissonConfig(BaseModel):
     """Options for the Poisson solver."""

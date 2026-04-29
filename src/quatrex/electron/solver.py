@@ -503,7 +503,18 @@ class ElectronSolver(SubsystemSolver):
                 #   assume that it's converged by the time we switch to adaptive
                 #   prevent band edge wobbling (seen in adaptive iterations)
                 #   (this was AlexMaeder's idea)
-                if self.call_count < self.config.scba.adaptive_start_iteration:
+                freeze_band_edge_update = self.config.scba.adaptive_freeze_band_edges and self.call_count >= self.config.scba.adaptive_start_iteration
+
+                if freeze_band_edge_update:
+                    # liyongda (24 Apr 2026): I still want the print statement that's in self._update_fermi_levels, copy-pasted here
+                    #   Add `0, 0` at the end so the existing out.txt parser will read band edge value, but we'll know 0 is not the real value (just a placeholder to indicate frozen band edges).
+                    if comm.rank == 0:
+                        print(
+                            f"Updating conduction band edges: iteration {self.call_count} - adaptive_start_iteration {self.config.scba.adaptive_start_iteration} = adaptive iteration {self.call_count - self.config.scba.adaptive_start_iteration} - band edges are frozen from iteration {self.config.scba.adaptive_start_iteration-1}: 0, 0",
+                            flush=True,
+                        )
+                else:
+                    # liyongda (24 Apr 2026): original behaviour, update band edges
                     left_band_edges, right_band_edges = find_renormalized_eigenvalues(
                         hamiltonian=self.hamiltonian,
                         overlap=self.overlap_sparray,
@@ -522,14 +533,6 @@ class ElectronSolver(SubsystemSolver):
                     )
 
                     self._update_fermi_levels(left_band_edges, right_band_edges)
-
-                else:
-                    # liyongda (24 Apr 2026): I still want the print statement that's in self._update_fermi_levels, copy-pasted here
-                    if comm.rank == 0:
-                        print(
-                            f"Updating conduction band edges: Adaptive iteration {self.call_count - self.config.scba.adaptive_start_iteration} - band edges are frozen from iteration {self.config.scba.adaptive_start_iteration-1}",
-                            flush=True,
-                        )
 
         self._compute_obc()
 

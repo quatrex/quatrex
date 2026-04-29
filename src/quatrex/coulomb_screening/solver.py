@@ -15,6 +15,7 @@ from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import (
     compute_num_connected_blocks,
+    expand_periodic_superblocks,
     get_periodic_superblocks,
     homogenize,
 )
@@ -237,54 +238,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
-    def _get_periodic_superblocks(
-        self, m_ji: NDArray, m_ii: NDArray, m_ij: NDArray, lower=False
-    ) -> tuple[NDArray, NDArray, NDArray]:
-        """Constructs the periodic superblocks for the given blocks."""
-
-        new_shape = list(m_ii.shape)
-        new_shape[-1] = new_shape[-1] * self.num_connected_blocks
-        new_shape[-2] = new_shape[-2] * self.num_connected_blocks
-
-        m_ji_out = xp.zeros_like(m_ji, shape=new_shape)
-        m_ii_out = xp.zeros_like(m_ii, shape=new_shape)
-        m_ij_out = xp.zeros_like(m_ij, shape=new_shape)
-
-        m_ji_tmp, m_ii_tmp, m_ij_tmp = get_periodic_superblocks(
-            a_ji=m_ji if not lower else xp.flip(m_ji, axis=(-2, -1)),
-            a_ii=m_ii if not lower else xp.flip(m_ii, axis=(-2, -1)),
-            a_ij=m_ij if not lower else xp.flip(m_ij, axis=(-2, -1)),
-            block_sections=self.small_block_sections,
-        )
-
-        for i in range(self.num_connected_blocks):
-            m_ii_out[
-                ...,
-                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
-                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
-            ] = m_ii_tmp
-
-        for i in range(self.num_connected_blocks - 1):
-            m_ii_out[
-                ...,
-                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
-                (i + 1) * m_ii.shape[-1] : (i + 2) * m_ii.shape[-1],
-            ] = m_ij_tmp
-            m_ii_out[
-                ...,
-                (i + 1) * m_ii.shape[-1] : (i + 2) * m_ii.shape[-1],
-                i * m_ii.shape[-1] : (i + 1) * m_ii.shape[-1],
-            ] = m_ji_tmp
-
-        m_ij_out[..., -m_ij.shape[-1] :, : m_ij.shape[-1]] = m_ij_tmp
-        m_ji_out[..., : m_ji.shape[-1], -m_ji.shape[-1] :] = m_ji_tmp
-
-        m_ji_out = m_ji_out if not lower else xp.flip(m_ji_out, axis=(-2, -1))
-        m_ii_out = m_ii_out if not lower else xp.flip(m_ii_out, axis=(-2, -1))
-        m_ij_out = m_ij_out if not lower else xp.flip(m_ij_out, axis=(-2, -1))
-
-        return m_ji_out, m_ii_out, m_ij_out
-
     def _contact_obc(
         self,
         contact: str,
@@ -335,17 +288,19 @@ class CoulombScreeningSolver(SubsystemSolver):
             comm=comm.stack,
         ):
 
-            p_retarded_10, p_retarded_00, p_retarded_01 = (
-                self._get_periodic_superblocks(
-                    m_ji=_order_block(p_retarded.blocks[*upper_inds[::-1]], order),
-                    m_ii=_order_block(p_retarded.blocks[*diagonal_inds], order),
-                    m_ij=_order_block(p_retarded.blocks[*upper_inds], order),
-                )
+            p_retarded_10, p_retarded_00, p_retarded_01 = expand_periodic_superblocks(
+                a_ji=_order_block(p_retarded.blocks[*upper_inds[::-1]], order),
+                a_ii=_order_block(p_retarded.blocks[*diagonal_inds], order),
+                a_ij=_order_block(p_retarded.blocks[*upper_inds], order),
+                block_sections=self.small_block_sections,
+                repetitions=self.num_connected_blocks,
             )
-            v_10, v_00, v_01 = self._get_periodic_superblocks(
-                m_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-                m_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-                m_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            v_10, v_00, v_01 = expand_periodic_superblocks(
+                a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+                a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+                a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+                block_sections=self.small_block_sections,
+                repetitions=self.num_connected_blocks,
             )
 
             m_00 = (
@@ -375,10 +330,12 @@ class CoulombScreeningSolver(SubsystemSolver):
         ):
 
             def _get_l_superblocks(p_):
-                p_10, p_00, p_01 = self._get_periodic_superblocks(
-                    m_ji=_order_block(p_.blocks[*upper_inds[::-1]], order),
-                    m_ii=_order_block(p_.blocks[*diagonal_inds], order),
-                    m_ij=_order_block(p_.blocks[*upper_inds], order),
+                p_10, p_00, p_01 = expand_periodic_superblocks(
+                    a_ji=_order_block(p_.blocks[*upper_inds[::-1]], order),
+                    a_ii=_order_block(p_.blocks[*diagonal_inds], order),
+                    a_ij=_order_block(p_.blocks[*upper_inds], order),
+                    block_sections=self.small_block_sections,
+                    repetitions=self.num_connected_blocks,
                 )
                 l_00 = (
                     v_10 @ p_00 @ v_01
@@ -569,14 +526,14 @@ class CoulombScreeningSolver(SubsystemSolver):
         """
 
         v_10, __, __ = get_periodic_superblocks(
-            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
             a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
             a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
         __, __, p_01 = get_periodic_superblocks(
-            a_ii=_order_block(self.p_retarded.blocks[*diagonal_inds], order),
             a_ji=_order_block(self.p_retarded.blocks[*upper_inds[::-1]], order),
+            a_ii=_order_block(self.p_retarded.blocks[*diagonal_inds], order),
             a_ij=_order_block(self.p_retarded.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
@@ -683,15 +640,15 @@ class CoulombScreeningSolver(SubsystemSolver):
         """
 
         v_10, v_00, v_01 = get_periodic_superblocks(
-            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
             a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
             a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
 
         p_10, p_00, p_01 = get_periodic_superblocks(
-            a_ii=_order_block(p_.blocks[*diagonal_inds], order),
             a_ji=_order_block(p_.blocks[*upper_inds[::-1]], order),
+            a_ii=_order_block(p_.blocks[*diagonal_inds], order),
             a_ij=_order_block(p_.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )

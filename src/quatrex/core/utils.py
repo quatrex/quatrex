@@ -155,7 +155,7 @@ def compute_num_connected_blocks(
 
 
 def get_periodic_superblocks(
-    a_ii: NDArray, a_ij: NDArray, a_ji: NDArray, block_sections: int
+    a_ij: NDArray, a_ii: NDArray, a_ji: NDArray, block_sections: int
 ) -> NDArray:
     """Constructs a periodic superblock structure from the given blocks.
 
@@ -164,12 +164,12 @@ def get_periodic_superblocks(
 
     Parameters
     ----------
+    a_ji : NDArray
+        The subdiagonal block made up of smaller subblocks.
     a_ii : NDArray
         The diagonal block made up of smaller subblocks.
     a_ij : NDArray
         The superdiagonal block made up of smaller subblocks.
-    a_ji : NDArray
-        The subdiagonal block made up of smaller subblocks.
     block_sections : int
         The number of subblocks each block is divided into. So if the
         block is of shape (n, n), the subblocks each have a shape of
@@ -181,6 +181,10 @@ def get_periodic_superblocks(
         The periodic superblock structure.
 
     """
+
+    if block_sections == 1:
+        return a_ji, a_ii, a_ij
+
     # Stack the diagonal and superdiagonal blocks and divide them into
     # sublayers. We are interested in the first, outermost sublayer.
     view_ij = _block_view(xp.concatenate((a_ii, a_ij), -1), -2, block_sections)
@@ -205,8 +209,86 @@ def get_periodic_superblocks(
         dtype=a_ii.dtype,
     )
     for i in range(block_sections):
-        periodic_blocks[i, :] = xp.roll(periodic_layer, i, axis=0)
+        periodic_blocks[i, i:] = periodic_layer[: 3 * block_sections - i]
 
-    # Recover the correct superbblock structure form the subblocks.
+    # Recover the correct superblock structure form the subblocks.
     periodic_blocks = xp.concatenate(xp.concatenate(periodic_blocks, -2), -1)
     return _block_view(periodic_blocks, -1, 3)
+
+
+def expand_periodic_superblocks(
+    a_ji: NDArray,
+    a_ii: NDArray,
+    a_ij: NDArray,
+    block_sections: int,
+    repetitions: int,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Expands the periodic superblocks to a larger block structure.
+
+    The periodic superblocks are constructed from the outermost subblocks of the input blocks.
+    This function calls `get_periodic_superblocks` to construct the periodic superblocks,
+    and then repeats the resulting structure.
+
+    Parameters
+    ----------
+    a_ji : NDArray
+        The subdiagonal block made up of smaller subblocks.
+    a_ii : NDArray
+        The diagonal block made up of smaller subblocks.
+    a_ij : NDArray
+        The superdiagonal block made up of smaller subblocks.
+    block_sections : int
+        The number of subblocks each block is divided into. So if the
+        block is of shape (n, n), the subblocks each have a shape of
+        (n // block_sections, n // block_sections).
+    repetitions : int
+        The number of times to repeat the periodic superblock structure.
+
+    Returns
+    -------
+    tuple[NDArray, NDArray, NDArray]
+        The expanded subdiagonal, diagonal, and superdiagonal blocks.
+
+    """
+
+    if repetitions == 1:
+        return a_ji, a_ii, a_ij
+
+    new_shape = list(a_ii.shape)
+    new_shape[-1] = new_shape[-1] * repetitions
+    new_shape[-2] = new_shape[-2] * repetitions
+
+    a_ji_out = xp.zeros_like(a_ji, shape=new_shape)
+    a_ii_out = xp.zeros_like(a_ii, shape=new_shape)
+    a_ij_out = xp.zeros_like(a_ij, shape=new_shape)
+
+    a_ji_tmp, a_ii_tmp, a_ij_tmp = get_periodic_superblocks(
+        a_ji=a_ji,
+        a_ii=a_ii,
+        a_ij=a_ij,
+        block_sections=block_sections,
+    )
+
+    for i in range(repetitions):
+        a_ii_out[
+            ...,
+            i * a_ii.shape[-1] : (i + 1) * a_ii.shape[-1],
+            i * a_ii.shape[-1] : (i + 1) * a_ii.shape[-1],
+        ] = a_ii_tmp
+
+    for i in range(repetitions - 1):
+        a_ii_out[
+            ...,
+            i * a_ii.shape[-1] : (i + 1) * a_ii.shape[-1],
+            (i + 1) * a_ii.shape[-1] : (i + 2) * a_ii.shape[-1],
+        ] = a_ij_tmp
+        a_ii_out[
+            ...,
+            (i + 1) * a_ii.shape[-1] : (i + 2) * a_ii.shape[-1],
+            i * a_ii.shape[-1] : (i + 1) * a_ii.shape[-1],
+        ] = a_ji_tmp
+
+    a_ij_out[..., -a_ij.shape[-1] :, : a_ij.shape[-1]] = a_ij_tmp
+    a_ji_out[..., : a_ji.shape[-1], -a_ji.shape[-1] :] = a_ji_tmp
+
+    return a_ji_out, a_ii_out, a_ij_out

@@ -221,8 +221,8 @@ class ElectronSolver(SubsystemSolver):
         if comm.block.rank == 0:
 
             m_10, m_00, m_01 = get_periodic_superblocks(
-                a_ii=self.system_matrix.blocks[0, 0],
                 a_ji=self.system_matrix.blocks[1, 0],
+                a_ii=self.system_matrix.blocks[0, 0],
                 a_ij=self.system_matrix.blocks[0, 1],
                 block_sections=self.block_sections,
             )
@@ -261,8 +261,8 @@ class ElectronSolver(SubsystemSolver):
 
             m_mn, m_nn, m_nm = get_periodic_superblocks(
                 # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
                 a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
+                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
                 a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
                 block_sections=self.block_sections,
             )

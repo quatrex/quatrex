@@ -8,17 +8,17 @@ from qttools.datastructures import DSDBSparse
 from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
+from qttools.toeplitz.toeplitz import (
+    expand_periodic_superblocks,
+    get_periodic_superblocks,
+    homogenize,
+)
 from qttools.utils.mpi_utils import get_section_sizes
 from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import (
-    compute_num_connected_blocks,
-    expand_periodic_superblocks,
-    get_periodic_superblocks,
-    homogenize,
-)
+from quatrex.core.utils import compute_num_connected_blocks
 
 profiler = Profiler()
 

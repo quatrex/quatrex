@@ -2,7 +2,10 @@
 import pytest
 
 from qttools import NDArray, xp
-from quatrex.core.utils import expand_periodic_superblocks, get_periodic_superblocks
+from qttools.toeplitz.toeplitz import (
+    expand_periodic_superblocks,
+    get_periodic_superblocks,
+)
 
 
 def _test_periodicity(

@@ -385,9 +385,6 @@ class SCBA:
                 else None
             )
 
-            # The transport-region polarization is always computed from the
-            # NEGF Green's functions. The optional RPA branch adds a fixed
-            # environment contribution on top of the iterative device screening.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
                 self.coulomb_screening_energies,
@@ -446,6 +443,20 @@ class SCBA:
             and self.has_dielectric_environment
             and self.dielectric_method == "rpa"
         ):
+            # The environment lesser/greater terms are added directly to the
+            # Coulomb solver source buffers, so they must use that source
+            # sparsity rather than the smaller polarization sparsity.
+            self.coulomb_screening_solver.l_lesser.allocate_data()
+            self.coulomb_screening_solver.l_greater.allocate_data()
+            self.data.w_environment_lesser = config.compute.dsdbsparse_type.zeros_like(
+                self.coulomb_screening_solver.l_lesser
+            )
+            self.data.w_environment_greater = config.compute.dsdbsparse_type.zeros_like(
+                self.coulomb_screening_solver.l_greater
+            )
+            self.coulomb_screening_solver.l_lesser.free_data()
+            self.coulomb_screening_solver.l_greater.free_data()
+
             self.rpa_coulomb_screening_bridge = EquilibriumRPAScreeningBridge(
                 self.config,
                 self.coulomb_screening_energies,
@@ -559,16 +570,35 @@ class SCBA:
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
 
-        self.p_coulomb_screening.compute(
-            self.data.g_lesser,
-            self.data.g_greater,
-            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+        use_rpa_polarization = (
+            self.has_dielectric_environment
+            and self.dielectric_method == "rpa"
+            and self.rpa_coulomb_screening_bridge is not None
         )
+        if use_rpa_polarization:
+            self.rpa_coulomb_screening_bridge.populate_polarization(
+                self.data.p_retarded,
+                self.data.p_lesser,
+                self.data.p_greater,
+            )
+        else:
+            self.p_coulomb_screening.compute(
+                self.data.g_lesser,
+                self.data.g_greater,
+                out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+            )
 
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+        if use_rpa_polarization:
+            self.coulomb_screening_solver.solve(
+                self.data.p_lesser,
+                self.data.p_greater,
+                self.data.p_retarded,
+                out=(self.data.w_lesser, self.data.w_greater),
+            )
+        elif self.has_dielectric_environment and self.dielectric_method == "rpa":
             self.rpa_coulomb_screening_bridge.populate(
                 self.data.w_environment_retarded,
                 self.data.w_environment_lesser,

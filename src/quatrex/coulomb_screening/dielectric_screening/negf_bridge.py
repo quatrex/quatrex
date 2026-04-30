@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import sparse, xp
 from qttools.comm import comm
@@ -19,6 +20,9 @@ from .rpa_compute import BrillouinZoneMesh, build_uniform_brillouin_zone_mesh
 class EquilibriumRPABridgeResult:
     """Cached real-space screened interactions for the NEGF Coulomb SSE path."""
 
+    p_retarded_matrices: list[sparse.coo_matrix]
+    p_lesser_matrices: list[sparse.coo_matrix]
+    p_greater_matrices: list[sparse.coo_matrix]
     w_retarded_matrices: list[sparse.coo_matrix]
     w_lesser_matrices: list[sparse.coo_matrix]
     w_greater_matrices: list[sparse.coo_matrix]
@@ -45,7 +49,14 @@ class EquilibriumRPAScreeningBridge:
         self.config = config
         self.screening_energies = np.asarray(screening_energies, dtype=np.float64)
         self.template = template
-        self._solver = EquilibriumScreening()
+        self._solver = EquilibriumScreening(
+            matrix_polarization=getattr(
+                config.coulomb_screening,
+                "matrix_valued_polarization",
+                False,
+            ),
+            frequency_axis="real",
+        )
         self._cached_result: EquilibriumRPABridgeResult | None = None
 
     def populate(
@@ -81,15 +92,56 @@ class EquilibriumRPAScreeningBridge:
             w_lesser.stack[(local_index,)] = result.w_lesser_matrices[global_index]
             w_greater.stack[(local_index,)] = result.w_greater_matrices[global_index]
 
+    def populate_polarization(
+        self,
+        p_retarded: DSDBSparse,
+        p_lesser: DSDBSparse,
+        p_greater: DSDBSparse,
+    ) -> None:
+        """Populate distributed polarization tensors with equilibrium RPA data."""
+
+        result = self._cached_result or self._build_cached_result()
+        self._cached_result = result
+
+        for matrix in (p_retarded, p_lesser, p_greater):
+            if matrix._data is None:
+                matrix.allocate_data()
+            matrix.data[:] = 0.0
+
+        local_energy_count = int(self.template.stack_section_sizes[self._stack_rank])
+        energy_offset = int(np.sum(self.template.stack_section_sizes[: self._stack_rank]))
+
+        for local_index in range(local_energy_count):
+            global_index = energy_offset + local_index
+            p_retarded.stack[(local_index,)] = result.p_retarded_matrices[global_index]
+            p_lesser.stack[(local_index,)] = result.p_lesser_matrices[global_index]
+            p_greater.stack[(local_index,)] = result.p_greater_matrices[global_index]
+
     @property
     def _stack_rank(self) -> int:
         return int(comm.stack.rank)
 
     def _build_cached_result(self) -> EquilibriumRPABridgeResult:
+        result = None
+        if global_comm.rank == 0:
+            print("Computing equilibrium RPA screening cache...", flush=True)
+            result = self._build_cached_result_on_root()
+            print("Finished equilibrium RPA screening cache.", flush=True)
+
+        result = global_comm.bcast(result, root=0)
+        return result
+
+    def _build_cached_result_on_root(self) -> EquilibriumRPABridgeResult:
         self._validate_supported_configuration()
 
         mesh = self._build_mesh()
         chemical_potential = self._resolve_chemical_potential()
+        print(
+            "RPA cache: loading Hamiltonian and Coulomb inputs "
+            f"(nk={mesh.k_points.size}, nq={mesh.q_points.size}, "
+            f"nw={mesh.frequencies.size})...",
+            flush=True,
+        )
         inputs = self._solver.load_inputs_from_config(
             self.config,
             hamiltonian_matrix_name=self.config.coulomb_screening.hamiltonian_matrix_name,
@@ -103,6 +155,7 @@ class EquilibriumRPAScreeningBridge:
             },
         )
 
+        print("RPA cache: computing screened interactions on q/frequency grid...", flush=True)
         grid_result = self._solver.solve_grid_from_inputs(
             inputs=scaled_inputs,
             mesh=mesh,
@@ -113,9 +166,21 @@ class EquilibriumRPAScreeningBridge:
             broadening=self.config.coulomb_screening.broadening,
         )
 
-        spectral_function = (
+        print("RPA cache: building lesser/greater spectral functions...", flush=True)
+        w_spectral_function = (
             grid_result.screened_interactions
             - np.swapaxes(grid_result.screened_interactions.conj(), -1, -2)
+        )
+        p_retarded_qw = np.asarray(
+            grid_result.polarization_result.polarization,
+            dtype=np.complex128,
+        )
+        if p_retarded_qw.ndim != 4:
+            raise NotImplementedError(
+                "RPA polarization injection into NEGF requires matrix_valued_polarization=True."
+            )
+        p_spectral_function = p_retarded_qw - np.swapaxes(
+            p_retarded_qw.conj(), -1, -2
         )
         bose = np.asarray(
             bose_einstein(
@@ -124,16 +189,30 @@ class EquilibriumRPAScreeningBridge:
             )
         )
         bose = bose.astype(np.complex128, copy=False)[np.newaxis, :, np.newaxis, np.newaxis]
-        w_lesser_qw = bose * spectral_function
-        w_greater_qw = (1.0 + bose) * spectral_function
+        w_lesser_qw = bose * w_spectral_function
+        w_greater_qw = (1.0 + bose) * w_spectral_function
+        p_lesser_qw = bose * p_spectral_function
+        p_greater_qw = (1.0 + bose) * p_spectral_function
 
+        print("RPA cache: transforming retarded P to transport matrices...", flush=True)
+        p_retarded_matrices = self._build_transport_matrices(mesh, p_retarded_qw)
+        print("RPA cache: transforming lesser P to transport matrices...", flush=True)
+        p_lesser_matrices = self._build_transport_matrices(mesh, p_lesser_qw)
+        print("RPA cache: transforming greater P to transport matrices...", flush=True)
+        p_greater_matrices = self._build_transport_matrices(mesh, p_greater_qw)
+        print("RPA cache: transforming retarded W to transport matrices...", flush=True)
         w_retarded_matrices = self._build_transport_matrices(
             mesh,
             grid_result.screened_interactions,
         )
+        print("RPA cache: transforming lesser W to transport matrices...", flush=True)
         w_lesser_matrices = self._build_transport_matrices(mesh, w_lesser_qw)
+        print("RPA cache: transforming greater W to transport matrices...", flush=True)
         w_greater_matrices = self._build_transport_matrices(mesh, w_greater_qw)
         return EquilibriumRPABridgeResult(
+            p_retarded_matrices=p_retarded_matrices,
+            p_lesser_matrices=p_lesser_matrices,
+            p_greater_matrices=p_greater_matrices,
             w_retarded_matrices=w_retarded_matrices,
             w_lesser_matrices=w_lesser_matrices,
             w_greater_matrices=w_greater_matrices,

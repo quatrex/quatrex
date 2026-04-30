@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -34,6 +34,9 @@ import scipy.io
 
 if TYPE_CHECKING:
 	from quatrex.core.config import QuatrexConfig
+
+
+FrequencyAxis = Literal["imaginary", "real"]
 
 
 @dataclass(frozen=True)
@@ -385,6 +388,7 @@ def compute_rpa_polarization_from_bands(
 	temperature: float,
 	state_multiplicity: float = 1.0,
 	broadening: float = 0.0,
+	frequency_axis: FrequencyAxis = "imaginary",
 ) -> NDArray[np.complex128]:
 	"""Compute RPA polarization from a 1D Bloch band structure on a uniform grid."""
 
@@ -411,8 +415,71 @@ def compute_rpa_polarization_from_bands(
 		form_factors,
 		frequencies,
 		broadening=broadening,
+		frequency_axis=frequency_axis,
 	)
 	return state_multiplicity * polarization
+
+
+def compute_rpa_polarization_matrix_from_bands(
+	band_structure: BlochBandStructure,
+	q_points: ArrayLike,
+	frequencies: ArrayLike,
+	*,
+	chemical_potential: float,
+	temperature: float,
+	state_multiplicity: float = 1.0,
+	broadening: float = 0.0,
+	frequency_axis: FrequencyAxis = "imaginary",
+) -> NDArray[np.complex128]:
+	"""Compute orbital-resolved RPA polarization matrices from Bloch states.
+
+	The returned array has shape ``(nq, n_omega, norb, norb)``. Summing over the
+	last two axes recovers the scalar band-overlap RPA polarization computed by
+	:func:`compute_rpa_polarization_from_bands`.
+	"""
+
+	q_shifts = map_q_points_to_k_shifts(q_points, band_structure.k_points)
+	occupations = fermi_dirac_distribution(
+		band_structure.eigenvalues,
+		chemical_potential=chemical_potential,
+		temperature=temperature,
+	)
+	nk = band_structure.k_points.size
+	shifted_indices = (
+		np.arange(nk, dtype=np.int64)[np.newaxis, :] + q_shifts[:, np.newaxis]
+	) % nk
+	shifted_energies = band_structure.eigenvalues[shifted_indices]
+	shifted_occupations = occupations[shifted_indices]
+	polarization = compute_rpa_polarization_matrix(
+		band_structure.eigenvalues,
+		shifted_energies,
+		occupations,
+		shifted_occupations,
+		band_structure.eigenvectors,
+		q_shifts,
+		frequencies,
+		broadening=broadening,
+		frequency_axis=frequency_axis,
+	)
+	return state_multiplicity * polarization
+
+
+def _rpa_denominator(
+	energy_differences: NDArray[np.float64],
+	frequencies: NDArray[np.float64],
+	*,
+	broadening: float,
+	frequency_axis: FrequencyAxis,
+) -> NDArray[np.complex128]:
+	"""Build the RPA response denominator for imaginary or real frequency."""
+
+	frequency_shape = (1,) * energy_differences.ndim + (frequencies.size,)
+	frequency_grid = frequencies.reshape(frequency_shape)
+	if frequency_axis == "imaginary":
+		return energy_differences[..., np.newaxis] - 1j * (frequency_grid + broadening)
+	if frequency_axis == "real":
+		return energy_differences[..., np.newaxis] - frequency_grid - 1j * broadening
+	raise ValueError("frequency_axis must be either 'imaginary' or 'real'.")
 
 
 def compute_rpa_polarization(
@@ -426,6 +493,7 @@ def compute_rpa_polarization(
 	k_weights: ArrayLike | None = None,
 	normalize_k_sum: bool = True,
 	broadening: float = 0.0,
+	frequency_axis: FrequencyAxis = "imaginary",
 ) -> NDArray[np.complex128]:
 	r"""Compute the RPA polarization for a set of momenta and frequencies.
 
@@ -443,14 +511,20 @@ def compute_rpa_polarization(
 		Form factors :math:`F_{k, k+q}^{\gamma\gamma'}`.
 	frequencies : array-like, shape (n_omega,)
 		Frequency grid. For imaginary-axis RPA this is the real-valued Matsubara
-		frequency grid entering as :math:`i\omega`.
+		frequency grid entering as :math:`i\omega`. For real-axis RPA this is
+		the real energy-transfer grid :math:`\omega`.
 	k_weights : array-like, optional, shape (nk,)
 		Weights for the Brillouin-zone sum over ``k``.
 	normalize_k_sum : bool, default True
 		Divide the final ``k`` sum by ``nk`` when no explicit ``k_weights`` are
 		provided.
 	broadening : float, default 0.0
-		Positive infinitesimal added as ``-i (omega + broadening)``.
+		Positive infinitesimal. On the imaginary axis this preserves the legacy
+		``-i (omega + broadening)`` denominator; on the real axis it enters as
+		the retarded ``-i eta`` term.
+	frequency_axis : {"imaginary", "real"}, default "imaginary"
+		Select the response denominator. ``"real"`` computes the retarded
+		real-frequency response used by the NEGF bridge.
 
 	Returns
 	-------
@@ -498,9 +572,11 @@ def compute_rpa_polarization(
 	)
 	numerator = occupation_differences * form_factors_array
 
-	denominator = energy_differences[..., np.newaxis] - 1j * (
-		frequencies_array[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
-		+ broadening
+	denominator = _rpa_denominator(
+		energy_differences,
+		frequencies_array,
+		broadening=broadening,
+		frequency_axis=frequency_axis,
 	)
 	integrand = numerator[..., np.newaxis] / denominator
 
@@ -518,11 +594,128 @@ def compute_rpa_polarization(
 	return polarization
 
 
+def compute_rpa_polarization_matrix(
+	energies_k: ArrayLike,
+	energies_kq: ArrayLike,
+	occupations_k: ArrayLike,
+	occupations_kq: ArrayLike,
+	eigenvectors: ArrayLike,
+	q_shifts: ArrayLike,
+	frequencies: ArrayLike,
+	*,
+	k_weights: ArrayLike | None = None,
+	normalize_k_sum: bool = True,
+	broadening: float = 0.0,
+	frequency_axis: FrequencyAxis = "imaginary",
+) -> NDArray[np.complex128]:
+	r"""Compute the orbital-resolved RPA polarization matrix.
+
+	For each transition ``(k, gamma) -> (k+q, gamma')`` this evaluates the
+	orbital-density vertex
+
+	.. math::
+
+		M_i = u^*_{k,\gamma,i} u_{k+q,\gamma',i}
+
+	and accumulates ``M_i M_j^*`` with the same RPA denominator used by the
+	scalar polarization. The result has shape ``(nq, n_omega, norb, norb)``.
+	"""
+
+	energies_k_array = _as_float64(energies_k, name="energies_k")
+	energies_kq_array = _as_float64(energies_kq, name="energies_kq")
+	occupations_k_array = _as_float64(occupations_k, name="occupations_k")
+	occupations_kq_array = _as_float64(occupations_kq, name="occupations_kq")
+	eigenvectors_array = _as_complex128(eigenvectors, name="eigenvectors")
+	q_shifts_array = np.asarray(q_shifts, dtype=np.int64)
+	frequencies_array = _as_float64(frequencies, name="frequencies")
+
+	if energies_k_array.ndim != 2:
+		raise ValueError("energies_k must have shape (nk, nbands).")
+	if occupations_k_array.shape != energies_k_array.shape:
+		raise ValueError("occupations_k must match energies_k shape.")
+
+	nk, nbands = energies_k_array.shape
+	if eigenvectors_array.ndim != 3 or eigenvectors_array.shape[0] != nk:
+		raise ValueError("eigenvectors must have shape (nk, norb, nbands).")
+	norb = eigenvectors_array.shape[1]
+	if eigenvectors_array.shape[2] != nbands:
+		raise ValueError("eigenvectors band dimension must match energies_k.")
+
+	expected_shifted_shape = (energies_kq_array.shape[0], nk, nbands)
+	if energies_kq_array.ndim != 3 or energies_kq_array.shape[1:] != (nk, nbands):
+		raise ValueError(
+			"energies_kq must have shape (nq, nk, nbands) matching energies_k."
+		)
+	if occupations_kq_array.shape != expected_shifted_shape:
+		raise ValueError("occupations_kq must match energies_kq shape.")
+	if q_shifts_array.shape != (energies_kq_array.shape[0],):
+		raise ValueError("q_shifts must have shape (nq,).")
+	if frequencies_array.ndim != 1:
+		raise ValueError("frequencies must be a one-dimensional array.")
+
+	k_weight_array = None
+	if k_weights is not None:
+		k_weight_array = _as_float64(k_weights, name="k_weights")
+		if k_weight_array.shape != (nk,):
+			raise ValueError("k_weights must have shape (nk,).")
+
+	nq = energies_kq_array.shape[0]
+	n_omega = frequencies_array.size
+	polarization = np.empty((nq, n_omega, norb, norb), dtype=np.complex128)
+	k_indices = np.arange(nk, dtype=np.int64)
+
+	for q_index, q_shift in enumerate(q_shifts_array):
+		shifted_vectors = eigenvectors_array[(k_indices + q_shift) % nk]
+		transition_vertices = (
+			eigenvectors_array.conj()[:, :, :, np.newaxis]
+			* shifted_vectors[:, :, np.newaxis, :]
+		)
+		transition_vertices = np.moveaxis(transition_vertices, 1, -1)
+
+		energy_differences = (
+			energies_kq_array[q_index, :, np.newaxis, :]
+			- energies_k_array[:, :, np.newaxis]
+		)
+		occupation_differences = (
+			occupations_kq_array[q_index, :, np.newaxis, :]
+			- occupations_k_array[:, :, np.newaxis]
+		)
+		denominator = _rpa_denominator(
+			energy_differences,
+			frequencies_array,
+			broadening=broadening,
+			frequency_axis=frequency_axis,
+		)
+		weights = occupation_differences[..., np.newaxis] / denominator
+		if k_weight_array is not None:
+			weights = weights * k_weight_array[:, np.newaxis, np.newaxis, np.newaxis]
+
+		polarization[q_index] = np.einsum(
+			"kbcw,kbci,kbcj->wij",
+			weights,
+			transition_vertices,
+			transition_vertices.conj(),
+			optimize=True,
+		)
+		if k_weight_array is None and normalize_k_sum and nk > 0:
+			polarization[q_index] /= nk
+
+	return polarization
+
+
 class RPAPolarization:
 	"""RPA solver that maps a Hamiltonian file onto a momentum-resolved polarization."""
 
-	def __init__(self, *, channels: ScreeningChannels | None = None) -> None:
+	def __init__(
+		self,
+		*,
+		channels: ScreeningChannels | None = None,
+		frequency_axis: FrequencyAxis = "imaginary",
+	) -> None:
 		self.channels = channels or ScreeningChannels()
+		if frequency_axis not in ("imaginary", "real"):
+			raise ValueError("frequency_axis must be either 'imaginary' or 'real'.")
+		self.frequency_axis = frequency_axis
 
 	def load_bloch_band_structure(
 		self,
@@ -579,6 +772,29 @@ class RPAPolarization:
 			temperature=temperature,
 			state_multiplicity=self.channels.multiplicity,
 			broadening=broadening,
+			frequency_axis=self.frequency_axis,
+		)
+
+	def compute_polarization_matrix(
+		self,
+		band_structure: BlochBandStructure,
+		mesh: BrillouinZoneMesh,
+		*,
+		chemical_potential: float,
+		temperature: float,
+		broadening: float = 0.0,
+	) -> NDArray[np.complex128]:
+		"""Compute the orbital-resolved RPA polarization from Bloch states."""
+
+		return compute_rpa_polarization_matrix_from_bands(
+			band_structure,
+			mesh.q_points,
+			mesh.frequencies,
+			chemical_potential=chemical_potential,
+			temperature=temperature,
+			state_multiplicity=self.channels.multiplicity,
+			broadening=broadening,
+			frequency_axis=self.frequency_axis,
 		)
 
 	def solve(
@@ -671,6 +887,65 @@ class RPAPolarization:
 			broadening=broadening,
 		)
 
+	def solve_matrix_from_translation_blocks(
+		self,
+		*,
+		translation_blocks: dict[tuple[int, int, int], NDArray[np.complex128]],
+		mesh: BrillouinZoneMesh,
+		chemical_potential: float,
+		temperature: float,
+		periodic_axis: int | None = None,
+		lattice_constant: float = 1.0,
+		broadening: float = 0.0,
+	) -> PolarizationResult:
+		"""Compute matrix-valued RPA polarization from preloaded translation blocks."""
+
+		band_structure = self.load_bloch_band_structure_from_blocks(
+			translation_blocks,
+			mesh,
+			periodic_axis=periodic_axis,
+			lattice_constant=lattice_constant,
+		)
+		polarization = self.compute_polarization_matrix(
+			band_structure,
+			mesh,
+			chemical_potential=chemical_potential,
+			temperature=temperature,
+			broadening=broadening,
+		)
+		return PolarizationResult(
+			band_structure=band_structure,
+			polarization=polarization,
+		)
+
+	def solve_matrix_from_config(
+		self,
+		config: QuatrexConfig,
+		*,
+		mesh: BrillouinZoneMesh,
+		chemical_potential: float,
+		temperature: float,
+		matrix_name: str = "hamiltonian",
+		periodic_axis: int | None = None,
+		lattice_constant: float = 1.0,
+		broadening: float = 0.0,
+	) -> PolarizationResult:
+		"""Compute matrix-valued RPA polarization from blocks loaded via config."""
+
+		translation_blocks = load_translation_blocks_from_config(
+			config,
+			matrix_name=matrix_name,
+		)
+		return self.solve_matrix_from_translation_blocks(
+			translation_blocks=translation_blocks,
+			mesh=mesh,
+			chemical_potential=chemical_potential,
+			temperature=temperature,
+			periodic_axis=periodic_axis,
+			lattice_constant=lattice_constant,
+			broadening=broadening,
+		)
+
 	def solve_from_unit_cell_file(
 		self,
 		*,
@@ -744,6 +1019,8 @@ __all__ = [
 	"build_uniform_brillouin_zone_mesh",
 	"load_translation_blocks",
 	"load_translation_blocks_from_config",
+	"compute_rpa_polarization_matrix",
+	"compute_rpa_polarization_matrix_from_bands",
 	"resolve_unit_cell_matrix_path",
 	"PolarizationResult",
 	"RPACompute",

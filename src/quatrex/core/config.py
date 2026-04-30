@@ -577,6 +577,13 @@ class CoulombScreeningConfig(BaseModel):
     q_index: NonNegativeInt = 0
     frequency_index: NonNegativeInt = 0
 
+    matrix_valued_polarization: bool = False
+    """Whether equilibrium RPA should compute orbital-resolved polarization matrices.
+
+    If false, RPA computes the legacy scalar ``Pi(q, omega)``. If true, RPA
+    computes ``P(q, omega)`` matrices and screens via ``epsilon = I - V @ P``.
+    """
+
     spin_degeneracy: PositiveFloat = 1.0
     valley_degeneracy: PositiveFloat = 1.0
 
@@ -618,7 +625,8 @@ class CoulombScreeningConfig(BaseModel):
         ]
         if missing_fields:
             raise ValueError(
-                "The following coulomb_screening fields are required for dielectric_method='rpa': "
+                "The following coulomb_screening fields are required for polarization_method='rpa' "
+                "or dielectric_method='rpa': "
                 + ", ".join(missing_fields)
             )
 

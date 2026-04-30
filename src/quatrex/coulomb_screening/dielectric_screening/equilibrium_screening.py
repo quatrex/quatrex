@@ -27,7 +27,7 @@ class ScreenedCoulombResult:
 
     polarization_result: PolarizationResult
     coulomb_matrix: NDArray[np.complex128]
-    polarization: np.complex128
+    polarization: np.complex128 | NDArray[np.complex128]
     dielectric_matrix: NDArray[np.complex128]
     screened_interaction: NDArray[np.complex128]
     q_index: int
@@ -96,27 +96,32 @@ def build_coulomb_matrices(
 
 def compute_dielectric_matrix(
     coulomb_matrix: NDArray[np.complex128],
-    polarization: complex,
+    polarization: complex | NDArray[np.complex128],
 ) -> NDArray[np.complex128]:
-    """Compute the matrix dielectric function ``epsilon = I - V * Pi``.
+    """Compute the matrix dielectric function.
 
-    This is the simplest equilibrium matrix generalization where ``Pi`` is treated as
-    a scalar response value at a chosen ``(q, omega)`` and ``V`` is the bare Coulomb
-    matrix in the orbital or block basis.
+    Scalar polarization values use ``epsilon = I - Pi * V`` for backward
+    compatibility. Matrix-valued polarization uses the Quatrex/NEGF convention
+    ``epsilon = I - V @ P``.
     """
 
     matrix = np.asarray(coulomb_matrix, dtype=np.complex128)
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("coulomb_matrix must be a square matrix.")
     identity = np.eye(matrix.shape[0], dtype=np.complex128)
-    return identity - np.complex128(polarization) * matrix
+    polarization_array = np.asarray(polarization, dtype=np.complex128)
+    if polarization_array.ndim == 0:
+        return identity - np.complex128(polarization_array) * matrix
+    if polarization_array.shape != matrix.shape:
+        raise ValueError("matrix-valued polarization must match coulomb_matrix shape.")
+    return identity - matrix @ polarization_array
 
 
 def compute_screened_coulomb_matrix(
     coulomb_matrix: NDArray[np.complex128],
-    polarization: complex,
+    polarization: complex | NDArray[np.complex128],
 ) -> tuple[NDArray[np.complex128], NDArray[np.complex128]]:
-    """Compute ``epsilon`` and ``W = epsilon^{-1} V`` for a scalar polarization."""
+    """Compute ``epsilon`` and ``W = epsilon^{-1} V``."""
 
     dielectric_matrix = compute_dielectric_matrix(coulomb_matrix, polarization)
     screened_interaction = np.linalg.solve(dielectric_matrix, coulomb_matrix)
@@ -127,7 +132,11 @@ def compute_screened_coulomb_matrices(
     coulomb_matrices: NDArray[np.complex128],
     polarization: NDArray[np.complex128],
 ) -> tuple[NDArray[np.complex128], NDArray[np.complex128]]:
-    """Compute dielectric and screened interaction matrices on a full ``(q, omega)`` grid."""
+    """Compute dielectric and screened interaction matrices on a full grid.
+
+    ``polarization`` may be either scalar-valued with shape ``(nq, n_omega)`` or
+    matrix-valued with shape ``(nq, n_omega, norb, norb)``.
+    """
 
     matrices = np.asarray(coulomb_matrices, dtype=np.complex128)
     polarization_grid = np.asarray(polarization, dtype=np.complex128)
@@ -136,10 +145,14 @@ def compute_screened_coulomb_matrices(
         raise ValueError(
             "coulomb_matrices must have shape (nq, norb, norb) with square matrices."
         )
-    if polarization_grid.ndim != 2:
-        raise ValueError("polarization must have shape (nq, n_omega).")
+    if polarization_grid.ndim not in (2, 4):
+        raise ValueError(
+            "polarization must have shape (nq, n_omega) or (nq, n_omega, norb, norb)."
+        )
     if matrices.shape[0] != polarization_grid.shape[0]:
         raise ValueError("The q dimension of coulomb_matrices and polarization must match.")
+    if polarization_grid.ndim == 4 and polarization_grid.shape[-2:] != matrices.shape[-2:]:
+        raise ValueError("matrix-valued polarization must match coulomb matrix shape.")
 
     nq, norb, _ = matrices.shape
     n_omega = polarization_grid.shape[1]
@@ -151,9 +164,11 @@ def compute_screened_coulomb_matrices(
     for q_index in range(nq):
         coulomb_matrix = matrices[q_index]
         for frequency_index in range(n_omega):
-            dielectric_matrix = (
-                identity - polarization_grid[q_index, frequency_index] * coulomb_matrix
-            )
+            polarization_value = polarization_grid[q_index, frequency_index]
+            if polarization_grid.ndim == 2:
+                dielectric_matrix = identity - polarization_value * coulomb_matrix
+            else:
+                dielectric_matrix = identity - coulomb_matrix @ polarization_value
             dielectric_matrices[q_index, frequency_index] = dielectric_matrix
             screened_interactions[q_index, frequency_index] = np.linalg.solve(
                 dielectric_matrix,
@@ -166,8 +181,18 @@ def compute_screened_coulomb_matrices(
 class EquilibriumScreening:
     """Lightweight equilibrium screening bridge using RPA polarization and a Coulomb matrix."""
 
-    def __init__(self, *, channels: ScreeningChannels | None = None) -> None:
-        self.polarization_solver = RPAPolarization(channels=channels)
+    def __init__(
+        self,
+        *,
+        channels: ScreeningChannels | None = None,
+        matrix_polarization: bool = False,
+        frequency_axis: str = "imaginary",
+    ) -> None:
+        self.polarization_solver = RPAPolarization(
+            channels=channels,
+            frequency_axis=frequency_axis,
+        )
+        self.matrix_polarization = matrix_polarization
 
     def load_inputs_from_config(
         self,
@@ -205,8 +230,8 @@ class EquilibriumScreening:
     ) -> ScreenedCoulombResult:
         """Solve for screening at one selected ``(q, omega)`` point.
 
-        The selected scalar polarization value is combined with the bare Coulomb
-        matrix through ``epsilon = I - V * Pi`` and ``W = epsilon^{-1} V``.
+        The selected polarization is combined with the bare Coulomb matrix and
+        returned together with ``W = epsilon^{-1} V``.
         """
 
         hamiltonian_blocks = load_translation_blocks(hamiltonian_file)
@@ -266,15 +291,26 @@ class EquilibriumScreening:
     ) -> ScreenedCoulombGridResult:
         """Solve for screening on the full ``(q, omega)`` grid."""
 
-        polarization_result = self.polarization_solver.solve_from_translation_blocks(
-            translation_blocks=hamiltonian_blocks,
-            mesh=mesh,
-            chemical_potential=chemical_potential,
-            temperature=temperature,
-            periodic_axis=periodic_axis,
-            lattice_constant=lattice_constant,
-            broadening=broadening,
-        )
+        if self.matrix_polarization:
+            polarization_result = self.polarization_solver.solve_matrix_from_translation_blocks(
+                translation_blocks=hamiltonian_blocks,
+                mesh=mesh,
+                chemical_potential=chemical_potential,
+                temperature=temperature,
+                periodic_axis=periodic_axis,
+                lattice_constant=lattice_constant,
+                broadening=broadening,
+            )
+        else:
+            polarization_result = self.polarization_solver.solve_from_translation_blocks(
+                translation_blocks=hamiltonian_blocks,
+                mesh=mesh,
+                chemical_potential=chemical_potential,
+                temperature=temperature,
+                periodic_axis=periodic_axis,
+                lattice_constant=lattice_constant,
+                broadening=broadening,
+            )
         coulomb_matrices = np.asarray(
             build_coulomb_matrices(
                 coulomb_blocks,
@@ -361,9 +397,12 @@ class EquilibriumScreening:
         coulomb_matrix = np.asarray(
             grid_result.coulomb_matrices[q_index], dtype=np.complex128
         )
-        polarization = np.complex128(
-            grid_result.polarization_result.polarization[q_index, frequency_index]
+        polarization = np.asarray(
+            grid_result.polarization_result.polarization[q_index, frequency_index],
+            dtype=np.complex128,
         )
+        if polarization.ndim == 0:
+            polarization = np.complex128(polarization)
         dielectric_matrix = np.asarray(
             grid_result.dielectric_matrices[q_index, frequency_index],
             dtype=np.complex128,

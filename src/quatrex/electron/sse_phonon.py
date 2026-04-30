@@ -81,9 +81,9 @@ class SigmaPhonon(ScatteringSelfEnergy):
             The lesser, greater and retarded self-energies.
 
         """
-        sigma_lesser, sigma_greater, sigma_retarded = out
+        sigma_lesser, sigma_greater, __ = out
         # Transpose the matrices to nnz distribution.
-        for m in (g_lesser, g_greater, sigma_lesser, sigma_greater, sigma_retarded):
+        for m in (g_lesser, g_greater, sigma_lesser, sigma_greater):
             # These should ideally already be in nnz-distribution.
             m.dtranspose() if m.distribution_state != "nnz" else None
 

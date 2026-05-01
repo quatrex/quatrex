@@ -238,7 +238,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.block_sizes = block_sizes
         self.l_greater.block_sizes = block_sizes
 
-    def _contact_obc(
+    def _compute_contact_obc(
         self,
         contact: str,
         p_lesser: DSDBSparse,
@@ -303,6 +303,9 @@ class CoulombScreeningSolver(SubsystemSolver):
                 repetitions=self.num_connected_blocks,
             )
 
+            # NOTE: The blocks need to be recomputed here
+            # similarly to the spillover correction because
+            # the periodic superblocks are used for the OBC computation,
             m_00 = (
                 xp.eye(p_retarded_00.shape[-1])
                 - v_10 @ p_retarded_01
@@ -385,9 +388,13 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             m_w_m = m_10 @ w_00 @ m_10.conj().swapaxes(-1, -2)
 
-            obc_lesser = m_w_m[0] - (a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2))
+            m_w_m_lesser, m_w_m_greater = m_w_m
 
-            obc_greater = m_w_m[1] - (
+            obc_lesser = m_w_m_lesser - (
+                a_00_lesser - a_00_lesser.conj().swapaxes(-1, -2)
+            )
+
+            obc_greater = m_w_m_greater - (
                 a_00_greater - a_00_greater.conj().swapaxes(-1, -2)
             )
 
@@ -423,7 +430,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
         if comm.block.rank == 0:
-            obc_retarded, obc_lesser, obc_greater = self._contact_obc(
+            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
                 contact="left",
                 p_lesser=p_lesser,
                 p_greater=p_greater,
@@ -439,7 +446,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             n = p_retarded.num_local_blocks - 1
             m = n - 1
-            obc_retarded, obc_lesser, obc_greater = self._contact_obc(
+            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
                 contact="right",
                 p_lesser=p_lesser,
                 p_greater=p_greater,

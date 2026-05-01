@@ -176,3 +176,6 @@ hostfile
 
 # quatrex output files
 *quatrex_times*
+
+# GitHub Actions setup-miniconda generated files
+setup-miniconda-patched-*.yaml

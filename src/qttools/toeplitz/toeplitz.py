@@ -36,6 +36,27 @@ def get_periodic_superblocks(
     The periodic superblock structure will repeat the left- and
     upper-most subblocks of the input block layer.
 
+    This does the following:
+    | aji | aii | aij |
+    | a b | c d | e 0 |
+    | 0 h | i j | k l |
+    then the periodic layer would be
+    | a i c d e |
+    with block_sections = 2
+    since it is assumed that
+    | aii aij |
+    | aji ajj |
+    leading to periodic superblocks
+    | aji | aii | aij |
+    | a i | c d | e 0 |
+    | 0 a | i c | d e |
+
+    If there are interactions g/f like
+    | aji | aii | aij |
+    | a b | c d | e f |
+    | g h | i j | k l |
+    they will be ignored without any warning
+
     Parameters
     ----------
     a_ji : NDArray
@@ -74,7 +95,9 @@ def get_periodic_superblocks(
 
     # Stack the sublayers to form a periodic layer from the outermost
     # subblocks.
-    periodic_layer = xp.vstack((view_ji[block_sections::-1], view_ij[1:]))
+    periodic_layer = xp.vstack(
+        (view_ji[block_sections::-1], view_ij[1 : 1 + block_sections])
+    )
 
     # Stack the periodic layer to form a periodic superblock structure.
     subblock_shape = a_ii.shape[:-2] + (a_ii.shape[-1] // block_sections,) * 2
@@ -83,7 +106,9 @@ def get_periodic_superblocks(
         dtype=a_ii.dtype,
     )
     for i in range(block_sections):
-        periodic_blocks[i, i:] = periodic_layer[: 3 * block_sections - i]
+        periodic_blocks[i, i : 3 * block_sections - (block_sections - 1) + i] = (
+            periodic_layer
+        )
 
     # Recover the correct superblock structure form the subblocks.
     periodic_blocks = xp.concatenate(xp.concatenate(periodic_blocks, -2), -1)
@@ -102,6 +127,32 @@ def expand_periodic_superblocks(
     The periodic superblocks are constructed from the outermost subblocks of the input blocks.
     This function calls `get_periodic_superblocks` to construct the periodic superblocks,
     and then repeats the resulting structure.
+
+    This does the following:
+    | aji | aii | aij |
+    | a b | c d | e 0 |
+    | 0 h | i j | k l |
+    then the periodic layer would be
+    | a i c d e |
+    with block_sections = 2
+    since it is assumed that
+    | aii aij |
+    | aji ajj |
+    leading to temporary superblocks
+    | aji | aii | aij |
+    | a i | c d | e 0 |
+    | 0 a | i c | d e |
+    if we want to double, then repeating only the periodic layer would give us
+    || 0 0 | a i || c d | e 0 || 0 0 | 0 0 ||
+    || 0 0 | 0 a || i c | d e || 0 0 | 0 0 ||
+    || 0 0 | 0 0 || a i | c d || e 0 | 0 0 ||
+    || 0 0 | 0 0 || 0 a | i c || d e | 0 0 ||
+
+    Similar to `get_periodic_superblocks`,
+    extra interactions are ignored without any warning.
+
+    NOTE: Similarly feature could be achieved
+    by repeating the periodic layer
 
     Parameters
     ----------

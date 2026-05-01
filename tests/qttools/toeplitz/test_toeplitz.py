@@ -26,8 +26,13 @@ def _test_periodicity(
     )
 
     small_block_size = block_size // block_sections
+    small_shape = a_ii.shape[:-2] + (small_block_size, small_block_size)
+
     a = xp.concatenate(
-        [a_ii[..., :small_block_size, :], a_ij[..., :small_block_size, :]],
+        [
+            a_ii[..., :small_block_size, :],
+            a_ij[..., :small_block_size, :small_block_size],
+        ],
         axis=-1,
     )
 
@@ -43,15 +48,25 @@ def _test_periodicity(
             ],
             axis=-1,
         )
-    for i in range(block_sections):
+    a = xp.concatenate(
+        [
+            a_ji[
+                ...,
+                :small_block_size,
+                :small_block_size,
+            ],
+            a,
+        ],
+        axis=-1,
+    )
+
+    # padd with extra zeros
+    # to match the shape of the periodic superblocks
+    for i in range(block_sections - 1):
         a = xp.concatenate(
             [
-                a_ji[
-                    ...,
-                    i * small_block_size : (i + 1) * small_block_size,
-                    :small_block_size,
-                ],
                 a,
+                xp.zeros(small_shape, dtype=a.dtype),
             ],
             axis=-1,
         )
@@ -62,12 +77,8 @@ def _test_periodicity(
     )
 
     for i in range(block_sections * small_block_size, small_block_size):
-        end = min(
-            3 * block_sections * small_block_size - i,
-            3 * block_sections * small_block_size,
-        )
         assert xp.allclose(
-            m[..., i : (i + small_block_size), i : i + end], a[..., :, :end]
+            m[..., i : (i + small_block_size), :], xp.roll(a, shift=i, axis=-1)
         )
 
 
@@ -95,6 +106,9 @@ def test_expand_periodic_superblocks(
     """Test that the periodic superblock structure is correctly constructed."""
 
     rng = xp.random.default_rng(0)
+
+    # NOTE: Dense allocation for simplicity,
+    # but interactions will be cut off in the periodic superblocks.
     if batch_shape is not None:
         a_ii = rng.random((*batch_shape, block_size, block_size))
         a_ij = rng.random((*batch_shape, block_size, block_size))

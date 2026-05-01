@@ -9,7 +9,7 @@ structure_file = "lattice.xyz"
 transport_direction = "x"
 construct_from_unit_cell = true
 num_transport_cells = 3
-neighbor_cell_cutoff = [8, 8, 0]
+neighbor_cell_cutoff = [2, 2, 0]
 kpoint_grid = [1, 1, 1]
 kpoint_shift = [0.0, 0.0, 0.0]
 orthogonal_basis = true
@@ -19,7 +19,7 @@ max_iterations = 2
 mixing_factor = 0.5  # Reduced to dampen oscillations
 
 coulomb_screening = true  # Re-enabled with lower mixing factor
-phonon = false
+phonon = true
 
 symmetric = true
 
@@ -42,18 +42,18 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-fermi_level = 2 # eV
-left_fermi_level = 2 # eV
-right_fermi_level = 2 # eV
+fermi_level = -1.75 # eV
+left_fermi_level = -1.75 # eV
+right_fermi_level = -1.75 # eV
 flatband = false
 
-conduction_band_edge = 5 # eV
-valence_band_edge = -1   # eV
+conduction_band_edge = 0.5 # eV 
+valence_band_edge = -3.9   # eV
 band_edge_tracking = "eigenvalues"
 
 # Energy grid.
-energy_window_min = -12
-energy_window_max = 14
+energy_window_min = -14
+energy_window_max = 12
 energy_window_num = 1001
 
 solver.algorithm = "rgf"
@@ -81,7 +81,7 @@ obc.residual_tolerance = 1e-4
 
 [coulomb_screening] # ==================================================
 interaction_cutoff = 8 # Angstrom
-epsilon_r = 4
+epsilon_r = 200
 compute_retarded_polarization = true
 
 num_connected_blocks = 1 # Can be 1, 2, 3, or "auto"
@@ -114,3 +114,9 @@ lyapunov.memoizer.mode = "off"
 lyapunov.memoizer.num_ref_iterations = 3
 lyapunov.memoizer.relative_tol = 2e-1
 lyapunov.memoizer.absolute_tol = 1e-6
+
+[phonon]
+interaction_cutoff = 5.5     # Å
+model = "pseudo-scattering"
+phonon_energy = 50e-3
+deformation_potential = 5e-3

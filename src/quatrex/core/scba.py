@@ -385,6 +385,9 @@ class SCBA:
                 else None
             )
 
+            # The transport-region polarization is always computed from the
+            # NEGF Green's functions. The optional RPA branch adds a fixed
+            # environment contribution on top of the iterative device screening.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
                 self.coulomb_screening_energies,

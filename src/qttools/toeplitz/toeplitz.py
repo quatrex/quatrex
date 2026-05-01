@@ -176,7 +176,7 @@ def expand_periodic_superblocks(
 
     """
 
-    if repetitions == 1:
+    if repetitions == 1 and block_sections == 1:
         return a_ji, a_ii, a_ij
 
     new_shape = list(a_ii.shape)
@@ -193,6 +193,9 @@ def expand_periodic_superblocks(
         a_ij=a_ij,
         block_sections=block_sections,
     )
+
+    if repetitions == 1:
+        return a_ji_tmp, a_ii_tmp, a_ij_tmp
 
     n = a_ii.shape[-1]
     for i in range(repetitions):

@@ -19,6 +19,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.core.utils import compute_num_connected_blocks
+from quatrex.device.contact import get_inverse_order, order_block
 
 profiler = Profiler()
 
@@ -39,41 +40,6 @@ def _compute_sparsity_pattern(
     return sparse.coo_matrix(
         (xp.ones_like(rows), (rows, cols)), shape=shape, dtype=dtype
     )
-
-
-def _order_block(
-    block: NDArray,
-    order: str | NDArray | None,
-) -> NDArray:
-    """Reorders the blocks of the given matrix according to the specified order.
-
-    Parameters
-    ----------
-    block : NDArray
-        The matrix block to reorder.
-    order : str | NDArray | None
-        The order in which to reorder the blocks.
-        The only supported string is "reverse",
-        which reverses the order of the blocks.
-
-    Returns
-    -------
-    NDArray
-        The reordered matrix block.
-
-    """
-
-    if isinstance(order, str) and order not in ["reverse"]:
-        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
-    elif isinstance(order, xp.ndarray) and order.ndim != 1:
-        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
-
-    if order is None:
-        return block
-    elif order == "reverse":
-        return xp.flip(block, axis=(-2, -1))
-    else:
-        return block[..., :, order][..., order, :]
 
 
 class CoulombScreeningSolver(SubsystemSolver):
@@ -282,6 +248,8 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
 
+        inverse_order = get_inverse_order(order)
+
         with profiler.profile_range(
             label=f"CoulombScreeningSolver: Get OBCR blocks {contact}",
             level="default",
@@ -289,16 +257,16 @@ class CoulombScreeningSolver(SubsystemSolver):
         ):
 
             p_retarded_10, p_retarded_00, p_retarded_01 = expand_periodic_superblocks(
-                a_ji=_order_block(p_retarded.blocks[*upper_inds[::-1]], order),
-                a_ii=_order_block(p_retarded.blocks[*diagonal_inds], order),
-                a_ij=_order_block(p_retarded.blocks[*upper_inds], order),
+                a_ji=order_block(p_retarded.blocks[*upper_inds[::-1]], order),
+                a_ii=order_block(p_retarded.blocks[*diagonal_inds], order),
+                a_ij=order_block(p_retarded.blocks[*upper_inds], order),
                 block_sections=self.small_block_sections,
                 repetitions=self.num_connected_blocks,
             )
             v_10, v_00, v_01 = expand_periodic_superblocks(
-                a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-                a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-                a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+                a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+                a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+                a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
                 block_sections=self.small_block_sections,
                 repetitions=self.num_connected_blocks,
             )
@@ -334,9 +302,9 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             def _get_l_superblocks(p_):
                 p_10, p_00, p_01 = expand_periodic_superblocks(
-                    a_ji=_order_block(p_.blocks[*upper_inds[::-1]], order),
-                    a_ii=_order_block(p_.blocks[*diagonal_inds], order),
-                    a_ij=_order_block(p_.blocks[*upper_inds], order),
+                    a_ji=order_block(p_.blocks[*upper_inds[::-1]], order),
+                    a_ii=order_block(p_.blocks[*diagonal_inds], order),
+                    a_ij=order_block(p_.blocks[*upper_inds], order),
                     block_sections=self.small_block_sections,
                     repetitions=self.num_connected_blocks,
                 )
@@ -399,9 +367,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
 
         return (
-            _order_block(obc_retarded, order),
-            _order_block(obc_lesser, order),
-            _order_block(obc_greater, order),
+            order_block(obc_retarded, inverse_order),
+            order_block(obc_lesser, inverse_order),
+            order_block(obc_greater, inverse_order),
         )
 
     @profiler.profile(label="CoulombScreeningSolver: OBC", level="default", comm=comm)
@@ -532,19 +500,23 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
 
+        inverse_order = get_inverse_order(order)
+
         v_10, __, __ = get_periodic_superblocks(
-            a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-            a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+            a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+            a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
         __, __, p_01 = get_periodic_superblocks(
-            a_ji=_order_block(self.p_retarded.blocks[*upper_inds[::-1]], order),
-            a_ii=_order_block(self.p_retarded.blocks[*diagonal_inds], order),
-            a_ij=_order_block(self.p_retarded.blocks[*upper_inds], order),
+            a_ji=order_block(self.p_retarded.blocks[*upper_inds[::-1]], order),
+            a_ii=order_block(self.p_retarded.blocks[*diagonal_inds], order),
+            a_ij=order_block(self.p_retarded.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
-        self.system_matrix.blocks[*diagonal_inds] += _order_block(v_10 @ p_01, order)
+        self.system_matrix.blocks[*diagonal_inds] += order_block(
+            v_10 @ p_01, inverse_order
+        )
 
     @profiler.profile(
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
@@ -646,26 +618,30 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         """
 
+        inverse_order = get_inverse_order(order)
+
         v_10, v_00, v_01 = get_periodic_superblocks(
-            a_ji=_order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
-            a_ii=_order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
-            a_ij=_order_block(self.coulomb_matrix.blocks[*upper_inds], order),
+            a_ji=order_block(self.coulomb_matrix.blocks[*upper_inds[::-1]], order),
+            a_ii=order_block(self.coulomb_matrix.blocks[*diagonal_inds], order),
+            a_ij=order_block(self.coulomb_matrix.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
 
         p_10, p_00, p_01 = get_periodic_superblocks(
-            a_ji=_order_block(p_.blocks[*upper_inds[::-1]], order),
-            a_ii=_order_block(p_.blocks[*diagonal_inds], order),
-            a_ij=_order_block(p_.blocks[*upper_inds], order),
+            a_ji=order_block(p_.blocks[*upper_inds[::-1]], order),
+            a_ii=order_block(p_.blocks[*diagonal_inds], order),
+            a_ij=order_block(p_.blocks[*upper_inds], order),
             block_sections=self.small_block_sections,
         )
 
-        l_.blocks[*diagonal_inds] += _order_block(
-            v_10 @ p_01 @ v_00 + v_00 @ p_10 @ v_01 + v_10 @ p_00 @ v_01, order
+        l_.blocks[*diagonal_inds] += order_block(
+            v_10 @ p_01 @ v_00 + v_00 @ p_10 @ v_01 + v_10 @ p_00 @ v_01, inverse_order
         )
-        l_.blocks[*upper_inds] += _order_block(v_10 @ p_01 @ v_01, order)
+        l_.blocks[*upper_inds] += order_block(v_10 @ p_01 @ v_01, inverse_order)
         if not l_.symmetry:
-            l_.blocks[*upper_inds[::-1]] += _order_block(v_10 @ p_10 @ v_01, order)
+            l_.blocks[*upper_inds[::-1]] += order_block(
+                v_10 @ p_10 @ v_01, inverse_order
+            )
 
     def _apply_spillover_sandwich(
         self,

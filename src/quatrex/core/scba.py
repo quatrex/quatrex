@@ -657,7 +657,9 @@ class SCBA:
             self.data.w_environment_greater.free_data()
             self.data.w_environment_lesser.free_data()
 
-    @profiler.profile(label="SCBA: Full polarization output", level="default", comm=comm)
+    @profiler.profile(
+        label="SCBA: Full polarization output", level="default", comm=comm
+    )
     def _write_full_polarization(self, iteration: int) -> None:
         """Writes full dense polarization stacks for the current iteration."""
 

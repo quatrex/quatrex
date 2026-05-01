@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-import time
 
 import numpy as np
 
 from qttools.comm import comm
-from qttools.utils.mpi_utils import distributed_load
 from qttools.utils.gpu_utils import get_host
+from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import DeviceConfig, QuatrexConfig
 from quatrex.core.scba import SCBAData
 from quatrex.coulomb_screening import PCoulombScreening
@@ -166,7 +166,9 @@ def export_environment_screening(
         data.sigma_retarded,
         out=(data.g_lesser, data.g_greater, data.g_retarded),
     )
-    log(f"Environment Green's functions solved in {time.perf_counter() - stage_tic:.2f} s.")
+    log(
+        f"Environment Green's functions solved in {time.perf_counter() - stage_tic:.2f} s."
+    )
 
     log("Transposing Green's functions for polarization.")
     for matrix in (data.g_lesser, data.g_greater):
@@ -182,7 +184,9 @@ def export_environment_screening(
         data.g_greater,
         out=(data.p_lesser, data.p_greater, data.p_retarded),
     )
-    log(f"Environment polarization computed in {time.perf_counter() - stage_tic:.2f} s.")
+    log(
+        f"Environment polarization computed in {time.perf_counter() - stage_tic:.2f} s."
+    )
 
     log("Gathering dense P_ee stacks.")
     p_retarded = _gather_dense_stack(data.p_retarded)
@@ -227,7 +231,8 @@ def export_environment_screening(
         p_lesser=export_dir / "p_ee_lesser.npy",
         p_greater=export_dir / "p_ee_greater.npy",
         v_ee=export_dir / "v_ee.npy",
-        epsilon_inverse_retarded=export_dir / "epsilon_environment_inverse_retarded.npy",
+        epsilon_inverse_retarded=export_dir
+        / "epsilon_environment_inverse_retarded.npy",
     )
 
 

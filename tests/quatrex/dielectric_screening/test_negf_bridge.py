@@ -102,7 +102,9 @@ def test_negf_rpa_bridge_builds_transport_matrices(tmp_path):
         template=template,
     )
     mesh = bridge._build_mesh()
-    q_values = np.ones((mesh.q_points.size, mesh.frequencies.size, 1, 1), dtype=np.complex128)
+    q_values = np.ones(
+        (mesh.q_points.size, mesh.frequencies.size, 1, 1), dtype=np.complex128
+    )
 
     matrices = bridge._build_transport_matrices(mesh, q_values)
 

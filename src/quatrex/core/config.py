@@ -626,8 +626,7 @@ class CoulombScreeningConfig(BaseModel):
         if missing_fields:
             raise ValueError(
                 "The following coulomb_screening fields are required for polarization_method='rpa' "
-                "or dielectric_method='rpa': "
-                + ", ".join(missing_fields)
+                "or dielectric_method='rpa': " + ", ".join(missing_fields)
             )
 
         return self

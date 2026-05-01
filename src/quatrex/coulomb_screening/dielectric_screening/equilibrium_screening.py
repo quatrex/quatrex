@@ -13,8 +13,8 @@ from .rpa_compute import (
     RPAPolarization,
     ScreeningChannels,
     build_bloch_hamiltonian,
-    load_translation_blocks_from_config,
     load_translation_blocks,
+    load_translation_blocks_from_config,
 )
 
 if TYPE_CHECKING:
@@ -150,8 +150,13 @@ def compute_screened_coulomb_matrices(
             "polarization must have shape (nq, n_omega) or (nq, n_omega, norb, norb)."
         )
     if matrices.shape[0] != polarization_grid.shape[0]:
-        raise ValueError("The q dimension of coulomb_matrices and polarization must match.")
-    if polarization_grid.ndim == 4 and polarization_grid.shape[-2:] != matrices.shape[-2:]:
+        raise ValueError(
+            "The q dimension of coulomb_matrices and polarization must match."
+        )
+    if (
+        polarization_grid.ndim == 4
+        and polarization_grid.shape[-2:] != matrices.shape[-2:]
+    ):
         raise ValueError("matrix-valued polarization must match coulomb matrix shape.")
 
     nq, norb, _ = matrices.shape
@@ -292,24 +297,28 @@ class EquilibriumScreening:
         """Solve for screening on the full ``(q, omega)`` grid."""
 
         if self.matrix_polarization:
-            polarization_result = self.polarization_solver.solve_matrix_from_translation_blocks(
-                translation_blocks=hamiltonian_blocks,
-                mesh=mesh,
-                chemical_potential=chemical_potential,
-                temperature=temperature,
-                periodic_axis=periodic_axis,
-                lattice_constant=lattice_constant,
-                broadening=broadening,
+            polarization_result = (
+                self.polarization_solver.solve_matrix_from_translation_blocks(
+                    translation_blocks=hamiltonian_blocks,
+                    mesh=mesh,
+                    chemical_potential=chemical_potential,
+                    temperature=temperature,
+                    periodic_axis=periodic_axis,
+                    lattice_constant=lattice_constant,
+                    broadening=broadening,
+                )
             )
         else:
-            polarization_result = self.polarization_solver.solve_from_translation_blocks(
-                translation_blocks=hamiltonian_blocks,
-                mesh=mesh,
-                chemical_potential=chemical_potential,
-                temperature=temperature,
-                periodic_axis=periodic_axis,
-                lattice_constant=lattice_constant,
-                broadening=broadening,
+            polarization_result = (
+                self.polarization_solver.solve_from_translation_blocks(
+                    translation_blocks=hamiltonian_blocks,
+                    mesh=mesh,
+                    chemical_potential=chemical_potential,
+                    temperature=temperature,
+                    periodic_axis=periodic_axis,
+                    lattice_constant=lattice_constant,
+                    broadening=broadening,
+                )
             )
         coulomb_matrices = np.asarray(
             build_coulomb_matrices(

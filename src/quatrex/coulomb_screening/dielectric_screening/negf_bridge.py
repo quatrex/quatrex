@@ -83,12 +83,16 @@ class EquilibriumRPAScreeningBridge:
         w_greater.data[:] = 0.0
 
         local_energy_count = int(self.template.stack_section_sizes[self._stack_rank])
-        energy_offset = int(np.sum(self.template.stack_section_sizes[: self._stack_rank]))
+        energy_offset = int(
+            np.sum(self.template.stack_section_sizes[: self._stack_rank])
+        )
 
         for local_index in range(local_energy_count):
             global_index = energy_offset + local_index
             if w_retarded is not None:
-                w_retarded.stack[(local_index,)] = result.w_retarded_matrices[global_index]
+                w_retarded.stack[(local_index,)] = result.w_retarded_matrices[
+                    global_index
+                ]
             w_lesser.stack[(local_index,)] = result.w_lesser_matrices[global_index]
             w_greater.stack[(local_index,)] = result.w_greater_matrices[global_index]
 
@@ -109,7 +113,9 @@ class EquilibriumRPAScreeningBridge:
             matrix.data[:] = 0.0
 
         local_energy_count = int(self.template.stack_section_sizes[self._stack_rank])
-        energy_offset = int(np.sum(self.template.stack_section_sizes[: self._stack_rank]))
+        energy_offset = int(
+            np.sum(self.template.stack_section_sizes[: self._stack_rank])
+        )
 
         for local_index in range(local_energy_count):
             global_index = energy_offset + local_index
@@ -155,7 +161,10 @@ class EquilibriumRPAScreeningBridge:
             },
         )
 
-        print("RPA cache: computing screened interactions on q/frequency grid...", flush=True)
+        print(
+            "RPA cache: computing screened interactions on q/frequency grid...",
+            flush=True,
+        )
         grid_result = self._solver.solve_grid_from_inputs(
             inputs=scaled_inputs,
             mesh=mesh,
@@ -167,9 +176,8 @@ class EquilibriumRPAScreeningBridge:
         )
 
         print("RPA cache: building lesser/greater spectral functions...", flush=True)
-        w_spectral_function = (
-            grid_result.screened_interactions
-            - np.swapaxes(grid_result.screened_interactions.conj(), -1, -2)
+        w_spectral_function = grid_result.screened_interactions - np.swapaxes(
+            grid_result.screened_interactions.conj(), -1, -2
         )
         p_retarded_qw = np.asarray(
             grid_result.polarization_result.polarization,
@@ -179,16 +187,16 @@ class EquilibriumRPAScreeningBridge:
             raise NotImplementedError(
                 "RPA polarization injection into NEGF requires matrix_valued_polarization=True."
             )
-        p_spectral_function = p_retarded_qw - np.swapaxes(
-            p_retarded_qw.conj(), -1, -2
-        )
+        p_spectral_function = p_retarded_qw - np.swapaxes(p_retarded_qw.conj(), -1, -2)
         bose = np.asarray(
             bose_einstein(
                 xp.asarray(self.screening_energies),
                 self.config.coulomb_screening.temperature,
             )
         )
-        bose = bose.astype(np.complex128, copy=False)[np.newaxis, :, np.newaxis, np.newaxis]
+        bose = bose.astype(np.complex128, copy=False)[
+            np.newaxis, :, np.newaxis, np.newaxis
+        ]
         w_lesser_qw = bose * w_spectral_function
         w_greater_qw = (1.0 + bose) * w_spectral_function
         p_lesser_qw = bose * p_spectral_function
@@ -258,22 +266,27 @@ class EquilibriumRPAScreeningBridge:
                 dtype=np.complex128,
             )
             for translation in translations:
-                block = np.sum(
-                    np.exp(
-                        -1j
-                        * q_points
-                        * translation
-                        * self.config.coulomb_screening.lattice_constant
-                    )[:, np.newaxis, np.newaxis]
-                    * q_slice,
-                    axis=0,
-                    dtype=np.complex128,
-                ) / nq
+                block = (
+                    np.sum(
+                        np.exp(
+                            -1j
+                            * q_points
+                            * translation
+                            * self.config.coulomb_screening.lattice_constant
+                        )[:, np.newaxis, np.newaxis]
+                        * q_slice,
+                        axis=0,
+                        dtype=np.complex128,
+                    )
+                    / nq
+                )
                 block_index = [0, 0, 0]
                 block_index[periodic_axis] = translation + max_translation
                 unit_cells[tuple(block_index)] = block
 
-            matrix_sparray, __, __ = _create_matrix_from_unit_cells(self.config, unit_cells)
+            matrix_sparray, __, __ = _create_matrix_from_unit_cells(
+                self.config, unit_cells
+            )
             matrices.append(matrix_sparray.astype(xp.complex128))
 
         return matrices

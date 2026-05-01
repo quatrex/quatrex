@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-
 ComplexMatrix = NDArray[np.complex128]
 
 __all__ = [
@@ -134,9 +133,7 @@ def solve_environment_dressed_interaction(
     epsilon_inv_l = epsilon_inv_r @ v_ee_array @ p_ee_l @ epsilon_inv_a
 
     w_e_r = v_c_array + v_ce_array @ p_ee_r @ epsilon_inv_r @ v_ec_array
-    w_e_l = v_ce_array @ (
-        p_ee_r @ epsilon_inv_l + p_ee_l @ epsilon_inv_a
-    ) @ v_ec_array
+    w_e_l = v_ce_array @ (p_ee_r @ epsilon_inv_l + p_ee_l @ epsilon_inv_a) @ v_ec_array
     w_e_a = _advanced(w_e_r)
 
     return EnvironmentDressedInteraction(

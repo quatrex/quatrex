@@ -1,8 +1,8 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import numpy as np
 from numpy.testing import assert_allclose

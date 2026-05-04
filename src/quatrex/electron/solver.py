@@ -289,21 +289,22 @@ class ElectronSolver(SubsystemSolver):
         __, left_conduction_band_edge = left_band_edges
         __, right_conduction_band_edge = right_band_edges
 
-        (
-            print(
-                f"Updating conduction band edges: "
-                f"{left_conduction_band_edge}, {right_conduction_band_edge}",
-                flush=True,
-            )
-            if comm.rank == 0
-            else None
-        )
-
         self.left_fermi_level = (
             left_conduction_band_edge - self.delta_fermi_level_conduction_band
         )
         self.right_fermi_level = (
             right_conduction_band_edge - self.delta_fermi_level_conduction_band
+        )
+
+        (
+            print(
+                f"Updating conduction band edges: "
+                f"{left_conduction_band_edge:.6f}, {right_conduction_band_edge:.6f}\n",
+                f"Updating Fermi levels: {self.left_fermi_level:.6f}, {self.right_fermi_level:.6f}",
+                flush=True,
+            )
+            if comm.rank == 0
+            else None
         )
 
         self.left_occupancies = fermi_dirac(

@@ -253,7 +253,7 @@ class SCBA:
                 f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.",
                 flush=True,
             )
-            print(f"Resolution is {energy_resolution} eV.", flush=True)
+            print(f"Resolution is {energy_resolution:.6f} eV.", flush=True)
             print(
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
             )

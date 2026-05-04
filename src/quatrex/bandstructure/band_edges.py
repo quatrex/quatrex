@@ -1,9 +1,11 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
+import numpy as np
 
 from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
+from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import BandEdgeConfig
@@ -51,7 +53,18 @@ def _compute_eigenvalues(
     eigvalsh_compute_location: str = "numpy",
     use_pinned_memory: bool = True,
 ):
-    """Computes the eigenvalues for the left or right contact.
+    r"""Computes the eigenvalues for the left or right contact.
+
+    Block sectioning is done in the following way:
+    Assume 2 sections with
+    ||  h00  || ||  h01  ||
+    || a | b || || c | d ||
+    || e | f || || g | h ||
+
+    First $h = (b + c + d)$ is constructed, then
+    $h += (b + c + d)^{\dagger}$
+    and finally $h += a$.
+    With the same logic, sigma and the potential are added.
 
     Parameters
     ----------
@@ -100,117 +113,104 @@ def _compute_eigenvalues(
 
     """
 
+    if not use_eigvalsh:
+        raise NotImplementedError("Only use_eigvalsh=True is supported.")
+
     big_blocksize = sigma_retarded.block_sizes[diagonal_inds[0]]
     small_blocksize = big_blocksize // block_sections
 
+    h_slice = (np.s_[:],) + tuple(ind[1:]) + np.s_[:small_blocksize, :]
+    sigma_slice = tuple(ind) + np.s_[:small_blocksize, :]
+
     # Hamiltonian is only extracted at a certain k-point
     # as it is not energy dependent.
-    h_00 = order_block(hamiltonian.blocks[*diagonal_inds], order)[
-        :, *ind[1:], :small_blocksize, :
-    ]
-    h_01 = order_block(hamiltonian.blocks[*upper_inds], order)[
-        :, *ind[1:], :small_blocksize, :
-    ]
+    h_00 = order_block(hamiltonian.blocks[*diagonal_inds], order)[h_slice]
+    h_01 = order_block(hamiltonian.blocks[*upper_inds], order)[h_slice]
+
+    # Extract the blocks corresponding to the first block layer
+    h_00 = _block_view(h_00, axis=-1, num_blocks=block_sections)
+    h_01 = _block_view(h_01, axis=-1, num_blocks=block_sections)
 
     # Sigma is extract at a certain energy and k-point
     # NOTE: In this case we use only the real part of the retarded
     # self-energy.
     sigma_00 = xp.real(
-        order_block(sigma_retarded.blocks[*diagonal_inds], order)[
-            *ind, :small_blocksize, :
-        ]
+        order_block(sigma_retarded.blocks[*diagonal_inds], order)[sigma_slice]
     )
     sigma_01 = xp.real(
-        order_block(sigma_retarded.blocks[*upper_inds], order)[*ind, :small_blocksize]
+        order_block(sigma_retarded.blocks[*upper_inds], order)[sigma_slice]
     )
 
-    h_0 = sum(
-        h_00[..., i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(1, block_sections)
-    )
-    h_0 += sum(
-        h_01[..., i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(block_sections)
-    )
-    h_0 += sum(
-        sigma_00[..., i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(1, block_sections)
-    )
-    h_0 += sum(
-        sigma_01[..., i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(block_sections)
-    )
+    sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=block_sections)
+    sigma_01 = _block_view(sigma_01, axis=-1, num_blocks=block_sections)
+
+    h_0 = xp.zeros(h_00.shape[1:], dtype=h_00.dtype)
+    h_0 += xp.sum(h_00[1:], axis=0)
+    h_0 += xp.sum(h_01, axis=0)
+    h_0 += xp.sum(sigma_00[1:], axis=0)
+    h_0 += xp.sum(sigma_01, axis=0)
 
     potential = order_vector(potential, order)
-    if overlap is None:
-        s_0 = None
-        h_0 += h_0.conj().swapaxes(-2, -1)
-        h_0 += xp.diag(potential[:small_blocksize])
-
-    else:
+    if overlap is not None:
         potential_0 = potential[:big_blocksize]
-        potential_1 = order_vector(potential, order)[big_blocksize : 2 * big_blocksize]
+        potential_1 = potential[big_blocksize : 2 * big_blocksize]
+
+        # match the shape of the hamiltonian blocks
+        # this is done for the multiplication with the overlap blocks later on.
+        potential_0 = potential_0.reshape(
+            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
+        )
+        potential_1 = potential_1.reshape(
+            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
+        )
 
         # The overlap is only extracted at a certain k-point
         # as it is not energy dependent.
-        s_00 = order_block(overlap.blocks[*diagonal_inds], order)[
-            :, *ind[1:], :small_blocksize, :
-        ]
-        s_01 = order_block(overlap.blocks[*upper_inds], order)[
-            :, *ind[1:], :small_blocksize, :
-        ]
+        s_00 = order_block(overlap.blocks[*diagonal_inds], order)[h_slice]
+        s_01 = order_block(overlap.blocks[*upper_inds], order)[h_slice]
 
-        s_0 = sum(
-            s_00[..., i * small_blocksize : (i + 1) * small_blocksize]
-            for i in range(1, block_sections)
-        )
-        s_0 += sum(
-            s_01[..., i * small_blocksize : (i + 1) * small_blocksize]
-            for i in range(block_sections)
-        )
+        s_00 = _block_view(s_00, axis=-1, num_blocks=block_sections)
+        s_01 = _block_view(s_01, axis=-1, num_blocks=block_sections)
+
+        s_0 = xp.zeros(s_00.shape[1:], dtype=s_00.dtype)
+        s_0 += xp.sum(s_00[1:], axis=0)
+        s_0 += xp.sum(s_01, axis=0)
+
         s_0 += s_0.conj().swapaxes(-2, -1)
-        s_0 += s_00[..., :small_blocksize]
+        s_0 += s_00[0]
 
-        h_0 += sum(
-            s_00[..., i * small_blocksize : (i + 1) * small_blocksize]
-            * potential_0[i * small_blocksize : (i + 1) * small_blocksize, None]
-            + s_00[..., i * small_blocksize : (i + 1) * small_blocksize]
-            * potential_0[i * small_blocksize : (i + 1) * small_blocksize]
-            for i in range(1, block_sections)
+        ps_0 = 0.5 * (
+            s_00 * potential_0[..., None, :] + s_00 * potential_0[..., :, None]
         )
-        h_0 += sum(
-            sigma_01[..., i * small_blocksize : (i + 1) * small_blocksize]
-            * potential_1[i * small_blocksize : (i + 1) * small_blocksize, None]
-            + sigma_01[..., i * small_blocksize : (i + 1) * small_blocksize]
-            * potential_1[i * small_blocksize : (i + 1) * small_blocksize]
-            for i in range(block_sections)
+        ps_1 = 0.5 * (
+            s_01 * potential_1[..., None, :] + s_01 * potential_1[..., :, None]
         )
 
-        # NOTE: The potential is added to the Hamiltonian as 0.5 * (S V + V S).
-        h_0 += h_0.conj().swapaxes(-2, -1)
-        h_0 += 0.5 * (
-            s_00[..., :small_blocksize] * potential_0[:small_blocksize, None]
-            + s_00[..., :small_blocksize] * potential_0[:small_blocksize]
-        )
+        h_0 += xp.sum(ps_0[1:], axis=0)
+        h_0 += xp.sum(ps_1, axis=0)
 
-    h_0 += h_00[..., :small_blocksize]
-    h_0 += sigma_00[..., :small_blocksize]
+    h_0 += h_0.conj().swapaxes(-2, -1)
+    h_0 += h_00[0]
+    h_0 += sigma_00[0]
+
+    if overlap is None:
+        s_0 = None
+        h_0 += xp.diag(potential[:small_blocksize])
+    else:
+        h_0 += ps_0[0]
 
     # NOTE: Prevent eigvalsh from calling a batched routine (slow).
     h_0 = xp.squeeze(h_0)
     if s_0 is not None:
         s_0 = xp.squeeze(s_0)
 
-    if use_eigvalsh:
-        e_0 = eigvalsh(
-            h_0,
-            s_0,
-            compute_module=eigvalsh_compute_location,
-            use_pinned_memory=use_pinned_memory,
-        )
-        return xp.sort(e_0.real)
-
-    raise NotImplementedError("Only use_eigvalsh=True is supported at the moment.")
+    w = eigvalsh(
+        h_0,
+        s_0,
+        compute_module=eigvalsh_compute_location,
+        use_pinned_memory=use_pinned_memory,
+    )
+    return xp.sort(w.real)
 
 
 def find_renormalized_eigenvalues(

@@ -78,6 +78,7 @@ def allocate_system_matrix(
     overlap_matrices: dict,
     contacts: list = [],
     upper_view: bool = False,
+    real_system_matrix: bool = False,
 ) -> sparse.csr_matrix:
     """Allocates the system matrix.
 
@@ -120,59 +121,69 @@ def allocate_system_matrix(
         nnz_cont.append(len(contact.orbital_indices))
         total_nnz += len(contact.orbital_indices) ** 2
 
-    concatenated_indices = np.zeros((total_nnz, 2), dtype=np.int32)
+    concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
 
     start_idx = 0
     for r, h_r in hamiltonians.items():
         nnz = h_r.nnz
         concatenated_indices[start_idx : start_idx + nnz, 1] = h_r.indices
-        concatenated_indices[start_idx : start_idx + nnz, 0] = np.repeat(
-            np.arange(h_r.shape[0], dtype=np.int32), np.diff(h_r.indptr)
+        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
+            xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
         )
         start_idx += nnz
         if not upper_view:
             concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
-            concatenated_indices[start_idx : start_idx + nnz, 1] = np.repeat(
-                np.arange(h_r.shape[0], dtype=np.int32), np.diff(h_r.indptr)
+            concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
+                xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
             )
             start_idx += nnz
 
     for r, s_r in overlap_matrices.items():
         nnz = s_r.nnz
         concatenated_indices[start_idx : start_idx + nnz, 1] = s_r.indices
-        concatenated_indices[start_idx : start_idx + nnz, 0] = np.repeat(
-            np.arange(s_r.shape[0], dtype=np.int32), np.diff(s_r.indptr)
+        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
+            xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
         )
         start_idx += nnz
         if not upper_view:
             concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
-            concatenated_indices[start_idx : start_idx + nnz, 1] = np.repeat(
-                np.arange(s_r.shape[0], dtype=np.int32), np.diff(s_r.indptr)
+            concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
+                xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
             )
             start_idx += nnz
 
     for contact in contacts:
         n_orb = contact.orbital_indices.shape[0]
         nnz = n_orb**2
-        concatenated_indices[start_idx : start_idx + nnz, 0] = np.repeat(
-            contact.orbital_indices, n_orb
-        )
-        concatenated_indices[start_idx : start_idx + nnz, 1] = np.tile(
-            contact.orbital_indices, n_orb
-        )
+
+        orbs = xp.asarray(contact.orbital_indices)
+        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(orbs, n_orb)
+        concatenated_indices[start_idx : start_idx + nnz, 1] = xp.tile(orbs, n_orb)
         start_idx += nnz
 
-    concatenated_indices, inverse_indices = np.unique(
-        concatenated_indices, axis=0, return_inverse=True
+    concatenated_indices_M = (
+        concatenated_indices[:, 0] * size + concatenated_indices[:, 1]
     )
-    print(inverse_indices.shape)
 
-    data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
+    concatenated_indices_M, inverse_indices = xp.unique(
+        concatenated_indices_M, return_inverse=True
+    )
+
+    concatenated_indices = xp.zeros(
+        (concatenated_indices_M.shape[0], 2), dtype=xp.int64
+    )
+    concatenated_indices[:, 0] = concatenated_indices_M // size
+    concatenated_indices[:, 1] = concatenated_indices_M % size
+
+    if real_system_matrix:
+        data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.float64)
+    else:
+        data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
 
     system_matrix = sparse.csr_matrix(
         (data, (concatenated_indices[:, 0], concatenated_indices[:, 1])),
         shape=(size, size),
-        dtype=xp.complex128,
+        dtype=data.dtype,
     )
 
     start_idx = 0
@@ -401,6 +412,19 @@ class QTBM:
                 dtype=xp.float64,
             )
 
+        if (
+            self.config.device.kpoint_grid == (1, 1, 1)
+            and self.config.device.kpoint_shift == (0, 0, 0)
+            and not self.device.matrices_complex
+            and self.config.qtbm.OBC_rank == "reduced"
+        ):
+            self.real_system_matrix = True
+            print(
+                "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: Using real arithmetic for the system matrix and solvers."
+            )
+        else:
+            self.real_system_matrix = False
+
         if self.config.qtbm.OBC_rank == "reduced":
             self.solver = self._configure_solver(self.config.electron.solver)
         else:
@@ -435,12 +459,18 @@ class QTBM:
             return SuperLU()
         if solver_config.direct_solver == "cudss":
             if self.config.qtbm.OBC_rank == "reduced":
-                return cuDSS(matrix_type="complex_hermitian_indefinite")
+                if self.real_system_matrix:
+                    return cuDSS(matrix_type="real_symmetric_indefinite")
+                else:
+                    return cuDSS(matrix_type="complex_hermitian_indefinite")
             else:
                 return cuDSS(matrix_type="complex_nonsymmetric")
         if solver_config.direct_solver == "pardiso":
             if self.config.qtbm.OBC_rank == "reduced":
-                return PARDISO(matrix_type="complex_hermitian_indefinite")
+                if self.real_system_matrix:
+                    return PARDISO(matrix_type="real_symmetric_indefinite")
+                else:
+                    return PARDISO(matrix_type="complex_hermitian_indefinite")
             else:
                 return PARDISO(matrix_type="complex_structurally_symmetric")
 
@@ -588,15 +618,36 @@ class QTBM:
         # the overlap matrices are infinite
         phi_ortho = xp.zeros_like(phi)
         for r, overlap in overlap_matrices.items():
-            phi_ortho += (overlap @ phi) * xp.exp(2j * np.pi * np.dot(k_loc, r))
-            phi_ortho += (phi.T.conj() @ overlap).T.conj() * xp.exp(
-                -2j * np.pi * np.dot(k_loc, r)
-            )
-            phi_ortho -= (
-                sparse.diags(overlap.diagonal())
-                @ phi
-                * xp.exp(-2j * np.pi * np.dot(k_loc, r))
-            )
+            phase = xp.exp(2j * np.pi * np.dot(k_loc, r))
+            if overlap.dtype == xp.complex128:
+                temp = overlap @ phi
+                temp *= phase
+            elif overlap.dtype == xp.float64:
+                temp = xp.empty_like(phi)
+                temp.real = overlap @ phi.real
+                temp.imag = overlap @ phi.imag
+                temp *= phase
+            phi_ortho += temp
+
+            temp = xp.empty_like(phi)
+
+            if overlap.dtype == xp.complex128:
+                xp.conjugate(overlap.data, out=overlap.data)
+                temp = (overlap.T @ phi) * phase.conjugate()
+                xp.conjugate(overlap.data, out=overlap.data)
+            elif overlap.dtype == xp.float64:
+                temp.real = overlap.T @ phi.real
+                temp.imag = overlap.T @ phi.imag
+                temp *= phase.conjugate()
+
+            phi_ortho += temp
+
+            temp = sparse.diags(overlap.diagonal()) @ phi
+            temp *= phase
+
+            phi_ortho -= temp
+
+            del temp
 
         for contact in self.device.contacts:
             orbital_indices = contact.orbital_indices
@@ -632,17 +683,13 @@ class QTBM:
             # Add the spill over from the overlap
             for r, overlap in overlap_matrices.items():
                 phi_ortho[orbital_indices, :] += (
-                    contact.get_coupling_matrix(
-                        overlap * xp.exp(2j * np.pi * np.dot(k_loc, r))
-                    )
-                    @ phi_cont
-                )
+                    contact.get_coupling_matrix(overlap)
+                    * xp.exp(2j * np.pi * np.dot(k_loc, r))
+                ) @ phi_cont
                 phi_ortho[orbital_indices, :] += (
-                    contact.get_coupling_matrix(
-                        overlap * xp.exp(2j * np.pi * np.dot(k_loc, r)), transpose=True
-                    )
-                    @ phi_cont
-                )
+                    contact.get_coupling_matrix(overlap, transpose=True)
+                    * xp.exp(-2j * np.pi * np.dot(k_loc, r))
+                ) @ phi_cont
             # CHECK SPILL OVER ERROR (DEBUG)
             error = contact.get_coupling_matrix(system_matrix) @ phi_cont
             error += (
@@ -653,7 +700,7 @@ class QTBM:
                 error += (
                     contact.get_coupling_matrix(system_matrix, transpose=True)
                     @ phi_cont
-                    + system_matrix[:, orbital_indices].T.conj() @ phi
+                    + (system_matrix.T @ phi.conj())[orbital_indices, :].conj()
                     - sparse.diags(system_matrix.diagonal(), format="csr")[
                         orbital_indices, :
                     ]
@@ -664,6 +711,8 @@ class QTBM:
 
             if comm.rank == 0:
                 print(f"    Spill over error for contact {contact.name[0]}: {error}")
+
+        xp.conjugate(phi_ortho, out=phi_ortho)
 
         # Compute the DOS for every injected wavefunction
         for contact in self.device.contacts:
@@ -679,7 +728,7 @@ class QTBM:
             if phi_c.size != 0:
                 self.observables.electron_ldos[contact][
                     k_idx, :, global_energy_index
-                ] = xp.real(xp.sum(phi_c.conj() * phi_c_ortho, axis=1) / (2 * xp.pi))
+                ] = xp.real(xp.sum(phi_c * phi_c_ortho, axis=1) / (2 * xp.pi))
 
     def _compute_observables(
         self,
@@ -893,6 +942,7 @@ class QTBM:
                 self.device.overlap_matrices,
                 [],
                 upper_view=True,
+                real_system_matrix=self.real_system_matrix,
             )  # Initialize the system matrix without boundary self energies
         else:
             (
@@ -907,6 +957,7 @@ class QTBM:
                 self.device.overlap_matrices,
                 self.device.contacts,
                 upper_view=False,
+                real_system_matrix=self.real_system_matrix,
             )  # Initialize the system matrix
 
         free_mempool()
@@ -1067,64 +1118,82 @@ class QTBM:
                                 for contact in self.device.contacts
                             ]
                         )
+                        if self.real_system_matrix:
+                            injection_tot_R = xp.zeros(
+                                (injection_tot.shape[0], injection_tot.shape[1] * 2),
+                                dtype=xp.float64,
+                                order="F",
+                            )
+                            injection_tot_R[:, : injection_tot.shape[1]] = (
+                                injection_tot.real
+                            )
+                            injection_tot_R[:, injection_tot.shape[1] :] = (
+                                injection_tot.imag
+                            )
+                            injection_tot = injection_tot_R
 
                     system_matrix.data[:] = 0
 
                     # Add the Hamiltonian and overlap contributions
                     for r, h_r in self.device.hamiltonians.items():
-                        inplace.isub(
+                        k_phase = np.exp(2j * np.pi * np.dot(k, r))
+                        if k_phase.imag == 0:
+                            k_phase = np.float64(k_phase.real)
+                        else:
+                            k_phase = np.complex128(k_phase)
+                        inplace.iadd(
                             system_matrix.data,
                             h_r.data,
                             hamiltonian_update_indices[r],
-                            xp.exp(2j * np.pi * np.dot(k, r)),
-                        )
-                        if self.config.qtbm.OBC_rank != "reduced":
-                            inplace.isub(
-                                system_matrix.data,
-                                xp.conj(h_r).data,
-                                hamiltonian_update_indices_transpose[r],
-                                xp.exp(-2j * np.pi * np.dot(k, r)),
-                            )
-                            system_matrix.setdiag(
-                                system_matrix.diagonal()
-                                + xp.conj(h_r.diagonal())
-                                * xp.exp(-2j * np.pi * np.dot(k, r))
-                            )
-
-                    for r, s_r in self.device.overlap_matrices.items():
-                        inplace.iadd(
-                            system_matrix.data,
-                            s_r.data,
-                            overlap_update_indices[r],
-                            xp.exp(2j * np.pi * np.dot(k, r)) * energy,
+                            -k_phase,
+                            False,
                         )
                         if self.config.qtbm.OBC_rank != "reduced":
                             inplace.iadd(
                                 system_matrix.data,
-                                xp.conj(s_r).data,
-                                overlap_update_indices_transpose[r],
-                                xp.exp(-2j * np.pi * np.dot(k, r)) * energy,
+                                h_r.data,
+                                hamiltonian_update_indices_transpose[r],
+                                -k_phase.conj(),
+                                True,
                             )
-                            system_matrix.setdiag(
-                                system_matrix.diagonal()
-                                - xp.conj(s_r.diagonal())
-                                * xp.exp(-2j * np.pi * np.dot(k, r))
-                                * energy
+                    for r, s_r in self.device.overlap_matrices.items():
+                        k_phase = np.exp(2j * np.pi * np.dot(k, r)) * energy
+                        if xp.__name__ == "cupy":
+                            k_phase = k_phase.get()
+                        if k_phase.imag == 0:
+                            k_phase = np.float64(k_phase.real)
+                        else:
+                            k_phase = np.complex128(k_phase)
+                        inplace.iadd(
+                            system_matrix.data,
+                            s_r.data,
+                            overlap_update_indices[r],
+                            k_phase,
+                            False,
+                        )
+                        if self.config.qtbm.OBC_rank != "reduced":
+                            inplace.iadd(
+                                system_matrix.data,
+                                s_r.data,
+                                overlap_update_indices_transpose[r],
+                                k_phase.conj(),
+                                True,
                             )
 
-                    # if self.config.qtbm.OBC_rank != "reduced":
-                    #    system_matrix.setdiag(system_matrix.diagonal()/2)
+                    if self.config.qtbm.OBC_rank != "reduced":
+                        system_matrix.setdiag(system_matrix.diagonal() / 2)
 
                     if self.config.qtbm.OBC_rank != "reduced":
                         # Add the boundary self-energy contributions
                         for contact, sigma_obc in sigma_obc_per_contact.items():
                             for k_t, sigma_obc_k in sigma_obc.items():
-                                inplace.isub_obc(
+                                inplace.iadd_obc(
                                     system_matrix.data,
                                     sigma_obc_k[i, :, :],
                                     sigma_obc_update_indices[contact],
                                     k_t,
                                     contact.transverse_repetition_grid,
+                                    -1,
                                 )
 
                     synchronize_device()
@@ -1135,7 +1204,9 @@ class QTBM:
                         )
 
                     times.append(time.perf_counter())
+
                     n_injected = injection_count[i]
+
                     if self.config.qtbm.dump_system_matrix:
                         if comm.rank == 0:
                             print("Dumping system matrix...", flush=True)
@@ -1150,6 +1221,7 @@ class QTBM:
                             f"{self.config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
                             system_matrix_cpu,
                         )
+                    print(injection_tot.shape)
                     if self.config.qtbm.OBC_rank == "reduced":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
@@ -1159,6 +1231,17 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
+
+                            if self.real_system_matrix:
+                                phi_C = xp.zeros(
+                                    (phi.shape[0], phi.shape[1] // 2),
+                                    dtype=xp.complex128,
+                                    order="F",
+                                )
+                                phi_C.real = phi[:, : phi.shape[1] // 2]
+                                phi_C.imag = phi[:, phi.shape[1] // 2 :]
+                                phi = phi_C
+
                             synchronize_device()
                             t2 = time.perf_counter()
                             if comm.rank == 0:
@@ -1174,6 +1257,7 @@ class QTBM:
                                 xp.diag(eig_tot) - phi_inv_tot @ phi[:, n_injected:],
                                 phi_inv_tot @ phi[:, :n_injected],
                             )
+                            phi = phi[:, :n_injected]
                             synchronize_device()
                             t2 = time.perf_counter()
                             if comm.rank == 0:
@@ -1189,6 +1273,7 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
+
                     synchronize_device()
                     t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
@@ -1208,6 +1293,7 @@ class QTBM:
                                     sigma_obc_update_indices[contact],
                                     k_t,
                                     contact.transverse_repetition_grid,
+                                    1,
                                 )
 
                     if injection_tot.size != 0:

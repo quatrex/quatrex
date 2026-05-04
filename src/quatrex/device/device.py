@@ -232,48 +232,56 @@ class Device:
 
         self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
 
-        for r, h_r in self.hamiltonians.items():
+        for r in self.hamiltonians.keys():
             assert (
-                h_r.shape[0] == h_r.shape[1]
+                self.hamiltonians[r].shape[0] == self.hamiltonians[r].shape[1]
             ), f"Hamiltonian matrix at index {r} is not square."
 
             # assert all hamiltonians are sparse matrices
-            if not isinstance(h_r, scipy.sparse.spmatrix):
+            if not isinstance(self.hamiltonians[r], scipy.sparse.spmatrix):
                 raise ValueError(
                     f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
-                    f"Matrix type: {type(h_r)}"
+                    f"Matrix type: {type(self.hamiltonians[r])}"
                 )
 
-            self.hamiltonians[r] = sparse.csr_matrix((h_r))
+            self.hamiltonians[r] = sparse.csr_matrix((self.hamiltonians[r]))
+
+            if self.hamiltonians[r].dtype in [np.complex64, np.complex128]:
+                self.matrices_complex = True
 
             # Keep only the upper triangular part of the Hamiltonian
             self.hamiltonians[r] = sparse.triu(self.hamiltonians[r], format="csr")
 
-            # TODO: Check data type handling.
-            # Gamma point can be real depending on the basis.
-            # TODO: Do not unsymmetrize
-            flipped_r = tuple(-i for i in r)
-            hamiltonian_flipped = hamiltonians[flipped_r]
-            self.hamiltonians[r] = (
-                hamiltonians[r] + sparse.triu(hamiltonian_flipped, k=1).conj().T
-            )
-        for r in hamiltonians.keys():
-            self.hamiltonians[r] = sparse.csr_matrix(self.hamiltonians[r])
+            if not self.hamiltonians[r].has_canonical_format:
+                self.hamiltonians[r].sum_duplicates()
+                self.hamiltonians[r].sort_indices()
 
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.h5").exists():
             overlap_matrices = load_matrices(self.config, "overlap")
 
-            self.overlap_matrices = {}
-            for r, s_r in overlap_matrices.items():
+            for r in self.overlap_matrices.keys():
                 assert (
-                    s_r.shape[0] == size
-                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[0]}."
+                    self.overlap_matrices[r].shape[0]
+                    == self.overlap_matrices[r].shape[1]
+                ), f"Hamiltonian matrix at index {r} is not square."
 
                 assert (
-                    s_r.shape[1] == size
-                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {s_r.shape[1]}."
+                    self.overlap_matrices[r].shape[0] == size
+                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {self.overlap_matrices[r].shape[0]}."
+
+                assert (
+                    self.overlap_matrices[r].shape[1] == size
+                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {self.overlap_matrices[r].shape[1]}."
+
+                # assert all overlap_matrices are sparse matrices
+                if not isinstance(self.overlap_matrices[r], scipy.sparse.spmatrix):
+                    raise ValueError(
+                        f"Hamiltonian matrix at index {r} is not a sparse matrix."
+                    )
+
+                self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
 
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
@@ -282,11 +290,6 @@ class Device:
                 self.overlap_matrices[r] = sparse.triu(
                     self.overlap_matrices[r], format="csr"
                 )
-
-                if not all(index == 0 for index in r):
-                    self.overlap_matrices[r] = self.overlap_matrices[r].astype(
-                        xp.complex128
-                    )
 
                 if not self.overlap_matrices[r].has_canonical_format:
                     self.overlap_matrices[r].sum_duplicates()
@@ -305,7 +308,7 @@ class Device:
                     "No overlap matrices found. Assuming identity matrix.",
                 )
             self.overlap_matrices = {
-                (0, 0, 0): sparse.eye(size, dtype=xp.complex128, format="csr")
+                (0, 0, 0): sparse.eye(size, dtype=xp.float64, format="csr")
             }
 
         if comm.rank == 0:

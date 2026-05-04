@@ -4,7 +4,7 @@ input_dir = "../inputs"
 formalism = "wf"
 
 [qtbm]
-max_batch_size = 1
+max_batch_size = 2
 OBC_rank = "reduced"
 [device]
 transport_direction = 'x'

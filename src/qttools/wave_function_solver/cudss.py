@@ -1,6 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
-
 try:
+    import cupy as cp
     import nvmath
     from nvmath.bindings import cudss
     from nvmath.bindings.cudss import MatrixType, MatrixViewType
@@ -8,8 +8,8 @@ try:
     nvmath_available = True
 
     matrix_combination = {
-        "real_symmetric_positive_definite": MatrixType.SYMMETRIC,
-        "real_symmetric_indefinite": MatrixType.GENERAL,
+        "real_symmetric_positive_definite": MatrixType.SPD,
+        "real_symmetric_indefinite": MatrixType.SYMMETRIC,
         "complex_hermitian_positive_definite": MatrixType.HPD,
         "complex_hermitian_indefinite": MatrixType.HERMITIAN,
         "real_nonsymmetric": MatrixType.GENERAL,
@@ -35,6 +35,18 @@ class cuDSS(WFSolver):
     def _set_A(self, a: sparse.csr_matrix):
         n = a.shape[0]
         nnz = a.nnz
+        if a.indices.dtype != cp.int32 or a.indptr.dtype != cp.int32:
+            raise ValueError(
+                f"Matrix A has unsupported index data type. Expected int32 for both indices and indptr, but got {a.indices.dtype} and {a.indptr.dtype}."
+            )
+        if a.dtype == cp.float64:
+            type = nvmath.CudaDataType.CUDA_R_64F
+        elif a.dtype == cp.complex128:
+            type = nvmath.CudaDataType.CUDA_C_64F
+        else:
+            raise ValueError(
+                f"Unsupported data type {a.dtype} for matrix A. Supported types are float64 and complex128."
+            )
         self.A = cudss.matrix_create_csr(
             n,  # nrows
             n,  # ncols
@@ -44,7 +56,7 @@ class cuDSS(WFSolver):
             a.indices.data.ptr,  # column indices
             a.data.data.ptr,  # values
             nvmath.CudaDataType.CUDA_R_32I,  # index type (int32)
-            nvmath.CudaDataType.CUDA_C_64F,  # value type (complex128)
+            type,
             self.M_type,  # matrix type (general)
             self.M_view,  # matrix view (full)
             cudss.IndexBase.ZERO,  # 0-based indexing
@@ -53,24 +65,41 @@ class cuDSS(WFSolver):
     def _set_b(self, b: NDArray):
         n = b.shape[0]
         batchsize = b.shape[1]
+
+        if b.dtype == cp.float64:
+            type = nvmath.CudaDataType.CUDA_R_64F
+        elif b.dtype == cp.complex128:
+            type = nvmath.CudaDataType.CUDA_C_64F
+        else:
+            raise ValueError(
+                f"Unsupported data type {b.dtype} for matrix B. Supported types are float64 and complex128."
+            )
         self.B = cudss.matrix_create_dn(
             n,  # nrows
             batchsize,  # ncols (number of RHS)
             n,  # leading dimension
             b.data.ptr,  # values
-            nvmath.CudaDataType.CUDA_C_64F,  # complex128
+            type,
             cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
         )
 
-    def _set_x(self, x: NDArray):
+    def _set_x(self, x: NDArray, dtype):
         n = x.shape[0]
         batchsize = x.shape[1]
+        if dtype == cp.float64:
+            type = nvmath.CudaDataType.CUDA_R_64F
+        elif dtype == cp.complex128:
+            type = nvmath.CudaDataType.CUDA_C_64F
+        else:
+            raise ValueError(
+                f"Unsupported data type {dtype} for matrix X. Supported types are float64 and complex128."
+            )
         self.X = cudss.matrix_create_dn(
             n,  # nrows
             batchsize,  # ncols (number of RHS)
             n,  # leading dimension
             x.data.ptr,  # values (will be allocated by cuDSS)
-            nvmath.CudaDataType.CUDA_C_64F,  # complex128
+            type,
             cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
         )
 
@@ -162,11 +191,18 @@ class cuDSS(WFSolver):
         reuse_fact: bool = False,
     ):
 
+        print(self.M_type)
+
         x = xp.zeros_like(b)
 
         self._set_A(a)
         self._set_b(b)
-        self._set_x(x)
+        self._set_x(x, b.dtype)
+
+        if a.dtype != b.dtype:
+            raise ValueError(
+                f"Data type of matrix A ({a.dtype}) does not match data type of matrix B ({b.dtype}). Please ensure they have the same data type."
+            )
 
         if not reuse_sym_fact and reuse_fact:
             raise ValueError(

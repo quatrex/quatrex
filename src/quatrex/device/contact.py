@@ -12,6 +12,89 @@ from qttools.nevp import NEVP, Beyn, Full
 from quatrex.core.config import NEVPConfig, OBCConfig
 
 
+def order_vector(
+    vector: NDArray,
+    order: str | NDArray | None,
+):
+    if isinstance(order, str) and order not in ["reverse"]:
+        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
+    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
+
+    if order is None:
+        return vector
+    elif order == "reverse":
+        return xp.flip(vector, axis=-1)
+    else:
+        return vector[..., order]
+
+
+def order_block(
+    block: NDArray,
+    order: str | NDArray | None,
+) -> NDArray:
+    """Reorders the blocks of the given matrix according to the specified order.
+
+    Parameters
+    ----------
+    block : NDArray
+        The matrix block to reorder.
+    order : str | NDArray | None
+        The order in which to reorder the blocks.
+        The only supported string is "reverse",
+        which reverses the order of the blocks.
+
+    Returns
+    -------
+    NDArray
+        The reordered matrix block.
+
+    """
+
+    if isinstance(order, str) and order not in ["reverse"]:
+        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
+    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
+
+    if order is None:
+        return block
+    elif order == "reverse":
+        return xp.flip(block, axis=(-2, -1))
+    else:
+        return block[..., :, order][..., order, :]
+
+
+def get_inverse_order(
+    order: str | NDArray | None,
+) -> str | NDArray | None:
+    """Computes the inverse of the given order.
+
+    Parameters
+    ----------
+    order : str | NDArray | None
+
+    Returns
+    -------
+    str | NDArray | None
+        The inverse order, or None if the input order is None.
+
+    """
+    # TODO: This should be only called once inside
+    # the contact.
+
+    if isinstance(order, str) and order not in ["reverse"]:
+        raise ValueError(f"Invalid order string: {order}. Must be 'reverse' or None.")
+    elif isinstance(order, xp.ndarray) and order.ndim != 1:
+        raise ValueError(f"Order array must be 1-dimensional, got shape {order.shape}.")
+
+    if order is None:
+        return None
+    elif order == "reverse":
+        return "reverse"
+    else:
+        return xp.argsort(order)
+
+
 class Contact:
     """Class representing a contact for QTBM calculations.
 

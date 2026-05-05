@@ -96,9 +96,9 @@ def _btd_apply_potential(
 def _btd_assemble(
     system_matrix: DSDBSparse,
     hamiltonian: DSDBSparse,
-    see_retarded: DSDBSparse,
-    see_lesser: DSDBSparse,
-    see_greater: DSDBSparse,
+    sse_lesser: DSDBSparse,
+    sse_greater: DSDBSparse,
+    sse_retarded_hermitian: DSDBSparse,
 ) -> None:
     r"""Subtracts the Hamiltonian and the self-energy from the system matrix on the block-tridiagonal.
 
@@ -112,24 +112,24 @@ def _btd_assemble(
         The system matrix to subtract from.
     hamiltonian : DSDBSparse
         The Hamiltonian to subtract.
-    see_retarded : DSDBSparse
-        The retarded self-energy to subtract.
-    see_lesser : DSDBSparse
+    sse_lesser : DSDBSparse
         The lesser self-energy to subtract.
-    see_greater : DSDBSparse
+    sse_greater : DSDBSparse
         The greater self-energy to subtract.
+    sse_retarded_hermitian : DSDBSparse
+        The retarded self-energy to subtract.
 
     """
     system_matrix_ = system_matrix.stack[...]
     hamiltonian_ = hamiltonian.stack[...]
-    see_retarded_ = see_retarded.stack[...]
-    see_lesser_ = see_lesser.stack[...]
-    see_greater_ = see_greater.stack[...]
+    sse_retarded_hermitian_ = sse_retarded_hermitian.stack[...]
+    sse_lesser_ = sse_lesser.stack[...]
+    sse_greater_ = sse_greater.stack[...]
     for i in range(system_matrix.num_local_blocks):
         j = i + 1
         system_matrix_.blocks[i, i] -= (
-            see_retarded_.blocks[i, i]
-            + 0.5 * (see_greater_.blocks[i, i] - see_lesser_.blocks[i, i])
+            sse_retarded_hermitian_.blocks[i, i]
+            + 0.5 * (sse_greater_.blocks[i, i] - sse_lesser_.blocks[i, i])
             + hamiltonian_.blocks[i, i]
         )
 
@@ -141,13 +141,13 @@ def _btd_assemble(
             continue
 
         system_matrix_.blocks[i, j] -= (
-            see_retarded_.blocks[i, j]
-            + 0.5 * (see_greater_.blocks[i, j] - see_lesser_.blocks[i, j])
+            sse_retarded_hermitian_.blocks[i, j]
+            + 0.5 * (sse_greater_.blocks[i, j] - sse_lesser_.blocks[i, j])
             + hamiltonian_.blocks[i, j]
         )
         system_matrix_.blocks[j, i] -= (
-            see_retarded_.blocks[j, i]
-            + 0.5 * (see_greater_.blocks[j, i] - see_lesser_.blocks[j, i])
+            sse_retarded_hermitian_.blocks[j, i]
+            + 0.5 * (sse_greater_.blocks[j, i] - sse_lesser_.blocks[j, i])
             + hamiltonian_.blocks[j, i]
         )
 
@@ -445,18 +445,21 @@ class ElectronSolver(SubsystemSolver):
             )
 
     def _assemble_system_matrix(
-        self, sse_retarded: DSDBSparse, sse_lesser: DSDBSparse, sse_greater: DSDBSparse
+        self,
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        sse_retarded_hermitian: DSDBSparse,
     ) -> None:
         """Assembles the system matrix.
 
         Parameters
         ----------
-        sse_retarded : DSDBSparse
-            The retarded scattering self-energy.
         sse_lesser : DSDBSparse
             The lesser scattering self-energy.
         sse_greater : DSDBSparse
             The greater scattering self-energy.
+        sse_retarded_hermitian : DSDBSparse
+            The hermitian part of the retarded scattering self-energy.
 
         """
         self.system_matrix.data = 0.0
@@ -476,7 +479,11 @@ class ElectronSolver(SubsystemSolver):
             _btd_apply_potential(self.system_matrix, self.overlap, self.potential)
 
         _btd_assemble(
-            self.system_matrix, self.hamiltonian, sse_retarded, sse_lesser, sse_greater
+            self.system_matrix,
+            self.hamiltonian,
+            sse_lesser,
+            sse_greater,
+            sse_retarded_hermitian,
         )
 
     def _filter_peaks(self, out: tuple[DSDBSparse, ...]) -> None:
@@ -528,7 +535,7 @@ class ElectronSolver(SubsystemSolver):
         self,
         sse_lesser: DSDBSparse,
         sse_greater: DSDBSparse,
-        sse_retarded: DSDBSparse,
+        sse_retarded_hermitian: DSDBSparse,
         out: tuple[DSDBSparse, ...],
     ):
         """Solves for the electron Green's function.
@@ -539,7 +546,7 @@ class ElectronSolver(SubsystemSolver):
             The lesser self-energy.
         sse_greater : DSDBSparse
             The greater self-energy.
-        sse_retarded : DSDBSparse
+        sse_retarded_hermitian : DSDBSparse
             The hermitian part of the retarded self-energy.
         out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
@@ -553,14 +560,16 @@ class ElectronSolver(SubsystemSolver):
             ):
                 homogenize(sse_greater)
                 homogenize(sse_lesser)
-                homogenize(sse_retarded)
+                homogenize(sse_retarded_hermitian)
 
         with profiler.profile_range(
             label="ElectronSolver: Assemble", level="default", comm=comm
         ):
             self.system_matrix.allocate_data()
 
-            self._assemble_system_matrix(sse_retarded, sse_lesser, sse_greater)
+            self._assemble_system_matrix(
+                sse_lesser, sse_greater, sse_retarded_hermitian
+            )
 
         if self.band_edge_tracking:
             with profiler.profile_range(
@@ -572,7 +581,7 @@ class ElectronSolver(SubsystemSolver):
                     potential=self.potential,
                     sigma_lesser=sse_lesser,
                     sigma_greater=sse_greater,
-                    sigma_retarded_hermitian=sse_retarded,
+                    sigma_retarded_hermitian=sse_retarded_hermitian,
                     energies=self.energies,
                     conduction_band_guesses=(
                         self.left_fermi_level + self.delta_fermi_level_conduction_band,

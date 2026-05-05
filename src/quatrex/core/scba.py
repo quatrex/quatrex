@@ -130,9 +130,12 @@ class SCBAData:
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_retarded_hermitian = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+            if config.scba.symmetric:
+                self.p_retarded_hermitian.symmetry_op = lambda a: a.conj()
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -455,12 +458,16 @@ class SCBA:
 
         self.data.p_greater.allocate_data()
         self.data.p_lesser.allocate_data()
-        self.data.p_retarded.allocate_data()
+        self.data.p_retarded_hermitian.allocate_data()
 
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
-            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+            out=(
+                self.data.p_lesser,
+                self.data.p_greater,
+                self.data.p_retarded_hermitian,
+            ),
         )
 
         self.data.w_greater.allocate_data()
@@ -469,7 +476,7 @@ class SCBA:
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
-            self.data.p_retarded,
+            self.data.p_retarded_hermitian,
             out=(self.data.w_lesser, self.data.w_greater),
         )
 
@@ -477,7 +484,7 @@ class SCBA:
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
-        self.data.p_retarded.free_data()
+        self.data.p_retarded_hermitian.free_data()
 
         self.sigma_fock.compute(
             self.data.g_lesser,

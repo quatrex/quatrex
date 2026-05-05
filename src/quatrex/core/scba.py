@@ -16,11 +16,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device.inputs import (
-    create_coordinate_grid,
-    distributed_read_xyz,
-    load_matrix,
-)
+from quatrex.device.inputs import load_matrix, load_structure
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -49,55 +45,7 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        structure_file = config.input_dir / "structure.xyz"
-        if not structure_file.exists():
-            raise FileNotFoundError(f"Structure file {structure_file} not found.")
-        lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
-            structure_file
-        )
-
-        orbitals_per_atom = [
-            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
-        ]
-        atom_coordinates = xp.asarray(atom_coordinates)
-        grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
-
-        if config.device.construct_from_unit_cell:
-            # The neighbor cell cutoff along the transport direction
-            # determines the size of the transport cell.
-            transport_ind = "xyz".index(config.device.transport_direction)
-            unit_cells_per_transport_cell = [1, 1, 1]
-            unit_cells_per_transport_cell[transport_ind] = (
-                config.device.neighbor_cell_cutoff[transport_ind]
-            )
-            device_cell = unit_cells_per_transport_cell.copy()
-            device_cell[transport_ind] *= config.device.num_transport_cells
-
-            block_sizes = np.array(
-                [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
-                * config.device.num_transport_cells
-            )
-
-            grid = create_coordinate_grid(
-                grid, tuple(device_cell), xp.asarray(lattice_vectors)
-            )
-
-        else:
-            block_sizes = config.device.block_size
-            if isinstance(block_sizes, int):
-                num_blocks, remainder = divmod(grid.shape[0], block_sizes)
-                if remainder != 0:
-                    raise ValueError(
-                        f"Block size {block_sizes} does not evenly divide the number of orbitals {grid.shape[0]}."
-                    )
-                block_sizes = [block_sizes] * num_blocks
-
-            block_sizes = np.array(block_sizes)
-
-            if block_sizes.sum() != grid.shape[0]:
-                raise ValueError(
-                    f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
-                )
+        block_sizes, grid = load_structure(config)
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.
@@ -305,7 +253,7 @@ class SCBA:
                 f"Energy window: {min_energy} to {max_energy} eV with {num_energies} grid points.",
                 flush=True,
             )
-            print(f"Resolution is {energy_resolution} eV.", flush=True)
+            print(f"Resolution is {energy_resolution:.6f} eV.", flush=True)
             print(
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
             )
@@ -549,25 +497,20 @@ class SCBA:
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
-        overlap = (
-            None
-            if self.electron_solver.orthogonal_basis
-            else self.electron_solver.overlap
-        )
         if self.config.outputs.electron_ldos:
             self.observables.electron_ldos = -density(
                 self.data.g_retarded,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
         if self.config.outputs.device_currents:
@@ -590,15 +533,15 @@ class SCBA:
         if self.config.outputs.self_energy_density:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
             self.observables.sigma_greater_density = -density(
                 self.data.sigma_greater,
-                overlap,
+                self.electron_solver.overlap,
             ) / (2 * xp.pi)
 
     @profiler.profile(label="SCBA: W observables", level="default", comm=comm)

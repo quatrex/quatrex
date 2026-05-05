@@ -16,6 +16,76 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.grid.kpoints import monkhorst_pack
 
 
+def load_structure(
+    config: QuatrexConfig,
+) -> tuple[NDArray, NDArray]:
+    """Loads the block sizes and grid for the device.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The Quatrex configuration.
+
+    Returns
+    -------
+    tuple[NDArray, NDArray]
+        The block sizes and grid.
+
+    """
+
+    structure_file = config.input_dir / "structure.xyz"
+    if not structure_file.exists():
+        raise FileNotFoundError(f"Structure file {structure_file} not found.")
+    lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
+        structure_file
+    )
+
+    orbitals_per_atom = [
+        config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
+    ]
+    atom_coordinates = xp.asarray(atom_coordinates)
+    grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
+
+    if config.device.construct_from_unit_cell:
+        # The neighbor cell cutoff along the transport direction
+        # determines the size of the transport cell.
+        transport_ind = "xyz".index(config.device.transport_direction)
+        unit_cells_per_transport_cell = [1, 1, 1]
+        unit_cells_per_transport_cell[transport_ind] = (
+            config.device.neighbor_cell_cutoff[transport_ind]
+        )
+        device_cell = unit_cells_per_transport_cell.copy()
+        device_cell[transport_ind] *= config.device.num_transport_cells
+
+        block_sizes = np.array(
+            [unit_cells_per_transport_cell[transport_ind] * grid.shape[0]]
+            * config.device.num_transport_cells
+        )
+
+        grid = create_coordinate_grid(
+            grid, tuple(device_cell), xp.asarray(lattice_vectors)
+        )
+
+    else:
+        block_sizes = config.device.block_size
+        if isinstance(block_sizes, int):
+            num_blocks, remainder = divmod(grid.shape[0], block_sizes)
+            if remainder != 0:
+                raise ValueError(
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {grid.shape[0]}."
+                )
+            block_sizes = [block_sizes] * num_blocks
+
+        block_sizes = np.array(block_sizes)
+
+        if block_sizes.sum() != grid.shape[0]:
+            raise ValueError(
+                f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
+            )
+
+    return block_sizes, grid
+
+
 def _trim_zeros_nd(arr: NDArray) -> NDArray:
     """Implementation of trim_zeros over all dimensions
 

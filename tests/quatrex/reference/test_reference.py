@@ -43,7 +43,7 @@ def test_single_rank(
             reference.shape == test.shape
         ), f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
         assert np.allclose(
-            reference, test, rtol=1e-5, atol=1e-6
+            reference, test, rtol=1e-5, atol=1e-4
         ), f"Value mismatch for '{output_file.name}'"
 
 

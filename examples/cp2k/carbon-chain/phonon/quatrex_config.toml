@@ -1,0 +1,61 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "negf"
+
+
+[device]
+transport_direction = 'x'
+num_orbitals_per_atom = { "C" = 13 }
+kpoint_grid = [1, 1, 1]
+kpoint_shift = [0, 0, 0]
+
+block_size = 260
+
+
+[scba] # =============================================================
+max_iterations = 2
+mixing_factor = 0.75
+phonon = true
+
+[outputs]  # Select which outputs to write.
+electron_ldos = true
+device_currents = true
+electron_density = true
+hole_density = true
+self_energy_density = true
+
+
+[electron]
+conduction_band_edge = -2.4
+valence_band_edge = -2.5
+fermi_level = -2.45
+left_fermi_level = -3
+right_fermi_level = -3.001
+
+energy_window_min = -5
+energy_window_max = -4
+energy_window_num = 10
+
+obc.algorithm = "spectral"
+obc.num_ref_iterations = 10
+obc.nevp_solver = "full"
+obc.r_o = 1000
+obc.r_i = 0.9
+obc.m_0 = 100
+obc.num_quad_points = 64
+obc.min_decay = 1e-8
+obc.max_decay = 10
+
+
+[phonon]
+interaction_cutoff = 5.0 # Angstrom
+
+model = "pseudo-scattering"
+phonon_energy = 40e-3         # eV
+deformation_potential = 15e-3 # eV
+
+
+[compute]
+numba_num_threads = 1
+blas_num_threads = 4

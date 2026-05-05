@@ -464,7 +464,24 @@ class ElectronConfig(BaseModel):
     left_fermi_level: float | None = None
     right_fermi_level: float | None = None
 
-    band_edge_tracking: Literal["dos-peaks", "eigenvalues"] | None = None
+    band_edge_tracking: bool = False
+    """Whether to track the band edges during the SCBA iterations.
+
+    This is setting is only useful if the considered interactions result
+    in energy renormalization in the electronic subsystem, which is
+    primarily the screened Coulomb interaction.
+
+    If set to `True`, the band edges are tracked during the SCBA
+    iterations by computing the eigenvalues of the Hamiltonian
+    renormalized with the current self-energy.
+
+    The Fermi levels are then set to be a fixed distance from the band
+    edges, which is determined by the initial Fermi level and band
+    edges. For example, if the initial Fermi level is 0.5 eV above the
+    conduction band edge, the Fermi level is always set to be 0.5 eV
+    above the conduction band edge during the SCBA iterations.
+
+    """
 
     temperature: PositiveFloat = 300.0  # K
 
@@ -832,20 +849,6 @@ class DeviceConfig(BaseModel):
 
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
-    orthogonal_basis: bool = True
-    """Whether the basis set is orthogonal.
-
-    This affects how the overlap matrix is handled.
-    In the case of `True`, the overlap matrix is identity.
-
-    !!! warning
-
-        Currently, `False` is not supported since
-        the code does not correctly handle overlap matrices in the case
-        of kpoints.
-
-    """
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:

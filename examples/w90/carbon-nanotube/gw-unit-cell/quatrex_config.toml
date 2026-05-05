@@ -42,7 +42,7 @@ fermi_level = -3.6                        # eV
 conduction_band_edge = -3.566382123573606 # eV
 valence_band_edge = -4.174109778287768    # eV
 
-band_edge_tracking = "eigenvalues"
+band_edge_tracking = true
 
 # Energy grid.
 energy_window_min = -10
@@ -113,3 +113,6 @@ interaction_cutoff = 5.5     # Å
 model = "pseudo-scattering"
 phonon_energy = 50e-3
 deformation_potential = 5e-3
+
+[compute]
+band_edge.block_sections = 2

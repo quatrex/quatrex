@@ -1,13 +1,15 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-from functools import partial
+import numpy as np
 
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
+from qttools.datastructures.dsdbsparse import _block_view
 from qttools.kernels.linalg import eigvalsh
 from qttools.utils.mpi_utils import get_section_sizes
 from quatrex.core.config import BandEdgeConfig
+from quatrex.device.contact import order_block, order_vector
 
 if xp.__name__ == "numpy":
     from scipy.signal import find_peaks
@@ -15,54 +17,6 @@ elif xp.__name__ == "cupy":
     from cupyx.scipy.signal import find_peaks
 else:
     raise ImportError("Unknown backend.")
-
-
-def get_block(
-    coo: sparse.coo_matrix | DSDBSparse,
-    block_sizes: NDArray,
-    block_offsets: NDArray,
-    index: tuple,
-) -> NDArray:
-    """Gets a block from a COO matrix.
-
-    Parameters
-    ----------
-    coo : sparse.coo_matrix
-        The COO matrix.
-    block_sizes : NDArray
-        The block sizes.
-    block_offsets : NDArray
-        The block offsets.
-    index : tuple
-        The index of the block to extract.
-
-    Returns
-    -------
-    block : NDArray
-        The requested, dense block.
-
-    """
-    row, col = index
-    row = row + len(block_sizes) if row < 0 else row
-    col = col + len(block_sizes) if col < 0 else col
-
-    if isinstance(coo, DSDBSparse):
-        start_block = coo.block_section_offsets[comm.block.rank]
-        return coo.blocks[row - start_block, col - start_block]
-
-    mask = (
-        (block_offsets[row] <= coo.row)
-        & (coo.row < block_offsets[row + 1])
-        & (block_offsets[col] <= coo.col)
-        & (coo.col < block_offsets[col + 1])
-    )
-    block = xp.zeros((int(block_sizes[row]), int(block_sizes[col])), dtype=coo.dtype)
-    block[
-        coo.row[mask] - block_offsets[row],
-        coo.col[mask] - block_offsets[col],
-    ] = coo.data[mask]
-
-    return block
 
 
 def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
@@ -86,95 +40,182 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
 
 
 def _compute_eigenvalues(
-    hamiltonian: sparse.spmatrix | DSDBSparse,
-    overlap: sparse.spmatrix,
+    hamiltonian: DSDBSparse,
+    overlap: DSDBSparse | None,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
     ind: tuple[int, ...],
-    side: str,
-    band_edge_config: BandEdgeConfig = BandEdgeConfig(),
+    diagonal_inds: tuple,
+    upper_inds: tuple,
+    order: str | NDArray | None = None,
+    block_sections: int = 1,
+    use_eigvalsh: bool = True,
+    eigvalsh_compute_location: str = "numpy",
+    use_pinned_memory: bool = True,
 ):
-    """Computes the eigenvalues for the left or right contact."""
-    big_blocksize = sigma_retarded.block_sizes[0]
-    block_sections = band_edge_config.block_sections
+    r"""Computes the eigenvalues for the left or right contact.
+
+    Block sectioning is done in the following way:
+    Assume 2 sections with
+    ||  h00  || ||  h01  ||
+    || a | b || || c | d ||
+    || e | f || || g | h ||
+
+    First $h = (b + c + d)$ is constructed, then
+    $h += (b + c + d)^{\dagger}$
+    and finally $h += a$.
+    With the same logic, sigma and the potential are added.
+
+    Parameters
+    ----------
+    hamiltonian : DSDBSparse
+        The Hamiltonian.
+    overlap : DSDBSparse | None
+        The overlap matrix. If None, the basis is assumed to be
+        orthogonal.
+    potential : NDArray
+        The potential.
+    sigma_retarded : DSDBSparse
+        The retarded self-energy.
+    ind : tuple[int, ...]
+        The local (E, k) index where the eigenvalues should be computed.
+        This is a guess that should be as close as possible to where the
+        band edge is to determine the correct band edge in this
+        non-linear EVP. An outer loop should be used to refine this
+        guess.
+    diagonal_inds : tuple
+        The indices of the diagonal blocks corresponding to the contact.
+    upper_inds : tuple
+        The indices of the upper off-diagonal blocks corresponding to the contact.
+    order : str | NDArray | None, optional
+        The permutation of the blocks to achieve the same order as the canonical left contact.
+        If None, the left contact order is assumed.
+        Instead of an explicit permutation, the string "reverse" can be passed
+        to reverse the order of the blocks, which is equivalent to the right contact order.
+    block_sections : int, optional
+        The number of block sections to assume in the computation. This is used to
+        reduce the size of the eigenvalue problem by utilizing periodicity.
+    use_eigvalsh : bool, optional
+        Whether to assume the eigenvalue problem is Hermitian. By default, this is True.
+        This is an approximation in the case of scattering since the self-energy is not Hermitian.
+    eigvalsh_compute_location : str, optional
+        The compute module to use in the eigvalsh call.
+        Can be "numpy" or "cupy".
+    use_pinned_memory : bool, optional
+        Whether to use pinned memory in the eigvalsh call.
+        This can speed up the computation when using `cupy`.
+
+    Returns
+    -------
+    e_0 : NDArray
+        The eigenvalues at the given (E, k) index sorted by energy in
+        ascending order.
+
+    """
+
+    if not use_eigvalsh:
+        raise NotImplementedError("Only use_eigvalsh=True is supported.")
+
+    big_blocksize = sigma_retarded.block_sizes[diagonal_inds[0]]
     small_blocksize = big_blocksize // block_sections
 
-    if side == "left":
-        blocks = [(0, 0), (0, 1)]  # , (1, 0)]
-        potential = xp.diag(potential[:small_blocksize])
-        row_slice = slice(0, small_blocksize)
-    elif side == "right":
-        blocks = [(-1, -1), (-1, -2)]  # , (n-2, n-1)]
-        potential = xp.diag(potential[-small_blocksize:])
-        row_slice = slice(big_blocksize - small_blocksize, big_blocksize)
-    else:
-        raise ValueError(f"Unknown side '{side}'.")
+    h_slice = (np.s_[:],) + tuple(ind[1:]) + np.s_[:small_blocksize, :]
+    sigma_slice = tuple(ind) + np.s_[:small_blocksize, :]
 
-    _get_block = partial(
-        get_block,
-        block_sizes=sigma_retarded.block_sizes,
-        block_offsets=sigma_retarded.block_offsets,
+    # Hamiltonian is only extracted at a certain k-point
+    # as it is not energy dependent.
+    h_00 = order_block(hamiltonian.blocks[*diagonal_inds], order)[h_slice]
+    h_01 = order_block(hamiltonian.blocks[*upper_inds], order)[h_slice]
+
+    # Extract the blocks corresponding to the first block layer
+    h_00 = _block_view(h_00, axis=-1, num_blocks=block_sections)
+    h_01 = _block_view(h_01, axis=-1, num_blocks=block_sections)
+
+    # Sigma is extract at a certain energy and k-point
+    # NOTE: In this case we use only the real part of the retarded
+    # self-energy.
+    sigma_00 = xp.real(
+        order_block(sigma_retarded.blocks[*diagonal_inds], order)[sigma_slice]
+    )
+    sigma_01 = xp.real(
+        order_block(sigma_retarded.blocks[*upper_inds], order)[sigma_slice]
     )
 
-    h_00 = _get_block(hamiltonian, index=blocks[0])[:, *ind[1:], row_slice]
-    h_01 = _get_block(hamiltonian, index=blocks[1])[:, *ind[1:], row_slice]
-    s_00 = _get_block(overlap, index=blocks[0])[row_slice]
-    s_01 = _get_block(overlap, index=blocks[1])[row_slice]
-    sigma_00 = xp.real(_get_block(sigma_retarded, index=blocks[0])[*ind, row_slice])
-    sigma_01 = xp.real(_get_block(sigma_retarded, index=blocks[1])[*ind, row_slice])
+    sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=block_sections)
+    sigma_01 = _block_view(sigma_01, axis=-1, num_blocks=block_sections)
 
-    h_0 = sum(
-        h_00[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(1, block_sections)
-    )
-    h_0 += sum(
-        h_01[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(block_sections)
-    )
-    h_0 += sum(
-        sigma_00[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(1, block_sections)
-    )
-    h_0 += sum(
-        sigma_01[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(block_sections)
-    )
-    h_0 += h_0.conj().swapaxes(-2, -1)
-    h_0 += h_00[:, :small_blocksize]
-    h_0 += sigma_00[:, :small_blocksize]
-    h_0 += potential
+    h_0 = xp.zeros(h_00.shape[1:], dtype=h_00.dtype)
+    h_0 += xp.sum(h_00[1:], axis=0)
+    h_0 += xp.sum(h_01, axis=0)
+    h_0 += xp.sum(sigma_00[1:], axis=0)
+    h_0 += xp.sum(sigma_01, axis=0)
 
-    s_0 = sum(
-        s_00[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(1, block_sections)
-    )
-    s_0 += sum(
-        s_01[:, i * small_blocksize : (i + 1) * small_blocksize]
-        for i in range(block_sections)
-    )
-    s_0 += s_0.conj().swapaxes(-2, -1)
-    s_0 += s_00[:, :small_blocksize]
+    potential = order_vector(potential, order)
+    if overlap is not None:
+        potential_0 = potential[:big_blocksize]
+        potential_1 = potential[big_blocksize : 2 * big_blocksize]
 
-    if band_edge_config.use_eigvalsh:
-        # NOTE: In this case we use only the real part of the retarded
-        # self-energy.
-        e_0 = eigvalsh(
-            # NOTE: Prevent eigvalsh from calling a batched routine (slow).
-            xp.squeeze(h_0),
-            xp.squeeze(s_0),
-            compute_module=band_edge_config.eigvalsh_compute_location,
-            use_pinned_memory=band_edge_config.use_pinned_memory,
+        # match the shape of the hamiltonian blocks
+        # this is done for the multiplication with the overlap blocks later on.
+        potential_0 = potential_0.reshape(
+            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
         )
-        return xp.sort(e_0.real)
+        potential_1 = potential_1.reshape(
+            (block_sections, *((1,) * (len(h_00.shape) - 3)), small_blocksize)
+        )
 
-    raise NotImplementedError(
-        "Only band_edge_config.use_eigvalsh=True is supported at the moment."
+        # The overlap is only extracted at a certain k-point
+        # as it is not energy dependent.
+        s_00 = order_block(overlap.blocks[*diagonal_inds], order)[h_slice]
+        s_01 = order_block(overlap.blocks[*upper_inds], order)[h_slice]
+
+        s_00 = _block_view(s_00, axis=-1, num_blocks=block_sections)
+        s_01 = _block_view(s_01, axis=-1, num_blocks=block_sections)
+
+        s_0 = xp.zeros(s_00.shape[1:], dtype=s_00.dtype)
+        s_0 += xp.sum(s_00[1:], axis=0)
+        s_0 += xp.sum(s_01, axis=0)
+
+        s_0 += s_0.conj().swapaxes(-2, -1)
+        s_0 += s_00[0]
+
+        ps_0 = 0.5 * (
+            s_00 * potential_0[..., None, :] + s_00 * potential_0[..., :, None]
+        )
+        ps_1 = 0.5 * (
+            s_01 * potential_1[..., None, :] + s_01 * potential_1[..., :, None]
+        )
+
+        h_0 += xp.sum(ps_0[1:], axis=0)
+        h_0 += xp.sum(ps_1, axis=0)
+
+    h_0 += h_0.conj().swapaxes(-2, -1)
+    h_0 += h_00[0]
+    h_0 += sigma_00[0]
+
+    if overlap is None:
+        s_0 = None
+        h_0 += xp.diag(potential[:small_blocksize])
+    else:
+        h_0 += ps_0[0]
+
+    # NOTE: Prevent eigvalsh from calling a batched routine (slow).
+    h_0 = xp.squeeze(h_0)
+    if s_0 is not None:
+        s_0 = xp.squeeze(s_0)
+
+    w = eigvalsh(
+        h_0,
+        s_0,
+        compute_module=eigvalsh_compute_location,
+        use_pinned_memory=use_pinned_memory,
     )
+    return xp.sort(w.real)
 
 
 def find_renormalized_eigenvalues(
-    hamiltonian: sparse.spmatrix | DSDBSparse,
-    overlap: sparse.spmatrix,
+    hamiltonian: DSDBSparse,
+    overlap: DSDBSparse | None,
     potential: NDArray,
     sigma_retarded: DSDBSparse,
     energies: NDArray,
@@ -187,10 +228,11 @@ def find_renormalized_eigenvalues(
 
     Parameters
     ----------
-    hamiltonian : sparse.spmatrix
+    hamiltonian : DSDBSparse
         The Hamiltonian.
-    overlap : sparse.spmatrix
-        The overlap matrix.
+    overlap : DSDBSparse | None
+        The overlap matrix. If None, the basis is assumed to be
+        orthogonal.
     sigma_lesser : DSDBSparse
         The lesser self-energy.
     sigma_greater : DSDBSparse
@@ -250,9 +292,14 @@ def find_renormalized_eigenvalues(
                     potential=potential,
                     sigma_retarded=sigma_retarded,
                     ind=local_ind,
-                    side="left",
-                    band_edge_config=band_edge_config,
+                    diagonal_inds=(0, 0),
+                    upper_inds=(0, 1),
+                    block_sections=band_edge_config.block_sections,
+                    use_eigvalsh=band_edge_config.use_eigvalsh,
+                    eigvalsh_compute_location=band_edge_config.eigvalsh_compute_location,
+                    use_pinned_memory=band_edge_config.use_pinned_memory,
                 )
+
                 left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
                 left_mid_gap_energy = xp.mean(left_band_edges)
                 __, left_conduction_band_guess = left_band_edges
@@ -278,14 +325,22 @@ def find_renormalized_eigenvalues(
                 local_ind = (ind_right - section_offsets[rank_right],) + tuple(
                     [s // 2 for s in sigma_retarded.shape[1:-2]]
                 )
+
+                n = hamiltonian.num_local_blocks - 1
+                m = n - 1
                 e_0_right = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
                     sigma_retarded=sigma_retarded,
                     ind=local_ind,
-                    side="right",
-                    band_edge_config=band_edge_config,
+                    diagonal_inds=(n, n),
+                    upper_inds=(n, m),
+                    order="reverse",
+                    block_sections=band_edge_config.block_sections,
+                    use_eigvalsh=band_edge_config.use_eigvalsh,
+                    eigvalsh_compute_location=band_edge_config.eigvalsh_compute_location,
+                    use_pinned_memory=band_edge_config.use_pinned_memory,
                 )
                 right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
                 right_mid_gap_energy = xp.mean(right_band_edges)

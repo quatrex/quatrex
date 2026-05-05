@@ -17,9 +17,23 @@ EXAMPLES = [
     for config in CONFIGS
 ]
 
+GW_EXAMPLE = [
+    pytest.param(
+        (config.parent, "dist" in config.parent.stem),
+        id="-".join(config.parent.parts[-3:]),
+    )
+    for config in CONFIGS
+    if "gw" in config.parent.stem
+][0:1]
+
 
 @pytest.fixture(params=EXAMPLES, scope="function")
 def example(request: pytest.FixtureRequest) -> tuple[Path, bool]:
+    return request.param
+
+
+@pytest.fixture(params=GW_EXAMPLE, scope="function")
+def gw_example(request: pytest.FixtureRequest) -> tuple[Path, bool]:
     return request.param
 
 

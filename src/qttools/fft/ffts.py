@@ -21,9 +21,7 @@ def fft_convolve(a: NDArray, b: NDArray) -> NDArray:
     NDArray
         The convolution of the two arrays.
     """
-    ne = (
-        a.shape[0] + b.shape[0]
-    )  # Should not have -1 here (otherwise hilbert transform fails)
+    ne = a.shape[0] + b.shape[0] - 1
     a_fft = xp.fft.fft(a, ne, axis=0)
     b_fft = xp.fft.fft(b, ne, axis=0)
     return xp.fft.ifft(a_fft * b_fft, axis=0)

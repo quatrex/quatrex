@@ -21,7 +21,7 @@ def _naive_convolve(a: NDArray, b: NDArray) -> NDArray:
     """
     ne_a = a.shape[0]
     ne_b = b.shape[0]
-    ne = ne_a + ne_b  # - 1
+    ne = ne_a + ne_b - 1
     result_shape = (ne,) + a.shape[1:]
     result = xp.zeros(result_shape, dtype=a.dtype)
     for i in range(ne_a):

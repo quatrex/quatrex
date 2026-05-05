@@ -42,7 +42,7 @@ fermi_level = -0.3 # eV
 conduction_band_edge = -0.3187 # eV
 valence_band_edge = -2.0026 # eV
 
-band_edge_tracking = "eigenvalues"
+band_edge_tracking = true
 
 flatband = false
 

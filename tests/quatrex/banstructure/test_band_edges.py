@@ -8,7 +8,7 @@ import pytest
 from qttools import xp
 from quatrex.bandstructure.band_edges import _compute_eigenvalues
 from quatrex.core.config import QuatrexConfig, parse_config, setup_context
-from quatrex.device.inputs import load_matrix, load_structure
+from quatrex.device.inputs import assemble_matrix, load_structure
 from quatrex.grid import get_electron_energies
 
 
@@ -17,14 +17,14 @@ def _intialize(config: QuatrexConfig):
     and initialize the self-energy for the band edge tests."""
 
     # Load the device Hamiltonian.
-    hamiltonian, sparsity_pattern = load_matrix(
+    hamiltonian, sparsity_pattern = assemble_matrix(
         config=config,
         matrix_name="hamiltonian",
         sparsity_pattern=None,
         shift_kpoints=False,
     )
     try:
-        overlap, __ = load_matrix(
+        overlap, __ = assemble_matrix(
             config=config,
             matrix_name="overlap",
             sparsity_pattern=None,

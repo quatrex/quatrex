@@ -82,6 +82,7 @@ def load_structure(
 
     return block_sizes, grid
 
+
 def create_coordinate_grid(
     unit_cell_coords: NDArray,
     num_unit_cells: int,

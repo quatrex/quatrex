@@ -16,12 +16,7 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device.inputs import (
-    assemble_matrix,
-    load_structure,
-    create_coordinate_grid,
-    distributed_read_xyz,
-)
+from quatrex.device.inputs import assemble_matrix, load_structure
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,

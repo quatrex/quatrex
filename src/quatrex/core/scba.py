@@ -194,7 +194,6 @@ class Observables:
     w_lesser_density: NDArray = None
     w_greater_density: NDArray = None
 
-    p_retarded_density: NDArray = None
     p_lesser_density: NDArray = None
     p_greater_density: NDArray = None
 
@@ -551,9 +550,6 @@ class SCBA:
 
         # NOTE: The overlap is maybe missing here (it is not used)
         if self.config.outputs.polarization_density:
-            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-                2 * xp.pi
-            )
             self.observables.p_lesser_density = density(self.data.p_lesser) / (
                 2 * xp.pi
             )
@@ -602,7 +598,6 @@ class SCBA:
                     {
                         f"p_lesser_density_{iteration}.npy": self.observables.p_lesser_density,
                         f"p_greater_density_{iteration}.npy": self.observables.p_greater_density,
-                        f"p_retarded_density_{iteration}.npy": self.observables.p_retarded_density,
                     }
                 )
             if self.config.outputs.coulomb_screening_density:

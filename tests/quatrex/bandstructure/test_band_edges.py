@@ -42,12 +42,12 @@ def _intialize(config: QuatrexConfig):
     dsdbsparse_type = config.compute.dsdbsparse_type
 
     # dummy self-energy
-    sigma_retarded = dsdbsparse_type.from_sparray(
+    sigma_dummy = dsdbsparse_type.from_sparray(
         sparsity_pattern.astype(xp.complex128),
         block_sizes=block_sizes,
         global_stack_shape=energies.shape + tuple([k for k in kpoint_grid if k > 1]),
     )
-    sigma_retarded.data[:] = 0
+    sigma_dummy.data[:] = 0
 
     section_offsets = xp.array([0, len(energies)])
 
@@ -55,10 +55,10 @@ def _intialize(config: QuatrexConfig):
     rank_left = xp.digitize(ind_left, section_offsets) - 1
     local_ind = (ind_left - section_offsets[rank_left],) + tuple(
         # Only take the k point indices
-        [s // 2 for s in sigma_retarded.shape[1:-2]]
+        [s // 2 for s in sigma_dummy.shape[1:-2]]
     )
 
-    return hamiltonian, overlap, potential, sigma_retarded, local_ind
+    return hamiltonian, overlap, potential, sigma_dummy, local_ind
 
 
 def test_subsectioning(
@@ -89,13 +89,15 @@ def test_subsectioning(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_retarded, local_ind = _intialize(config)
+    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
 
     e_0_test = _compute_eigenvalues(
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
@@ -107,7 +109,9 @@ def test_subsectioning(
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
@@ -150,13 +154,15 @@ def test_left_right(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_retarded, local_ind = _intialize(config)
+    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
 
     e_0_left = _compute_eigenvalues(
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
@@ -170,7 +176,9 @@ def test_left_right(
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(n, n),
         upper_inds=(n, m),
@@ -226,7 +234,7 @@ def test_overlap(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_retarded, local_ind = _intialize(config)
+    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
 
     if overlap is None:
         pytest.skip("Skipping test for missing overlap matrix.")
@@ -242,7 +250,9 @@ def test_overlap(
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
@@ -261,7 +271,7 @@ def test_overlap(
 
     block_sizes = hamiltonian.block_sizes
     hamiltonian = hamiltonian.to_dense()
-    sigma_retarded = sigma_retarded.to_dense()
+    sigma_dummy = sigma_dummy.to_dense()
 
     L_inv_full = xp.zeros_like(hamiltonian)
     for i in range(len(block_sizes)):
@@ -276,13 +286,15 @@ def test_overlap(
     # NOTE: a mock class is used since it is not so straightforward
     # to do the correct DSDBSparse -> dense -> DSDBSparse conversion with the current API.
     hamiltonian = MockDSDBSparse(hamiltonian_hat, block_sizes)
-    sigma_retarded = MockDSDBSparse(sigma_retarded, block_sizes)
+    sigma_dummy = MockDSDBSparse(sigma_dummy, block_sizes)
 
     e_0_test = _compute_eigenvalues(
         hamiltonian=hamiltonian,
         overlap=None,
         potential=xp.zeros_like(potential),
-        sigma_retarded=sigma_retarded,
+        sigma_lesser=sigma_dummy,
+        sigma_greater=sigma_dummy,
+        sigma_retarded_hermitian=sigma_dummy,
         ind=local_ind,
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),

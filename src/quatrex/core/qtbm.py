@@ -623,24 +623,27 @@ class QTBM:
                 temp = overlap @ phi
                 temp *= phase
             elif overlap.dtype == xp.float64:
-                temp = xp.empty_like(phi)
+                temp = xp.zeros_like(phi)
                 temp.real = overlap @ phi.real
                 temp.imag = overlap @ phi.imag
                 temp *= phase
-            phi_ortho += temp
 
-            temp = xp.empty_like(phi)
+            phi_ortho += temp
+            del temp
 
             if overlap.dtype == xp.complex128:
                 xp.conjugate(overlap.data, out=overlap.data)
-                temp = (overlap.T @ phi) * phase.conjugate()
+                temp = overlap.T @ phi
+                temp *= phase.conjugate()
                 xp.conjugate(overlap.data, out=overlap.data)
             elif overlap.dtype == xp.float64:
+                temp = xp.zeros_like(phi)
                 temp.real = overlap.T @ phi.real
                 temp.imag = overlap.T @ phi.imag
                 temp *= phase.conjugate()
 
             phi_ortho += temp
+            del temp
 
             temp = sparse.diags(overlap.diagonal()) @ phi
             temp *= phase

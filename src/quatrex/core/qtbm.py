@@ -623,9 +623,18 @@ class QTBM:
                 temp = overlap @ phi
                 temp *= phase
             elif overlap.dtype == xp.float64:
-                temp = xp.zeros_like(phi)
-                temp.real = overlap @ phi.real
-                temp.imag = overlap @ phi.imag
+                temp = phi.copy()
+
+                temp = xp.ascontiguousarray(temp)
+                temp = temp.view(xp.float64)
+                temp = xp.asfortranarray(temp)
+
+                temp = overlap @ temp
+
+                temp = xp.ascontiguousarray(temp)
+                temp = temp.view(xp.complex128)
+                temp = xp.asfortranarray(temp)
+
                 temp *= phase
 
             phi_ortho += temp
@@ -637,9 +646,17 @@ class QTBM:
                 temp *= phase.conjugate()
                 xp.conjugate(overlap.data, out=overlap.data)
             elif overlap.dtype == xp.float64:
-                temp = xp.zeros_like(phi)
-                temp.real = overlap.T @ phi.real
-                temp.imag = overlap.T @ phi.imag
+                temp = phi.copy()
+                temp = xp.ascontiguousarray(temp)
+                temp = temp.view(xp.float64)
+                temp = xp.asfortranarray(temp)
+
+                temp = overlap.T @ temp
+
+                temp = xp.ascontiguousarray(temp)
+                temp = temp.view(xp.complex128)
+                temp = xp.asfortranarray(temp)
+
                 temp *= phase.conjugate()
 
             phi_ortho += temp
@@ -1106,6 +1123,10 @@ class QTBM:
                                 reflection_segments_translated[contact, i],
                             ] = reflection_per_contact[contact][i]
 
+                    injection_tot = xp.asfortranarray(injection_tot)
+                    print(injection_tot.shape)
+                    print(injection_tot.flags)
+
                     if self.config.qtbm.OBC_rank == "reduced":
                         phi_inv_tot = get_sparse_RHS_transpose(
                             phi_inv_ref_per_contact,
@@ -1122,21 +1143,13 @@ class QTBM:
                             ]
                         )
                         if self.real_system_matrix:
-                            injection_tot_R = xp.zeros(
-                                (injection_tot.shape[0], injection_tot.shape[1] * 2),
-                                dtype=xp.float64,
-                                order="F",
-                            )
-                            injection_tot_R[:, : injection_tot.shape[1]] = (
-                                injection_tot.real
-                            )
-                            injection_tot_R[:, injection_tot.shape[1] :] = (
-                                injection_tot.imag
-                            )
-                            injection_tot = injection_tot_R
+                            injection_tot = xp.ascontiguousarray(injection_tot)
+                            injection_tot = injection_tot.view(np.float64)
+                            injection_tot = xp.asfortranarray(injection_tot)
 
                     system_matrix.data[:] = 0
 
+                    synchronize_device()
                     # Add the Hamiltonian and overlap contributions
                     for r, h_r in self.device.hamiltonians.items():
                         k_phase = np.exp(2j * np.pi * np.dot(k, r))
@@ -1236,14 +1249,9 @@ class QTBM:
                             )
 
                             if self.real_system_matrix:
-                                phi_C = xp.zeros(
-                                    (phi.shape[0], phi.shape[1] // 2),
-                                    dtype=xp.complex128,
-                                    order="F",
-                                )
-                                phi_C.real = phi[:, : phi.shape[1] // 2]
-                                phi_C.imag = phi[:, phi.shape[1] // 2 :]
-                                phi = phi_C
+                                phi = xp.ascontiguousarray(phi)
+                                phi = phi.view(xp.complex128)
+                                phi = xp.asfortranarray(phi)
 
                             synchronize_device()
                             t2 = time.perf_counter()
@@ -1260,7 +1268,6 @@ class QTBM:
                                 xp.diag(eig_tot) - phi_inv_tot @ phi[:, n_injected:],
                                 phi_inv_tot @ phi[:, :n_injected],
                             )
-                            phi = phi[:, :n_injected]
                             synchronize_device()
                             t2 = time.perf_counter()
                             if comm.rank == 0:

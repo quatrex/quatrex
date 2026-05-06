@@ -1124,8 +1124,6 @@ class QTBM:
                             ] = reflection_per_contact[contact][i]
 
                     injection_tot = xp.asfortranarray(injection_tot)
-                    print(injection_tot.shape)
-                    print(injection_tot.flags)
 
                     if self.config.qtbm.OBC_rank == "reduced":
                         phi_inv_tot = get_sparse_RHS_transpose(
@@ -1237,7 +1235,6 @@ class QTBM:
                             f"{self.config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
                             system_matrix_cpu,
                         )
-                    print(injection_tot.shape)
                     if self.config.qtbm.OBC_rank == "reduced":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()

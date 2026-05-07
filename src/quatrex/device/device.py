@@ -130,15 +130,11 @@ class Device:
             # TODO: Check data type handling.
             # Gamma point can be real depending on the basis.
             # TODO: Do not unsymmetrize
-            if not all(index == 0 for index in r):
-                flipped_r = tuple(-i for i in r)
-                hamiltonian_flipped = hamiltonians[flipped_r]
-                self.hamiltonians[r] = (
-                    hamiltonians[r] + sparse.triu(hamiltonian_flipped, k=1).conj().T
-                )
-            else:
-                self.hamiltonians[r] = hamiltonians[r] + hamiltonians[r].conj().T
-                self.hamiltonians[r].setdiag(self.hamiltonians[r].diagonal() / 2)
+            flipped_r = tuple(-i for i in r)
+            hamiltonian_flipped = hamiltonians[flipped_r]
+            self.hamiltonians[r] = (
+                hamiltonians[r] + sparse.triu(hamiltonian_flipped, k=1).conj().T
+            )
         for r in hamiltonians.keys():
             self.hamiltonians[r] = sparse.csr_matrix(self.hamiltonians[r])
 
@@ -160,20 +156,12 @@ class Device:
                 # TODO: Check data type handling.
                 # Gamma point can be real depending on the basis.
                 # TODO: Do not unsymmetrize
-                if not all(index == 0 for index in r):
-                    flipped_r = tuple(-i for i in r)
-                    overlap_matrix_flipped = overlap_matrices[flipped_r]
-                    self.overlap_matrices[r] = (
-                        overlap_matrices[r]
-                        + sparse.triu(overlap_matrix_flipped, k=1).conj().T
-                    )
-                else:
-                    self.overlap_matrices[r] = (
-                        overlap_matrices[r] + overlap_matrices[r].conj().T
-                    )
-                    self.overlap_matrices[r].setdiag(
-                        self.overlap_matrices[r].diagonal() / 2
-                    )
+                flipped_r = tuple(-i for i in r)
+                overlap_matrix_flipped = overlap_matrices[flipped_r]
+                self.overlap_matrices[r] = (
+                    overlap_matrices[r]
+                    + sparse.triu(overlap_matrix_flipped, k=1).conj().T
+                )
 
             if len(self.overlap_matrices) < len(self.hamiltonians):
                 raise ValueError(

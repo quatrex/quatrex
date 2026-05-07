@@ -187,7 +187,10 @@ def assemble_mfc_transform(
 
 
 def find_periodic_pairs(
-    pbc: tuple, boundary_inds: NDArray, nodes_fractional: NDArray
+    pbc: tuple,
+    boundary_inds: NDArray,
+    nodes_fractional: NDArray,
+    match_tol: float = 1e-4,
 ) -> list[tuple[int, int]]:
     """Find pairs of nodes that are periodic images of each other.
 
@@ -206,6 +209,9 @@ def find_periodic_pairs(
         the mesh.
     nodes_fractional : NDArray
         An array of fractional coordinates of the nodes in the mesh.
+    match_tol : float, optional
+        The tolerance for determining whether two nodes are periodic
+        images of each other. Default is 1e-4.
 
     Returns
     -------
@@ -224,7 +230,7 @@ def find_periodic_pairs(
             continue
 
         boundary_mask = (
-            np.abs(np.mod(np.round(nodes_fractional[i], decimals=5), 1)) < 1e-5
+            np.abs(np.mod(np.round(nodes_fractional[i], decimals=5), 1)) < match_tol
         )
         if not (pbc[boundary_mask]).all():
             # If the node is on a non-periodic boundary, skip it.
@@ -236,7 +242,7 @@ def find_periodic_pairs(
 
         distances = np.abs(nodes_fractional[i] - nodes_fractional[boundary_inds])
         distances = np.round(distances, decimals=5)
-        paired_nodes = (np.mod(distances, 1) < 1e-5).all(axis=1).nonzero()[0]
+        paired_nodes = (np.mod(distances, 1) < match_tol).all(axis=1).nonzero()[0]
 
         if paired_nodes.shape[0] != 2 ** boundary_mask.sum():
             raise ValueError(

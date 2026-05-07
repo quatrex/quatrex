@@ -593,6 +593,14 @@ class DeviceMesh:
             if not periodic:
                 continue
 
+            if len(surface_pair) != 2:
+                raise ValueError(
+                    "Periodic boundary surfaces must remain unfragmented. "
+                    f"Expected 2 surfaces along axis {i}, found {len(surface_pair)}. "
+                    "Check geometry/Dirichlet definitions to ensure they do not "
+                    "intersect periodic boundary surfaces."
+                )
+
             print(f"    Enforcing periodicity along lattice vector {lattice_vector}...")
 
             # Check which sits at a smaller coordinate value to

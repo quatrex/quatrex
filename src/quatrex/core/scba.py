@@ -218,10 +218,7 @@ class SCBAData:
                 symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
-            if (
-                config.coulomb_screening.dielectric_environment
-                and config.coulomb_screening.dielectric_method == "rpa"
-            ):
+            if config.coulomb_screening.dielectric_environment:
                 self.w_environment_retarded = dsdbsparse_type.from_sparray(
                     self.sparsity_pattern.astype(xp.complex128),
                     block_sizes=block_sizes,
@@ -271,6 +268,9 @@ class Observables:
     p_retarded_density: NDArray = None
     p_lesser_density: NDArray = None
     p_greater_density: NDArray = None
+    p_retarded_diagonal: NDArray = None
+    p_lesser_diagonal: NDArray = None
+    p_greater_diagonal: NDArray = None
 
     # --- Photons ------------------------------------------------------
     pi_photon_retarded_density: NDArray = None
@@ -312,7 +312,7 @@ class SCBA:
         electron_energies = xp.zeros((comm.size,))
         self.data = SCBAData(config, electron_energies=electron_energies)  # dummy data
         self.mixing_factor = self.config.scba.mixing_factor
-        self.rpa_coulomb_screening_bridge = None
+        self.environment_coulomb_screening_bridge = None
 
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
@@ -385,9 +385,6 @@ class SCBA:
                 else None
             )
 
-            # The transport-region polarization is always computed from the
-            # NEGF Green's functions. The optional RPA branch adds a fixed
-            # environment contribution on top of the iterative device screening.
             self.p_coulomb_screening = PCoulombScreening(
                 self.config,
                 self.coulomb_screening_energies,
@@ -460,7 +457,7 @@ class SCBA:
             self.coulomb_screening_solver.l_lesser.free_data()
             self.coulomb_screening_solver.l_greater.free_data()
 
-            self.rpa_coulomb_screening_bridge = EquilibriumRPAScreeningBridge(
+            self.environment_coulomb_screening_bridge = EquilibriumRPAScreeningBridge(
                 self.config,
                 self.coulomb_screening_energies,
                 self.data.p_lesser,
@@ -573,36 +570,16 @@ class SCBA:
         self.data.p_lesser.allocate_data()
         self.data.p_retarded.allocate_data()
 
-        use_rpa_polarization = (
-            self.has_dielectric_environment
-            and self.dielectric_method == "rpa"
-            and self.rpa_coulomb_screening_bridge is not None
+        self.p_coulomb_screening.compute(
+            self.data.g_lesser,
+            self.data.g_greater,
+            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
         )
-        if use_rpa_polarization:
-            self.rpa_coulomb_screening_bridge.populate_polarization(
-                self.data.p_retarded,
-                self.data.p_lesser,
-                self.data.p_greater,
-            )
-        else:
-            self.p_coulomb_screening.compute(
-                self.data.g_lesser,
-                self.data.g_greater,
-                out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
-            )
-
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        if use_rpa_polarization:
-            self.coulomb_screening_solver.solve(
-                self.data.p_lesser,
-                self.data.p_greater,
-                self.data.p_retarded,
-                out=(self.data.w_lesser, self.data.w_greater),
-            )
-        elif self.has_dielectric_environment and self.dielectric_method == "rpa":
-            self.rpa_coulomb_screening_bridge.populate(
+        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+            self.environment_coulomb_screening_bridge.populate(
                 self.data.w_environment_retarded,
                 self.data.w_environment_lesser,
                 self.data.w_environment_greater,
@@ -758,6 +735,11 @@ class SCBA:
     def _compute_coulomb_screening_observables(self) -> None:
 
         # NOTE: The overlap is maybe missing here (it is not used)
+        if self.config.outputs.polarization_diagonal:
+            self.observables.p_retarded_diagonal = density(self.data.p_retarded)
+            self.observables.p_lesser_diagonal = density(self.data.p_lesser)
+            self.observables.p_greater_diagonal = density(self.data.p_greater)
+
         if self.config.outputs.polarization_density:
             self.observables.p_retarded_density = -density(self.data.p_retarded) / (
                 2 * xp.pi
@@ -817,6 +799,14 @@ class SCBA:
                 )
 
         if self.config.scba.coulomb_screening:
+            if self.config.outputs.polarization_diagonal:
+                outputs.update(
+                    {
+                        f"p_lesser_diagonal_{iteration}.npy": self.observables.p_lesser_diagonal,
+                        f"p_greater_diagonal_{iteration}.npy": self.observables.p_greater_diagonal,
+                        f"p_retarded_diagonal_{iteration}.npy": self.observables.p_retarded_diagonal,
+                    }
+                )
             if self.config.outputs.polarization_density:
                 outputs.update(
                     {

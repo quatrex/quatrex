@@ -10,7 +10,10 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import bose_einstein
-from quatrex.device.inputs import _create_matrix_from_unit_cells
+from quatrex.device.inputs import (
+    _create_matrix_from_unit_cells,
+    trim_tight_binding_matrix,
+)
 
 from .equilibrium_screening import EquilibriumScreening
 from .rpa_compute import BrillouinZoneMesh, build_uniform_brillouin_zone_mesh
@@ -20,9 +23,6 @@ from .rpa_compute import BrillouinZoneMesh, build_uniform_brillouin_zone_mesh
 class EquilibriumRPABridgeResult:
     """Cached real-space screened interactions for the NEGF Coulomb SSE path."""
 
-    p_retarded_matrices: list[sparse.coo_matrix]
-    p_lesser_matrices: list[sparse.coo_matrix]
-    p_greater_matrices: list[sparse.coo_matrix]
     w_retarded_matrices: list[sparse.coo_matrix]
     w_lesser_matrices: list[sparse.coo_matrix]
     w_greater_matrices: list[sparse.coo_matrix]
@@ -96,33 +96,6 @@ class EquilibriumRPAScreeningBridge:
             w_lesser.stack[(local_index,)] = result.w_lesser_matrices[global_index]
             w_greater.stack[(local_index,)] = result.w_greater_matrices[global_index]
 
-    def populate_polarization(
-        self,
-        p_retarded: DSDBSparse,
-        p_lesser: DSDBSparse,
-        p_greater: DSDBSparse,
-    ) -> None:
-        """Populate distributed polarization tensors with equilibrium RPA data."""
-
-        result = self._cached_result or self._build_cached_result()
-        self._cached_result = result
-
-        for matrix in (p_retarded, p_lesser, p_greater):
-            if matrix._data is None:
-                matrix.allocate_data()
-            matrix.data[:] = 0.0
-
-        local_energy_count = int(self.template.stack_section_sizes[self._stack_rank])
-        energy_offset = int(
-            np.sum(self.template.stack_section_sizes[: self._stack_rank])
-        )
-
-        for local_index in range(local_energy_count):
-            global_index = energy_offset + local_index
-            p_retarded.stack[(local_index,)] = result.p_retarded_matrices[global_index]
-            p_lesser.stack[(local_index,)] = result.p_lesser_matrices[global_index]
-            p_greater.stack[(local_index,)] = result.p_greater_matrices[global_index]
-
     @property
     def _stack_rank(self) -> int:
         return int(comm.stack.rank)
@@ -185,9 +158,8 @@ class EquilibriumRPAScreeningBridge:
         )
         if p_retarded_qw.ndim != 4:
             raise NotImplementedError(
-                "RPA polarization injection into NEGF requires matrix_valued_polarization=True."
+                "RPA environment screening requires matrix_valued_polarization=True."
             )
-        p_spectral_function = p_retarded_qw - np.swapaxes(p_retarded_qw.conj(), -1, -2)
         bose = np.asarray(
             bose_einstein(
                 xp.asarray(self.screening_energies),
@@ -199,15 +171,7 @@ class EquilibriumRPAScreeningBridge:
         ]
         w_lesser_qw = bose * w_spectral_function
         w_greater_qw = (1.0 + bose) * w_spectral_function
-        p_lesser_qw = bose * p_spectral_function
-        p_greater_qw = (1.0 + bose) * p_spectral_function
 
-        print("RPA cache: transforming retarded P to transport matrices...", flush=True)
-        p_retarded_matrices = self._build_transport_matrices(mesh, p_retarded_qw)
-        print("RPA cache: transforming lesser P to transport matrices...", flush=True)
-        p_lesser_matrices = self._build_transport_matrices(mesh, p_lesser_qw)
-        print("RPA cache: transforming greater P to transport matrices...", flush=True)
-        p_greater_matrices = self._build_transport_matrices(mesh, p_greater_qw)
         print("RPA cache: transforming retarded W to transport matrices...", flush=True)
         w_retarded_matrices = self._build_transport_matrices(
             mesh,
@@ -218,9 +182,6 @@ class EquilibriumRPAScreeningBridge:
         print("RPA cache: transforming greater W to transport matrices...", flush=True)
         w_greater_matrices = self._build_transport_matrices(mesh, w_greater_qw)
         return EquilibriumRPABridgeResult(
-            p_retarded_matrices=p_retarded_matrices,
-            p_lesser_matrices=p_lesser_matrices,
-            p_greater_matrices=p_greater_matrices,
             w_retarded_matrices=w_retarded_matrices,
             w_lesser_matrices=w_lesser_matrices,
             w_greater_matrices=w_greater_matrices,
@@ -284,6 +245,13 @@ class EquilibriumRPAScreeningBridge:
                 block_index[periodic_axis] = translation + max_translation
                 unit_cells[tuple(block_index)] = block
 
+            # Match the device-side transport-cell construction by trimming the
+            # Fourier-reconstructed translation range back to the configured
+            # neighbor-cell cutoff before expanding into a transport matrix.
+            unit_cells = trim_tight_binding_matrix(
+                tight_binding_matrix=unit_cells,
+                neighbor_cell_cutoff=self.config.device.neighbor_cell_cutoff,
+            )
             matrix_sparray, __, __ = _create_matrix_from_unit_cells(
                 self.config, unit_cells
             )

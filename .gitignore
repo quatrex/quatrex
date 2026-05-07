@@ -166,9 +166,17 @@ notebooks/
 
 # Examples directory and outputs
 **/outputs
+**/outputs_*/
+**/.codex/
+**/.codex
 
 hostfile
 .vscode/
+
+# Carbon nanotube GW unit-cell local analysis helpers
+examples/w90/carbon-nanotube/gw-unit-cell/export_*rpa*.py
+examples/w90/carbon-nanotube/gw-unit-cell/plot_*rpa*.py
+examples/w90/carbon-nanotube/gw-unit-cell/plot_negf_vs_rpa_diagonal.py
 
 # Nsight Systems output
 *.nsys-rep

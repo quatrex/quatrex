@@ -687,6 +687,7 @@ class OutputConfig(BaseModel):
     hole_density: bool = False
 
     polarization_density: bool = False
+    polarization_diagonal: bool = False
     full_polarization: bool = False
     coulomb_screening_density: bool = False
 

@@ -4,7 +4,9 @@ import numpy as np
 import scipy.io
 from numpy.testing import assert_allclose
 
-from quatrex.dielectric_screening.negf_bridge import EquilibriumRPAScreeningBridge
+from quatrex.coulomb_screening.dielectric_screening.negf_bridge import (
+    EquilibriumRPAScreeningBridge,
+)
 
 
 def _write_input_matrices(tmp_path):

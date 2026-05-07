@@ -603,9 +603,6 @@ class SCBA:
 
         self._compute_coulomb_screening_observables()
 
-        if self.config.outputs.full_polarization:
-            self._write_full_polarization(self.iteration)
-
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
         self.data.p_retarded.free_data()
@@ -633,33 +630,6 @@ class SCBA:
             self.data.w_environment_retarded.free_data()
             self.data.w_environment_greater.free_data()
             self.data.w_environment_lesser.free_data()
-
-    @profiler.profile(
-        label="SCBA: Full polarization output", level="default", comm=comm
-    )
-    def _write_full_polarization(self, iteration: int) -> None:
-        """Writes full dense polarization stacks for the current iteration."""
-
-        if self.data.p_lesser.distribution_state != "stack":
-            raise ValueError("Full polarization output requires stack-distributed P.")
-
-        output_dir = self.config.output_dir
-        if comm.rank == 0:
-            os.makedirs(output_dir, exist_ok=True)
-
-        for name, matrix in (
-            ("p_lesser", self.data.p_lesser),
-            ("p_greater", self.data.p_greater),
-            ("p_retarded", self.data.p_retarded),
-        ):
-            dense_local = matrix.to_dense()
-            dense = comm.stack.all_gather_v(
-                dense_local,
-                axis=0,
-                mask=matrix._stack_padding_mask,
-            )
-            if comm.rank == 0:
-                xp.save(output_dir / f"{name}_full_{iteration}.npy", dense)
 
     @profiler.profile(label="SCBA: G observables", level="default", comm=comm)
     def _compute_electron_observables(self) -> None:

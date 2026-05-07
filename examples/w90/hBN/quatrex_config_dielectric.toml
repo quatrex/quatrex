@@ -31,7 +31,6 @@ electron_density = true
 hole_density = true
 
 polarization_density = true
-full_polarization = true
 coulomb_screening_density = true
 
 self_energy_density = true

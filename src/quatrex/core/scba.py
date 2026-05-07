@@ -637,6 +637,87 @@ class SCBA:
         for filename, data in outputs.items():
             xp.save(self.config.output_dir / filename, data)
 
+    def _compute_excess_charge_densities(self):
+        """Computes the charge density from the local density of states.
+
+        Returns
+        -------
+        excess_electron_density : NDArray
+            The excess electron density computed from the local density
+            of states.
+        excess_hole_density : NDArray
+            The excess hole density computed from the local density of
+            states.
+
+        """
+        if (
+            self.observables.electron_density is None
+            or self.observables.hole_density is None
+        ):
+            raise ValueError(
+                "Electron and hole densities must be computed "
+                "before computing excess charge densities."
+            )
+
+        mid_gap_energy = (
+            self.config.electron.conduction_band_edge
+            + self.config.electron.valence_band_edge
+        ) / 2
+        mid_gap_energy = self.electron_solver.potential + mid_gap_energy
+
+        electron_density = self.observables.electron_density.copy()
+        hole_density = self.observables.hole_density.copy()
+
+        mask = self.electron_energies[:, None] > mid_gap_energy
+        electron_density[~mask] = 0
+        hole_density[mask] = 0
+
+        excess_electron_density = np.trapezoid(
+            electron_density, self.electron_energies, axis=0
+        )
+        excess_hole_density = np.trapezoid(hole_density, self.electron_energies, axis=0)
+
+        return excess_electron_density, excess_hole_density
+
+    def set_potential(self, potential: NDArray):
+        """Sets the potential for the SCBA calculation.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The new potential values to be set in the system matrix.
+
+        """
+        if potential.shape[0] != np.sum(self.data.orbitals_per_atom):
+            potential = np.repeat(potential, self.data.orbitals_per_atom)
+
+        self.electron_solver.potential = potential
+
+    def compute_charge_density(self) -> NDArray:
+        """Computes the charge density.
+
+        This runs the SCBA to convergence (or to the maximum number of
+        iterations) and then computes the charge density from the
+        spectral electron and hole densities.
+
+        Returns
+        -------
+        charge_density : NDArray
+            The computed charge density for the device.
+
+        """
+
+        self.run()
+
+        electron_density, hole_density = self._compute_excess_charge_densities()
+        charge_density = electron_density - hole_density
+
+        # From orbital to atom resolved charge density.
+        orbital_offsets = np.hstack(([0], np.cumsum(self.data.orbitals_per_atom)))
+        charge_density = np.add.reduceat(charge_density, orbital_offsets[:-1])
+
+        return charge_density
+
     @profiler.profile(label="SCBA", level="default", comm=comm)
     def run(self) -> None:
         """Runs the SCBA to convergence."""

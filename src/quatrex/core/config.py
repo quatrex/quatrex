@@ -40,10 +40,62 @@ class SCSPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     min_iterations: PositiveInt = 1
-    max_iterations: PositiveInt = 100
-    convergence_tol: PositiveFloat = 1e-5
+    """The minimum number of Schrödinger-Poisson iterations to perform."""
 
-    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+    max_iterations: PositiveInt = 100
+    """The maximum number of Schrödinger-Poisson iterations to perform."""
+
+    convergence_tol: PositiveFloat = 1e-3
+    r"""The convergence tolerance for the potential in the
+    Schrödinger-Poisson loop.
+
+    This is defined as the infinity norm of the difference between the
+    potential in the current iteration and the previous iteration.
+
+    $$\lVert V_{n} - V_{n-1} \rVert_{\infty} < \verb|convergence_tol|$$
+
+    """
+
+    # Parameters for potential mixing.
+    mixer: Literal["under-relaxation", "diis"] = "under-relaxation"
+    """The mixing scheme to use for the self-consistent solution of the
+    Poisson equation.
+
+    - `"under-relaxation"`: Simple under-relaxation scheme where the new
+      potential is a weighted average of the previous potential and the
+      newly computed potential. The weight is given by the
+      `mixing_factor` parameter.
+    - `"diis"`: Direct inversion in the iterative subspace (DIIS) method
+      which constructs the new potential as a linear combination of the
+      previous potentials and the newly computed potential. The
+      coefficients of the linear combination are determined by
+      minimizing the residuals of the previous potentials.
+
+    """
+
+    mixing_factor: PositiveFloat = Field(default=0.75, le=1.0)
+    """Under-relaxation factor for the under-relaxation mixer. Should be
+    between 0 and 1.
+
+    Only used if `mixer` is set to "under-relaxation".
+
+    """
+
+    max_history: PositiveInt = 3
+    """Maximum number of previous potentials and residuals to store for
+    the DIIS extrapolation.
+
+    Only used if `mixer` is set to "diis".
+
+    """
+
+    epsilon: PositiveFloat = 1e-5
+    """Regularization parameter for the least-squares problem in the
+    DIIS method to ensure numerical stability.
+
+    Only used if `mixer` is set to "diis".
+
+    """
 
 
 class QTBMConfig(BaseModel):
@@ -106,21 +158,84 @@ class SCBAConfig(BaseModel):
     """
 
 
-class PoissonConfig(BaseModel):
+class ElectrostaticsConfig(BaseModel):
     """Options for the Poisson solver."""
 
     model_config = ConfigDict(extra="forbid")
 
-    model: Literal["point-charge", "orbital"] = "point-charge"
-    max_iterations: PositiveInt = 100
-    convergence_tol: PositiveFloat = 1e-5
-    mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+    orbital_basis: Literal["point-charge"] = "point-charge"
+    """The orbital basis to use to transform between the real-space and
+    orbital-space representations of the potential and charge density.
 
-    rho_shift: NonNegativeFloat = 1e-8
-    cg_tol: PositiveFloat = 1e-5
-    cg_max_iter: PositiveInt = 100
+    Currently, only the "point-charge" basis is supported. Each orbital
+    is represented as a point charge located at the corresponding atomic
+    position.
 
-    num_orbitals_per_atom: dict[str, int] = Field(default_factory=dict)
+    """
+
+    solving_scheme: Literal["root-finding", "direct"] = "root-finding"
+    """The scheme to solve the non-linear Poisson equation.
+
+    - `"root-finding"`: Solves the Poisson equation using an iterative
+      predictor-corrector scheme where the charge density response is
+      computed from the potential using a density model and the Poisson
+      equation is solved iteratively until convergence.
+    - `"direct"`: Solves the Poisson equation directly using a linear
+      solver. Due to the non-linearity of the Schrödinger-Poisson
+      problem, this scheme is not recommended and should only be used
+      with very cautious mixing and a good initial guess.
+
+    """
+
+    max_iterations: PositiveInt = 20
+    """The maximum number of inner iterations for the root-finding scheme.
+
+    Only used if `solving_scheme` is set to "root-finding".
+
+    """
+
+    convergence_tol: PositiveFloat = 1e-3
+    """The convergence tolerance for the root-finding scheme.
+
+    This is defined as the infinity norm of the potential update in the
+    root-finding scheme.
+
+    Only used if `solving_scheme` is set to "root-finding".
+
+    """
+
+    density_model: Literal["single-band", "omen"] = "single-band"
+    """The density model to use for the root-finding scheme.
+
+    - `"single-band"`: Uses a simple single-band density model where the
+      charge density is computed from the potential using a single-band
+      approximation.
+    - `"omen"`: Uses the density model from the OMEN code. This is
+      almost identical to the single-band model in the 2D case.
+
+    Only used if `solving_scheme` is set to "root-finding".
+
+    """
+
+    density_model_dim: Literal[1, 2, 3] = 2
+    """The dimensionality of the system to use for the single-band
+    density model.
+
+    Only used if `solving_scheme` is set to "root-finding" and
+    `density_model` is set to "single-band".
+
+    """
+
+    initial_guess: Literal["zero", "constraints", "file"] = "file"
+    """The strategy to generate the initial guess for the potential.
+
+    - `"zero"`: Uses a zero potential as the initial guess.
+    - `"constraints"`: Solves a linear Poisson equation with the potential
+        constraints to generate the initial guess.
+    - `"file"`: Loads the initial guess from a file. The file should be
+        located in the `input_dir` and named `potential.npy`.
+
+    """
 
 
 class MemoizerConfig(BaseModel):
@@ -1125,7 +1240,7 @@ class QuatrexConfig(BaseModel):
     scsp: SCSPConfig = SCSPConfig()
     scba: SCBAConfig = SCBAConfig()
     qtbm: QTBMConfig = QTBMConfig()
-    poisson: PoissonConfig = PoissonConfig()
+    electrostatics: ElectrostaticsConfig = ElectrostaticsConfig()
 
     electron: ElectronConfig
 

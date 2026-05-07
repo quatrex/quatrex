@@ -96,6 +96,8 @@ class SCSP:
             return DIIS(
                 max_history=scsp_config.max_history,
                 epsilon=scsp_config.epsilon,
+                alpha=scsp_config.mixing_factor,
+                extrapolation_interval=scsp_config.extrapolation_interval,
             )
 
         raise ValueError(f"Unknown mixer type: {scsp_config.mixer}")

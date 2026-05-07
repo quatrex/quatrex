@@ -77,8 +77,6 @@ class SCSPConfig(BaseModel):
     """Under-relaxation factor for the under-relaxation mixer. Should be
     between 0 and 1.
 
-    Only used if `mixer` is set to "under-relaxation".
-
     """
 
     max_history: PositiveInt = 3
@@ -92,6 +90,18 @@ class SCSPConfig(BaseModel):
     epsilon: PositiveFloat = 1e-5
     """Regularization parameter for the least-squares problem in the
     DIIS method to ensure numerical stability.
+
+    Only used if `mixer` is set to "diis".
+
+    """
+
+    extrapolation_interval: PositiveInt = 1
+    """Number of iterations between DIIS extrapolation steps.
+    
+    For example, if set to 3, the mixer will perform two
+    under-relaxation steps followed by a DIIS extrapolation step, and
+    then repeat this cycle. If set to 1 (the default), the Pulay mixing
+    is performed at every iteration.
 
     Only used if `mixer` is set to "diis".
 

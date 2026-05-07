@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
+from hashlib import sha256
 from tempfile import NamedTemporaryFile
 
 import ase.io
@@ -14,7 +15,16 @@ import pyvista as pv
 from qttools import NDArray
 from quatrex import __version__
 from quatrex.core.config import QuatrexConfig
-from quatrex.electrostatics.geometry_config import Shape
+from quatrex.electrostatics.geometry_config import (
+    Box,
+    Cylinder,
+    Shape,
+    ShapeDifference,
+    ShapeUnion,
+    VolumeProperties,
+)
+
+GMSH_GEOMETRY_TOLERANCE = 1e-5
 
 
 def _add_box(shape: Shape) -> tuple[int, int]:
@@ -249,6 +259,169 @@ def _add_union(shape: Shape) -> tuple[int, int]:
     return out_dim_tags[0]
 
 
+def _inside_box(point: NDArray, box: Box) -> bool:
+    """Checks if a point is inside a box defined by its bounds.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    box : Box
+        The box defined by its bounds, which should be a tuple of two
+        points representing the lower and upper corners of the box.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the box, False otherwise.
+
+    """
+    point = np.asarray(point)
+    (x_min, y_min, z_min), (x_max, y_max, z_max) = box.bounds
+    inside = (
+        (x_min <= point[..., 0])
+        & (point[..., 0] <= x_max)
+        & (y_min <= point[..., 1])
+        & (point[..., 1] <= y_max)
+        & (z_min <= point[..., 2])
+        & (point[..., 2] <= z_max)
+    )
+
+    return inside
+
+
+def _inside_cylinder(point: NDArray, cylinder: Cylinder) -> bool:
+    """Checks if a point is inside a cylinder defined by its center, axis, length, and radius.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    cylinder : Cylinder
+        The cylinder defined by its center, axis, length, and radius.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the cylinder, False otherwise.
+
+    """
+    point = np.asarray(point)
+    single_point = point.ndim == 1
+    if single_point:
+        point = point[None, :]
+
+    center = np.array(cylinder.center)
+    axis = np.array(cylinder.axis)
+    axis /= np.linalg.norm(axis)
+    length = cylinder.length
+    radius = cylinder.radius
+
+    # Compute the vector from the center of the cylinder to the point.
+    v = point - center
+
+    # Project the vector onto the axis of the cylinder to get the
+    # component along the axis.
+    v_parallel = np.dot(v, axis)[:, None] * axis
+
+    # The component perpendicular to the axis is then given by:
+    v_perpendicular = v - v_parallel
+
+    # Check if the point is within the length and radius of the
+    # cylinder.
+    inside = (
+        (0 <= np.dot(v, axis))
+        & (np.dot(v, axis) <= length)
+        & (np.linalg.norm(v_perpendicular, axis=1) <= radius)
+    )
+    return inside[0] if single_point else inside
+
+
+_inside_entity_functions = {
+    "box": _inside_box,
+    "cylinder": _inside_cylinder,
+}
+
+
+def _inside_union(point: NDArray, shape_union: ShapeUnion) -> bool:
+    """Checks if a point is inside a union of shapes.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape_union : ShapeUnion
+        The union of shapes defined by a list of shapes.
+
+    Returns
+    -------
+    bool
+        True if the point is inside any of the shapes in the union, False otherwise.
+
+    """
+    inside = np.zeros(point.shape[0], dtype=bool)
+    for shape in shape_union.shapes:
+        inside_shape = _inside_entity_functions[shape.type](point, shape)
+        inside |= inside_shape
+
+    return inside
+
+
+def _inside_difference(point: NDArray, shape_difference: ShapeDifference) -> bool:
+    """Checks if a point is inside a difference of two shapes.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape_difference : ShapeDifference
+        The difference of two shapes defined by a `base` shape and a
+        `subtract` shape.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the `base` shape and not inside the
+        `subtract` shape, False otherwise.
+
+    """
+    inside_base = _inside_entity_functions[shape_difference.base.type](
+        point, shape_difference.base
+    )
+    inside_subtract = _inside_entity_functions[shape_difference.subtract.type](
+        point, shape_difference.subtract
+    )
+    inside = inside_base & ~inside_subtract
+    return inside
+
+
+def inside_shape(point: NDArray, shape: Shape) -> bool:
+    """Checks if a point is inside a shape.
+
+    Parameters
+    ----------
+    point : array-like
+        The coordinates of the point to check.
+    shape : Shape
+        The shape definition, which can be a basic shape, a union of
+        shapes, or a difference of shapes.
+
+    Returns
+    -------
+    bool
+        True if the point is inside the shape, False otherwise.
+
+    """
+    if shape.type in _inside_entity_functions:
+        return _inside_entity_functions[shape.type](point, shape)
+    if shape.type == "union":
+        return _inside_union(point, shape)
+    if shape.type == "difference":
+        return _inside_difference(point, shape)
+
+    raise ValueError(f"Unsupported shape type {shape.type}")
+
+
 class DeviceMesh:
     """Class for generating a mesh for the device geometry defined in the configuration.
 
@@ -328,6 +501,8 @@ class DeviceMesh:
         )
         gmsh.model.occ.synchronize()
 
+        return (3, structure_cell)
+
     def _add_bounding_box(self) -> tuple[int, int]:
         """Adds a bounding box to the GMSH model.
 
@@ -403,11 +578,11 @@ class DeviceMesh:
             )
             # Determine the plane of the surface by checking which
             # coordinate is constant in the bounding box.
-            if np.isclose(x_min, x_max, atol=1e-4):
+            if np.isclose(x_min, x_max, atol=GMSH_GEOMETRY_TOLERANCE):
                 surface_pairs[0].append([tag])
-            elif np.isclose(y_min, y_max, atol=1e-4):
+            elif np.isclose(y_min, y_max, atol=GMSH_GEOMETRY_TOLERANCE):
                 surface_pairs[1].append([tag])
-            elif np.isclose(z_min, z_max, atol=1e-4):
+            elif np.isclose(z_min, z_max, atol=GMSH_GEOMETRY_TOLERANCE):
                 surface_pairs[2].append([tag])
             else:
                 raise ValueError(f"Surface {tag} of bounding box is not axis-aligned")
@@ -417,6 +592,8 @@ class DeviceMesh:
         ):
             if not periodic:
                 continue
+
+            print(f"    Enforcing periodicity along lattice vector {lattice_vector}...")
 
             # Check which sits at a smaller coordinate value to
             # determine the direction of the translation.
@@ -459,7 +636,7 @@ class DeviceMesh:
                 gmsh.model.mesh.field.set_numbers(
                     distance_field, "PointsList", [tag for __, tag in dim_tags]
                 )
-                gmsh.model.mesh.field.set_numbers(distance_field, "Sampling", [100])
+                gmsh.model.mesh.field.set_number(distance_field, "Sampling", 100)
 
                 threshold_field = gmsh.model.mesh.field.add("Threshold")
                 gmsh.model.mesh.field.set_number(
@@ -495,7 +672,9 @@ class DeviceMesh:
                     restrict_field, "SurfacesList", [tag for __, tag in dim_tags]
                 )
             else:
-                raise ValueError(f"Unsupported dimension {dim} for region {name}")
+                gmsh.model.mesh.field.set_numbers(
+                    restrict_field, "PointsList", [tag for __, tag in dim_tags]
+                )
 
             region_fields.append(restrict_field)
 
@@ -514,8 +693,6 @@ class DeviceMesh:
         """
         region_node_inds = {}
         for region_name in self.region_mesh_sizes.keys():
-
-            tag, dim = self.mesh.field_data[region_name]
 
             node_inds = []
             for cell_block, cell_inds in zip(
@@ -552,24 +729,37 @@ class DeviceMesh:
         gmsh.initialize()
         gmsh.option.set_number("General.Terminal", 0)
         gmsh.option.set_number("General.Verbosity", 5)
+        gmsh.option.set_number("Geometry.Tolerance", GMSH_GEOMETRY_TOLERANCE)
 
         gmsh.logger.start()
-        gmsh.option.set_number("Geometry.Tolerance", 1e-4)
-
         gmsh.model.add(".tmp")
 
         # Add device geometry entities.
         print("    Adding device geometry regions...")
         region_dim_tags = {}
         for region in self.config.device.geometry.regions:
+            if isinstance(region.properties, VolumeProperties):
+                # We do not add volumes as physical groups directly.
+                # Instead, we will find the nodes in the volumes after
+                # meshing and assign them to physical groups based on
+                # that. This is because the volumes are not meshed as
+                # separate entities,
+                continue
+
             dim_tag = _add_entity(region.shape)
             region_dim_tags[region.name] = dim_tag
 
         print("    Adding structure cell...")
-        self._add_structure_cell()
+        cell_dim_tags = [self._add_structure_cell()]
 
         print("    Adding bounding box...")
         bounding_box_dim_tags = [self._add_bounding_box()]
+
+        # Remove the cell again, since we only needed it to define the
+        # bounding, but we do not want it to be part of the final
+        # geometry.
+        gmsh.model.occ.remove(cell_dim_tags, recursive=True)
+        gmsh.model.occ.synchronize()
 
         # Only fragment if there is any geometry defined, otherwise we
         # just have the bounding box.
@@ -578,12 +768,6 @@ class DeviceMesh:
             out_dim_tags, out_map = gmsh.model.occ.fragment(
                 bounding_box_dim_tags,
                 list(region_dim_tags.values()),
-                # NOTE: As i understand it, this only removes the original
-                # entities, but not the resulting fragments. This is what we
-                # want, since we need the fragments to define the physical
-                # groups for the regions.
-                removeObject=True,
-                removeTool=False,
             )
             region_dim_tags = dict(zip(region_dim_tags.keys(), out_map[1:]))
             bounding_box_dim_tags = out_map[0]
@@ -606,7 +790,35 @@ class DeviceMesh:
         # Generate the mesh.
         print("    Meshing...")
         gmsh.model.mesh.generate(dim=3)
-        gmsh.model.mesh.optimize(method="", niter=3)
+        gmsh.model.mesh.remove_duplicate_nodes()
+        gmsh.model.mesh.remove_duplicate_elements()
+
+        # Set up physical groups for the volume regions based on which
+        # nodes are inside the corresponding shapes. We do this after
+        # meshing, since the volume regions may not be meshed as
+        # separate entities, but we can still identify which nodes
+        # belong to which regions based on their coordinates.
+        node_tags, node_coords, __ = gmsh.model.mesh.get_nodes()
+        node_coords = node_coords.reshape(-1, 3)
+        for region in self.config.device.geometry.regions:
+            if not isinstance(region.properties, VolumeProperties):
+                continue
+
+            inside_mask = inside_shape(node_coords, region.shape)
+            region_node_tags = node_tags[inside_mask]
+
+            discrete_entity_tag = gmsh.model.add_discrete_entity(0)
+            gmsh.model.mesh.add_nodes(
+                0, discrete_entity_tag, [], node_coords[inside_mask].flatten()
+            )
+            max_tag = gmsh.model.mesh.get_max_node_tag()
+            element_tags = np.arange(len(region_node_tags)) + max_tag + 1_000_000
+            gmsh.model.mesh.add_elements(
+                0, discrete_entity_tag, [15], [element_tags], [region_node_tags]
+            )
+            gmsh.model.add_physical_group(0, [discrete_entity_tag], name=region.name)
+
+        gmsh.model.mesh.optimize(method="", niter=10)
 
         gmsh_logs = gmsh.logger.get()
         gmsh.logger.stop()
@@ -639,7 +851,9 @@ class DeviceMesh:
                     [
                         "$Comments",
                         f"Generated with quatrex v{__version__}.",
+                        f"{sha256(str(self.config.device.geometry).encode()).hexdigest()}",
                         "$EndComments",
+                        "",
                     ]
                 )
             )
@@ -708,11 +922,11 @@ class DeviceMesh:
         pl.show()
 
     @classmethod
-    def from_file(cls, config: QuatrexConfig) -> "DeviceMesh":
-        """Creates a DeviceMesher instance from the configuration file.
+    def from_config(cls, config: QuatrexConfig) -> "DeviceMesh":
+        """Creates a DeviceMesh instance from the configuration file.
 
         This function reads the mesh from the output directory and
-        creates a DeviceMesher instance with the loaded mesh.
+        creates a DeviceMesh instance with the loaded mesh.
 
         Parameters
         ----------
@@ -722,10 +936,29 @@ class DeviceMesh:
 
         Returns
         -------
-        DeviceMesher
-            An instance of DeviceMesher with the loaded mesh.
+        DeviceMesh
+            An instance of DeviceMesh with the loaded mesh.
 
         """
+        # Check if the mesh file is up to date with the configuration by
+        # comparing the hash of the configuration with the hash stored
+        # in the mesh file comments.
+        with open(config.output_dir / "device.msh", "r") as f:
+            lines = f.readlines()
+            comments_start = lines.index("$Comments\n")
+            comments_end = lines.index("$EndComments\n")
+            comments = lines[comments_start + 1 : comments_end]
+            config_hash = next(
+                line.strip() for line in comments if len(line.strip()) == 64
+            )
+            if config_hash != sha256(str(config.device.geometry).encode()).hexdigest():
+                # Warn the user that the mesh file is not up to date with the configuration.
+                print(
+                    "Warning: The mesh file is not up to date with the configuration. "
+                    "Please regenerate the mesh by running `quatrex mesh`."
+                    "The existing mesh file will be used, but it may not reflect the current configuration."
+                )
+
         device_mesher = cls(config)
         device_mesher._mesh = meshio.read(config.output_dir / "device.msh")
         device_mesher._region_node_inds = device_mesher._map_nodes_to_physical_regions()

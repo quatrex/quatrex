@@ -119,6 +119,10 @@ class OMENDensityModel(DensityModel):
         self.rho_shift = rho_shift
         self.rho_sign = np.sign(density)
 
+        # NOTE: OMEN does not use CODATA values. Instead, it hardcodes
+        # the value of k_B in eV/K.
+        self._k_B = 1.38e-23 / 1.6022e-19
+
         self.fermi_level = self._estimate_fermi_level(density, potential)
 
     def _estimate_fermi_level(
@@ -141,7 +145,7 @@ class OMENDensityModel(DensityModel):
             The estimated Fermi level.
 
         """
-        fermi_level = potential + self.rho_sign * k_B * self.temperature * np.log(
+        fermi_level = potential + self.rho_sign * self._k_B * self.temperature * np.log(
             np.exp(
                 (density + self.rho_sign * self.rho_shift)
                 / (self.effective_dos * self.rho_sign)
@@ -173,7 +177,7 @@ class OMENDensityModel(DensityModel):
                 + np.exp(
                     self.rho_sign
                     * (self.fermi_level - potential)
-                    / (k_B * self.temperature)
+                    / (self._k_B * self.temperature)
                 )
             )
         )
@@ -196,13 +200,13 @@ class OMENDensityModel(DensityModel):
         """
         density_derivative = (
             -1
-            / (k_B * self.temperature)
+            / (self._k_B * self.temperature)
             * self.effective_dos
             / (
                 np.exp(
                     self.rho_sign
                     * (potential - self.fermi_level)
-                    / (k_B * self.temperature)
+                    / (self._k_B * self.temperature)
                 )
                 + 1
             )

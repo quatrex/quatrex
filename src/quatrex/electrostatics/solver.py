@@ -43,10 +43,13 @@ class PoissonSolver(ABC):
 
         epsilon_r = np.ones_like(mesh.p[0])
         for region in config.device.geometry.regions:
-            if not hasattr(region, "epsilon_r"):
+
+            region_epsilon_r = getattr(region.properties, "epsilon_r", None)
+            if region_epsilon_r is None:
                 continue
+
             inds = device_mesh.region_node_inds[region.name]
-            epsilon_r[inds] = region.properties.epsilon_r
+            epsilon_r[inds] = region_epsilon_r
 
         self.stiffness_matrix = self._assemble_stiffness_matrix(
             basis=self.basis,

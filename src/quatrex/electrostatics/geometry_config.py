@@ -419,6 +419,8 @@ def _assemble_shape_definitions(
 
         shape_defs[region.name] = region.shape
 
+    return shape_defs
+
 
 def parse_geometry_config(raw_device_config: dict[str, Any]) -> GeometryConfig:
     """Parses the raw geometry config and resolves all shape references."""

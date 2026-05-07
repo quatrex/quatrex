@@ -143,13 +143,13 @@ class DIIS(Mixer):
         self.residuals.append(residual)
 
         num_entries = len(self.history)
+        self.call_count += 1
 
         # If we don't have enough entries, fall back to under-relaxation.
         # TODO: We could pass a parameter for the under-relaxation factor
         # here, or even do a dynamic adjustment based on the norm of the
         # residuals.
         if num_entries < 2 or self.call_count % self.extrapolation_interval != 0:
-            self.call_count += 1
             return UnderRelaxation(self.alpha).mix(previous_value, incoming_value)
 
         # Construct the matrix for the least-squares problem.

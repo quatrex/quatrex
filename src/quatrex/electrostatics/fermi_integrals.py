@@ -39,7 +39,7 @@ def _gamma(n: float) -> float:
     return sp.special.gamma(n)
 
 
-def fermi_integral(k: int, eta: NDArray, num_quad_points: int = 500) -> float:
+def fermi_integral(k: float, eta: NDArray, num_quad_points: int = 500) -> float:
     """Computes the Fermi integral of order k by quadrature.[^1].
 
     Extended (composite) trapezoidal quadrature rule with a variable
@@ -57,7 +57,7 @@ def fermi_integral(k: int, eta: NDArray, num_quad_points: int = 500) -> float:
 
     Parameters
     ----------
-    k : int
+    k : float
         The order of the Fermi integral. If k is 0 or -1, the analytical
         solution is returned.
     eta : NDArray
@@ -143,9 +143,7 @@ def _inverse_fermi_integral_numerical(
     """
 
     def cost_function(eta: NDArray, k: float, u: float, num_quad_points: int):
-        return np.linalg.norm(
-            (fermi_integral(k, eta[..., np.newaxis], num_quad_points) - u) ** 2
-        )
+        return np.linalg.norm((fermi_integral(k, eta, num_quad_points) - u) ** 2)
 
     # Minimize the cost function.
     result = minimize(cost_function, x0=np.zeros_like(u), args=(k, u, num_quad_points))

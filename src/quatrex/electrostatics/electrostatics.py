@@ -71,7 +71,7 @@ class ElectrostaticSolver:
     def _configure_constraints(
         config: QuatrexConfig,
         device_mesh: DeviceMesh,
-    ) -> tuple[NDArray, dict[str, tuple[float, NDArray]]]:
+    ) -> tuple[dict[str, tuple[float, NDArray]], NDArray]:
         """Configures the constraints for the electrostatic problem."""
 
         potential_constraints = {}

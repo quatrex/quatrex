@@ -712,7 +712,8 @@ class DeviceMesh:
                 node_inds.append(np.unique(cell_block.data[cell_inds]))
 
             if not node_inds:
-                return np.array([], dtype=int)
+                region_node_inds[region_name] = np.array([], dtype=int)
+                continue
 
             region_node_inds[region_name] = np.unique(np.concatenate(node_inds))
 

@@ -977,6 +977,14 @@ class DeviceConfig(BaseModel):
 
     construct_from_unit_cell: bool = False
 
+    geometry: GeometryConfig
+    """The geometry configuration of the device.
+    
+    This contains a defintion of all regions in the device, such as
+    doping, material constants and gates.
+
+    """
+
     # --- Device geometry ---------------------------------------------
     neighbor_cell_cutoff: (
         tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None

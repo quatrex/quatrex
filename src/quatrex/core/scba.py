@@ -520,16 +520,19 @@ class SCBA:
                 self.data.g_retarded,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.electron_ldos *= 2  # Spin
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.electron_density *= 2  # Spin
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.hole_density *= 2  # Spin
 
         if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(

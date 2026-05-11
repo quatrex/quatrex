@@ -93,65 +93,6 @@ def _btd_apply_potential(
         ) / 2
 
 
-def _btd_assemble(
-    system_matrix: DSDBSparse,
-    hamiltonian: DSDBSparse,
-    sse_lesser: DSDBSparse,
-    sse_greater: DSDBSparse,
-    sse_retarded_hermitian: DSDBSparse,
-) -> None:
-    r"""Subtracts the Hamiltonian and the self-energy from the system matrix on the block-tridiagonal.
-
-    $$\mathbf{M} \mathrel{{-}{=}} \mathbf{H} + \mathbf{\Sigma}^R + \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right)$$
-
-    This is an in-place operation, i.e. the system matrix is modified.
-
-    Parameters
-    ----------
-    system_matrix : DSDBSparse
-        The system matrix to subtract from.
-    hamiltonian : DSDBSparse
-        The Hamiltonian to subtract.
-    sse_lesser : DSDBSparse
-        The lesser self-energy to subtract.
-    sse_greater : DSDBSparse
-        The greater self-energy to subtract.
-    sse_retarded_hermitian : DSDBSparse
-        The retarded self-energy to subtract.
-
-    """
-    system_matrix_ = system_matrix.stack[...]
-    hamiltonian_ = hamiltonian.stack[...]
-    sse_retarded_hermitian_ = sse_retarded_hermitian.stack[...]
-    sse_lesser_ = sse_lesser.stack[...]
-    sse_greater_ = sse_greater.stack[...]
-    for i in range(system_matrix.num_local_blocks):
-        j = i + 1
-        system_matrix_.blocks[i, i] -= (
-            sse_retarded_hermitian_.blocks[i, i]
-            + 0.5 * (sse_greater_.blocks[i, i] - sse_lesser_.blocks[i, i])
-            + hamiltonian_.blocks[i, i]
-        )
-
-        if (
-            j >= system_matrix.num_local_blocks
-            and comm.block.rank == comm.block.size - 1
-        ):
-            # The last rank does not have these blocks.
-            continue
-
-        system_matrix_.blocks[i, j] -= (
-            sse_retarded_hermitian_.blocks[i, j]
-            + 0.5 * (sse_greater_.blocks[i, j] - sse_lesser_.blocks[i, j])
-            + hamiltonian_.blocks[i, j]
-        )
-        system_matrix_.blocks[j, i] -= (
-            sse_retarded_hermitian_.blocks[j, i]
-            + 0.5 * (sse_greater_.blocks[j, i] - sse_lesser_.blocks[j, i])
-            + hamiltonian_.blocks[j, i]
-        )
-
-
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 
@@ -444,6 +385,59 @@ class ElectronSolver(SubsystemSolver):
                 gamma_nn.copy(), self.right_occupancies - 1
             )
 
+    def _subtract_hamiltonian_and_self_energy(
+        self,
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        sse_retarded_hermitian: DSDBSparse,
+    ) -> None:
+        r"""Subtracts the Hamiltonian and the self-energy from the system matrix on the block-tridiagonal.
+
+        $$\mathbf{M} \mathrel{{-}{=}} \mathbf{H} + \mathbf{\Sigma}^R + \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right)$$
+
+        This modifies the system matrix in-place, i.e. the result is stored in `self.system_matrix`.
+
+        Parameters
+        ----------
+        sse_lesser : DSDBSparse
+            The lesser self-energy to subtract.
+        sse_greater : DSDBSparse
+            The greater self-energy to subtract.
+        sse_retarded_hermitian : DSDBSparse
+            The retarded self-energy to subtract.
+
+        """
+        system_matrix_ = self.system_matrix.stack[...]
+        hamiltonian_ = self.hamiltonian.stack[...]
+        sse_retarded_hermitian_ = sse_retarded_hermitian.stack[...]
+        sse_lesser_ = sse_lesser.stack[...]
+        sse_greater_ = sse_greater.stack[...]
+        for i in range(self.system_matrix.num_local_blocks):
+            j = i + 1
+            system_matrix_.blocks[i, i] -= (
+                sse_retarded_hermitian_.blocks[i, i]
+                + 0.5 * (sse_greater_.blocks[i, i] - sse_lesser_.blocks[i, i])
+                + hamiltonian_.blocks[i, i]
+            )
+
+            if (
+                j >= self.system_matrix.num_local_blocks
+                and comm.block.rank == comm.block.size - 1
+            ):
+                # The last rank does not have these blocks.
+                continue
+
+            system_matrix_.blocks[i, j] -= (
+                sse_retarded_hermitian_.blocks[i, j]
+                + 0.5 * (sse_greater_.blocks[i, j] - sse_lesser_.blocks[i, j])
+                + hamiltonian_.blocks[i, j]
+            )
+            system_matrix_.blocks[j, i] -= (
+                sse_retarded_hermitian_.blocks[j, i]
+                + 0.5 * (sse_greater_.blocks[j, i] - sse_lesser_.blocks[j, i])
+                + hamiltonian_.blocks[j, i]
+            )
+
     def _assemble_system_matrix(
         self,
         sse_lesser: DSDBSparse,
@@ -478,9 +472,7 @@ class ElectronSolver(SubsystemSolver):
         else:
             _btd_apply_potential(self.system_matrix, self.overlap, self.potential)
 
-        _btd_assemble(
-            self.system_matrix,
-            self.hamiltonian,
+        self._subtract_hamiltonian_and_self_energy(
             sse_lesser,
             sse_greater,
             sse_retarded_hermitian,

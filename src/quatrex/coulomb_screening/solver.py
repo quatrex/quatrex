@@ -40,53 +40,6 @@ def _compute_sparsity_pattern(
     )
 
 
-def _btd_assemble_polarization(
-    p_retarded: DSDBSparse,
-    p_lesser: DSDBSparse,
-    p_greater: DSDBSparse,
-    p_retarded_hermitian: DSDBSparse,
-) -> None:
-    r"""Assembles the full retarded polarization from the Hermitian part
-    and the lesser and greater parts.
-
-    $$\mathbf{P}^R = \mathbf{P}^R + \frac{1}{2} \left(\mathbf{P}^{>} - \mathbf{P}^{<} \right)$$
-
-    This is an in-place operation, i.e. the retarded polarization is modified.
-
-    Parameters
-    ----------
-    p_retarded : DSDBSparse
-        The retarded polarization.
-    p_lesser : DSDBSparse
-        The lesser polarization.
-    p_greater : DSDBSparse
-        The greater polarization.
-    p_retarded_hermitian : DSDBSparse
-        The hermitian part of the retarded polarization.
-
-    """
-    p_retarded_ = p_retarded.stack[...]
-    p_retarded_hermitian_ = p_retarded_hermitian.stack[...]
-    p_lesser_ = p_lesser.stack[...]
-    p_greater_ = p_greater.stack[...]
-    for i in range(p_retarded.num_local_blocks):
-        j = i + 1
-        p_retarded_.blocks[i, i] = p_retarded_hermitian_.blocks[i, i] + 0.5 * (
-            p_greater_.blocks[i, i] - p_lesser_.blocks[i, i]
-        )
-
-        if j >= p_retarded.num_local_blocks and comm.block.rank == comm.block.size - 1:
-            # The last rank does not have these blocks.
-            continue
-
-        p_retarded_.blocks[i, j] = p_retarded_hermitian_.blocks[i, j] + 0.5 * (
-            p_greater_.blocks[i, j] - p_lesser_.blocks[i, j]
-        )
-        p_retarded_.blocks[j, i] = p_retarded_hermitian_.blocks[j, i] + 0.5 * (
-            p_greater_.blocks[j, i] - p_lesser_.blocks[j, i]
-        )
-
-
 class CoulombScreeningSolver(SubsystemSolver):
     """Solves the dynamics of the screened Coulomb interaction.
 
@@ -382,6 +335,53 @@ class CoulombScreeningSolver(SubsystemSolver):
                     a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2)
                 )
 
+    def _assemble_retarded_polarization(
+        self,
+        p_lesser: DSDBSparse,
+        p_greater: DSDBSparse,
+        p_retarded_hermitian: DSDBSparse,
+    ) -> None:
+        r"""Assembles the full retarded polarization from the Hermitian part
+        and the lesser and greater parts.
+
+        $$\mathbf{P}^R = \mathbf{P}^R + \frac{1}{2} \left(\mathbf{P}^{>} - \mathbf{P}^{<} \right)$$
+
+        This modifies retarded polarization in-place i.e. the result is stored in `self.p_retarded`.
+
+        Parameters
+        ----------
+        p_lesser : DSDBSparse
+            The lesser polarization.
+        p_greater : DSDBSparse
+            The greater polarization.
+        p_retarded_hermitian : DSDBSparse
+            The hermitian part of the retarded polarization.
+
+        """
+        p_retarded_ = self.p_retarded.stack[...]
+        p_retarded_hermitian_ = p_retarded_hermitian.stack[...]
+        p_lesser_ = p_lesser.stack[...]
+        p_greater_ = p_greater.stack[...]
+        for i in range(self.p_retarded.num_local_blocks):
+            j = i + 1
+            p_retarded_.blocks[i, i] = p_retarded_hermitian_.blocks[i, i] + 0.5 * (
+                p_greater_.blocks[i, i] - p_lesser_.blocks[i, i]
+            )
+
+            if (
+                j >= self.p_retarded.num_local_blocks
+                and comm.block.rank == comm.block.size - 1
+            ):
+                # The last rank does not have these blocks.
+                continue
+
+            p_retarded_.blocks[i, j] = p_retarded_hermitian_.blocks[i, j] + 0.5 * (
+                p_greater_.blocks[i, j] - p_lesser_.blocks[i, j]
+            )
+            p_retarded_.blocks[j, i] = p_retarded_hermitian_.blocks[j, i] + 0.5 * (
+                p_greater_.blocks[j, i] - p_lesser_.blocks[j, i]
+            )
+
     @profiler.profile(
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
     )
@@ -413,8 +413,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         self.p_retarded.allocate_data()
 
-        _btd_assemble_polarization(
-            self.p_retarded,
+        self._assemble_retarded_polarization(
             p_lesser,
             p_greater,
             p_retarded_hermitian,

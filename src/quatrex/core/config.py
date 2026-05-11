@@ -556,7 +556,7 @@ class CoulombScreeningConfig(BaseModel):
 
     polarization_method: Literal["negf", "rpa"] = "negf"
     dielectric_environment: bool = False
-    dielectric_method: Literal["rpa"] | None = None
+    dielectric_method: Literal["rpa", "negf"] | None = None
 
     hamiltonian_matrix_name: str = "hamiltonian"
     coulomb_matrix_name: str = "coulomb_matrix"
@@ -610,25 +610,7 @@ class CoulombScreeningConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_rpa_parameters(self) -> Self:
-        """Ensure RPA-specific parameters are set when the dielectric RPA path is selected."""
-
-        if not self.dielectric_environment or self.dielectric_method != "rpa":
-            return self
-
-        required_fields = {
-            "num_k_points": self.num_k_points,
-            "num_frequencies": self.num_frequencies,
-            "max_frequency": self.max_frequency,
-        }
-        missing_fields = [
-            field_name for field_name, value in required_fields.items() if value is None
-        ]
-        if missing_fields:
-            raise ValueError(
-                "The following coulomb_screening fields are required for polarization_method='rpa' "
-                "or dielectric_method='rpa': " + ", ".join(missing_fields)
-            )
-
+        """Keep legacy dielectric RPA fields permissive during migration."""
         return self
 
 
@@ -870,7 +852,7 @@ class EnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    input_dir: Path
+    input_dir: Path | None = None
 
     hamiltonian_matrix_name: str = "hamiltonian"
     coulomb_matrix_name: str = "coulomb_matrix"
@@ -881,12 +863,15 @@ class EnvironmentConfig(BaseModel):
         tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
     ) = None
     num_transport_cells: PositiveInt = 1
-    transport_direction: Literal["x", "y", "z"]
+    transport_direction: Literal["x", "y", "z"] | None = None
     block_size: PositiveInt | list[PositiveInt] | None = None
 
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
     orthogonal_basis: bool = True
+    screening: "EnvironmentScreeningConfig" = Field(
+        default_factory=lambda: EnvironmentScreeningConfig()
+    )
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
@@ -896,6 +881,53 @@ class EnvironmentConfig(BaseModel):
         self.kpoint_grid = tuple(self.kpoint_grid)
         self.kpoint_shift = tuple(self.kpoint_shift)
         return self
+
+    @model_validator(mode="after")
+    def validate_enabled_environment(self) -> Self:
+        """Require the core environment fields only when the subsystem is enabled."""
+        if not self.enabled:
+            return self
+
+        missing_fields = []
+        if self.input_dir is None:
+            missing_fields.append("input_dir")
+        if self.transport_direction is None:
+            missing_fields.append("transport_direction")
+        if missing_fields:
+            raise ValueError(
+                "An enabled [environment] section requires: "
+                + ", ".join(missing_fields)
+            )
+        return self
+
+
+class EnvironmentScreeningConfig(BaseModel):
+    """Options for equilibrium screening of the environment subsystem."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["rpa", "negf"] | None = None
+    source: Literal["compute", "file"] = "compute"
+    input_dir: Path | None = None
+    hamiltonian_matrix_name: str = "hamiltonian"
+    coulomb_matrix_name: str = "coulomb_matrix"
+
+    num_k_points: PositiveInt | None = None
+    num_q_points: PositiveInt | None = None
+    num_frequencies: PositiveInt | None = None
+    max_frequency: NonNegativeFloat | None = None
+
+    include_zero_q: bool = True
+
+    periodic_axis: NonNegativeInt | None = Field(default=None, le=2)
+    lattice_constant: PositiveFloat = 1.0
+
+    chemical_potential: float | None = None
+    broadening: NonNegativeFloat = 0.0
+
+    matrix_valued_polarization: bool = False
+    spin_degeneracy: PositiveFloat = 1.0
+    valley_degeneracy: PositiveFloat = 1.0
 
 
 class EnvironmentCouplingConfig(BaseModel):
@@ -1159,6 +1191,75 @@ class QuatrexConfig(BaseModel):
     # --- Compute options ----------------------------------------------
     compute: ComputeConfig = ComputeConfig()
 
+    @property
+    def environment_screening(self) -> EnvironmentScreeningConfig:
+        """Return the effective environment-screening configuration.
+
+        New configs should use ``[environment.screening]``. Legacy
+        ``[coulomb_screening]`` RPA fields are still accepted and act as a
+        fallback while the dielectric-environment workflow is being migrated.
+        """
+
+        screening = (
+            self.environment.screening.model_copy(deep=True)
+            if self.environment is not None
+            else EnvironmentScreeningConfig()
+        )
+        legacy = self.coulomb_screening
+        if legacy is None:
+            return screening
+
+        if screening.method is None and legacy.dielectric_environment:
+            screening.method = legacy.dielectric_method
+        if screening.hamiltonian_matrix_name == "hamiltonian":
+            screening.hamiltonian_matrix_name = legacy.hamiltonian_matrix_name
+        if screening.coulomb_matrix_name == "coulomb_matrix":
+            screening.coulomb_matrix_name = legacy.coulomb_matrix_name
+        if screening.num_k_points is None:
+            screening.num_k_points = legacy.num_k_points
+        if screening.num_q_points is None:
+            screening.num_q_points = legacy.num_q_points
+        if screening.num_frequencies is None:
+            screening.num_frequencies = legacy.num_frequencies
+        if screening.max_frequency is None:
+            screening.max_frequency = legacy.max_frequency
+        if screening.periodic_axis is None:
+            screening.periodic_axis = legacy.periodic_axis
+        if screening.chemical_potential is None:
+            screening.chemical_potential = legacy.chemical_potential
+
+        screening.include_zero_q = screening.include_zero_q and legacy.include_zero_q
+        screening.lattice_constant = legacy.lattice_constant
+        screening.broadening = legacy.broadening
+        screening.matrix_valued_polarization = (
+            screening.matrix_valued_polarization or legacy.matrix_valued_polarization
+        )
+        screening.spin_degeneracy = legacy.spin_degeneracy
+        screening.valley_degeneracy = legacy.valley_degeneracy
+        return screening
+
+    @property
+    def has_environment_screening(self) -> bool:
+        """Whether the dielectric-environment workflow is active."""
+
+        return self.environment_screening.method is not None
+
+    @model_validator(mode="after")
+    def normalize_environment_screening(self) -> Self:
+        """Map the new environment-screening block onto legacy activation flags."""
+
+        if self.environment is None or self.environment.screening.method is None:
+            return self
+
+        method = self.environment.screening.method
+        self.coulomb_screening.dielectric_environment = True
+        self.coulomb_screening.dielectric_method = method
+        if method == "rpa":
+            # Keep the legacy switch aligned so existing code paths continue to
+            # recognize dielectric environment screening during the migration.
+            self.coulomb_screening.polarization_method = "rpa"
+        return self
+
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:
         """Resolves the config directory path."""
@@ -1205,12 +1306,23 @@ class QuatrexConfig(BaseModel):
     def resolve_environment_paths(self) -> Self:
         """Resolves environment subsystem paths."""
         if self.environment is not None:
-            if self.environment.input_dir.is_absolute():
-                self.environment.input_dir = self.environment.input_dir.resolve()
-            else:
-                self.environment.input_dir = (
-                    self.config_dir / self.environment.input_dir
-                ).resolve()
+            if self.environment.input_dir is not None:
+                if self.environment.input_dir.is_absolute():
+                    self.environment.input_dir = self.environment.input_dir.resolve()
+                else:
+                    self.environment.input_dir = (
+                        self.config_dir / self.environment.input_dir
+                    ).resolve()
+
+            if self.environment.screening.input_dir is not None:
+                if self.environment.screening.input_dir.is_absolute():
+                    self.environment.screening.input_dir = (
+                        self.environment.screening.input_dir.resolve()
+                    )
+                else:
+                    self.environment.screening.input_dir = (
+                        self.config_dir / self.environment.screening.input_dir
+                    ).resolve()
 
         for field_name in ("v_ce_file", "v_ec_file"):
             path = getattr(self.environment_coupling, field_name)
@@ -1231,23 +1343,44 @@ class QuatrexConfig(BaseModel):
     def validate_paths(self) -> Self:
         """Validates the input file paths."""
 
+        screening = self.environment_screening
         if (
             self.formalism == "negf"
             and self.scba.coulomb_screening
-            and self.coulomb_screening is not None
-            and self.coulomb_screening.dielectric_environment
-            and self.coulomb_screening.dielectric_method == "rpa"
+            and screening.method is not None
         ):
-            required_matrices = (
-                self.coulomb_screening.hamiltonian_matrix_name,
-                self.coulomb_screening.coulomb_matrix_name,
-            )
-            for matrix_name in required_matrices:
-                matrix_path = (self.input_dir / f"{matrix_name}.mat").resolve()
-                if not matrix_path.is_file():
+            if screening.method == "rpa" and screening.source == "compute":
+                screening_input_dir = (
+                    self.environment.input_dir
+                    if self.environment is not None and self.environment.enabled
+                    else self.input_dir
+                )
+                required_matrices = (
+                    screening.hamiltonian_matrix_name,
+                    screening.coulomb_matrix_name,
+                )
+                for matrix_name in required_matrices:
+                    matrix_path = (screening_input_dir / f"{matrix_name}.mat").resolve()
+                    if not matrix_path.is_file():
+                        raise ValueError(
+                            f"Required RPA screening input file '{matrix_path}' does not exist."
+                        )
+            elif screening.source == "file":
+                if screening.input_dir is None:
                     raise ValueError(
-                        f"Required RPA screening input file '{matrix_path}' does not exist."
+                        "environment.screening.source='file' requires environment.screening.input_dir."
                     )
+                required_exports = (
+                    "p_ee_retarded.npy",
+                    "p_ee_lesser.npy",
+                    "v_ee.npy",
+                )
+                for filename in required_exports:
+                    export_path = (screening.input_dir / filename).resolve()
+                    if not export_path.is_file():
+                        raise ValueError(
+                            f"Required saved environment screening file '{export_path}' does not exist."
+                        )
 
         if (
             self.electron.energy_window_min is None
@@ -1302,6 +1435,63 @@ class QuatrexConfig(BaseModel):
                     raise ValueError(
                         f"Required environment coupling file '{path}' does not exist."
                     )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_environment_screening(self) -> Self:
+        """Validate the effective environment-screening configuration."""
+
+        if self.coulomb_screening is None:
+            return self
+
+        screening = self.environment_screening
+        if screening.method is None:
+            return self
+
+        uses_explicit_environment_screening = (
+            self.environment is not None and self.environment.screening.method is not None
+        )
+
+        if screening.method == "negf":
+            if screening.source != "file":
+                raise ValueError(
+                    "environment.screening.method='negf' currently requires source='file'. "
+                    "Run the environment export first, then load the saved arrays."
+                )
+            if screening.input_dir is None:
+                raise ValueError(
+                    "environment.screening.source='file' requires environment.screening.input_dir."
+                )
+            return self
+
+        if screening.source == "compute" and uses_explicit_environment_screening:
+            if self.environment is None or not self.environment.enabled:
+                raise ValueError(
+                    "Dielectric RPA with environment.screening.source='compute' requires an enabled [environment] section."
+                )
+        elif screening.source == "file":
+            if screening.input_dir is None:
+                raise ValueError(
+                    "environment.screening.source='file' requires environment.screening.input_dir."
+                )
+
+        required_fields = {
+            "num_k_points": screening.num_k_points,
+            "num_frequencies": screening.num_frequencies,
+            "max_frequency": screening.max_frequency,
+        }
+        if screening.source == "compute":
+            missing_fields = [
+                field_name
+                for field_name, value in required_fields.items()
+                if value is None
+            ]
+            if missing_fields:
+                raise ValueError(
+                    "The following environment screening fields are required for dielectric RPA: "
+                    + ", ".join(missing_fields)
+                )
 
         return self
 

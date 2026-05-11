@@ -159,9 +159,22 @@ def resolve_unit_cell_matrix_path(
     config: QuatrexConfig,
     matrix_name: str,
 ) -> Path:
-    """Resolve a unit-cell matrix path from the Quatrex input directory."""
+    """Resolve a unit-cell matrix path for dielectric screening inputs.
 
-    return Path(config.input_dir) / f"{matrix_name}.mat"
+    When an explicit environment subsystem is enabled, the dielectric screening
+    workflow should read the environment matrices rather than the transport
+    device matrices.
+    """
+
+    screening_input_dir = Path(config.input_dir)
+    if (
+        config.environment is not None
+        and config.environment.enabled
+        and config.environment.input_dir is not None
+    ):
+        screening_input_dir = Path(config.environment.input_dir)
+
+    return screening_input_dir / f"{matrix_name}.mat"
 
 
 def load_translation_blocks_from_config(

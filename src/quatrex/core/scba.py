@@ -218,7 +218,10 @@ class SCBAData:
                 symmetry_op=lambda a: -a.conj(),
             )
             self.w_greater = dsdbsparse_type.zeros_like(self.w_lesser)
-            if config.coulomb_screening.dielectric_environment:
+            if (
+                config.has_environment_screening
+                and config.environment_coupling.mode != "zero"
+            ):
                 self.w_environment_retarded = dsdbsparse_type.from_sparray(
                     self.sparsity_pattern.astype(xp.complex128),
                     block_sizes=block_sizes,
@@ -313,6 +316,7 @@ class SCBA:
         self.data = SCBAData(config, electron_energies=electron_energies)  # dummy data
         self.mixing_factor = self.config.scba.mixing_factor
         self.environment_coulomb_screening_bridge = None
+        self.zero_environment_coupling = False
 
         # ----- Electrons ----------------------------------------------
         self.electron_energies = get_electron_energies(config)
@@ -340,10 +344,11 @@ class SCBA:
 
         # ----- Coulomb screening --------------------------------------
         if self.config.scba.coulomb_screening:
-            self.has_dielectric_environment = (
-                self.config.coulomb_screening.dielectric_environment
+            self.has_dielectric_environment = self.config.has_environment_screening
+            self.dielectric_method = self.config.environment_screening.method
+            self.zero_environment_coupling = (
+                self.config.environment_coupling.mode == "zero"
             )
-            self.dielectric_method = self.config.coulomb_screening.dielectric_method
             # Load the Coulomb matrix.
             coulomb_matrix, __ = load_matrix(
                 config=config,
@@ -396,7 +401,10 @@ class SCBA:
                 sparsity_pattern=self.data.sparsity_pattern,
             )
 
-            if self.has_dielectric_environment and self.dielectric_method != "rpa":
+            if self.has_dielectric_environment and self.dielectric_method not in {
+                "rpa",
+                "negf",
+            }:
                 raise NotImplementedError(
                     f"Unsupported dielectric screening method '{self.dielectric_method}'."
                 )
@@ -441,7 +449,8 @@ class SCBA:
         if (
             self.config.scba.coulomb_screening
             and self.has_dielectric_environment
-            and self.dielectric_method == "rpa"
+            and self.dielectric_method in {"rpa", "negf"}
+            and not self.zero_environment_coupling
         ):
             # The environment lesser/greater terms are added directly to the
             # Coulomb solver source buffers, so they must use that source
@@ -578,7 +587,11 @@ class SCBA:
         self.data.w_greater.allocate_data()
         self.data.w_lesser.allocate_data()
 
-        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+        if (
+            self.has_dielectric_environment
+            and self.dielectric_method in {"rpa", "negf"}
+            and not self.zero_environment_coupling
+        ):
             self.environment_coulomb_screening_bridge.populate(
                 self.data.w_environment_retarded,
                 self.data.w_environment_lesser,
@@ -626,7 +639,11 @@ class SCBA:
 
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
-        if self.has_dielectric_environment and self.dielectric_method == "rpa":
+        if (
+            self.has_dielectric_environment
+            and self.dielectric_method in {"rpa", "negf"}
+            and not self.zero_environment_coupling
+        ):
             self.data.w_environment_retarded.free_data()
             self.data.w_environment_greater.free_data()
             self.data.w_environment_lesser.free_data()

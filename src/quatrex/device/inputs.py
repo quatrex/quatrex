@@ -89,9 +89,11 @@ def create_coordinate_grid(
     transport_ind: int,
     lattice_vectors: NDArray,
 ) -> NDArray:
-    """Creates a grid of coordinates for orbital centers in a transport cell.
-    Only expands in the transport direction, and assumes that the unit cell is
-    repeated in the transport direction.
+    """Creates a grid of coordinates for orbital centers in a supercell.
+
+    This takes an array of coordinates and repeats them `num_unit_cells`
+    times along the transport direction, by shifting them by the lattice
+    vector in that direction.
 
     Parameters
     ----------
@@ -340,9 +342,10 @@ def _sum_operator(
     symmetric: bool,
     phases: dict | None = None,
 ):
-    """Sums the contributions from different periodic repetitions
-    of a hermitian operator (e.g., Hamiltonian, overlap) to construct the matrix
-    for a specific k-point.
+    """Sums up periodic image contributions for a specific k-point.
+
+    This takes a Hermitian operator (e.g., Hamiltonian, overlap) and performs a weighted
+    sum to construct a matrix for a specific k-point.
 
     Parameters
     ----------
@@ -352,7 +355,9 @@ def _sum_operator(
     symmetric : bool
         Whether the resulting matrix should be symmetric. If `True`, only
         construct the upper triangular part.
-    phases :
+    phases : dict, optional
+        A dictionary mapping the different image indices to their weight.
+        If not provided, this performs an unweighted sum.
 
     """
 
@@ -596,7 +601,6 @@ def load_matrices(
     # expand potentially if the system is periodic
     # and given bz unit cell matrix_dict
     if config.device.construct_from_unit_cell:
-        # raise NotImplementedError("Constructing from unit cell is not implemented yet.")
         matrix_dict = _create_matrix_from_unit_cells(config, matrix_dict)
 
     # NOTE: for closed systems,

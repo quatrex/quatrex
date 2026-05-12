@@ -997,10 +997,24 @@ class _DStackView:
         """In-place addition of sparse matrix."""
         if sparse.issparse(other):
             csr = other.tocsr()
-            self._dsdbsparse.data[self._stack_index] += xp.squeeze(
-                xp.asarray(csr[self._dsdbsparse.spy()])
-            )
-            return self._dsdbsparse
+
+            if hasattr(self._dsdbsparse, "rows") and hasattr(self._dsdbsparse, "cols"):
+                # If the view has rows and cols attributes, we can use them to
+                # directly index into the sparse matrix.
+                self._dsdbsparse.data[self._stack_index] += xp.squeeze(
+                    xp.asarray(
+                        csr[
+                            getattr(self._dsdbsparse, "rows"),
+                            getattr(self._dsdbsparse, "cols"),
+                        ]
+                    )
+                )
+                return self._dsdbsparse
+
+            else:
+                raise NotImplementedError(
+                    "In-place addition only supported for dsdbcoo matrices"
+                )
         try:
             # TODO: Lots more checks should be done here.
             # For example, the nnz sizes should match.

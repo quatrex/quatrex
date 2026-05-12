@@ -104,10 +104,10 @@ class PCoulombScreening(ScatteringSelfEnergy):
             The greater Green's function.
         out : tuple[DSDBSparse, ...]
             The output matrices for the polarization. The order is
-            p_lesser, p_greater, p_retarded.
+            p_lesser, p_greater, p_retarded_hermitian.
 
         """
-        p_lesser, p_greater, p_retarded = out
+        p_lesser, p_greater, p_retarded_hermitian = out
 
         # Barrier to synchronize ranks.
         with profiler.profile_range(
@@ -123,8 +123,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 m.dtranspose(discard=True) if m.distribution_state != "nnz" else None
             if self.include_energy_renormalization:
                 (
-                    p_retarded.dtranspose(discard=True)
-                    if (p_retarded.distribution_state != "nnz")
+                    p_retarded_hermitian.dtranspose(discard=True)
+                    if (p_retarded_hermitian.distribution_state != "nnz")
                     else None
                 )
 
@@ -188,7 +188,7 @@ class PCoulombScreening(ScatteringSelfEnergy):
                     # Note that only the hermitian part is computed here.
 
                     if self.include_energy_renormalization:
-                        p_retarded.data[..., batch] = (
+                        p_retarded_hermitian.data[..., batch] = (
                             -(self.prefactor / 2)
                             * (
                                 hilbert_transform(
@@ -211,8 +211,8 @@ class PCoulombScreening(ScatteringSelfEnergy):
                 m.dtranspose() if m.distribution_state != "stack" else None
             if self.include_energy_renormalization:
                 (
-                    p_retarded.dtranspose()
-                    if (p_retarded.distribution_state != "stack")
+                    p_retarded_hermitian.dtranspose()
+                    if (p_retarded_hermitian.distribution_state != "stack")
                     else None
                 )
             # NOTE: The Green's functions must not be transposed back to
@@ -226,15 +226,13 @@ class PCoulombScreening(ScatteringSelfEnergy):
             if not p_lesser.symmetry:
                 p_lesser.symmetrize(xp.subtract)
                 p_greater.symmetrize(xp.subtract)
-                p_retarded.symmetrize(xp.add)
+                p_retarded_hermitian.symmetrize(xp.add)
 
             if not self.include_energy_renormalization:
-                p_retarded.data[:] = 0
+                p_retarded_hermitian.data[:] = 0
 
             # Discard the real part of lesser/greater and imag part of retarded
             if self.align_to_complex_axes:
                 p_lesser.data.real = 0
                 p_greater.data.real = 0
-                p_retarded.data.imag = 0
-
-            p_retarded.data += (p_greater.data - p_lesser.data) / 2
+                p_retarded_hermitian.data.imag = 0

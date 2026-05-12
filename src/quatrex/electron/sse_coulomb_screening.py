@@ -120,14 +120,14 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             The greater screened Coulomb interaction.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
-            sigma_lesser, sigma_greater, sigma_retarded.
+            sigma_lesser, sigma_greater, sigma_retarded_hermitian.
         batch : slice
             The batch slice for the current computation.
         hilbert_kernel_fft : NDArray
             The precomputed Hilbert kernel in Fourier space.
 
         """
-        sigma_lesser, sigma_greater, sigma_retarded = out
+        sigma_lesser, sigma_greater, sigma_retarded_hermitian = out
 
         n = g_lesser.data.shape[0] + g_greater.data.shape[0] - 1
         ne = g_lesser.data.shape[0]
@@ -180,7 +180,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
             # part of the retarded self-energy is added outside in the
             # main SCBA loop, so it is not added here.
-            sigma_retarded.data[..., batch] += (
+            sigma_retarded_hermitian.data[..., batch] += (
                 self.prefactor
                 * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
                 * self.kpoint_volume
@@ -209,12 +209,12 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             The greater screened Coulomb interaction.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
-            sigma_lesser, sigma_greater, sigma_retarded.
+            sigma_lesser, sigma_greater, sigma_retarded_hermitian.
         batch : slice
             The batch slice for the current computation.
 
         """
-        sigma_lesser, sigma_greater, sigma_retarded = out
+        sigma_lesser, sigma_greater, sigma_retarded_hermitian = out
         ne = g_lesser.data.shape[0]
 
         # Lesser self-energy
@@ -248,7 +248,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             # NOTE: The anti-Hermitian (sigma_greater - sigma_lesser)
             # part of the retarded self-energy is added outside in the
             # main SCBA loop, so it is not added here.
-            sigma_retarded.data[..., batch] += (
+            sigma_retarded_hermitian.data[..., batch] += (
                 self.prefactor
                 * hilbert_transform(sl, sg, self.energies)
                 * self.kpoint_volume
@@ -277,7 +277,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             The greater screened Coulomb interaction.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
-            sigma_lesser, sigma_greater, sigma_retarded.
+            sigma_lesser, sigma_greater, sigma_retarded_hermitian.
 
         """
 
@@ -294,7 +294,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             w_lesser.block_sizes = g_lesser.block_sizes
             w_greater.block_sizes = g_greater.block_sizes
 
-            sigma_lesser, sigma_greater, sigma_retarded = out
+            sigma_lesser, sigma_greater, sigma_retarded_hermitian = out
 
         with profiler.profile_range(
             label="SigmaCoulombScreening: stack->nnz transpose",
@@ -310,7 +310,7 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
                 g_greater,
                 sigma_lesser,
                 sigma_greater,
-                sigma_retarded,
+                sigma_retarded_hermitian,
             ):
                 # The electron Green's functions and self-energies should
                 # ideally already be in nnz-distribution. We cannot discard

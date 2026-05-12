@@ -43,7 +43,9 @@ def _compute_eigenvalues(
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_retarded: DSDBSparse,
+    sigma_lesser: DSDBSparse,
+    sigma_greater: DSDBSparse,
+    sigma_retarded_hermitian: DSDBSparse,
     ind: tuple[int, ...],
     diagonal_inds: tuple,
     upper_inds: tuple,
@@ -75,8 +77,12 @@ def _compute_eigenvalues(
         orthogonal.
     potential : NDArray
         The potential.
-    sigma_retarded : DSDBSparse
-        The retarded self-energy.
+    sigma_lesser : DSDBSparse
+        The lesser self-energy.
+    sigma_greater : DSDBSparse
+        The greater self-energy.
+    sigma_retarded_hermitian : DSDBSparse
+        The hermitian part of the retarded self-energy.
     ind : tuple[int, ...]
         The local (E, k) index where the eigenvalues should be computed.
         This is a guess that should be as close as possible to where the
@@ -116,7 +122,7 @@ def _compute_eigenvalues(
     if not use_eigvalsh:
         raise NotImplementedError("Only use_eigvalsh=True is supported.")
 
-    big_blocksize = sigma_retarded.block_sizes[diagonal_inds[0]]
+    big_blocksize = sigma_retarded_hermitian.block_sizes[diagonal_inds[0]]
     small_blocksize = big_blocksize // block_sections
 
     h_slice = (np.s_[:],) + tuple(ind[1:]) + np.s_[:small_blocksize, :]
@@ -134,11 +140,30 @@ def _compute_eigenvalues(
     # Sigma is extract at a certain energy and k-point
     # NOTE: In this case we use only the real part of the retarded
     # self-energy.
+
+    # NOTE: Even if the real part is used, the lesser and greater self-energies
+    # need to be taken into account since they can have a non-zero real part.
     sigma_00 = xp.real(
-        order_block(sigma_retarded.blocks[*diagonal_inds], order)[sigma_slice]
+        order_block(
+            sigma_retarded_hermitian.blocks[*diagonal_inds]
+            + 0.5
+            * (
+                sigma_greater.blocks[*diagonal_inds]
+                - sigma_lesser.blocks[*diagonal_inds]
+            ),
+            order,
+        )[sigma_slice]
     )
     sigma_01 = xp.real(
-        order_block(sigma_retarded.blocks[*upper_inds], order)[sigma_slice]
+        order_block(
+            sigma_retarded_hermitian.blocks[*upper_inds]
+            + 0.5
+            * (
+                sigma_greater.blocks[*diagonal_inds]
+                - sigma_lesser.blocks[*diagonal_inds]
+            ),
+            order,
+        )[sigma_slice]
     )
 
     sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=block_sections)
@@ -217,7 +242,9 @@ def find_renormalized_eigenvalues(
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_retarded: DSDBSparse,
+    sigma_lesser: DSDBSparse,
+    sigma_greater: DSDBSparse,
+    sigma_retarded_hermitian: DSDBSparse,
     energies: NDArray,
     conduction_band_guesses: tuple[float, float],
     mid_gap_energies: tuple[float, float],
@@ -237,8 +264,8 @@ def find_renormalized_eigenvalues(
         The lesser self-energy.
     sigma_greater : DSDBSparse
         The greater self-energy.
-    sigma_retarded : DSDBSparse
-        The retarded self-energy.
+    sigma_retarded_hermitian : DSDBSparse
+        The hermitian part of the retarded self-energy.
     energies : NDArray
         The energies.
     local_energies : NDArray
@@ -284,13 +311,15 @@ def find_renormalized_eigenvalues(
                 # is at the Gamma point.
                 # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
                 local_ind = (ind_left - section_offsets[rank_left],) + tuple(
-                    [s // 2 for s in sigma_retarded.shape[1:-2]]
+                    [s // 2 for s in sigma_retarded_hermitian.shape[1:-2]]
                 )
                 e_0_left = _compute_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_retarded=sigma_retarded,
+                    sigma_lesser=sigma_lesser,
+                    sigma_greater=sigma_greater,
+                    sigma_retarded_hermitian=sigma_retarded_hermitian,
                     ind=local_ind,
                     diagonal_inds=(0, 0),
                     upper_inds=(0, 1),
@@ -323,7 +352,7 @@ def find_renormalized_eigenvalues(
                 # is at the Gamma point.
                 # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
                 local_ind = (ind_right - section_offsets[rank_right],) + tuple(
-                    [s // 2 for s in sigma_retarded.shape[1:-2]]
+                    [s // 2 for s in sigma_retarded_hermitian.shape[1:-2]]
                 )
 
                 n = hamiltonian.num_local_blocks - 1
@@ -332,7 +361,9 @@ def find_renormalized_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_retarded=sigma_retarded,
+                    sigma_lesser=sigma_lesser,
+                    sigma_greater=sigma_greater,
+                    sigma_retarded_hermitian=sigma_retarded_hermitian,
                     ind=local_ind,
                     diagonal_inds=(n, n),
                     upper_inds=(n, m),

@@ -141,6 +141,21 @@ class CoulombScreeningSolver(SubsystemSolver):
         self.l_lesser.free_data()
         self.l_greater.free_data()
 
+        # Allocate object for the retarded polarization.
+        # This is only used as a temporary assembling the full retarded
+        # polarization before multiplying with the Coulomb matrix.
+        # This is simpler in case of domain distributed solver.
+        # Otherwise, it would be more memory efficient to directly assemble
+        # when doing the product with the Coulomb matrix, but the life time
+        # is not during the peak (quadratic solve).
+        self.p_retarded = config.compute.dsdbsparse_type.from_sparray(
+            sparsity_pattern.astype(xp.complex128),
+            block_sizes=self.small_block_sizes,
+            global_stack_shape=self.energies.shape
+            + tuple([k for k in kpoint_grid if k > 1]),
+        )
+        self.p_retarded.free_data()
+
         # Boundary conditions.
         self.left_occupancies = bose_einstein(
             self.local_energies,
@@ -320,11 +335,75 @@ class CoulombScreeningSolver(SubsystemSolver):
                     a_nn_greater - a_nn_greater.conj().swapaxes(-1, -2)
                 )
 
+    def _assemble_retarded_polarization(
+        self,
+        p_lesser: DSDBSparse,
+        p_greater: DSDBSparse,
+        p_retarded_hermitian: DSDBSparse,
+    ) -> None:
+        r"""Assembles the full retarded polarization from the Hermitian part
+        and the lesser and greater parts.
+
+        $$\mathbf{P}^R = \mathbf{P}^R + \frac{1}{2} \left(\mathbf{P}^{>} - \mathbf{P}^{<} \right)$$
+
+        This modifies retarded polarization in-place i.e. the result is stored in `self.p_retarded`.
+
+        Parameters
+        ----------
+        p_lesser : DSDBSparse
+            The lesser polarization.
+        p_greater : DSDBSparse
+            The greater polarization.
+        p_retarded_hermitian : DSDBSparse
+            The hermitian part of the retarded polarization.
+
+        """
+        p_retarded_ = self.p_retarded.stack[...]
+        p_retarded_hermitian_ = p_retarded_hermitian.stack[...]
+        p_lesser_ = p_lesser.stack[...]
+        p_greater_ = p_greater.stack[...]
+        for i in range(self.p_retarded.num_local_blocks):
+            j = i + 1
+            p_retarded_.blocks[i, i] = p_retarded_hermitian_.blocks[i, i] + 0.5 * (
+                p_greater_.blocks[i, i] - p_lesser_.blocks[i, i]
+            )
+
+            if (
+                j >= self.p_retarded.num_local_blocks
+                and comm.block.rank == comm.block.size - 1
+            ):
+                # The last rank does not have these blocks.
+                continue
+
+            p_retarded_.blocks[i, j] = p_retarded_hermitian_.blocks[i, j] + 0.5 * (
+                p_greater_.blocks[i, j] - p_lesser_.blocks[i, j]
+            )
+            p_retarded_.blocks[j, i] = p_retarded_hermitian_.blocks[j, i] + 0.5 * (
+                p_greater_.blocks[j, i] - p_lesser_.blocks[j, i]
+            )
+
     @profiler.profile(
         label="CoulombScreeningSolver: Assembly", level="default", comm=comm
     )
-    def _assemble_system_matrix(self, p_retarded: DSDBSparse) -> None:
-        """Assembles the system matrix."""
+    def _assemble_system_matrix(
+        self,
+        p_lesser: DSDBSparse,
+        p_greater: DSDBSparse,
+        p_retarded_hermitian: DSDBSparse,
+    ) -> None:
+        """Assembles the system matrix.
+
+        Parameters
+        ----------
+        p_lesser : DSDBSparse
+            The lesser polarization.
+        p_greater : DSDBSparse
+            The greater polarization.
+        p_retarded_hermitian : DSDBSparse
+            The hermitian part of the retarded polarization.
+             The anti-hermitian part is calculated from lesser and greater.
+
+        """
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
             len(self.system_matrix.block_sizes), comm.block.size
@@ -332,14 +411,23 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
+        self.p_retarded.allocate_data()
+
+        self._assemble_retarded_polarization(
+            p_lesser,
+            p_greater,
+            p_retarded_hermitian,
+        )
         bd_matmul_distr(
             self.coulomb_matrix,
-            p_retarded,
+            self.p_retarded,
             out=self.system_matrix,
             start_block=start_block,
             end_block=end_block,
             spillover_correction=True,
         )
+        self.p_retarded.free_data()
+
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
 
@@ -391,7 +479,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         self,
         p_lesser: DSDBSparse,
         p_greater: DSDBSparse,
-        p_retarded: DSDBSparse,
+        p_retarded_hermitian: DSDBSparse,
         out: tuple[DSDBSparse, ...],
     ) -> None:
         """Solves for the screened Coulomb interaction.
@@ -402,8 +490,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             The lesser polarization.
         p_greater : DSDBSparse
             The greater polarization.
-        p_retarded : DSDBSparse
-            The retarded polarization.
+        p_retarded_hermitian : DSDBSparse
+            The hermitian part of the retarded polarization.
+            The anti-hermitian part is calculated from lesser and greater.
         out : tuple[DSDBSparse, ...]
             The output matrices. The order is (lesser, greater,
             retarded).
@@ -419,7 +508,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             self._set_block_sizes(self.small_block_sizes)
 
         # Assemble the system matrix (Includes matrix multiplication).
-        self._assemble_system_matrix(p_retarded)
+        self._assemble_system_matrix(p_lesser, p_greater, p_retarded_hermitian)
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Sandwich", level="default", comm=comm

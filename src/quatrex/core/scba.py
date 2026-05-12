@@ -119,20 +119,23 @@ class SCBAData:
         self.sigma_greater_prev = dsdbsparse_type.zeros_like(self.g_lesser)
         self.sigma_greater = dsdbsparse_type.zeros_like(self.g_lesser)
 
-        self.sigma_retarded_prev = dsdbsparse_type.zeros_like(self.g_lesser)
-        self.sigma_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_retarded_hermitian_prev = dsdbsparse_type.zeros_like(self.g_lesser)
+        self.sigma_retarded_hermitian = dsdbsparse_type.zeros_like(self.g_lesser)
         if config.scba.symmetric:
-            self.sigma_retarded.symmetry_op = lambda a: a
-            self.sigma_retarded_prev.symmetry_op = lambda a: a
+            self.sigma_retarded_hermitian.symmetry_op = lambda a: a.conj()
+            self.sigma_retarded_hermitian_prev.symmetry_op = lambda a: a.conj()
 
         if config.scba.coulomb_screening:
             # NOTE: The polarization has the same sparsity pattern as
             # the electronic system (the interactions are local in real
             # space). However, we need to change the block sizes of the
             # screened Coulomb interaction.
-            self.p_retarded = dsdbsparse_type.zeros_like(self.g_lesser)
+            self.p_retarded_hermitian = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_lesser = dsdbsparse_type.zeros_like(self.g_lesser)
             self.p_greater = dsdbsparse_type.zeros_like(self.g_lesser)
+
+            if config.scba.symmetric:
+                self.p_retarded_hermitian.symmetry_op = lambda a: a.conj()
 
             num_connected_blocks = config.coulomb_screening.num_connected_blocks
             if num_connected_blocks == "auto":
@@ -187,7 +190,6 @@ class Observables:
     electron_photon_scattering_rate: NDArray = None
     electron_phonon_scattering_rate: NDArray = None
 
-    sigma_retarded_density: NDArray = None
     sigma_lesser_density: NDArray = None
     sigma_greater_density: NDArray = None
 
@@ -195,7 +197,6 @@ class Observables:
     w_lesser_density: NDArray = None
     w_greater_density: NDArray = None
 
-    p_retarded_density: NDArray = None
     p_lesser_density: NDArray = None
     p_greater_density: NDArray = None
 
@@ -351,9 +352,11 @@ class SCBA:
         """Stash the current into the previous self-energy buffers."""
         self.data.sigma_lesser_prev.data[:] = self.data.sigma_lesser.data
         self.data.sigma_greater_prev.data[:] = self.data.sigma_greater.data
-        self.data.sigma_retarded_prev.data[:] = self.data.sigma_retarded.data
+        self.data.sigma_retarded_hermitian_prev.data[:] = (
+            self.data.sigma_retarded_hermitian.data
+        )
 
-        self.data.sigma_retarded.data[:] = 0.0
+        self.data.sigma_retarded_hermitian.data[:] = 0.0
         self.data.sigma_lesser.data[:] = 0.0
         self.data.sigma_greater.data[:] = 0.0
 
@@ -363,15 +366,17 @@ class SCBA:
         if not self.config.scba.symmetric:
             self.data.sigma_lesser.symmetrize(xp.subtract)
             self.data.sigma_greater.symmetrize(xp.subtract)
-            # Make the self-energy Hermitian (removing the skew-Hermitian part).
-            self.data.sigma_retarded.symmetrize(xp.add)
+            # Make the self-energy Hermitian
+            # This is done before adding the skew hermitian part coming
+            # from the lesser and greater self-energies
+            self.data.sigma_retarded_hermitian.symmetrize(xp.add)
 
         if self.config.scba.align_self_energy_to_complex_axes:
             self.data.sigma_lesser._data.real = 0
             self.data.sigma_greater._data.real = 0
             # Make sure that the imaginary part comes only from
             # sigma_greater - sigma_lesser.
-            self.data.sigma_retarded._data.imag = 0
+            self.data.sigma_retarded_hermitian._data.imag = 0
 
     @profiler.profile(label="SCBA: Update Sigma", level="default", comm=comm)
     def _update_sigma(self) -> None:
@@ -384,16 +389,19 @@ class SCBA:
             (1 - self.mixing_factor) * self.data.sigma_greater_prev.data
             + self.mixing_factor * self.data.sigma_greater.data
         )
-        self.data.sigma_retarded.data[:] = (
-            (1 - self.mixing_factor) * self.data.sigma_retarded_prev.data
-            + self.mixing_factor * self.data.sigma_retarded.data
+        self.data.sigma_retarded_hermitian.data[:] = (
+            (1 - self.mixing_factor) * self.data.sigma_retarded_hermitian_prev.data
+            + self.mixing_factor * self.data.sigma_retarded_hermitian.data
         )
 
     @profiler.profile(label="SCBA: Convergence test", level="default", comm=comm)
     def _has_converged(self) -> bool:
         """Checks if the SCBA has converged."""
         # Infinity norm of the self-energy update.
-        diff = self.data.sigma_retarded.data - self.data.sigma_retarded_prev.data
+        diff = (
+            self.data.sigma_retarded_hermitian.data
+            - self.data.sigma_retarded_hermitian_prev.data
+        )
         local_max_diff = get_host(xp.max(xp.abs(diff)))
         max_diff = np.empty_like(local_max_diff)
         global_comm.Allreduce(local_max_diff, max_diff, op=MPI.MAX)
@@ -435,7 +443,7 @@ class SCBA:
                 out=(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
-                    self.data.sigma_retarded,
+                    self.data.sigma_retarded_hermitian,
                 ),
             )
 
@@ -450,12 +458,16 @@ class SCBA:
 
         self.data.p_greater.allocate_data()
         self.data.p_lesser.allocate_data()
-        self.data.p_retarded.allocate_data()
+        self.data.p_retarded_hermitian.allocate_data()
 
         self.p_coulomb_screening.compute(
             self.data.g_lesser,
             self.data.g_greater,
-            out=(self.data.p_lesser, self.data.p_greater, self.data.p_retarded),
+            out=(
+                self.data.p_lesser,
+                self.data.p_greater,
+                self.data.p_retarded_hermitian,
+            ),
         )
 
         self.data.w_greater.allocate_data()
@@ -464,7 +476,7 @@ class SCBA:
         self.coulomb_screening_solver.solve(
             self.data.p_lesser,
             self.data.p_greater,
-            self.data.p_retarded,
+            self.data.p_retarded_hermitian,
             out=(self.data.w_lesser, self.data.w_greater),
         )
 
@@ -472,11 +484,11 @@ class SCBA:
 
         self.data.p_lesser.free_data()
         self.data.p_greater.free_data()
-        self.data.p_retarded.free_data()
+        self.data.p_retarded_hermitian.free_data()
 
         self.sigma_fock.compute(
             self.data.g_lesser,
-            out=(self.data.sigma_retarded,),
+            out=(self.data.sigma_retarded_hermitian,),
         )
 
         self.sigma_coulomb_screening.compute(
@@ -487,7 +499,7 @@ class SCBA:
             out=(
                 self.data.sigma_lesser,
                 self.data.sigma_greater,
-                self.data.sigma_retarded,
+                self.data.sigma_retarded_hermitian,
             ),
         )
 
@@ -531,10 +543,6 @@ class SCBA:
                 )
 
         if self.config.outputs.self_energy_density:
-            self.observables.sigma_retarded_density = -density(
-                self.data.sigma_retarded,
-                self.electron_solver.overlap,
-            ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,
                 self.electron_solver.overlap,
@@ -549,9 +557,6 @@ class SCBA:
 
         # NOTE: The overlap is maybe missing here (it is not used)
         if self.config.outputs.polarization_density:
-            self.observables.p_retarded_density = -density(self.data.p_retarded) / (
-                2 * xp.pi
-            )
             self.observables.p_lesser_density = density(self.data.p_lesser) / (
                 2 * xp.pi
             )
@@ -600,7 +605,6 @@ class SCBA:
                     {
                         f"p_lesser_density_{iteration}.npy": self.observables.p_lesser_density,
                         f"p_greater_density_{iteration}.npy": self.observables.p_greater_density,
-                        f"p_retarded_density_{iteration}.npy": self.observables.p_retarded_density,
                     }
                 )
             if self.config.outputs.coulomb_screening_density:
@@ -614,7 +618,6 @@ class SCBA:
         if self.config.outputs.self_energy_density:
             outputs.update(
                 {
-                    f"sigma_retarded_density_{iteration}.npy": self.observables.sigma_retarded_density,
                     f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
                     f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
                 }
@@ -642,7 +645,7 @@ class SCBA:
                 self.electron_solver.solve(
                     self.data.sigma_lesser,
                     self.data.sigma_greater,
-                    self.data.sigma_retarded,
+                    self.data.sigma_retarded_hermitian,
                     out=(self.data.g_lesser, self.data.g_greater, self.data.g_retarded),
                 )
                 self._compute_electron_observables()
@@ -663,7 +666,7 @@ class SCBA:
                     for m in (
                         self.data.sigma_lesser,
                         self.data.sigma_greater,
-                        self.data.sigma_retarded,
+                        self.data.sigma_retarded_hermitian,
                     ):
                         m.dtranspose(discard=True)  # These can be safely discarded.
                         assert m.distribution_state == "nnz"
@@ -686,18 +689,13 @@ class SCBA:
                     for m in (
                         self.data.sigma_lesser,
                         self.data.sigma_greater,
-                        self.data.sigma_retarded,
+                        self.data.sigma_retarded_hermitian,
                     ):
                         m.dtranspose(discard=False)  # This must not be discarded.
                         assert m.distribution_state == "stack"
 
             # Symmetrize the self-energy.
             self._symmetrize_sigma()
-
-            # Add the anti-Hermitian part to the retarded self-energy.
-            self.data.sigma_retarded.data += 0.5 * (
-                self.data.sigma_greater.data - self.data.sigma_lesser.data
-            )
 
             if self._has_converged():
                 if comm.rank == 0:

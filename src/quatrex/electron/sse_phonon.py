@@ -61,7 +61,7 @@ class SigmaPhonon(ScatteringSelfEnergy):
             The greater Green's function.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
-            sigma_lesser, sigma_greater, sigma_retarded.
+            sigma_lesser, sigma_greater, sigma_retarded_hermitian.
 
         """
         return self._compute_pseudo_scattering(g_lesser, g_greater, out)

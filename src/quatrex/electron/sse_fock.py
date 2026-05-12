@@ -52,7 +52,7 @@ class SigmaFock(ScatteringSelfEnergy):
             The lesser Green's function.
         out : tuple[DSDBSparse, ...]
             The output matrices for the self-energy. The order is
-            sigma_retarded.
+            sigma_retarded_hermitian.
 
         """
         # TODO: Check again if we really need to transpose the matrices
@@ -60,8 +60,8 @@ class SigmaFock(ScatteringSelfEnergy):
         with profiler.profile_range(
             label="SigmaFock: stack->nnz transpose", level="default", comm=comm
         ):
-            (sigma_retarded,) = out
-            for m in (g_lesser, sigma_retarded):
+            (sigma_retarded_hermitian,) = out
+            for m in (g_lesser, sigma_retarded_hermitian):
                 # These should both already be in nnz-distribution.
                 m.dtranspose() if m.distribution_state != "nnz" else None
 
@@ -71,7 +71,7 @@ class SigmaFock(ScatteringSelfEnergy):
         ):
             if g_lesser.data.shape[-1] != 0:
                 gl_density = self.prefactor * g_lesser.data.sum(axis=0)
-                sigma_retarded.data += (
+                sigma_retarded_hermitian.data += (
                     fft_circular_convolve(
                         gl_density,
                         self.coulomb_matrix_data,

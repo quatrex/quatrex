@@ -15,7 +15,7 @@ num_transport_cells = 4
 [scba] # =============================================================
 max_iterations = 2
 mixing_factor = 0.5
-symmetric = false
+symmetric = true
 
 coulomb_screening = true
 phonon = true

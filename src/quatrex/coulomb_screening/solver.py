@@ -375,17 +375,20 @@ class CoulombScreeningSolver(SubsystemSolver):
     @profiler.profile(label="CoulombScreeningSolver: OBC", level="default", comm=comm)
     def _compute_obc(self, p_lesser, p_greater, p_retarded) -> None:
         """Computes open boundary conditions (OBC).
-        Both the OBC for retarded and lesser/greater components are computed,
-        as the former is needed for the latter.
-        This done for all the contacts of the system,
-        which are currently assumed to be only the left and right boundaries.
 
-        The result of this method is that the `obc_blocks` attribute of the solver is filled.
+        Both the OBC for retarded and lesser/greater components are
+        computed, as the former is needed for the latter. This done for
+        all the contacts of the system, which are currently assumed to
+        be only the left and right boundaries.
 
-        NOTE: The polarizations are passed as arguments and not the system matrix.
-        This is because not the blocks of the system matrix are used, but
-        fully periodic superblocks are assembled with the polarizations and the Coulomb matrix.
-        In the case of no subdivision, the system matrix blocks could be used directly.
+        The result of this method is that the `obc_blocks` attribute of
+        the solver is filled.
+
+        NOTE: The polarizations are passed as arguments and not the
+        system matrix. This is because not the blocks of the system
+        matrix are used, but fully periodic superblocks are assembled
+        with the polarizations and the Coulomb matrix. In the case of no
+        subdivision, the system matrix blocks could be used directly.
 
         Parameters
         ----------

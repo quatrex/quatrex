@@ -26,24 +26,31 @@ def get_periodic_superblocks(
     upper-most subblocks of the input block layer.
 
     This does the following:
-    | aji | aii | aij |
-    | a b | c d | e 0 |
-    | 0 h | i j | k l |
+     a_ii  a_ij
+     a_ji
+    | c d | e 0 |
+    | b j | k l |
+    -------------
+    | a i |
+    | 0 h |
     then the periodic layer would be
-    | a i c d e |
+    | a b c d e |
     with block_sections = 2
-    since it is assumed that
-    | aii aij |
-    | aji ajj |
     leading to periodic superblocks
-    | aji | aii | aij |
-    | a i | c d | e 0 |
-    | 0 a | i c | d e |
+    | c d | e 0 |
+    | b c | d e |
+    -------------
+    | a b |
+    | 0 a |
 
     If there are interactions g/f like
-    | aji | aii | aij |
-    | a b | c d | e f |
-    | g h | i j | k l |
+     a_ii  a_ij
+     a_ji
+    | c d | e g |
+    | b j | k l |
+    -------------
+    | a i |
+    | f h |
     they will be ignored without any warning
 
     Parameters
@@ -118,24 +125,33 @@ def expand_periodic_superblocks(
     and then repeats the resulting structure.
 
     This does the following:
-    | aji | aii | aij |
-    | a b | c d | e 0 |
-    | 0 h | i j | k l |
+     a_ii  a_ij
+     a_ji
+    | c d | e 0 |
+    | b j | k l |
+    -------------
+    | a i |
+    | 0 h |
     then the periodic layer would be
-    | a i c d e |
+    | a b c d e |
     with block_sections = 2
-    since it is assumed that
-    | aii aij |
-    | aji ajj |
-    leading to temporary superblocks
-    | aji | aii | aij |
-    | a i | c d | e 0 |
-    | 0 a | i c | d e |
-    if we want to double, then repeating only the periodic layer would give us
-    || 0 0 | a i || c d | e 0 || 0 0 | 0 0 ||
-    || 0 0 | 0 a || i c | d e || 0 0 | 0 0 ||
-    || 0 0 | 0 0 || a i | c d || e 0 | 0 0 ||
-    || 0 0 | 0 0 || 0 a | i c || d e | 0 0 ||
+    leading to periodic superblocks
+    | c d | e 0 |
+    | b c | d e |
+    -------------
+    | a b |
+    | 0 a |
+
+    if we want to double, this would give us
+    || c d | e 0 || 0 0 | 0 0 ||
+    || b c | d e || 0 0 | 0 0 ||
+    || a b | c d || e 0 | 0 0 ||
+    || 0 a | b c || d e | 0 0 ||
+    ----------------------------
+    || 0 0 | a b ||
+    || 0 0 | 0 a ||
+    || 0 0 | 0 0 ||
+    || 0 0 | 0 0 ||
 
     Similar to `get_periodic_superblocks`,
     extra interactions are ignored without any warning.

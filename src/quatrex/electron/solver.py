@@ -19,80 +19,6 @@ from quatrex.device.inputs import assemble_matrix
 profiler = Profiler()
 
 
-def _btd_add(a: DSDBSparse, b: DSDBSparse) -> None:
-    """Adds b to a on the block-tridiagonal.
-
-    This is an in-place operation, i.e. a is modified.
-
-    Parameters
-    ----------
-    a : DSDBSparse
-        The matrix to add to.
-    b : DSDBSparse
-        The matrix to add.
-
-    """
-    a_ = a.stack[...]
-    b_ = b.stack[...]
-    for i in range(a.num_local_blocks):
-        j = i + 1
-        a_.blocks[i, i] += b_.blocks[i, i]
-
-        if j >= a.num_local_blocks and comm.block.rank == comm.block.size - 1:
-            # The last rank does not have these blocks.
-            continue
-
-        a_.blocks[i, j] += b_.blocks[i, j]
-        a_.blocks[j, i] += b_.blocks[j, i]
-
-
-def _btd_apply_potential(
-    a: DSDBSparse, overlap: DSDBSparse, potential: NDArray
-) -> None:
-    """Applies the potential to a on the block-tridiagonal.
-
-    This is an in-place operation, i.e. a is modified.
-
-    Parameters
-    ----------
-    a : DSDBSparse
-        The matrix to apply the potential to.
-    overlap : DSDBSparse
-        The overlap matrix.
-    potential : NDArray
-        The potential to apply.
-
-    """
-    a_ = a.stack[...]
-    overlap_ = overlap.stack[...]
-    offset = 0
-    for i in range(a.num_local_blocks):
-        j = i + 1
-        s_ii = overlap_.blocks[i, i]
-        potential_i = potential[offset : offset + s_ii.shape[-1]]
-
-        a_.blocks[i, i] -= (
-            s_ii * potential_i[..., np.newaxis] + s_ii * potential_i
-        ) / 2
-
-        offset += s_ii.shape[-1]
-
-        if j >= a.num_local_blocks and comm.block.rank == comm.block.size - 1:
-            # The last rank does not have these blocks.
-            continue
-
-        s_ij = overlap_.blocks[i, j]
-        s_ji = overlap_.blocks[j, i]
-        potential_j = potential[offset : offset + s_ij.shape[-1]]
-
-        a_.blocks[i, j] -= (
-            s_ij * potential_i[..., np.newaxis] + s_ij * potential_j
-        ) / 2
-        a_.blocks[j, i] -= (
-            s_ji * potential_j[..., np.newaxis] + s_ji * potential_i
-        ) / 2
-
-
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
 
@@ -385,17 +311,99 @@ class ElectronSolver(SubsystemSolver):
                 gamma_nn.copy(), self.right_occupancies - 1
             )
 
+    def _add_overlap(
+        self,
+    ) -> None:
+        """Adds the overlap matrix to the system matrix.
+
+        This modifies the system matrix in-place, i.e. the result is stored in
+        `self.system_matrix`.
+
+        Parameters
+        ----------
+        self.system_matrix : DSDBSparse
+            The matrix to add to.
+        b : DSDBSparse
+            The matrix to add.
+
+        """
+        if not isinstance(self.overlap, DSDBSparse):
+            raise ValueError("Overlap matrix must be a DSDBSparse.")
+
+        system_matrix_ = self.system_matrix.stack[...]
+        overlap_ = self.overlap.stack[...]
+        for i in range(self.system_matrix.num_local_blocks):
+            j = i + 1
+            system_matrix_.blocks[i, i] += overlap_.blocks[i, i]
+
+            if (
+                j >= self.system_matrix.num_local_blocks
+                and comm.block.rank == comm.block.size - 1
+            ):
+                # The last rank does not have these blocks.
+                continue
+
+            system_matrix_.blocks[i, j] += overlap_.blocks[i, j]
+            system_matrix_.blocks[j, i] += overlap_.blocks[j, i]
+
+    def _apply_potential(
+        self,
+    ) -> None:
+        """Applies the potential to the system matrix.
+
+        This modifies the system matrix in-place, i.e. the result is stored in
+        `self.system_matrix`.
+
+        """
+        if not isinstance(self.overlap, DSDBSparse):
+            raise ValueError("Overlap matrix must be a DSDBSparse.")
+
+        system_matrix_ = self.system_matrix.stack[...]
+        overlap_ = self.overlap.stack[...]
+        offset = 0
+        for i in range(self.system_matrix.num_local_blocks):
+            j = i + 1
+            s_ii = overlap_.blocks[i, i]
+            potential_i = self.potential[offset : offset + s_ii.shape[-1]]
+
+            system_matrix_.blocks[i, i] -= (
+                s_ii * potential_i[..., np.newaxis] + s_ii * potential_i
+            ) / 2
+
+            offset += s_ii.shape[-1]
+
+            if (
+                j >= self.system_matrix.num_local_blocks
+                and comm.block.rank == comm.block.size - 1
+            ):
+                # The last rank does not have these blocks.
+                continue
+
+            s_ij = overlap_.blocks[i, j]
+            s_ji = overlap_.blocks[j, i]
+            potential_j = self.potential[offset : offset + s_ij.shape[-1]]
+
+            system_matrix_.blocks[i, j] -= (
+                s_ij * potential_i[..., np.newaxis] + s_ij * potential_j
+            ) / 2
+            system_matrix_.blocks[j, i] -= (
+                s_ji * potential_j[..., np.newaxis] + s_ji * potential_i
+            ) / 2
+
     def _subtract_hamiltonian_and_self_energy(
         self,
         sse_lesser: DSDBSparse,
         sse_greater: DSDBSparse,
         sse_retarded_hermitian: DSDBSparse,
     ) -> None:
-        r"""Subtracts the Hamiltonian and the self-energy from the system matrix on the block-tridiagonal.
+        r"""Subtracts the Hamiltonian and the self-energy from the system matrix
+        on the block-tridiagonal.
 
-        $$\mathbf{M} \mathrel{{-}{=}} \mathbf{H} + \mathbf{\Sigma}^R + \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right)$$
+        $$\mathbf{M} \mathrel{{-}{=}} \mathbf{H} + \mathbf{\Sigma}^R +
+        \frac{1}{2} \left(\mathbf{\Sigma}^{>} - \mathbf{\Sigma}^{<} \right)$$
 
-        This modifies the system matrix in-place, i.e. the result is stored in `self.system_matrix`.
+        This modifies the system matrix in-place, i.e. the result is stored in
+        `self.system_matrix`.
 
         Parameters
         ----------
@@ -460,7 +468,7 @@ class ElectronSolver(SubsystemSolver):
         if self.overlap is None:
             self.system_matrix.fill_diagonal(1.0)
         else:
-            _btd_add(self.system_matrix, self.overlap)
+            self._add_overlap()
 
         scale_stack(
             self.system_matrix.data,
@@ -470,7 +478,7 @@ class ElectronSolver(SubsystemSolver):
         if self.overlap is None:
             self.system_matrix -= sparse.diags(self.potential, format="csr")
         else:
-            _btd_apply_potential(self.system_matrix, self.overlap, self.potential)
+            self._apply_potential()
 
         self._subtract_hamiltonian_and_self_energy(
             sse_lesser,

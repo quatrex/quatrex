@@ -430,6 +430,9 @@ class CoulombScreeningSolver(SubsystemSolver):
             self.obc_blocks.lesser[-1] = obc_lesser
             self.obc_blocks.greater[-1] = obc_greater
 
+    @profiler.profile(
+        label="CoulombScreeningSolver: Assemble Pr", level="default", comm=comm
+    )
     def _assemble_retarded_polarization(
         self,
         p_lesser: DSDBSparse,
@@ -526,23 +529,8 @@ class CoulombScreeningSolver(SubsystemSolver):
     )
     def _assemble_system_matrix(
         self,
-        p_lesser: DSDBSparse,
-        p_greater: DSDBSparse,
-        p_retarded_hermitian: DSDBSparse,
     ) -> None:
-        """Assembles the system matrix.
-
-        Parameters
-        ----------
-        p_lesser : DSDBSparse
-            The lesser polarization.
-        p_greater : DSDBSparse
-            The greater polarization.
-        p_retarded_hermitian : DSDBSparse
-            The hermitian part of the retarded polarization.
-             The anti-hermitian part is calculated from lesser and greater.
-
-        """
+        """Assembles the system matrix."""
         self.system_matrix.data = 0.0
         local_blocks, _ = get_section_sizes(
             len(self.system_matrix.block_sizes), comm.block.size
@@ -550,13 +538,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
-        self.p_retarded.allocate_data()
-
-        self._assemble_retarded_polarization(
-            p_lesser,
-            p_greater,
-            p_retarded_hermitian,
-        )
         bd_matmul_distr(
             self.coulomb_matrix,
             self.p_retarded,
@@ -581,9 +562,6 @@ class CoulombScreeningSolver(SubsystemSolver):
                 upper_inds=(n, m),
                 order="reverse",
             )
-
-        self.p_retarded.free_data()
-
 
         xp.negative(self.system_matrix.data, out=self.system_matrix.data)
         self.system_matrix += sparse.eye(self.system_matrix.shape[-1])
@@ -764,8 +742,24 @@ class CoulombScreeningSolver(SubsystemSolver):
             # Change the block sizes to match the Coulomb matrix.
             self._set_block_sizes(self.small_block_sizes)
 
+        self.p_retarded.allocate_data()
+        self._assemble_retarded_polarization(
+            p_lesser,
+            p_greater,
+            p_retarded_hermitian,
+        )
+
         # Assemble the system matrix (Includes matrix multiplication).
-        self._assemble_system_matrix(p_lesser, p_greater, p_retarded_hermitian)
+        self._assemble_system_matrix()
+
+        # Apply the OBC algorithm.
+        self._compute_obc(
+            p_lesser,
+            p_greater,
+            self.p_retarded,
+        )
+
+        self.p_retarded.free_data()
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Sandwich", level="default", comm=comm
@@ -810,13 +804,6 @@ class CoulombScreeningSolver(SubsystemSolver):
         ):
             # Go back to normal block sizes.
             self._set_block_sizes(self.block_sizes)
-
-        # Apply the OBC algorithm.
-        self._compute_obc(
-            p_lesser,
-            p_greater,
-            p_retarded,
-        )
 
         with profiler.profile_range(
             label="CoulombScreeningSolver: Solve", level="default", comm=comm

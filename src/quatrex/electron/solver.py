@@ -14,8 +14,8 @@ from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.device.inputs import assemble_matrix
 from quatrex.device.contact import get_inverse_order, order_block
+from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
 

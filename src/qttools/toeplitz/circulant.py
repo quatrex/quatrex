@@ -85,7 +85,42 @@ def _get_idft_matrix(n: int) -> NDArray:
     return w
 
 
-def _transform_matrix(
+def _2D_fft(a: NDArray):
+    """Apply the 2D discrete Fourier transform (DFT) to the input array a. The
+    DFT is applied along the first two dimensions of a.
+    The DFT is done explictly using the DFT matrices, which is not the most efficient way for
+    many sections, but it is assumed that the number of sections is small.
+
+    Parameters
+    ----------
+    a : NDArray
+        The input array to transform. The first two dimensions are assumed to be the section dimensions.
+
+    Returns
+    -------
+    NDArray
+        The transformed array after applying the 2D DFT along the first two dimensions.
+
+    """
+
+    sections_y = a.shape[0]
+    sections_x = a.shape[1]
+
+    # stores the first block-layer of the system, which has the shape
+    # (sections_y, sections_x, batch_size, block_size_y, block_size_x)
+    dft_x = _get_dft_matrix(sections_x)
+    dft_y = _get_dft_matrix(sections_y)
+
+    # Transform along the y-sections
+    a = xp.einsum("ij, jk... -> ik...", dft_y, a)
+
+    # Transform along the x-sections
+    a = xp.einsum("ij, kj... -> ki...", dft_x, a)
+
+    return a
+
+
+def transform_circulant(
     a: NDArray,
     sections_x: int = 1,
     sections_y: int = 1,
@@ -156,28 +191,16 @@ def _transform_matrix(
     # view along y direction
     a = _block_view(a[..., :block_size_y, :], axis=-1, num_blocks=sections_y)
 
-    # a now stores the first block-layer of the system, which has the shape
-    # (sections_y, sections_x, batch_size, block_size_y, block_size_x)
-
-    dft_x = _get_dft_matrix(sections_x)
-    dft_y = _get_dft_matrix(sections_y)
-
-    # Transform along the y-sections
-    a = xp.einsum("ij, jklmn -> iklmn", dft_y, a)
-
-    # Transform along the x-sections
-    a = xp.einsum("ij, kjlmn -> kilmn", dft_x, a)
-
-    return a
+    return _2D_fft(a)
 
 
-def _detransform_matrix(
+def detransform_circulant(
     a: NDArray,
     sections_x: int = 1,
     sections_y: int = 1,
 ) -> NDArray:
     """Inverse transformation of the block diagonal form to the original matrix
-    form. This is the inverse of the _transform_matrix function and uses the
+    form. This is the inverse of the `transform_circulant` function and uses the
     inverse DFT matrices.
 
     Parameters
@@ -248,20 +271,19 @@ def _detransform_matrix(
     return out
 
 
-def transform_system(
-    a_xx: list[NDArray],
-    phase: complex = 1,
+def transform_phi_circulant(
+    a: NDArray,
+    phase_x: complex = 1,
+    phase_y: complex = 1,
     sections_x: int = 1,
     sections_y: int = 1,
 ):
-    r"""Transform the boundary system to block diagonal form by exploiting the
-    circulant structure of the system. This transformation is based on the
-    discrete Fourier transform (DFT) and can be applied to systems with
-    periodicity in transverse direction. It is assumed that the system is
+    r"""Transform a matrix to block diagonal form by exploiting the
+    $\phi$-circulant structure of the matrix. This transformation is based on the
+    discrete Fourier transform (DFT). It is assumed that the matrix is
     already sorted according to the transverse direction.
     
-    A phase needs to be provided for non-gamma point caculation since the the
-    system is not circulant, but rather $\phi$-circulant i.e. has the form of:
+    Being $\phi$-circulant implies that the matrix has the form of:
 
     \[
         \mathbf{A} = \begin{bmatrix}
@@ -280,11 +302,110 @@ def transform_system(
     \[
         \mathbf{D} = \begin{bmatrix}
             1 & 0 & 0 \\
-            0 & a & 0 \\
-            0 & 0 & c
+            0 & \phi^{\frac{1}{3}} & 0 \\
+            0 & 0 & \phi^{\frac{2}{3}}
         \end{bmatrix}
     \]
 
+    For the case of a 2D $\phi$-circulant structure, the matrix has the same
+    form as above, but each block is again $\phi$-circulant.
+
+    Parameters
+    ----------
+    a : NDArray
+        The matrix to transform. The last two dimensions are assumed to be
+        square and the last dimension is assumed to be divisible by sections_x
+        and sections_y.
+    phase_x : complex, optional
+        The phase shift in the x direction, by default 1.
+    phase_y : complex, optional
+        The phase shift in the y direction, by default 1.
+    sections_x : int, optional 
+        The number of sections in the x direction, by default 1.
+    sections_y : int, optional
+        The number of sections in the y direction, by default 1.
+
+    Returns
+    -------
+    NDArray
+        The transformed matrix in block diagonal form.
 
     """
-    ...
+
+    if a.ndim == 2:
+        a = a[None, ...]
+
+    if a.shape[-1] % sections_x != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_x.")
+
+    block_size_x = a.shape[-1] // sections_x
+
+    if block_size_x % sections_y != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_y.")
+
+    block_size_y = block_size_x // sections_y
+
+    # view along x direction
+    a = _block_view(a[..., :block_size_x, :], axis=-1, num_blocks=sections_x)
+    # view along y direction
+    a = _block_view(a[..., :block_size_y, :], axis=-1, num_blocks=sections_y)
+
+    # the problem can be transformed to the circulant case
+    # where the is a phase shift on the blocks
+
+    beta_x = phase_x ** (1 / sections_x)
+    beta_y = phase_y ** (1 / sections_y)
+
+    betas_x = xp.array([beta_x**i for i in range(sections_x)])
+    betas_y = xp.array([beta_y**i for i in range(sections_y)])
+
+    beta = betas_y[:, None] * betas_x[None, :]
+    a = a * beta[..., None, None, None]
+
+    return _2D_fft(a)
+
+
+def detransform_phi_circulant(
+    a: NDArray,
+    phase_x: complex = 1,
+    phase_y: complex = 1,
+    sections_x: int = 1,
+    sections_y: int = 1,
+) -> NDArray:
+    """Inverse transformation of the block diagonal form to the original matrix
+    form. This is the inverse of the `transform_phi_circulant` function and uses the
+    inverse DFT matrices.
+
+    Parameters
+    ----------
+    a : NDArray
+        The matrix to detransform.
+    phase_x : complex, optional
+        The phase shift in the x direction, by default 1.
+    phase_y : complex, optional
+        The phase shift in the y direction, by default 1.
+    sections_x : int, optional
+        The number of sections in the x direction, by default 1.
+    sections_y : int, optional
+        The number of sections in the y direction, by default 1.
+
+    Returns
+    -------
+    NDArray
+        The original matrix before transformation.
+
+    """
+    block_size_y = a.shape[-1]
+
+    out = detransform_circulant(a, sections_x, sections_y)
+
+    # need to apply the inverse of the phase transformation
+    beta_x = phase_x ** (1 / sections_x)
+    beta_y = phase_y ** (1 / sections_y)
+
+    betas_x = xp.array([beta_x**i for i in range(sections_x)])
+    betas_y = xp.array([beta_y**i for i in range(sections_y)])
+
+    beta = xp.kron(betas_x, xp.kron(betas_y, xp.ones(block_size_y)))
+
+    return (out * beta[None, :, None]) / beta[None, None, :]

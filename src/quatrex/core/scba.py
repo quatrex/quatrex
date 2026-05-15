@@ -28,6 +28,7 @@ from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
     SigmaFock,
+    SigmaHartree,
     SigmaPhonon,
     SigmaPhoton,
 )
@@ -249,6 +250,8 @@ class Observables:
     sigma_lesser_density: NDArray = None
     sigma_greater_density: NDArray = None
 
+    hartree_potential: NDArray = None
+
     # --- Coulomb screening --------------------------------------------
     w_lesser_density: NDArray = None
     w_greater_density: NDArray = None
@@ -338,7 +341,10 @@ class SCBA:
         )
 
         # ----- Coulomb screening --------------------------------------
-        if self.quatrex_config.scba.coulomb_screening:
+        if (
+            self.quatrex_config.scba.coulomb_screening
+            or self.quatrex_config.scba.hartree
+        ):
             # Load the Coulomb matrix.
             coulomb_matrix, __ = load_matrix(
                 quatrex_config=quatrex_config,
@@ -401,6 +407,16 @@ class SCBA:
                 self.quatrex_config,
                 self.compute_config,
                 self.electron_energies,
+            )
+
+        # ----- Hartree ------------------------------------------------
+        if self.quatrex_config.scba.hartree:
+            # TODO: This should probably not be here
+            self.sigma_hartree = SigmaHartree(
+                self.quatrex_config,
+                coulomb_matrix,
+                self.electron_energies,
+                self.electron_solver.potential,
             )
 
         # ----- Photons ------------------------------------------------
@@ -657,6 +673,28 @@ class SCBA:
         self.data.w_greater.free_data()
         self.data.w_lesser.free_data()
 
+    def _compute_hartree_interaction(self):
+        """Computes the Hartree interaction."""
+        t_sigma_hartree_start = time.perf_counter()
+        self.sigma_hartree.compute(
+            self.data.g_retarded,
+            self.data.g_lesser,
+            out=(self.data.sigma_retarded,),
+        )
+        synchronize_device()
+        t_sigma_hartree_end = time.perf_counter()
+        comm.barrier()
+        t_sigma_hartree_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"  Time for Hartree self-energy: {t_sigma_hartree_end - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
+            print(
+                f"  Time for Hartree self-energy all: {t_sigma_hartree_end_all - t_sigma_hartree_start:.3f} s",
+                flush=True,
+            )
+
     @profiler.profile(level="debug")
     def _compute_electron_observables(self) -> None:
         """Computes electron observables."""
@@ -726,6 +764,9 @@ class SCBA:
                 self.data.sigma_greater,
                 overlap,
             ) / (2 * xp.pi)
+
+        if self.quatrex_config.scba.hartree:
+            self.observables.hartree_potential = self.sigma_hartree.hartree_potential
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
@@ -816,6 +857,11 @@ class SCBA:
                     f"sigma_lesser_density_{iteration}.npy": self.observables.sigma_lesser_density,
                     f"sigma_greater_density_{iteration}.npy": self.observables.sigma_greater_density,
                 }
+            )
+
+        if self.quatrex_config.scba.hartree:
+            outputs[f"hartree_potential_{iteration}.npy"] = (
+                self.observables.hartree_potential
             )
 
         print(f"Writing output for iteration {iteration}...", flush=True)
@@ -936,6 +982,23 @@ class SCBA:
                     )
                     print(
                         f"Time for Coulomb screening interaction all: {t_end_coulomb_all - t_start_coulomb:.3f} s",
+                        flush=True,
+                    )
+
+            if self.quatrex_config.scba.hartree:
+                t_start_hartree = time.perf_counter()
+                self._compute_hartree_interaction()
+                synchronize_device()
+                t_end_hartree = time.perf_counter()
+                comm.barrier()
+                t_end_hartree_all = time.perf_counter()
+                if comm.rank == 0:
+                    print(
+                        f"Time for Hartree interaction: {t_end_hartree - t_start_hartree:.3f} s",
+                        flush=True,
+                    )
+                    print(
+                        f"Time for Hartree interaction all: {t_end_hartree_all - t_start_hartree:.3f} s",
                         flush=True,
                     )
 

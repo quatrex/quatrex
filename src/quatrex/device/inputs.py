@@ -365,7 +365,8 @@ def _assemble_kpoint(
     matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
     kpoint_grid: NDArray,
     kpoint_shift: NDArray,
-    kshift: int | NDArray,
+    shift_kpoints: bool,
+    # kshift: int | NDArray,
 ) -> None:
     """Assembles a DSBSparse from a dictionary of sparse matrices
     corresponding to different transverse periodic repetitions.
@@ -387,8 +388,8 @@ def _assemble_kpoint(
 
     num_dimensions = len(kpoint_grid)
 
-    if isinstance(kshift, int):
-        kshift = np.array([kshift for _ in range(num_dimensions)])
+    # if isinstance(kshift, int):
+    #    kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -403,7 +404,9 @@ def _assemble_kpoint(
     kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
         tuple(kpoint_grid) + (-1,)
     )
-    kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
+    # kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
+    if shift_kpoints:
+        kpoints -= kpoints[0, 0, 0]  # Shift the k-points such Gamma is at the origin
 
     # index = np.argwhere(kpoint_grid > 1)[0]
     for stack_index in np.ndindex(kpoints.shape[:-1]):
@@ -616,7 +619,8 @@ def load_matrix(
             matrix_dict=matrix_dict,
             kpoint_grid=kpoint_grid,
             kpoint_shift=kpoint_shift,
-            kshift=-(kpoint_grid // 2) if shift_kpoints else 0,
+            shift_kpoints=shift_kpoints,
+            # kshift=-(kpoint_grid // 2) if shift_kpoints else 0,
         )
         # Explicitely try to free the memory
         del matrix_dict

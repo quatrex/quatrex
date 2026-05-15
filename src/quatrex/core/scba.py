@@ -352,7 +352,9 @@ class SCBA:
             # TODO: Check that this is correct for kpoints.
             if not coulomb_matrix.symmetry:
                 coulomb_matrix.symmetrize()
-            coulomb_matrix._data /= quatrex_config.coulomb_screening.epsilon_r
+            coulomb_matrix._data /= quatrex_config.coulomb_matrix.epsilon_r
+
+        if self.quatrex_config.scba.coulomb_screening:
 
             energies_path = (
                 self.quatrex_config.input_dir / "coulomb_screening_energies.npy"

@@ -450,6 +450,14 @@ class ElectronConfig(BaseModel):
         return self
 
 
+class CoulombConfig(BaseModel):
+    """Options for the Coulomb matrix."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    epsilon_r: PositiveFloat = 1.0
+
+
 class CoulombScreeningConfig(BaseModel):
     """Options for the Coulomb screening solver."""
 
@@ -463,8 +471,6 @@ class CoulombScreeningConfig(BaseModel):
     solve_lyapunov: bool = True
 
     temperature: PositiveFloat = 300.0  # K
-
-    epsilon_r: PositiveFloat = 1.0
 
     left_temperature: PositiveFloat | None = None
     right_temperature: PositiveFloat | None = None
@@ -706,6 +712,8 @@ class QuatrexConfig(BaseModel):
     poisson: PoissonConfig = PoissonConfig()
 
     electron: ElectronConfig
+
+    coulomb_matrix: CoulombConfig | None = None
 
     phonon: PhononConfig | None = None
     coulomb_screening: CoulombScreeningConfig | None = None

@@ -15,10 +15,9 @@ from qttools.toeplitz.circulant import (
 )
 
 
-def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
-    """Tests that the subspace NEVP solver returns the correct result."""
-    ws, vs = nevp(a_xx)
-
+def _check_residuals(a_xx: tuple[NDArray, ...], ws: NDArray, vs: NDArray) -> None:
+    """Checks that the residuals of the eigenvalue problem are small for the
+    computed eigenvalues and eigenvectors."""
     a_ji, a_ii, a_ij = a_xx
     residuals = []
     for e in range(ws.shape[0]):
@@ -43,6 +42,13 @@ def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
     assert not xp.all(spurious_mask)
 
     assert residuals[~spurious_mask].max() < 1e-5
+
+
+def test_nevp(a_xx: tuple[NDArray, ...], nevp: NEVP):
+    """Tests that the subspace NEVP solver returns the correct result."""
+    ws, vs = nevp(a_xx)
+
+    _check_residuals(a_xx, ws, vs)
 
 
 @pytest.mark.parametrize("reduce", [False, True])
@@ -68,30 +74,7 @@ def test_full(a_xx: tuple[NDArray, ...], reduce: bool, provide_sparsity: bool):
     full_nevp = Full(a_xx_sparsity=a_xx_sparsity, reduce=reduce)
     ws, vs = full_nevp(a_xx)
 
-    a_ji, a_ii, a_ij = a_xx
-    residuals = []
-    for e in range(ws.shape[0]):
-        for k in range(ws.shape[1]):
-            w = ws[e, k]
-            v = vs[e, :, k] / xp.linalg.norm(vs[e, :, k])
-            with np.errstate(divide="ignore", invalid="ignore"):
-                residuals.append(
-                    xp.linalg.norm((a_ji[e] / w + a_ii[e] + a_ij[e] * w) @ v)
-                    / xp.linalg.norm(w)
-                )
-
-    residuals = xp.nan_to_num(xp.array(residuals))
-
-    # Filter outlier eigenmodes (robust Z-score method).
-    median = xp.median(residuals)
-    median_abs_deviation = xp.median(xp.abs(residuals - median))
-    z_scores = 0.6745 * (residuals - median) / median_abs_deviation
-    spurious_mask = xp.abs(z_scores) > 30  # Very generous threshold.
-
-    # assert some eigenvalues were found
-    assert not xp.all(spurious_mask)
-
-    assert residuals[~spurious_mask].max() < 1e-5
+    _check_residuals(a_xx, ws, vs)
 
 
 def test_circulant(
@@ -132,30 +115,7 @@ def test_circulant(
         vs, sections_x=block_sections_x, sections_y=block_sections_y
     )
 
-    a_ji, a_ii, a_ij = a_xx
-    residuals = []
-    for e in range(ws.shape[0]):
-        for k in range(ws.shape[1]):
-            w = ws[e, k]
-            v = vs[e, :, k] / xp.linalg.norm(vs[e, :, k])
-            with np.errstate(divide="ignore", invalid="ignore"):
-                residuals.append(
-                    xp.linalg.norm((a_ji[e] / w + a_ii[e] + a_ij[e] * w) @ v)
-                    / xp.linalg.norm(w)
-                )
-
-    residuals = xp.nan_to_num(xp.array(residuals))
-
-    # Filter outlier eigenmodes (robust Z-score method).
-    median = xp.median(residuals)
-    median_abs_deviation = xp.median(xp.abs(residuals - median))
-    z_scores = 0.6745 * (residuals - median) / median_abs_deviation
-    spurious_mask = xp.abs(z_scores) > 30  # Very generous threshold.
-
-    # assert some eigenvalues were found
-    assert not xp.all(spurious_mask)
-
-    assert residuals[~spurious_mask].max() < 1e-5
+    _check_residuals(a_xx, ws, vs)
 
 
 def test_phi_circulant(
@@ -215,27 +175,4 @@ def test_phi_circulant(
         sections_y=block_sections_y,
     )
 
-    a_ji, a_ii, a_ij = a_xx
-    residuals = []
-    for e in range(ws.shape[0]):
-        for k in range(ws.shape[1]):
-            w = ws[e, k]
-            v = vs[e, :, k] / xp.linalg.norm(vs[e, :, k])
-            with np.errstate(divide="ignore", invalid="ignore"):
-                residuals.append(
-                    xp.linalg.norm((a_ji[e] / w + a_ii[e] + a_ij[e] * w) @ v)
-                    / xp.linalg.norm(w)
-                )
-
-    residuals = xp.nan_to_num(xp.array(residuals))
-
-    # Filter outlier eigenmodes (robust Z-score method).
-    median = xp.median(residuals)
-    median_abs_deviation = xp.median(xp.abs(residuals - median))
-    z_scores = 0.6745 * (residuals - median) / median_abs_deviation
-    spurious_mask = xp.abs(z_scores) > 30  # Very generous threshold.
-
-    # assert some eigenvalues were found
-    assert not xp.all(spurious_mask)
-
-    assert residuals[~spurious_mask].max() < 1e-5
+    _check_residuals(a_xx, ws, vs)

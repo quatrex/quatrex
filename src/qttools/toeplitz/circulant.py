@@ -5,6 +5,146 @@ from qttools import NDArray, xp
 from qttools.datastructures.dsdbsparse import _block_view
 
 
+def _make_1D_block_circulant(
+    a: NDArray,
+    sections: int,
+) -> NDArray:
+    """Helper function to transform a matrix into a block circulant matrix with
+    the given number of sections."""
+
+    if a.shape[-1] % sections != 0:
+        raise ValueError("The last dimension of a must be divisible by sections.")
+
+    if a.shape[-2] != a.shape[-1]:
+        raise ValueError(
+            "The second to last dimension of a must be equal to the last dimension of a."
+        )
+
+    block_size = a.shape[-1] // sections
+    # Take the first block-row (top n rows)
+    block_layer = a[..., :block_size, :]
+    blocks = xp.split(block_layer, sections, axis=-1)
+
+    matrix = xp.zeros_like(a)
+    for i in range(sections):
+        shifted_blocks = blocks[-i:] + blocks[:-i]
+        matrix[..., i * block_size : (i + 1) * block_size, :] = xp.concatenate(
+            shifted_blocks, axis=-1
+        )
+
+    return matrix
+
+
+def _make_2D_block_circulant(
+    a: NDArray,
+    sections_x: int,
+    sections_y: int,
+) -> NDArray:
+    """Helper function to transform a matrix into a block circulant matrix with
+    the given number of sections."""
+
+    if a.shape[-1] % sections_x != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_x.")
+    if a.shape[-1] % sections_y != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_y.")
+    if a.shape[-1] % (sections_x * sections_y) != 0:
+        raise ValueError(
+            "The last dimension of a must be divisible by the section product."
+        )
+
+    if a.shape[-2] != a.shape[-1]:
+        raise ValueError(
+            "The second to last dimension of a must be equal to the last dimension of a."
+        )
+
+    block_size_x = a.shape[-1] // sections_x
+
+    # make first circulant in the y direction
+    for i in range(0, a.shape[-1], block_size_x):
+        a[..., :block_size_x, i : i + block_size_x] = _make_1D_block_circulant(
+            a[..., :block_size_x, i : i + block_size_x],
+            sections=sections_y,
+        )
+
+    return _make_1D_block_circulant(a, sections=sections_x)
+
+
+def _make_1D_block_phi_circulant(
+    a: NDArray,
+    phase: NDArray,
+    sections: int,
+) -> NDArray:
+    """Helper function to transform a matrix into a block circulant matrix with
+    the given number of sections."""
+
+    if a.shape[-1] % sections != 0:
+        raise ValueError("The last dimension of a must be divisible by sections.")
+
+    if a.shape[-2] != a.shape[-1]:
+        raise ValueError(
+            "The second to last dimension of a must be equal to the last dimension of a."
+        )
+
+    block_size = a.shape[-1] // sections
+    # Take the first block-row (top n rows)
+    block_layer = a[..., :block_size, :]
+    blocks = xp.split(block_layer, sections, axis=-1)
+
+    matrix = xp.zeros_like(a)
+    for i in range(sections):
+        if i == 0:
+            phased_blocks = blocks[-i:]
+        else:
+            phased_blocks = [
+                phase[:, *([None] * (len(block.shape) - 1))] * block
+                for block in blocks[-i:]
+            ]
+
+        shifted_blocks = phased_blocks + blocks[:-i]
+        matrix[..., i * block_size : (i + 1) * block_size, :] = xp.concatenate(
+            shifted_blocks, axis=-1
+        )
+
+    return matrix
+
+
+def _make_2D_block_phi_circulant(
+    a: NDArray,
+    phase_x: NDArray,
+    phase_y: NDArray,
+    sections_x: int,
+    sections_y: int,
+) -> NDArray:
+    """Helper function to transform a matrix into a block circulant matrix with
+    the given number of sections."""
+
+    if a.shape[-1] % sections_x != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_x.")
+    if a.shape[-1] % sections_y != 0:
+        raise ValueError("The last dimension of a must be divisible by sections_y.")
+    if a.shape[-1] % (sections_x * sections_y) != 0:
+        raise ValueError(
+            "The last dimension of a must be divisible by the section product."
+        )
+
+    if a.shape[-2] != a.shape[-1]:
+        raise ValueError(
+            "The second to last dimension of a must be equal to the last dimension of a."
+        )
+
+    block_size_x = a.shape[-1] // sections_x
+
+    # make first circulant in the y direction
+    for i in range(0, a.shape[-1], block_size_x):
+        a[..., :block_size_x, i : i + block_size_x] = _make_1D_block_phi_circulant(
+            a[..., :block_size_x, i : i + block_size_x],
+            phase_y,
+            sections=sections_y,
+        )
+
+    return _make_1D_block_phi_circulant(a, phase_x, sections=sections_x)
+
+
 def check_circulant(a: NDArray, sections: int) -> bool:
     """Check if a matrix is block circulant with the given number of sections.
 
@@ -273,8 +413,8 @@ def detransform_circulant(
 
 def transform_phi_circulant(
     a: NDArray,
-    phase_x: complex = 1,
-    phase_y: complex = 1,
+    phase_x: NDArray,
+    phase_y: NDArray,
     sections_x: int = 1,
     sections_y: int = 1,
 ):
@@ -316,10 +456,10 @@ def transform_phi_circulant(
         The matrix to transform. The last two dimensions are assumed to be
         square and the last dimension is assumed to be divisible by sections_x
         and sections_y.
-    phase_x : complex, optional
-        The phase shift in the x direction, by default 1.
-    phase_y : complex, optional
-        The phase shift in the y direction, by default 1.
+    phase_x : NDArray
+        The phase shift in the x direction. This is the phase per batch.
+    phase_y : NDArray
+        The phase shift in the y direction. This is the phase per batch.
     sections_x : int, optional 
         The number of sections in the x direction, by default 1.
     sections_y : int, optional
@@ -337,6 +477,15 @@ def transform_phi_circulant(
 
     if a.shape[-1] % sections_x != 0:
         raise ValueError("The last dimension of a must be divisible by sections_x.")
+
+    if not isinstance(phase_x, xp.ndarray):
+        raise TypeError("phase_x must be an array.")
+
+    if not isinstance(phase_y, xp.ndarray):
+        raise TypeError("phase_y must be an array.")
+
+    if phase_x.ndim > 1 or phase_y.ndim > 1:
+        raise ValueError("phase_x and phase_y must be 1D arrays.")
 
     block_size_x = a.shape[-1] // sections_x
 
@@ -359,16 +508,16 @@ def transform_phi_circulant(
     betas_x = xp.array([beta_x**i for i in range(sections_x)])
     betas_y = xp.array([beta_y**i for i in range(sections_y)])
 
-    beta = betas_y[:, None] * betas_x[None, :]
-    a = a * beta[..., None, None, None]
+    beta = betas_y[:, None, :] * betas_x[None, :, :]
+    a = a * beta[..., None, None]
 
     return _2D_fft(a)
 
 
 def detransform_phi_circulant(
     a: NDArray,
-    phase_x: complex = 1,
-    phase_y: complex = 1,
+    phase_x: NDArray,
+    phase_y: NDArray,
     sections_x: int = 1,
     sections_y: int = 1,
 ) -> NDArray:
@@ -380,10 +529,10 @@ def detransform_phi_circulant(
     ----------
     a : NDArray
         The matrix to detransform.
-    phase_x : complex, optional
-        The phase shift in the x direction, by default 1.
-    phase_y : complex, optional
-        The phase shift in the y direction, by default 1.
+    phase_x : NDArray
+        The phase shift in the x direction. This is the phase per batch.
+    phase_y : NDArray
+        The phase shift in the y direction. This is the phase per batch.
     sections_x : int, optional
         The number of sections in the x direction, by default 1.
     sections_y : int, optional
@@ -395,17 +544,29 @@ def detransform_phi_circulant(
         The original matrix before transformation.
 
     """
-    block_size_y = a.shape[-1]
+
+    if not isinstance(phase_x, xp.ndarray):
+        raise TypeError("phase_x must be an array.")
+
+    if not isinstance(phase_y, xp.ndarray):
+        raise TypeError("phase_y must be an array.")
+
+    if phase_x.ndim > 1 or phase_y.ndim > 1:
+        raise ValueError("phase_x and phase_y must be 1D arrays.")
 
     out = detransform_circulant(a, sections_x, sections_y)
+
+    block_size_y = a.shape[-1]
 
     # need to apply the inverse of the phase transformation
     beta_x = phase_x ** (1 / sections_x)
     beta_y = phase_y ** (1 / sections_y)
 
-    betas_x = xp.array([beta_x**i for i in range(sections_x)])
-    betas_y = xp.array([beta_y**i for i in range(sections_y)])
+    betas_x = xp.array([beta_x**i for i in range(sections_x)]).T
+    betas_y = xp.array([beta_y**i for i in range(sections_y)]).T
 
-    beta = xp.kron(betas_x, xp.kron(betas_y, xp.ones(block_size_y)))
+    ones = xp.ones(block_size_y, dtype=betas_x.dtype)
 
-    return (out * beta[None, :, None]) / beta[None, None, :]
+    beta = xp.einsum("bi,bj,k->bijk", betas_x, betas_y, ones).reshape(len(phase_x), -1)
+
+    return (out * beta[..., None]) / beta[..., None, :]

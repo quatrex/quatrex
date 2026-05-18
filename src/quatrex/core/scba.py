@@ -759,6 +759,7 @@ class SCBA:
             self.observables.sigma_retarded_density = -density(
                 self.data.sigma_retarded,
                 overlap,
+                return_complex=True,
             ) / (2 * xp.pi)
             self.observables.sigma_lesser_density = density(
                 self.data.sigma_lesser,

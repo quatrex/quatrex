@@ -97,7 +97,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
         self.apply_hilbert_correction = (
             quatrex_config.coulomb_screening.apply_hilbert_correction
         )
-        self.compute_real_part = quatrex_config.coulomb_screening.compute_real_part_self_energy
+        self.compute_real_part = (
+            quatrex_config.coulomb_screening.compute_real_part_self_energy
+        )
 
     def _compute_without_correction(
         self,
@@ -181,7 +183,9 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             sigma_x_fft -= xp.multiply(antihermitian_fft, hilbert_kernel_fft.conj())
 
             sigma_retarded.data[..., batch] += (
-                self.prefactor * xp.fft.ifft(sigma_x_fft, axis=0)[:ne] * self.kpoint_volume
+                self.prefactor
+                * xp.fft.ifft(sigma_x_fft, axis=0)[:ne]
+                * self.kpoint_volume
             )
 
     def _compute_with_correction(
@@ -220,23 +224,23 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             g_lesser.data[..., batch],
             -w_greater.data[..., batch].conj(),
         )
-        sl[-ne:] += (
+        sl[-ne + 1 :] += (
             self.prefactor
             * fft_convolve_kpoints(
-                g_lesser.data[..., batch], w_lesser.data[..., batch]
-            )[:ne]
+                g_lesser.data[..., batch], w_lesser.data[1:, ..., batch]
+            )[: ne - 1]
         )
 
         # Greater self-energy
         sg = self.prefactor * fft_convolve_kpoints(
             g_greater.data[..., batch], w_greater.data[..., batch]
         )
-        sg[:ne] += (
+        sg[1:ne] += (
             self.prefactor
             * fft_correlate_kpoints(
                 g_greater.data[..., batch],
-                -w_lesser.data[..., batch].conj(),
-            )[-ne:]
+                -w_lesser.data[1:, ..., batch].conj(),
+            )[-ne + 1 :]
         )
 
         sigma_lesser.data[..., batch] += sl[-ne:]

@@ -63,6 +63,69 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
         a_.blocks[j, i] -= b_.blocks[j, i]
 
 
+def generate_potential_profile(
+    grid, transport_direction, bias, potential_function="tanh", flat_length=0
+):
+    """
+    Generates a potential profile on a given grid using a specified potential function.
+
+    Parameters
+    ----------
+    grid : ndarray
+        The spatial grid on which to evaluate the potential. Shape should be (N, 3) for 3D space.
+    transport_direction : int
+        The index of the transport direction (0 for x, 1 for y, 2 for z).
+    bias : float
+        The bias to apply to the potential profile. A positive bias creates a drop along transport.
+    potential_function : str
+        "tanh" or "linear". The type of potential function to use. Default is "tanh".
+    flat_length : float
+        Length of the flat part of the potential profile at the beginning and end.
+
+    Returns
+    -------
+    potential_profile : ndarray
+        The potential profile evaluated on the grid. Shape will be (N,).
+    """
+    coords = np.asarray(grid[:, transport_direction], dtype=float)
+    coord0 = coords.min()
+    transport_length = coords.max() - coord0
+
+    if transport_length <= 0:
+        raise ValueError("Grid has zero transport length in the chosen direction.")
+    if flat_length < 0:
+        raise ValueError("flat_length must be non-negative.")
+    if 2 * flat_length >= transport_length:
+        raise ValueError("flat_length is too large for the given transport length.")
+
+    # Shift to [0, transport_length] so masks are coordinate-based, not index-based.
+    s = coords - coord0
+    left_mask = s <= flat_length
+    right_mask = s >= (transport_length - flat_length)
+    middle_mask = ~(left_mask | right_mask)
+
+    potential_profile = np.empty_like(s)
+    potential_profile[left_mask] = 0.0
+    potential_profile[right_mask] = -bias
+
+    if np.any(middle_mask):
+        drop_coords = s[middle_mask] - flat_length
+        drop_length = transport_length - 2 * flat_length
+
+        if potential_function == "tanh":
+            xi = drop_coords / drop_length
+            # potential_profile[middle_mask] = -0.5 * bias * (1.0 + np.tanh(5 * (2 * xi - 1)))
+            potential_profile[middle_mask] = (
+                -0.5 * bias * (1.0 + np.tanh(3 * (2 * xi - 1)))
+            )
+        elif potential_function == "linear":
+            potential_profile[middle_mask] = -bias * (drop_coords / drop_length)
+        else:
+            raise ValueError("Invalid potential function. Choose 'tanh' or 'linear'.")
+
+    return potential_profile
+
+
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
 class ElectronSolver(SubsystemSolver):
     """Solves the electron dynamics.
@@ -86,6 +149,7 @@ class ElectronSolver(SubsystemSolver):
         compute_config: ComputeConfig,
         energies: NDArray,
         sparsity_pattern: sparse.coo_matrix,
+        grid: NDArray,
     ) -> None:
         """Initializes the electron solver."""
         super().__init__(quatrex_config, compute_config, energies)
@@ -162,18 +226,6 @@ class ElectronSolver(SubsystemSolver):
                 f"{self.block_sizes.sum()} != {self.hamiltonian.shape[-2]}"
             )
 
-        # Load the potential.
-        try:
-            self.potential = distributed_load(
-                quatrex_config.input_dir / "potential.npy"
-            )
-        except FileNotFoundError:
-            # No potential provided. Assume zero potential.
-            self.potential = xp.zeros(
-                self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
-            )
-        if self.potential.size != self.hamiltonian.shape[-2]:
-            raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         # Eta can be a float or an array, if it is an array the elements are iterated over
         # each call to solve, until the end is reached and the last element is used for all
         # subsequent calls.
@@ -227,6 +279,36 @@ class ElectronSolver(SubsystemSolver):
             self.local_energies - self.right_fermi_level, self.temperature
         )
 
+        self.grid = grid
+
+        # Load the potential.
+        try:
+            self.potential = distributed_load(
+                quatrex_config.input_dir / "potential.npy"
+            )
+        except FileNotFoundError:
+            transport_direction = "xyz".index(quatrex_config.device.transport_direction)
+            self.flat_length = (
+                self.lattice_vectors[transport_direction, transport_direction] * 16
+            )  # Flat for 4 transport cells at each end
+            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 12  # Flat for 3 transport cells at each end
+            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 20  # Flat for 5 transport cells at each end
+            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 28  # Flat for 7 transport cells at each end
+            self.potential = generate_potential_profile(
+                self.grid,
+                transport_direction=transport_direction,
+                bias=self.bias,
+                # potential_function="linear",
+                potential_function="tanh",
+                flat_length=self.flat_length,
+            )
+            # # No potential provided. Assume zero potential.
+            # self.potential = xp.zeros(
+            #     self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
+            # )
+        if self.potential.size != self.hamiltonian.shape[-2]:
+            raise ValueError("Potential matrix and Hamiltonian have different shapes.")
+
         # Prepare Buffers for OBC.
         self.obc_blocks = OBCBlocks(num_blocks=self.system_matrix.num_local_blocks)
         self.block_sections = quatrex_config.electron.obc.block_sections
@@ -235,6 +317,18 @@ class ElectronSolver(SubsystemSolver):
         ]
 
         self.fermi_level_mixing = quatrex_config.electron.fermi_level_mixing
+
+        self.fermi_levels = []
+        self.charge_densities = []
+        # Charge per unit volume
+        self.left_target_charge = (
+            self.quatrex_config.electron.doping
+            * xp.linalg.det(
+                # So far this only works for 2D systems.
+                self.lattice_vectors[:2, :2]
+            )
+            * 1e-16
+        )  # A^2 to cm^2
 
         self.call_count = 0
         self.filtering_iteration_limit = (
@@ -438,11 +532,9 @@ class ElectronSolver(SubsystemSolver):
             # TODO: This is not correct in the case of kpoints
             self.system_matrix += self.overlap_sparray
 
-        eta = self.eta[
-            self.call_count if self.call_count < len(self.eta) else -1
-        ]
+        eta = self.eta[self.call_count if self.call_count < len(self.eta) else -1]
         if comm.rank == 0:
-            print(f"Using eta = {eta}", flush=True) 
+            print(f"Using eta = {eta}", flush=True)
         scale_stack(
             self.system_matrix.data,
             self.local_energies + 1j * eta,
@@ -450,6 +542,234 @@ class ElectronSolver(SubsystemSolver):
         self.system_matrix -= sparse.diags(self.potential, format="csr")
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
+
+    def _update_potential_and_solve(
+        self,
+        left_dos,
+        right_dos,
+        sse_retarded: DSDBSparse,
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
+    ) -> None:
+        """Updates the potential and solves for the Green's function."""
+        charge_neutral_fl = contact_fermi_level(
+            temperature=self.temperature,
+            dos=left_dos,
+            energies=self.energies,
+            doping_density=self.left_target_charge,
+            midgap_energy=self.left_mid_gap_energy,
+        )
+        charge_neutral_fr = contact_fermi_level(
+            temperature=self.temperature,
+            dos=right_dos,
+            energies=self.energies,
+            doping_density=self.left_target_charge,
+            midgap_energy=self.right_mid_gap_energy,
+        )
+        old_pot_start = self.potential[0]
+        old_pot_end = self.potential[-1]
+        old_bias = old_pot_start - old_pot_end
+        new_bias = (
+            old_bias
+            - (charge_neutral_fl - charge_neutral_fr)
+            + (self.left_fermi_level - self.right_fermi_level)
+        )
+        self.potential = generate_potential_profile(
+            self.grid,
+            transport_direction="xyz".index(
+                self.quatrex_config.device.transport_direction
+            ),
+            bias=new_bias,
+            # potential_function="linear",
+            potential_function="tanh",
+            flat_length=self.flat_length,
+        )
+        self.potential += old_pot_start - self.potential[0]
+        self.potential += self.left_fermi_level - charge_neutral_fl
+        self.left_mid_gap_energy += self.left_fermi_level - charge_neutral_fl
+        self.right_mid_gap_energy += self.right_fermi_level - charge_neutral_fl
+
+        t_assemble_start = time.perf_counter()
+        self._assemble_system_matrix(sse_retarded)
+        synchronize_device()
+        t_assemble_end = time.perf_counter()
+        comm.barrier()
+        t_assemble_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Assemble: {t_assemble_end - t_assemble_start}", flush=True)
+            print(
+                f"    Assemble all: {t_assemble_end_all - t_assemble_start}", flush=True
+            )
+
+        t_obc_start = time.perf_counter()
+        self._compute_obc()
+        synchronize_device()
+        t_obc_end = time.perf_counter()
+        comm.barrier()
+        t_obc_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    OBC: {t_obc_end - t_obc_start}", flush=True)
+            print(f"    OBC all: {t_obc_end_all - t_obc_start}", flush=True)
+
+        if comm.block.size > 1:
+            t_solve_start = time.perf_counter()
+            self.solver_dist.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=sse_lesser,
+                sigma_greater=sse_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=True,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
+
+        else:
+            t_solve_start = time.perf_counter()
+            self.meir_wingreen_current = self.solver.selected_solve(
+                a=self.system_matrix,
+                sigma_lesser=sse_lesser,
+                sigma_greater=sse_greater,
+                obc_blocks=self.obc_blocks,
+                out=out,
+                return_retarded=True,
+                return_current=self.compute_meir_wingreen_current,
+            )
+            synchronize_device()
+            t_solve_end = time.perf_counter()
+            comm.barrier()
+            t_solve_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    Solve: {t_solve_end - t_solve_start}", flush=True)
+                print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
+
+        t_filter_peaks_start = time.perf_counter()
+        # Free the system matrix data to save memory
+        # self.system_matrix.free_data()
+        if self.call_count < self.filtering_iteration_limit:
+            g_lesser, g_greater, g_retarded = out
+            local_mask = filtering_peaks_mask(
+                g_retarded, self.energies, self.dos_peak_limit
+            )
+            g_lesser.data[local_mask] = 0.0
+            g_greater.data[local_mask] = 0.0
+            g_retarded.data[local_mask] = 0.0
+
+        synchronize_device()
+        t_filter_peaks_end = time.perf_counter()
+        comm.barrier()
+        t_filter_peaks_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    Filter peaks: {t_filter_peaks_end - t_filter_peaks_start}",
+                flush=True,
+            )
+            print(
+                f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
+                flush=True,
+            )
+
+    def _update_fermi_and_solve(
+        self,
+        left_dos,
+        right_dos,
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
+    ) -> None:
+        """Updates the Fermi levels and solves for the Green's function."""
+        self.left_fermi_level = contact_fermi_level(
+            temperature=self.temperature,
+            dos=left_dos,
+            energies=self.energies,
+            doping_density=self.left_target_charge,
+            midgap_energy=self.left_mid_gap_energy,
+        )
+        # self.right_fermi_level = self.left_fermi_level - self.bias
+        self.right_fermi_level = contact_fermi_level(
+            temperature=self.temperature,
+            dos=right_dos,
+            energies=self.energies,
+            doping_density=self.left_target_charge,
+            midgap_energy=self.right_mid_gap_energy,
+        )
+        # Update lesser/greater self-energies with new Fermi levels.
+        self.left_occupancies = fermi_dirac(
+            self.local_energies - self.left_fermi_level,
+            self.temperature,
+        )
+        self.right_occupancies = fermi_dirac(
+            self.local_energies - self.right_fermi_level,
+            self.temperature,
+        )
+        sigma_00 = self.obc_blocks.retarded[0]
+        gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
+        # Compute and apply the lesser boundary self-energy.
+        self.obc_blocks.lesser[0] = 1j * scale_stack(
+            gamma_00.copy(), self.left_occupancies
+        )
+        # Compute and apply the greater boundary self-energy.
+        self.obc_blocks.greater[0] = 1j * scale_stack(
+            gamma_00.copy(), self.left_occupancies - 1
+        )
+        sigma_nn = self.obc_blocks.retarded[-1]
+        gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
+        self.obc_blocks.lesser[-1] = 1j * scale_stack(
+            gamma_nn.copy(), self.right_occupancies
+        )
+        self.obc_blocks.greater[-1] = 1j * scale_stack(
+            gamma_nn.copy(), self.right_occupancies - 1
+        )
+        t_solve_start = time.perf_counter()
+        self.meir_wingreen_current = self.solver.selected_solve(
+            a=self.system_matrix,
+            sigma_lesser=sse_lesser,
+            sigma_greater=sse_greater,
+            obc_blocks=self.obc_blocks,
+            out=out,
+            return_retarded=True,
+            return_current=self.compute_meir_wingreen_current,
+        )
+        synchronize_device()
+        t_solve_end = time.perf_counter()
+        comm.barrier()
+        t_solve_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(f"    Second solve: {t_solve_end - t_solve_start}", flush=True)
+            print(
+                f"    Second solve all: {t_solve_end_all - t_solve_start}", flush=True
+            )
+        t_filter_peaks_start = time.perf_counter()
+        # Free the system matrix data to save memory
+        # self.system_matrix.free_data()
+        if self.call_count < self.filtering_iteration_limit:
+            g_lesser, g_greater, g_retarded = out
+            local_mask = filtering_peaks_mask(
+                g_retarded, self.energies, self.dos_peak_limit
+            )
+            g_lesser.data[local_mask] = 0.0
+            g_greater.data[local_mask] = 0.0
+            g_retarded.data[local_mask] = 0.0
+
+        synchronize_device()
+        t_filter_peaks_end = time.perf_counter()
+        comm.barrier()
+        t_filter_peaks_end_all = time.perf_counter()
+        if comm.rank == 0:
+            print(
+                f"    Filter peaks: {t_filter_peaks_end - t_filter_peaks_start}",
+                flush=True,
+            )
+            print(
+                f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
+                flush=True,
+            )
 
     @profiler.profile(level="basic")
     def solve(
@@ -539,17 +859,12 @@ class ElectronSolver(SubsystemSolver):
                     flush=True,
                 )
 
-        elif self.band_edge_tracking == "charge-neutrality" and self.call_count <= 3:
+        elif (
+            self.band_edge_tracking in ["charge-neutrality", "secant-method"]
+            and self.call_count <= 1
+        ):
             t_cn_start = time.perf_counter()
             # Charge per unit volume
-            left_target_charge = (
-                self.quatrex_config.electron.doping
-                * xp.linalg.det(
-                    # So far this only works for 2D systems.
-                    self.lattice_vectors[:2, :2]
-                )
-                * 1e-16
-            )  # A^2 to cm^2
             left_fermi_level, left_mid_gap_energy = find_charge_neutral_fermi_level(
                 hamiltonian=self.hamiltonian,
                 overlap=self.overlap_sparray,
@@ -558,7 +873,7 @@ class ElectronSolver(SubsystemSolver):
                 local_energies=self.local_energies,
                 energies=self.energies,
                 temperature=self.temperature,
-                target_charge=left_target_charge,
+                target_charge=self.left_target_charge,
                 mid_gap_energy=self.left_mid_gap_energy,
                 block_sections=self.block_sections_contact_gf,
                 side="left",
@@ -571,6 +886,46 @@ class ElectronSolver(SubsystemSolver):
                 )
             else:
                 self.left_fermi_level = left_fermi_level
+            self.left_mid_gap_energy = left_mid_gap_energy
+
+            self.right_mid_gap_energy = self.left_mid_gap_energy - self.bias
+            self.right_fermi_level = self.left_fermi_level - self.bias
+
+            self.left_occupancies = fermi_dirac(
+                self.local_energies - self.left_fermi_level,
+                self.temperature,
+            )
+            self.right_occupancies = fermi_dirac(
+                self.local_energies - self.right_fermi_level,
+                self.temperature,
+            )
+
+            synchronize_device()
+            t_cn_end = time.perf_counter()
+            comm.barrier()
+            t_cn_end_all = time.perf_counter()
+            if comm.rank == 0:
+                print(f"    CN: {t_cn_end - t_cn_start}", flush=True)
+                print(f"    CN all: {t_cn_end_all - t_cn_start}", flush=True)
+
+        elif self.band_edge_tracking == "potential-update" and self.call_count < 1:
+            t_cn_start = time.perf_counter()
+            # Charge per unit volume
+            # Fermi level is updated once and then kept fixed. The potential is updated to get charge neutrality in the contacts.
+            left_fermi_level, left_mid_gap_energy = find_charge_neutral_fermi_level(
+                hamiltonian=self.hamiltonian,
+                overlap=self.overlap_sparray,
+                potential=self.potential,
+                sigma_retarded=sse_retarded,
+                local_energies=self.local_energies,
+                energies=self.energies,
+                temperature=self.temperature,
+                target_charge=self.left_target_charge,
+                mid_gap_energy=self.left_mid_gap_energy,
+                block_sections=self.block_sections_contact_gf,
+                side="left",
+            )
+            self.left_fermi_level = left_fermi_level
             self.left_mid_gap_energy = left_mid_gap_energy
 
             self.right_mid_gap_energy = self.left_mid_gap_energy - self.bias
@@ -651,7 +1006,10 @@ class ElectronSolver(SubsystemSolver):
                 print(f"    Solve all: {t_solve_end_all - t_solve_start}", flush=True)
 
         t_filter_peaks_start = time.perf_counter()
-        self.system_matrix.free_data()
+        # Free the system matrix data to save memory
+        # Don't free the data here since we might need to do another solve
+        # in the case of potential update.
+        # self.system_matrix.free_data()
         if self.call_count < self.filtering_iteration_limit:
             g_lesser, g_greater, g_retarded = out
             local_mask = filtering_peaks_mask(
@@ -675,9 +1033,11 @@ class ElectronSolver(SubsystemSolver):
                 flush=True,
             )
 
-        if self.band_edge_tracking == "dos-peaks" or (
-            self.call_count >= 3 and self.band_edge_tracking == "charge-neutrality"
-        ):
+        if self.band_edge_tracking in [
+            "dos-peaks",
+            "secant-method",
+            "potential-update",
+        ] or (self.call_count >= 1 and self.band_edge_tracking == "charge-neutrality"):
             t_dos_peaks_start = time.perf_counter()
 
             _, _, g_retarded = out
@@ -689,15 +1049,25 @@ class ElectronSolver(SubsystemSolver):
                     "xyz".index(self.quatrex_config.device.transport_direction)
                 ]
                 block_size_0 = self.block_sizes[0]
-                assert block_size_0 % uc_size == 0, "Block size must be divisible by unit cell size."
+                assert (
+                    block_size_0 % uc_size == 0
+                ), "Block size must be divisible by unit cell size."
                 small_block_size = block_size_0 // uc_size
-                s_00 = self._get_block(self.overlap_sparray, (0, 0))[..., :small_block_size, :small_block_size]
-                g_00 = g_retarded.blocks[0, 0][..., :small_block_size, :small_block_size]
+                s_00 = self._get_block(self.overlap_sparray, (0, 0))[
+                    ..., :small_block_size, :small_block_size
+                ]
+                g_00 = g_retarded.blocks[0, 0][
+                    ..., :small_block_size, :small_block_size
+                ]
 
                 kp_dims = len(g_retarded.shape[1:-2])
-                local_left_dos = -xp.mean(
-                    xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
-                ) / xp.pi
+                local_left_dos = (
+                    -xp.mean(
+                        xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag,
+                        axis=tuple(range(1, kp_dims + 1)),
+                    )
+                    / xp.pi
+                )
 
                 left_dos = comm.stack.all_gather_v(
                     local_left_dos,
@@ -708,38 +1078,30 @@ class ElectronSolver(SubsystemSolver):
                 left_band_edges = xp.array(
                     find_band_edges(e_0_left, self.left_mid_gap_energy)
                 )
-                if self.band_edge_tracking == "charge-neutrality":
-                    # Update the mid band gap
-                    self.left_mid_gap_energy = xp.mean(left_band_edges)
-                    left_target_charge = (
-                        self.quatrex_config.electron.doping
-                        * xp.linalg.det(
-                            # So far this only works for 2D systems.
-                            self.lattice_vectors[:2, :2]
-                        )
-                        * 1e-16
-                    )  # A^2 to cm^2
-                    left_fermi_level = contact_fermi_level(
-                        temperature=self.temperature,
-                        dos=left_dos,
-                        energies=self.energies,
-                        doping_density=left_target_charge,
-                        midgap_energy=self.left_mid_gap_energy,
-                    )
 
             if comm.block.rank == comm.block.size - 1:
                 uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
                     "xyz".index(self.quatrex_config.device.transport_direction)
                 ]
                 block_size_n = self.block_sizes[-1]
-                assert block_size_n % uc_size == 0, "Block size must be divisible by unit cell size."
+                assert (
+                    block_size_n % uc_size == 0
+                ), "Block size must be divisible by unit cell size."
                 small_block_size = block_size_n // uc_size
-                s_nn = self._get_block(self.overlap_sparray, (-1, -1))[..., -small_block_size:, -small_block_size:]
+                s_nn = self._get_block(self.overlap_sparray, (-1, -1))[
+                    ..., -small_block_size:, -small_block_size:
+                ]
                 n = g_retarded.num_local_blocks - 1
-                g_nn = g_retarded.blocks[n, n][..., -small_block_size:, -small_block_size:]
-                local_right_dos = -xp.mean(
-                    xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag, axis=tuple(range(1, kp_dims + 1))
-                ) / xp.pi
+                g_nn = g_retarded.blocks[n, n][
+                    ..., -small_block_size:, -small_block_size:
+                ]
+                local_right_dos = (
+                    -xp.mean(
+                        xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag,
+                        axis=tuple(range(1, kp_dims + 1)),
+                    )
+                    / xp.pi
+                )
 
                 right_dos = comm.stack.all_gather_v(
                     local_right_dos,
@@ -751,19 +1113,159 @@ class ElectronSolver(SubsystemSolver):
                     find_band_edges(e_0_right, self.right_mid_gap_energy)
                 )
 
+            # NOTE: This will not work if comm.block.size > 1
+            if self.band_edge_tracking == "charge-neutrality":
+                # Update the mid band gap
+                self.left_mid_gap_energy = xp.mean(left_band_edges)
+                left_fermi_level = contact_fermi_level(
+                    temperature=self.temperature,
+                    dos=left_dos,
+                    energies=self.energies,
+                    doping_density=self.left_target_charge,
+                    midgap_energy=self.left_mid_gap_energy,
+                )
+            elif self.band_edge_tracking == "secant-method":
+                # Update the mid band gap
+                self.left_mid_gap_energy = xp.mean(left_band_edges)
+                self.right_mid_gap_energy = xp.mean(right_band_edges)
+                # Add the current Fermi level guess to the list of tracked Fermi levels for the secant method.
+                self.fermi_levels.append(self.left_fermi_level)
+                # Compute the charge of the current iteration.
+                neq_distribution = fermi_dirac(
+                    self.energies - self.left_fermi_level, self.temperature
+                ) - fermi_dirac(
+                    self.energies - self.left_mid_gap_energy, self.temperature
+                )
+                charge_density = xp.trapz(
+                    left_dos * neq_distribution, self.energies, axis=0
+                )
+                # If the charge density and target charge are too far off, redo the caculation of the Green's function
+                # with the correct Fermi level.
+                # if xp.abs(charge_density - self.left_target_charge) / xp.abs(self.left_target_charge) > 1.0:
+                if True:
+                    if comm.rank == 0:
+                        print(
+                            "Charge density is too far from target charge. Redoing calculation with correct Fermi level.",
+                            flush=True,
+                        )
+                    # Zero the output Green's functions to be safe.
+                    for g in out:
+                        g.data[:] = 0.0
+                    self._update_fermi_and_solve(
+                        left_dos=left_dos,
+                        right_dos=right_dos,
+                        sse_lesser=sse_lesser,
+                        sse_greater=sse_greater,
+                        out=out,
+                    )
+                    # Replace last Fermi level with the new one.
+                    self.fermi_levels[-1] = self.left_fermi_level
+                    # Recompute the charge density with the updated Green's function.
+                    neq_distribution = fermi_dirac(
+                        self.energies - self.left_fermi_level, self.temperature
+                    ) - fermi_dirac(
+                        self.energies - self.left_mid_gap_energy, self.temperature
+                    )
+                    charge_density = xp.trapz(
+                        left_dos * neq_distribution, self.energies, axis=0
+                    )
+                if comm.rank == 0:
+                    print(
+                        f"Left Fermi level: {self.left_fermi_level}\n",
+                        f"Left Mid-gap energy: {self.left_mid_gap_energy}\n",
+                        f"Right Fermi level: {self.right_fermi_level}\n",
+                        f"Right Mid-gap energy: {self.right_mid_gap_energy}\n",
+                        f"Current charge: {charge_density}, target charge: {self.left_target_charge}",
+                        flush=True,
+                    )
+                self.charge_densities.append(charge_density - self.left_target_charge)
+                if len(self.fermi_levels) > 1:
+                    # update_value = self.charge_densities[-1] * (self.fermi_levels[-1] - self.fermi_levels[-2]) / (self.charge_densities[-1] - self.charge_densities[-2])
+                    # left_fermi_level = self.left_fermi_level - update_value
+
+                    # Use the secant method to compute the next Fermi level guess.
+                    update_value = (
+                        self.charge_densities[-1]
+                        * (self.fermi_levels[-1] - self.fermi_levels[-2])
+                        / (self.charge_densities[-1] - self.charge_densities[-2])
+                    )
+                    if np.abs(update_value) > 0.2:
+                        if comm.rank == 0:
+                            print(
+                                f"Large update value detected: {update_value}. Falling back to using previous charge neutrality.",
+                                flush=True,
+                            )
+                        left_fermi_level = contact_fermi_level(
+                            temperature=self.temperature,
+                            dos=left_dos,
+                            energies=self.energies,
+                            doping_density=self.left_target_charge,
+                            midgap_energy=self.left_mid_gap_energy,
+                        )
+                    else:
+                        left_fermi_level = self.left_fermi_level - update_value
+
+                    # charge_diff = self.charge_densities[-1] - self.charge_densities[-2]
+                    # # If the charge difference is smaller than a certain threshold,
+                    # # we fallback to a simple update to avoid numerical issues.
+                    # if abs(charge_diff) < 1e-4:
+                    #     if comm.rank == 0:
+                    #         print(
+                    #             f"Small charge difference detected: {charge_diff}. Falling back to using previous charge neutrality.",
+                    #             flush=True,
+                    #         )
+                    #     left_fermi_level = contact_fermi_level(
+                    #         temperature=self.temperature,
+                    #         dos=left_dos,
+                    #         energies=self.energies,
+                    #         doping_density=self.left_target_charge,
+                    #         midgap_energy=self.left_mid_gap_energy,
+                    #     )
+                    # else:
+                    #     left_fermi_level = (
+                    #         self.fermi_levels[-2] * self.charge_densities[-1]
+                    #         - self.fermi_levels[-1] * self.charge_densities[-2]
+                    #     ) / charge_diff
+
+            elif self.band_edge_tracking == "potential-update":
+                # TODO: What about mid-gap energy? Fermi stays the same but mid-gap energy changes
+                # Update the mid band gap
+                self.left_mid_gap_energy = xp.mean(left_band_edges)
+                self.right_mid_gap_energy = xp.mean(right_band_edges)
+                # Zero the output Green's functions to be safe.
+                for g in out:
+                    g.data[:] = 0.0
+                self._update_potential_and_solve(
+                    left_dos=left_dos,
+                    right_dos=right_dos,
+                    sse_retarded=sse_retarded,
+                    sse_lesser=sse_lesser,
+                    sse_greater=sse_greater,
+                    out=out,
+                )
+                if comm.rank == 0:
+                    print(
+                        f"Left Fermi level: {self.left_fermi_level}\n",
+                        f"Left Mid-gap energy: {self.left_mid_gap_energy}\n",
+                        f"Right Fermi level: {self.right_fermi_level}\n",
+                        f"Right Mid-gap energy: {self.right_mid_gap_energy}\n",
+                        flush=True,
+                    )
+
             if self.band_edge_tracking == "dos-peaks":
                 comm.block.bcast(left_band_edges, root=0, backend="device_mpi")
                 comm.block.bcast(
                     right_band_edges, root=comm.block.size - 1, backend="device_mpi"
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
-            else:  # charge-neutrality
+            elif self.band_edge_tracking in ["charge-neutrality", "secant-method"]:
                 comm.block.bcast(left_fermi_level, root=0, backend="device_mpi")
                 # Mix the Fermi level with the previous one.
                 self.left_fermi_level = (
                     self.fermi_level_mixing * left_fermi_level
                     + (1 - self.fermi_level_mixing) * self.left_fermi_level
                 )
+                # What should I do here? It was commented out before (maybe for printing)
                 self.right_fermi_level = self.left_fermi_level - self.bias
                 self.left_occupancies = fermi_dirac(
                     self.local_energies - self.left_fermi_level,
@@ -786,5 +1288,7 @@ class ElectronSolver(SubsystemSolver):
                     f"    DOS peaks all: {t_dos_peaks_end_all - t_dos_peaks_start}",
                     flush=True,
                 )
+        # Free the system matrix data to save memory
+        self.system_matrix.free_data()
 
         self.call_count += 1

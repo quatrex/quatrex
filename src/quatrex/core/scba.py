@@ -140,6 +140,7 @@ class SCBAData:
             start_idx=start_idx,
             end_idx=end_idx,
         )
+        self.grid = grid
 
         synchronize_device()
         time_sparsity_end = time.perf_counter()
@@ -251,6 +252,8 @@ class Observables:
     sigma_greater_density: NDArray = None
 
     hartree_potential: NDArray = None
+    grid = None
+    potential = None
 
     # --- Coulomb screening --------------------------------------------
     w_lesser_density: NDArray = None
@@ -338,6 +341,7 @@ class SCBA:
             self.compute_config,
             self.electron_energies,
             sparsity_pattern=self.data.sparsity_pattern,
+            grid=self.data.grid,
         )
 
         # ----- Coulomb screening --------------------------------------
@@ -767,6 +771,8 @@ class SCBA:
 
         if self.quatrex_config.scba.hartree:
             self.observables.hartree_potential = self.sigma_hartree.hartree_potential
+        self.observables.grid = self.electron_solver.grid
+        self.observables.potential = self.electron_solver.potential
 
     @profiler.profile(level="debug")
     def _compute_coulomb_screening_observables(self) -> None:
@@ -859,6 +865,8 @@ class SCBA:
                 }
             )
 
+        outputs[f"potential_{iteration}.npy"] = self.observables.potential
+        outputs["grid.npy"] = self.observables.grid
         if self.quatrex_config.scba.hartree:
             outputs[f"hartree_potential_{iteration}.npy"] = (
                 self.observables.hartree_potential

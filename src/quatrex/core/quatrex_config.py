@@ -359,7 +359,14 @@ class ElectronConfig(BaseModel):
 
     doping: float = 0.0  # Charge per unit volume
     band_edge_tracking: (
-        Literal["dos-peaks", "eigenvalues", "charge-neutrality"] | None
+        Literal[
+            "dos-peaks",
+            "eigenvalues",
+            "charge-neutrality",
+            "secant-method",
+            "potential-update",
+        ]
+        | None
     ) = None
 
     temperature: PositiveFloat = 300.0  # K

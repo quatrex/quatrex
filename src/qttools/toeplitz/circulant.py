@@ -411,6 +411,52 @@ def detransform_circulant(
     return out
 
 
+def detransform_circulant_vector(
+    v: NDArray,
+    sections_x: int,
+    sections_y: int,
+):
+    """Inverse transformation for the eigenvectors of the block diagonal form to
+    the original matrix
+
+     Parameters
+     ----------
+     v : NDArray
+         The eigenvectors in the block diagonal form. The first two dimensions
+         are assumed to be the section dimensions, the third dimension is the
+         batch dimension, the fourth dimension is the block size, and the fifth
+         dimension is the number of eigenvalues per block.
+     sections_x : int
+         The number of sections in the x direction.
+     sections_y : int
+         The number of sections in the y direction.
+
+     Returns
+     -------
+     NDArray
+         The eigenvectors in the original matrix form. The first dimension is the
+         batch dimension, the second and third dimensions are the original matrix
+         dimensions, and the fourth dimension is the number of eigenvalues.
+
+    """
+
+    idft_x = _get_dft_matrix(sections_x)
+    idft_y = _get_dft_matrix(sections_y)
+
+    batch_size = v.shape[2]
+    block_size = v.shape[3]
+    eigenvalues_per_block = v.shape[4]
+
+    v_expanded = xp.einsum("yk, xj, kjbie -> bxyikje", idft_y, idft_x, v)
+
+    N_total = sections_x * sections_y * block_size
+    total_eigenvectors = sections_x * sections_y * eigenvalues_per_block
+
+    v_flat = v_expanded.reshape(batch_size, N_total, total_eigenvectors)
+
+    return v_flat
+
+
 def transform_phi_circulant(
     a: NDArray,
     phase_x: NDArray,
@@ -570,3 +616,56 @@ def detransform_phi_circulant(
     beta = xp.einsum("bi,bj,k->bijk", betas_x, betas_y, ones).reshape(len(phase_x), -1)
 
     return (out * beta[..., None]) / beta[..., None, :]
+
+
+def detransform_phi_circulant_vector(
+    v: NDArray,
+    phase_x: NDArray,
+    phase_y: NDArray,
+    sections_x: int,
+    sections_y: int,
+):
+    """Inverse transformation for the eigenvectors of the block diagonal form to
+    the original matrix
+
+     Parameters
+     ----------
+     v : NDArray
+         The eigenvectors in the block diagonal form. The first two dimensions
+         are assumed to be the section dimensions, the third dimension is the
+         batch dimension, the fourth dimension is the block size, and the fifth
+         dimension is the number of eigenvalues per block.
+     phase_x : NDArray
+         The phase shift in the x direction. This is the phase per batch.
+     phase_y : NDArray
+         The phase shift in the y direction. This is the phase per batch.
+     sections_x : int
+         The number of sections in the x direction.
+     sections_y : int
+         The number of sections in the y direction.
+
+     Returns
+     -------
+     NDArray
+         The eigenvectors in the original matrix form. The first dimension is the
+         batch dimension, the second and third dimensions are the original matrix
+         dimensions, and the fourth dimension is the number of eigenvalues.
+
+    """
+
+    v_flat = detransform_circulant_vector(v, sections_x, sections_y)
+
+    block_size_y = v.shape[-2]
+
+    # need to apply the inverse of the phase transformation
+    beta_x = phase_x ** (1 / sections_x)
+    beta_y = phase_y ** (1 / sections_y)
+
+    betas_x = xp.array([beta_x**i for i in range(sections_x)]).T
+    betas_y = xp.array([beta_y**i for i in range(sections_y)]).T
+
+    ones = xp.ones(block_size_y, dtype=betas_x.dtype)
+
+    beta = xp.einsum("bi,bj,k->bijk", betas_x, betas_y, ones).reshape(len(phase_x), -1)
+
+    return v_flat * beta[..., None]

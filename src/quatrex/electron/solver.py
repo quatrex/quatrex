@@ -7,13 +7,14 @@ from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
+from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
-from quatrex.core.utils import get_periodic_superblocks, homogenize
+from quatrex.device.contact import get_inverse_order, order_block
 from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
@@ -215,101 +216,110 @@ class ElectronSolver(SubsystemSolver):
             self.temperature,
         )
 
+    def _compute_contact_obc(
+        self,
+        contact: str,
+        diagonal_inds: tuple,
+        upper_inds: tuple,
+        occupancies: NDArray,
+        order: str | NDArray | None = None,
+    ) -> tuple[NDArray, NDArray, NDArray]:
+        """Computes the OBC for a specific contact.
+
+        Parameters
+        ----------
+        contact : str
+            The contact for which to compute the OBC.
+            Used for profiling and caching purposes.
+        diagonal_inds : tuple
+            The indices of the diagonal blocks corresponding to the contact.
+        upper_inds : tuple
+            The indices of the upper off-diagonal blocks corresponding to the contact.
+        occupancies : NDArray
+            The occupancies of the contact at the local energies.
+        order : str | NDArray | None, optional
+            The permutation of the blocks to achieve the same order as the canonical left contact.
+            If None, the left contact order is assumed.
+            Instead of an explicit permutation, the string "reverse" can be passed
+            to reverse the order of the blocks, which is equivalent to the right contact order.
+
+        Returns
+        -------
+        obc_retarded : NDArray
+            The retarded OBC for the contact.
+        obc_lesser : NDArray
+            The lesser OBC for the contact.
+        obc_greater : NDArray
+            The greater OBC for the contact.
+
+        """
+
+        inverse_order = get_inverse_order(order)
+
+        m_10, m_00, m_01 = get_periodic_superblocks(
+            a_ji=order_block(self.system_matrix.blocks[*upper_inds[::-1]], order),
+            a_ii=order_block(self.system_matrix.blocks[*diagonal_inds], order),
+            a_ij=order_block(self.system_matrix.blocks[*upper_inds], order),
+            block_sections=self.block_sections,
+        )
+
+        if self.overlap is None:
+            s_10 = xp.zeros_like(m_10, dtype=m_10.dtype)
+            s_00 = 1j * self.eta_obc * xp.eye(m_00.shape[-1], dtype=m_00.dtype)
+            s_01 = xp.zeros_like(m_01, dtype=m_01.dtype)
+        else:
+            # Extract the overlap matrix blocks.
+            s_10 = 1j * self.eta_obc * self.overlap.blocks[*upper_inds[::-1]]
+            s_00 = 1j * self.eta_obc * self.overlap.blocks[*diagonal_inds]
+            s_01 = 1j * self.eta_obc * self.overlap.blocks[*upper_inds]
+
+        # TODO: use residuals to filter "bad" energies
+        g_00, *__ = self.obc(
+            (m_00 + s_00, m_01 + s_01, m_10 + s_10),
+            contact="G: " + contact,
+        )
+        # Apply the retarded boundary self-energy.
+        sigma_00 = m_10 @ g_00 @ m_01
+        gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
+
+        # Compute and apply the lesser boundary self-energy.
+        obc_lesser = 1j * scale_stack(gamma_00.copy(), occupancies)
+        # Compute and apply the greater boundary self-energy.
+        obc_greater = 1j * scale_stack(gamma_00.copy(), occupancies - 1)
+
+        return (
+            order_block(sigma_00, inverse_order),
+            order_block(obc_lesser, inverse_order),
+            order_block(obc_greater, inverse_order),
+        )
+
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
     def _compute_obc(self) -> None:
         """Computes open boundary conditions."""
         if comm.block.rank == 0:
-
-            m_10, m_00, m_01 = get_periodic_superblocks(
-                a_ii=self.system_matrix.blocks[0, 0],
-                a_ji=self.system_matrix.blocks[1, 0],
-                a_ij=self.system_matrix.blocks[0, 1],
-                block_sections=self.block_sections,
-            )
-
-            if self.overlap is None:
-                s_00 = 1j * self.eta_obc * xp.eye(m_00.shape[-1], dtype=m_00.dtype)
-                s_01 = xp.zeros_like(m_01, dtype=m_01.dtype)
-                s_10 = xp.zeros_like(m_10, dtype=m_10.dtype)
-            else:
-                # Extract the overlap matrix blocks.
-                s_00 = 1j * self.eta_obc * self.overlap.blocks[0, 0]
-                s_01 = 1j * self.eta_obc * self.overlap.blocks[0, 1]
-                s_10 = 1j * self.eta_obc * self.overlap.blocks[1, 0]
-
-            # TODO: use residuals to filter "bad" energies
-            g_00, *__ = self.obc(
-                (m_00 + s_00, m_01 + s_01, m_10 + s_10),
+            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
                 contact="left",
+                diagonal_inds=(0, 0),
+                upper_inds=(0, 1),
+                occupancies=self.left_occupancies,
             )
-            # Apply the retarded boundary self-energy.
-            sigma_00 = m_10 @ g_00 @ m_01
-            self.obc_blocks.retarded[0] = sigma_00
-            gamma_00 = 1j * (sigma_00 - sigma_00.conj().swapaxes(-2, -1))
+            self.obc_blocks.retarded[0] = obc_retarded
+            self.obc_blocks.lesser[0] = obc_lesser
+            self.obc_blocks.greater[0] = obc_greater
 
-            # Compute and apply the lesser boundary self-energy.
-            self.obc_blocks.lesser[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies
-            )
-            # Compute and apply the greater boundary self-energy.
-            self.obc_blocks.greater[0] = 1j * scale_stack(
-                gamma_00.copy(), self.left_occupancies - 1
-            )
         if comm.block.rank == comm.block.size - 1:
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
-
-            m_mn, m_nn, m_nm = get_periodic_superblocks(
-                # Twist it, flip it, ...
-                a_ii=xp.flip(self.system_matrix.blocks[n, n], axis=(-2, -1)),
-                a_ji=xp.flip(self.system_matrix.blocks[m, n], axis=(-2, -1)),
-                a_ij=xp.flip(self.system_matrix.blocks[n, m], axis=(-2, -1)),
-                block_sections=self.block_sections,
-            )
-
-            if self.overlap is None:
-                s_nn = 1j * self.eta_obc * xp.eye(m_nn.shape[-1], dtype=m_nn.dtype)
-                s_nm = xp.zeros_like(m_nm, dtype=m_nm.dtype)
-                s_mn = xp.zeros_like(m_mn, dtype=m_mn.dtype)
-            else:
-                # Extract the overlap matrix blocks.
-                s_nn = 1j * self.eta_obc * self.overlap.blocks[n, n]
-                s_nm = 1j * self.eta_obc * self.overlap.blocks[n, m]
-                s_mn = 1j * self.eta_obc * self.overlap.blocks[m, n]
-
-            # ... bop it.
-            m_nn = xp.flip(m_nn, axis=(-2, -1))
-            m_nm = xp.flip(m_nm, axis=(-2, -1))
-            m_mn = xp.flip(m_mn, axis=(-2, -1))
-            g_nn, *__ = self.obc(
-                # Twist it, flip it, ...
-                (
-                    xp.flip(m_nn + s_nn, axis=(-2, -1)),
-                    xp.flip(m_nm + s_nm, axis=(-2, -1)),
-                    xp.flip(m_mn + s_mn, axis=(-2, -1)),
-                ),
+            obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
                 contact="right",
+                diagonal_inds=(n, n),
+                upper_inds=(n, m),
+                occupancies=self.right_occupancies,
+                order="reverse",
             )
-            # ... bop it.
-            g_nn = xp.flip(g_nn, axis=(-2, -1))
-
-            # NOTE: Here we could possibly do peak/discontinuity detection
-            # on the surface Green's function DOS (not same as actual DOS).
-
-            # Apply the retarded boundary self-energy.
-            sigma_nn = m_mn @ g_nn @ m_nm
-
-            self.obc_blocks.retarded[-1] = sigma_nn
-
-            gamma_nn = 1j * (sigma_nn - sigma_nn.conj().swapaxes(-2, -1))
-
-            self.obc_blocks.lesser[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies
-            )
-
-            self.obc_blocks.greater[-1] = 1j * scale_stack(
-                gamma_nn.copy(), self.right_occupancies - 1
-            )
+            self.obc_blocks.retarded[-1] = obc_retarded
+            self.obc_blocks.lesser[-1] = obc_lesser
+            self.obc_blocks.greater[-1] = obc_greater
 
     def _add_overlap(
         self,

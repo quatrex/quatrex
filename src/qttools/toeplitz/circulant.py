@@ -225,7 +225,7 @@ def _get_idft_matrix(n: int) -> NDArray:
     return w
 
 
-def _2D_fft(a: NDArray):
+def _2D_dft(a: NDArray):
     """Apply the 2D discrete Fourier transform (DFT) to the input array a. The
     DFT is applied along the first two dimensions of a.
     The DFT is done explictly using the DFT matrices, which is not the most efficient way for
@@ -257,7 +257,42 @@ def _2D_fft(a: NDArray):
     # Transform along the x-sections
     a = xp.einsum("ij, kj... -> ki...", dft_x, a)
 
-    return a
+    return a * xp.sqrt(sections_x * sections_y)
+
+
+def _2D_idft(a: NDArray) -> NDArray:
+    """Apply the 2D inverse discrete Fourier transform (IDFT) to the input array
+    a along the first two dimensions, scaled to match the block-diagonal form.
+    The IDFT is done explictly using the DFT matrices, which is not the most
+    efficient way for many sections, but it is assumed that the number of
+    sections is small.
+
+    Parameters
+    ----------
+    a : NDArray
+        The input array to transform. The first two dimensions are assumed to be
+        the section dimensions.
+
+    Returns
+    -------
+    NDArray
+        The transformed array after applying the 2D IDFT along the first two
+        dimensions.
+
+    """
+    sections_y = a.shape[0]
+    sections_x = a.shape[1]
+
+    idft_x = _get_idft_matrix(sections_x)
+    idft_y = _get_idft_matrix(sections_y)
+
+    # Transform along the y-sections
+    a = xp.einsum("ij, jk... -> ik...", idft_y, a)
+
+    # Transform along the x-sections
+    a = xp.einsum("ij, kj... -> ki...", idft_x, a)
+
+    return a / xp.sqrt(sections_x * sections_y)
 
 
 def transform_circulant(
@@ -331,13 +366,76 @@ def transform_circulant(
     # view along y direction
     a = _block_view(a[..., :block_size_y, :], axis=-1, num_blocks=sections_y)
 
-    return _2D_fft(a)
+    return _2D_dft(a)
+
+
+def _core_detransform(
+    a: NDArray,
+    phase_x: NDArray | None = None,
+    phase_y: NDArray | None = None,
+) -> NDArray:
+    """Core helper that handles the 2D matrix DFT, phase modulation,
+    and block-interleaving layout reconstruction.
+
+    Parameters
+    ----------
+    a : NDArray
+        The input array in block diagonal form. The first two dimensions are
+        assumed to be the section dimensions, the third dimension is the batch
+        dimension, the fourth dimension is the block size, and the fifth
+        dimension is the number of eigenvalues per block.
+    phase_x : NDArray | None, optional
+        The phase factors for the x direction, by default None. If provided, it
+        should have shape (batch_size,).
+    phase_y : NDArray | None, optional
+        The phase factors for the y direction, by default None. If provided, it
+        should have shape (batch_size,).
+
+    Returns
+    -------
+    NDArray
+        The detransformed array in the original matrix form. The first dimension
+        is the batch dimension, the second and third dimensions are the original
+        matrix dimensions, and the fourth dimension is the number of
+        eigenvalues.
+
+    """
+    sections_y, sections_x = a.shape[0], a.shape[1]
+    batch_size = a.shape[2]
+    block_size_y = a.shape[3]
+
+    dft_x = _get_dft_matrix(sections_x)
+    dft_y = _get_dft_matrix(sections_y)
+
+    if phase_x is not None and phase_y is not None:
+        beta_x = phase_x ** (1 / sections_x)
+        beta_y = phase_y ** (1 / sections_y)
+        bx = xp.array([beta_x**i for i in range(sections_x)]).T
+        by = xp.array([beta_y**i for i in range(sections_y)]).T
+
+        step_y = xp.einsum(
+            "yk, uk, klbij, by, bu -> yulbij", dft_y, dft_y.conj(), a, by, 1 / by
+        )
+
+        spatial_blocks = xp.einsum(
+            "xl, vl, yulbij, bx, bv -> yxbvuij", dft_x, dft_x.conj(), step_y, bx, 1 / bx
+        )
+    else:
+        step_y = xp.einsum("yk, uk, klbij -> yulbij", dft_y, dft_y.conj(), a)
+
+        spatial_blocks = xp.einsum(
+            "xl, vl, yulbij -> yxbvuij", dft_x, dft_x.conj(), step_y
+        )
+
+    # Reconstruct the final block-matrix layout
+    permuted = xp.transpose(spatial_blocks, (2, 1, 0, 5, 3, 4, 6))
+
+    total_size = sections_x * sections_y * block_size_y
+    return permuted.reshape(batch_size, total_size, total_size)
 
 
 def detransform_circulant(
     a: NDArray,
-    sections_x: int = 1,
-    sections_y: int = 1,
 ) -> NDArray:
     """Inverse transformation of the block diagonal form to the original matrix
     form. This is the inverse of the `transform_circulant` function and uses the
@@ -347,10 +445,6 @@ def detransform_circulant(
     ----------
     a : NDArray
         The matrix to detransform.
-    sections_x : int, optional
-        The number of sections in the x direction, by default 1.
-    sections_y : int, optional
-        The number of sections in the y direction, by default 1.
 
     Returns
     -------
@@ -364,57 +458,11 @@ def detransform_circulant(
             "The input matrix must have 5 dimensions after transformation."
         )
 
-    if a.shape[0] != sections_y:
-        raise ValueError("The first dimension of a must be equal to sections_y.")
-    if a.shape[1] != sections_x:
-        raise ValueError("The second dimension of a must be equal to sections_x.")
-
-    block_size_y = a.shape[-1]
-    block_size_x = block_size_y * a.shape[0]
-    batch_size = a.shape[2]
-
-    idft_x = _get_idft_matrix(sections_x)
-    idft_y = _get_idft_matrix(sections_y)
-
-    # Transform along the y-sections
-    a = xp.einsum("ij, jklmn -> iklmn", idft_y, a)
-
-    # Transform along the x-sections
-    a = xp.einsum("ij, kjlmn -> kilmn", idft_x, a)
-
-    # expand first in the y direction
-    # the temporary has the shape (sections_x, batch_size, block_size_x, block_size_x)
-    tmp = xp.zeros((sections_x, batch_size, block_size_x, block_size_x), dtype=a.dtype)
-    a = a.transpose(1, 2, 3, 0, 4).reshape(
-        sections_x, batch_size, block_size_y, block_size_x
-    )
-
-    for i in range(0, block_size_x, block_size_y):
-        tmp[..., i : i + block_size_y, :] = a
-        # roll the layer
-        a = xp.roll(a, block_size_y, axis=-1)
-
-    # expand first in the x direction
-    tmp = tmp.transpose(1, 2, 0, 3).reshape(
-        batch_size, block_size_x, block_size_x * sections_x
-    )
-    out = xp.zeros(
-        (batch_size, block_size_x * sections_x, block_size_x * sections_x),
-        dtype=a.dtype,
-    )
-
-    for i in range(0, block_size_x * sections_x, block_size_x):
-        out[..., i : i + block_size_x, :] = tmp
-        # roll the layer
-        tmp = xp.roll(tmp, block_size_x, axis=-1)
-
-    return out
+    return _core_detransform(a)
 
 
 def detransform_circulant_vector(
     v: NDArray,
-    sections_x: int,
-    sections_y: int,
 ):
     """Inverse transformation for the eigenvectors of the block diagonal form to
     the original matrix
@@ -426,10 +474,6 @@ def detransform_circulant_vector(
          are assumed to be the section dimensions, the third dimension is the
          batch dimension, the fourth dimension is the block size, and the fifth
          dimension is the number of eigenvalues per block.
-     sections_x : int
-         The number of sections in the x direction.
-     sections_y : int
-         The number of sections in the y direction.
 
      Returns
      -------
@@ -439,6 +483,7 @@ def detransform_circulant_vector(
          dimensions, and the fourth dimension is the number of eigenvalues.
 
     """
+    sections_y, sections_x = v.shape[0], v.shape[1]
 
     idft_x = _get_dft_matrix(sections_x)
     idft_y = _get_dft_matrix(sections_y)
@@ -557,15 +602,13 @@ def transform_phi_circulant(
     beta = betas_y[:, None, :] * betas_x[None, :, :]
     a = a * beta[..., None, None]
 
-    return _2D_fft(a)
+    return _2D_dft(a)
 
 
 def detransform_phi_circulant(
     a: NDArray,
     phase_x: NDArray,
     phase_y: NDArray,
-    sections_x: int = 1,
-    sections_y: int = 1,
 ) -> NDArray:
     """Inverse transformation of the block diagonal form to the original matrix
     form. This is the inverse of the `transform_phi_circulant` function and uses the
@@ -579,10 +622,6 @@ def detransform_phi_circulant(
         The phase shift in the x direction. This is the phase per batch.
     phase_y : NDArray
         The phase shift in the y direction. This is the phase per batch.
-    sections_x : int, optional
-        The number of sections in the x direction, by default 1.
-    sections_y : int, optional
-        The number of sections in the y direction, by default 1.
 
     Returns
     -------
@@ -600,30 +639,13 @@ def detransform_phi_circulant(
     if phase_x.ndim > 1 or phase_y.ndim > 1:
         raise ValueError("phase_x and phase_y must be 1D arrays.")
 
-    out = detransform_circulant(a, sections_x, sections_y)
-
-    block_size_y = a.shape[-1]
-
-    # need to apply the inverse of the phase transformation
-    beta_x = phase_x ** (1 / sections_x)
-    beta_y = phase_y ** (1 / sections_y)
-
-    betas_x = xp.array([beta_x**i for i in range(sections_x)]).T
-    betas_y = xp.array([beta_y**i for i in range(sections_y)]).T
-
-    ones = xp.ones(block_size_y, dtype=betas_x.dtype)
-
-    beta = xp.einsum("bi,bj,k->bijk", betas_x, betas_y, ones).reshape(len(phase_x), -1)
-
-    return (out * beta[..., None]) / beta[..., None, :]
+    return _core_detransform(a, phase_x=phase_x, phase_y=phase_y)
 
 
 def detransform_phi_circulant_vector(
     v: NDArray,
     phase_x: NDArray,
     phase_y: NDArray,
-    sections_x: int,
-    sections_y: int,
 ):
     """Inverse transformation for the eigenvectors of the block diagonal form to
     the original matrix
@@ -639,10 +661,6 @@ def detransform_phi_circulant_vector(
          The phase shift in the x direction. This is the phase per batch.
      phase_y : NDArray
          The phase shift in the y direction. This is the phase per batch.
-     sections_x : int
-         The number of sections in the x direction.
-     sections_y : int
-         The number of sections in the y direction.
 
      Returns
      -------
@@ -652,8 +670,9 @@ def detransform_phi_circulant_vector(
          dimensions, and the fourth dimension is the number of eigenvalues.
 
     """
+    sections_y, sections_x = v.shape[0], v.shape[1]
 
-    v_flat = detransform_circulant_vector(v, sections_x, sections_y)
+    v_flat = detransform_circulant_vector(v)
 
     block_size_y = v.shape[-2]
 

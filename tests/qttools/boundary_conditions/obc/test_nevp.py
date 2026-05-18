@@ -111,9 +111,7 @@ def test_circulant(
 
     # upscale eigenvalues
     ws = ws.transpose(2, 0, 1, 3).reshape(batch_size, -1)
-    vs = detransform_circulant_vector(
-        vs, sections_x=block_sections_x, sections_y=block_sections_y
-    )
+    vs = detransform_circulant_vector(vs)
 
     _check_residuals(a_xx, ws, vs)
 
@@ -171,8 +169,6 @@ def test_phi_circulant(
         vs,
         phase_x=phase_x,
         phase_y=phase_y,
-        sections_x=block_sections_x,
-        sections_y=block_sections_y,
     )
 
     _check_residuals(a_xx, ws, vs)

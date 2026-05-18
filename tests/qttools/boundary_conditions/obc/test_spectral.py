@@ -174,6 +174,9 @@ def test_upscaling(
 ):
     """Tests that the eigenmode upscaling works."""
 
+    if block_size % block_sections != 0:
+        pytest.skip("block_size must be divisible by block_sections")
+
     spectral = Spectral(nevp=nevp, block_sections=block_sections)
 
     rng = xp.random.default_rng()

@@ -4,6 +4,8 @@ import pytest
 
 from qttools import xp
 from qttools.toeplitz.circulant import (
+    _2D_dft,
+    _2D_idft,
     _get_dft_matrix,
     _get_idft_matrix,
     _make_1D_block_circulant,
@@ -36,6 +38,18 @@ def test_dft_matrix(block_sections: int):
     assert xp.allclose(W_inv.conj().T @ W_inv, xp.eye(block_sections))
 
 
+def test_2D_dft(block_sections_x: int, block_sections_y: int):
+    """Test `_2D_dft` and `_2D_idft`."""
+
+    rng = xp.random.default_rng(seed=0)
+    x = rng.random((block_sections_y, block_sections_x)) + 1j * rng.random(
+        (block_sections_y, block_sections_x)
+    )
+    x_dft = _2D_dft(x)
+    x_idft = _2D_idft(x_dft)
+    assert xp.allclose(x, x_idft)
+
+
 def test_transform_1D_circulant(batch_size: int, block_size: int, block_sections: int):
     """Test the transformation of a 1D block circulant matrix to block diagonal form."""
 
@@ -59,7 +73,7 @@ def test_transform_1D_circulant(batch_size: int, block_size: int, block_sections
 
     a_diagonal = transform_circulant(a_circulant, sections_x=block_sections)
 
-    a_test = detransform_circulant(a_diagonal, sections_x=block_sections)
+    a_test = detransform_circulant(a_diagonal)
 
     assert xp.allclose(a_circulant, a_test)
 
@@ -94,9 +108,7 @@ def test_transform_2D_circulant(
         a_circulant, sections_x=block_sections_x, sections_y=block_sections_y
     )
 
-    a_test = detransform_circulant(
-        a_diagonal, sections_x=block_sections_x, sections_y=block_sections_y
-    )
+    a_test = detransform_circulant(a_diagonal)
 
     assert xp.allclose(a_circulant, a_test)
 
@@ -150,8 +162,6 @@ def test_transform_2D_phi_circulant(
         a_diagonal,
         phase_x=phase_x,
         phase_y=phase_y,
-        sections_x=block_sections_x,
-        sections_y=block_sections_y,
     )
 
     assert xp.allclose(a_circulant, a_test)

@@ -97,7 +97,7 @@ class SCSPConfig(BaseModel):
 
     extrapolation_interval: PositiveInt = 1
     """Number of iterations between DIIS extrapolation steps.
-    
+
     For example, if set to 3, the mixer will perform two
     under-relaxation steps followed by a DIIS extrapolation step, and
     then repeat this cycle. If set to 1 (the default), the Pulay mixing
@@ -221,7 +221,9 @@ class ElectrostaticsConfig(BaseModel):
       charge density is computed from the potential using a single-band
       approximation.
     - `"omen"`: Uses the density model from the OMEN code. This is
-      almost identical to the single-band model in the 2D case.
+      almost identical to the single-band model with `density_model_dim
+      = 2`. However, it uses slightly different physical constants, i.e.
+      not the CODATA values used everywhere else in `quatrex`.
 
     Only used if `solving_scheme` is set to "root-finding".
 
@@ -959,11 +961,18 @@ class OutputConfig(BaseModel):
 
 
 class ContactConfig(BaseModel):
+    """Configuration for a contact.
+
+    !!! note
+
+        These contact configurations are currently only used in the
+        `"wf"` formalism.
+
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    fermi_level: float
     name: str
-    type: Literal["ohmic"] = "ohmic"
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
     lattice_vectors: list[list[float]] = Field(
         default_factory=lambda: [
@@ -974,11 +983,50 @@ class ContactConfig(BaseModel):
     )
     direction: Literal["a", "b", "c"]
 
+    fermi_level: float | None = None
+    """The Fermi level of the contact.
+
+    Either this or `mid_gap_energy` should be set to determine the Fermi
+    level of the contact.
+
+    """
+
+    mid_gap_energy: float | None = None
+    """An energy lying somewhere in the band gap of the contact.
+
+    This is used to separate conduction from valence band states, which
+    is necessary to automatically determine a contact's Fermi level.
+
+    """
+
+    temperature: NonNegativeFloat = 300.0  # K
+    """The temperature of the contact."""
+
+    voltage: float = 0.0
+    """The voltage applied to the contact.
+
+    At least one contact needs to be grounded (i.e. have zero voltage)
+    to serve as a reference for the other voltages.
+
+    The voltage and the Fermi level of the contact are used to determine
+    its chemical potential.
+
+    """
+
     @model_validator(mode="after")
     def to_array(self) -> Self:
         """Transforms origin and size to arrays."""
         self.origin = np.array(self.origin, dtype=float)
         self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
+        return self
+
+    @model_validator(mode="after")
+    def check_either_fermi_or_midgap(self) -> Self:
+        """Checks that either the Fermi level or the mid-gap energy is set."""
+        if (self.fermi_level is None) == (self.mid_gap_energy is None):
+            raise ValueError(
+                "Either `fermi_level` or `mid_gap_energy` must be set, but not both."
+            )
         return self
 
 
@@ -989,7 +1037,7 @@ class DeviceConfig(BaseModel):
 
     geometry: GeometryConfig
     """The geometry configuration of the device.
-    
+
     This contains a defintion of all regions in the device, such as
     doping, material constants and gates.
 
@@ -1255,7 +1303,7 @@ class QuatrexConfig(BaseModel):
         consistent.
 
     """
-    scsp: SCSPConfig = SCSPConfig()
+    scsp: SCSPConfig | None = None
     scba: SCBAConfig = SCBAConfig()
     qtbm: QTBMConfig = QTBMConfig()
     electrostatics: ElectrostaticsConfig = ElectrostaticsConfig()
@@ -1356,6 +1404,24 @@ class QuatrexConfig(BaseModel):
         if not self.device.construct_from_unit_cell and self.device.block_size is None:
             raise ValueError(
                 "block_size must be given when construct_from_unit_cell=False."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_device_contact_voltages(self) -> Self:
+        """Checks that at least one contact exists and is grounded."""
+        if self.formalism == "negf":
+            # TODO: In NEGF, device contact definitions are not yet
+            # used, so we skip this check for now.
+            return self
+
+        if len(self.device.contacts) == 0:
+            raise ValueError("At least one contact must be defined.")
+
+        if not any(contact.voltage == 0 for contact in self.device.contacts):
+            raise ValueError(
+                "At least one contact must be grounded (i.e. have zero voltage)."
             )
 
         return self

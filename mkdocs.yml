@@ -90,8 +90,8 @@ nav:
           - QuaTrEx: user_guide/parameters/quatrex.md
           - Device: user_guide/parameters/device.md
           - Contact: user_guide/parameters/contact.md
+          - Electrostatics: user_guide/parameters/electrostatics.md
           - SCSP: user_guide/parameters/scsp.md
-          - Poisson: user_guide/parameters/poisson.md
           - SCBA: user_guide/parameters/scba.md
           - QTBM: user_guide/parameters/qtbm.md
           - Electron: user_guide/parameters/electron.md

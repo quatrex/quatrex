@@ -149,8 +149,9 @@ class _SubCommunicator:
 
     def __init__(self, mpi_comm: MPI.Comm, config: dict):
         """Initializes the communication backend."""
-        self._validate_config(config)
-        self._config = config.copy()
+        _SubCommunicator._validate_config(config)
+        self._config = _default_config.copy()
+        self._config.update(config)
 
         self.rank = mpi_comm.rank
         self.size = mpi_comm.size
@@ -160,7 +161,8 @@ class _SubCommunicator:
         if "nccl" in config.values():
             self._init_nccl()
 
-    def _validate_config(self, config: dict):
+    @classmethod
+    def _validate_config(cls, config: dict):
         """Validate the configuration for the communication backend."""
         if not isinstance(config, dict):
             raise ValueError("Configuration must be a dictionary.")
@@ -285,7 +287,7 @@ class _SubCommunicator:
     ):
         """Performs all-gather communication."""
         if backend is None:
-            backend = self._config.get("all_gather", _default_config["all_gather"])
+            backend = self._config["all_gather"]
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -336,7 +338,7 @@ class _SubCommunicator:
     ):
         """Performs all-reduce communication."""
         if backend is None:
-            backend = self._config.get("all_reduce", _default_config["all_reduce"])
+            backend = self._config["all_reduce"]
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -381,7 +383,7 @@ class _SubCommunicator:
     def bcast(self, sendrecvbuf: NDArray, root: int = 0, backend: str | None = None):
         """Perform broadcast communication."""
         if backend is None:
-            backend = self._config.get("bcast", _default_config["bcast"])
+            backend = self._config["bcast"]
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -494,7 +496,7 @@ class _SubCommunicator:
         """
 
         if backend is None:
-            backend = self._config.get("send_recv", _default_config["send_recv"])
+            backend = self._config["send_recv"]
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -502,8 +504,8 @@ class _SubCommunicator:
 
             nccl.groupStart()
 
-            self._nccl_comm.send(sendbuf, dest=dest)
-            self._nccl_comm.recv(recvbuf, source=source)
+            self._nccl_comm.send(sendbuf, dest)
+            self._nccl_comm.recv(recvbuf, source)
 
             nccl.groupEnd()
 

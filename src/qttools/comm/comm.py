@@ -12,6 +12,9 @@ from qttools.utils.gpu_utils import (
     synchronize_device,
 )
 
+if xp.__name__ == "cupy":
+    from cupy.cuda import nccl
+
 
 def _check_gpu_aware_mpi() -> bool:
     """Checks if the MPI implementation is GPU-aware.
@@ -92,6 +95,7 @@ _default_config = {
     "all_gather": "host_mpi",
     "all_reduce": "host_mpi",
     "bcast": "host_mpi",
+    "send_recv": "host_mpi",
 }
 
 _mpi_ops = {
@@ -184,8 +188,6 @@ class _SubCommunicator:
         """Initializes the NCCL backend."""
         if not xp.__name__ == "cupy":
             raise RuntimeError("NCCL is only available with CuPy.")
-
-        from cupy.cuda import nccl
 
         if not nccl.available:
             raise RuntimeError("NCCL is not available.")
@@ -464,6 +466,77 @@ class _SubCommunicator:
 
         indices = xp.where(mask)[0]
         return xp.take(recvbuf, indices, axis=axis)
+
+    def send_recv(
+        self,
+        sendbuf: NDArray,
+        dest: int,
+        recvbuf: NDArray,
+        source: int,
+        backend: str | None = None,
+    ) -> None:
+        """Performs sendrecv communication.
+
+        Parameters
+        ----------
+        sendbuf : NDArray
+            The buffer to send.
+        dest : int
+            The rank to send to.
+        recvbuf : NDArray
+            The buffer to receive into.
+        source : int
+            The rank to receive from.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend for sendrecv will be used.
+
+        """
+
+        if backend is None:
+            backend = self._config["send_recv"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
+
+        if self.rank not in [source, dest]:
+            raise ValueError(
+                f"Rank {self.rank} is not involved in the send_recv operation (source={source}, dest={dest})."
+            )
+
+        if backend == "nccl":
+
+            nccl.groupStart()
+
+            self._nccl_comm.send(sendbuf, dest=dest)
+            self._nccl_comm.recv(recvbuf, source=source)
+
+            nccl.groupEnd()
+
+        elif backend == "device_mpi":
+            self._mpi_comm.Sendrecv(
+                sendbuf=sendbuf,
+                dest=dest,
+                recvbuf=recvbuf,
+                source=source,
+            )
+        elif backend == "host_mpi":
+            sendbuf_host = get_any_location(
+                sendbuf,
+                output_module="numpy",
+                use_pinned_memory=True,
+            )
+            recvbuf_host = empty_like_pinned(recvbuf)
+            self._mpi_comm.Sendrecv(
+                sendbuf=sendbuf_host,
+                dest=dest,
+                recvbuf=recvbuf_host,
+                source=source,
+            )
+            recvbuf[:] = get_any_location(
+                recvbuf_host,
+                output_module="cupy",
+                use_pinned_memory=True,
+            )
 
 
 class QuatrexCommunicator:

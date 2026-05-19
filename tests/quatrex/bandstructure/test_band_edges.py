@@ -49,16 +49,16 @@ def _intialize(config: QuatrexConfig):
     )
     sigma_dummy.data[:] = 0
 
-    section_offsets = xp.array([0, len(energies)])
-
     ind_left = xp.argmin(xp.abs(energies - config.electron.conduction_band_edge))
-    rank_left = xp.digitize(ind_left, section_offsets) - 1
-    local_ind = (ind_left - section_offsets[rank_left],) + tuple(
-        # Only take the k point indices
-        [s // 2 for s in sigma_dummy.shape[1:-2]]
-    )
 
-    return hamiltonian, overlap, potential, sigma_dummy, local_ind
+    if energies[ind_left] < config.electron.conduction_band_edge:
+        ind_lower = ind_left
+        ind_upper = ind_left + 1
+    else:
+        ind_lower = ind_left - 1
+        ind_upper = ind_left
+
+    return energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper
 
 
 def test_subsectioning(
@@ -89,16 +89,22 @@ def test_subsectioning(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
+    energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
+        _intialize(config)
+    )
 
     e_0_test = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
         block_sections=config.compute.band_edge.block_sections,
@@ -106,13 +112,17 @@ def test_subsectioning(
     )
 
     e_0_ref = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
         block_sections=1,
@@ -154,16 +164,22 @@ def test_left_right(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
+    energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
+        _intialize(config)
+    )
 
     e_0_left = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
         block_sections=config.compute.band_edge.block_sections,
@@ -173,13 +189,17 @@ def test_left_right(
     n = hamiltonian.num_local_blocks - 1
     m = n - 1
     e_0_right = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(n, n),
         upper_inds=(n, m),
         order="reverse",
@@ -234,7 +254,9 @@ def test_overlap(
 
     setup_context(config)
 
-    hamiltonian, overlap, potential, sigma_dummy, local_ind = _intialize(config)
+    energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper = (
+        _intialize(config)
+    )
 
     if overlap is None:
         pytest.skip("Skipping test for missing overlap matrix.")
@@ -247,23 +269,29 @@ def test_overlap(
     potential += 0.1
 
     e_0_ref = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
         potential=potential,
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
         block_sections=config.compute.band_edge.block_sections,
         eigvalsh_compute_location=config.compute.band_edge.eigvalsh_compute_location,
     )
 
+    # Only the gamma point
+    local_ind = tuple([s // 2 for s in sigma_dummy.shape[1:-2]])
     overlap_gamma = (
-        overlap.blocks[0, 0][:, *local_ind[1:]]
-        + overlap.blocks[0, 1][:, *local_ind[1:]]
-        + (overlap.blocks[0, 1][:, *local_ind[1:]]).conj().swapaxes(-1, -2)
+        overlap.blocks[0, 0][:, *local_ind]
+        + overlap.blocks[0, 1][:, *local_ind]
+        + (overlap.blocks[0, 1][:, *local_ind]).conj().swapaxes(-1, -2)
     )
 
     L = xp.linalg.cholesky(overlap_gamma)
@@ -289,13 +317,17 @@ def test_overlap(
     sigma_dummy = MockDSDBSparse(sigma_dummy, block_sizes)
 
     e_0_test = _compute_eigenvalues(
+        target_energy=config.electron.conduction_band_edge,
+        energies=energies,
         hamiltonian=hamiltonian,
         overlap=None,
         potential=xp.zeros_like(potential),
-        sigma_lesser=sigma_dummy,
-        sigma_greater=sigma_dummy,
         sigma_retarded_hermitian=sigma_dummy,
-        ind=local_ind,
+        ind_lower=ind_lower,
+        ind_upper=ind_upper,
+        rank_lower=0,
+        rank_upper=0,
+        section_offsets=xp.array([0, len(energies)]),
         diagonal_inds=(0, 0),
         upper_inds=(0, 1),
         block_sections=config.compute.band_edge.block_sections,

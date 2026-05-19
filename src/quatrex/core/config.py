@@ -996,11 +996,13 @@ class CommConfig(BaseModel):
     block_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     block_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     block_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    block_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
 
     stack_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     stack_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
     stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
 
 
 class ComputeConfig(BaseModel):
@@ -1236,6 +1238,7 @@ def _setup_comm(comm_config: CommConfig) -> None:
         "all_gather": comm_config.block_all_gather or default_backend,
         "all_reduce": comm_config.block_all_reduce or default_backend,
         "bcast": comm_config.block_bcast or default_backend,
+        "send_recv": comm_config.block_send_recv or default_backend,
     }
 
     stack_comm_config = {
@@ -1243,6 +1246,7 @@ def _setup_comm(comm_config: CommConfig) -> None:
         "all_gather": comm_config.stack_all_gather or default_backend,
         "all_reduce": comm_config.stack_all_reduce or default_backend,
         "bcast": comm_config.stack_bcast or default_backend,
+        "send_recv": comm_config.stack_send_recv or default_backend,
     }
 
     comm.configure(

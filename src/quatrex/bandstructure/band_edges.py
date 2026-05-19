@@ -118,14 +118,14 @@ def _slice_sigma(
 
             partner_rank = rank_lower
 
-        comm.stack._mpi_comm.Sendrecv(
+        comm.stack.send_recv(
             sendbuf=sigma_00_lower if comm.stack.rank == rank_lower else sigma_00_upper,
             dest=partner_rank,
             recvbuf=sigma_00_upper if comm.stack.rank == rank_lower else sigma_00_lower,
             source=partner_rank,
         )
 
-        comm.stack._mpi_comm.Sendrecv(
+        comm.stack.send_recv(
             sendbuf=sigma_01_lower if comm.stack.rank == rank_lower else sigma_01_upper,
             dest=partner_rank,
             recvbuf=sigma_01_upper if comm.stack.rank == rank_lower else sigma_01_lower,
@@ -151,8 +151,6 @@ def _compute_eigenvalues(
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_lesser: DSDBSparse,
-    sigma_greater: DSDBSparse,
     sigma_retarded_hermitian: DSDBSparse,
     ind_lower: tuple[int, ...],
     ind_upper: tuple[int, ...],
@@ -197,10 +195,6 @@ def _compute_eigenvalues(
         orthogonal.
     potential : NDArray
         The potential.
-    sigma_lesser : DSDBSparse
-        The lesser self-energy.
-    sigma_greater : DSDBSparse
-        The greater self-energy.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     ind_lower : tuple[int, ...]
@@ -259,32 +253,8 @@ def _compute_eigenvalues(
     sigma_slice = tuple(ind_k) + np.s_[:small_blocksize, :]
 
     # Sigma is extract at a certain energy and k-point
-    # NOTE: In this case we use only the real part of the retarded
-    # self-energy.
-    # NOTE: Even if the real part is used, the lesser and greater self-energies
-    # need to be taken into account since they can have a non-zero real part.
-    sigma_00 = xp.real(
-        order_block(
-            sigma_retarded_hermitian.blocks[*diagonal_inds]
-            + 0.5
-            * (
-                sigma_greater.blocks[*diagonal_inds]
-                - sigma_lesser.blocks[*diagonal_inds]
-            ),
-            order,
-        )
-    )
-    sigma_01 = xp.real(
-        order_block(
-            sigma_retarded_hermitian.blocks[*upper_inds]
-            + 0.5
-            * (
-                sigma_greater.blocks[*diagonal_inds]
-                - sigma_lesser.blocks[*diagonal_inds]
-            ),
-            order,
-        )
-    )
+    sigma_00 = order_block(sigma_retarded_hermitian.blocks[*diagonal_inds], order)
+    sigma_01 = order_block(sigma_retarded_hermitian.blocks[*upper_inds], order)
 
     sigma_00, sigma_01 = _slice_sigma(
         target_energy,
@@ -384,8 +354,6 @@ def find_renormalized_eigenvalues(
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_lesser: DSDBSparse,
-    sigma_greater: DSDBSparse,
     sigma_retarded_hermitian: DSDBSparse,
     energies: NDArray,
     conduction_band_guesses: tuple[float, float],
@@ -402,10 +370,6 @@ def find_renormalized_eigenvalues(
     overlap : DSDBSparse | None
         The overlap matrix. If None, the basis is assumed to be
         orthogonal.
-    sigma_lesser : DSDBSparse
-        The lesser self-energy.
-    sigma_greater : DSDBSparse
-        The greater self-energy.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     energies : NDArray
@@ -467,8 +431,6 @@ def find_renormalized_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_lesser=sigma_lesser,
-                    sigma_greater=sigma_greater,
                     sigma_retarded_hermitian=sigma_retarded_hermitian,
                     ind_lower=ind_left_lower,
                     ind_upper=ind_left_upper,
@@ -524,8 +486,6 @@ def find_renormalized_eigenvalues(
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_lesser=sigma_lesser,
-                    sigma_greater=sigma_greater,
                     sigma_retarded_hermitian=sigma_retarded_hermitian,
                     ind_lower=ind_right_lower,
                     ind_upper=ind_right_upper,

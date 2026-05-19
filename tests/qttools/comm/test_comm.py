@@ -294,7 +294,7 @@ def test_all_gather_v(
             )
 
 
-@pytest.mark.mpi(min_size=3)
+@pytest.mark.mpi(min_size=2)
 def test_send_recv(
     backend_type: str,
     block_comm_size: int,
@@ -318,7 +318,14 @@ def test_send_recv(
 
         if test_comm.rank in [0, 1]:
 
-            test_comm.send_recv(sendbuf=sendbuf, source=0, recvbuf=recvbuf, dest=1)
+            # send to and receive from the other rank (not self)
+            other = 1 - test_comm.rank
+            source = other
+            dest = other
+
+            test_comm.send_recv(
+                sendbuf=sendbuf, source=source, recvbuf=recvbuf, dest=dest
+            )
 
             expected = xp.ones((data_size), dtype=xp.float32)
             assert xp.allclose(expected, recvbuf)

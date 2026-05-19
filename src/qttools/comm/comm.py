@@ -285,7 +285,7 @@ class _SubCommunicator:
     ):
         """Performs all-gather communication."""
         if backend is None:
-            backend = self._config["all_gather"]
+            backend = self._config.get("all_gather", _default_config["all_gather"])
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -336,7 +336,7 @@ class _SubCommunicator:
     ):
         """Performs all-reduce communication."""
         if backend is None:
-            backend = self._config["all_reduce"]
+            backend = self._config.get("all_reduce", _default_config["all_reduce"])
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -381,7 +381,7 @@ class _SubCommunicator:
     def bcast(self, sendrecvbuf: NDArray, root: int = 0, backend: str | None = None):
         """Perform broadcast communication."""
         if backend is None:
-            backend = self._config["bcast"]
+            backend = self._config.get("bcast", _default_config["bcast"])
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
 
@@ -494,14 +494,9 @@ class _SubCommunicator:
         """
 
         if backend is None:
-            backend = self._config["send_recv"]
+            backend = self._config.get("send_recv", _default_config["send_recv"])
         elif backend not in _backends:
             raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
-
-        if self.rank not in [source, dest]:
-            raise ValueError(
-                f"Rank {self.rank} is not involved in the send_recv operation (source={source}, dest={dest})."
-            )
 
         if backend == "nccl":
 

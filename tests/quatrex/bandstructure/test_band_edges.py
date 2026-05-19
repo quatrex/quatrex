@@ -58,6 +58,11 @@ def _intialize(config: QuatrexConfig):
         ind_lower = ind_left - 1
         ind_upper = ind_left
 
+    # check if the upper energy is outside the energy range
+    if ind_upper >= len(energies):
+        ind_upper = len(energies) - 1
+        ind_lower = ind_upper - 1
+
     return energies, hamiltonian, overlap, potential, sigma_dummy, ind_lower, ind_upper
 
 
@@ -227,6 +232,8 @@ class MockDSDBSparse:
                     i * block_size : (i + 1) * block_size,
                     j * block_size : (j + 1) * block_size,
                 ]
+
+        self.shape = data.shape
 
 
 def test_overlap(

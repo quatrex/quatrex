@@ -309,23 +309,16 @@ def test_send_recv(
 
     for test_comm in [comm.block, comm.stack]:
 
+        if test_comm.size < 2:
+            pytest.skip("Need at least 2 processes for send_recv test")
+
         # random sendbuf
-        sendbuf = (
-            xp.ones(
-                (data_size),
-                dtype=xp.float32,
-            )
-            * test_comm.rank
-        )
+        sendbuf = xp.ones((data_size), dtype=xp.float32)
         recvbuf = xp.empty_like(sendbuf)
 
-        recvbuf = test_comm.send_recv(
-            sendbuf=sendbuf, source=0, recvbuf=recvbuf, dest=1
-        )
-
         if test_comm.rank in [0, 1]:
-            expected = xp.ones(
-                (data_size),
-                dtype=xp.float32,
-            ) * (1 - test_comm.rank)
+
+            test_comm.send_recv(sendbuf=sendbuf, source=0, recvbuf=recvbuf, dest=1)
+
+            expected = xp.ones((data_size), dtype=xp.float32)
             assert xp.allclose(expected, recvbuf)

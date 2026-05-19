@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
+import warnings
+
 import numpy as np
 
 from qttools import NDArray, xp
@@ -133,14 +135,18 @@ def _slice_sigma(
         )
 
     # Interpolate
-    energy_lower = energies[ind_lower]
-    energy_upper = energies[ind_upper]
-    sigma_00 = (sigma_00_upper - sigma_00_lower) * (target_energy - energy_lower) / (
-        energy_upper - energy_lower
-    ) + sigma_00_lower
-    sigma_01 = (sigma_01_upper - sigma_01_lower) * (target_energy - energy_lower) / (
-        energy_upper - energy_lower
-    ) + sigma_01_lower
+    if ind_upper != ind_lower:
+        energy_lower = energies[ind_lower]
+        energy_upper = energies[ind_upper]
+        sigma_00 = (sigma_00_upper - sigma_00_lower) * (
+            target_energy - energy_lower
+        ) / (energy_upper - energy_lower) + sigma_00_lower
+        sigma_01 = (sigma_01_upper - sigma_01_lower) * (
+            target_energy - energy_lower
+        ) / (energy_upper - energy_lower) + sigma_01_lower
+    else:
+        sigma_00 = sigma_00_lower
+        sigma_01 = sigma_01_lower
 
     return sigma_00, sigma_01
 
@@ -418,6 +424,24 @@ def find_renormalized_eigenvalues(
                 ind_left_lower = ind_left - 1
                 ind_left_upper = ind_left
 
+            # Sanity checks when the energy grid is unphysical,
+            # but one still wants to benchmark
+            if ind_left_upper >= len(energies):
+                ind_left_upper = len(energies) - 1
+                if comm.rank == 0:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is above the maximum energy. "
+                        "Using the maximum energy for the upper index."
+                    )
+
+            if ind_left_lower < 0:
+                ind_left_lower = 0
+                if comm.rank == 0:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is below the minimum energy. "
+                        "Using the minimum energy for the lower index."
+                    )
+
             rank_left_lower = xp.digitize(ind_left_lower, section_offsets) - 1
             rank_left_upper = xp.digitize(ind_left_upper, section_offsets) - 1
 
@@ -470,6 +494,21 @@ def find_renormalized_eigenvalues(
             else:
                 ind_right_lower = ind_right - 1
                 ind_right_upper = ind_right
+
+            if ind_right_upper >= len(energies):
+                ind_right_upper = len(energies) - 1
+                if comm.rank == comm.block.rank:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is above the maximum energy. "
+                        "Using the maximum energy for the upper index."
+                    )
+            if ind_right_lower < 0:
+                ind_right_lower = 0
+                if comm.rank == comm.block.rank:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is below the minimum energy. "
+                        "Using the minimum energy for the lower index."
+                    )
 
             rank_right_lower = xp.digitize(ind_right_lower, section_offsets) - 1
             rank_right_upper = xp.digitize(ind_right_upper, section_offsets) - 1

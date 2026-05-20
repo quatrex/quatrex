@@ -22,6 +22,7 @@ from quatrex.bandstructure.contact import (
     find_charge_neutral_fermi_level,
 )
 from quatrex.core.compute_config import ComputeConfig
+from quatrex.core.observables import density
 from quatrex.core.quatrex_config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
@@ -31,6 +32,12 @@ from quatrex.core.utils import (
     homogenize,
 )
 from quatrex.device.inputs import load_matrix
+
+from ._potential_generation import (
+    compute_charge_for_fermi_levels,
+    find_energy_shift,
+    generate_potential_profile,
+)
 
 profiler = Profiler()
 
@@ -61,69 +68,6 @@ def _btd_subtract(a: DSDBSparse, b: DSDBSparse) -> None:
 
         a_.blocks[i, j] -= b_.blocks[i, j]
         a_.blocks[j, i] -= b_.blocks[j, i]
-
-
-def generate_potential_profile(
-    grid, transport_direction, bias, potential_function="tanh", flat_length=0
-):
-    """
-    Generates a potential profile on a given grid using a specified potential function.
-
-    Parameters
-    ----------
-    grid : ndarray
-        The spatial grid on which to evaluate the potential. Shape should be (N, 3) for 3D space.
-    transport_direction : int
-        The index of the transport direction (0 for x, 1 for y, 2 for z).
-    bias : float
-        The bias to apply to the potential profile. A positive bias creates a drop along transport.
-    potential_function : str
-        "tanh" or "linear". The type of potential function to use. Default is "tanh".
-    flat_length : float
-        Length of the flat part of the potential profile at the beginning and end.
-
-    Returns
-    -------
-    potential_profile : ndarray
-        The potential profile evaluated on the grid. Shape will be (N,).
-    """
-    coords = np.asarray(grid[:, transport_direction], dtype=float)
-    coord0 = coords.min()
-    transport_length = coords.max() - coord0
-
-    if transport_length <= 0:
-        raise ValueError("Grid has zero transport length in the chosen direction.")
-    if flat_length < 0:
-        raise ValueError("flat_length must be non-negative.")
-    if 2 * flat_length >= transport_length:
-        raise ValueError("flat_length is too large for the given transport length.")
-
-    # Shift to [0, transport_length] so masks are coordinate-based, not index-based.
-    s = coords - coord0
-    left_mask = s <= flat_length
-    right_mask = s >= (transport_length - flat_length)
-    middle_mask = ~(left_mask | right_mask)
-
-    potential_profile = np.empty_like(s)
-    potential_profile[left_mask] = 0.0
-    potential_profile[right_mask] = -bias
-
-    if np.any(middle_mask):
-        drop_coords = s[middle_mask] - flat_length
-        drop_length = transport_length - 2 * flat_length
-
-        if potential_function == "tanh":
-            xi = drop_coords / drop_length
-            # potential_profile[middle_mask] = -0.5 * bias * (1.0 + np.tanh(5 * (2 * xi - 1)))
-            potential_profile[middle_mask] = (
-                -0.5 * bias * (1.0 + np.tanh(3 * (2 * xi - 1)))
-            )
-        elif potential_function == "linear":
-            potential_profile[middle_mask] = -bias * (drop_coords / drop_length)
-        else:
-            raise ValueError("Invalid potential function. Choose 'tanh' or 'linear'.")
-
-    return potential_profile
 
 
 @decorate_methods(profiler.profile(level="api"), exclude=["solve"])
@@ -289,8 +233,10 @@ class ElectronSolver(SubsystemSolver):
         except FileNotFoundError:
             transport_direction = "xyz".index(quatrex_config.device.transport_direction)
             self.flat_length = (
-                self.lattice_vectors[transport_direction, transport_direction] * 16
-            )  # Flat for 4 transport cells at each end
+                self.lattice_vectors[transport_direction, transport_direction] * 4
+            )  # Flat for 1 transport cells at each end
+            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 8  # Flat for 2 transport cells at each end
+            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 16  # Flat for 4 transport cells at each end
             # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 12  # Flat for 3 transport cells at each end
             # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 20  # Flat for 5 transport cells at each end
             # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 28  # Flat for 7 transport cells at each end
@@ -298,8 +244,8 @@ class ElectronSolver(SubsystemSolver):
                 self.grid,
                 transport_direction=transport_direction,
                 bias=self.bias,
-                # potential_function="linear",
-                potential_function="tanh",
+                potential_function="linear",
+                # potential_function="tanh",
                 flat_length=self.flat_length,
             )
             # # No potential provided. Assume zero potential.
@@ -329,6 +275,19 @@ class ElectronSolver(SubsystemSolver):
             )
             * 1e-16
         )  # A^2 to cm^2
+
+        # NOTE: This only works for uniform block sizes and when the unit cell is commensurate with the blocks.
+        uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
+            "xyz".index(self.quatrex_config.device.transport_direction)
+        ]
+        block_size = self.block_sizes[0]
+        assert (
+            block_size % uc_size == 0
+        ), "Block size must be divisible by unit cell size."
+        self.small_block_size = block_size // uc_size
+        # Try bigger block sizes
+        # self.small_block_size *= uc_size
+        # self.left_target_charge *= uc_size
 
         self.call_count = 0
         self.filtering_iteration_limit = (
@@ -543,16 +502,22 @@ class ElectronSolver(SubsystemSolver):
         _btd_subtract(self.system_matrix, sse_retarded)
         _btd_subtract(self.system_matrix, self.hamiltonian)
 
-    def _update_potential_and_solve(
-        self,
-        left_dos,
-        right_dos,
-        sse_retarded: DSDBSparse,
-        sse_lesser: DSDBSparse,
-        sse_greater: DSDBSparse,
-        out: tuple[DSDBSparse, ...],
-    ) -> None:
-        """Updates the potential and solves for the Green's function."""
+    def _block_resolved_dos(self, x: DSDBSparse) -> NDArray:
+        """Computes the block-resolved density of states from a Green's function.
+        It is in units of states per eV per cm^2, assuming a 2D system."""
+        kp_dims = len(x.shape[1:-2])
+        ne = len(self.energies)
+        block_dos = density(x=x, overlap=self.overlap_sparray)
+        # Mean over k-points
+        block_dos = block_dos.mean(tuple(range(1, kp_dims + 1)))
+        # Make it block resolved
+        block_dos = block_dos.reshape((ne, -1, self.small_block_size)).sum(-1)
+        # # Correct units
+        # block_dos = block_dos / np.linalg.det(self.lattice_vectors[:2, :2]) * 1e16
+        return block_dos
+
+    def _potential_update_boundary(self, left_dos, right_dos):
+        """Creates a new potential by enforcing charge neutrality at the contacts."""
         charge_neutral_fl = contact_fermi_level(
             temperature=self.temperature,
             dos=left_dos,
@@ -589,6 +554,60 @@ class ElectronSolver(SubsystemSolver):
         self.potential += self.left_fermi_level - charge_neutral_fl
         self.left_mid_gap_energy += self.left_fermi_level - charge_neutral_fl
         self.right_mid_gap_energy += self.right_fermi_level - charge_neutral_fl
+
+    def _potential_update(self, ldos, excess_charge, midgap_energies):
+        """Creates a new potential by enforcing charge neutrality across the device."""
+        fermi_levels = self.energies.copy()
+        # Find charge for each Fermi level.
+        charge_per_fermi_level = compute_charge_for_fermi_levels(
+            fermi_levels, ldos, midgap_energies, self.energies
+        )
+        # Find the Fermi level that corresponds to the target charge, and the current excess charge. Then
+        # return the difference as the energy shift to apply to the potential.
+        energy_shifts = find_energy_shift(
+            charge_per_fermi_level, fermi_levels, self.left_target_charge, excess_charge
+        )
+        # Apply the energy shift as a rigid shift to the potential.
+        # Problem: energy shifts are block resolved, but the potential is orbital resolved. For now, we just apply
+        # the same shift to all orbitals. This can maybe change in the future.
+        bs = (
+            self.small_block_size
+            if self.small_block_size % 2 == 1
+            else self.small_block_size - 1
+        )
+        energy_shifts = np.repeat(energy_shifts, self.small_block_size)
+        self.potential -= energy_shifts
+        # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="edge"), np.ones(bs)/bs, mode="valid")
+        # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="wrap"), np.ones(bs)/bs, mode="valid")
+        # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="reflect"), np.ones(bs)/bs, mode="valid")
+        self.potential -= xp.convolve(
+            np.pad(
+                energy_shifts,
+                pad_width=bs // 2,
+                mode="constant",
+                constant_values=self.left_target_charge / self.small_block_size,
+            ),
+            np.ones(bs) / bs,
+            mode="valid",
+        )
+
+    def _update_potential_and_solve(
+        self,
+        ldos,
+        excess_charge,
+        midgap_energies,
+        sse_retarded: DSDBSparse,
+        sse_lesser: DSDBSparse,
+        sse_greater: DSDBSparse,
+        out: tuple[DSDBSparse, ...],
+    ) -> None:
+        """Updates the potential and solves for the Green's function."""
+
+        # Update the potential based on the contact DOS
+        if self.band_edge_tracking == "potential-update-boundary":
+            self._potential_update_boundary(ldos[..., 0], ldos[..., -1])
+        elif self.band_edge_tracking == "potential-update":
+            self._potential_update(ldos, excess_charge, midgap_energies)
 
         t_assemble_start = time.perf_counter()
         self._assemble_system_matrix(sse_retarded)
@@ -770,6 +789,21 @@ class ElectronSolver(SubsystemSolver):
                 f"    Filter peaks all: {t_filter_peaks_end_all - t_filter_peaks_start}",
                 flush=True,
             )
+
+    def _find_band_edges(self, ldos):
+        """Finds the band edges based on the local density of states."""
+        # Loop through the blocks and find the band edges for each block
+        band_edges = []
+        block_potential = self.potential.reshape((-1, self.small_block_size)).mean(-1)
+        block_potential -= block_potential[0]
+        for block in range(ldos.shape[1]):
+            peaks = find_dos_peaks(ldos[:, block], self.energies)
+            edges = find_band_edges(
+                peaks, self.left_mid_gap_energy + block_potential[block]
+            )
+            band_edges.append(edges)
+
+        return band_edges
 
     @profiler.profile(level="basic")
     def solve(
@@ -1040,78 +1074,33 @@ class ElectronSolver(SubsystemSolver):
         ] or (self.call_count >= 1 and self.band_edge_tracking == "charge-neutrality"):
             t_dos_peaks_start = time.perf_counter()
 
-            _, _, g_retarded = out
+            if self.band_edge_tracking == "potential-update":
+                g_lesser, _, g_retarded = out
+            else:
+                _, _, g_retarded = out
             left_band_edges = np.empty((2,), dtype=float)
             right_band_edges = np.empty((2,), dtype=float)
 
-            if comm.block.rank == 0:
-                uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
-                    "xyz".index(self.quatrex_config.device.transport_direction)
-                ]
-                block_size_0 = self.block_sizes[0]
-                assert (
-                    block_size_0 % uc_size == 0
-                ), "Block size must be divisible by unit cell size."
-                small_block_size = block_size_0 // uc_size
-                s_00 = self._get_block(self.overlap_sparray, (0, 0))[
-                    ..., :small_block_size, :small_block_size
-                ]
-                g_00 = g_retarded.blocks[0, 0][
-                    ..., :small_block_size, :small_block_size
-                ]
-
-                kp_dims = len(g_retarded.shape[1:-2])
-                local_left_dos = (
-                    -xp.mean(
-                        xp.trace(g_00 @ s_00, axis1=-2, axis2=-1).imag,
-                        axis=tuple(range(1, kp_dims + 1)),
-                    )
-                    / xp.pi
+            # NOTE: This will not work if comm.block.size > 1
+            if comm.block.size > 1:
+                raise NotImplementedError(
+                    "Band edge tracking with block distribution is not implemented."
+                )
+            # NOTE: Also assumes it is block homogeneous
+            # Check that g_retarded.block_sizes are all the same
+            if not np.all(g_retarded.block_sizes == g_retarded.block_sizes[0]):
+                raise NotImplementedError(
+                    "Band edge tracking with non-uniform block sizes is not implemented."
                 )
 
-                left_dos = comm.stack.all_gather_v(
-                    local_left_dos,
-                    axis=0,
-                    mask=g_retarded._stack_padding_mask,
-                )
-                e_0_left = find_dos_peaks(left_dos, self.energies)
-                left_band_edges = xp.array(
-                    find_band_edges(e_0_left, self.left_mid_gap_energy)
-                )
+            # TODO: Check sign
+            ldos = -self._block_resolved_dos(g_retarded) / xp.pi
 
-            if comm.block.rank == comm.block.size - 1:
-                uc_size = self.quatrex_config.device.neighbor_cell_cutoff[
-                    "xyz".index(self.quatrex_config.device.transport_direction)
-                ]
-                block_size_n = self.block_sizes[-1]
-                assert (
-                    block_size_n % uc_size == 0
-                ), "Block size must be divisible by unit cell size."
-                small_block_size = block_size_n // uc_size
-                s_nn = self._get_block(self.overlap_sparray, (-1, -1))[
-                    ..., -small_block_size:, -small_block_size:
-                ]
-                n = g_retarded.num_local_blocks - 1
-                g_nn = g_retarded.blocks[n, n][
-                    ..., -small_block_size:, -small_block_size:
-                ]
-                local_right_dos = (
-                    -xp.mean(
-                        xp.trace(g_nn @ s_nn, axis1=-2, axis2=-1).imag,
-                        axis=tuple(range(1, kp_dims + 1)),
-                    )
-                    / xp.pi
-                )
-
-                right_dos = comm.stack.all_gather_v(
-                    local_right_dos,
-                    axis=0,
-                    mask=g_retarded._stack_padding_mask,
-                )
-                e_0_right = find_dos_peaks(right_dos, self.energies)
-                right_band_edges = xp.array(
-                    find_band_edges(e_0_right, self.right_mid_gap_energy)
-                )
+            band_edges = self._find_band_edges(ldos)
+            left_dos = ldos[..., 0]
+            left_band_edges = band_edges[0]
+            right_dos = ldos[..., -1]
+            right_band_edges = band_edges[-1]
 
             # NOTE: This will not work if comm.block.size > 1
             if self.band_edge_tracking == "charge-neutrality":
@@ -1232,12 +1221,23 @@ class ElectronSolver(SubsystemSolver):
                 # Update the mid band gap
                 self.left_mid_gap_energy = xp.mean(left_band_edges)
                 self.right_mid_gap_energy = xp.mean(right_band_edges)
+                # Also compute the excess charge
+                # TODO: Check sign
+                el_ldos = self._block_resolved_dos(g_lesser) / (2 * np.pi)
+                excess_charge = []
+                midgap_energies = xp.mean(band_edges, axis=1)
+                for b in range(el_ldos.shape[-1]):
+                    mask = self.energies > midgap_energies[b]
+                    excess_charge.append(
+                        np.trapezoid(el_ldos[:, b][mask], self.energies[mask])
+                    )
                 # Zero the output Green's functions to be safe.
                 for g in out:
                     g.data[:] = 0.0
                 self._update_potential_and_solve(
-                    left_dos=left_dos,
-                    right_dos=right_dos,
+                    ldos=ldos,
+                    excess_charge=excess_charge,
+                    midgap_energies=midgap_energies,
                     sse_retarded=sse_retarded,
                     sse_lesser=sse_lesser,
                     sse_greater=sse_greater,

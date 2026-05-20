@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 import warnings
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
@@ -9,29 +10,11 @@ from qttools import NDArray, sparse, xp
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
-from quatrex.device.inputs import distributed_read_xyz, load_matrices
-
-
-def get_orbital_potential(potential: NDArray, orbital_offsets: NDArray) -> NDArray:
-    """Converts atom-resolved potential to orbital-resolved potential.
-
-    Parameters
-    ----------
-    potential : NDArray
-        Electrostatic potential at each atomic site.
-    orbital_offsets : NDArray
-        Cumulative orbital count array where orbital_offsets[i] gives
-        the starting orbital index for atom i.
-
-    Returns
-    -------
-    NDArray
-        Electrostatic potential for each orbital.
-
-    """
-    orbitals_per_atom = list(np.diff(orbital_offsets))
-    orbital_potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-    return orbital_potential
+from quatrex.device.inputs import (
+    create_coordinate_grid,
+    distributed_read_xyz,
+    load_matrices,
+)
 
 
 class Device:
@@ -58,9 +41,6 @@ class Device:
     gamma_only : bool
         True if only the Gamma point (0,0,0) Hamiltonian is available,
         indicating that k-point calculations are not possible.
-    lattice_vectors : NDArray
-        3x3 array containing the lattice vectors of the device unit
-        cell.
     atom_coordinates : NDArray
         Array of atomic coordinates.
     atomic_species : NDArray
@@ -69,7 +49,7 @@ class Device:
         Array of cumulative orbital counts, used to map from atoms to
         orbitals. orbital_offsets[i] gives the starting orbital index
         for atom i.
-    orbital_potential : NDArray, optional
+    potential : NDArray, optional
         Array of electrostatic potential for each orbital.
         Can be either None if no potential is provided or a 1D array
         where the 1D index corresponds to the orbital index or the
@@ -91,9 +71,14 @@ class Device:
         self.config = config
 
         self._init_hamiltonian()
-        self._init_lattice()
+        __, self.atom_coordinates, self.atomic_species = self.load_structure(config)
         self._init_orbitals()
-        self._load_potential()
+        self.potential = self.load_potential(
+            self.config.input_dir,
+            self.atom_coordinates,
+            self.atomic_species,
+            self.config.device.num_orbitals_per_atom,
+        )
         self.apply_potential()
         self._add_contacts()
 
@@ -102,6 +87,124 @@ class Device:
                 f"Device initialized with {len(self.contacts)} contacts.",
                 flush=True,
             )
+
+    @staticmethod
+    def load_potential(
+        input_dir: Path,
+        atom_coordinates: NDArray,
+        atomic_species: NDArray,
+        num_orbitals_per_atom: dict[str, int],
+    ) -> NDArray:
+        """Loads electrostatic potential data from input files.
+
+        Attempts to load the electrostatic potential from potential.npy in the
+        input directory. The potential can be provided either at the atomic
+        level or at the orbital level.
+
+        Parameters
+        ----------
+        input_dir : Path
+            Directory containing the `potential.npy` file.
+        atom_coordinates : NDArray
+            Array of atomic coordinates.
+        atomic_species : NDArray
+            Array of atomic species.
+        num_orbitals_per_atom : dict[str, int]
+            Dictionary mapping atomic species to the number of orbitals per
+            atom.
+
+        Returns
+        -------
+        NDArray
+            The electrostatic potential array. If no potential file is found,
+            returns an array of zeros with length equal to the total number of
+            orbitals.
+
+
+        """
+        orbitals_per_atom = xp.array(
+            [num_orbitals_per_atom.get(species, 1) for species in atomic_species],
+            dtype=np.int32,
+        )
+        num_orbitals = xp.sum(orbitals_per_atom)
+
+        try:
+            potential = distributed_load(input_dir / "potential.npy")
+
+            # NOTE: If atom species is only 'X', then we still repeat.
+            if potential.shape[0] == atom_coordinates.shape[0]:
+                # Upscale the potential to the number of orbitals
+                potential = xp.repeat(potential, orbitals_per_atom, axis=0)
+            elif potential.shape[0] != num_orbitals:
+                raise ValueError(
+                    "Potential shape does not match number of atoms or orbitals."
+                )
+
+        except FileNotFoundError:
+            potential = xp.zeros(num_orbitals)
+
+        return potential
+
+    @staticmethod
+    def load_structure(
+        config: QuatrexConfig,
+    ) -> tuple[NDArray, NDArray, NDArray]:
+        """Loads the orbital coordinates, atom coordinates, and atomic
+        species for the device.
+
+        Parameters
+        ----------
+        config : QuatrexConfig
+            The Quatrex configuration.
+
+        Returns
+        -------
+        tuple[NDArray, NDArray, NDArray]
+            The orbital coordinates, atom coordinates, and atomic
+            species.
+
+        """
+
+        structure_file = config.input_dir / "structure.xyz"
+        if not structure_file.exists():
+            raise FileNotFoundError(f"Structure file {structure_file} not found.")
+        lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
+            structure_file
+        )
+
+        orbitals_per_atom = [
+            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
+        ]
+        atom_coordinates = xp.asarray(atom_coordinates)
+        orbital_coordinates = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
+
+        if config.device.construct_from_unit_cell:
+
+            transport_ind = "xyz".index(config.device.transport_direction)
+
+            orbital_coordinates = create_coordinate_grid(
+                orbital_coordinates,
+                config.device.num_transport_cells
+                * config.device.neighbor_cell_cutoff[transport_ind],
+                transport_ind,
+                xp.asarray(lattice_vectors),
+            )
+
+            atom_coordinates = create_coordinate_grid(
+                atom_coordinates,
+                config.device.num_transport_cells
+                * config.device.neighbor_cell_cutoff[transport_ind],
+                transport_ind,
+                xp.asarray(lattice_vectors),
+            )
+
+            atomic_species = xp.concatenate(
+                [atomic_species]
+                * config.device.neighbor_cell_cutoff[transport_ind]
+                * config.device.num_transport_cells
+            )
+
+        return orbital_coordinates, atom_coordinates, atomic_species
 
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.
@@ -186,18 +289,6 @@ class Device:
         if len(self.hamiltonians) == 1:
             self.gamma_only = True
 
-    def _init_lattice(self) -> None:
-        """Initializes the atomic structure and lattice parameters of
-        the device."""
-
-        # Load the lattice structure from file.
-        structure_file = self.config.input_dir / "structure.xyz"
-        if not structure_file.exists():
-            raise FileNotFoundError(f"Structure file {structure_file} not found.")
-        self.lattice_vectors, self.atom_coordinates, self.atomic_species = (
-            distributed_read_xyz(structure_file)
-        )
-
     def _init_orbitals(self) -> None:
         """Initializes the orbital indexing system for the device.
 
@@ -220,45 +311,10 @@ class Device:
         # Create a vector with the starting orbital for each atom
         self.orbital_offsets = np.hstack(([0], np.cumsum(orbitals_per_atom)))
 
-    def _load_potential(self) -> None:
-        """Loads electrostatic potential data from input files.
-
-        Attempts to load the electrostatic potential from potential.npy
-        in the input directory. The potential can be provided either
-        at the atomic level or at the orbital level.
-
-        """
-
-        self.potential = None
-
-        try:
-            potential = distributed_load(self.config.input_dir / "potential.npy")
-
-            if potential.shape[0] == self.atom_coordinates.shape[0]:
-                # Upscale the potential to the number of orbitals
-                self.potential = get_orbital_potential(potential, self.orbital_offsets)
-            elif potential.shape[0] == self.orbital_offsets[-1]:
-                self.potential = potential
-            else:
-                raise ValueError(
-                    "Potential shape does not match number of atoms or orbitals."
-                )
-
-        except FileNotFoundError:
-            if comm.rank == 0:
-                print("No external potential is provided.", flush=True)
-
     # TODO: THis should probably not happen directly in the Hamiltonian,
     # but rather during the construction of the system matrix.
     def apply_potential(self) -> None:
         """Applies electrostatic potential to device Hamiltonian."""
-
-        if self.potential is None:
-            if comm.rank == 0:
-                print(
-                    "No potential loaded. Skipping potential application.", flush=True
-                )
-            return
 
         potential = self.potential + 1e-10
 

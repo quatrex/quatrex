@@ -8,13 +8,14 @@ from qttools.datastructures import DSDBSparse
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
-from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
+from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
 from quatrex.device.contact import get_inverse_order, order_block
+from quatrex.device.device import Device
 from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
@@ -105,13 +106,16 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Load the potential.
-        try:
-            self.potential = distributed_load(config.input_dir / "potential.npy")
-        except FileNotFoundError:
-            # No potential provided. Assume zero potential.
-            self.potential = xp.zeros(
-                self.hamiltonian.shape[-2], dtype=self.hamiltonian.dtype
-            )
+        # TODO: The sturcture should not be reloaded here.
+        # This will be fixed when the device is unified.
+        __, atom_coordinates, atomic_species = Device.load_structure(config)
+        self.potential = Device.load_potential(
+            config.input_dir,
+            atom_coordinates,
+            atomic_species,
+            config.device.num_orbitals_per_atom,
+        )
+
         if self.potential.size != self.hamiltonian.shape[-2]:
             raise ValueError("Potential matrix and Hamiltonian have different shapes.")
         self.eta = config.electron.eta

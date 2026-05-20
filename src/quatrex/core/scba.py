@@ -16,7 +16,8 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
-from quatrex.device.inputs import assemble_matrix, load_structure
+from quatrex.device.device import Device
+from quatrex.device.inputs import assemble_matrix, get_block_sizes
 from quatrex.electron import (
     ElectronSolver,
     SigmaCoulombScreening,
@@ -45,7 +46,8 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        block_sizes, grid = load_structure(config)
+        grid, __, __ = Device.load_structure(config)
+        block_sizes = get_block_sizes(config, grid)
 
         kpoint_grid = config.device.kpoint_grid
         # Find the maximum interaction cutoff.

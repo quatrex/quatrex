@@ -8,7 +8,7 @@ import pytest
 from qttools import xp
 from quatrex.bandstructure.band_edges import _compute_eigenvalues
 from quatrex.core.config import QuatrexConfig, parse_config, setup_context
-from quatrex.device.device import Device
+from quatrex.device import Device
 from quatrex.device.inputs import assemble_matrix, get_block_sizes
 from quatrex.grid import get_electron_energies
 

@@ -14,8 +14,8 @@ from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.statistics import fermi_dirac
 from quatrex.core.subsystem import SubsystemSolver
+from quatrex.device import Device
 from quatrex.device.contact import get_inverse_order, order_block
-from quatrex.device.device import Device
 from quatrex.device.inputs import assemble_matrix
 
 profiler = Profiler()
@@ -106,7 +106,7 @@ class ElectronSolver(SubsystemSolver):
             )
 
         # Load the potential.
-        # TODO: The sturcture should not be reloaded here.
+        # TODO: The structure should not be reloaded here.
         # This will be fixed when the device is unified.
         __, atom_coordinates, atomic_species = Device.load_structure(config)
         self.potential = Device.load_potential(

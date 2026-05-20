@@ -589,8 +589,6 @@ class ElectronSolver(SubsystemSolver):
                     hamiltonian=self.hamiltonian,
                     overlap=self.overlap,
                     potential=self.potential,
-                    sigma_lesser=sse_lesser,
-                    sigma_greater=sse_greater,
                     sigma_retarded_hermitian=sse_retarded_hermitian,
                     energies=self.energies,
                     conduction_band_guesses=(

@@ -292,3 +292,40 @@ def test_all_gather_v(
                 * i,
                 recvbuf[:, displacements[i] : displacements[i] + counts[i], :],
             )
+
+
+@pytest.mark.mpi(min_size=2)
+def test_send_recv(
+    backend_type: str,
+    block_comm_size: int,
+):
+    """Test the send_recv function."""
+
+    if not _configure(
+        backend_type=backend_type,
+        block_comm_size=block_comm_size,
+    ):
+        pytest.skip("Config not valid")
+
+    for test_comm in [comm.block, comm.stack]:
+
+        if test_comm.size < 2:
+            pytest.skip("Need at least 2 processes for send_recv test")
+
+        # random sendbuf
+        sendbuf = xp.ones((data_size), dtype=xp.float32)
+        recvbuf = xp.empty_like(sendbuf)
+
+        if test_comm.rank in [0, 1]:
+
+            # send to and receive from the other rank (not self)
+            other = 1 - test_comm.rank
+            source = other
+            dest = other
+
+            test_comm.send_recv(
+                sendbuf=sendbuf, source=source, recvbuf=recvbuf, dest=dest
+            )
+
+            expected = xp.ones((data_size), dtype=xp.float32)
+            assert xp.allclose(expected, recvbuf)

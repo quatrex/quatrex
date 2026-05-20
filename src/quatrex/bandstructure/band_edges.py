@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
+import warnings
+
 import numpy as np
 
 from qttools import NDArray, xp
@@ -39,14 +41,128 @@ def find_dos_peaks(dos: NDArray, energies: NDArray) -> NDArray:
     return energies[peaks]
 
 
+def _slice_sigma(
+    target_energy: float,
+    energies: NDArray,
+    ind_lower: tuple[int, ...],
+    ind_upper: tuple[int, ...],
+    rank_lower: int,
+    rank_upper: int,
+    sigma_00: NDArray,
+    sigma_01: NDArray,
+    section_offsets: NDArray,
+    sigma_slice: tuple[int, ...],
+):
+    """Slices the self-energy blocks at the given energy indices and performs
+    interpolation if needed.
+
+    Parameters
+    ----------
+    target_energy : float
+        The energy at which the self-energy should be sliced.
+    energies : NDArray
+        The full energy grid.
+    ind_lower : tuple[int, ...]
+        The local (E,) index corresponding to the energy just below the target
+        energy.
+    ind_upper : tuple[int, ...]
+        The local (E,) index corresponding to the energy just above the target
+        energy.
+    rank_lower : int
+        The rank that holds the local index corresponding to the energy just
+        below the target energy.
+    rank_upper : int
+        The rank that holds the local index corresponding to the energy just
+        above the target energy.
+    sigma_00 : NDArray
+        The diagonal block of the self-energy at the given k-point.
+    sigma_01 : NDArray
+        The upper off-diagonal block of the self-energy at the given k-point.
+    section_offsets : NDArray
+        The offsets of the energy sections for each rank. This is needed to
+        determine the global energy index.
+    sigma_slice : tuple[int, ...]
+        The slice corresponding to the k-point and block layer of interest.
+
+    Returns
+    -------
+    sigma_00 : NDArray
+        The diagonal block of the self-energy at the target energy and given
+        k-point.
+    sigma_01 : NDArray
+        The upper off-diagonal block of the self-energy at the target energy and
+        given k-point
+
+    """
+
+    if comm.stack.rank not in [rank_lower, rank_upper]:
+        raise ValueError("Rank must be either rank_lower or rank_upper.")
+
+    if comm.stack.rank == rank_lower:
+        sigma_slice_lower = (ind_lower - section_offsets[rank_lower],) + sigma_slice
+        sigma_00_lower = sigma_00[sigma_slice_lower].copy()
+        sigma_01_lower = sigma_01[sigma_slice_lower].copy()
+    if comm.stack.rank == rank_upper:
+        sigma_slice_upper = (ind_upper - section_offsets[rank_upper],) + sigma_slice
+        sigma_00_upper = sigma_00[sigma_slice_upper].copy()
+        sigma_01_upper = sigma_01[sigma_slice_upper].copy()
+
+    if rank_lower != rank_upper:
+        if comm.stack.rank == rank_lower:
+            sigma_00_upper = xp.empty_like(sigma_00_lower)
+            sigma_01_upper = xp.empty_like(sigma_01_lower)
+
+            partner_rank = rank_upper
+
+        elif comm.stack.rank == rank_upper:
+            sigma_00_lower = xp.empty_like(sigma_00_upper)
+            sigma_01_lower = xp.empty_like(sigma_01_upper)
+
+            partner_rank = rank_lower
+
+        comm.stack.send_recv(
+            sendbuf=sigma_00_lower if comm.stack.rank == rank_lower else sigma_00_upper,
+            dest=partner_rank,
+            recvbuf=sigma_00_upper if comm.stack.rank == rank_lower else sigma_00_lower,
+            source=partner_rank,
+        )
+
+        comm.stack.send_recv(
+            sendbuf=sigma_01_lower if comm.stack.rank == rank_lower else sigma_01_upper,
+            dest=partner_rank,
+            recvbuf=sigma_01_upper if comm.stack.rank == rank_lower else sigma_01_lower,
+            source=partner_rank,
+        )
+
+    # Interpolate
+    if ind_upper != ind_lower:
+        energy_lower = energies[ind_lower]
+        energy_upper = energies[ind_upper]
+        sigma_00 = (sigma_00_upper - sigma_00_lower) * (
+            target_energy - energy_lower
+        ) / (energy_upper - energy_lower) + sigma_00_lower
+        sigma_01 = (sigma_01_upper - sigma_01_lower) * (
+            target_energy - energy_lower
+        ) / (energy_upper - energy_lower) + sigma_01_lower
+    else:
+        sigma_00 = sigma_00_lower
+        sigma_01 = sigma_01_lower
+
+    return sigma_00, sigma_01
+
+
 def _compute_eigenvalues(
+    target_energy: float,
+    energies: NDArray,
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_lesser: DSDBSparse,
-    sigma_greater: DSDBSparse,
     sigma_retarded_hermitian: DSDBSparse,
-    ind: tuple[int, ...],
+    ind_lower: tuple[int, ...],
+    ind_upper: tuple[int, ...],
+    rank_lower: int,
+    rank_upper: int,
+    section_offsets: NDArray,
     diagonal_inds: tuple,
     upper_inds: tuple,
     order: str | NDArray | None = None,
@@ -70,6 +186,14 @@ def _compute_eigenvalues(
 
     Parameters
     ----------
+    target_energy : float
+        The energy at which the eigenvalues should be computed.
+        This is a guess that should be as close as possible to where the
+        band edge is to determine the correct band edge in this
+        non-linear EVP. An outer loop should be used to refine this
+        guess.
+    energies : NDArray
+        The full energy grid.
     hamiltonian : DSDBSparse
         The Hamiltonian.
     overlap : DSDBSparse | None
@@ -77,18 +201,19 @@ def _compute_eigenvalues(
         orthogonal.
     potential : NDArray
         The potential.
-    sigma_lesser : DSDBSparse
-        The lesser self-energy.
-    sigma_greater : DSDBSparse
-        The greater self-energy.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
-    ind : tuple[int, ...]
-        The local (E, k) index where the eigenvalues should be computed.
-        This is a guess that should be as close as possible to where the
-        band edge is to determine the correct band edge in this
-        non-linear EVP. An outer loop should be used to refine this
-        guess.
+    ind_lower : tuple[int, ...]
+        The local (E, k) index corresponding to the energy just below the target energy.
+    ind_upper : tuple[int, ...]
+        The local (E, k) index corresponding to the energy just above the target energy.
+    rank_lower : int
+        The rank that holds the local index corresponding to the energy just below the target energy.
+    rank_upper : int
+        The rank that holds the local index corresponding to the energy just above the target energy.
+    section_offsets : NDArray
+        The offsets of the energy sections for each rank.
+        This is need to determine the global energy index.
     diagonal_inds : tuple
         The indices of the diagonal blocks corresponding to the contact.
     upper_inds : tuple
@@ -122,11 +247,33 @@ def _compute_eigenvalues(
     if not use_eigvalsh:
         raise NotImplementedError("Only use_eigvalsh=True is supported.")
 
+    if comm.stack.rank not in [rank_lower, rank_upper]:
+        raise ValueError("Rank must be either rank_lower or rank_upper.")
+
     big_blocksize = sigma_retarded_hermitian.block_sizes[diagonal_inds[0]]
     small_blocksize = big_blocksize // block_sections
 
-    h_slice = (np.s_[:],) + tuple(ind[1:]) + np.s_[:small_blocksize, :]
-    sigma_slice = tuple(ind) + np.s_[:small_blocksize, :]
+    ind_k = tuple([s // 2 for s in sigma_retarded_hermitian.shape[1:-2]])
+
+    h_slice = (np.s_[:],) + tuple(ind_k) + np.s_[:small_blocksize, :]
+    sigma_slice = tuple(ind_k) + np.s_[:small_blocksize, :]
+
+    # Sigma is extract at a certain energy and k-point
+    sigma_00 = order_block(sigma_retarded_hermitian.blocks[*diagonal_inds], order)
+    sigma_01 = order_block(sigma_retarded_hermitian.blocks[*upper_inds], order)
+
+    sigma_00, sigma_01 = _slice_sigma(
+        target_energy,
+        energies,
+        ind_lower,
+        ind_upper,
+        rank_lower,
+        rank_upper,
+        sigma_00,
+        sigma_01,
+        section_offsets,
+        sigma_slice,
+    )
 
     # Hamiltonian is only extracted at a certain k-point
     # as it is not energy dependent.
@@ -136,35 +283,6 @@ def _compute_eigenvalues(
     # Extract the blocks corresponding to the first block layer
     h_00 = _block_view(h_00, axis=-1, num_blocks=block_sections)
     h_01 = _block_view(h_01, axis=-1, num_blocks=block_sections)
-
-    # Sigma is extract at a certain energy and k-point
-    # NOTE: In this case we use only the real part of the retarded
-    # self-energy.
-
-    # NOTE: Even if the real part is used, the lesser and greater self-energies
-    # need to be taken into account since they can have a non-zero real part.
-    sigma_00 = xp.real(
-        order_block(
-            sigma_retarded_hermitian.blocks[*diagonal_inds]
-            + 0.5
-            * (
-                sigma_greater.blocks[*diagonal_inds]
-                - sigma_lesser.blocks[*diagonal_inds]
-            ),
-            order,
-        )[sigma_slice]
-    )
-    sigma_01 = xp.real(
-        order_block(
-            sigma_retarded_hermitian.blocks[*upper_inds]
-            + 0.5
-            * (
-                sigma_greater.blocks[*diagonal_inds]
-                - sigma_lesser.blocks[*diagonal_inds]
-            ),
-            order,
-        )[sigma_slice]
-    )
 
     sigma_00 = _block_view(sigma_00, axis=-1, num_blocks=block_sections)
     sigma_01 = _block_view(sigma_01, axis=-1, num_blocks=block_sections)
@@ -242,8 +360,6 @@ def find_renormalized_eigenvalues(
     hamiltonian: DSDBSparse,
     overlap: DSDBSparse | None,
     potential: NDArray,
-    sigma_lesser: DSDBSparse,
-    sigma_greater: DSDBSparse,
     sigma_retarded_hermitian: DSDBSparse,
     energies: NDArray,
     conduction_band_guesses: tuple[float, float],
@@ -260,10 +376,6 @@ def find_renormalized_eigenvalues(
     overlap : DSDBSparse | None
         The overlap matrix. If None, the basis is assumed to be
         orthogonal.
-    sigma_lesser : DSDBSparse
-        The lesser self-energy.
-    sigma_greater : DSDBSparse
-        The greater self-energy.
     sigma_retarded_hermitian : DSDBSparse
         The hermitian part of the retarded self-energy.
     energies : NDArray
@@ -304,23 +416,51 @@ def find_renormalized_eigenvalues(
     if comm.block.rank == 0:
         for __ in range(num_ref_iterations):
             ind_left = xp.argmin(xp.abs(energies - left_conduction_band_guess))
-            rank_left = xp.digitize(ind_left, section_offsets) - 1
 
-            if rank_left == comm.stack.rank:
+            if energies[ind_left] < left_conduction_band_guess:
+                ind_left_lower = ind_left
+                ind_left_upper = ind_left + 1
+            else:
+                ind_left_lower = ind_left - 1
+                ind_left_upper = ind_left
+
+            # Sanity checks when the energy grid is unphysical,
+            # but one still wants to benchmark
+            if ind_left_upper >= len(energies):
+                ind_left_upper = len(energies) - 1
+                if comm.rank == 0:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is above the maximum energy. "
+                        "Using the maximum energy for the upper index."
+                    )
+
+            if ind_left_lower < 0:
+                ind_left_lower = 0
+                if comm.rank == 0:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is below the minimum energy. "
+                        "Using the minimum energy for the lower index."
+                    )
+
+            rank_left_lower = xp.digitize(ind_left_lower, section_offsets) - 1
+            rank_left_upper = xp.digitize(ind_left_upper, section_offsets) - 1
+
+            if comm.stack.rank in [rank_left_lower, rank_left_upper]:
                 # NOTE: This assumes that each rank has all k-points and that the band edge
                 # is at the Gamma point.
                 # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
-                local_ind = (ind_left - section_offsets[rank_left],) + tuple(
-                    [s // 2 for s in sigma_retarded_hermitian.shape[1:-2]]
-                )
                 e_0_left = _compute_eigenvalues(
+                    target_energy=left_conduction_band_guess,
+                    energies=energies,
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_lesser=sigma_lesser,
-                    sigma_greater=sigma_greater,
                     sigma_retarded_hermitian=sigma_retarded_hermitian,
-                    ind=local_ind,
+                    ind_lower=ind_left_lower,
+                    ind_upper=ind_left_upper,
+                    rank_lower=rank_left_lower,
+                    rank_upper=rank_left_upper,
+                    section_offsets=section_offsets,
                     diagonal_inds=(0, 0),
                     upper_inds=(0, 1),
                     block_sections=band_edge_config.block_sections,
@@ -329,6 +469,8 @@ def find_renormalized_eigenvalues(
                     use_pinned_memory=band_edge_config.use_pinned_memory,
                 )
 
+                # NOTE: Only the lower rank broadcasts and overwrites the guess of
+                # the upper rank (which should be identical).
                 left_band_edges = find_band_edges(e_0_left, left_mid_gap_energy)
                 left_mid_gap_energy = xp.mean(left_band_edges)
                 __, left_conduction_band_guess = left_band_edges
@@ -336,35 +478,59 @@ def find_renormalized_eigenvalues(
             left_packed = xp.array([left_conduction_band_guess, left_mid_gap_energy])
             comm.stack.bcast(
                 left_packed,
-                root=rank_left,
+                root=rank_left_lower,
             )
             left_conduction_band_guess, left_mid_gap_energy = left_packed
 
-        comm.stack.bcast(left_band_edges, root=rank_left)
+        comm.stack.bcast(left_band_edges, root=rank_left_lower)
 
     if comm.block.rank == comm.block.size - 1:
         for __ in range(num_ref_iterations):
             ind_right = xp.argmin(xp.abs(energies - right_conduction_band_guess))
-            rank_right = xp.digitize(ind_right, section_offsets) - 1
 
-            if rank_right == comm.stack.rank:
+            if energies[ind_right] < right_conduction_band_guess:
+                ind_right_lower = ind_right
+                ind_right_upper = ind_right + 1
+            else:
+                ind_right_lower = ind_right - 1
+                ind_right_upper = ind_right
+
+            if ind_right_upper >= len(energies):
+                ind_right_upper = len(energies) - 1
+                if comm.rank == comm.block.rank:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is above the maximum energy. "
+                        "Using the maximum energy for the upper index."
+                    )
+            if ind_right_lower < 0:
+                ind_right_lower = 0
+                if comm.rank == comm.block.rank:
+                    warnings.warn(
+                        "The initial guess for the conduction band edge is below the minimum energy. "
+                        "Using the minimum energy for the lower index."
+                    )
+
+            rank_right_lower = xp.digitize(ind_right_lower, section_offsets) - 1
+            rank_right_upper = xp.digitize(ind_right_upper, section_offsets) - 1
+
+            if comm.stack.rank in [rank_right_lower, rank_right_upper]:
                 # NOTE: This assumes that each rank has all k-points and that the band edge
                 # is at the Gamma point.
                 # TODO: Generalize this to arbitrary k-points (and maybe change gamma point index).
-                local_ind = (ind_right - section_offsets[rank_right],) + tuple(
-                    [s // 2 for s in sigma_retarded_hermitian.shape[1:-2]]
-                )
-
                 n = hamiltonian.num_local_blocks - 1
                 m = n - 1
                 e_0_right = _compute_eigenvalues(
+                    target_energy=right_conduction_band_guess,
+                    energies=energies,
                     hamiltonian=hamiltonian,
                     overlap=overlap,
                     potential=potential,
-                    sigma_lesser=sigma_lesser,
-                    sigma_greater=sigma_greater,
                     sigma_retarded_hermitian=sigma_retarded_hermitian,
-                    ind=local_ind,
+                    ind_lower=ind_right_lower,
+                    ind_upper=ind_right_upper,
+                    rank_lower=rank_right_lower,
+                    rank_upper=rank_right_upper,
+                    section_offsets=section_offsets,
                     diagonal_inds=(n, n),
                     upper_inds=(n, m),
                     order="reverse",
@@ -373,15 +539,18 @@ def find_renormalized_eigenvalues(
                     eigvalsh_compute_location=band_edge_config.eigvalsh_compute_location,
                     use_pinned_memory=band_edge_config.use_pinned_memory,
                 )
+
+                # NOTE: Only the lower rank broadcasts and overwrites the guess of
+                # the upper rank (which should be identical).
                 right_band_edges = find_band_edges(e_0_right, right_mid_gap_energy)
                 right_mid_gap_energy = xp.mean(right_band_edges)
                 __, right_conduction_band_guess = right_band_edges
 
             right_packed = xp.array([right_conduction_band_guess, right_mid_gap_energy])
-            comm.stack.bcast(right_packed, root=rank_right)
+            comm.stack.bcast(right_packed, root=rank_right_lower)
             right_conduction_band_guess, right_mid_gap_energy = right_packed
 
-        comm.stack.bcast(right_band_edges, root=rank_right)
+        comm.stack.bcast(right_band_edges, root=rank_right_lower)
 
     comm.block.bcast(left_band_edges, root=0)
     comm.block.bcast(right_band_edges, root=comm.block.size - 1)

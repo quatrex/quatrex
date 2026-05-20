@@ -329,10 +329,8 @@ def _inside_cylinder(point: NDArray, cylinder: Cylinder) -> bool:
 
     # Check if the point is within the length and radius of the
     # cylinder.
-    inside = (
-        (0 <= np.dot(v, axis))
-        & (np.dot(v, axis) <= length)
-        & (np.linalg.norm(v_perpendicular, axis=1) <= radius)
+    inside = (np.linalg.norm(v_parallel, axis=1) <= length / 2) & (
+        np.linalg.norm(v_perpendicular, axis=1) <= radius
     )
     return inside[0] if single_point else inside
 

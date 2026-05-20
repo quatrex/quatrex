@@ -92,13 +92,8 @@ RUN python3 -m venv /opt/venv \
 
 
 # Install cuDSS / nvmath-python.
-RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
-    && apt-get update \
-    && apt-get -y install cudss \
-    && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && python3 -m pip install nvmath-python
+RUN python3 -m pip install nvmath-python \
+    && python3 -m pip install nvidia-cudss-cu13
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available

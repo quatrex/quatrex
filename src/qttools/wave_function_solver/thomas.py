@@ -20,7 +20,34 @@ profiler = Profiler()
 class Thomas(WFSolver):
     """Wave function solver using block thomas algorithm."""
 
-    def __init__(self, sym: bool = False, view: str = "default"):
+    def __init__(
+        self, matrix_type: str = "complex_nonsymmetric", view: str = "default"
+    ):
+        """
+        Initialize the Thomas solver.
+
+        Parameters
+        ----------
+        matrix_type : str, optional
+            The type of the system matrix. Must be one of 'real_symmetric_indefinite', 'complex_hermitian_indefinite', or 'complex_nonsymmetric'.
+        view : str, optional
+            The view of the system matrix. Must be one of 'default', 'up', or
+            'down'. 'up' and 'down' are only valid for symmetric or Hermitian matrices.
+        """
+
+        if matrix_type not in [
+            "real_symmetric_indefinite",
+            "complex_hermitian_indefinite",
+            "complex_nonsymmetric",
+        ]:
+            raise ValueError(
+                f"Invalid matrix_type: {matrix_type}. Must be 'real_symmetric_indefinite', 'complex_hermitian_indefinite', or 'complex_nonsymmetric'."
+            )
+        if matrix_type in ["real_symmetric_indefinite", "complex_hermitian_indefinite"]:
+            sym = True
+        else:
+            sym = False
+
         if view not in ["default", "up", "down"]:
             raise ValueError(
                 f"Invalid view: {view}. Must be 'default', 'up', or 'down'."
@@ -30,9 +57,8 @@ class Thomas(WFSolver):
                 f"Invalid view: {view}. Must be 'default' when sym is False."
             )
         if view == "down":
-            raise NotImplementedError(
-                "Downward view is not implemented for Thomas solver."
-            )
+            raise NotImplementedError("Down view is not implemented for Thomas solver.")
+
         self.sym = sym
         self.view = view
         self.blocks = None

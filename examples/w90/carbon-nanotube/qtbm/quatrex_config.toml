@@ -35,7 +35,6 @@ energy_window_min = -6.5
 energy_window_max = -1.0
 energy_window_num = 10
 
-solver.direct_solver = "superlu"
 
 obc.algorithm = "spectral"
 obc.nevp_solver = "beyn"

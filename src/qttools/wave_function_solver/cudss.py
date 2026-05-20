@@ -30,9 +30,22 @@ from qttools.wave_function_solver.solver import WFSolver
 profiler = Profiler()
 
 
+def cudss_available():
+    """Checks if the cuDSS solver is available."""
+    return nvmath_available
+
+
 class cuDSS(WFSolver):
 
     def _set_A(self, a: sparse.csr_matrix):
+        """
+        Create a cuDSS matrix wrapper for the sparse system matrix A in CSR format.
+
+        Parameters
+        ----------
+        a : sparse.csr_matrix
+            The sparse system matrix A in CSR format.
+        """
         n = a.shape[0]
         nnz = a.nnz
         if a.indices.dtype != cp.int32 or a.indptr.dtype != cp.int32:
@@ -63,6 +76,15 @@ class cuDSS(WFSolver):
         )
 
     def _set_b(self, b: NDArray):
+        """
+        Create a cuDSS matrix wrapper for the dense right-hand side matrix B.
+
+        Parameters
+        ----------
+        b : NDArray
+            The dense right-hand side matrix B with shape (n, batchsize).
+        """
+
         n = b.shape[0]
         batchsize = b.shape[1]
 
@@ -84,6 +106,16 @@ class cuDSS(WFSolver):
         )
 
     def _set_x(self, x: NDArray, dtype):
+        """
+        Create a cuDSS matrix wrapper for the dense solution matrix X.
+
+        Parameters
+        ----------
+        x : NDArray
+            The dense solution matrix X with shape (n, batchsize).
+        dtype : numpy.dtype
+            The data type of the solution matrix X.
+        """
         n = x.shape[0]
         batchsize = x.shape[1]
         if dtype == cp.float64:
@@ -106,7 +138,18 @@ class cuDSS(WFSolver):
     def __init__(
         self,
         matrix_type: str = None,
+        view: str = None,
     ):
+        """
+        Initialize the cuDSS solver.
+
+        Parameters
+        ----------
+        matrix_type : str, optional
+            The type of the system matrix A.
+        view : str, optional
+            The view of the system matrix A.
+        """
         if not nvmath_available:
             raise ImportError(
                 "nvmath or its cudss bindings are not available. Please install them to use this solver."
@@ -121,13 +164,27 @@ class cuDSS(WFSolver):
                     f"Invalid matrix type '{matrix_type}'. Valid options are: {list(matrix_combination.keys())}"
                 )
             self.M_type = matrix_combination[matrix_type]
-            self.M_view = MatrixViewType.UPPER
+
+        if view is not None:
+            if view == "default":
+                self.M_view = MatrixViewType.FULL
+            elif view == "up":
+                self.M_view = MatrixViewType.UPPER
+            elif view == "down":
+                self.M_view = MatrixViewType.LOWER
+            else:
+                raise ValueError(
+                    f"Invalid view '{view}'. Valid options are: 'default', 'up', 'down'."
+                )
 
         self.cudss_handle = cudss.create()
         self.cudss_config = cudss.config_create()
         self.cudss_data = cudss.data_create(self.cudss_handle)
 
     def analyse(self):
+        """
+        Perform symbolic factorization (analysis) of the system matrix A.
+        """
         xp.cuda.Stream.null.synchronize()
         analysis_tic = time.perf_counter()
         cudss.execute(
@@ -145,6 +202,9 @@ class cuDSS(WFSolver):
         return analysis_toc - analysis_tic
 
     def factorize(self):
+        """
+        Perform numeric factorization of the system matrix A.
+        """
         xp.cuda.Stream.null.synchronize()
         numeric_tic = time.perf_counter()
         cudss.execute(
@@ -162,6 +222,9 @@ class cuDSS(WFSolver):
         return numeric_toc - numeric_tic
 
     def _solve(self):
+        """
+        Solve the linear system AX = B using the factorized form of A.
+        """
         xp.cuda.Stream.null.synchronize()
         solve_tic = time.perf_counter()
         cudss.execute(
@@ -179,6 +242,9 @@ class cuDSS(WFSolver):
         return solve_toc - solve_tic
 
     def _destroy_data_wrappers(self):
+        """
+        Destroy the cuDSS matrix wrappers for A, B, and X to free GPU memory.
+        """
         cudss.matrix_destroy(self.A)
         cudss.matrix_destroy(self.B)
         cudss.matrix_destroy(self.X)
@@ -190,8 +256,24 @@ class cuDSS(WFSolver):
         reuse_sym_fact: bool = False,
         reuse_fact: bool = False,
     ):
+        """
+        Solve the linear system AX = B using cuDSS.
+        Parameters
+        ----------
+        a : sparse.spmatrix
+            The sparse system matrix A in CSR format.
+        b : NDArray
+            The dense right-hand side matrix B with shape (n, batchsize).
+        reuse_sym_fact : bool, optional
+            Whether to reuse the symbolic factorization from a previous solve. Default is False.
+        reuse_fact : bool, optional
+            Whether to reuse the numeric factorization from a previous solve. Default is False.
 
-        print(self.M_type)
+        Return
+        ------
+        x : NDArray
+            The dense solution matrix X with shape (n, batchsize) that satisfies AX = B
+        """
 
         x = xp.zeros_like(b)
 

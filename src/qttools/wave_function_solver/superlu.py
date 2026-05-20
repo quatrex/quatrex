@@ -18,6 +18,18 @@ class SuperLU(WFSolver):
 
     """
 
+    def __init__(
+        self,
+        matrix_type: str = "complex_nonsymmetric",
+        view: str = "default",
+    ) -> None:
+        """Initializes the SuperLU wave function solver."""
+
+        if matrix_type != "complex_nonsymmetric" or view != "default":
+            raise ValueError(
+                "SuperLU solver currently only supports 'complex_nonsymmetric' matrix type and 'default' view."
+            )
+
     def solve(
         self,
         a: sparse.spmatrix,

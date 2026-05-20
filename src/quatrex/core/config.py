@@ -186,7 +186,9 @@ class SolverConfig(BaseModel):
         "cudss",
         "pardiso",
         "thomas",
-    ] = "superlu"
+        "superlu",
+        "auto",
+    ] = "auto"
 
     @model_validator(mode="after")
     def set_compute_current(self) -> Self:

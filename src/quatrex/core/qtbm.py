@@ -29,7 +29,13 @@ from quatrex.grid import get_electron_energies, monkhorst_pack
 
 
 def get_cpu_memory_gb() -> float:
-    """Get current CPU memory usage in GB."""
+    """Get current CPU memory usage in GB.
+
+    Returns
+    -------
+    float
+        Current CPU memory usage in GB, or 0.0 if it cannot be determined.
+    """
     try:
         with open("/proc/self/status", "r") as f:
             for line in f:
@@ -92,6 +98,8 @@ def allocate_system_matrix(
         List of contact objects.
     upper_view : bool, optional
         Whether to allocate the matrix only in upper triangular view.
+    real_system_matrix : bool, optional
+        Whether to allocate the system matrix with real data type (if possible).
 
     Returns
     -------
@@ -102,6 +110,7 @@ def allocate_system_matrix(
 
     size = hamiltonians[0, 0, 0].shape[0]
 
+    # Count the total number of non-zero
     nnz_H = []
     nnz_S = []
     nnz_cont = []
@@ -121,6 +130,7 @@ def allocate_system_matrix(
         nnz_cont.append(len(contact.orbital_indices))
         total_nnz += len(contact.orbital_indices) ** 2
 
+    # Concaate all indices from the hamiltonians, overlaps, and contacts into a single array to find unique indices for allocation
     concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
 
     start_idx = 0
@@ -161,33 +171,34 @@ def allocate_system_matrix(
         concatenated_indices[start_idx : start_idx + nnz, 1] = xp.tile(orbs, n_orb)
         start_idx += nnz
 
+    # Compress the indices from 2d to 1d (1d-unique is faster)
     concatenated_indices_M = (
         concatenated_indices[:, 0] * size + concatenated_indices[:, 1]
     )
-
+    # Find the unique indices and the inverse mapping to the original concatenated array
     concatenated_indices_M, inverse_indices = xp.unique(
         concatenated_indices_M, return_inverse=True
     )
-
+    # Decompress the unique indices back to 2d
     concatenated_indices = xp.zeros(
         (concatenated_indices_M.shape[0], 2), dtype=xp.int64
     )
     concatenated_indices[:, 0] = concatenated_indices_M // size
     concatenated_indices[:, 1] = concatenated_indices_M % size
 
+    # Allocate system matrix
     if real_system_matrix:
         data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.float64)
     else:
         data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
-
     system_matrix = sparse.csr_matrix(
         (data, (concatenated_indices[:, 0], concatenated_indices[:, 1])),
         shape=(size, size),
         dtype=data.dtype,
     )
 
+    # Store the indices to update in-place the system matrix for each hamiltonian, overlap, and contact self-energy
     start_idx = 0
-
     hamiltonian_update_indices = {}
     hamiltonian_update_indices_transpose = {}
     for r, h_r in hamiltonians.items():
@@ -231,7 +242,7 @@ def allocate_system_matrix(
     )
 
 
-def get_sparse_RHS(
+def construct_sparse_vector(
     vector_per_cont: dict,
     injection_segments: dict,
     contacts: list,
@@ -239,6 +250,29 @@ def get_sparse_RHS(
     injection_count: dict,
     num_orbitals: int,
 ) -> sparse.csr_matrix:
+    """
+    Construct a sparse vector from the vectors of each contact for the current energy index `i` (used for example to build the device-size injection-vector).
+
+    Parameters
+    ----------
+    vector_per_cont : dict
+        Dictionary mapping each contact to its corresponding injection vector for the current energy index `i`.
+    injection_segments : dict
+        Dictionary mapping each contact and energy index to its corresponding injection segment.
+    contacts : list
+        List of contacts in the system.
+    i : int
+        Current energy index.
+    injection_count : dict
+        Dictionary mapping each energy index to the number of injection sites.
+    num_orbitals : int
+        Number of orbitals in the system.
+
+    Returns
+    -------
+    sparse.csr_matrix
+        The sparse right-hand side (RHS) vector for the QTBM system of equations.
+    """
     return sparse.csr_matrix(
         (
             xp.concatenate(
@@ -273,7 +307,7 @@ def get_sparse_RHS(
     )
 
 
-def get_sparse_RHS_transpose(
+def construct_sparse_vector_transpose(
     vector_per_cont: dict,
     injection_segments: dict,
     contacts: list,
@@ -281,6 +315,29 @@ def get_sparse_RHS_transpose(
     injection_count: dict,
     num_orbitals: int,
 ) -> sparse.csr_matrix:
+    """
+    Construct a sparse transposed vector from vectors of each contact for the current energy index `i` (used for example to build the device-size pseudo-inverse).
+
+    Parameters
+    ----------
+    vector_per_cont : dict
+        Dictionary mapping each contact to its corresponding pseudo-inverse vector for the current energy index `i`.
+    injection_segments : dict
+        Dictionary mapping each contact and energy index to its corresponding injection segment.
+    contacts : list
+        List of contacts in the system.
+    i : int
+        Current energy index.
+    injection_count : dict
+        Dictionary mapping each energy index to the number of injection sites.
+    num_orbitals : int
+        Number of orbitals in the system.
+
+    Returns
+    -------
+    sparse.csr_matrix
+        The sparse transposed vector.
+    """
     return sparse.csr_matrix(
         (
             xp.concatenate(
@@ -412,6 +469,12 @@ class QTBM:
                 dtype=xp.float64,
             )
 
+        if self.config.qtbm.OBC_rank == "reduced":
+            self.system_matrix_UP_view = True
+        else:
+            self.system_matrix_UP_view = False
+
+        # Check if we can use real arithmetic for the system matrix and solvers (only possible for reduced method with real Hamiltonian and no k-point shift)
         if (
             self.config.device.kpoint_grid == (1, 1, 1)
             and self.config.device.kpoint_shift == (0, 0, 0)
@@ -425,10 +488,9 @@ class QTBM:
         else:
             self.real_system_matrix = False
 
-        if self.config.qtbm.OBC_rank == "reduced":
-            self.solver = self._configure_solver(self.config.electron.solver)
-        else:
-            self.solver = self._configure_solver(self.config.electron.solver)
+        self.solver = self._configure_solver(self.config.electron.solver)
+
+        # TODO Preferred_matrix_type is not used at the moment
         self.matrix_type = preferred_matrix_type[
             self.config.electron.solver.direct_solver
         ]
@@ -447,38 +509,79 @@ class QTBM:
             The configured wavefunction solver instance.
 
         """
-        if solver_config.direct_solver == "mumps":
-            if self.config.qtbm.OBC_rank == "reduced":
-                raise ValueError("reduced method is not compatible with MUMPS solver.")
-            return MUMPS()
-        if solver_config.direct_solver == "superlu":
-            if self.config.qtbm.OBC_rank == "reduced":
-                raise ValueError(
-                    "reduced method is not compatible with SuperLU solver."
-                )
-            return SuperLU()
-        if solver_config.direct_solver == "cudss":
-            if self.config.qtbm.OBC_rank == "reduced":
-                if self.real_system_matrix:
-                    return cuDSS(matrix_type="real_symmetric_indefinite")
-                else:
-                    return cuDSS(matrix_type="complex_hermitian_indefinite")
+        if self.config.qtbm.OBC_rank == "reduced":
+            if self.real_system_matrix:
+                matrix_type = "real_symmetric_indefinite"
             else:
-                return cuDSS(matrix_type="complex_nonsymmetric")
-        if solver_config.direct_solver == "pardiso":
-            if self.config.qtbm.OBC_rank == "reduced":
-                if self.real_system_matrix:
-                    return PARDISO(matrix_type="real_symmetric_indefinite")
-                else:
-                    return PARDISO(matrix_type="complex_hermitian_indefinite")
+                matrix_type = "complex_hermitian_indefinite"
+            if self.system_matrix_UP_view:
+                view = "up"
             else:
-                return PARDISO(matrix_type="complex_structurally_symmetric")
+                raise ValueError("Symmetric matrix currently only supports upper view.")
+        else:
+            matrix_type = "complex_nonsymmetric"
+            if self.system_matrix_UP_view:
+                raise ValueError("Nonsymmetric matrix cannot have upper view.")
+            else:
+                view = "default"
 
+        if solver_config.direct_solver == "mumps":
+            return MUMPS(matrix_type=matrix_type, view=view)
+        if solver_config.direct_solver == "superlu":
+            return SuperLU(matrix_type=matrix_type, view=view)
+        if solver_config.direct_solver == "cudss":
+            return cuDSS(matrix_type=matrix_type, view=view)
+        if solver_config.direct_solver == "pardiso":
+            return PARDISO(matrix_type=matrix_type, view=view)
         if solver_config.direct_solver == "thomas":
-            if self.config.qtbm.OBC_rank == "reduced":
-                return Thomas(sym=True, view="up")
+            return Thomas(matrix_type=matrix_type, view=view)
+        if solver_config.direct_solver == "auto":
+            # Auto-select the solver based on the matrix type and view
+            from qttools.wave_function_solver.cudss import cudss_available
+            from qttools.wave_function_solver.mumps import mumps_available
+            from qttools.wave_function_solver.pardiso import pardiso_available
+
+            if xp.__name__ == "cupy":
+                if matrix_type in [
+                    "real_symmetric_indefinite",
+                    "complex_hermitian_indefinite",
+                ]:
+                    if cudss_available():
+                        print("Auto-selecting cuDSS solver.")
+                        return cuDSS(matrix_type=matrix_type, view=view)
+                    else:
+                        raise ValueError(
+                            "On GPU, cuDSS is the only general solver that supports symmetric matrices"
+                        )
+                else:
+                    if cudss_available():
+                        print("Auto-selecting cuDSS solver.")
+                        return cuDSS(matrix_type=matrix_type, view=view)
+                    else:
+                        print("Auto-selecting SuperLU solver as fallback.")
+                        return SuperLU(matrix_type=matrix_type, view=view)
             else:
-                return Thomas(sym=False, view="default")
+                if matrix_type in [
+                    "real_symmetric_indefinite",
+                    "complex_hermitian_indefinite",
+                ]:
+                    if pardiso_available():
+                        print("Auto-selecting PARDISO solver.")
+                        return PARDISO(matrix_type=matrix_type, view=view)
+                    else:
+                        raise ValueError(
+                            "On CPU, PARDISO is the only general solver that supports symmetric matrices"
+                        )
+                else:
+                    if pardiso_available():
+                        print("Auto-selecting PARDISO solver.")
+                        return PARDISO(matrix_type=matrix_type, view=view)
+                    elif mumps_available():
+                        print("Auto-selecting MUMPS solver as fallback.")
+                        return MUMPS(matrix_type=matrix_type, view=view)
+                    else:
+                        print("Auto-selecting SuperLU solver as fallback.")
+                        return SuperLU(matrix_type=matrix_type, view=view)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -612,11 +715,15 @@ class QTBM:
             Index of the current k-point being processed.
 
         """
+
         # Compute the DOS
         # diag(phi^H @ S @ phi)
         # S @ phi needs to consider that
         # the overlap matrices are infinite
+
         phi_ortho = xp.zeros_like(phi)
+
+        # Accumulate the contribution from every overlap matrix
         for r, overlap in overlap_matrices.items():
             phase = xp.exp(2j * np.pi * np.dot(k_loc, r))
             if overlap.dtype == xp.complex128:
@@ -625,12 +732,14 @@ class QTBM:
             elif overlap.dtype == xp.float64:
                 temp = phi.copy()
 
+                # Convert to real with twice the number of columns
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.float64)
                 temp = xp.asfortranarray(temp)
 
                 temp = overlap @ temp
 
+                # Convert back to complex
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.complex128)
                 temp = xp.asfortranarray(temp)
@@ -640,6 +749,7 @@ class QTBM:
             phi_ortho += temp
             del temp
 
+            # Add the contribution from the transpose of the overlap matrix
             if overlap.dtype == xp.complex128:
                 xp.conjugate(overlap.data, out=overlap.data)
                 temp = overlap.T @ phi
@@ -647,12 +757,15 @@ class QTBM:
                 xp.conjugate(overlap.data, out=overlap.data)
             elif overlap.dtype == xp.float64:
                 temp = phi.copy()
+
+                # Convert to real with twice the number of columns
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.float64)
                 temp = xp.asfortranarray(temp)
 
                 temp = overlap.T @ temp
 
+                # Convert back to complex
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.complex128)
                 temp = xp.asfortranarray(temp)
@@ -662,6 +775,7 @@ class QTBM:
             phi_ortho += temp
             del temp
 
+            # Remove the contribution from the diagonal of the overlap matrix
             temp = sparse.diags(overlap.diagonal()) @ phi
             temp *= phase
 
@@ -712,16 +826,39 @@ class QTBM:
                 ) @ phi_cont
             # CHECK SPILL OVER ERROR (DEBUG)
             error = contact.get_coupling_matrix(system_matrix) @ phi_cont
-            error += (
-                # system_matrix[orbital_indices, :] @ phi
-                (system_matrix @ phi)[orbital_indices, :]
-            )
-            if self.config.qtbm.OBC_rank == "reduced":
+            if self.real_system_matrix:
+                # For real system matrix, we need to convert phi to real before multiplying with the system matrix, and then convert back to complex
+                temp = phi.copy()
+                temp = xp.ascontiguousarray(temp)
+                temp = temp.view(xp.float64)
+                temp = system_matrix @ temp
+                temp = temp.view(xp.complex128)
+                error += temp[orbital_indices, :]
+                del temp
+            else:
+                error += (system_matrix @ phi)[orbital_indices, :]
+            if self.system_matrix_UP_view:
+                # Need to add the contribution from the lower view of the system matrix as well
                 error += (
                     contact.get_coupling_matrix(system_matrix, transpose=True)
                     @ phi_cont
-                    + (system_matrix.T @ phi.conj())[orbital_indices, :].conj()
-                    - sparse.diags(system_matrix.diagonal(), format="csr")[
+                )
+                if self.real_system_matrix:
+                    # For real system matrix, we need to convert phi to real before multiplying with the system matrix, and then convert back to complex
+                    temp = phi.copy()
+                    temp = xp.ascontiguousarray(temp)
+                    temp = temp.view(xp.float64)
+                    temp = system_matrix.T @ temp
+                    temp = temp.view(xp.complex128)
+                    error += temp[orbital_indices, :]
+                    del temp
+                else:
+                    xp.conjugate(system_matrix.data, out=system_matrix.data)
+                    error += (system_matrix.T @ phi)[orbital_indices, :]
+                    xp.conjugate(system_matrix.data, out=system_matrix.data)
+
+                error -= (
+                    sparse.diags(system_matrix.diagonal(), format="csr")[
                         orbital_indices, :
                     ]
                     @ phi
@@ -732,6 +869,7 @@ class QTBM:
             if comm.rank == 0:
                 print(f"    Spill over error for contact {contact.name[0]}: {error}")
 
+        # Conjugate of the orthongonalized wavefunction
         xp.conjugate(phi_ortho, out=phi_ortho)
 
         # Compute the DOS for every injected wavefunction
@@ -961,7 +1099,7 @@ class QTBM:
                 self.device.hamiltonians,
                 self.device.overlap_matrices,
                 [],
-                upper_view=True,
+                upper_view=self.system_matrix_UP_view,
                 real_system_matrix=self.real_system_matrix,
             )  # Initialize the system matrix without boundary self energies
         else:
@@ -976,7 +1114,7 @@ class QTBM:
                 self.device.hamiltonians,
                 self.device.overlap_matrices,
                 self.device.contacts,
-                upper_view=False,
+                upper_view=self.system_matrix_UP_view,
                 real_system_matrix=self.real_system_matrix,
             )  # Initialize the system matrix
 
@@ -1059,7 +1197,6 @@ class QTBM:
                     modes_per_energy = np.array(
                         [arr.shape[1] for arr in injection_per_contact[contact]]
                     )
-
                     for i, num_modes in enumerate(modes_per_energy):
                         start = injection_count[i]
                         injection_segments[contact, i] = slice(start, start + num_modes)
@@ -1067,8 +1204,10 @@ class QTBM:
                     injection_count += modes_per_energy
 
                 if self.config.qtbm.OBC_rank == "reduced":
-                    reflection_segments = {}
-                    reflection_segments_translated = {}
+                    reflection_segments = {}  # Needed to stack the pseudo-inverse
+                    reflection_segments_translated = (
+                        {}
+                    )  # Needed to place the reflected modes in the correct position in the RHS
                     reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
                     for contact in self.device.contacts:
                         modes_per_energy = np.array(
@@ -1092,7 +1231,6 @@ class QTBM:
                     print(f"Time for OBC: {t_solve:.2f} s", flush=True)
 
                 for i, energy in enumerate(energy_batch):
-
                     times.append(time.perf_counter())
 
                     if self.config.qtbm.OBC_rank != "reduced":
@@ -1118,6 +1256,7 @@ class QTBM:
                             contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
                         if self.config.qtbm.OBC_rank == "reduced":
+                            # Add the reflection vectors
                             injection_tot[
                                 contact.orbital_indices,
                                 reflection_segments_translated[contact, i],
@@ -1126,7 +1265,8 @@ class QTBM:
                     injection_tot = xp.asfortranarray(injection_tot)
 
                     if self.config.qtbm.OBC_rank == "reduced":
-                        phi_inv_tot = get_sparse_RHS_transpose(
+                        # Generate the device-sized pseudo-inverse
+                        phi_inv_tot = construct_sparse_vector_transpose(
                             phi_inv_ref_per_contact,
                             reflection_segments,
                             self.device.contacts,
@@ -1140,10 +1280,12 @@ class QTBM:
                                 for contact in self.device.contacts
                             ]
                         )
-                        if self.real_system_matrix:
-                            injection_tot = xp.ascontiguousarray(injection_tot)
-                            injection_tot = injection_tot.view(np.float64)
-                            injection_tot = xp.asfortranarray(injection_tot)
+
+                    # If system matrix is real, convert the RHS to real with twice the number of columns
+                    if self.real_system_matrix:
+                        injection_tot = xp.ascontiguousarray(injection_tot)
+                        injection_tot = injection_tot.view(np.float64)
+                        injection_tot = xp.asfortranarray(injection_tot)
 
                     system_matrix.data[:] = 0
 
@@ -1162,7 +1304,7 @@ class QTBM:
                             -k_phase,
                             False,
                         )
-                        if self.config.qtbm.OBC_rank != "reduced":
+                        if not self.system_matrix_UP_view:
                             inplace.iadd(
                                 system_matrix.data,
                                 h_r.data,
@@ -1170,6 +1312,7 @@ class QTBM:
                                 -k_phase.conj(),
                                 True,
                             )
+
                     for r, s_r in self.device.overlap_matrices.items():
                         k_phase = np.exp(2j * np.pi * np.dot(k, r)) * energy
                         if xp.__name__ == "cupy":
@@ -1185,7 +1328,7 @@ class QTBM:
                             k_phase,
                             False,
                         )
-                        if self.config.qtbm.OBC_rank != "reduced":
+                        if not self.system_matrix_UP_view:
                             inplace.iadd(
                                 system_matrix.data,
                                 s_r.data,
@@ -1194,7 +1337,7 @@ class QTBM:
                                 True,
                             )
 
-                    if self.config.qtbm.OBC_rank != "reduced":
+                    if not self.system_matrix_UP_view:
                         system_matrix.setdiag(system_matrix.diagonal() / 2)
 
                     if self.config.qtbm.OBC_rank != "reduced":
@@ -1235,15 +1378,20 @@ class QTBM:
                             f"{self.config.output_dir}/system_matrix_k{k_idx}_e{batch_start + i}",
                             system_matrix_cpu,
                         )
+
+                    # SOLVE THE QTBM PROBLEM
+
                     if self.config.qtbm.OBC_rank == "reduced":
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
+                            # Solve the system
                             phi = self.solver.solve(
                                 system_matrix,
                                 injection_tot,
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
+                            # Apply the correction to the injected modes according to the reduced method
 
                             if self.real_system_matrix:
                                 phi = xp.ascontiguousarray(phi)
@@ -1259,6 +1407,7 @@ class QTBM:
                                 )
                             synchronize_device()
                             t1 = time.perf_counter()
+                            # Correction
                             phi[:, :n_injected] += phi[
                                 :, n_injected:
                             ] @ xp.linalg.solve(
@@ -1280,6 +1429,8 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
+
+                        # No need here to convert from real to complex, since the system matrix will never be real in the non-reduced method
 
                     synchronize_device()
                     t_solve = time.perf_counter() - times.pop()

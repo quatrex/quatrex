@@ -14,6 +14,7 @@ preferred_matrix_type = {
     "cudss": sparse.csr_matrix,
     "pardiso": sparse.csr_matrix,
     "thomas": sparse.csr_matrix,
+    "auto": sparse.csr_matrix,
 }
 
 __all__ = [

@@ -14,6 +14,17 @@ except ImportError:
 valid_orderings = ["amd", "amf", "scotch", "pord", "metis", "qamd", "auto"]
 
 
+def mumps_available() -> bool:
+    """Checks if the MUMPS solver is available.
+
+    Returns
+    -------
+    bool
+        True if MUMPS is available, False otherwise.
+    """
+    return mumps_available
+
+
 class MUMPS(WFSolver):
     """Wave function solver using MUMPS for sparse matrix solving.
 
@@ -36,6 +47,8 @@ class MUMPS(WFSolver):
 
     def __init__(
         self,
+        matrix_type: str = "complex_nonsymmetric",
+        view: str = "default",
         ordering: str = "metis",
         verbose: bool = False,
     ) -> None:
@@ -46,6 +59,11 @@ class MUMPS(WFSolver):
             )
         if xp.__name__ != "numpy":
             raise ValueError("MUMPS solver requires numpy backend.")
+
+        if matrix_type != "complex_nonsymmetric" or view != "default":
+            raise ValueError(
+                "MUMPS solver currently only supports 'complex_nonsymmetric' matrix type and 'default' view."
+            )
 
         if ordering not in valid_orderings:
             raise ValueError(

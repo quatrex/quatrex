@@ -28,7 +28,6 @@ kpoint_shift = [0,0.1,0.1]
 
 
 [electron]
-    solver.direct_solver = "thomas"
     conduction_band_edge = -2.4
     valence_band_edge = -2.5
 

@@ -27,6 +27,11 @@ valid_matrix_types = [
 ]
 
 
+def pardiso_available():
+    """Checks if the PARDISO solver is available."""
+    return pardiso_available
+
+
 class PARDISO(WFSolver):
     """Wave function solver using PARDISO for sparse matrix solving.
 
@@ -48,6 +53,7 @@ class PARDISO(WFSolver):
     def __init__(
         self,
         matrix_type: str = None,
+        view="default",
         verbose: bool = False,
     ) -> None:
         """Initializes the PARDISO wave function solver."""
@@ -57,6 +63,11 @@ class PARDISO(WFSolver):
             )
         if xp.__name__ != "numpy":
             raise ValueError("PARDISO solver requires numpy backend.")
+
+        if view not in ["default", "up"]:
+            raise ValueError(
+                f"Invalid view '{view}'. Valid options are: ['default', 'up']"
+            )  # The wiew option is not used internally. It is just a hint for the user to not use the down view, which is not supported by PARDISO.
 
         if matrix_type not in valid_matrix_types and matrix_type is not None:
             raise ValueError(

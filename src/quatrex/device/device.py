@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import scipy
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
@@ -278,7 +279,7 @@ class Device:
                 # assert all overlap_matrices are sparse matrices
                 if not isinstance(self.overlap_matrices[r], scipy.sparse.spmatrix):
                     raise ValueError(
-                        f"Hamiltonian matrix at index {r} is not a sparse matrix."
+                        f"Overlap matrix at index {r} is not a sparse matrix."
                     )
 
                 self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
@@ -299,7 +300,7 @@ class Device:
                 raise ValueError(
                     "Some overlap matrices are missing while others are present. All or none must be provided."
                 )
-            for r in overlap_matrices.keys():
+            for r in self.overlap_matrices.keys():
                 self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
 
         else:

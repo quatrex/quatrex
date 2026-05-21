@@ -857,6 +857,7 @@ class _SubCommunicator:
 
         if backend == "nccl":
             self._nccl_comm.send(buf, dest)
+            return None
 
         elif backend == "device_mpi":
             return self._mpi_comm.Isend(
@@ -914,6 +915,7 @@ class _SubCommunicator:
 
         if backend == "nccl":
             self._nccl_comm.recv(buf, source)
+            return None
 
         elif backend == "device_mpi":
             return self._mpi_comm.Irecv(

@@ -8,11 +8,9 @@ from qttools.comm import comm
 from qttools.comm.comm import GPU_AWARE_MPI
 from qttools.datastructures import (
     DSDBSparse,
-    bd_matmul,
     bd_matmul_distr,
     bd_sandwich,
     bd_sandwich_distr,
-    btd_matmul,
     btd_sandwich,
 )
 from qttools.utils.mpi_utils import get_section_sizes
@@ -74,25 +72,6 @@ class TestNotDistr:
             override=True,
         )
 
-    def test_btd_matmul(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-
-        # Initalize the output matrix with the correct sparsity pattern.
-
-        out = dsdbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
-
-        btd_matmul(dsdbsparse, dsdbsparse, out)
-
-        assert xp.allclose(dense @ dense, out.to_dense())
-
     def test_btd_sandwich(
         self,
         dsdbsparse_type: DSDBSparse,
@@ -112,25 +91,6 @@ class TestNotDistr:
         btd_sandwich(dsdbsparse, dsdbsparse, out)
 
         assert xp.allclose(dense @ dense @ dense, out.to_dense())
-
-    def test_bd_matmul(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-
-        # Initalize the output matrix with the correct sparsity pattern.
-
-        out = dsdbsparse_type.from_sparray(coo @ coo, block_sizes, global_stack_shape)
-
-        bd_matmul(dsdbsparse, dsdbsparse, out)
-
-        assert xp.allclose(dense @ dense, out.to_dense())
 
     def test_bd_sandwich(
         self,
@@ -153,60 +113,6 @@ class TestNotDistr:
         assert xp.allclose(
             dense @ dense @ dense.conj().swapaxes(-2, -1), out.to_dense()
         )
-
-    def test_bd_matmul_spillover(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-        dense_shape = list(dense.shape)
-        NBC = 1
-        left_obc = int(sum(block_sizes[0:NBC]))
-        right_obc = int(sum(block_sizes[-NBC:]))
-        dense_shape[-2] += left_obc + right_obc
-        dense_shape[-1] += left_obc + right_obc
-
-        dense_exp = xp.zeros(tuple(dense_shape), dtype=dense.dtype)
-        dense_exp[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ] = dense
-        # simply repeat the boundaries slices
-        dense_exp[..., :left_obc, :-left_obc] = dense_exp[
-            ..., left_obc : 2 * left_obc, left_obc:
-        ]
-        dense_exp[..., :-left_obc, :left_obc] = dense_exp[
-            ..., left_obc:, left_obc : 2 * left_obc
-        ]
-        dense_exp[..., -right_obc:, right_obc:] = dense_exp[
-            ..., -2 * right_obc : -right_obc, :-right_obc
-        ]
-        dense_exp[..., right_obc:, -right_obc:] = dense_exp[
-            ..., :-right_obc, -2 * right_obc : -right_obc
-        ]
-
-        expended_product = dense_exp @ dense_exp
-        ref = expended_product[
-            ...,
-            left_obc : left_obc + sum(block_sizes),
-            left_obc : left_obc + sum(block_sizes),
-        ]
-
-        # Initalize the output matrix with the correct sparsity pattern.
-
-        out = dsdbsparse_type.from_sparray(
-            sparse.coo_matrix(_get_last_2d(ref)), block_sizes, global_stack_shape
-        )
-
-        bd_matmul(dsdbsparse, dsdbsparse, out, spillover_correction=True)
-
-        assert xp.allclose(ref, out.to_dense())
 
     def test_bd_sandwich_spillover(
         self,

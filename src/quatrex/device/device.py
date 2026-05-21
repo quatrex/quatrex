@@ -356,15 +356,6 @@ class Device:
 
         contacts = []
         for contact_config in self.config.device.contacts:
-            contacts.append(
-                Contact(
-                    device=self,
-                    name=contact_config.name,
-                    origin=contact_config.origin,
-                    lattice_vectors=contact_config.lattice_vectors,
-                    direction=contact_config.direction,
-                    fermi_level=contact_config.fermi_level,
-                )
-            )
+            contacts.append(Contact(device=self, contact_config=contact_config))
 
         self.contacts = contacts

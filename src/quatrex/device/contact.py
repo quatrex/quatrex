@@ -9,9 +9,14 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
 from qttools.comm import comm
+from qttools.kernels import linalg
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
-from quatrex.core.config import NEVPConfig, OBCConfig
+from quatrex.bandstructure.contact import contact_fermi_level
+from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
+from quatrex.electrostatics.geometry_config import VolumeProperties
+from quatrex.electrostatics.meshing import inside_shape
+from quatrex.grid.kpoints import monkhorst_pack
 
 profiler = Profiler()
 
@@ -177,18 +182,10 @@ class Contact:
         The device object to which this contact is attached. Contains
         the Hamiltonian, overlap matrices, and atomic structure
         information.
-    name : str
-        A unique identifier for this contact.
-    origin : NDArray
-        The origin coordinates of the contact cell in device
-        coordinates.
-    lattice_vectors : NDArray
-        The lattice vectors defining the unit cell of the contact.
-    direction : str
-        The transport direction of the contact, specified as 'a', 'b',
-        or 'c' corresponding to the lattice axes.
-    fermi_level : float
-        The Fermi level of the contact in eV.
+    contact_config : ContactConfig
+        The configuration object containing the contact settings such as
+        lattice vectors, origin, transport direction, and Fermi level
+        information.
 
     Attributes
     ----------
@@ -220,33 +217,23 @@ class Contact:
 
     """
 
-    def __init__(
-        self,
-        device,
-        name: str,
-        origin: NDArray,
-        lattice_vectors: NDArray,
-        direction: str,
-        fermi_level: float,
-    ):
+    def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
-        if len(origin) != 3:
+        if len(contact_config.origin) != 3:
             raise ValueError("Origin must be a 3D coordinate.")
-        if lattice_vectors.shape != (3, 3):
+        if contact_config.lattice_vectors.shape != (3, 3):
             raise ValueError("Vectors must be a 3x3 array.")
-        if direction not in ["a", "b", "c"]:
+        if contact_config.direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
-        self.name = name
         self.device = device
+        self.name = contact_config.name
 
-        self.fermi_level = fermi_level
+        self.lattice_vectors = contact_config.lattice_vectors
+        self.origin = contact_config.origin
 
-        self.lattice_vectors = lattice_vectors
-        self.origin = origin
-
-        self.direction = "abc".index(direction)
+        self.direction = "abc".index(contact_config.direction)
         self.transverse_axes = [0, 1, 2]
         self.transverse_axes.remove(self.direction)
 
@@ -337,6 +324,66 @@ class Contact:
         self.obc_solver = self._configure_obc(
             device.config.electron.obc, device.config.compute.nevp
         )
+
+        # NOTE: We can either explicitly set the Fermi level in the
+        # contact config, or compute it from the doping density and a
+        # mid-gap energy.
+        if contact_config.fermi_level is not None:
+            self.fermi_level = contact_config.fermi_level
+        else:
+            # TODO: The kpoint grid info is not in the contact config,
+            # but we need it to compute a Fermi level. Would be nice if
+            # this could be accessed via a sort of general, global
+            # simulation context.
+            kpoints_transverse = (2 * np.pi) * monkhorst_pack(
+                device.config.device.kpoint_grid, device.config.device.kpoint_shift
+            )[:, self.transverse_axes]
+
+            # Next, we need to determine, whether the contact atoms sit
+            # in a device geometry region with doping.
+            for region in device.config.device.geometry.regions:
+                if not isinstance(region.properties, VolumeProperties):
+                    continue
+
+                if (
+                    region.properties.donor_concentration is None
+                    or region.properties.acceptor_concentration is None
+                ):
+                    continue
+
+                if np.all(
+                    inside_shape(
+                        device.atom_coordinates[self.origin_atom_indices], region.shape
+                    )
+                ):
+                    # Convert from cm^-3 to Å^-3
+                    doping_density = 1e-24 * (
+                        region.properties.donor_concentration
+                        - region.properties.acceptor_concentration
+                    )
+                    break
+
+            else:  # No break, i.e. contact not inside any doped region.
+                doping_density = 0.0
+
+            if comm.rank == 0:
+                print(f"    Doping density: {doping_density} Å^-3", flush=True)
+
+            self.fermi_level, self.mid_gap_energy = self._compute_fermi_level(
+                num_kpoints_transport=contact_config.num_kpoints_transport,
+                kpoints_transverse=kpoints_transverse,
+                mid_gap_energy=contact_config.mid_gap_energy,
+                temperature=contact_config.temperature,
+                doping_density=doping_density,
+                cell_volume=np.abs(np.linalg.det(self.lattice_vectors)),
+            )
+
+        if comm.rank == 0:
+            print(f"    Fermi level: {self.fermi_level} eV", flush=True)
+            print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
+
+        self.voltage = contact_config.voltage
+        self.temperature = contact_config.temperature
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -1003,6 +1050,101 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
+    def _compute_fermi_level(
+        self,
+        num_kpoints_transport: int,
+        kpoints_transverse: NDArray,
+        mid_gap_energy: float,
+        temperature: float,
+        doping_density: float,
+        cell_volume: float,
+    ) -> float:
+        """Computes the Fermi level for the contact.
+
+        Parameters
+        ----------
+        num_kpoints_transport : int
+            The number of k-points to sample in the transport direction
+            for the band structure calculation.
+        kpoints_transverse : NDArray
+            The array of transverse k-points at which to compute the
+            band structure.
+        mid_gap_energy : float
+            The mid-gap energy of the contact material.
+
+        temperature : float
+            The temperature of the contact in Kelvin.
+        doping_density : float
+            The doping density of the contact. This has to have the
+            inverse units of the cell volume, e.g. cm^-3 if the cell
+            volume is in cm^3.
+        cell_volume : float
+            The volume of the contact unit cell in the same units as the
+            inverse of the doping density, e.g. cm^3 if the doping
+            density is in cm^-3.
+
+        Returns
+        -------
+        fermi_level : float
+            The computed Fermi level in eV.
+        e_k : NDArray
+            The computed band structure at the sampled k-points, used
+            for debugging and verification.
+
+        """
+        # NOTE: I'm not 100% sure if i should be including the endpoint
+        # in the k-point grid or if i'm actually double counting like
+        # this.
+        num_kpoints_transport = 51
+        kpoints_transport = np.linspace(-np.pi, np.pi, num_kpoints_transport)
+
+        e_k = np.zeros(
+            (
+                num_kpoints_transport,
+                kpoints_transverse.shape[0],
+                self.num_transport_cells * self.origin_num_orbitals,
+            ),
+            dtype=float,
+        )
+
+        for n, (ki, kj) in enumerate(kpoints_transverse):
+            hamiltonian_layer = self._construct_contact_matrix(
+                self.unit_cell_hamiltonian, ki, kj
+            )
+            overlap_layer = self._construct_contact_matrix(
+                self.unit_cell_overlap, ki, kj
+            )
+
+            h_10, h_00, h_01 = xp.split(hamiltonian_layer.toarray(), 3, axis=-1)
+            s_10, s_00, s_01 = xp.split(overlap_layer.toarray(), 3, axis=-1)
+
+            h_k = (
+                h_00
+                + h_10 * xp.exp(-1j * kpoints_transport[:, None, None])
+                + h_01 * xp.exp(1j * kpoints_transport[:, None, None])
+            )
+            s_k = (
+                s_00
+                + s_10 * xp.exp(-1j * kpoints_transport[:, None, None])
+                + s_01 * xp.exp(1j * kpoints_transport[:, None, None])
+            )
+
+            e_k[:, n, :] = linalg.eigvalsh(h_k, s_k, compute_module="numpy")
+
+        e_k = np.sort(e_k, axis=-1)
+
+        fermi_level, mid_gap_energy = contact_fermi_level(
+            # Average over transverse k-points.
+            e_k=np.mean(e_k, axis=1),
+            kpoints=kpoints_transport,
+            mid_gap_energy=mid_gap_energy,
+            cell_volume=cell_volume,
+            doping_density=doping_density,
+            temperature=temperature,
+        )
+
+        return fermi_level, mid_gap_energy
+
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False
     ) -> NDArray:
@@ -1025,6 +1167,9 @@ class Contact:
             The matrix (Hamiltonian or overlap) from which to extract
             coupling elements. Should have dimensions
             (n_device_orbitals, n_device_orbitals).
+        transpose : bool, optional
+            If True, the method extracts the transpose of the coupling
+            matrix, by default False.
 
         Returns
         -------

@@ -52,75 +52,69 @@ def contact_band_structure(
     return xp.sort(e_k.real, axis=1)
 
 
-def contact_dos(e_k: NDArray, energies: NDArray) -> NDArray:
-    """Computes the density of states of a device contact.
+def contact_fermi_level(
+    e_k: NDArray,
+    kpoints: NDArray,
+    mid_gap_energy: float,
+    cell_volume: float,
+    doping_density: float,
+    temperature: float = 300,
+) -> float:
+    """Computes the Fermi level of a device contact.
+
+    The cell volume and the doping density must be given in the same
+    units, so both should be in m^3/m^-3 or in nm^3/nm^-3, etc.
 
     Parameters
     ----------
     e_k : NDArray
-        The sorted eigenvalues in energy and k.
-    energies : NDArray
-        The energies.
-
-    Returns
-    -------
-    dos : NDArray
-        The density of states.
-
-    """
-    dos = np.zeros_like(energies)
-    dos[:-1] = np.histogram(e_k, energies)[0]
-
-    # Normalize the density of states.
-    dos /= e_k.shape[0] * (energies[1] - energies[0])
-
-    return dos
-
-
-def contact_fermi_level(
-    temperature: float,
-    dos: NDArray,
-    energies: NDArray,
-    doping_density: float,
-    midgap_energy: float,
-) -> float:
-    """Computes the Fermi level of a device contact.
-
-    This is done by minimizing the excess charge difference, while
-    taking doping into account.
-
-    Parameters
-    ----------
-    temperature : float
-        The temperature.
-    dos : NDArray
-        The density of states.
-    energies : NDArray
-        The energies.
+        The sorted eigenvalues in energy and k. This should have shape
+        (num_kpoints, num_bands).
+    kpoints : NDArray
+        The corresponding k-points. This should have shape
+        (num_kpoints,).
+    mid_gap_energy : float
+        A guess for the mid-gap energy, which is used to determine the
+        number of valence bands.
+    cell_volume : float
+        The volume of the unit cell. This needs to have the same units
+        as the doping density.
     doping_density : float
-        The doping density.
-    midgap_energy : float
-        The energy at the middle of the band gap. This is used to
-        separate conduction from valence bands.
+        The doping density. This needs to have the same units as the
+        cell volume.
+    temperature : float, optional
+        The temperature in K. Default is 300 K.
 
     Returns
     -------
-    float
-        The Fermi level.
+    fermi_level : float
+        The Fermi level in eV.
+    mid_gap_energy : float
+        The computed mid-gap energy in eV.
 
     """
-    dE = energies[1] - energies[0]
+
+    num_valence_bands = (e_k < mid_gap_energy).sum(axis=1).max()
+    e_k_valence, e_k_conduction = np.split(e_k, [num_valence_bands], axis=1)
+
+    mid_gap_energy = 0.5 * (e_k_valence.max() + e_k_conduction.min())
 
     def objective_function(fermi_level):
-        f = fermi_dirac(energies - fermi_level, temperature)
-        n = (f * dos)[energies >= midgap_energy].sum() * dE
-        p = ((1 - f) * dos)[energies < midgap_energy].sum() * dE
-        return ((n - p) - doping_density) ** 2
+        """Charge neutrality objective function."""
+        n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=1)
+        p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=1)
+        n = np.trapezoid(n_k, kpoints)
+        p = np.trapezoid(p_k, kpoints)
+
+        rho = (n - p) / (2 * np.pi * cell_volume)
+        rho *= 2  # Spin
+
+        return (rho - doping_density) ** 2
 
     result = minimize_scalar(
         objective_function,
-        bounds=(energies.min(), energies.max()),
+        bounds=(e_k.min(), e_k.max()),
         method="bounded",
     )
 
-    return result.x
+    return result.x, mid_gap_energy

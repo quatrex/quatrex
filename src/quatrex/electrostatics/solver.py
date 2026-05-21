@@ -41,7 +41,7 @@ class PoissonSolver(ABC):
 
         self.potential_constraints = potential_constraints
 
-        epsilon_r = np.ones_like(mesh.p[0])
+        epsilon_r = np.ones_like(mesh.p[0]) * config.electrostatics.default_epsilon_r
         for region in config.device.geometry.regions:
 
             region_epsilon_r = getattr(region.properties, "epsilon_r", None)

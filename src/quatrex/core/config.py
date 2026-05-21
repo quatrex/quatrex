@@ -52,7 +52,9 @@ class SCSPConfig(BaseModel):
     This is defined as the infinity norm of the difference between the
     potential in the current iteration and the previous iteration.
 
-    $$\lVert V_{n} - V_{n-1} \rVert_{\infty} < \verb|convergence_tol|$$
+    \[
+        \lVert V_{n} - V_{n-1} \rVert_{\infty} < \texttt{convergence_tol}
+    \]
 
     """
 
@@ -246,6 +248,24 @@ class ElectrostaticsConfig(BaseModel):
         constraints to generate the initial guess.
     - `"file"`: Loads the initial guess from a file. The file should be
         located in the `input_dir` and named `potential.npy`.
+
+    """
+
+    default_epsilon_r: PositiveFloat = 1.0
+    """The default relative permittivity to use for the Poisson solver.
+
+    This is used as a fallback for regions that do not have a specified
+    relative permittivity.
+
+    """
+
+    electron_affinity: float | None = None
+    """The electron affinity of the device.
+
+    This is used to align the voltage levels of any gates to the device
+    levels in SCSP runs. If not set, the voltages of the gates are taken
+    as absolute values without any alignment, i.e. they are directly
+    used as the Dirichlet boundary conditions for the Poisson equation.
 
     """
 
@@ -683,23 +703,6 @@ class ElectronConfig(BaseModel):
     """
 
     @model_validator(mode="after")
-    def set_left_right_fermi_levels(self) -> Self:
-        """Sets the left and right Fermi levels if not already set."""
-        if (self.left_fermi_level is None) != (self.right_fermi_level is None):
-            warnings.warn(
-                "Either both left and right Fermi levels must be set or neither."
-            )
-
-        if self.left_fermi_level is None and self.right_fermi_level is None:
-            if self.fermi_level is None:
-                warnings.warn("Fermi level must be set.")
-
-            self.left_fermi_level = self.fermi_level
-            self.right_fermi_level = self.fermi_level
-
-        return self
-
-    @model_validator(mode="after")
     def set_left_right_temperatures(self) -> Self:
         """Sets the left and right temperatures if not already set."""
         if (self.left_temperature is None) != (self.right_temperature is None):
@@ -996,6 +999,16 @@ class ContactConfig(BaseModel):
 
     This is used to separate conduction from valence band states, which
     is necessary to automatically determine a contact's Fermi level.
+
+    """
+
+    num_kpoints_transport: int = 51
+    """Number of k-points to use for contact band structure calculation.
+
+    This is used when automatically determining the Fermi level of the
+    contact from its band structure. The k-point grid along the
+    transverse directions are determined from the
+    [`kpoint_grid`][kpoint_grid] parameter.
 
     """
 
@@ -1416,13 +1429,43 @@ class QuatrexConfig(BaseModel):
             # used, so we skip this check for now.
             return self
 
-        if len(self.device.contacts) == 0:
-            raise ValueError("At least one contact must be defined.")
+        if len(self.device.contacts) < 2:
+            raise ValueError("At least two contacts must be defined.")
 
         if not any(contact.voltage == 0 for contact in self.device.contacts):
             raise ValueError(
                 "At least one contact must be grounded (i.e. have zero voltage)."
             )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_left_right_fermi_levels(self) -> Self:
+        """Checks and sets the left and right Fermi levels if not already set."""
+        if self.formalism == "wf":
+            # TODO: In the wavefunction formalism, the Fermi levels of
+            # the contacts are used, so we do not care about those set
+            # in the ElectronConfig.
+            return self
+
+        if (self.electron.left_fermi_level is None) != (
+            self.electron.right_fermi_level is None
+        ):
+            raise ValueError(
+                "Either both left and right Fermi levels must be set or neither."
+            )
+
+        if (
+            self.electron.left_fermi_level is None
+            and self.electron.right_fermi_level is None
+        ):
+            if self.electron.fermi_level is None:
+                raise ValueError(
+                    "When left and right Fermi levels are not set, the Fermi level must be set to determine the Fermi levels."
+                )
+
+            self.electron.left_fermi_level = self.electron.fermi_level
+            self.electron.right_fermi_level = self.electron.fermi_level
 
         return self
 

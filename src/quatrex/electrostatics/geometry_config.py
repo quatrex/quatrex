@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, field_validator
 
 
 class Box(BaseModel):
@@ -180,7 +180,7 @@ class SurfaceProperties(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    work_function: float
+    work_function: NonNegativeFloat | None = None
     """The work function of the surface."""
 
     voltage: float

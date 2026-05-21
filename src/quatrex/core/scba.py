@@ -14,6 +14,7 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
+from quatrex.core.transport import TransportSolver
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device import Device
@@ -224,7 +225,7 @@ class Observables:
     thermal_current: NDArray = None
 
 
-class SCBA:
+class SCBA(TransportSolver):
     """Self-consistent Born approximation (SCBA) solver.
 
     Parameters
@@ -696,8 +697,8 @@ class SCBA:
 
         self.electron_solver.potential = potential
 
-    def compute_charge_density(self) -> NDArray:
-        """Computes the charge density.
+    def get_charge_density(self) -> NDArray:
+        """Gets the charge density.
 
         This runs the SCBA to convergence (or to the maximum number of
         iterations) and then computes the charge density from the
@@ -709,9 +710,6 @@ class SCBA:
             The computed charge density for the device.
 
         """
-
-        self.run()
-
         electron_density, hole_density = self._compute_excess_charge_densities()
         charge_density = electron_density - hole_density
 

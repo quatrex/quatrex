@@ -79,12 +79,22 @@ class ElectrostaticSolver:
             if not hasattr(region.properties, "voltage"):
                 continue
 
+            constraint_value = region.properties.voltage
+            if (
+                config.device.electron_affinity is not None
+                and region.properties.work_function is not None
+            ):
+                # TODO: Fix this to include the fermi level to
+                # conduction band edge difference as well.
+                constraint_value += (
+                    region.properties.work_function - config.device.electron_affinity
+                )
+
             potential_constraints[region.name] = (
-                region.properties.voltage,
+                constraint_value,
                 device_mesh.region_node_inds[region.name],
             )
 
-        # in nm^3
         volume_per_atom = device_mesh.structure.get_volume() / len(
             device_mesh.structure
         )
@@ -104,15 +114,14 @@ class ElectrostaticSolver:
             inds = np.intersect1d(
                 inds, device_mesh.region_node_inds["atoms"], assume_unique=True
             )
-            fixed_density[inds] = (
-                (
-                    # These are given in m^-3.
-                    region.properties.donor_concentration
-                    - region.properties.acceptor_concentration
-                )
-                * 1e-27  # Convert from m^-3 to nm^-3.
-                * volume_per_atom
+
+            # NOTE: Doping concentrations are given in cm^-3, so we
+            # convert to Å^-3 below.
+            doping_concentration = 1e-24 * (
+                region.properties.donor_concentration
+                - region.properties.acceptor_concentration
             )
+            fixed_density[inds] = doping_concentration * volume_per_atom
 
         return potential_constraints, fixed_density
 
@@ -162,32 +171,53 @@ class ElectrostaticSolver:
                 print("using zero initial guess", flush=True)
             return np.zeros(self.atom_inds.size)
 
-        if self.initial_guess_strategy == "constraints":
-            # TODO: This is currently a very bad initial guess. The
-            # contact region voltages should be taken into account, and
-            # the fixed charges should be neglected.
-            if comm.rank == 0:
-                print("using initial guess from constraints", flush=True)
-            from scipy import sparse
-
-            rhs = self.poisson_solver._enforce_potential_constraints(
-                np.zeros(self.num_dofs)
-            )
-            potential, info = sparse.linalg.bicgstab(
-                self.poisson_solver.stiffness_matrix,
-                rhs,
-                # Small perturbation to avoid zero initial guess.
-                x0=np.zeros(self.num_dofs) + 1e-6,
-                M=sparse.diags(1 / self.poisson_solver.stiffness_matrix.diagonal()),
-            )
-
-            return (self.poisson_solver.mfc_transform.T @ potential)[self.atom_inds]
-
         if self.initial_guess_strategy == "file":
             if comm.rank == 0:
                 print("using initial guess from file", flush=True)
             potential = distributed_load(self.config.input_dir / "potential.npy")
             return potential
+
+        if self.initial_guess_strategy == "constraints":
+            raise NotImplementedError
+            # if comm.rank == 0:
+            #     print("using initial guess from constraints", flush=True)
+
+            # if self.config.formalism == "negf":
+            #     # TODO: The contacts are the first and last blocks of
+            #     # orbitals. use the indices of those to set the
+            #     # potential to the contact voltages.
+            #     ...
+
+            # # NOTE: When solving an initial guess from constraints, we
+            # # impose Dirichlet potential constraints in the contacts as
+            # # well, not only in the gates. Any dopants are ignored, as
+            # # they should normally get compensated by the excess charge
+            # # anyway.
+            # extended_potential_constraints = ...
+            # # TODO: Determine indices of atoms in the contacts. Set
+            # # those to the contact voltages.
+
+            # from scipy import sparse
+
+            # rhs = self.poisson_solver._enforce_potential_constraints(
+            #     np.zeros(self.num_dofs)
+            # )
+            # stiffness_matrix = skfem.enforce(
+            #     A=K_hat,
+            #     D={
+            #         key: basis.get_dofs(nodes=inds)
+            #         for key, (__, inds) in potential_constraints.items()
+            #     },
+            # )
+            # potential, info = sparse.linalg.bicgstab(
+            #     self.poisson_solver.stiffness_matrix,
+            #     rhs,
+            #     # Small perturbation to avoid zero initial guess.
+            #     x0=np.zeros(self.num_dofs) + 1e-6,
+            #     M=sparse.diags(1 / self.poisson_solver.stiffness_matrix.diagonal()),
+            # )
+
+            # return (self.poisson_solver.mfc_transform.T @ potential)[self.atom_inds]
 
         raise ValueError(f"Unknown initial guess type: {self.initial_guess_strategy}")
 

@@ -249,6 +249,7 @@ def run(
             _abort_quatrex(e)
         raise
 
+
 @quatrex_cli.command()
 def mesh(
     config: Annotated[

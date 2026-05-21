@@ -3,7 +3,7 @@ import numpy as np
 from qttools.comm import comm
 from quatrex.core.config import QuatrexConfig, SCSPConfig
 from quatrex.core.qtbm import QTBM
-from quatrex.core.scba import SCBA
+from quatrex.core.transport import TransportSolver
 from quatrex.electrostatics.electrostatics import ElectrostaticSolver
 from quatrex.electrostatics.mixer import DIIS, Mixer, UnderRelaxation
 
@@ -29,15 +29,15 @@ class SCSP:
         """Initializes the SCSP solver."""
         self.config = config
 
-        self.electrostatic_solver = ElectrostaticSolver(config)
         self.transport_solver = self._configure_transport_solver(config)
+        self.electrostatic_solver = ElectrostaticSolver(config)
 
         self.mixer = self._configure_mixer(config.scsp)
 
         self.convergence_tol = config.scsp.convergence_tol
 
     @staticmethod
-    def _configure_transport_solver(config: QuatrexConfig) -> SCBA | QTBM:
+    def _configure_transport_solver(config: QuatrexConfig) -> TransportSolver:
         """Configures the transport solver.
 
         Parameters
@@ -51,7 +51,7 @@ class SCSP:
 
         Returns
         -------
-        SCBA or QTBM
+        TransportSolver
             The configured transport solver, which can be either a QTBM
             or an SCBA solver depending on the specified transport
             formalism in the configuration. The transport solver is
@@ -112,11 +112,9 @@ class SCSP:
             if isinstance(self.transport_solver, QTBM):
                 # TODO: The QTBM solver is currently torn down and
                 # re-initialized at each iteration. The issue was that
-                # it is a bit harder to reinitalize the observables
+                # it is a bit harder to reset the observables
                 # after they have been allgathered in place.
                 self.transport_solver = self._configure_transport_solver(self.config)
-
-            self.transport_solver.set_potential(potential)
 
             if comm.rank == 0:
                 np.save(
@@ -124,7 +122,9 @@ class SCSP:
                     potential,
                 )
 
-            charge_density = self.transport_solver.compute_charge_density()
+            self.transport_solver.set_potential(potential)
+            self.transport_solver.run()
+            charge_density = self.transport_solver.get_charge_density()
 
             new_potential = self.electrostatic_solver.solve(charge_density, potential)
 

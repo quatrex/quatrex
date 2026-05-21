@@ -26,8 +26,9 @@ from qttools.wave_function_solver import (
 from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
-from quatrex.device import Device
-from quatrex.device.contact import Contact, OBCResult
+from quatrex.core.transport import TransportSolver
+from quatrex.device import Contact, Device
+from quatrex.device.contact import OBCResult
 from quatrex.grid import get_electron_energies, monkhorst_pack
 
 profiler = Profiler()
@@ -51,10 +52,10 @@ class Observables:
 
     electron_ldos: dict = field(default_factory=dict)
     contact_currents: dict = field(default_factory=dict)
-    transmissions: dict = field(default_factory=dict)
+    transmissions: dict[tuple[Contact, Contact], NDArray] = field(default_factory=dict)
 
 
-class QTBM:
+class QTBM(TransportSolver):
     """Quantum Transmitting Boundary Method solver.
 
     Parameters
@@ -992,7 +993,7 @@ class QTBM:
         kpoint: float,
         kpoint_ind: int,
     ):
-        """Computes transport observables.
+        r"""Computes transport observables.
 
         Calculates transmission coefficients, density of states, and
         current distributions from the QTBM wavefunctions. This method
@@ -1058,12 +1059,14 @@ class QTBM:
             contact_in,
             contact_out,
         ), transmission in self.observables.transmissions.items():
+            mu_in = contact_in.fermi_level - contact_in.voltage
+            mu_out = contact_out.fermi_level - contact_out.voltage
             prefactor = fermi_dirac(
-                self.electron_energies - contact_in.fermi_level,
-                self.config.electron.temperature,
+                self.electron_energies - mu_in,
+                contact_in.temperature,
             ) - fermi_dirac(
-                self.electron_energies - contact_out.fermi_level,
-                self.config.electron.temperature,
+                self.electron_energies - mu_out,
+                contact_out.temperature,
             )
 
             self.observables.contact_currents[contact_in, contact_out] = -(
@@ -1129,18 +1132,26 @@ class QTBM:
         electron_density = np.zeros((self.num_orbitals, self.electron_energies.size))
         hole_density = np.zeros((self.num_orbitals, self.electron_energies.size))
         for contact, ldos in self.observables.electron_ldos.items():
+            mu = contact.fermi_level - contact.voltage
             occupancy = fermi_dirac(
-                self.electron_energies - contact.fermi_level,
-                self.config.electron.temperature,
+                self.electron_energies - mu,
+                contact.temperature,
             )
 
             electron_density += occupancy * ldos.sum(axis=0) * 2  # Spin
             hole_density += (1 - occupancy) * ldos.sum(axis=0) * 2  # Spin
 
-        mid_gap_energy = (
-            self.config.electron.conduction_band_edge
-            + self.config.electron.valence_band_edge
-        ) / 2
+        # Find the reference contact mid-gap energy to separate
+        # electrons and holes.
+        for contact in self.device.contacts:
+            if contact.voltage == 0:
+                mid_gap_energy = (
+                    contact.mid_gap_energy
+                    if contact.mid_gap_energy is not None
+                    else contact.fermi_level
+                )
+                break
+
         mid_gap_energy = self.device.potential + mid_gap_energy
 
         mask = self.electron_energies > mid_gap_energy[:, None]
@@ -1190,8 +1201,8 @@ class QTBM:
 
             contact._init_hamiltonian_overlap_matrices()
 
-    def compute_charge_density(self) -> NDArray:
-        """Computes the charge density from the QTBM calculation.
+    def get_charge_density(self) -> NDArray:
+        """Gets the charge density from the QTBM calculation.
 
         This method runs the full QTBM calculation and then integrates
         the local density of states to obtain the charge density. This
@@ -1204,9 +1215,6 @@ class QTBM:
             The computed charge density for the device.
 
         """
-
-        self.run()
-
         electron_density, hole_density = self._compute_excess_charge_densities()
         charge_density = electron_density - hole_density
 

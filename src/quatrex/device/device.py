@@ -12,11 +12,7 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
-from quatrex.device.inputs import (
-    create_coordinate_grid,
-    distributed_read_xyz,
-    load_matrices,
-)
+from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
 
 
 class Device:

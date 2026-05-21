@@ -93,7 +93,7 @@ RUN python3 -m venv /opt/venv \
 
 # Install cuDSS / nvmath-python.
 RUN python3 -m pip install nvmath-python \
-    && python3 -m pip install nvidia-cudss-cu13
+    && python3 -m pip install nvidia-cudss-cu12
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available

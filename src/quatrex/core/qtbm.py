@@ -79,170 +79,7 @@ def print_memory_usage(stage: str, energy_index: int | None = None) -> None:
         print(f"{prefix}: CPU {cpu_mem_gb:.2f} GB", flush=True)
 
 
-def allocate_system_matrix(
-    hamiltonians: dict,
-    overlap_matrices: dict,
-    contacts: list = [],
-    upper_view: bool = False,
-    real_system_matrix: bool = False,
-) -> sparse.csr_matrix:
-    """Allocates the system matrix.
-
-    Parameters
-    ----------
-    hamiltonians : dict
-        Dictionary of Hamiltonian matrices for each hopping direction.
-    overlap_matrices : dict
-        Dictionary of Overlap matrices for each hopping direction.
-    contacts : list
-        List of contact objects.
-    upper_view : bool, optional
-        Whether to allocate the matrix only in upper triangular view.
-    real_system_matrix : bool, optional
-        Whether to allocate the system matrix with real data type (if possible).
-
-    Returns
-    -------
-    system_matrix : sparse.csr_matrix
-        The allocated system matrix.
-
-    """
-
-    size = hamiltonians[0, 0, 0].shape[0]
-
-    # Count the total number of non-zero
-    nnz_H = []
-    nnz_S = []
-    nnz_cont = []
-
-    total_nnz = 0
-    for r, h_r in hamiltonians.items():
-        nnz_H.append(h_r.nnz)
-        total_nnz += h_r.nnz
-        if not upper_view:
-            total_nnz += h_r.nnz  # Account for the symmetric part if not upper view
-    for r, s_r in overlap_matrices.items():
-        nnz_S.append(s_r.nnz)
-        total_nnz += s_r.nnz
-        if not upper_view:
-            total_nnz += s_r.nnz  # Account for the symmetric part if not upper view
-    for contact in contacts:
-        nnz_cont.append(len(contact.orbital_indices))
-        total_nnz += len(contact.orbital_indices) ** 2
-
-    # Concaate all indices from the hamiltonians, overlaps, and contacts into a single array to find unique indices for allocation
-    concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
-
-    start_idx = 0
-    for r, h_r in hamiltonians.items():
-        nnz = h_r.nnz
-        concatenated_indices[start_idx : start_idx + nnz, 1] = h_r.indices
-        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-            xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
-        )
-        start_idx += nnz
-        if not upper_view:
-            concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
-            concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
-            )
-            start_idx += nnz
-
-    for r, s_r in overlap_matrices.items():
-        nnz = s_r.nnz
-        concatenated_indices[start_idx : start_idx + nnz, 1] = s_r.indices
-        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-            xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
-        )
-        start_idx += nnz
-        if not upper_view:
-            concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
-            concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
-            )
-            start_idx += nnz
-
-    for contact in contacts:
-        n_orb = contact.orbital_indices.shape[0]
-        nnz = n_orb**2
-
-        orbs = xp.asarray(contact.orbital_indices)
-        concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(orbs, n_orb)
-        concatenated_indices[start_idx : start_idx + nnz, 1] = xp.tile(orbs, n_orb)
-        start_idx += nnz
-
-    # Compress the indices from 2d to 1d (1d-unique is faster)
-    concatenated_indices_M = (
-        concatenated_indices[:, 0] * size + concatenated_indices[:, 1]
-    )
-    # Find the unique indices and the inverse mapping to the original concatenated array
-    concatenated_indices_M, inverse_indices = xp.unique(
-        concatenated_indices_M, return_inverse=True
-    )
-    # Decompress the unique indices back to 2d
-    concatenated_indices = xp.zeros(
-        (concatenated_indices_M.shape[0], 2), dtype=xp.int64
-    )
-    concatenated_indices[:, 0] = concatenated_indices_M // size
-    concatenated_indices[:, 1] = concatenated_indices_M % size
-
-    # Allocate system matrix
-    if real_system_matrix:
-        data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.float64)
-    else:
-        data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
-    system_matrix = sparse.csr_matrix(
-        (data, (concatenated_indices[:, 0], concatenated_indices[:, 1])),
-        shape=(size, size),
-        dtype=data.dtype,
-    )
-
-    # Store the indices to update in-place the system matrix for each hamiltonian, overlap, and contact self-energy
-    start_idx = 0
-    hamiltonian_update_indices = {}
-    hamiltonian_update_indices_transpose = {}
-    for r, h_r in hamiltonians.items():
-        hamiltonian_update_indices[r] = inverse_indices[start_idx : start_idx + h_r.nnz]
-        start_idx += h_r.nnz
-        if not upper_view:
-            hamiltonian_update_indices_transpose[r] = inverse_indices[
-                start_idx : start_idx + h_r.nnz
-            ]
-            start_idx += h_r.nnz
-
-    overlap_update_indices = {}
-    overlap_update_indices_transpose = {}
-    for r, s_r in overlap_matrices.items():
-        overlap_update_indices[r] = inverse_indices[start_idx : start_idx + s_r.nnz]
-        start_idx += s_r.nnz
-        if not upper_view:
-            overlap_update_indices_transpose[r] = inverse_indices[
-                start_idx : start_idx + s_r.nnz
-            ]
-            start_idx += s_r.nnz
-
-    sigma_obc_update_indices = {}
-    for contact in contacts:
-        sigma_obc_update_indices[contact] = inverse_indices[
-            start_idx : start_idx + len(contact.orbital_indices) ** 2
-        ]
-        start_idx += len(contact.orbital_indices) ** 2
-
-    # Check if SM has canonical format
-    if not system_matrix.has_canonical_format:
-        raise ValueError("System matrix is not in canonical format after allocation.")
-
-    return (
-        system_matrix,
-        hamiltonian_update_indices,
-        overlap_update_indices,
-        sigma_obc_update_indices,
-        hamiltonian_update_indices_transpose,
-        overlap_update_indices_transpose,
-    )
-
-
-def construct_sparse_vector(
+def construct_device_pseudo_inverse(
     vector_per_cont: dict,
     injection_segments: dict,
     contacts: list,
@@ -251,72 +88,7 @@ def construct_sparse_vector(
     num_orbitals: int,
 ) -> sparse.csr_matrix:
     """
-    Construct a sparse vector from the vectors of each contact for the current energy index `i` (used for example to build the device-size injection-vector).
-
-    Parameters
-    ----------
-    vector_per_cont : dict
-        Dictionary mapping each contact to its corresponding injection vector for the current energy index `i`.
-    injection_segments : dict
-        Dictionary mapping each contact and energy index to its corresponding injection segment.
-    contacts : list
-        List of contacts in the system.
-    i : int
-        Current energy index.
-    injection_count : dict
-        Dictionary mapping each energy index to the number of injection sites.
-    num_orbitals : int
-        Number of orbitals in the system.
-
-    Returns
-    -------
-    sparse.csr_matrix
-        The sparse right-hand side (RHS) vector for the QTBM system of equations.
-    """
-    return sparse.csr_matrix(
-        (
-            xp.concatenate(
-                list(vector_per_cont[contact][i].flatten() for contact in contacts)
-            ),
-            (
-                xp.concatenate(
-                    list(
-                        xp.repeat(
-                            xp.asarray(contact.orbital_indices),
-                            vector_per_cont[contact][i].shape[1],
-                        )
-                        for contact in contacts
-                    )
-                ),
-                xp.concatenate(
-                    list(
-                        xp.tile(
-                            xp.arange(
-                                injection_segments[contact, i].start,
-                                injection_segments[contact, i].stop,
-                            ),
-                            vector_per_cont[contact][i].shape[0],
-                        )
-                        for contact in contacts
-                    )
-                ),
-            ),
-        ),
-        shape=(num_orbitals, injection_count[i]),
-        dtype=xp.complex128,
-    )
-
-
-def construct_sparse_vector_transpose(
-    vector_per_cont: dict,
-    injection_segments: dict,
-    contacts: list,
-    i: int,
-    injection_count: dict,
-    num_orbitals: int,
-) -> sparse.csr_matrix:
-    """
-    Construct a sparse transposed vector from vectors of each contact for the current energy index `i` (used for example to build the device-size pseudo-inverse).
+    Construct the sparse device-size pseudo-inverse.
 
     Parameters
     ----------
@@ -495,6 +267,9 @@ class QTBM:
             self.config.electron.solver.direct_solver
         ]
 
+        self._allocate_system_matrix()
+        free_mempool()
+
     def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
         """Configures the wavefunction solver based on the config.
 
@@ -584,6 +359,228 @@ class QTBM:
                         return SuperLU(matrix_type=matrix_type, view=view)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
+
+    def _allocate_system_matrix(self) -> sparse.csr_matrix:
+        """Allocates the system matrix."""
+
+        size = self.device.hamiltonians[0, 0, 0].shape[0]
+        # Count the total number of non-zero
+        nnz_H = []
+        nnz_S = []
+        nnz_cont = []
+
+        total_nnz = 0
+        for r, h_r in self.device.hamiltonians.items():
+            nnz_H.append(h_r.nnz)
+            total_nnz += h_r.nnz
+            if not self.system_matrix_UP_view:
+                total_nnz += h_r.nnz  # Account for the symmetric part if not upper view
+        for r, s_r in self.device.overlap_matrices.items():
+            nnz_S.append(s_r.nnz)
+            total_nnz += s_r.nnz
+            if not self.system_matrix_UP_view:
+                total_nnz += s_r.nnz  # Account for the symmetric part if not upper view
+        if self.config.qtbm.OBC_rank != "reduced":
+            for contact in self.device.contacts:
+                nnz_cont.append(len(contact.orbital_indices))
+                total_nnz += len(contact.orbital_indices) ** 2
+
+        # Concaate all indices from the hamiltonians, overlaps, and contacts into a single array to find unique indices for allocation
+        concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
+
+        start_idx = 0
+        for r, h_r in self.device.hamiltonians.items():
+            nnz = h_r.nnz
+            concatenated_indices[start_idx : start_idx + nnz, 1] = h_r.indices
+            concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
+                xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
+            )
+            start_idx += nnz
+            if not self.system_matrix_UP_view:
+                concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
+                concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
+                    xp.arange(h_r.shape[0], dtype=xp.int32),
+                    xp.diff(h_r.indptr).tolist(),
+                )
+                start_idx += nnz
+
+        for r, s_r in self.device.overlap_matrices.items():
+            nnz = s_r.nnz
+            concatenated_indices[start_idx : start_idx + nnz, 1] = s_r.indices
+            concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
+                xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
+            )
+            start_idx += nnz
+            if not self.system_matrix_UP_view:
+                concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
+                concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
+                    xp.arange(s_r.shape[0], dtype=xp.int32),
+                    xp.diff(s_r.indptr).tolist(),
+                )
+                start_idx += nnz
+
+        if self.config.qtbm.OBC_rank != "reduced":
+            for contact in self.device.contacts:
+                n_orb = contact.orbital_indices.shape[0]
+                nnz = n_orb**2
+
+                orbs = xp.asarray(contact.orbital_indices)
+                concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
+                    orbs, n_orb
+                )
+                concatenated_indices[start_idx : start_idx + nnz, 1] = xp.tile(
+                    orbs, n_orb
+                )
+                start_idx += nnz
+
+        # Compress the indices from 2d to 1d (1d-unique is faster)
+        concatenated_indices_M = (
+            concatenated_indices[:, 0] * size + concatenated_indices[:, 1]
+        )
+        # Find the unique indices and the inverse mapping to the original concatenated array
+        concatenated_indices_M, inverse_indices = xp.unique(
+            concatenated_indices_M, return_inverse=True
+        )
+        # Decompress the unique indices back to 2d
+        concatenated_indices = xp.zeros(
+            (concatenated_indices_M.shape[0], 2), dtype=xp.int64
+        )
+        concatenated_indices[:, 0] = concatenated_indices_M // size
+        concatenated_indices[:, 1] = concatenated_indices_M % size
+
+        # Allocate system matrix
+        if self.real_system_matrix:
+            data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.float64)
+        else:
+            data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
+        self.system_matrix = sparse.csr_matrix(
+            (data, (concatenated_indices[:, 0], concatenated_indices[:, 1])),
+            shape=(size, size),
+            dtype=data.dtype,
+        )
+
+        # Store the indices to update in-place the system matrix for each hamiltonian, overlap, and contact self-energy
+        start_idx = 0
+        self.hamiltonian_update_indices = {}
+        self.hamiltonian_update_indices_transpose = {}
+        for r, h_r in self.device.hamiltonians.items():
+            self.hamiltonian_update_indices[r] = inverse_indices[
+                start_idx : start_idx + h_r.nnz
+            ]
+            start_idx += h_r.nnz
+            if not self.system_matrix_UP_view:
+                self.hamiltonian_update_indices_transpose[r] = inverse_indices[
+                    start_idx : start_idx + h_r.nnz
+                ]
+                start_idx += h_r.nnz
+
+        self.overlap_update_indices = {}
+        self.overlap_update_indices_transpose = {}
+        for r, s_r in self.device.overlap_matrices.items():
+            self.overlap_update_indices[r] = inverse_indices[
+                start_idx : start_idx + s_r.nnz
+            ]
+            start_idx += s_r.nnz
+            if not self.system_matrix_UP_view:
+                self.overlap_update_indices_transpose[r] = inverse_indices[
+                    start_idx : start_idx + s_r.nnz
+                ]
+                start_idx += s_r.nnz
+
+        self.sigma_obc_update_indices = {}
+        if self.config.qtbm.OBC_rank != "reduced":
+            for contact in self.device.contacts:
+                self.sigma_obc_update_indices[contact] = inverse_indices[
+                    start_idx : start_idx + len(contact.orbital_indices) ** 2
+                ]
+                start_idx += len(contact.orbital_indices) ** 2
+
+        # Check if SM has canonical format
+        if not self.system_matrix.has_canonical_format:
+            raise ValueError(
+                "System matrix is not in canonical format after allocation."
+            )
+
+    def _add_matrix_to_system_matrix(
+        self, k: xp.complex128, factor: xp.float64, type: str = "hamiltonian"
+    ) -> None:
+        """
+        Adds the contribution of a matrix to the system matrix for a given k-point and multiplication factor.
+
+        Parameters
+        ----------
+        k : np.complex128
+            The k-point for which the system matrix is being constructed.
+        factor : np.float64
+            A scaling factor for the matrix contribution.
+        type : str, optional
+            The type of matrix to add, either "hamiltonian" or "overlap". Default is "hamiltonian".
+        """
+
+        if type == "hamiltonian":
+            matrices = self.device.hamiltonians
+            update_indices = self.hamiltonian_update_indices
+            update_indices_transpose = self.hamiltonian_update_indices_transpose
+        elif type == "overlap":
+            matrices = self.device.overlap_matrices
+            update_indices = self.overlap_update_indices
+            update_indices_transpose = self.overlap_update_indices_transpose
+        else:
+            raise ValueError("Invalid matrix type. Must be 'hamiltonian' or 'overlap'.")
+
+        for r, m_r in matrices.items():
+            k_phase = np.exp(2j * np.pi * np.dot(k, r)) * factor
+            if hasattr(k_phase, "get"):
+                k_phase = k_phase.get()
+            if k_phase.imag == 0:
+                k_phase = np.float64(k_phase.real)
+            else:
+                k_phase = np.complex128(k_phase)
+            inplace.iadd(
+                self.system_matrix.data,
+                m_r.data,
+                update_indices[r],
+                k_phase,
+                False,
+            )
+            if not self.system_matrix_UP_view:
+                inplace.iadd(
+                    self.system_matrix.data,
+                    m_r.data,
+                    update_indices_transpose[r],
+                    k_phase.conj(),
+                    True,
+                )
+                self.system_matrix.setdiag(
+                    self.system_matrix.diagonal() - m_r.diagonal() * k_phase
+                )
+
+    def _add_sigma_obc_to_system_matrix(
+        self, factor: np.float64, sigma_obc_per_contact: dict, i: int
+    ) -> None:
+        """
+        Adds the contribution of a contact self-energy to the system matrix for a given contact.
+
+        Parameters
+        ----------
+        factor : np.float64
+            A scaling factor for the self-energy contribution.
+        sigma_obc_per_contact : dict
+            Dictionary of self-energy matrices for each contact
+        i : int
+            Index of the current local energy being processed.
+        """
+
+        for contact, sigma_obc in sigma_obc_per_contact.items():
+            for k_t, sigma_obc_k in sigma_obc.items():
+                inplace.iadd_obc(
+                    self.system_matrix.data,
+                    sigma_obc_k[i, :, :],
+                    self.sigma_obc_update_indices[contact],
+                    k_t,
+                    contact.transverse_repetition_grid,
+                    factor,
+                )
 
     def _compute_transmissions(
         self,
@@ -677,8 +674,6 @@ class QTBM:
         phi_ref_per_contact: dict,
         eig_ref_per_contact: dict,
         phi_inv_ref_per_contact: dict,
-        system_matrix: sparse.spmatrix,
-        overlap_matrices: dict,
         k_loc: float,
         k_idx: int,
     ):
@@ -724,7 +719,7 @@ class QTBM:
         phi_ortho = xp.zeros_like(phi)
 
         # Accumulate the contribution from every overlap matrix
-        for r, overlap in overlap_matrices.items():
+        for r, overlap in self.device.overlap_matrices.items():
             phase = xp.exp(2j * np.pi * np.dot(k_loc, r))
             if overlap.dtype == xp.complex128:
                 temp = overlap @ phi
@@ -815,7 +810,7 @@ class QTBM:
                     )
 
             # Add the spill over from the overlap
-            for r, overlap in overlap_matrices.items():
+            for r, overlap in self.device.overlap_matrices.items():
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap)
                     * xp.exp(2j * np.pi * np.dot(k_loc, r))
@@ -825,22 +820,24 @@ class QTBM:
                     * xp.exp(-2j * np.pi * np.dot(k_loc, r))
                 ) @ phi_cont
             # CHECK SPILL OVER ERROR (DEBUG)
-            error = contact.get_coupling_matrix(system_matrix) @ phi_cont
+            error = contact.get_coupling_matrix(self.system_matrix) @ phi_cont
             if self.real_system_matrix:
                 # For real system matrix, we need to convert phi to real before multiplying with the system matrix, and then convert back to complex
                 temp = phi.copy()
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.float64)
-                temp = system_matrix @ temp
+                temp = xp.asfortranarray(temp)
+                temp = self.system_matrix @ temp
+                temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.complex128)
                 error += temp[orbital_indices, :]
                 del temp
             else:
-                error += (system_matrix @ phi)[orbital_indices, :]
+                error += (self.system_matrix @ phi)[orbital_indices, :]
             if self.system_matrix_UP_view:
                 # Need to add the contribution from the lower view of the system matrix as well
                 error += (
-                    contact.get_coupling_matrix(system_matrix, transpose=True)
+                    contact.get_coupling_matrix(self.system_matrix, transpose=True)
                     @ phi_cont
                 )
                 if self.real_system_matrix:
@@ -848,17 +845,19 @@ class QTBM:
                     temp = phi.copy()
                     temp = xp.ascontiguousarray(temp)
                     temp = temp.view(xp.float64)
-                    temp = system_matrix.T @ temp
+                    temp = xp.asfortranarray(temp)
+                    temp = self.system_matrix.T @ temp
+                    temp = xp.ascontiguousarray(temp)
                     temp = temp.view(xp.complex128)
                     error += temp[orbital_indices, :]
                     del temp
                 else:
-                    xp.conjugate(system_matrix.data, out=system_matrix.data)
-                    error += (system_matrix.T @ phi)[orbital_indices, :]
-                    xp.conjugate(system_matrix.data, out=system_matrix.data)
+                    xp.conjugate(self.system_matrix.data, out=self.system_matrix.data)
+                    error += (self.system_matrix.T @ phi)[orbital_indices, :]
+                    xp.conjugate(self.system_matrix.data, out=self.system_matrix.data)
 
                 error -= (
-                    sparse.diags(system_matrix.diagonal(), format="csr")[
+                    sparse.diags(self.system_matrix.diagonal(), format="csr")[
                         orbital_indices, :
                     ]
                     @ phi
@@ -901,8 +900,6 @@ class QTBM:
         phi_inj_per_contact: dict,
         bloch_per_contact: dict,
         phi_ref_per_contact: dict,
-        system_matrix: sparse.spmatrix,
-        overlap_matrices: dict,
         k_loc: float,
         k_idx: int,
     ):
@@ -1011,8 +1008,6 @@ class QTBM:
             phi_ref_per_contact,
             eig_ref_per_contact,
             phi_inv_ref_per_contact,
-            system_matrix,
-            overlap_matrices,
             k_loc,
             k_idx,
         )
@@ -1086,39 +1081,6 @@ class QTBM:
         times = []
         comm.Barrier()
 
-        # Allocate indices to update the system matrix in-place
-        if self.config.qtbm.OBC_rank == "reduced":
-            (
-                system_matrix,
-                hamiltonian_update_indices,
-                overlap_update_indices,
-                _,
-                _,
-                _,
-            ) = allocate_system_matrix(
-                self.device.hamiltonians,
-                self.device.overlap_matrices,
-                [],
-                upper_view=self.system_matrix_UP_view,
-                real_system_matrix=self.real_system_matrix,
-            )  # Initialize the system matrix without boundary self energies
-        else:
-            (
-                system_matrix,
-                hamiltonian_update_indices,
-                overlap_update_indices,
-                sigma_obc_update_indices,
-                hamiltonian_update_indices_transpose,
-                overlap_update_indices_transpose,
-            ) = allocate_system_matrix(
-                self.device.hamiltonians,
-                self.device.overlap_matrices,
-                self.device.contacts,
-                upper_view=self.system_matrix_UP_view,
-                real_system_matrix=self.real_system_matrix,
-            )  # Initialize the system matrix
-
-        free_mempool()
         for k_idx in range(self.num_kpoints):
 
             if comm.rank == 0:
@@ -1264,9 +1226,10 @@ class QTBM:
 
                     injection_tot = xp.asfortranarray(injection_tot)
 
+                    # Variables needed for the correction in the reduced OBC method
                     if self.config.qtbm.OBC_rank == "reduced":
                         # Generate the device-sized pseudo-inverse
-                        phi_inv_tot = construct_sparse_vector_transpose(
+                        phi_inv_tot = construct_device_pseudo_inverse(
                             phi_inv_ref_per_contact,
                             reflection_segments,
                             self.device.contacts,
@@ -1274,6 +1237,7 @@ class QTBM:
                             reflection_count,
                             self.num_orbitals,
                         )
+                        # Generate the eigenvalue matrix
                         eig_tot = xp.concatenate(
                             [
                                 eig_ref_per_contact[contact][i]
@@ -1287,71 +1251,18 @@ class QTBM:
                         injection_tot = injection_tot.view(np.float64)
                         injection_tot = xp.asfortranarray(injection_tot)
 
-                    system_matrix.data[:] = 0
+                    self.system_matrix.data[:] = 0
 
                     synchronize_device()
-                    # Add the Hamiltonian and overlap contributions
-                    for r, h_r in self.device.hamiltonians.items():
-                        k_phase = np.exp(2j * np.pi * np.dot(k, r))
-                        if k_phase.imag == 0:
-                            k_phase = np.float64(k_phase.real)
-                        else:
-                            k_phase = np.complex128(k_phase)
-                        inplace.iadd(
-                            system_matrix.data,
-                            h_r.data,
-                            hamiltonian_update_indices[r],
-                            -k_phase,
-                            False,
-                        )
-                        if not self.system_matrix_UP_view:
-                            inplace.iadd(
-                                system_matrix.data,
-                                h_r.data,
-                                hamiltonian_update_indices_transpose[r],
-                                -k_phase.conj(),
-                                True,
-                            )
-
-                    for r, s_r in self.device.overlap_matrices.items():
-                        k_phase = np.exp(2j * np.pi * np.dot(k, r)) * energy
-                        if xp.__name__ == "cupy":
-                            k_phase = k_phase.get()
-                        if k_phase.imag == 0:
-                            k_phase = np.float64(k_phase.real)
-                        else:
-                            k_phase = np.complex128(k_phase)
-                        inplace.iadd(
-                            system_matrix.data,
-                            s_r.data,
-                            overlap_update_indices[r],
-                            k_phase,
-                            False,
-                        )
-                        if not self.system_matrix_UP_view:
-                            inplace.iadd(
-                                system_matrix.data,
-                                s_r.data,
-                                overlap_update_indices_transpose[r],
-                                k_phase.conj(),
-                                True,
-                            )
-
-                    if not self.system_matrix_UP_view:
-                        system_matrix.setdiag(system_matrix.diagonal() / 2)
+                    # Add the Hamiltonian and overlap to the system matrix
+                    self._add_matrix_to_system_matrix(k, -1, type="hamiltonian")
+                    self._add_matrix_to_system_matrix(k, energy, type="overlap")
 
                     if self.config.qtbm.OBC_rank != "reduced":
                         # Add the boundary self-energy contributions
-                        for contact, sigma_obc in sigma_obc_per_contact.items():
-                            for k_t, sigma_obc_k in sigma_obc.items():
-                                inplace.iadd_obc(
-                                    system_matrix.data,
-                                    sigma_obc_k[i, :, :],
-                                    sigma_obc_update_indices[contact],
-                                    k_t,
-                                    contact.transverse_repetition_grid,
-                                    -1,
-                                )
+                        self._add_sigma_obc_to_system_matrix(
+                            -1, sigma_obc_per_contact, i
+                        )
 
                     synchronize_device()
                     t_solve = time.perf_counter() - times.pop()
@@ -1368,9 +1279,9 @@ class QTBM:
                         if comm.rank == 0:
                             print("Dumping system matrix...", flush=True)
                         if xp.__name__ == "cupy":
-                            system_matrix_cpu = system_matrix.get()
+                            system_matrix_cpu = self.system_matrix.get()
                         else:
-                            system_matrix_cpu = system_matrix
+                            system_matrix_cpu = self.system_matrix
 
                         from scipy import sparse as sp_sparse
 
@@ -1386,7 +1297,7 @@ class QTBM:
                             t1 = time.perf_counter()
                             # Solve the system
                             phi = self.solver.solve(
-                                system_matrix,
+                                self.system_matrix,
                                 injection_tot,
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
@@ -1424,7 +1335,7 @@ class QTBM:
                         # Solve for the wavefunction
                         if injection_tot.size != 0:
                             phi = self.solver.solve(
-                                system_matrix,
+                                self.system_matrix,
                                 injection_tot,
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
@@ -1440,19 +1351,11 @@ class QTBM:
 
                     # Get the bare system matrix back, needed for
                     # transmission calculation
-
                     if self.config.qtbm.OBC_rank != "reduced":
-                        # Subtract the open boundary conditions
-                        for contact, sigma_obc in sigma_obc_per_contact.items():
-                            for k_t, sigma_obc_k in sigma_obc.items():
-                                inplace.iadd_obc(
-                                    system_matrix.data,
-                                    sigma_obc_k[i, :, :],
-                                    sigma_obc_update_indices[contact],
-                                    k_t,
-                                    contact.transverse_repetition_grid,
-                                    1,
-                                )
+                        # Add the boundary self-energy contributions
+                        self._add_sigma_obc_to_system_matrix(
+                            1, sigma_obc_per_contact, i
+                        )
 
                     if injection_tot.size != 0:
                         # Input
@@ -1468,8 +1371,6 @@ class QTBM:
                             phi_inj_per_contact,
                             bloch_per_contact,
                             phi_ref_per_contact,
-                            system_matrix,
-                            self.device.overlap_matrices,
                             k,
                             k_idx,
                         )

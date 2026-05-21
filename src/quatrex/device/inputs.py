@@ -15,72 +15,54 @@ from quatrex.core.config import QuatrexConfig
 from quatrex.grid.kpoints import monkhorst_pack
 
 
-def load_structure(
+def get_block_sizes(
     config: QuatrexConfig,
-) -> tuple[NDArray, NDArray]:
-    """Loads the block sizes and grid for the device.
+    orbital_coordinates: NDArray,
+) -> NDArray:
+    """Determines the block sizes for the device.
 
     Parameters
     ----------
     config : QuatrexConfig
         The Quatrex configuration.
+    orbital_coordinates : NDArray
+        The coordinates of the orbital centers.
 
     Returns
     -------
-    tuple[NDArray, NDArray]
-        The block sizes and grid.
+    NDArray
+        The block sizes for the device.
 
     """
-
-    structure_file = config.input_dir / "structure.xyz"
-    if not structure_file.exists():
-        raise FileNotFoundError(f"Structure file {structure_file} not found.")
-    lattice_vectors, atom_coordinates, atomic_species = distributed_read_xyz(
-        structure_file
-    )
-
-    orbitals_per_atom = [
-        config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
-    ]
-    atom_coordinates = xp.asarray(atom_coordinates)
-    grid = xp.repeat(atom_coordinates, orbitals_per_atom, axis=0)
 
     if config.device.construct_from_unit_cell:
         # The neighbor cell cutoff along the transport direction
         # determines the size of the transport cell.
-        transport_ind = "xyz".index(config.device.transport_direction)
-
-        block_sizes = np.array(
-            [config.device.neighbor_cell_cutoff[transport_ind] * grid.shape[0]]
-            * config.device.num_transport_cells
-        )
-
-        grid = create_coordinate_grid(
-            grid,
-            config.device.num_transport_cells
-            * config.device.neighbor_cell_cutoff[transport_ind],
-            transport_ind,
-            xp.asarray(lattice_vectors),
+        # which is implicit in the orbital coordinates.
+        block_sizes = np.full(
+            shape=config.device.num_transport_cells,
+            fill_value=orbital_coordinates.shape[0]
+            // config.device.num_transport_cells,
         )
 
     else:
         block_sizes = config.device.block_size
         if isinstance(block_sizes, int):
-            num_blocks, remainder = divmod(grid.shape[0], block_sizes)
+            num_blocks, remainder = divmod(orbital_coordinates.shape[0], block_sizes)
             if remainder != 0:
                 raise ValueError(
-                    f"Block size {block_sizes} does not evenly divide the number of orbitals {grid.shape[0]}."
+                    f"Block size {block_sizes} does not evenly divide the number of orbitals {orbital_coordinates.shape[0]}."
                 )
             block_sizes = [block_sizes] * num_blocks
 
         block_sizes = np.array(block_sizes)
 
-        if block_sizes.sum() != grid.shape[0]:
+        if block_sizes.sum() != orbital_coordinates.shape[0]:
             raise ValueError(
-                f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {grid.shape[0]}."
+                f"Sum of block sizes {block_sizes.sum()} does not match the number of orbitals {orbital_coordinates.shape[0]}."
             )
 
-    return block_sizes, grid
+    return block_sizes
 
 
 def create_coordinate_grid(

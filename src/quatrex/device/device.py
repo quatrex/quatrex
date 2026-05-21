@@ -7,6 +7,7 @@ import numpy as np
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
@@ -44,7 +45,8 @@ class Device:
     atom_coordinates : NDArray
         Array of atomic coordinates.
     atomic_species : NDArray
-        Array of atom symbols for each atom.
+        Array of atom symbols for each atom. NOTE: This array is always on the
+        host since CuPy does not support string arrays.
     orbital_offsets : NDArray
         Array of cumulative orbital counts, used to map from atoms to
         orbitals. orbital_offsets[i] gives the starting orbital index
@@ -72,6 +74,9 @@ class Device:
 
         self._init_hamiltonian()
         __, self.atom_coordinates, self.atomic_species = self.load_structure(config)
+        # TODO QTBM Device/Contact currently assumes that these quantities are on the host
+        self.atom_coordinates = get_host(self.atom_coordinates)
+
         self._init_orbitals()
         self.potential = self.load_potential(
             self.config.input_dir,
@@ -108,7 +113,8 @@ class Device:
         atom_coordinates : NDArray
             Array of atomic coordinates.
         atomic_species : NDArray
-            Array of atomic species.
+            Array of atom symbols for each atom. NOTE: This array is always on the
+            host since CuPy does not support string arrays.
         num_orbitals_per_atom : dict[str, int]
             Dictionary mapping atomic species to the number of orbitals per
             atom.
@@ -122,11 +128,10 @@ class Device:
 
 
         """
-        orbitals_per_atom = xp.array(
-            [num_orbitals_per_atom.get(species, 1) for species in atomic_species],
-            dtype=np.int32,
-        )
-        num_orbitals = xp.sum(orbitals_per_atom)
+        orbitals_per_atom = [
+            num_orbitals_per_atom.get(species, 1) for species in atomic_species
+        ]
+        num_orbitals = np.sum(np.array(orbitals_per_atom))
 
         try:
             potential = distributed_load(input_dir / "potential.npy")
@@ -198,7 +203,7 @@ class Device:
                 xp.asarray(lattice_vectors),
             )
 
-            atomic_species = xp.concatenate(
+            atomic_species = np.concatenate(
                 [atomic_species]
                 * config.device.neighbor_cell_cutoff[transport_ind]
                 * config.device.num_transport_cells
@@ -320,7 +325,7 @@ class Device:
 
         for r, s_r in self.overlap_matrices.items():
             self.hamiltonians[r] += (
-                s_r.multiply(potential[:, np.newaxis]) + s_r.multiply(potential)
+                s_r.multiply(potential[:, xp.newaxis]) + s_r.multiply(potential)
             ) / 2
 
     def _add_contacts(self):

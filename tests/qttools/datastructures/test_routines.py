@@ -5,14 +5,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
-from qttools.comm.comm import GPU_AWARE_MPI
-from qttools.datastructures import (
-    DSDBSparse,
-    bd_matmul_distr,
-    bd_sandwich,
-    bd_sandwich_distr,
-    btd_sandwich,
-)
+from qttools.datastructures import DSDBSparse, bd_matmul, bd_sandwich
 from qttools.utils.mpi_utils import get_section_sizes
 
 
@@ -43,86 +36,10 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     return sparse.coo_matrix(arr)
 
 
-class TestNotDistr:
+class TestNonDistr:
     """Tests the non-distributed matrix multiplication and sandwich operations."""
 
-    @classmethod
-    def setup_class(cls):
-        """setup any state specific to the execution of the given module."""
-        if xp.__name__ == "cupy":
-            _default_config = {
-                "all_to_all": "host_mpi",
-                "all_gather": "host_mpi",
-                "all_reduce": "host_mpi",
-                "bcast": "host_mpi",
-            }
-        elif xp.__name__ == "numpy":
-            _default_config = {
-                "all_to_all": "device_mpi",
-                "all_gather": "device_mpi",
-                "all_reduce": "device_mpi",
-                "bcast": "device_mpi",
-            }
-
-        # Configure the comm singleton.
-        comm.configure(
-            block_comm_size=1,
-            block_comm_config=_default_config,
-            stack_comm_config=_default_config,
-            override=True,
-        )
-
-    def test_btd_sandwich(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-
-        # Initalize the output matrix with the correct sparsity pattern.
-        out = dsdbsparse_type.from_sparray(
-            coo @ coo @ coo, block_sizes, global_stack_shape
-        )
-
-        btd_sandwich(dsdbsparse, dsdbsparse, out)
-
-        assert xp.allclose(dense @ dense @ dense, out.to_dense())
-
-    def test_bd_sandwich(
-        self,
-        dsdbsparse_type: DSDBSparse,
-        block_sizes: NDArray,
-        global_stack_shape: tuple,
-    ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
-        coo = _create_btd_coo(block_sizes)
-        dsdbsparse = dsdbsparse_type.from_sparray(coo, block_sizes, global_stack_shape)
-        dense = dsdbsparse.to_dense()
-
-        # Initalize the output matrix with the correct sparsity pattern.
-        out = dsdbsparse_type.from_sparray(
-            coo @ coo @ coo.T, block_sizes, global_stack_shape
-        )
-
-        bd_sandwich(dsdbsparse, dsdbsparse, out)
-
-        assert xp.allclose(
-            dense @ dense @ dense.conj().swapaxes(-2, -1), out.to_dense()
-        )
-
-
-def _get_last_2d(x):
-    m, n = x.shape[-2:]
-    return x.flat[: m * n].reshape(m, n)
-
-
-@pytest.mark.mpi(min_size=3)
-class TestDistr:
-    """Tests the distributed matrix multiplication and sandwich operations."""
+    block_comm_size = 1
 
     @classmethod
     def setup_class(cls):
@@ -144,29 +61,19 @@ class TestDistr:
 
         # Configure the comm singleton.
         comm.configure(
-            block_comm_size=3,
+            block_comm_size=cls.block_comm_size,
             block_comm_config=_default_config,
             stack_comm_config=_default_config,
             override=True,
         )
 
-    def test_bd_matmul_distr(
+    def test_bd_matmul(
         self,
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
-
-        if (
-            xp.__name__ == "cupy"
-            and not GPU_AWARE_MPI
-            and not hasattr(comm.block, "_nccl_comm")
-            and comm.block.size > 1
-        ):
-            pytest.skip(
-                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
-            )
 
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
@@ -186,7 +93,7 @@ class TestDistr:
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
-        bd_matmul_distr(
+        bd_matmul(
             dsdbsparse, dsdbsparse, out, start_block=start_block, end_block=end_block
         )
 
@@ -195,23 +102,13 @@ class TestDistr:
 
         assert xp.allclose(val, ref)
 
-    def test_bd_sandwich_distr(
+    def test_bd_sandwich(
         self,
         dsdbsparse_type_dist: DSDBSparse,
         block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
         """Tests the in-place addition of a DSDBSparse matrix."""
-
-        if (
-            xp.__name__ == "cupy"
-            and not GPU_AWARE_MPI
-            and not hasattr(comm.block, "_nccl_comm")
-            and comm.block.size > 1
-        ):
-            pytest.skip(
-                "Skipping test because GPU-aware MPI is not available and the block communicator does not have an NCCL communicator."
-            )
 
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
@@ -231,12 +128,23 @@ class TestDistr:
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
-        bd_sandwich_distr(
+        bd_sandwich(
             dsdbsparse, dsdbsparse, out, start_block=start_block, end_block=end_block
         )
 
         assert xp.allclose(dense @ dense @ dense, out.to_dense())
 
 
-if __name__ == "__main__":
-    pytest.main(["--only-mpi", __file__])
+@pytest.mark.mpi(min_size=3)
+class TestDistr(TestNonDistr):
+    """Tests all tests of TestNotDistr in a distributed setting."""
+
+    pass
+
+
+@pytest.mark.mpi(min_size=3)
+class TestDomainDistr(TestNonDistr):
+    """Tests all tests of TestNotDistr in a distributed setting with domain decomposition."""
+
+    block_comm_size = 3
+    pass

@@ -5,7 +5,7 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
-from qttools.datastructures.routines import bd_matmul_distr, bd_sandwich_distr
+from qttools.datastructures.routines import bd_matmul, bd_sandwich
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import (
@@ -538,7 +538,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         start_block = sum(local_blocks[: comm.block.rank])
         end_block = start_block + local_blocks[comm.block.rank]
 
-        bd_matmul_distr(
+        bd_matmul(
             self.coulomb_matrix,
             self.p_retarded,
             out=self.system_matrix,
@@ -768,7 +768,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
             start_block = sum(local_blocks[: comm.block.rank])
             end_block = start_block + local_blocks[comm.block.rank]
-            bd_sandwich_distr(
+            bd_sandwich(
                 a=self.coulomb_matrix,
                 b=p_lesser,
                 out=self.l_lesser,
@@ -777,7 +777,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             )
             self._apply_spillover_sandwich(p_lesser, self.l_lesser)
 
-            bd_sandwich_distr(
+            bd_sandwich(
                 a=self.coulomb_matrix,
                 b=p_greater,
                 out=self.l_greater,

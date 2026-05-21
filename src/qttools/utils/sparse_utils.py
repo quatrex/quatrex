@@ -4,7 +4,7 @@ import functools
 
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
+from qttools.datastructures.routines import BlockMatrix, bd_matmul
 
 
 def product_sparsity_pattern(
@@ -119,7 +119,7 @@ def product_sparsity_pattern_dsdbsparse(
         if n == len(matrices) - 2:
             tmp_num_diag = out_num_diag
 
-        c_ = bd_matmul_distr(
+        c_ = bd_matmul(
             a=a_,
             b=b,
             out=None,

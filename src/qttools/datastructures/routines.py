@@ -5,18 +5,7 @@ from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
 
 
-def correct_out_range_index(i: int, k: int, num_blocks: int):
-    # find the index of block in the matrix being repeated into open-end
-    # based on the difference of row and col, ie diagonal
-    diag = k - i
-    k_1 = min(max(k, 0), num_blocks - 1)
-    i_1 = k_1 - diag  # keep the same diag
-    i_2 = min(max(i_1, 0), num_blocks - 1)
-    k_2 = i_2 + diag  # keep the same diag
-    return (i_2, k_2)
-
-
-def bd_sandwich(
+def _bd_sandwich(
     a: DSDBSparse,
     b: DSDBSparse,
     out: DSDBSparse,
@@ -25,6 +14,9 @@ def bd_sandwich(
 ):
     """Compute the sandwich product `a @ b @ a` BD DSDBSparse matrices.
 
+    NOTE: This method is only for non-domain-distributed matrices. For
+    distributed matrices, please use `bd_sandwich` instead.
+
     Parameters
     ----------
     a : DSDBSparse
@@ -32,8 +24,8 @@ def bd_sandwich(
     b : DSDBSparse
         The second block tridiagonal matrix.
     out : DSDBSparse
-        The output matrix. This matrix must have the same block size as
-        `a`, and `b`. It will compute up to `out_num_diag` diagonals.
+        The output matrix. This matrix must have the same block size as `a`, and
+        `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
         The number of diagonals in input matrices
     out_num_diag: int
@@ -48,9 +40,13 @@ def bd_sandwich(
         raise ValueError(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
-    num_blocks = len(a.block_sizes)
+    if comm.block.size > 1:
+        raise ValueError(
+            "The _bd_sandwich method is not supported for distributed matrices."
+            "Please use bd_sandwich instead."
+        )
 
-    a_is_hermitian = a.symmetry and a.symmetry_op(1 + 1j) != (1 - 1j)
+    num_blocks = len(a.block_sizes)
 
     a_ = a.stack[...]
     b_ = b.stack[...]
@@ -98,81 +94,10 @@ def bd_sandwich(
 
                 if ab_ik[k] is None:
                     continue
-                if a_is_hermitian:
-                    partsum += ab_ik[k] @ a_.blocks[k, j]
-                else:
-                    partsum += ab_ik[k] @ a_.blocks[j, k].swapaxes(-1, -2).conj()
+
+                partsum += ab_ik[k] @ a_.blocks[k, j]
 
             out_.blocks[i, j] = partsum
-
-
-def btd_sandwich(
-    a: DSDBSparse,
-    b: DSDBSparse,
-    out: DSDBSparse,
-    spillover_correction: bool = False,
-):
-    """Compute the sandwich product `a @ b @ a` BTD DSDBSparse matrices.
-
-    Parameters
-    ----------
-    a : DSDBSparse
-        The first block tridiagonal matrix.
-    b : DSDBSparse
-        The second block tridiagonal matrix.
-    out : DSDBSparse
-        The output matrix. This matrix must have the same block size as
-        `a`, and `b`. It will compute up to heptadiagonal.
-    spillover_correction : bool, optional
-        Whether to apply spillover corrections to the output matrix.
-        This is necessary when the matrices represent open-ended
-        systems. The default is False.
-
-    """
-    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
-        raise ValueError(
-            "Matrix multiplication is not supported for matrices in nnz distribution state."
-        )
-    num_blocks = len(a.block_sizes)
-
-    # Make sure the output matrix is initialized to zero.
-    out.data = 0
-
-    # NOTE: Using the stack attribute to force caching of the data view.
-    out_ = out.stack[...]
-    a_ = a.stack[...]
-    b_ = b.stack[...]
-
-    for i in range(num_blocks):
-        for j in range(max(0, i - 3), min(num_blocks, i + 4)):
-            out_ij = out_.blocks[i, j]
-            for k in range(max(0, i - 2), min(num_blocks, i + 3)):
-                a_kj = a_.blocks[k, j]
-                for m in range(max(0, i - 1), min(num_blocks, i + 2)):
-                    out_ij += a_.blocks[i, m] @ b_.blocks[m, k] @ a_kj
-
-            out_.blocks[i, j] = out_ij
-
-    if not spillover_correction:
-        return
-
-    # Corrections accounting for the fact that the matrices should have
-    # open ends.
-    out_.blocks[0, 0] += (
-        a_.blocks[1, 0] @ b_.blocks[0, 1] @ a_.blocks[0, 0]
-        + a_.blocks[0, 0] @ b_.blocks[1, 0] @ a_.blocks[0, 1]
-        + a_.blocks[1, 0] @ b_.blocks[0, 0] @ a_.blocks[0, 1]
-    )
-    out_.blocks[0, 1] += a_.blocks[1, 0] @ b_.blocks[0, 1] @ a_.blocks[0, 1]
-    out_.blocks[1, 0] += a_.blocks[1, 0] @ b_.blocks[1, 0] @ a_.blocks[0, 1]
-
-    out_.blocks[-1, -1] += (
-        a_.blocks[-2, -1] @ b_.blocks[-1, -2] @ a_.blocks[-1, -1]
-        + a_.blocks[-1, -1] @ b_.blocks[-2, -1] @ a_.blocks[-1, -2]
-        + a_.blocks[-2, -1] @ b_.blocks[-1, -1] @ a_.blocks[-1, -2]
-    )
-    out_.blocks[-1, -2] += a_.blocks[-2, -1] @ b_.blocks[-1, -2] @ a_.blocks[-1, -2]
-    out_.blocks[-2, -1] += a_.blocks[-2, -1] @ b_.blocks[-2, -1] @ a_.blocks[-1, -2]
 
 
 class BlockMatrix:
@@ -365,7 +290,49 @@ def arrow_partition_halo_comm(
         _send_to_next()
 
 
-def bd_matmul_distr(
+def _get_keys(
+    start_block: int,
+    end_block: int,
+    num_blocks: int,
+    num_diag: int,
+) -> set[tuple[int, int]]:
+    """Helper function to get the set of block keys.
+
+    Parameters
+    ----------
+    start_block : int
+        The index of the first block to compute.
+    end_block : int
+        The index of the last block to compute.
+    num_blocks : int
+        The total number of blocks in the matrix.
+    num_diag : int
+        The number of diagonals to compute.
+
+    Returns
+    -------
+    set[tuple[int, int]]
+        The set of block keys to compute.
+
+    """
+    local_keys = set()
+    for i in range(start_block, end_block):
+        for j in range(
+            max(start_block, i - num_diag // 2),
+            min(num_blocks, i + num_diag // 2 + 1),
+        ):
+            local_keys.add((i, j))
+    for j in range(start_block, end_block):
+        for i in range(
+            max(end_block, j - num_diag // 2),
+            min(num_blocks, j + num_diag // 2 + 1),
+        ):
+            local_keys.add((i, j))
+
+    return local_keys
+
+
+def bd_matmul(
     a: DSDBSparse | BlockMatrix,
     b: DSDBSparse | BlockMatrix,
     out: DSDBSparse | None,
@@ -383,16 +350,16 @@ def bd_matmul_distr(
         The first block diagonal matrix.
     b : DSDBSparse
         The second block diagonal matrix.
-    out : DSDBSparse
+    out : DSDBSparse | None
         The output matrix. This matrix must have the same block size as `a` and
         `b`. It will compute up to `out_num_diag` diagonals.
-    in_num_diag: int
+    in_num_diag: int, optional
         The number of diagonals in input matrices
-    out_num_diag: int
+    out_num_diag: int, optional
         The number of diagonals in output matrices
-    start_block: int
+    start_block: int, optional
         The index of the first block to compute.
-    end_block: int
+    end_block: int | None, optional
         The index of the last block to compute. If None, it will compute up to
         the last block.
 
@@ -419,31 +386,19 @@ def bd_matmul_distr(
         )
 
     if isinstance(a, BlockMatrix):
-        a_ = a
         num_blocks = len(a.dsdbsparse.block_sizes)
         end_block = end_block or num_blocks
+        a_ = a
     else:
         num_blocks = len(a.block_sizes)
         end_block = end_block or num_blocks
-        local_keys = set()
-        for i in range(start_block, end_block):
-            for j in range(start_block, min(num_blocks, i + a_num_diag // 2 + 1)):
-                local_keys.add((i, j))
-        for j in range(start_block, end_block):
-            for i in range(end_block, min(num_blocks, j + a_num_diag // 2 + 1)):
-                local_keys.add((i, j))
+        local_keys = _get_keys(start_block, end_block, num_blocks, a_num_diag)
         a_ = BlockMatrix(a, local_keys, (start_block, start_block))
 
     if isinstance(b, BlockMatrix):
         b_ = b
     else:
-        local_keys = set()
-        for i in range(start_block, end_block):
-            for j in range(start_block, min(num_blocks, i + b_num_diag // 2 + 1)):
-                local_keys.add((i, j))
-        for j in range(start_block, end_block):
-            for i in range(end_block, min(num_blocks, j + b_num_diag // 2 + 1)):
-                local_keys.add((i, j))
+        local_keys = _get_keys(start_block, end_block, num_blocks, b_num_diag)
         b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
     # call blocking backend
@@ -459,13 +414,7 @@ def bd_matmul_distr(
     # Make sure the output matrix is initialized to zero.
     if out is not None:
         out.data[:] = 0
-        local_keys = set()
-        for i in range(start_block, end_block):
-            for j in range(start_block, min(num_blocks, i + out_num_diag // 2 + 1)):
-                local_keys.add((i, j))
-        for j in range(start_block, end_block):
-            for i in range(end_block, min(num_blocks, j + out_num_diag // 2 + 1)):
-                local_keys.add((i, j))
+        local_keys = _get_keys(start_block, end_block, num_blocks, out_num_diag)
         out_ = BlockMatrix(out, local_keys, (start_block, start_block))
     else:
         out_ = BlockMatrix(b_.dsdbsparse, set(), (start_block, start_block))
@@ -482,7 +431,7 @@ def bd_matmul_distr(
                 max(i - out_num_diag // 2, bcol_start),
                 min(i + out_num_diag // 2 + 1, bcol_end),
             ):
-                partsum = None
+                partsum = 0
 
                 for k in range(i - a_num_diag // 2, i + a_num_diag // 2 + 1):
                     if abs(j - k) > b_num_diag // 2:
@@ -491,23 +440,14 @@ def bd_matmul_distr(
                     if out_range:
                         continue
                     else:
-                        if out_range:
-                            i_a, k_a = correct_out_range_index(i, k, num_blocks)
-                            k_b, j_b = correct_out_range_index(k, j, num_blocks)
-                        else:
-                            i_a, k_a = i, k
-                            k_b, j_b = k, j
-                        if partsum is None:
-                            partsum = a_[i_a, k_a] @ b_[k_b, j_b]
-                        else:
-                            partsum += a_[i_a, k_a] @ b_[k_b, j_b]
+                        partsum += a_[i, k] @ b_[k, j]
 
                 out_[i, j] = partsum
 
     return out_
 
 
-def bd_sandwich_distr(
+def bd_sandwich(
     a: DSDBSparse,
     b: DSDBSparse,
     out: DSDBSparse,
@@ -527,10 +467,15 @@ def bd_sandwich_distr(
     out : DSDBSparse
         The output matrix. This matrix must have the same block size as
         `a` and `b`. It will compute up to `out_num_diag` diagonals.
-    in_num_diag: int
+    in_num_diag: int, optional
         The number of diagonals in input matrices
-    out_num_diag: int
+    out_num_diag: int, optional
         The number of diagonals in output matrices
+    start_block: int, optional
+        The index of the first block to compute.
+    end_block: int | None, optional
+        The index of the last block to compute. If None, it will compute up to
+        the last block.
 
     """
     if (
@@ -543,27 +488,18 @@ def bd_sandwich_distr(
         )
 
     # Dispatch to more optimized implementations in the non-block distributed case
+    if comm.block.size == 1:
+        _bd_sandwich(a, b, out, in_num_diag, out_num_diag)
+        return
 
     num_blocks = len(a.block_sizes)
     end_block = end_block or num_blocks
-    local_keys = set()
-    for i in range(start_block, end_block):
-        for j in range(
-            max(start_block, i - in_num_diag // 2),
-            min(num_blocks, i + in_num_diag // 2 + 1),
-        ):
-            local_keys.add((i, j))
-    for j in range(start_block, end_block):
-        for i in range(
-            max(end_block, j - in_num_diag // 2),
-            min(num_blocks, j + in_num_diag // 2 + 1),
-        ):
-            local_keys.add((i, j))
+    local_keys = _get_keys(start_block, end_block, num_blocks, in_num_diag)
     a_ = BlockMatrix(a, local_keys, (start_block, start_block))
     b_ = BlockMatrix(b, local_keys, (start_block, start_block))
 
     tmp_num_diag = 2 * in_num_diag - 1
-    tmp = bd_matmul_distr(
+    tmp = bd_matmul(
         a_,
         b_,
         None,
@@ -573,7 +509,7 @@ def bd_sandwich_distr(
         start_block,
         end_block,
     )
-    bd_matmul_distr(
+    bd_matmul(
         tmp,
         a_,
         out,

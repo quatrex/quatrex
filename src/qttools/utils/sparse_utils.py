@@ -128,7 +128,6 @@ def product_sparsity_pattern_dsdbsparse(
             out_num_diag=tmp_num_diag,
             start_block=start_block,
             end_block=end_block,
-            spillover_correction=False,
         )
 
         if spillover:

@@ -544,7 +544,6 @@ class CoulombScreeningSolver(SubsystemSolver):
             out=self.system_matrix,
             start_block=start_block,
             end_block=end_block,
-            spillover_correction=False,
         )
         # apply spillover correction to the system matrix.
         # This is necessary because infinite leads are assumed.
@@ -770,22 +769,20 @@ class CoulombScreeningSolver(SubsystemSolver):
             start_block = sum(local_blocks[: comm.block.rank])
             end_block = start_block + local_blocks[comm.block.rank]
             bd_sandwich_distr(
-                self.coulomb_matrix,
-                p_lesser,
+                a=self.coulomb_matrix,
+                b=p_lesser,
                 out=self.l_lesser,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
             )
             self._apply_spillover_sandwich(p_lesser, self.l_lesser)
 
             bd_sandwich_distr(
-                self.coulomb_matrix,
-                p_greater,
+                a=self.coulomb_matrix,
+                b=p_greater,
                 out=self.l_greater,
                 start_block=start_block,
                 end_block=end_block,
-                spillover_correction=False,
             )
             self._apply_spillover_sandwich(p_greater, self.l_greater)
 

@@ -19,14 +19,11 @@ def correct_out_range_index(i: int, k: int, num_blocks: int):
 def bd_sandwich(
     a: DSDBSparse,
     b: DSDBSparse,
-    out: DSDBSparse | None,
+    out: DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
-    spillover_correction: bool = False,
-    accumulator_dtype=None,
-    accumulate: bool = False,
 ):
-    """Compute the sandwich product `a @ b @ a.dagger()` BTD DSDBSparse matrices.
+    """Compute the sandwich product `a @ b @ a` BD DSDBSparse matrices.
 
     Parameters
     ----------
@@ -41,17 +38,13 @@ def bd_sandwich(
         The number of diagonals in input matrices
     out_num_diag: int
         The number of diagonals in output matrices
-    spillover_correction : bool, optional
-        Whether to apply spillover corrections to the output matrix.
-        This is necessary when the matrices represent open-ended
-        systems. The default is False.
-    accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
-    accumulate : bool, optional
-        Whether to add the result into the output matrix. The default is False.
 
     """
-    if a.distribution_state == "nnz" or b.distribution_state == "nnz":
+    if (
+        a.distribution_state == "nnz"
+        or b.distribution_state == "nnz"
+        or out.distribution_state == "nnz"
+    ):
         raise ValueError(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
@@ -59,22 +52,9 @@ def bd_sandwich(
 
     a_is_hermitian = a.symmetry and a.symmetry_op(1 + 1j) != (1 - 1j)
 
-    if accumulator_dtype is None:
-        accumulator_dtype = a.dtype
-
-    # Make sure the output matrix is initialized to zero.
-    if out is not None:
-        if not accumulate:
-            out.data = 0
-        out_block = False
-        # NOTE: Using the stack attribute to force caching of the data view.
-        out_ = out.stack[...]
-    else:
-        out_block = True
-        out = {}
-
     a_ = a.stack[...]
     b_ = b.stack[...]
+    out_ = out.stack[...]
 
     for i in range(num_blocks):
 
@@ -83,33 +63,23 @@ def bd_sandwich(
         for m in range(i - in_num_diag // 2, i + in_num_diag // 2 + 1):
 
             out_range = (m < 0) or (m >= num_blocks)
-            if out_range and (not spillover_correction):
+            if out_range:
                 continue
             else:
-                if out_range:
-                    a_i, a_m = correct_out_range_index(i, m, num_blocks)
-                else:
-                    a_i, a_m = i, m
+                a_i, a_m = i, m
 
             a_im = a_.blocks[a_i, a_m]
 
             for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
-                if out_range and (not spillover_correction):
+                if out_range:
                     continue
                 else:
-                    if out_range:
-                        b_m, b_k = correct_out_range_index(m, k, num_blocks)
-                    else:
-                        b_m, b_k = m, k
+                    b_m, b_k = m, k
                 if ab_ik[k] is None:
-                    ab_ik[k] = (a_im @ b_.blocks[b_m, b_k]).astype(
-                        accumulator_dtype
-                    )  # cast data type
+                    ab_ik[k] = a_im @ b_.blocks[b_m, b_k]
                 else:
-                    ab_ik[k] += (a_im @ b_.blocks[b_m, b_k]).astype(
-                        accumulator_dtype
-                    )  # cast data type
+                    ab_ik[k] += a_im @ b_.blocks[b_m, b_k]
 
         if out.symmetry:
             range_j_min = i
@@ -118,47 +88,22 @@ def bd_sandwich(
 
         for j in range(range_j_min, min(i + out_num_diag // 2 + 1, num_blocks)):
 
-            if out_block:
-                partsum = xp.zeros(
-                    (a.block_sizes[i], a.block_sizes[j]), dtype=accumulator_dtype
-                )
-            else:
-                partsum = (out_.blocks[i, j]).astype(
-                    accumulator_dtype
-                )  # cast data type
+            partsum = 0
 
             for k in range(j - in_num_diag // 2, j + in_num_diag // 2 + 1):
                 out_range = (k < 0) or (k >= num_blocks)
-                if out_range and (not spillover_correction):
+
+                if out_range:
                     continue
-                else:
-                    if out_range:
-                        a_k, a_j = correct_out_range_index(k, j, num_blocks)
-                    else:
-                        a_k, a_j = k, j
+
                 if ab_ik[k] is None:
                     continue
                 if a_is_hermitian:
-                    partsum += (ab_ik[k] @ a_.blocks[a_k, a_j]).astype(
-                        accumulator_dtype
-                    )  # cast data type
+                    partsum += ab_ik[k] @ a_.blocks[k, j]
                 else:
-                    partsum += (
-                        ab_ik[k] @ a_.blocks[a_j, a_k].swapaxes(-1, -2).conj()
-                    ).astype(
-                        accumulator_dtype
-                    )  # cast data type
+                    partsum += ab_ik[k] @ a_.blocks[j, k].swapaxes(-1, -2).conj()
 
-            if out_block:
-                out[i, j] = partsum
-            else:
-                if accumulate:
-                    out_.blocks[i, j] += partsum
-                else:
-                    out_.blocks[i, j] = partsum
-
-    if out_block:
-        return out
+            out_.blocks[i, j] = partsum
 
 
 def btd_sandwich(
@@ -428,10 +373,8 @@ def bd_matmul_distr(
     b_num_diag: int = 3,
     out_num_diag: int = 5,
     start_block: int = 0,
-    end_block: int = None,
-    spillover_correction: bool = False,
-    accumulator_dtype=None,
-):
+    end_block: int | None = None,
+) -> BlockMatrix:
     """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
 
     Parameters
@@ -441,18 +384,24 @@ def bd_matmul_distr(
     b : DSDBSparse
         The second block diagonal matrix.
     out : DSDBSparse
-        The output matrix. This matrix must have the same block size as
-        `a` and `b`. It will compute up to `out_num_diag` diagonals.
+        The output matrix. This matrix must have the same block size as `a` and
+        `b`. It will compute up to `out_num_diag` diagonals.
     in_num_diag: int
         The number of diagonals in input matrices
     out_num_diag: int
         The number of diagonals in output matrices
-    spillover_correction : bool, optional
-        Whether to apply spillover corrections to the output matrix.
-        This is necessary when the matrices represent open-ended
-        systems. The default is False.
-    accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
+    start_block: int
+        The index of the first block to compute.
+    end_block: int
+        The index of the last block to compute. If None, it will compute up to
+        the last block.
+
+    Returns
+    -------
+    BlockMatrix
+        The resulting block matrix of the multiplication. Even if the output is
+        not None, the method returns the corresponding BlockMatrix for
+        convenience.
 
     """
     if isinstance(a, DSDBSparse) and a.distribution_state == "nnz":
@@ -473,11 +422,9 @@ def bd_matmul_distr(
         a_ = a
         num_blocks = len(a.dsdbsparse.block_sizes)
         end_block = end_block or num_blocks
-        accumulator_dtype = accumulator_dtype or a.dsdbsparse.dtype
     else:
         num_blocks = len(a.block_sizes)
         end_block = end_block or num_blocks
-        accumulator_dtype = accumulator_dtype or a.dtype
         local_keys = set()
         for i in range(start_block, end_block):
             for j in range(start_block, min(num_blocks, i + a_num_diag // 2 + 1)):
@@ -541,7 +488,7 @@ def bd_matmul_distr(
                     if abs(j - k) > b_num_diag // 2:
                         continue
                     out_range = (k < 0) or (k >= num_blocks)
-                    if out_range and (not spillover_correction):
+                    if out_range:
                         continue
                     else:
                         if out_range:
@@ -551,9 +498,7 @@ def bd_matmul_distr(
                             i_a, k_a = i, k
                             k_b, j_b = k, j
                         if partsum is None:
-                            partsum = (a_[i_a, k_a] @ b_[k_b, j_b]).astype(
-                                accumulator_dtype
-                            )
+                            partsum = a_[i_a, k_a] @ b_[k_b, j_b]
                         else:
                             partsum += a_[i_a, k_a] @ b_[k_b, j_b]
 
@@ -565,15 +510,13 @@ def bd_matmul_distr(
 def bd_sandwich_distr(
     a: DSDBSparse,
     b: DSDBSparse,
-    out: DSDBSparse | None,
+    out: DSDBSparse,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     start_block: int = 0,
     end_block: int = None,
-    spillover_correction: bool = False,
-    accumulator_dtype=None,
-):
-    """Matrix multiplication of two `a @ b` BD DSDBSparse matrices.
+) -> None:
+    """Matrix multiplication of three `a @ b @ a` BD DSDBSparse matrices.
 
     Parameters
     ----------
@@ -588,24 +531,13 @@ def bd_sandwich_distr(
         The number of diagonals in input matrices
     out_num_diag: int
         The number of diagonals in output matrices
-    spillover_correction : bool, optional
-        Whether to apply spillover corrections to the output matrix.
-        This is necessary when the matrices represent open-ended
-        systems. The default is False.
-    accumulator_dtype : data type, optional
-        The data type of the temporary accumulator matrices. The default is complex128.
 
     """
-    if a.distribution_state == "nnz":
-        raise ValueError(
-            "Matrix multiplication is not supported for matrices in nnz distribution state."
-        )
-
-    if b.distribution_state == "nnz":
-        raise ValueError(
-            "Matrix multiplication is not supported for matrices in nnz distribution state."
-        )
-    if isinstance(out, DSDBSparse) and out.distribution_state == "nnz":
+    if (
+        a.distribution_state == "nnz"
+        or b.distribution_state == "nnz"
+        or out.distribution_state == "nnz"
+    ):
         raise ValueError(
             "Matrix multiplication is not supported for matrices in nnz distribution state."
         )
@@ -614,7 +546,6 @@ def bd_sandwich_distr(
 
     num_blocks = len(a.block_sizes)
     end_block = end_block or num_blocks
-    accumulator_dtype = accumulator_dtype or a.dtype
     local_keys = set()
     for i in range(start_block, end_block):
         for j in range(
@@ -641,10 +572,8 @@ def bd_sandwich_distr(
         tmp_num_diag,
         start_block,
         end_block,
-        False,
-        accumulator_dtype,
     )
-    out_ = bd_matmul_distr(
+    bd_matmul_distr(
         tmp,
         a_,
         out,
@@ -653,37 +582,4 @@ def bd_sandwich_distr(
         out_num_diag,
         start_block,
         end_block,
-        False,
-        accumulator_dtype,
     )
-
-    if spillover_correction:
-        if in_num_diag != 3:
-            raise NotImplementedError(
-                "Spillover correction is only implemented for in_num_diag=3."
-            )
-
-        # NOTE: This is only correct for BTD (tridiagonal) matrices with open ends.
-        if start_block == 0:
-            out_[0, 0] += (
-                a_[1, 0] @ b_[0, 1] @ a_[0, 0]
-                + a_[0, 0] @ b_[1, 0] @ a_[0, 1]
-                + a_[1, 0] @ b_[0, 0] @ a_[0, 1]
-            )
-            out_[0, 1] += a_[1, 0] @ b_[0, 1] @ a_[0, 1]
-            if not out_.dsdbsparse.symmetry:
-                out_[1, 0] += a_[1, 0] @ b_[1, 0] @ a_[0, 1]
-
-        if end_block == a.num_blocks:
-            m1 = a.num_blocks - 1
-            m2 = a.num_blocks - 2
-            out_[m1, m1] += (
-                a_[m2, m1] @ b_[m1, m2] @ a_[m1, m1]
-                + a_[m1, m1] @ b_[m2, m1] @ a_[m1, m2]
-                + a_[m2, m1] @ b_[m1, m1] @ a_[m1, m2]
-            )
-            out_[m1, m2] += a_[m2, m1] @ b_[m1, m2] @ a_[m1, m2]
-            if not out_.dsdbsparse.symmetry:
-                out_[m2, m1] += a_[m2, m1] @ b_[m2, m1] @ a_[m1, m2]
-
-    return out_

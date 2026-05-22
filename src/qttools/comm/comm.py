@@ -651,7 +651,7 @@ class _SubCommunicator:
         self._group_start_called = True
 
         if backend == "nccl":
-            self._nccl_comm.groupStart()
+            nccl.groupStart()
 
     def group_end(
         self,
@@ -689,7 +689,7 @@ class _SubCommunicator:
                     " a list of None when using the nccl backend."
                 )
 
-            self._nccl_comm.groupStart()
+            nccl.groupEnd()
         else:
             if requests is None:
                 raise ValueError(

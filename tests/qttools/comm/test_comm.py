@@ -320,11 +320,9 @@ def test_send_recv(
 
             # send to and receive from the other rank (not self)
             other = 1 - test_comm.rank
-            source = other
-            dest = other
 
             test_comm.send_recv(
-                sendbuf=sendbuf, dest=dest, recvbuf=recvbuf, source=source
+                sendbuf=sendbuf, dest=other, recvbuf=recvbuf, source=other
             )
 
             expected = xp.ones((data_size), dtype=xp.float32)
@@ -357,11 +355,13 @@ def test_send_and_recv(
 
             # send to and receive from the other rank (not self)
             other = 1 - test_comm.rank
-            source = other
-            dest = other
 
-            test_comm.send(buf=sendbuf, dest=dest)
-            test_comm.recv(buf=recvbuf, source=source)
+            if test_comm.rank == 0:
+                test_comm.send(buf=sendbuf, dest=other)
+                test_comm.recv(buf=recvbuf, source=other)
+            else:
+                test_comm.recv(buf=recvbuf, source=other)
+                test_comm.send(buf=sendbuf, dest=other)
 
             expected = xp.ones((data_size), dtype=xp.float32)
             assert xp.allclose(expected, recvbuf)
@@ -396,13 +396,11 @@ def test_isend_and_irecv(
 
             # send to and receive from the other rank (not self)
             other = 1 - test_comm.rank
-            source = other
-            dest = other
 
             test_comm.group_start(test_comm._config["send_recv"])
 
-            send_request = test_comm.isend(buf=sendbuf, dest=dest)
-            recv_request = test_comm.irecv(buf=recvbuf, source=source)
+            send_request = test_comm.isend(buf=sendbuf, dest=other)
+            recv_request = test_comm.irecv(buf=recvbuf, source=other)
 
             test_comm.group_end(
                 test_comm._config["send_recv"], [send_request, recv_request]

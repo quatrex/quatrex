@@ -147,4 +147,3 @@ class TestDomainDistr(TestNonDistr):
     """Tests all tests of TestNotDistr in a distributed setting with domain decomposition."""
 
     block_comm_size = 3
-    pass

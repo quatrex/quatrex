@@ -4,7 +4,6 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-import scipy
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
@@ -12,7 +11,11 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.device.contact import Contact
-from quatrex.device.inputs import create_coordinate_grid, distributed_read_xyz
+from quatrex.device.inputs import (
+    create_coordinate_grid,
+    distributed_read_xyz,
+    load_matrices,
+)
 
 
 class Device:
@@ -227,7 +230,7 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.h5").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        self.hamiltonians = distributed_load(self.config.input_dir / "hamiltonian.mat")
+        self.hamiltonians = load_matrices(self.config, "hamiltonian")
 
         for r in self.hamiltonians.keys():
             assert (
@@ -235,7 +238,7 @@ class Device:
             ), f"Hamiltonian matrix at index {r} is not square."
 
             # assert all hamiltonians are sparse matrices
-            if not isinstance(self.hamiltonians[r], scipy.sparse.spmatrix):
+            if not isinstance(self.hamiltonians[r], sparse.spmatrix):
                 raise ValueError(
                     f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
                     f"Matrix type: {type(self.hamiltonians[r])}"
@@ -245,9 +248,6 @@ class Device:
 
             if self.hamiltonians[r].dtype in [np.complex64, np.complex128]:
                 self.matrices_complex = True
-
-            # Keep only the upper triangular part of the Hamiltonian
-            self.hamiltonians[r] = sparse.triu(self.hamiltonians[r], format="csr")
 
             if not self.hamiltonians[r].has_canonical_format:
                 self.hamiltonians[r].sum_duplicates()
@@ -273,31 +273,19 @@ class Device:
                 ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {self.overlap_matrices[r].shape[1]}."
 
                 # assert all overlap_matrices are sparse matrices
-                if not isinstance(self.overlap_matrices[r], scipy.sparse.spmatrix):
+                if not isinstance(self.overlap_matrices[r], sparse.spmatrix):
                     raise ValueError(
                         f"Overlap matrix at index {r} is not a sparse matrix."
                     )
 
                 self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
 
-                # TODO: Check data type handling.
-                # Gamma point can be real depending on the basis.
-
-                # Keep only the upper triangular part of the overlap matrix.
-                self.overlap_matrices[r] = sparse.triu(
-                    self.overlap_matrices[r], format="csr"
-                )
+                if self.overlap_matrices[r].dtype in [np.complex64, np.complex128]:
+                    self.matrices_complex = True
 
                 if not self.overlap_matrices[r].has_canonical_format:
                     self.overlap_matrices[r].sum_duplicates()
                     self.overlap_matrices[r].sort_indices()
-
-            if len(self.overlap_matrices) < len(self.hamiltonians):
-                raise ValueError(
-                    "Some overlap matrices are missing while others are present. All or none must be provided."
-                )
-            for r in self.overlap_matrices.keys():
-                self.overlap_matrices[r] = sparse.csr_matrix(self.overlap_matrices[r])
 
         else:
             if comm.rank == 0:

@@ -6,10 +6,10 @@ from qttools.wave_function_solver.solver import WFSolver
 try:
     import mumps
 
-    mumps_available = True
+    _mumps_available = True
 
 except ImportError:
-    mumps_available = False
+    _mumps_available = False
 
 valid_orderings = ["amd", "amf", "scotch", "pord", "metis", "qamd", "auto"]
 
@@ -22,7 +22,7 @@ def mumps_available() -> bool:
     bool
         True if MUMPS is available, False otherwise.
     """
-    return mumps_available
+    return _mumps_available
 
 
 class MUMPS(WFSolver):
@@ -53,7 +53,7 @@ class MUMPS(WFSolver):
         verbose: bool = False,
     ) -> None:
         """Initializes the MUMPS wave function solver."""
-        if not mumps_available:
+        if not mumps_available():
             raise ImportError(
                 "python-mumps is not available. Please install it to use this solver."
             )

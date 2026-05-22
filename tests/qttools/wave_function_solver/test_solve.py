@@ -115,33 +115,31 @@ class TestcuDSS:
         assert x.shape == (n, m)
         assert xp.allclose(a @ x, b, atol=1e-6)
 
-    def test_explicit_reset_operands(self, n: int, m: int):
-        """Tests the wave function solver with explicit reset of operands."""
+    def test_reuse_analysis(self, n: int, m: int):
+        """Tests the wave function solver with reuse of analysis."""
         a, b = _assemble_system(n, m, format="csr", order="F")
 
-        solver = cuDSS(explicitely_reset_operands="a,b")
+        solver = cuDSS()
         x1 = solver.solve(a, b)
         assert xp.allclose(a @ x1, b, atol=1e-6)
 
-        # Modify the matrix to change the solution.
-        a.data[:] *= 10
+        # Reuse the analysis phase.
+        a.data[:] *= 10  # Modify the matrix to change the solution.
 
         __, b = _assemble_system(n, 2 * m, format="csr", order="F")
-        x2 = solver.solve(a, b)
+
+        x2 = solver.solve(a, b, reuse_sym_fact=True)
         assert xp.allclose(a @ x2, b, atol=1e-6)
 
-    def test_implicit_reset_operands(self, n: int, m: int):
-        """Tests the wave function solver without explicit reset of operands."""
+    def test_reuse_factorization(self, n: int, m: int):
+        """Tests the wave function solver with reuse of factorization."""
         a, b = _assemble_system(n, m, format="csr", order="F")
 
-        solver = cuDSS(explicitely_reset_operands="b")
+        solver = cuDSS()
         x1 = solver.solve(a, b)
         assert xp.allclose(a @ x1, b, atol=1e-6)
 
-        # Modify the matrix to change the solution.
-        a.data[:] *= 10
-
         __, b = _assemble_system(n, 2 * m, format="csr", order="F")
-        # The solver should still work without explicit reset.
-        x2 = solver.solve(a, b)
+
+        x2 = solver.solve(a, b, reuse_sym_fact=True, reuse_fact=True)
         assert xp.allclose(a @ x2, b, atol=1e-6)

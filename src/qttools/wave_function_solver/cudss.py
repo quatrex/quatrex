@@ -164,6 +164,9 @@ class cuDSS(WFSolver):
                     f"Invalid matrix type '{matrix_type}'. Valid options are: {list(matrix_combination.keys())}"
                 )
             self.M_type = matrix_combination[matrix_type]
+        else:
+            self.M_type = MatrixType.GENERAL
+            self.M_view = MatrixViewType.FULL
 
         if view is not None:
             if view == "default":

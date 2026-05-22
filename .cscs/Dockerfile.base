@@ -81,6 +81,14 @@ RUN wget -q http://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchma
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 \
     && python3 -m ensurepip --upgrade
 
+    # Install cuDSS / nvmath-python.
+RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+    && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
+    && apt-get update \
+    && apt-get -y install cudss \
+    && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
+
 # Install Python dependencies.
 RUN python3 -m venv /opt/venv \
     && . /opt/venv/bin/activate \
@@ -89,8 +97,7 @@ RUN python3 -m venv /opt/venv \
     && python3 -m pip install cupy \
     && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
     && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist \
-    && python3 -m pip install nvmath-python \
-    && python3 -m pip install nvidia-cudss-cu12
+    && python3 -m pip install nvmath-python 
 
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and

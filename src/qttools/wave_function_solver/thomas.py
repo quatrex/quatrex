@@ -232,8 +232,8 @@ class Thomas(WFSolver):
         """
 
         if reuse_fact:
-            raise NotImplementedError(
-                "Factorization reuse is not implemented for Thomas solver."
+            print(
+                "Warning: reuse_fact is not implemented for Thomas solver. The matrix will be refactorized."
             )
 
         if self.blocks is None or not reuse_sym_fact:

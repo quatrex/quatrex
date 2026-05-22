@@ -25,10 +25,10 @@ class SuperLU(WFSolver):
     ) -> None:
         """Initializes the SuperLU wave function solver."""
 
-        if matrix_type != "complex_nonsymmetric" or view != "default":
-            raise ValueError(
-                "SuperLU solver currently only supports 'complex_nonsymmetric' matrix type and 'default' view."
-            )
+        # Matrix_type is currently not used in the SuperLU solver
+
+        if view != "default":
+            raise ValueError("SuperLU solver currently only supports 'default' view.")
 
     def solve(
         self,

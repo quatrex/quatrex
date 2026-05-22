@@ -576,6 +576,9 @@ class Contact:
         return coordinates
 
     def _hermitianize_unit_cell_matrices(self):
+        """Ensures that the unit cell Hamiltonian and overlap matrices are the Hermitian conjugate of the one
+        with the opposite index.
+        """
 
         for key in self.unit_cell_hamiltonian.keys():
             if key[0] == 0:

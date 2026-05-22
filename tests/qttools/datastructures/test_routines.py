@@ -73,7 +73,7 @@ class TestNonDistr:
         block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
+        """Tests the `bd_matmul` function for multiplying two DSDBSparse matrices."""
 
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)
@@ -108,7 +108,7 @@ class TestNonDistr:
         block_sizes: NDArray,
         global_stack_shape: tuple,
     ):
-        """Tests the in-place addition of a DSDBSparse matrix."""
+        """Tests the `bd_sandwich` function for multiplying three DSDBSparse matrices."""
 
         coo = _create_btd_coo(block_sizes)
         coo = global_comm.bcast(coo, root=0)

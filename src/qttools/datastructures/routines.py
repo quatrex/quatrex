@@ -61,21 +61,18 @@ def _bd_sandwich(
             out_range = (m < 0) or (m >= num_blocks)
             if out_range:
                 continue
-            else:
-                a_i, a_m = i, m
 
-            a_im = a_.blocks[a_i, a_m]
+            a_im = a_.blocks[i, m]
 
             for k in range(m - in_num_diag // 2, m + in_num_diag // 2 + 1):
-                out_range = (k < 0) or (k >= num_blocks) or (m < 0) or (m >= num_blocks)
+                out_range = (k < 0) or (k >= num_blocks)
                 if out_range:
                     continue
-                else:
-                    b_m, b_k = m, k
+
                 if ab_ik[k] is None:
-                    ab_ik[k] = a_im @ b_.blocks[b_m, b_k]
+                    ab_ik[k] = a_im @ b_.blocks[m, k]
                 else:
-                    ab_ik[k] += a_im @ b_.blocks[b_m, b_k]
+                    ab_ik[k] += a_im @ b_.blocks[m, k]
 
         if out.symmetry:
             range_j_min = i
@@ -436,11 +433,12 @@ def bd_matmul(
                 for k in range(i - a_num_diag // 2, i + a_num_diag // 2 + 1):
                     if abs(j - k) > b_num_diag // 2:
                         continue
+
                     out_range = (k < 0) or (k >= num_blocks)
                     if out_range:
                         continue
-                    else:
-                        partsum += a_[i, k] @ b_[k, j]
+
+                    partsum += a_[i, k] @ b_[k, j]
 
                 out_[i, j] = partsum
 

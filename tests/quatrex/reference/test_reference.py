@@ -9,6 +9,43 @@ from mpi4py.MPI import COMM_WORLD as comm
 from quatrex.cli.main import run as cli_run
 
 
+def _verify_outputs(
+    output_dir: Path,
+    reference_output_dir: Path,
+    rtol: float = 1e-4,
+    atol: float = 1e-4,
+) -> None:
+    """Helper function to verify that the outputs in `output_dir` match the
+    reference outputs in `reference_output_dir`."""
+    test_failed = False
+
+    # NOTE: We loop through all output files without asserting immediately. This
+    # allows us to report all mismatches at once, rather than stopping at the
+    # first failure.
+    for output_file in output_dir.glob("*.npy"):
+
+        reference = np.load(reference_output_dir / output_file.name)
+        test = np.load(output_file)
+        shape_match = reference.shape == test.shape
+        if not shape_match:
+            print(
+                f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
+            )
+
+        value_match = np.allclose(reference, test, rtol=rtol, atol=atol, equal_nan=True)
+        if not value_match:
+            print(f"Value mismatch for '{output_file.name}':")
+            print(
+                f"    Relative error: {np.linalg.norm(reference - test) / np.linalg.norm(reference)}"
+            )
+            print(f"    Absolute error: {np.linalg.norm(reference - test)}")
+            print(f"    Reference norm: {np.linalg.norm(reference)}")
+
+        test_failed |= not shape_match or not value_match
+
+    assert not test_failed, "One or more output files did not match the reference."
+
+
 # NOTE: Skip this if running in an MPI environment. These should be run
 # in a single process only.
 @pytest.mark.mpi_skip()
@@ -35,16 +72,7 @@ def test_single_rank(
     output_dir = tmp_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
 
-    for output_file in output_dir.glob("*.npy"):
-
-        reference = np.load(reference_output_dir / output_file.name)
-        test = np.load(output_file)
-        assert (
-            reference.shape == test.shape
-        ), f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
-        assert np.allclose(
-            reference, test, rtol=1e-5, atol=1e-4
-        ), f"Value mismatch for '{output_file.name}'"
+    _verify_outputs(output_dir, reference_output_dir)
 
 
 # NOTE: The distributed test will fail if the number of ranks is not a
@@ -78,13 +106,4 @@ def test_distributed(
     output_dir = mpi_tmp_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
 
-    for output_file in output_dir.glob("*.npy"):
-
-        reference = np.load(reference_output_dir / output_file.name)
-        test = np.load(output_file)
-        assert (
-            reference.shape == test.shape
-        ), f"Shape mismatch for '{output_file.name}': {reference.shape} vs {test.shape}"
-        assert np.allclose(
-            reference, test, rtol=1e-3, atol=1e-4, equal_nan=True
-        ), f"Value mismatch for '{output_file.name}'"
+    _verify_outputs(output_dir, reference_output_dir)

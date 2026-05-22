@@ -258,6 +258,10 @@ class SCBA:
             )
             print(f"Resolution is {energy_resolution:.6f} eV.", flush=True)
             print(
+                f"comm.stack size: {comm.stack.size}, comm.block size: {comm.block.size}",
+                flush=True,
+            )
+            print(
                 f"Each comm.block has {num_energies_per_rank} grid points.", flush=True
             )
 

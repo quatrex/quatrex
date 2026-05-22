@@ -56,7 +56,7 @@ solver.max_batch_size = 1000
 # solver.compute_current = true # Compute Meir-Wingreen current.
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
+obc.nevp_solver = "full"
 obc.block_sections = 1
 
 # Parameters for Beyn's method.
@@ -84,7 +84,7 @@ solver.algorithm = "rgf"
 solver.max_batch_size = 1000
 
 obc.algorithm = "spectral"
-obc.nevp_solver = "beyn"
+obc.nevp_solver = "full"
 obc.block_sections = 1
 
 # Parameters for Beyn's method.

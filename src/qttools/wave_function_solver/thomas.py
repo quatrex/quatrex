@@ -66,13 +66,10 @@ class Thomas(WFSolver):
         self._triu_cache = {}
 
     def _symmetrize_from_upper_inplace(self, block: NDArray) -> None:
-        """Make block Hermitian by folding the lower triangle into the upper one.
+        """Make block Hermitian by folding the upper triangle into the lower one.
 
         For each off-diagonal pair (i, j) with i < j:
-            block[i, j] += conj(block[j, i])   # accumulate lower into upper
-            block[j, i]  = conj(block[i, j])   # mirror back
-        This handles permuted Hamiltonians where the lower triangle may carry
-        values that have no corresponding entry in the upper triangle.
+            block[j, i]  = conj(block[i, j])
         """
         n = block.shape[0]
         if n <= 1:
@@ -215,7 +212,7 @@ class Thomas(WFSolver):
         reuse_sym_fact: bool = False,
         reuse_fact: bool = False,
     ) -> NDArray:
-        """Solves the sparse system a @ x = b using the block Thomas algorithm.
+        """Solves the sparse system a @ x = b using the block Thomas algorithm. Since b is directly modified in-place, b is lost after this call.
 
         Parameters
         ----------

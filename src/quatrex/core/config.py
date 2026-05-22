@@ -186,7 +186,6 @@ class SolverConfig(BaseModel):
         "cudss",
         "pardiso",
         "thomas",
-        "superlu",
         "auto",
     ] = "auto"
 

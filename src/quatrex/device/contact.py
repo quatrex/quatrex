@@ -580,7 +580,7 @@ class Contact:
         with the opposite index.
         """
 
-        for key in self.unit_cell_hamiltonian.keys():
+        for key in list(self.unit_cell_hamiltonian.keys()):
             if key[0] == 0:
 
                 key_opp = (key[0], -key[1], -key[2])
@@ -588,7 +588,7 @@ class Contact:
                     key
                 ].T.conj()
 
-        for key in self.unit_cell_overlap.keys():
+        for key in list(self.unit_cell_overlap.keys()):
 
             if key[0] == 0:
                 key_opp = (key[0], -key[1], -key[2])
@@ -754,6 +754,19 @@ class Contact:
         )
 
         opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
+
+        if opposite_hopping_matrix is None:
+            raise ValueError(
+                f"Error in contact {self.name}: \n"
+                f"Hopping matrix found at {hopping_indices} without corresponding opposite hopping at {opposite_hopping_indices}."
+            )
+
+        opposite_hopping_matrix = (
+            opposite_hopping_matrix.get()
+            if hasattr(opposite_hopping_matrix, "get")
+            else opposite_hopping_matrix
+        )
+
         # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
         # We need to add the lower part to get the full coupling.
         unit = (
@@ -917,19 +930,23 @@ class Contact:
         )
 
     def dump_matrix_elements(self):
+        """Dumps the matrix elements of the contact unit cell matrices for debugging purposes."""
+
         from scipy import sparse as sp
 
-        """Dumps the matrix elements of the contact unit cell matrices for debugging purposes."""
-        for key, value in self.unit_cell_hamiltonian.items():
-            sp.save_npz(
-                f"{self.name}_hamiltonian_{key[0]}_{key[1]}_{key[2]}.npz",
-                value.get() if hasattr(value, "get") else value,
-            )
-        for key, value in self.unit_cell_overlap.items():
-            sp.save_npz(
-                f"{self.name}_overlap_{key[0]}_{key[1]}_{key[2]}.npz",
-                value.get() if hasattr(value, "get") else value,
-            )
+        if comm.rank == 0:
+            print(f"Dumping contact unit cell matrices for contact {self.name}...")
+
+            for key, value in self.unit_cell_hamiltonian.items():
+                sp.save_npz(
+                    f"{self.name}_hamiltonian_{key[0]}_{key[1]}_{key[2]}.npz",
+                    value.get() if hasattr(value, "get") else value,
+                )
+            for key, value in self.unit_cell_overlap.items():
+                sp.save_npz(
+                    f"{self.name}_overlap_{key[0]}_{key[1]}_{key[2]}.npz",
+                    value.get() if hasattr(value, "get") else value,
+                )
 
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False

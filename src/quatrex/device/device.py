@@ -230,7 +230,9 @@ class Device:
         if not (self.config.input_dir / "hamiltonian.h5").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
-        self.hamiltonians = load_matrices(self.config, "hamiltonian")
+        self.hamiltonians = load_matrices(
+            self.config, "hamiltonian", force_complex=False
+        )
 
         for r in self.hamiltonians.keys():
             assert (

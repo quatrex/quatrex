@@ -480,6 +480,7 @@ def _create_matrix_from_unit_cells(
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
+    force_complex: bool = True,
 ):
     """Loads a Hermitian matrix from file
 
@@ -489,8 +490,8 @@ def load_matrices(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
-
-
+    force_complex : bool
+        Whether to force the loaded matrices to be complex. If `True`, the loaded matrices will be cast to `xp.complex128`.
     Returns
     -------
     dict
@@ -571,14 +572,16 @@ def load_matrices(
     # transfer the matrix_dict to the GPU
     if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
         matrix_dict = {
-            coord: xp.asarray(matrix).astype(xp.complex128)
-            for coord, matrix in matrix_dict.items()
+            coord: xp.asarray(matrix) for coord, matrix in matrix_dict.items()
         }
     elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
         matrix_dict = {
-            coord: sparse.csr_matrix(matrix).astype(xp.complex128)
-            for coord, matrix in matrix_dict.items()
+            coord: sparse.csr_matrix(matrix) for coord, matrix in matrix_dict.items()
         }
+
+    if force_complex:
+        for key in matrix_dict.keys():
+            matrix_dict[key] = matrix_dict[key].astype(xp.complex128)
 
     # expand potentially if the system is periodic
     # and given bz unit cell matrix_dict

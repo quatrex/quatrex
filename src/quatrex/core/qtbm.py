@@ -43,7 +43,7 @@ def get_cpu_memory_gb() -> float:
                     # VmRSS is in kB
                     return int(line.split()[1]) / 1024 / 1024
     except FileNotFoundError:
-        # /proc is not available on all platforms; fall back to unknown usage.
+        # If status file is not found (e.g., on non-Linux systems), return 0.0
         return 0.0
     return 0.0
 

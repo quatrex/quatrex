@@ -7,10 +7,10 @@ from qttools.wave_function_solver.solver import WFSolver
 try:
     from pydiso.mkl_solver import MATRIX_TYPES, MKLPardisoSolver
 
-    pardiso_available = True
+    _pardiso_available = True
 
 except ImportError:
-    pardiso_available = False
+    _pardiso_available = False
 
 profiler = Profiler()
 
@@ -29,7 +29,7 @@ valid_matrix_types = [
 
 def pardiso_available():
     """Checks if the PARDISO solver is available."""
-    return pardiso_available
+    return _pardiso_available
 
 
 class PARDISO(WFSolver):
@@ -57,7 +57,7 @@ class PARDISO(WFSolver):
         verbose: bool = False,
     ) -> None:
         """Initializes the PARDISO wave function solver."""
-        if not pardiso_available:
+        if not _pardiso_available:
             raise ImportError(
                 "python-pardiso is not available. Please install it to use this solver."
             )

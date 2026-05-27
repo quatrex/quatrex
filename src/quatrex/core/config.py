@@ -5,7 +5,6 @@ import re
 import subprocess
 import tomllib
 import warnings
-from math import isclose
 from pathlib import Path
 from typing import Literal
 
@@ -78,6 +77,17 @@ class SCSPConfig(BaseModel):
     mixing_factor: PositiveFloat = Field(default=0.75, le=1.0)
     """Under-relaxation factor for the under-relaxation mixer. Should be
     between 0 and 1.
+
+    """
+
+    adaptive_mixing: bool = False
+    """Whether to adaptively adjust the mixing factor based on the
+    convergence behavior.
+
+    If `True`, the mixing factor is adjusted based on the convergence
+    behavior. If the residual between two potential iterations is larger
+    than the previous iteration, the mixing factor is reduced by 50%. If
+    it is smaller, the mixing factor is increased by 10%.
 
     """
 
@@ -240,7 +250,7 @@ class ElectrostaticsConfig(BaseModel):
 
     """
 
-    initial_guess: Literal["zero", "constraints", "file"] = "file"
+    initial_guess: Literal["zero", "constraints", "file"] = "zero"
     """The strategy to generate the initial guess for the potential.
 
     - `"zero"`: Uses a zero potential as the initial guess.
@@ -636,6 +646,122 @@ class LyapunovConfig(BaseModel):
     """Options for memoizing the Lyapunov solver."""
 
 
+class ContactConfig(BaseModel):
+    """Configuration for a contact.
+
+    !!! warning
+
+        Many contact parameters are currently only used in the
+        `"wf"` formalism.
+
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    """A unique name for the contact."""
+
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    """The origin of the contact region in Å.
+
+    This is used to automatically determine the orbitals that belong to
+    this contact.
+
+    !!! warning
+
+        This parameter is currently only used in the `"wf"` formalism.
+
+
+    """
+
+    lattice_vectors: list[list[float]] = Field(
+        default_factory=lambda: [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    """The lattice vectors of the contact cell in Å.
+
+    In `"wf"` simulations this is used to automatically determine the
+    orbitals that belong to this contact.
+
+    The volume of the contact cell is also used to determine the Fermi
+    level of the contact from its doping density and the density of
+    states of its band structure.
+
+    """
+
+    direction: Literal["a", "b", "c"] | None = None
+    """The direction from contact to the device.
+
+    This is used to find periodic images of the contact in transport
+    direction.
+
+    !!! warning
+
+        This parameter is currently only used in the `"wf"` formalism.
+
+    """
+
+    fermi_level: float | None = None
+    """The Fermi level of the contact.
+
+    If not set, the Fermi level is automatically determined from the
+    band structure of the contact via the `mid_gap_energy` parameter.
+
+    When set explicitly, this may lead to physically inconsistent
+    results, especially in the context of Schrödinger-Poisson
+    simulations.
+
+    """
+
+    mid_gap_energy: float | None = None
+    """An energy lying somewhere in the band gap of the contact.
+
+    This is used to separate conduction from valence band states, which
+    is necessary to automatically determine a contact's Fermi level, and
+    to compute the excess carrier density that is used in computing the
+    electrostatic potential in the Poisson solver.
+
+    This is also necessary when band-edge tracking is enabled in
+    `"negf"` simulations, since the band edges, and their initial
+    distance to the Fermi level, are determined via the mid-gap energy.
+
+    """
+
+    num_kpoints_transport: int = 51
+    """Number of k-points to use for contact band structure calculation.
+
+    This is used when automatically determining the Fermi level of the
+    contact from its band structure. The k-point grid along the
+    transverse directions are determined from the
+    [`kpoint_grid`][kpoint_grid] parameter.
+
+    """
+
+    temperature: NonNegativeFloat = 300.0  # K
+    """The temperature of the contact."""
+
+    voltage: float = 0.0
+    """The voltage applied to the contact.
+
+    At least one contact needs to be grounded (i.e. have zero voltage)
+    to serve as a reference for the other voltages.
+
+    The voltage and the Fermi level of the contact are used to determine
+    its chemical potential.
+
+    """
+
+    @model_validator(mode="after")
+    def to_array(self) -> Self:
+        """Transforms origin and size to arrays."""
+        self.origin = np.array(self.origin, dtype=float)
+        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
+        return self
+
+
 class ElectronConfig(BaseModel):
     """Options for the electronic subsystem solver."""
 
@@ -648,12 +774,27 @@ class ElectronConfig(BaseModel):
     eta_obc: NonNegativeFloat = 0  # eV
     eta: NonNegativeFloat = 1e-12  # eV
 
-    fermi_level: float | None = None
-    conduction_band_edge: float | None = None
-    valence_band_edge: float | None = None
+    left_contact: ContactConfig | None = None
+    """Configuration for the left contact.
 
-    left_fermi_level: float | None = None
-    right_fermi_level: float | None = None
+    This must be provided for any `"negf"` simulation.
+
+    !!! note
+
+        In `"wf"` simulations, the left and right contacts are not used.
+
+    """
+
+    right_contact: ContactConfig | None = None
+    """Configuration for the right contact.
+
+    This must be provided for any `"negf"` simulation.
+
+    !!! note
+
+        In `"wf"` simulations, the left and right contacts are not used.
+
+    """
 
     band_edge_tracking: bool = False
     """Whether to track the band edges during the SCBA iterations.
@@ -673,11 +814,6 @@ class ElectronConfig(BaseModel):
     above the conduction band edge during the SCBA iterations.
 
     """
-
-    temperature: PositiveFloat = 300.0  # K
-
-    left_temperature: PositiveFloat | None = None
-    right_temperature: PositiveFloat | None = None
 
     energy_window_min: float | None = None
     energy_window_max: float | None = None
@@ -703,28 +839,23 @@ class ElectronConfig(BaseModel):
     """
 
     @model_validator(mode="after")
-    def set_left_right_temperatures(self) -> Self:
-        """Sets the left and right temperatures if not already set."""
-        if (self.left_temperature is None) != (self.right_temperature is None):
-            raise ValueError(
-                "Either both left and right temperatures must be set or neither."
-            )
-
-        if self.left_temperature is None and self.right_temperature is None:
-            self.left_temperature = self.temperature
-            self.right_temperature = self.temperature
-
-        return self
-
-    @model_validator(mode="after")
-    def set_flatband(self) -> Self:
-        """Sets the flatband flags if not already set."""
-        if self.left_fermi_level is not None or self.right_fermi_level is not None:
-            if self.flatband is None:
-                if isclose(self.left_fermi_level, self.right_fermi_level):
-                    self.flatband = True
-                else:
-                    self.flatband = False
+    def check_mid_gap_energy_band_edge_tracking(self) -> Self:
+        """Checks that the mid-gap-energy is set if band edge tracking is enabled."""
+        if self.band_edge_tracking:
+            if (
+                self.left_contact is not None
+                and self.left_contact.mid_gap_energy is None
+            ):
+                raise ValueError(
+                    "When band edge tracking is enabled, the `mid_gap_energy` of the left contact must be set."
+                )
+            if (
+                self.right_contact is not None
+                and self.right_contact.mid_gap_energy is None
+            ):
+                raise ValueError(
+                    "When band edge tracking is enabled, the `mid_gap_energy` of the right contact must be set."
+                )
 
         return self
 
@@ -960,86 +1091,6 @@ class OutputConfig(BaseModel):
 
         assert self.profiling_path is not None, "profiling_path should be set here."
 
-        return self
-
-
-class ContactConfig(BaseModel):
-    """Configuration for a contact.
-
-    !!! note
-
-        These contact configurations are currently only used in the
-        `"wf"` formalism.
-
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    lattice_vectors: list[list[float]] = Field(
-        default_factory=lambda: [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-    direction: Literal["a", "b", "c"]
-
-    fermi_level: float | None = None
-    """The Fermi level of the contact.
-
-    Either this or `mid_gap_energy` should be set to determine the Fermi
-    level of the contact.
-
-    """
-
-    mid_gap_energy: float | None = None
-    """An energy lying somewhere in the band gap of the contact.
-
-    This is used to separate conduction from valence band states, which
-    is necessary to automatically determine a contact's Fermi level.
-
-    """
-
-    num_kpoints_transport: int = 51
-    """Number of k-points to use for contact band structure calculation.
-
-    This is used when automatically determining the Fermi level of the
-    contact from its band structure. The k-point grid along the
-    transverse directions are determined from the
-    [`kpoint_grid`][kpoint_grid] parameter.
-
-    """
-
-    temperature: NonNegativeFloat = 300.0  # K
-    """The temperature of the contact."""
-
-    voltage: float = 0.0
-    """The voltage applied to the contact.
-
-    At least one contact needs to be grounded (i.e. have zero voltage)
-    to serve as a reference for the other voltages.
-
-    The voltage and the Fermi level of the contact are used to determine
-    its chemical potential.
-
-    """
-
-    @model_validator(mode="after")
-    def to_array(self) -> Self:
-        """Transforms origin and size to arrays."""
-        self.origin = np.array(self.origin, dtype=float)
-        self.lattice_vectors = np.array(self.lattice_vectors, dtype=float)
-        return self
-
-    @model_validator(mode="after")
-    def check_either_fermi_or_midgap(self) -> Self:
-        """Checks that either the Fermi level or the mid-gap energy is set."""
-        if (self.fermi_level is None) == (self.mid_gap_energy is None):
-            raise ValueError(
-                "Either `fermi_level` or `mid_gap_energy` must be set, but not both."
-            )
         return self
 
 
@@ -1424,15 +1475,23 @@ class QuatrexConfig(BaseModel):
     @model_validator(mode="after")
     def check_device_contact_voltages(self) -> Self:
         """Checks that at least one contact exists and is grounded."""
+        # TODO: Contacts should be unified between the two formalisms.
         if self.formalism == "negf":
-            # TODO: In NEGF, device contact definitions are not yet
-            # used, so we skip this check for now.
-            return self
+            if (
+                self.electron.left_contact is None
+                or self.electron.right_contact is None
+            ):
+                raise ValueError("Both left and right contacts must be defined.")
+            contacts = [self.electron.left_contact, self.electron.right_contact]
+        elif self.formalism == "wf":
+            contacts = self.device.contacts
+        else:
+            raise ValueError(f"Invalid formalism '{self.formalism}'.")
 
-        if len(self.device.contacts) < 2:
+        if len(contacts) < 2:
             raise ValueError("At least two contacts must be defined.")
 
-        if not any(contact.voltage == 0 for contact in self.device.contacts):
+        if not any(contact.voltage == 0 for contact in contacts):
             raise ValueError(
                 "At least one contact must be grounded (i.e. have zero voltage)."
             )
@@ -1440,32 +1499,31 @@ class QuatrexConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_left_right_fermi_levels(self) -> Self:
-        """Checks and sets the left and right Fermi levels if not already set."""
-        if self.formalism == "wf":
-            # TODO: In the wavefunction formalism, the Fermi levels of
-            # the contacts are used, so we do not care about those set
-            # in the ElectronConfig.
-            return self
+    def check_either_fermi_or_midgap(self) -> Self:
+        """Checks that either the Fermi level or the mid-gap energy is set."""
+        if self.formalism == "negf":
+            contacts = [self.electron.left_contact, self.electron.right_contact]
+        elif self.formalism == "wf":
+            contacts = self.device.contacts
+        else:
+            raise ValueError(f"Invalid formalism '{self.formalism}'.")
 
-        if (self.electron.left_fermi_level is None) != (
-            self.electron.right_fermi_level is None
-        ):
-            raise ValueError(
-                "Either both left and right Fermi levels must be set or neither."
-            )
-
-        if (
-            self.electron.left_fermi_level is None
-            and self.electron.right_fermi_level is None
-        ):
-            if self.electron.fermi_level is None:
+        for contact in contacts:
+            if contact.fermi_level is None and contact.mid_gap_energy is None:
                 raise ValueError(
-                    "When left and right Fermi levels are not set, the Fermi level must be set to determine the Fermi levels."
+                    "Either `fermi_level` or `mid_gap_energy` must be set."
                 )
 
-            self.electron.left_fermi_level = self.electron.fermi_level
-            self.electron.right_fermi_level = self.electron.fermi_level
+            if (
+                contact.fermi_level is not None
+                and contact.mid_gap_energy is not None
+                and not (self.electron.band_edge_tracking or self.scsp is not None)
+            ):
+                raise ValueError(
+                    "Both `fermi_level` and `mid_gap_energy` cannot be set "
+                    "simultaneously, unless band edge tracking is active "
+                    "or the Schrödinger-Poisson solver is enabled."
+                )
 
         return self
 

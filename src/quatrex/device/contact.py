@@ -9,13 +9,15 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
 from qttools.comm import comm
-from qttools.kernels import linalg
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
-from quatrex.bandstructure.contact import contact_fermi_level
+from quatrex.bandstructure.contact import (
+    contact_band_edges,
+    contact_band_structure,
+    contact_doping_density,
+    contact_fermi_level,
+)
 from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
-from quatrex.electrostatics.geometry_config import VolumeProperties
-from quatrex.electrostatics.meshing import inside_shape
 from quatrex.grid.kpoints import monkhorst_pack
 
 profiler = Profiler()
@@ -330,6 +332,7 @@ class Contact:
         # mid-gap energy.
         if contact_config.fermi_level is not None:
             self.fermi_level = contact_config.fermi_level
+            self.mid_gap_energy = contact_config.mid_gap_energy
         else:
             # TODO: The kpoint grid info is not in the contact config,
             # but we need it to compute a Fermi level. Would be nice if
@@ -339,32 +342,10 @@ class Contact:
                 device.config.device.kpoint_grid, device.config.device.kpoint_shift
             )[:, self.transverse_axes]
 
-            # Next, we need to determine, whether the contact atoms sit
-            # in a device geometry region with doping.
-            for region in device.config.device.geometry.regions:
-                if not isinstance(region.properties, VolumeProperties):
-                    continue
-
-                if (
-                    region.properties.donor_concentration is None
-                    or region.properties.acceptor_concentration is None
-                ):
-                    continue
-
-                if np.all(
-                    inside_shape(
-                        device.atom_coordinates[self.origin_atom_indices], region.shape
-                    )
-                ):
-                    # Convert from cm^-3 to Å^-3
-                    doping_density = 1e-24 * (
-                        region.properties.donor_concentration
-                        - region.properties.acceptor_concentration
-                    )
-                    break
-
-            else:  # No break, i.e. contact not inside any doped region.
-                doping_density = 0.0
+            doping_density = contact_doping_density(
+                coordinates=device.atom_coordinates[self.origin_atom_indices],
+                geometry_regions=device.config.device.geometry.regions,
+            )
 
             if comm.rank == 0:
                 print(f"    Doping density: {doping_density} Å^-3", flush=True)
@@ -378,12 +359,14 @@ class Contact:
                 cell_volume=np.abs(np.linalg.det(self.lattice_vectors)),
             )
 
+        self.voltage = contact_config.voltage
+        self.temperature = contact_config.temperature
+
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
-
-        self.voltage = contact_config.voltage
-        self.temperature = contact_config.temperature
+            print(f"    Voltage: {self.voltage} V", flush=True)
+            print(f"    Temperature: {self.temperature} K", flush=True)
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -1093,10 +1076,8 @@ class Contact:
 
         """
         # NOTE: I'm not 100% sure if i should be including the endpoint
-        # in the k-point grid or if i'm actually double counting like
-        # this.
-        num_kpoints_transport = 51
-        kpoints_transport = np.linspace(-np.pi, np.pi, num_kpoints_transport)
+        # in the k-point grid or if i end up double counting like this.
+        kpoints_transport = xp.linspace(-xp.pi, xp.pi, num_kpoints_transport)
 
         e_k = np.zeros(
             (
@@ -1115,33 +1096,25 @@ class Contact:
                 self.unit_cell_overlap, ki, kj
             )
 
-            h_10, h_00, h_01 = xp.split(hamiltonian_layer.toarray(), 3, axis=-1)
-            s_10, s_00, s_01 = xp.split(overlap_layer.toarray(), 3, axis=-1)
+            h_xx = xp.split(hamiltonian_layer.toarray(), 3, axis=-1)
+            s_xx = xp.split(overlap_layer.toarray(), 3, axis=-1)
 
-            h_k = (
-                h_00
-                + h_10 * xp.exp(-1j * kpoints_transport[:, None, None])
-                + h_01 * xp.exp(1j * kpoints_transport[:, None, None])
-            )
-            s_k = (
-                s_00
-                + s_10 * xp.exp(-1j * kpoints_transport[:, None, None])
-                + s_01 * xp.exp(1j * kpoints_transport[:, None, None])
-            )
+            e_k[:, n, :] = contact_band_structure(kpoints_transport, h_xx, s_xx)
 
-            e_k[:, n, :] = linalg.eigvalsh(h_k, s_k, compute_module="numpy")
+        # Average over transverse k-points.
+        e_k = np.mean(e_k, axis=1)
 
-        e_k = np.sort(e_k, axis=-1)
-
-        fermi_level, mid_gap_energy = contact_fermi_level(
-            # Average over transverse k-points.
-            e_k=np.mean(e_k, axis=1),
+        fermi_level = contact_fermi_level(
+            e_k=e_k,
             kpoints=kpoints_transport,
             mid_gap_energy=mid_gap_energy,
             cell_volume=cell_volume,
             doping_density=doping_density,
             temperature=temperature,
         )
+
+        # Recompute the actual mid-gap energy from the band structure.
+        mid_gap_energy = np.mean(contact_band_edges(e_k, mid_gap_energy))
 
         return fermi_level, mid_gap_energy
 

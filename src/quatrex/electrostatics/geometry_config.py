@@ -159,14 +159,14 @@ class VolumeProperties(BaseModel):
     This is used for solving the Poisson equation.
 
     """
-    donor_concentration: float | None = None
+    donor_concentration: float = 0.0
     """The donor concentration in this region in cm^-3.
 
     This is used for solving the Poisson equation and to determine
     the contact Fermi levels.
 
     """
-    acceptor_concentration: float | None = None
+    acceptor_concentration: float = 0.0
     """The acceptor concentration in this region in cm^-3.
 
     This is used for solving the Poisson equation and to determine

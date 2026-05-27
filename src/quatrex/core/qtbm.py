@@ -50,8 +50,10 @@ class Observables:
 
     """
 
-    electron_ldos: dict = field(default_factory=dict)
-    contact_currents: dict = field(default_factory=dict)
+    electron_ldos: dict[Contact, NDArray] = field(default_factory=dict)
+    contact_currents: dict[tuple[Contact, Contact], NDArray] = field(
+        default_factory=dict
+    )
     transmissions: dict[tuple[Contact, Contact], NDArray] = field(default_factory=dict)
 
 
@@ -1145,12 +1147,12 @@ class QTBM(TransportSolver):
         # electrons and holes.
         for contact in self.device.contacts:
             if contact.voltage == 0:
-                mid_gap_energy = (
-                    contact.mid_gap_energy
-                    if contact.mid_gap_energy is not None
-                    else contact.fermi_level
-                )
+                mid_gap_energy = contact.mid_gap_energy
                 break
+        else:  # Did not break, no reference contact found
+            raise ValueError(
+                "No reference contact with zero voltage found to determine mid-gap energy."
+            )
 
         mid_gap_energy = self.device.potential + mid_gap_energy
 
@@ -1179,6 +1181,7 @@ class QTBM(TransportSolver):
 
         """
         if potential.shape[0] == self.device.atom_coordinates.shape[0]:
+
             # Upscale the potential to the number of orbitals
             orbitals_per_atom = [
                 self.config.device.num_orbitals_per_atom.get(species, 1)

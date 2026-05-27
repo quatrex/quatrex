@@ -8,6 +8,7 @@ from qttools import NDArray
 from qttools.comm import comm
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
+from quatrex.electrostatics.geometry_config import VolumeProperties
 from quatrex.electrostatics.meshing import DeviceMesh
 from quatrex.electrostatics.solver import (
     DirectPoissonSolver,
@@ -81,13 +82,14 @@ class ElectrostaticSolver:
 
             constraint_value = region.properties.voltage
             if (
-                config.device.electron_affinity is not None
+                config.electrostatics.electron_affinity is not None
                 and region.properties.work_function is not None
             ):
                 # TODO: Fix this to include the fermi level to
                 # conduction band edge difference as well.
                 constraint_value += (
-                    region.properties.work_function - config.device.electron_affinity
+                    region.properties.work_function
+                    - config.electrostatics.electron_affinity
                 )
 
             potential_constraints[region.name] = (
@@ -100,13 +102,12 @@ class ElectrostaticSolver:
         )
         fixed_density = np.zeros(device_mesh.mesh.points.shape[0])
         for region in config.device.geometry.regions:
-            if not hasattr(region.properties, "donor_concentration") or not hasattr(
-                region.properties, "acceptor_concentration"
-            ):
+            if not isinstance(region.properties, VolumeProperties):
                 continue
+
             if (
-                region.properties.donor_concentration is None
-                or region.properties.acceptor_concentration is None
+                region.properties.donor_concentration == 0.0
+                and region.properties.acceptor_concentration == 0.0
             ):
                 continue
 

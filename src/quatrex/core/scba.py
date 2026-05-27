@@ -663,10 +663,17 @@ class SCBA(TransportSolver):
                 "before computing excess charge densities."
             )
 
-        mid_gap_energy = (
-            self.config.electron.conduction_band_edge
-            + self.config.electron.valence_band_edge
-        ) / 2
+        # NOTE: Use the mid-gap-energy of a reference contact.
+        if self.electron_solver.left_voltage == 0.0:
+            mid_gap_energy = self.electron_solver.left_mid_gap_energy
+        elif self.electron_solver.right_voltage == 0.0:
+            mid_gap_energy = self.electron_solver.right_mid_gap_energy
+        else:
+            raise NotImplementedError(
+                "Cannot determine mid-gap energy for excess charge density calculation. "
+                "At least one contact must be grounded (zero voltage)."
+            )
+
         mid_gap_energy = self.electron_solver.potential + mid_gap_energy
 
         electron_density = self.observables.electron_density.copy()

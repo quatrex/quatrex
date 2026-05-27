@@ -4,52 +4,129 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 
 from qttools import NDArray, xp
-from qttools.utils.gpu_utils import get_array_module_name, get_device, get_host
+from qttools.kernels import linalg
 from quatrex.core.statistics import fermi_dirac
+from quatrex.electrostatics.geometry_config import Region, VolumeProperties
+from quatrex.electrostatics.meshing import inside_shape
+
+
+def _real_to_kspace(
+    kpoints: NDArray, a_xx: tuple[NDArray, NDArray, NDArray] | None
+) -> NDArray:
+    """Transforms real-space operator blocks to k-space."""
+    a_10, a_00, a_01 = a_xx
+    a_k = (
+        np.einsum("k, ...-> k...", np.exp(-1j * kpoints), a_10)
+        + a_00
+        + np.einsum("k, ...-> k...", np.exp(1j * kpoints), a_01)
+    )
+    return a_k
 
 
 def contact_band_structure(
-    h_10: NDArray,
-    h_00: NDArray,
-    h_01: NDArray,
-    num_k_points: int | None = None,
+    kpoints: NDArray,
+    h_xx: tuple[NDArray, NDArray, NDArray],
+    s_xx: tuple[NDArray, NDArray, NDArray] | None = None,
 ) -> NDArray:
     """Computes the band structure of a device contact.
 
     Parameters
     ----------
-    h_10 : NDArray
-        The off-diagonal element of the Hamiltonian.
-    h_00 : NDArray
-        The diagonal element of the Hamiltonian.
-    h_01 : NDArray
-        The off-diagonal element of the Hamiltonian.
-    num_k_points : int, optional
-        The number of k points. If not given, only the Gamma point is
-        considered.
+    kpoints : NDArray
+        The k-points at which to compute the band structure. This should
+        have shape (num_kpoints,).
+    h_xx : tuple[NDArray, NDArray, NDArray]
+        Hamiltonian matrix blocks of a single contact layer.
+    s_xx : tuple[NDArray, NDArray, NDArray] | None
+        Overlap matrix blocks. If None, the overlap matrix is assumed to
+        be the identity.
 
     Returns
     -------
     e_k : NDArray
-        The sorted eigenvalues in energy and k.
+        The sorted eigenvalues in energy and k. This will have shape
+        (num_kpoints, num_bands).
 
     """
-    k = (
-        xp.linspace(-xp.pi, xp.pi, num_k_points)
-        if num_k_points is not None
-        else xp.array([0])
-    )
+    h_k = _real_to_kspace(kpoints, h_xx)
+    s_k = _real_to_kspace(kpoints, s_xx) if s_xx is not None else None
 
-    h_k = (
-        h_01 * xp.exp(-1j * k)[:, xp.newaxis, xp.newaxis]
-        + h_00
-        + h_10 * xp.exp(1j * k)[:, xp.newaxis, xp.newaxis]
-    )
-    if get_array_module_name(h_k) == "cupy":
-        e_k = get_device(np.linalg.eigvals(get_host(h_k)))
-    else:
-        e_k = np.linalg.eigvals(h_k)
-    return xp.sort(e_k.real, axis=1)
+    e_k = linalg.eigvalsh(h_k, s_k, compute_module="numpy")
+
+    return xp.sort(e_k, axis=-1)
+
+
+def contact_band_edges(e_k: NDArray, mid_gap_energy: float) -> tuple[float, float]:
+    """Computes the band edges from band structure and mid-gap energy.
+
+    Parameters
+    ----------
+    e_k : NDArray
+        The sorted eigenvalues in energy and k. This should have shape
+        (num_kpoints, num_bands).
+    mid_gap_energy : float
+        A guess for the mid-gap energy, which is used to determine the
+        number of valence bands.
+
+    Returns
+    -------
+    valence_band_edge : float
+        The energy of the valence band edge in eV.
+    conduction_band_edge : float
+        The energy of the conduction band edge in eV.
+
+    """
+    valence_bands_mask = e_k < mid_gap_energy
+
+    valence_band_edge = e_k[valence_bands_mask].max()
+    conduction_band_edge = e_k[~valence_bands_mask].min()
+
+    return valence_band_edge, conduction_band_edge
+
+
+def contact_doping_density(
+    coordinates: NDArray, geometry_regions: list[Region]
+) -> float:
+    """Computes the doping density of a device contact.
+
+    This function checks which geometry region the contact coordinates
+    are located in and returns the corresponding doping density. If the
+    contact is located in multiple regions, the doping density of the
+    first detected region is returned. If the contact is not located in
+    any region, a doping density of 0 is returned.
+
+    Parameters
+    ----------
+    coordinates : NDArray
+        The coordinates of the contact.
+    geometry_regions : list[Region]
+        The geometry regions to check.
+
+    Returns
+    -------
+    doping_density : float
+        The doping density in Å^-3.
+
+    """
+    for region in geometry_regions:
+        if not isinstance(region.properties, VolumeProperties):
+            continue
+
+        if (
+            region.properties.donor_concentration == 0.0
+            and region.properties.acceptor_concentration == 0.0
+        ):
+            continue
+
+        if np.all(inside_shape(coordinates, region.shape)):
+            # Convert from cm^-3 to Å^-3
+            doping_density = 1e-24 * (
+                region.properties.donor_concentration
+                - region.properties.acceptor_concentration
+            )
+            return doping_density
+
+    return 0.0
 
 
 def contact_fermi_level(
@@ -89,15 +166,11 @@ def contact_fermi_level(
     -------
     fermi_level : float
         The Fermi level in eV.
-    mid_gap_energy : float
-        The computed mid-gap energy in eV.
 
     """
 
     num_valence_bands = (e_k < mid_gap_energy).sum(axis=1).max()
     e_k_valence, e_k_conduction = np.split(e_k, [num_valence_bands], axis=1)
-
-    mid_gap_energy = 0.5 * (e_k_valence.max() + e_k_conduction.min())
 
     def objective_function(fermi_level):
         """Charge neutrality objective function."""
@@ -117,4 +190,4 @@ def contact_fermi_level(
         method="bounded",
     )
 
-    return result.x, mid_gap_energy
+    return result.x

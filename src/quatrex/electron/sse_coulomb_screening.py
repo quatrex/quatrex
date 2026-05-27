@@ -224,23 +224,23 @@ class SigmaCoulombScreening(ScatteringSelfEnergy):
             g_lesser.data[..., batch],
             -w_greater.data[..., batch].conj(),
         )
-        sl[-ne + 1 :] += (
+        sl[-ne:] += (
             self.prefactor
             * fft_convolve_kpoints(
-                g_lesser.data[..., batch], w_lesser.data[1:, ..., batch]
-            )[: ne - 1]
+                g_lesser.data[..., batch], w_lesser.data[..., batch]
+            )[:ne]
         )
 
         # Greater self-energy
         sg = self.prefactor * fft_convolve_kpoints(
             g_greater.data[..., batch], w_greater.data[..., batch]
         )
-        sg[1:ne] += (
+        sg[:ne] += (
             self.prefactor
             * fft_correlate_kpoints(
                 g_greater.data[..., batch],
-                -w_lesser.data[1:, ..., batch].conj(),
-            )[-ne + 1 :]
+                -w_lesser.data[..., batch].conj(),
+            )[-ne:]
         )
 
         sigma_lesser.data[..., batch] += sl[-ne:]

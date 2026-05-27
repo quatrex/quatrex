@@ -605,7 +605,7 @@ class BSC:
                 self.data.g_retarded,
                 self.overlap,
             )
-            / (2 * xp.pi),
+            / xp.pi,
             axis=-1,
         )
         energies = self.electron_energies
@@ -691,6 +691,8 @@ class BSC:
         nk = np.prod(self.quatrex_config.device.kpoint_grid)
         uc_area = np.linalg.det(self.data.lattice_vectors[:2, :2])
         dos_density *= de / (nk * uc_area) * 1e16  # in 1/cm^2
+        # Spin degeneracy factor of 2.
+        dos_density *= 2
         return dos_density
 
     def _compute_total_charge(self) -> float:
@@ -698,7 +700,7 @@ class BSC:
         ldos = -density(
             self.data.g_retarded,
             self.overlap,
-        ) / (2 * xp.pi)
+        ) / (xp.pi)
         # Sum all axis except the first one (which is the energy axis).
         dos = xp.sum(ldos, axis=tuple(i for i in range(1, ldos.ndim)))
         # Gather the occupancies across all ranks.
@@ -715,6 +717,8 @@ class BSC:
         total_charge = xp.sum(dos * (occupancies - equilibrium_occupancies))
         de = self.electron_energies[1] - self.electron_energies[0]
         total_charge *= de
+        # Spin degeneracy factor of 2.
+        total_charge *= 2
         return total_charge
 
     def _stash_sigma(self) -> None:

@@ -172,7 +172,7 @@ def _inverse_fermi_integral_approximate_plus_one_half(u: NDArray) -> NDArray:
         The value(s) of eta such that fermi_integral(1/2, eta) = u.
 
     """
-    u = np.atleast_1d(np.asarray(u))
+    u = np.atleast_1d(np.asarray(u)) * _gamma(1 / 2 + 1)
     result = np.zeros_like(u, dtype=float)
     params = PARAMS_PLUS_ONE_HALF
 
@@ -235,7 +235,7 @@ def _inverse_fermi_integral_approximate_minus_one_half(u: NDArray) -> NDArray:
         The value(s) of eta such that fermi_integral(-1/2, eta) = u.
 
     """
-    u = np.atleast_1d(np.asarray(u))
+    u = np.atleast_1d(np.asarray(u)) * _gamma(-1 / 2 + 1)
     result = np.zeros_like(u, dtype=float)
     params = PARAMS_MINUS_ONE_HALF
 

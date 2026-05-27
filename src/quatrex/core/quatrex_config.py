@@ -365,6 +365,7 @@ class ElectronConfig(BaseModel):
             "charge-neutrality",
             "secant-method",
             "potential-update",
+            "potential-update-boundary",
         ]
         | None
     ) = None

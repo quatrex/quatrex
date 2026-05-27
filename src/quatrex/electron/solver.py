@@ -232,14 +232,13 @@ class ElectronSolver(SubsystemSolver):
             )
         except FileNotFoundError:
             transport_direction = "xyz".index(quatrex_config.device.transport_direction)
+            transport_cell_size = quatrex_config.device.neighbor_cell_cutoff[
+                transport_direction
+            ]
             self.flat_length = (
-                self.lattice_vectors[transport_direction, transport_direction] * 4
+                self.lattice_vectors[transport_direction, transport_direction]
+                * transport_cell_size
             )  # Flat for 1 transport cells at each end
-            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 8  # Flat for 2 transport cells at each end
-            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 16  # Flat for 4 transport cells at each end
-            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 12  # Flat for 3 transport cells at each end
-            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 20  # Flat for 5 transport cells at each end
-            # self.flat_length = self.lattice_vectors[transport_direction, transport_direction] * 28  # Flat for 7 transport cells at each end
             self.potential = generate_potential_profile(
                 self.grid,
                 transport_direction=transport_direction,
@@ -546,8 +545,8 @@ class ElectronSolver(SubsystemSolver):
                 self.quatrex_config.device.transport_direction
             ),
             bias=new_bias,
-            # potential_function="linear",
-            potential_function="tanh",
+            potential_function="linear",
+            # potential_function="tanh",
             flat_length=self.flat_length,
         )
         self.potential += old_pot_start - self.potential[0]
@@ -570,26 +569,26 @@ class ElectronSolver(SubsystemSolver):
         # Apply the energy shift as a rigid shift to the potential.
         # Problem: energy shifts are block resolved, but the potential is orbital resolved. For now, we just apply
         # the same shift to all orbitals. This can maybe change in the future.
-        bs = (
-            self.small_block_size
-            if self.small_block_size % 2 == 1
-            else self.small_block_size - 1
-        )
+        # bs = (
+        #     self.small_block_size
+        #     if self.small_block_size % 2 == 1
+        #     else self.small_block_size - 1
+        # )
         energy_shifts = np.repeat(energy_shifts, self.small_block_size)
         self.potential -= energy_shifts
         # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="edge"), np.ones(bs)/bs, mode="valid")
         # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="wrap"), np.ones(bs)/bs, mode="valid")
         # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="reflect"), np.ones(bs)/bs, mode="valid")
-        self.potential -= xp.convolve(
-            np.pad(
-                energy_shifts,
-                pad_width=bs // 2,
-                mode="constant",
-                constant_values=self.left_target_charge / self.small_block_size,
-            ),
-            np.ones(bs) / bs,
-            mode="valid",
-        )
+        # self.potential -= xp.convolve(
+        #    np.pad(
+        #        energy_shifts,
+        #        pad_width=bs // 2,
+        #        mode="constant",
+        #        constant_values=self.left_target_charge / self.small_block_size,
+        #    ),
+        #    np.ones(bs) / bs,
+        #    mode="valid",
+        # )
 
     def _update_potential_and_solve(
         self,
@@ -942,7 +941,10 @@ class ElectronSolver(SubsystemSolver):
                 print(f"    CN: {t_cn_end - t_cn_start}", flush=True)
                 print(f"    CN all: {t_cn_end_all - t_cn_start}", flush=True)
 
-        elif self.band_edge_tracking == "potential-update" and self.call_count < 1:
+        elif (
+            self.band_edge_tracking in ["potential-update", "potential-update-boundary"]
+            and self.call_count < 1
+        ):
             t_cn_start = time.perf_counter()
             # Charge per unit volume
             # Fermi level is updated once and then kept fixed. The potential is updated to get charge neutrality in the contacts.
@@ -1071,10 +1073,14 @@ class ElectronSolver(SubsystemSolver):
             "dos-peaks",
             "secant-method",
             "potential-update",
+            "potential-update-boundary",
         ] or (self.call_count >= 1 and self.band_edge_tracking == "charge-neutrality"):
             t_dos_peaks_start = time.perf_counter()
 
-            if self.band_edge_tracking == "potential-update":
+            if self.band_edge_tracking in [
+                "potential-update",
+                "potential-update-boundary",
+            ]:
                 g_lesser, _, g_retarded = out
             else:
                 _, _, g_retarded = out
@@ -1216,7 +1222,13 @@ class ElectronSolver(SubsystemSolver):
                     #         - self.fermi_levels[-1] * self.charge_densities[-2]
                     #     ) / charge_diff
 
-            elif self.band_edge_tracking == "potential-update":
+            # Try to update the potential every 3rd iteration after the first 10 iterations to see if it helps with convergence,
+            # until the 10th iteration we update the potential in every iteration
+            # elif self.band_edge_tracking == "potential-update-boundary" and (self.call_count < 10 or self.call_count % 3 == 0):
+            elif self.band_edge_tracking in [
+                "potential-update",
+                "potential-update-boundary",
+            ]:
                 # TODO: What about mid-gap energy? Fermi stays the same but mid-gap energy changes
                 # Update the mid band gap
                 self.left_mid_gap_energy = xp.mean(left_band_edges)

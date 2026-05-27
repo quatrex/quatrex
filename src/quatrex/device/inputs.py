@@ -363,9 +363,10 @@ def expand_tight_binding_matrix(
 def _assemble_kpoint(
     out_matrix: DSDBSparse,
     matrix_dict: dict[tuple, sparse.csr_matrix | NDArray],
+    kpoints: NDArray,
     kpoint_grid: NDArray,
-    kpoint_shift: NDArray,
-    kshift: int | NDArray,
+    # kpoint_shift: NDArray,
+    # kshift: int | NDArray,
 ) -> None:
     """Assembles a DSBSparse from a dictionary of sparse matrices
     corresponding to different transverse periodic repetitions.
@@ -387,8 +388,8 @@ def _assemble_kpoint(
 
     num_dimensions = len(kpoint_grid)
 
-    if isinstance(kshift, int):
-        kshift = np.array([kshift for _ in range(num_dimensions)])
+    # if isinstance(kshift, int):
+    #     kshift = np.array([kshift for _ in range(num_dimensions)])
 
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
@@ -400,10 +401,10 @@ def _assemble_kpoint(
                 f"Expected {num_dimensions}, got {len(cell)}."
             )
 
-    kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
-        tuple(kpoint_grid) + (-1,)
-    )
-    kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
+    # kpoints = monkhorst_pack(kpoint_grid, kpoint_shift).reshape(
+    #     tuple(kpoint_grid) + (-1,)
+    # )
+    # kpoints = np.roll(kpoints, shift=kshift, axis=tuple(range(num_dimensions)))
 
     # index = np.argwhere(kpoint_grid > 1)[0]
     for stack_index in np.ndindex(kpoints.shape[:-1]):

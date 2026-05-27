@@ -1,6 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
-import os
 from hashlib import sha256
 from tempfile import NamedTemporaryFile
 
@@ -831,10 +830,7 @@ class DeviceMesh:
         gmsh_logs = gmsh.logger.get()
         gmsh.logger.stop()
 
-        if not os.path.exists(self.config.output_dir):
-            os.mkdir(self.config.output_dir)
-
-        with open(self.config.output_dir / "gmsh.log", "w") as f:
+        with open(self.config.input_dir / "gmsh.log", "w") as f:
             f.write("\n".join(gmsh_logs))
 
         # Transfer the mesh to meshio.
@@ -844,16 +840,16 @@ class DeviceMesh:
             mesh = meshio.read(file.name)
         print("Done!")
 
-        # Save the mesh to the output directory.
-        print(f"Saving mesh to {self.config.output_dir / 'device.msh'}...")
+        # Save the mesh to the input directory.
+        print(f"Saving mesh to {self.config.input_dir / 'device.msh'}...")
         mesh.write(
-            self.config.output_dir / "device.msh",
+            self.config.input_dir / "device.msh",
             file_format="gmsh",
             binary=False,
         )
 
         # Add some provenance information to the mesh file as comments.
-        with open(self.config.output_dir / "device.msh", "a") as f:
+        with open(self.config.input_dir / "device.msh", "a") as f:
             f.write(
                 "\n".join(
                     [
@@ -933,7 +929,7 @@ class DeviceMesh:
     def from_config(cls, config: QuatrexConfig) -> "DeviceMesh":
         """Creates a DeviceMesh instance from the configuration file.
 
-        This function reads the mesh from the output directory and
+        This function reads the mesh from the input directory and
         creates a DeviceMesh instance with the loaded mesh.
 
         Parameters
@@ -951,7 +947,7 @@ class DeviceMesh:
         # Check if the mesh file is up to date with the configuration by
         # comparing the hash of the configuration with the hash stored
         # in the mesh file comments.
-        with open(config.output_dir / "device.msh", "r") as f:
+        with open(config.input_dir / "device.msh", "r") as f:
             lines = f.readlines()
             comments_start = lines.index("$Comments\n")
             comments_end = lines.index("$EndComments\n")
@@ -971,6 +967,6 @@ class DeviceMesh:
                     )
 
         device_mesher = cls(config)
-        device_mesher._mesh = meshio.read(config.output_dir / "device.msh")
+        device_mesher._mesh = meshio.read(config.input_dir / "device.msh")
         device_mesher._region_node_inds = device_mesher._map_nodes_to_physical_regions()
         return device_mesher

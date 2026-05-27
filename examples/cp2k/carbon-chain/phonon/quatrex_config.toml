@@ -18,7 +18,7 @@ max_iterations = 2
 mixing_factor = 0.75
 phonon = true
 
-[outputs]  # Select which outputs to write.
+[outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
 electron_density = true
@@ -27,11 +27,11 @@ self_energy_density = true
 
 
 [electron]
-conduction_band_edge = -2.4
-valence_band_edge = -2.5
-fermi_level = -2.45
-left_fermi_level = -3
-right_fermi_level = -3.001
+left_contact.name = "source"
+left_contact.fermi_level = -3
+
+right_contact.name = "drain"
+right_contact.fermi_level = -3.001
 
 energy_window_min = -5
 energy_window_max = -4

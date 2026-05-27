@@ -126,16 +126,16 @@ def _abort_quatrex(
         )
 
         os.write(2, error_msg.encode("utf-8"))
-    except Exception:
-        fallback_msg = (
-            f"\n[RANK {comm.rank}] Fatal error occurred, traceback formatting failed.\n"
-        )
+    except Exception as traceback_exc:
+        fallback_msg = f"\n[RANK {comm.rank}] traceback formatting failed with exception: {traceback_exc}\n"
+
         os.write(2, fallback_msg.encode("utf-8"))
 
     try:
         comm.Abort(1)
-    except Exception:
-        pass
+    except Exception as abort_exc:
+        fallback_abort_msg = f"\n[RANK {comm.rank}] MPI abort failed while handling a fatal exception: {abort_exc}\n"
+        os.write(2, fallback_abort_msg.encode("utf-8"))
 
     raise
 

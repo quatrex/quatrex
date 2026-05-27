@@ -1,13 +1,13 @@
 """Parameter sweep plotter for analyzing SLURM simulation outputs."""
 
-import os
 import glob
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.signal import find_peaks
 
 from quatrex.core.quatrex_config import parse_config
 
@@ -44,6 +44,7 @@ class ParameterSweepPlotter:
         self.root_folder = Path(root_folder)
         self.parameter_pattern = parameter_pattern
         self.data: Dict[float, Dict[str, List[float]]] = {}
+        self.parameter_folders: Dict[float, Path] = {}
         conf_folder = self._parse_all_folders()
         self.config = parse_config(conf_folder / "quatrex_config.toml")
         self.energies = np.linspace(
@@ -176,6 +177,7 @@ class ParameterSweepPlotter:
     def _parse_all_folders(self) -> None:
         """Parse all parameter folders and extract data."""
         parameter_folders = self._find_parameter_folders()
+        self.parameter_folders = parameter_folders
         if not parameter_folders:
             print(
                 f"No parameter folders found matching pattern '{self.parameter_pattern}' in {self.root_folder}"
@@ -190,6 +192,17 @@ class ParameterSweepPlotter:
                 print(f"Warning: No SLURM file found in {folder}")
         # Return a folder for additional processing of shared data
         return list(parameter_folders.values())[0]
+
+    def _get_parameter_folder(self, parameter_value: Union[str, float]) -> Path:
+        """Return the sweep folder associated with a parameter value."""
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.parameter_folders:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        return self.parameter_folders[par_value_float]
 
     def _get_last_values(
         self,
@@ -502,6 +515,49 @@ class ParameterSweepPlotter:
         ax.grid(True)
 
         return ax
+    
+    def get_dos(self, parameter_value: str, iteration: int, kp: tuple[int, int] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get density of states (DOS) for a specific parameter value and iteration.
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to get the DOS for
+        iteration : int
+            The iteration number to get the DOS for
+        kp : tuple[int, int], optional
+            The k-point indices to get the DOS for. If None, returns the sum over all k-points.
+
+        Returns
+        -------
+        tuple of np.ndarray
+            Tuple containing energy array and corresponding DOS values
+
+        Raises
+        ------
+        ValueError
+            If the parameter value is not found in the data or if DOS data is not available
+        """
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        dos_energy = self.energies
+        dos_file = self._get_parameter_folder(parameter_value) / "outputs" / f"electron_ldos_{iteration}.npy"
+        if not dos_file.exists():
+            raise ValueError(f"DOS file {dos_file} not found for parameter value {parameter_value} and iteration {iteration}")
+        
+        if kp is None:
+            # k-point resolved DOS
+            dos_values = np.load(dos_file)
+        else:
+            dos_values = np.load(dos_file)[:, kp[0], kp[1]]
+
+        return dos_energy, dos_values
 
     def plot_dos(self, parameter_value: str, iteration: int, ax=None, kp: tuple[int, int] = None) -> plt.Axes:
         """
@@ -539,19 +595,10 @@ class ParameterSweepPlotter:
             )
 
         dos_energy = self.energies
-        dos_file = (
-            self.root_folder
-            / self.parameter_pattern.replace("*", parameter_value)
-            / "outputs"
-            / f"electron_ldos_{iteration}.npy"
-        )
+        parameter_folder = self._get_parameter_folder(parameter_value)
+        dos_file = parameter_folder / "outputs" / f"electron_ldos_{iteration}.npy"
         # Have first iteration as reference
-        dos_ref_file = (
-            self.root_folder
-            / self.parameter_pattern.replace("*", parameter_value)
-            / "outputs"
-            / f"electron_ldos_0.npy"
-        )
+        dos_ref_file = parameter_folder / "outputs" / "electron_ldos_0.npy"
         if kp is None:
             # Sum over k-points
             dos_values = np.load(dos_file).mean(axis=(-2, -1))
@@ -562,12 +609,183 @@ class ParameterSweepPlotter:
 
         ax.plot(dos_energy, dos_ref, label="Reference (Iteration 0)", color="lightgray", alpha=0.7)
         ax.plot(dos_energy, dos_values, label=f"Iteration {iteration}")
+        # Add vertical lines for Fermi level
+        fermi_level = self.data[par_value_float]["fermi_level"][iteration]
+        ax.axvline(x=fermi_level, color="red", linestyle="--", label="Fermi Level")
         ax.set_xlabel("Energy (eV)")
         ax.set_ylabel("Density of States")
         ax.set_title(f"Density of States (Parameter = {parameter_value})")
         ax.grid(True)
 
         return ax
+    
+    def occupation(self, fermi_level: float) -> np.ndarray:
+        """
+        Calculate the Fermi-Dirac occupation function.
+
+        Parameters
+        ----------
+        energy : np.ndarray
+            Array of energy values
+        fermi_level : float
+            The Fermi level energy
+
+        Returns
+        -------
+        np.ndarray
+            Array of occupation probabilities corresponding to the input energies
+        """
+        k_B = 8.617333262145e-5  # Boltzmann constant in eV/K
+        T = self.config.electron.temperature  # Temperature in Kelvin (can be made a parameter if needed)
+        return 1 / (np.exp((self.energies - fermi_level) / (k_B * T)) + 1)
+
+    def _extract_charge_at_kp(self, parameter_value: str, iteration: int, kp: tuple[int, int]) -> float:
+        """
+        Extract the charge at a specific k-point for a given parameter value and iteration.
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to extract the charge for
+        iteration : int
+            The iteration number to extract the charge for
+        kp : tuple[int, int]
+            The k-point indices to extract the charge from
+
+        Returns
+        -------
+        float
+            The charge at the specified k-point
+
+        Raises
+        ------
+        ValueError
+            If the parameter value is not found in the data or if charge data is not available
+        """
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        dos_energy = self.energies
+        dos_file = self._get_parameter_folder(parameter_value) / "outputs" / f"electron_ldos_{iteration}.npy"
+        # Note that the DOS file is expected to have shape (num_energies, num_kpoints_x, num_kpoints_y)
+        # The orbital index is already summed over to save disk space.
+        dos_values = np.load(dos_file)[:, kp[0], kp[1]]
+        # Integrate DOS up to Fermi level to get charge at this k-point
+        fermi_level = self.data[par_value_float]["fermi_level"][iteration]
+        mid_bandgap = (self.data[par_value_float]["conduction_band"][iteration] + self.data[par_value_float]["valence_band"][iteration]) / 2
+        excess_occupation = self.occupation(fermi_level) - self.occupation(mid_bandgap)  # Occupation relative to mid-gap
+        # NOTE: In the code the np.pi factor is not included. It actually should be included
+        # but current results are not normalized by it, so I will keep it consistent with the current code.
+        charge_kp = np.sum(dos_values * excess_occupation) * (dos_energy[1] - dos_energy[0]) / (np.pi)
+        # Calculate the number of charge per cm^2 using the lattice vectors
+        area_per_unit_cell = np.cross(self.lattice_vectors[0], self.lattice_vectors[1])[
+            2
+        ] * 1e-16 # Area in cm^2
+        charge_kp_density = charge_kp / area_per_unit_cell  # Charge density in e/cm^2
+        # When calculating charge density, you usually take the mean over all k-points, 
+        # so should I divide by the total number of k-points to get the charge density at this k-point? Yes!
+        num_kpoints = np.prod(self.config.device.kpoint_grid)
+        charge_kp_density /= num_kpoints
+        # Factor 2 for spin degeneracy
+        charge_kp_density *= 2
+        return charge_kp_density
+    
+    def plot_charge_at_kp_vs_parameter(
+        self,
+        kp: tuple[int, int],
+        exclude_params: List[str] = None,
+        ax=None,
+    ) -> plt.Axes:
+        """
+        Plot charge at a specific k-point as a function of parameter value.
+
+        The plot also overlays the charge percentage on a secondary y-axis.
+
+        Parameters
+        ----------
+        kp : tuple[int, int]
+            The k-point indices to plot the charge for
+        exclude_params : list of str, optional
+            List of parameter values to exclude from the plot (e.g., [0, 1e12])
+        ax : matplotlib.axes.Axes, optional
+            Axes object to plot on. If None, creates a new figure.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes object containing the plot
+
+        Raises
+        ------
+        ValueError
+            If the parameter value is not found in the data or if charge data is not available
+        """
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        params = sorted(self.data.keys())
+        if exclude_params:
+            params = [param for param in params if param not in exclude_params]
+        kp_display = tuple(int(index) for index in kp)
+        charges_kp = []
+        for param in params:
+            # Extract the number of iterations for this parameter to get the last iteration number
+            num_iterations = len(self.data[param]["fermi_level"])
+            charge_kp = self._extract_charge_at_kp(param, num_iterations - 1, kp)  # Get charge at last iteration
+            charges_kp.append(charge_kp)
+
+        # Assume that the parameter value is the total charge (this only works if the charge is the parameter being swept)
+        if self.parameter_pattern.startswith("doping"):
+            total_charges = [float(param) for param in params]
+        else:
+            raise NotImplementedError(
+                "Total charge is not directly available from the parameter values. "
+                "Please implement a method to calculate total charge for each parameter value."
+            )
+
+        charge_percentages = [
+            100 * (charge / total) if total != 0 else 0
+            for charge, total in zip(charges_kp, total_charges)
+        ]
+
+        ax.plot(params, charges_kp, "o-")
+        ax.set_xlabel("Parameter Value")
+        ax.set_ylabel("Charge Density (e/cm²)")
+        ax.set_title(f"Charge Density at k-point {kp_display}")
+        ax.grid(True)
+
+        ax_percentage = ax.twinx()
+        ax_percentage.plot(params, charge_percentages, "s--", color="C1")
+        ax_percentage.set_ylabel("Charge Percentage (%)")
+
+        handles_charge, labels_charge = ax.get_legend_handles_labels()
+        handles_percentage, labels_percentage = ax_percentage.get_legend_handles_labels()
+        ax.legend(handles_charge + handles_percentage, labels_charge + labels_percentage)
+
+        return ax
+
+    def plot_charge_percentage_at_kp_vs_parameter(self, kp: tuple[int, int], exclude_params: List[str] = None, ax=None) -> plt.Axes:
+        """
+        Backward-compatible wrapper for plotting charge and charge percentage at a k-point.
+        Parameters
+        ----------
+        kp : tuple[int, int]
+            The k-point indices to plot the charge for
+        exclude_params : list of str, optional
+            List of parameter values to exclude from the plot (e.g., [0, 1e12])
+        ax : matplotlib.axes.Axes, optional
+            Axes object to plot on. If None, creates a new figure.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes object containing the plot
+        """
+        return self.plot_charge_at_kp_vs_parameter(kp=kp, exclude_params=exclude_params, ax=ax)
 
     def plot_fermi_level_vs_parameter(self, exclude_params: List[str] = None, ax=None) -> plt.Axes:
         """
@@ -655,7 +873,7 @@ class ParameterSweepPlotter:
             )
 
         dos_energy = self.energies
-        folder = self.root_folder / self.parameter_pattern.replace("*", parameter_value) / "outputs"
+        folder = self._get_parameter_folder(parameter_value) / "outputs"
         dos_files = list(folder.glob(f"electron_ldos_*.npy"))
         if not dos_files:
             raise ValueError(f"No DOS files found for parameter value {parameter_value}")
@@ -667,6 +885,102 @@ class ParameterSweepPlotter:
         de = dos_energy[1] - dos_energy[0]
         num_states = np.sum(dos_e, axis=1) * de / (np.pi)  # Sum over energy bins to get total number of states
         return num_states
+    
+    def get_mid_bandgap(self, parameter_value: str, iteration: int) -> float:
+        """
+        Get the mid-gap energy for a specific parameter value and iteration.
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to get the mid-gap energy for
+        iteration : int
+            The iteration number to get the mid-gap energy for
+        Returns
+        -------
+        float
+            The mid-gap energy for the given parameter value and iteration
+        """
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+        conduction_band_edge = self.data[par_value_float]["conduction_band"][iteration]
+        valence_band_edge = self.data[par_value_float]["valence_band"][iteration]
+        mid_gap = (conduction_band_edge + valence_band_edge) / 2
+        return mid_gap
+
+    def plot_band_edges_vs_kpoint(self, parameter_value: str, iteration: int, ax_cb=None, ax_vb=None) -> plt.Axes:
+        """
+        Plot conduction and valence band edges as a function of k-point index for a specific parameter value and iteration.
+        The k-point path is along the G to K, i.e. the kp index goes from (0, 0) to (num_kp, num_kp).
+
+        Parameters
+        ----------
+        parameter_value : str
+            The parameter value to plot
+        iteration : int
+            The iteration number to plot the band edges for
+        ax_cb : matplotlib.axes.Axes, optional
+            Axes object to plot the conduction band edges on. If None, creates a new figure.
+        ax_vb : matplotlib.axes.Axes, optional
+            Axes object to plot the valence band edges on. If None, creates a new figure.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes object containing the plot
+
+        Raises
+        ------
+        ValueError
+            If the parameter value is not found in the data or if band edge data is not available
+        """
+        if ax_cb is None or ax_vb is None:
+            fig, (ax_cb, ax_vb) = plt.subplots(1, 2, figsize=(12, 5))
+
+        par_value_float = float(parameter_value)
+        if par_value_float not in self.data:
+            raise ValueError(
+                f"Parameter value {parameter_value} not found in data. "
+                f"Available values: {[f'{par:.1e}' for par in sorted(self.data.keys())]}"
+            )
+
+        # To plot the band edges as a function of k-point index, we need to extract the band edge values for each k-point from the DOS files.
+        dos_energy = self.energies
+        dos_file = self._get_parameter_folder(parameter_value) / "outputs" / f"electron_ldos_{iteration}.npy"
+        if not dos_file.exists():
+            raise ValueError(f"DOS file {dos_file} not found for parameter value {parameter_value} and iteration {iteration}")
+        dos_values = np.load(dos_file)  # Shape: (num_energies, num_kpoints_x, num_kpoints_y)
+        mid_bandgap = (self.data[par_value_float]["conduction_band"][iteration] + self.data[par_value_float]["valence_band"][iteration]) / 2
+        num_kpoints_x = dos_values.shape[1]
+        num_kpoints_y = dos_values.shape[2]
+        kpoint_indices = [(i, i) for i in range(min(num_kpoints_x, num_kpoints_y))]  # G to K path
+        conduction_band_edges = []
+        valence_band_edges = []
+        for kp in kpoint_indices:
+            dos_kp = dos_values[:, kp[0], kp[1]]
+            peaks, _ = find_peaks(dos_kp, height=0.01)
+            bands = dos_energy[peaks]
+            # Find the conduction and valence band edges.
+            conduction_band_edge = np.min(bands[bands > mid_bandgap])
+            valence_band_edge = np.max(bands[bands < mid_bandgap])
+            conduction_band_edges.append(conduction_band_edge)
+            valence_band_edges.append(valence_band_edge)
+        ax_cb.plot(range(len(kpoint_indices)), conduction_band_edges, "o-")
+        ax_cb.set_xlabel("K-point Index (G to K)")
+        ax_cb.set_ylabel("Conduction Band Edge (eV)")
+        ax_cb.set_title(f"Conduction Band Edge vs K-point \n (Parameter = {parameter_value}, Iteration = {iteration})")
+        ax_cb.grid(True)
+        ax_vb.plot(range(len(kpoint_indices)), valence_band_edges, "s-")
+        ax_vb.set_xlabel("K-point Index (G to K)")
+        ax_vb.set_ylabel("Valence Band Edge (eV)")
+        ax_vb.set_title(f"Valence Band Edge vs K-point \n (Parameter = {parameter_value}, Iteration = {iteration})")
+        ax_vb.grid(True)
+        return ax_cb, ax_vb
+        
 
     def get_available_parameters(self) -> List[float]:
         """

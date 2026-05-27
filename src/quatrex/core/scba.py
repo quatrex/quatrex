@@ -1034,7 +1034,10 @@ class SCBA:
             # Transpose back to stack distribution.
             t_transpose_sigma_start = time.perf_counter()
             for m in (self.data.g_lesser, self.data.g_greater):
-                m.dtranspose(discard=True)  # These can be safely discarded.
+                # m.dtranspose(discard=True)  # These can be safely discarded.
+                m.dtranspose(
+                    discard=False
+                )  # This must not be discarded for current conservation check.
                 assert m.distribution_state == "stack"
             for m in (
                 self.data.sigma_lesser,

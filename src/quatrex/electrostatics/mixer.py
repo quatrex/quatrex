@@ -40,7 +40,7 @@ class Adaptive(ABC):
         if residual_norm < self._previous_residual_norm:
             self.alpha = min(1.0, self.alpha * INCREASE_FACTOR)
         else:
-            self.alpha = max(1e-3, self.alpha * DECREASE_FACTOR)
+            self.alpha = max(0.1, self.alpha * DECREASE_FACTOR)
 
         self._previous_residual_norm = residual_norm
 

@@ -12,6 +12,8 @@ from quatrex.device import Device
 from quatrex.device.inputs import assemble_matrix, get_block_sizes
 from quatrex.grid import get_electron_energies
 
+TARGET_ENERGY = -0.5
+
 
 def _intialize(config: QuatrexConfig):
     """Helper function to load the device Hamiltonian
@@ -51,9 +53,9 @@ def _intialize(config: QuatrexConfig):
     )
     sigma_dummy.data[:] = 0
 
-    ind_left = xp.argmin(xp.abs(energies - config.electron.conduction_band_edge))
+    ind_left = xp.argmin(xp.abs(energies - TARGET_ENERGY))
 
-    if energies[ind_left] < config.electron.conduction_band_edge:
+    if energies[ind_left] < TARGET_ENERGY:
         ind_lower = ind_left
         ind_upper = ind_left + 1
     else:
@@ -101,7 +103,7 @@ def test_subsectioning(
     )
 
     e_0_test = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
@@ -119,7 +121,7 @@ def test_subsectioning(
     )
 
     e_0_ref = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
@@ -176,7 +178,7 @@ def test_left_right(
     )
 
     e_0_left = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
@@ -196,7 +198,7 @@ def test_left_right(
     n = hamiltonian.num_local_blocks - 1
     m = n - 1
     e_0_right = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
@@ -278,7 +280,7 @@ def test_overlap(
     potential += 0.1
 
     e_0_ref = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=overlap,
@@ -326,7 +328,7 @@ def test_overlap(
     sigma_dummy = MockDSDBSparse(sigma_dummy, block_sizes)
 
     e_0_test = _compute_eigenvalues(
-        target_energy=config.electron.conduction_band_edge,
+        target_energy=TARGET_ENERGY,
         energies=energies,
         hamiltonian=hamiltonian,
         overlap=None,

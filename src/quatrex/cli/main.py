@@ -3,9 +3,11 @@
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
+import os
 import time
+import traceback
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import typer
 from click import BadArgumentUsage
@@ -102,6 +104,42 @@ def _run_negf(config):
             typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _abort_quatrex(
+    e: Exception,
+) -> NoReturn:
+    """Handles exceptions by printing the error and aborting the MPI program.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception that was raised.
+
+    """
+
+    # Force MPI to abort in the case of an exception
+    # to avoid hanging processes.
+    try:
+        full_traceback = "".join(traceback.format_exception(e))
+
+        error_msg = (
+            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
+        )
+
+        os.write(2, error_msg.encode("utf-8"))
+    except Exception:
+        fallback_msg = (
+            f"\n[RANK {comm.rank}] Fatal error occurred, traceback formatting failed.\n"
+        )
+        os.write(2, fallback_msg.encode("utf-8"))
+
+    try:
+        comm.Abort(1)
+    except Exception:
+        pass
+
+    raise
+
+
 @quatrex_cli.command()
 def run(
     config: Annotated[
@@ -116,44 +154,50 @@ def run(
     ] = None,
 ):
     """Runs quatrex with the provided configuration."""
-    # No arguments provided, check for the default config file in the
-    # working directory.
-    if config is None:
-        config = Path("./quatrex_config.toml")
-        if not config.exists():
-            raise BadArgumentUsage(
-                "No quatrex configuration file provided and default "
-                "'./quatrex_config.toml' does not exist."
+
+    try:
+        # No arguments provided, check for the default config file in the
+        # working directory.
+        if config is None:
+            config = Path("./quatrex_config.toml")
+            if not config.exists():
+                raise BadArgumentUsage(
+                    "No quatrex configuration file provided and default "
+                    "'./quatrex_config.toml' does not exist."
+                )
+
+        # If a directory is provided, look for the config file inside.
+        if config.is_dir():
+            config = config / "quatrex_config.toml"
+            if not config.exists():
+                raise BadArgumentUsage(
+                    f"No quatrex configuration file found in directory: {config.parent}"
+                )
+
+        from qttools.profiling import Profiler
+        from quatrex.core.config import parse_config, setup_context
+
+        profiler = Profiler()
+
+        config = parse_config(config)
+        setup_context(config)
+
+        secho_header()
+
+        # Dispatch to the appropriate runner based on the formalism.
+        if config.formalism == "wf":
+            _run_wf(config)
+        elif config.formalism == "negf":
+            _run_negf(config)
+        else:
+            raise NotImplementedError(
+                f"Formalism '{config.formalism}' is not implemented."
             )
 
-    # If a directory is provided, look for the config file inside.
-    if config.is_dir():
-        config = config / "quatrex_config.toml"
-        if not config.exists():
-            raise BadArgumentUsage(
-                f"No quatrex configuration file found in directory: {config.parent}"
-            )
-
-    from qttools.profiling import Profiler
-    from quatrex.core.config import parse_config, setup_context
-
-    profiler = Profiler()
-
-    config = parse_config(config)
-    setup_context(config)
-
-    secho_header()
-
-    # Dispatch to the appropriate runner based on the formalism.
-    if config.formalism == "wf":
-        _run_wf(config)
-    elif config.formalism == "negf":
-        _run_negf(config)
-    else:
-        raise NotImplementedError(f"Formalism '{config.formalism}' is not implemented.")
-
-    if config.outputs.save_profiling_results:
-        profiler.dump_stats()
+        if config.outputs.save_profiling_results:
+            profiler.dump_stats()
+    except Exception as e:
+        _abort_quatrex(e)
 
 
 @quatrex_cli.callback(no_args_is_help=True)

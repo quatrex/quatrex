@@ -13,6 +13,7 @@ import numpy as np
 import pyvista as pv
 
 from qttools import NDArray
+from qttools.comm import comm
 from quatrex import __version__
 from quatrex.core.config import QuatrexConfig
 from quatrex.electrostatics.geometry_config import (
@@ -959,12 +960,15 @@ class DeviceMesh:
                 line.strip() for line in comments if len(line.strip()) == 64
             )
             if config_hash != sha256(str(config.device.geometry).encode()).hexdigest():
-                # Warn the user that the mesh file is not up to date with the configuration.
-                print(
-                    "Warning: The mesh file is not up to date with the configuration. "
-                    "Please regenerate the mesh by running `quatrex mesh`."
-                    "The existing mesh file will be used, but it may not reflect the current configuration."
-                )
+                # Warn the user that the mesh file is not up to date
+                # with the configuration.
+                if comm.rank == 0:
+                    print(
+                        "Warning: The mesh file is not up to date with the configuration. "
+                        "Please regenerate the mesh by running `quatrex mesh`."
+                        "The existing mesh file will be used, but it may not reflect the current configuration.",
+                        flush=True,
+                    )
 
         device_mesher = cls(config)
         device_mesher._mesh = meshio.read(config.output_dir / "device.msh")

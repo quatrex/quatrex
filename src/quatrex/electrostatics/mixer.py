@@ -1,10 +1,14 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 """Different mixing schemes for self-consistent loops."""
+
 from abc import ABC, abstractmethod
 
 import numpy as np
 
 from qttools import NDArray
+
+INCREASE_FACTOR = 1.1
+DECREASE_FACTOR = 0.5
 
 
 class Mixer(ABC):
@@ -16,7 +20,32 @@ class Mixer(ABC):
         ...
 
 
-class UnderRelaxation(Mixer):
+class Adaptive(ABC):
+    """Mixin class to make mixing schemes adaptive."""
+
+    def update_alpha(self, residual: NDArray):
+        """Dynamically updates the under-relaxation factor.
+
+        Parameters
+        ----------
+        residual : NDArray
+            The current residual.
+
+        """
+        residual_norm = np.linalg.norm(residual)
+        if self._previous_residual_norm is None:
+            self._previous_residual_norm = residual_norm
+            return
+
+        if residual_norm < self._previous_residual_norm:
+            self.alpha = min(1.0, self.alpha * INCREASE_FACTOR)
+        else:
+            self.alpha = max(1e-3, self.alpha * DECREASE_FACTOR)
+
+        self._previous_residual_norm = residual_norm
+
+
+class UnderRelaxation(Mixer, Adaptive):
     """Simple under-relaxation mixer.
 
     Parameters
@@ -26,12 +55,15 @@ class UnderRelaxation(Mixer):
 
     """
 
-    def __init__(self, alpha: float = 0.5):
+    def __init__(self, alpha: float = 0.5, adaptive: bool = True):
         """Initializes the under-relaxation mixer."""
 
         if not (0 < alpha <= 1):
             raise ValueError("alpha must be between 0 and 1")
         self.alpha = alpha
+
+        self.adaptive = adaptive
+        self._previous_residual_norm = None
 
     def mix(self, previous_value: NDArray, incoming_value: NDArray) -> NDArray:
         """Mixes the incoming value with the previous value.
@@ -51,10 +83,14 @@ class UnderRelaxation(Mixer):
             The mixed value.
 
         """
+        if self.adaptive:
+            residual = incoming_value - previous_value
+            self.update_alpha(residual)
+
         return self.alpha * incoming_value + (1 - self.alpha) * previous_value
 
 
-class DIIS(Mixer):
+class DIIS(Mixer, Adaptive):
     """DIIS mixing scheme.
 
     This implementation is version of "periodic" Pulay mixing algorithm
@@ -99,6 +135,7 @@ class DIIS(Mixer):
         epsilon: float = 1e-5,
         alpha: float = 0.5,
         extrapolation_interval: int = 1,
+        adaptive: bool = True,
     ):
         """Initializes the DIIS mixer."""
         self.max_history = max_history
@@ -107,6 +144,9 @@ class DIIS(Mixer):
         self.extrapolation_interval = extrapolation_interval
 
         self.call_count = 0
+
+        self.adaptive = adaptive
+        self._previous_residual_norm = None
 
         # NOTE: If this ends up causing memory issues, we can
         # preallocate these arrays and use a circular buffer approach.
@@ -145,6 +185,9 @@ class DIIS(Mixer):
         num_entries = len(self.history)
         self.call_count += 1
 
+        if self.adaptive:
+            self._update_alpha(residual)
+
         # If we don't have enough entries, fall back to under-relaxation.
         # TODO: We could pass a parameter for the under-relaxation factor
         # here, or even do a dynamic adjustment based on the norm of the
@@ -180,7 +223,5 @@ class DIIS(Mixer):
         # Compute the mixed value.
         mixed_value = np.einsum("i,ik->k", coeffs, self.history)
 
-        # NOTE: Optionally, we could even do another under-relaxation
-        # step here to further stabilize the mixing.
-        # mixed_value = UnderRelaxation(self.alpha).mix(previous_value, mixed_value)
+        mixed_value = UnderRelaxation(self.alpha).mix(previous_value, mixed_value)
         return mixed_value

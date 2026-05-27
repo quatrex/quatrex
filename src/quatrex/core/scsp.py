@@ -91,13 +91,17 @@ class SCSP:
 
         """
         if scsp_config.mixer == "under-relaxation":
-            return UnderRelaxation(alpha=scsp_config.mixing_factor)
+            return UnderRelaxation(
+                alpha=scsp_config.mixing_factor,
+                adaptive=scsp_config.adaptive_mixing,
+            )
         if scsp_config.mixer == "diis":
             return DIIS(
                 max_history=scsp_config.max_history,
                 epsilon=scsp_config.epsilon,
                 alpha=scsp_config.mixing_factor,
                 extrapolation_interval=scsp_config.extrapolation_interval,
+                adaptive=scsp_config.adaptive_mixing,
             )
 
         raise ValueError(f"Unknown mixer type: {scsp_config.mixer}")

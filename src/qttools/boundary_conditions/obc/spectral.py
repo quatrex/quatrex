@@ -423,6 +423,8 @@ class Spectral(OBCSolver):
         mask: NDArray,
     ) -> NDArray:
         """Computes reflected modes and pseudo_inverses.
+        A symmetric pseudo inverse of \phi is computed by (\phi A_ij^H A_ij \phi)^-1 \phi^H A_ij^H A_ij, where \phi are the reflected modes.
+        It preserves the sparsity pattern of A_ij.
 
         Parameters
         ----------
@@ -451,12 +453,14 @@ class Spectral(OBCSolver):
         for i in xp.ndindex(mask.shape[:-1]):
             m = mask[i]
             vr = vs[i][:, m]
-            w = ws[i][m]
             # Moore-Penrose pseudoinverse.
-            V = a_ji[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w)) @ linalg.inv(
-                xp.diag(w)
-            ) + a_ii[i, :, :].squeeze() @ vr @ linalg.inv(xp.diag(w))
-            v_inv = -linalg.inv(V.conj().T @ V) @ V.conj().T @ a_ij[i, :, :].squeeze()
+            a_ij_i = a_ij[i, :, :].squeeze()
+            v_inv = (
+                linalg.inv(vr.conj().T @ a_ij_i.conj().T @ a_ij_i @ vr)
+                @ vr.conj().T
+                @ a_ij_i.conj().T
+                @ a_ij_i
+            )
             phi_inv_reflected.append(v_inv)
 
         # Calculate the surface Green's function.

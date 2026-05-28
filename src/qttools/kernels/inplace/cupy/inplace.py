@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import cupy as cp
+
 from qttools import NDArray
 from qttools.kernels.inplace.cupy import _rawkernel
 
@@ -70,6 +72,8 @@ def scatter_add_scaled_obc(
 
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
+
+    alpha = cp.float64(alpha)
 
     _rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),

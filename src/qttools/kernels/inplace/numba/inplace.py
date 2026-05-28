@@ -8,7 +8,7 @@ from qttools import NDArray
 
 
 @nb.njit(parallel=True)
-def iadd(
+def scatter_add_scaled(
     a: NDArray, b: NDArray, inds: NDArray, alpha: np.complex128, conjugate: bool
 ) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
@@ -31,7 +31,7 @@ def iadd(
 
 
 @nb.njit(parallel=True)
-def iadd_obc(
+def scatter_add_scaled_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,

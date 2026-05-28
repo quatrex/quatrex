@@ -24,10 +24,7 @@ import time
 from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
-from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
-
-profiler = Profiler()
 
 
 def cudss_available():

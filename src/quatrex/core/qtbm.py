@@ -536,7 +536,7 @@ class QTBM:
                 k_phase = np.float64(k_phase.real)
             else:
                 k_phase = np.complex128(k_phase)
-            inplace.iadd(
+            inplace.scatter_add_scaled(
                 self.system_matrix.data,
                 m_r.data,
                 update_indices[r],
@@ -544,7 +544,7 @@ class QTBM:
                 False,
             )
             if not self.system_matrix_UP_view:
-                inplace.iadd(
+                inplace.scatter_add_scaled(
                     self.system_matrix.data,
                     m_r.data,
                     update_indices_transpose[r],
@@ -573,7 +573,7 @@ class QTBM:
 
         for contact, sigma_obc in sigma_obc_per_contact.items():
             for k_t, sigma_obc_k in sigma_obc.items():
-                inplace.iadd_obc(
+                inplace.scatter_add_scaled_obc(
                     self.system_matrix.data,
                     sigma_obc_k[i, :, :],
                     self.sigma_obc_update_indices[contact],

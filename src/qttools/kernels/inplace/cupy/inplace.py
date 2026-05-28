@@ -1,5 +1,4 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
-import cupy as cp
 
 from qttools import NDArray
 from qttools.kernels.inplace.cupy import _rawkernel
@@ -7,8 +6,8 @@ from qttools.kernels.inplace.cupy import _rawkernel
 THREADS_PER_BLOCK = 1024
 
 
-def iadd(
-    a: NDArray, b: NDArray, inds: NDArray, alpha=1.0, conjugate: bool = False
+def scatter_add_scaled(
+    a: NDArray, b: NDArray, inds: NDArray, alpha: float = 1.0, conjugate: bool = False
 ) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
 
@@ -22,6 +21,8 @@ def iadd(
         The indices at which to add `b` to `a`.
     alpha : complex, optional
         The scalar multiplier for `b` before adding it to `a`.
+    conjugate : bool, optional
+        Whether to take the complex conjugate of `b` before adding it to `a`.
 
     """
     num_inds = inds.shape[0]
@@ -35,13 +36,13 @@ def iadd(
     )
 
 
-def iadd_obc(
+def scatter_add_scaled_obc(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
     k: tuple[float, float],
     transverse_repetition_grid: tuple[int, int],
-    alpha: cp.complex128,
+    alpha: float = 1.0,
 ):
     """Adds array `b` to array `a` at indices `ind` in-place with OBC repetitions.
 
@@ -57,7 +58,7 @@ def iadd_obc(
         The transverse wavevector components.
     transverse_repetition_grid : tuple[int, int]
         The transverse repetition grid of the contact.
-    alpha : complex
+    alpha : float
         The scalar multiplier for `b` before adding it to `a`.
 
     """
@@ -67,12 +68,10 @@ def iadd_obc(
     ky, kz = k
     ny, nz = transverse_repetition_grid
 
-    alpha = cp.complex128(alpha)
-
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
 
-    _rawkernel._iadd_obc(
+    _rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (

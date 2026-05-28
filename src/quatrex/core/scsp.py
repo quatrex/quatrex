@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 
 from qttools.comm import comm
@@ -109,6 +111,10 @@ class SCSP:
     def run(self):
         """Runs the self-consistent Schrödinger-Poisson solver."""
 
+        if comm.rank == 0:
+            if not os.path.exists(self.config.output_dir):
+                os.mkdir(self.config.output_dir)
+
         potential = self.electrostatic_solver.generate_initial_guess()
 
         for iteration in range(self.config.scsp.max_iterations):
@@ -133,6 +139,9 @@ class SCSP:
             new_potential = self.electrostatic_solver.solve(charge_density, potential)
 
             if np.max(np.abs(potential - new_potential)) < self.convergence_tol:
+                if comm.rank == 0:
+                    print(f"SCSP converged after {iteration} iterations.")
+                    np.save(self.config.output_dir / "potential_final.npy", potential)
                 break
 
             potential = self.mixer.mix(potential, new_potential)
@@ -143,9 +152,5 @@ class SCSP:
                     "Warning: SCSP did not converge after "
                     f"{self.config.scsp.max_iterations} iterations."
                 )
-
-        if comm.rank == 0:
-            print(f"SCSP converged after {iteration} iterations.")
-            np.save(self.config.output_dir / "potential_final.npy", potential)
 
         return potential

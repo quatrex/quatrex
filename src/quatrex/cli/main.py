@@ -137,7 +137,7 @@ def _abort_quatrex(
         fallback_abort_msg = f"\n[RANK {comm.rank}] MPI abort failed while handling a fatal exception: {abort_exc}\n"
         os.write(2, fallback_abort_msg.encode("utf-8"))
 
-    raise
+    raise e
 
 
 @quatrex_cli.command()
@@ -152,6 +152,13 @@ def run(
             exists=True,
         ),
     ] = None,
+    abort_on_exception: Annotated[
+        bool,
+        typer.Option(
+            "--abort-on-exception/--no-abort-on-exception",
+            help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
+        ),
+    ] = True,
 ):
     """Runs quatrex with the provided configuration."""
 
@@ -197,7 +204,10 @@ def run(
         if config.outputs.save_profiling_results:
             profiler.dump_stats()
     except Exception as e:
-        _abort_quatrex(e)
+        if abort_on_exception:
+            _abort_quatrex(e)
+        else:
+            raise
 
 
 @quatrex_cli.callback(no_args_is_help=True)

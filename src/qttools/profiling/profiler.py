@@ -396,6 +396,12 @@ class Profiler:
                 xp.cuda.nvtx.RangePush(label)
         start_time = time.perf_counter()
 
+        # NOTE: There is not finally here since this would
+        # potentially lead to deadlocks.
+        # The only issue is that if the profiled code raises an exception,
+        # the depth will not be decreased and the profiling data will be inconsistent.
+        # However, we should always crash when profiled code raises an exception,
+        # so this should not be a problem in practice.
         yield
 
         if xp.__name__ == "cupy":

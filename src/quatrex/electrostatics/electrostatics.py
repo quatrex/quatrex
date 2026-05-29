@@ -4,8 +4,9 @@
 
 import numpy as np
 
-from qttools import NDArray
+from qttools import NDArray, xp
 from qttools.comm import comm
+from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
 from quatrex.electrostatics.geometry_config import VolumeProperties
@@ -47,7 +48,7 @@ class ElectrostaticSolver:
         self.device_mesh = DeviceMesh.from_config(config)
 
         self.num_dofs = self.device_mesh.mesh.points.shape[0]
-        self.atom_inds = self.device_mesh.region_node_inds["atoms"]
+        self.atom_inds = xp.asarray(self.device_mesh.region_node_inds["atoms"])
 
         # Configure gates and dopants that define the problem setup.
         potential_constraints, fixed_density = self._configure_constraints(
@@ -170,7 +171,7 @@ class ElectrostaticSolver:
         if self.initial_guess_strategy == "zero":
             if comm.rank == 0:
                 print("using zero initial guess", flush=True)
-            return np.zeros(self.atom_inds.size)
+            return xp.zeros(self.atom_inds.size)
 
         if self.initial_guess_strategy == "file":
             if comm.rank == 0:
@@ -180,45 +181,6 @@ class ElectrostaticSolver:
 
         if self.initial_guess_strategy == "constraints":
             raise NotImplementedError
-            # if comm.rank == 0:
-            #     print("using initial guess from constraints", flush=True)
-
-            # if self.config.formalism == "negf":
-            #     # TODO: The contacts are the first and last blocks of
-            #     # orbitals. use the indices of those to set the
-            #     # potential to the contact voltages.
-            #     ...
-
-            # # NOTE: When solving an initial guess from constraints, we
-            # # impose Dirichlet potential constraints in the contacts as
-            # # well, not only in the gates. Any dopants are ignored, as
-            # # they should normally get compensated by the excess charge
-            # # anyway.
-            # extended_potential_constraints = ...
-            # # TODO: Determine indices of atoms in the contacts. Set
-            # # those to the contact voltages.
-
-            # from scipy import sparse
-
-            # rhs = self.poisson_solver._enforce_potential_constraints(
-            #     np.zeros(self.num_dofs)
-            # )
-            # stiffness_matrix = skfem.enforce(
-            #     A=K_hat,
-            #     D={
-            #         key: basis.get_dofs(nodes=inds)
-            #         for key, (__, inds) in potential_constraints.items()
-            #     },
-            # )
-            # potential, info = sparse.linalg.bicgstab(
-            #     self.poisson_solver.stiffness_matrix,
-            #     rhs,
-            #     # Small perturbation to avoid zero initial guess.
-            #     x0=np.zeros(self.num_dofs) + 1e-6,
-            #     M=sparse.diags(1 / self.poisson_solver.stiffness_matrix.diagonal()),
-            # )
-
-            # return (self.poisson_solver.mfc_transform.T @ potential)[self.atom_inds]
 
         raise ValueError(f"Unknown initial guess type: {self.initial_guess_strategy}")
 
@@ -241,25 +203,26 @@ class ElectrostaticSolver:
         """
         self.call_count += 1
 
-        real_space_charge_density = np.zeros(self.num_dofs)
+        real_space_charge_density = xp.zeros(self.num_dofs)
         real_space_charge_density[self.atom_inds] = charge_density
 
         if comm.rank == 0:
-            np.save(
+            xp.save(
                 self.config.output_dir
                 / f"real_space_charge_density_{self.call_count}.npy",
                 real_space_charge_density,
             )
 
-        real_space_potential = np.zeros(self.num_dofs)
+        real_space_potential = xp.zeros(self.num_dofs)
         real_space_potential[self.atom_inds] = potential
 
         potential = self.poisson_solver.solve(
-            real_space_charge_density, real_space_potential
+            get_host(real_space_charge_density), get_host(real_space_potential)
         )
+        potential = get_device(potential)
 
         if comm.rank == 0:
-            np.save(
+            xp.save(
                 self.config.output_dir / f"real_space_potential_{self.call_count}.npy",
                 potential,
             )

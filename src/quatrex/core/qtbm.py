@@ -1131,8 +1131,8 @@ class QTBM(TransportSolver):
         """
 
         # Compute the spectral electron and hole densities.
-        electron_density = np.zeros((self.num_orbitals, self.electron_energies.size))
-        hole_density = np.zeros((self.num_orbitals, self.electron_energies.size))
+        electron_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
+        hole_density = xp.zeros((self.num_orbitals, self.electron_energies.size))
         for contact, ldos in self.observables.electron_ldos.items():
             mu = contact.fermi_level - contact.voltage
             occupancy = fermi_dirac(
@@ -1160,10 +1160,10 @@ class QTBM(TransportSolver):
         electron_density[~mask] = 0
         hole_density[mask] = 0
 
-        excess_electron_density = np.trapezoid(
+        excess_electron_density = xp.trapezoid(
             electron_density, self.electron_energies, axis=1
         )
-        excess_hole_density = np.trapezoid(hole_density, self.electron_energies, axis=1)
+        excess_hole_density = xp.trapezoid(hole_density, self.electron_energies, axis=1)
 
         return excess_electron_density, excess_hole_density
 

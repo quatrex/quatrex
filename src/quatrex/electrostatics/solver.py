@@ -5,8 +5,9 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import skfem
+from scipy import sparse
 
-from qttools import NDArray, sparse
+from qttools import NDArray
 from qttools.comm import comm
 from quatrex.core.config import ElectrostaticsConfig, QuatrexConfig
 from quatrex.core.constants import epsilon_0

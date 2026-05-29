@@ -321,8 +321,8 @@ class ElectronSolver(SubsystemSolver):
         # Average over all dimensions, except for the transport k-point
         # dimension and the last dimension corresponding to the
         # eigenvalues.
-        e_k = np.mean(e_k, axis=tuple(range(1, e_k.ndim - 1)))
-        e_k = np.sort(e_k, axis=-1)
+        e_k = xp.mean(e_k, axis=tuple(range(1, e_k.ndim - 1)))
+        e_k = xp.sort(e_k, axis=-1)
 
         valence_band_edge, conduction_band_edge = contact_band_edges(
             e_k, contact_config.mid_gap_energy

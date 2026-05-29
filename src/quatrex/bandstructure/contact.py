@@ -81,7 +81,10 @@ def contact_band_edges(e_k: NDArray, mid_gap_energy: float) -> tuple[float, floa
     valence_band_edge = e_k[valence_bands_mask].max()
     conduction_band_edge = e_k[~valence_bands_mask].min()
 
-    return valence_band_edge, conduction_band_edge
+    # NOTE: This is a implicit copy to the host
+    # this is done since max() gives a 0-dim with cupy
+    # and a scalar with numpy
+    return float(valence_band_edge), float(conduction_band_edge)
 
 
 def contact_doping_density(
@@ -169,24 +172,27 @@ def contact_fermi_level(
 
     """
 
-    num_valence_bands = (e_k < mid_gap_energy).sum(axis=1).max()
-    e_k_valence, e_k_conduction = np.split(e_k, [num_valence_bands], axis=1)
+    # NOTE: int() does a implicit copy to the host
+    # which is need since the input for split needs to be a int
+    num_valence_bands = int((e_k < mid_gap_energy).sum(axis=1).max())
+    e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=1)
 
     def objective_function(fermi_level):
         """Charge neutrality objective function."""
         n_k = fermi_dirac(e_k_conduction - fermi_level, temperature).sum(axis=1)
         p_k = fermi_dirac(fermi_level - e_k_valence, temperature).sum(axis=1)
-        n = np.trapezoid(n_k, kpoints)
-        p = np.trapezoid(p_k, kpoints)
+        n = xp.trapezoid(n_k, kpoints)
+        p = xp.trapezoid(p_k, kpoints)
 
-        rho = (n - p) / (2 * np.pi * cell_volume)
+        rho = (n - p) / (2 * xp.pi * cell_volume)
         rho *= 2  # Spin
 
-        return (rho - doping_density) ** 2
+        return float((rho - doping_density) ** 2)
 
+    # NOTE: cupyx does not support minimize_scalar
     result = minimize_scalar(
         objective_function,
-        bounds=(e_k.min(), e_k.max()),
+        bounds=(float(e_k.min()), float(e_k.max())),
         method="bounded",
     )
 

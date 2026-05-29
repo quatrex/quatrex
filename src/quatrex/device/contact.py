@@ -1098,7 +1098,7 @@ class Contact:
         # in the k-point grid or if i end up double counting like this.
         kpoints_transport = xp.linspace(-xp.pi, xp.pi, num_kpoints_transport)
 
-        e_k = np.zeros(
+        e_k = xp.zeros(
             (
                 num_kpoints_transport,
                 kpoints_transverse.shape[0],
@@ -1121,7 +1121,7 @@ class Contact:
             e_k[:, n, :] = contact_band_structure(kpoints_transport, h_xx, s_xx)
 
         # Average over transverse k-points.
-        e_k = np.mean(e_k, axis=1)
+        e_k = xp.mean(e_k, axis=1)
 
         fermi_level = contact_fermi_level(
             e_k=e_k,

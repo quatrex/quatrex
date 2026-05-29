@@ -1191,17 +1191,11 @@ class QTBM(TransportSolver):
 
         # HACK: Because the potential is baked into the Hamiltonian, we
         # need to update the Hamiltonian matrices.
-        if self.device.potential is None:
-            self.device.potential = potential
-        else:
-            delta_potential = potential - self.device.potential
-            self.device.potential = delta_potential
+        delta_potential = potential - self.device.potential
+        self.device.potential = delta_potential
 
         self.device.apply_potential()
         for contact in self.device.contacts:
-            contact.unit_cell_hamiltonian = {}
-            contact.unit_cell_overlap = {}
-
             contact._init_hamiltonian_overlap_matrices()
 
     def get_charge_density(self) -> NDArray:

@@ -350,6 +350,21 @@ class Contact:
             if comm.rank == 0:
                 print(f"    Doping density: {doping_density} Å^-3", flush=True)
 
+            # HACK: If there is a potential present in the input folder,
+            # it will have already been baked into the unit cell
+            # Hamiltonian by the time we get here, so it now needs to be
+            # removed to correctly compute the Fermi level and band
+            # edges and then it has to be added back again immediately
+            # after to not affect the rest of the calculation. Because
+            # the potential is added in-place rather than just set, we
+            # have to in-place add its negative to effectively remove
+            # it.
+            potential = self.device.potential.copy()
+
+            self.device.potential = -potential
+            self.device.apply_potential()
+            self._init_hamiltonian_overlap_matrices()
+
             self.fermi_level, self.mid_gap_energy = self._compute_fermi_level(
                 num_kpoints_transport=contact_config.num_kpoints_transport,
                 kpoints_transverse=kpoints_transverse,
@@ -358,6 +373,10 @@ class Contact:
                 doping_density=doping_density,
                 cell_volume=np.abs(np.linalg.det(self.lattice_vectors)),
             )
+
+            self.device.potential = potential
+            self.device.apply_potential()
+            self._init_hamiltonian_overlap_matrices()
 
         self.voltage = contact_config.voltage
         self.temperature = contact_config.temperature
@@ -1114,7 +1133,11 @@ class Contact:
         )
 
         # Recompute the actual mid-gap energy from the band structure.
-        mid_gap_energy = np.mean(contact_band_edges(e_k, mid_gap_energy))
+        band_edges = contact_band_edges(e_k, mid_gap_energy)
+        if comm.rank == 0:
+            print(f"    Conduction band minimum: {band_edges[1]} eV", flush=True)
+            print(f"    Valence band maximum: {band_edges[0]} eV", flush=True)
+        mid_gap_energy = np.mean(band_edges)
 
         return fermi_level, mid_gap_energy
 

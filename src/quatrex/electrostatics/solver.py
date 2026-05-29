@@ -120,7 +120,11 @@ class DirectPoissonSolver(PoissonSolver):
             potential_constraints=potential_constraints,
         )
         self.fixed_density = fixed_density
-        self.preconditioner = sparse.diags(1 / self.stiffness_matrix.diagonal())
+
+        self.preconditioner = sparse.linalg.LinearOperator(
+            self.stiffness_matrix.shape,
+            matvec=lambda x: x / self.stiffness_matrix.diagonal(),
+        )
 
     def solve(
         self,
@@ -131,11 +135,14 @@ class DirectPoissonSolver(PoissonSolver):
         charge_density = self._enforce_potential_constraints(
             -(self.fixed_density - charge_density) / epsilon_0
         )
-        potential, __ = sparse.linalg.bicgstab(
+        potential, info = sparse.linalg.bicgstab(
             self.stiffness_matrix,
             charge_density,
             M=self.preconditioner,
+            x0=self.preconditioner @ charge_density,
         )
+        if comm.rank == 0:
+            print(f"Direct Poisson solver info: {info}", flush=True)
         return self.mfc_transform.T @ potential
 
 
@@ -271,7 +278,10 @@ class NonlinearPoissonSolver(PoissonSolver):
             for value, indices in self.potential_constraints.values():
                 residual[indices] = 0.0
 
-            preconditioner = sparse.diags(1 / jacobian.diagonal())
+            preconditioner = sparse.linalg.LinearOperator(
+                jacobian.shape,
+                matvec=lambda x: x / jacobian.diagonal(),
+            )
 
             if comm.rank == 0:
                 print("    Solving linearized problem.", flush=True)
@@ -280,6 +290,7 @@ class NonlinearPoissonSolver(PoissonSolver):
                 jacobian,
                 residual,
                 M=preconditioner,
+                x0=preconditioner @ residual,
             )
 
             new_potential -= delta_potential

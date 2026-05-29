@@ -186,7 +186,7 @@ class DIIS(Mixer, Adaptive):
         self.call_count += 1
 
         if self.adaptive:
-            self._update_alpha(residual)
+            self.update_alpha(residual)
 
         # If we don't have enough entries, fall back to under-relaxation.
         # TODO: We could pass a parameter for the under-relaxation factor

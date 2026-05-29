@@ -11,6 +11,7 @@ from qttools import NDArray, sparse, xp
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
 from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import (
     MUMPS,
@@ -18,6 +19,7 @@ from qttools.wave_function_solver import (
     SuperLU,
     Thomas,
     WFSolver,
+    auto_select_solver,
     cuDSS,
     preferred_matrix_type,
 )
@@ -26,57 +28,6 @@ from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Device
 from quatrex.grid import get_electron_energies, monkhorst_pack
-
-
-def get_cpu_memory_gb() -> float:
-    """Get current CPU memory usage in GB.
-
-    Returns
-    -------
-    float
-        Current CPU memory usage in GB, or 0.0 if it cannot be determined.
-    """
-    try:
-        with open("/proc/self/status", "r") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    # VmRSS is in kB
-                    return int(line.split()[1]) / 1024 / 1024
-    except FileNotFoundError:
-        # If status file is not found (e.g., on non-Linux systems), return 0.0
-        return 0.0
-    return 0.0
-
-
-def print_memory_usage(stage: str, energy_index: int | None = None) -> None:
-    """Print CPU/GPU memory usage for rank 0.
-
-    Parameters
-    ----------
-    stage : str
-        Human-readable stage label.
-    energy_index : int | None, optional
-        Global energy index to include in the message.
-    """
-    if comm.rank != 0:
-        return
-
-    prefix = f"[Memory] {stage}"
-    if energy_index is not None:
-        prefix += f" (energy {energy_index})"
-
-    cpu_mem_gb = get_cpu_memory_gb()
-    if xp.__name__ == "cupy":
-        synchronize_device()
-        gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
-        gpu_mem_used_gb = (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
-        gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
-        print(
-            f"{prefix}: CPU {cpu_mem_gb:.2f} GB, GPU {gpu_mem_used_gb:.2f}/{gpu_mem_total_gb:.2f} GB",
-            flush=True,
-        )
-    else:
-        print(f"{prefix}: CPU {cpu_mem_gb:.2f} GB", flush=True)
 
 
 def construct_device_pseudo_inverse(
@@ -254,9 +205,10 @@ class QTBM:
             and self.config.qtbm.OBC_rank_reduced
         ):
             self.real_system_matrix = True
-            print(
-                "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: Using real arithmetic for the system matrix and solvers."
-            )
+            if comm.rank == 0:
+                print(
+                    "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: Using real arithmetic for the system matrix and solvers."
+                )
         else:
             self.real_system_matrix = False
 
@@ -311,52 +263,7 @@ class QTBM:
         if solver_config.direct_solver == "thomas":
             return Thomas(matrix_type=matrix_type, view=view)
         if solver_config.direct_solver == "auto":
-            # Auto-select the solver based on the matrix type and view
-            from qttools.wave_function_solver.cudss import cudss_available
-            from qttools.wave_function_solver.mumps import mumps_available
-            from qttools.wave_function_solver.pardiso import pardiso_available
-
-            if xp.__name__ == "cupy":
-                if matrix_type in [
-                    "real_symmetric_indefinite",
-                    "complex_hermitian_indefinite",
-                ]:
-                    if cudss_available():
-                        print("Auto-selecting cuDSS solver.")
-                        return cuDSS(matrix_type=matrix_type, view=view)
-                    else:
-                        raise ValueError(
-                            "On GPU, cuDSS is the only general solver that supports symmetric matrices"
-                        )
-                else:
-                    if cudss_available():
-                        print("Auto-selecting cuDSS solver.")
-                        return cuDSS(matrix_type=matrix_type, view=view)
-                    else:
-                        print("Auto-selecting SuperLU solver as fallback.")
-                        return SuperLU(matrix_type=matrix_type, view=view)
-            else:
-                if matrix_type in [
-                    "real_symmetric_indefinite",
-                    "complex_hermitian_indefinite",
-                ]:
-                    if pardiso_available():
-                        print("Auto-selecting PARDISO solver.")
-                        return PARDISO(matrix_type=matrix_type, view=view)
-                    else:
-                        raise ValueError(
-                            "On CPU, PARDISO is the only general solver that supports symmetric matrices"
-                        )
-                else:
-                    if pardiso_available():
-                        print("Auto-selecting PARDISO solver.")
-                        return PARDISO(matrix_type=matrix_type, view=view)
-                    elif mumps_available():
-                        print("Auto-selecting MUMPS solver as fallback.")
-                        return MUMPS(matrix_type=matrix_type, view=view)
-                    else:
-                        print("Auto-selecting SuperLU solver as fallback.")
-                        return SuperLU(matrix_type=matrix_type, view=view)
+            return auto_select_solver(matrix_type=matrix_type, view=view)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -1391,7 +1298,7 @@ class QTBM:
                         )
 
                     # Keep an end-of-energy memory report for all methods.
-                    print_memory_usage("End of energy iteration", batch_start + i)
+                    print_memory_usage()
                     free_mempool()
 
                 del injection_per_contact

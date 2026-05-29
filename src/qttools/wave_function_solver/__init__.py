@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import sparse
+from qttools.wave_function_solver.auto_select import auto_select_solver
 from qttools.wave_function_solver.cudss import cuDSS
 from qttools.wave_function_solver.mumps import MUMPS
 from qttools.wave_function_solver.pardiso import PARDISO
@@ -25,4 +26,5 @@ __all__ = [
     "PARDISO",
     "Thomas",
     "preferred_matrix_type",
+    "auto_select_solver",
 ]

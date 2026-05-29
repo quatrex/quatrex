@@ -89,7 +89,8 @@ class Thomas(WFSolver):
     ) -> None:
         """
         Find block structure of the sparse matrix a and prepare for solving.
-        Parameters
+        It traverses the graph of the sparse matrix to find connected components.
+        The blocks are contigous and with variable size.
         ----------
         a : sparse.spmatrix
             The sparse system matrix.

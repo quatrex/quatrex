@@ -50,9 +50,14 @@ class QTBMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # The maximum number of energies per batch.
     max_batch_size: PositiveInt = 10
-    OBC_rank: Literal["full", "reduced"] = "full"
+    """The maximum number of energies per OBC batch."""
+
+    OBC_rank_reduced: bool = False
+    """Whether to use reduced rank for the OBC self-energies.
+    If set to True, OBC self energies are moved to the RHS of system matrix, reducing fill ins during factorization.
+    """
+
     dump_system_matrix: bool = False
 
 
@@ -188,6 +193,9 @@ class SolverConfig(BaseModel):
         "thomas",
         "auto",
     ] = "auto"
+    """The direct solver to use for the linear systems.
+    If set to "auto", the solver is automatically chosen based on other configurations and available libraries.
+    """
 
     @model_validator(mode="after")
     def set_compute_current(self) -> Self:

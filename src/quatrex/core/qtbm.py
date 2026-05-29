@@ -241,7 +241,7 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        if self.config.qtbm.OBC_rank == "reduced":
+        if self.config.qtbm.OBC_rank_reduced:
             self.system_matrix_UP_view = True
         else:
             self.system_matrix_UP_view = False
@@ -251,7 +251,7 @@ class QTBM:
             self.config.device.kpoint_grid == (1, 1, 1)
             and self.config.device.kpoint_shift == (0, 0, 0)
             and not self.device.matrices_complex
-            and self.config.qtbm.OBC_rank == "reduced"
+            and self.config.qtbm.OBC_rank_reduced
         ):
             self.real_system_matrix = True
             print(
@@ -284,7 +284,7 @@ class QTBM:
             The configured wavefunction solver instance.
 
         """
-        if self.config.qtbm.OBC_rank == "reduced":
+        if self.config.qtbm.OBC_rank_reduced:
             if self.real_system_matrix:
                 matrix_type = "real_symmetric_indefinite"
             else:
@@ -380,7 +380,7 @@ class QTBM:
             total_nnz += s_r.nnz
             if not self.system_matrix_UP_view:
                 total_nnz += s_r.nnz  # Account for the symmetric part if not upper view
-        if self.config.qtbm.OBC_rank != "reduced":
+        if not self.config.qtbm.OBC_rank_reduced:
             for contact in self.device.contacts:
                 nnz_cont.append(len(contact.orbital_indices))
                 total_nnz += len(contact.orbital_indices) ** 2
@@ -419,7 +419,7 @@ class QTBM:
                 )
                 start_idx += nnz
 
-        if self.config.qtbm.OBC_rank != "reduced":
+        if not self.config.qtbm.OBC_rank_reduced:
             for contact in self.device.contacts:
                 n_orb = contact.orbital_indices.shape[0]
                 nnz = n_orb**2
@@ -488,7 +488,7 @@ class QTBM:
                 start_idx += s_r.nnz
 
         self.sigma_obc_update_indices = {}
-        if self.config.qtbm.OBC_rank != "reduced":
+        if not self.config.qtbm.OBC_rank_reduced:
             for contact in self.device.contacts:
                 self.sigma_obc_update_indices[contact] = inverse_indices[
                     start_idx : start_idx + len(contact.orbital_indices) ** 2
@@ -634,7 +634,7 @@ class QTBM:
             # Compute the transmission
             if phi_nt.size != 0:
 
-                if self.config.qtbm.OBC_rank == "reduced":
+                if self.config.qtbm.OBC_rank_reduced:
                     S_P = reflection_per_contact[contact_out] @ (
                         xp.diag(1 / eig_ref_per_contact[contact_out])
                         @ (phi_inv_ref_per_contact[contact_out] @ phi_nt)
@@ -786,7 +786,7 @@ class QTBM:
             )
             phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
 
-            if self.config.qtbm.OBC_rank == "reduced":
+            if self.config.qtbm.OBC_rank_reduced:
                 phi_cont += phi_ref_per_contact[contact] @ (
                     xp.diag(1 / eig_ref_per_contact[contact])
                     @ (phi_inv_ref_per_contact[contact] @ phi[orbital_indices, :])
@@ -1124,7 +1124,7 @@ class QTBM:
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
-                    if self.config.qtbm.OBC_rank == "reduced":
+                    if self.config.qtbm.OBC_rank_reduced:
                         (
                             injection_per_contact[contact],
                             phi_inj_per_contact[contact],
@@ -1165,7 +1165,7 @@ class QTBM:
 
                     injection_count += modes_per_energy
 
-                if self.config.qtbm.OBC_rank == "reduced":
+                if self.config.qtbm.OBC_rank_reduced:
                     reflection_segments = {}  # Needed to stack the pseudo-inverse
                     reflection_segments_translated = (
                         {}
@@ -1195,7 +1195,7 @@ class QTBM:
                 for i, energy in enumerate(energy_batch):
                     times.append(time.perf_counter())
 
-                    if self.config.qtbm.OBC_rank != "reduced":
+                    if not self.config.qtbm.OBC_rank_reduced:
                         injection_tot = xp.zeros(
                             (self.num_orbitals, injection_count[i]),
                             dtype=xp.complex128,
@@ -1217,7 +1217,7 @@ class QTBM:
                         injection_tot[
                             contact.orbital_indices, injection_segments[contact, i]
                         ] = injection_per_contact[contact][i]
-                        if self.config.qtbm.OBC_rank == "reduced":
+                        if self.config.qtbm.OBC_rank_reduced:
                             # Add the reflection vectors
                             injection_tot[
                                 contact.orbital_indices,
@@ -1227,7 +1227,7 @@ class QTBM:
                     injection_tot = xp.asfortranarray(injection_tot)
 
                     # Variables needed for the correction in the reduced OBC method
-                    if self.config.qtbm.OBC_rank == "reduced":
+                    if self.config.qtbm.OBC_rank_reduced:
                         # Generate the device-sized pseudo-inverse
                         phi_inv_tot = construct_device_pseudo_inverse(
                             phi_inv_ref_per_contact,
@@ -1258,7 +1258,7 @@ class QTBM:
                     self._add_matrix_to_system_matrix(k, -1, type="hamiltonian")
                     self._add_matrix_to_system_matrix(k, energy, type="overlap")
 
-                    if self.config.qtbm.OBC_rank != "reduced":
+                    if not self.config.qtbm.OBC_rank_reduced:
                         # Add the boundary self-energy contributions
                         self._add_sigma_obc_to_system_matrix(
                             -1, sigma_obc_per_contact, i
@@ -1292,7 +1292,7 @@ class QTBM:
 
                     # SOLVE THE QTBM PROBLEM
 
-                    if self.config.qtbm.OBC_rank == "reduced":
+                    if self.config.qtbm.OBC_rank_reduced:
                         if injection_tot.size != 0:
                             t1 = time.perf_counter()
                             # Solve the system
@@ -1351,7 +1351,7 @@ class QTBM:
 
                     # Get the bare system matrix back, needed for
                     # transmission calculation
-                    if self.config.qtbm.OBC_rank != "reduced":
+                    if not self.config.qtbm.OBC_rank_reduced:
                         # Add the boundary self-energy contributions
                         self._add_sigma_obc_to_system_matrix(
                             1, sigma_obc_per_contact, i
@@ -1378,7 +1378,7 @@ class QTBM:
                         del phi
 
                     del injection_tot
-                    if self.config.qtbm.OBC_rank == "reduced":
+                    if self.config.qtbm.OBC_rank_reduced:
                         del phi_inv_tot
                         del eig_tot
 

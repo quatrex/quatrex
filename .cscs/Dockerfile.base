@@ -20,6 +20,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     autoconf \
     libtool \
     make \
+    cmake \
+    libblas-dev \
+    liblapack-dev \
     gdb \
     strace \
     wget \
@@ -95,3 +98,31 @@ RUN python3 -m venv /opt/venv \
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available
 RUN rm /etc/ld.so.conf.d/cuda_stubs.conf && ldconfig
+
+# Install Gmsh from source
+# as pip does not have a wheel for aarch64
+# other option would be to install from conda-forge
+RUN git clone https://gitlab.onelab.info/gmsh/gmsh.git \
+    && mkdir gmsh/build \
+    && cd gmsh/build \
+    && cmake -DCMAKE_BUILD_TYPE=Release \
+             -DENABLE_BUILD_SHARED=ON \
+             -DENABLE_BUILD_DYNAMIC=ON \
+             -DENABLE_FLTK=OFF \
+             -DENABLE_GRAPHICS=OFF \
+             .. \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd / \
+    && rm -rf gmsh
+
+# Formalize the Gmsh Python installation so Pip registers it in the venv
+RUN mkdir -p dummy_gmsh \
+    && cd dummy_gmsh \
+    && cp /usr/local/lib/gmsh.py . \
+    && printf "from setuptools import setup\nsetup(name='gmsh', version='4.13.1', py_modules=['gmsh'])\n" > setup.py \
+    && . /opt/venv/bin/activate \
+    && python3 -m pip install . \
+    && cd / \
+    && rm -rf dummy_gmsh

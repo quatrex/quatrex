@@ -9,6 +9,8 @@ from qttools.comm import comm
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
 from quatrex.core.config import QuatrexConfig
+from quatrex.core.qtbm import QTBM
+from quatrex.core.scba import SCBA
 from quatrex.electrostatics.geometry_config import VolumeProperties
 from quatrex.electrostatics.meshing import DeviceMesh
 from quatrex.electrostatics.solver import (
@@ -166,8 +168,85 @@ class ElectrostaticSolver:
             f"Unknown solving scheme: {config.electrostatics.solving_scheme}"
         )
 
-    def generate_initial_guess(self) -> NDArray:
-        """Provides an initial guess for the potential."""
+    def _get_contact_potential_constraints(
+        self, transport_solver: QTBM | SCBA
+    ) -> dict[str, tuple[float, NDArray]]:
+        """Gets the potential constraints for the contacts based on the
+        transport solver.
+
+        This is used when generating an initial guess for the potential
+        by solving the Poisson equation with the constraints.
+
+        Parameters
+        ----------
+        transport_solver : QTBM | SCBA
+            The transport solver, which may be needed to determine the
+            contact potential constraints.
+
+        Returns
+        -------
+        contact_potential_constraints : dict[str, tuple[float, NDArray]]
+            A dictionary mapping contact names to tuples of (potential
+            value, indices of the nodes where the constraint is applied).
+
+        """
+
+        if isinstance(transport_solver, QTBM):
+            # In the wavefunction formalism we go through all contacts
+            # and gather their potentials.
+            contact_potential_constraints = {}
+            for contact in transport_solver.device.contacts:
+                contact_inds = self.atom_inds[contact.origin_atom_indices]
+                contact_potential_constraints[contact.name] = (
+                    -contact.voltage,
+                    contact_inds,
+                )
+
+            return contact_potential_constraints
+
+        # In NEGF the contacts are the first and last blocks of
+        # orbitals.
+        if isinstance(self.config.device.block_size, int):
+            left_block_size = right_block_size = self.config.device.block_size
+        else:
+            left_block_size = self.config.device.block_size[0]
+            right_block_size = self.config.device.block_size[-1]
+
+        left_contact_inds = self.atom_inds[:left_block_size]
+        right_contact_inds = self.atom_inds[-right_block_size:]
+
+        contact_potential_constraints = {
+            self.config.electron.left_contact.name: (
+                -self.config.electron.left_contact.voltage,
+                left_contact_inds,
+            ),
+            self.config.electron.right_contact.name: (
+                -self.config.electron.right_contact.voltage,
+                right_contact_inds,
+            ),
+        }
+        return contact_potential_constraints
+
+    def generate_initial_guess(self, transport_solver: QTBM | SCBA) -> NDArray:
+        """Provides an initial guess for the potential.
+
+        The initial guess can be generated based on different strategies
+        specified in the configuration, such as using a zero potential,
+        loading from a file, or solving an initial guess from the
+        constraints.
+
+        Parameters
+        ----------
+        transport_solver : TransportSolver
+            The transport solver, which may be needed to solve an
+            initial guess from the constraints.
+
+        Returns
+        -------
+        potential : NDArray
+            The initial guess for the potential in the orbital basis.
+
+        """
         if self.initial_guess_strategy == "zero":
             if comm.rank == 0:
                 print("using zero initial guess", flush=True)
@@ -180,7 +259,50 @@ class ElectrostaticSolver:
             return potential
 
         if self.initial_guess_strategy == "constraints":
-            raise NotImplementedError
+            if comm.rank == 0:
+                print("using initial guess from constraints", flush=True)
+
+            # NOTE: When solving an initial guess from constraints, we
+            # impose Dirichlet potential constraints in the contacts as
+            # well, not only in the gates.
+            contact_potential_constraints = self._get_contact_potential_constraints(
+                transport_solver=transport_solver
+            )
+
+            extended_potential_constraints = (
+                self.poisson_solver.potential_constraints
+                | contact_potential_constraints
+            )
+
+            import skfem
+            from scipy import sparse
+
+            rhs = np.zeros(self.num_dofs)
+            for value, indices in extended_potential_constraints.values():
+                rhs[indices] = value
+
+            stiffness_matrix = skfem.enforce(
+                A=self.poisson_solver.stiffness_matrix,
+                D={
+                    key: self.poisson_solver.basis.get_dofs(nodes=inds)
+                    for key, (__, inds) in extended_potential_constraints.items()
+                },
+            )
+
+            diagonal = stiffness_matrix.diagonal()
+            preconditioner = sparse.linalg.LinearOperator(
+                stiffness_matrix.shape, matvec=lambda x: x / diagonal
+            )
+            potential, info = sparse.linalg.bicgstab(
+                stiffness_matrix,
+                rhs,
+                M=preconditioner,
+                # NOTE: Zero starting guess was leading to parameter
+                # breakdown, this seems more robust.
+                x0=preconditioner @ rhs,
+            )
+
+            return (self.poisson_solver.mfc_transform.T @ potential)[self.atom_inds]
 
         raise ValueError(f"Unknown initial guess type: {self.initial_guess_strategy}")
 

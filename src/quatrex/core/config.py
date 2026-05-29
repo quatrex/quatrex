@@ -254,8 +254,10 @@ class ElectrostaticsConfig(BaseModel):
     """The strategy to generate the initial guess for the potential.
 
     - `"zero"`: Uses a zero potential as the initial guess.
-    - `"constraints"`: Solves a linear Poisson equation with the potential
-        constraints to generate the initial guess.
+    - `"constraints"`: Solves a linear Poisson equation with the
+        potential constraints to generate the initial guess. This is
+        expected to work best at regimes close to equilibrium where the
+        potential does not vary too much.
     - `"file"`: Loads the initial guess from a file. The file should be
         located in the `input_dir` and named `potential.npy`.
 

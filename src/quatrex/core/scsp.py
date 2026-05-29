@@ -115,7 +115,9 @@ class SCSP:
             if not os.path.exists(self.config.output_dir):
                 os.mkdir(self.config.output_dir)
 
-        potential = self.electrostatic_solver.generate_initial_guess()
+        potential = self.electrostatic_solver.generate_initial_guess(
+            self.transport_solver
+        )
 
         for iteration in range(self.config.scsp.max_iterations):
 

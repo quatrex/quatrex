@@ -628,6 +628,9 @@ class ElectronSolver(SubsystemSolver):
             sse_greater_tmp = sse_greater.stack[stack_slice]
             sse_retarded_hermitian_tmp = sse_retarded_hermitian.stack[stack_slice]
 
+            # Free data when the batch size changes
+            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                self.system_matrix.free_data()
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
             self._assemble_system_matrix(

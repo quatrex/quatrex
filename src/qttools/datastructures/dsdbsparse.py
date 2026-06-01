@@ -1123,9 +1123,34 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
+    def dtype(self):
+        """Returns the dtype."""
+        return self._dsdbsparse.dtype
+
+    @property
     def stack(self) -> "_DStackIndexer":
         """Returns the stack indexer on the substack."""
         return _DStackIndexer(self)
+
+    @property
+    def num_blocks(self) -> int:
+        """Returns the number of global (?) blocks."""
+        return self._dsdbsparse.num_blocks
+
+    @property
+    def block_sizes(self) -> list[int]:
+        """Returns the global block sizes."""
+        return self._dsdbsparse.block_sizes
+
+    @property
+    def data(self) -> NDArray:
+        """Returns the local slice of the data, masking the padding."""
+        return self._dsdbsparse.data[self._stack_index]
+
+    @data.setter
+    def data(self, value: NDArray) -> None:
+        """Sets the local slice of the data."""
+        self._dsdbsparse.data[self._stack_index] = value
 
     def __iadd__(self, other: "DSDBSparse | sparse.spmatrix") -> "DSDBSparse":
         """In-place addition of sparse matrix."""

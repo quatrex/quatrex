@@ -206,6 +206,22 @@ def arrow_partition_halo_comm(
         The index of the last block to communicate.
 
     """
+    if a.dsdbsparse.num_blocks != b.dsdbsparse.num_blocks:
+        raise ValueError(
+            "The two block matrices must" " have the same number of blocks."
+        )
+
+    # a_num_diag=5 and b_num_diag=3 is tested
+    if a_num_diag > 3 and b_num_diag > 3:
+        # TODO: This `raise` is here since there was a bug in the loop ranges
+        # but all the tests were passing. We are currently not sure when
+        # removing the bug (naively changing `i` to `j`) will wokr with all edge
+        # cases
+        raise NotImplementedError(
+            "Halo communication is only tested for block tridiagonal matrices.\n"
+            "Please implement tests first if you want to use it for more general matrices.\n"
+            f"Received a_num_diag={a_num_diag}, b_num_diag={b_num_diag}."
+        )
 
     num_blocks = a.dsdbsparse.num_blocks
     a_ssz = a.dsdbsparse.shape[:-2]
@@ -219,61 +235,67 @@ def arrow_partition_halo_comm(
 
     # Send halo blocks to previous rank
     def _send_to_previous():
-        if start_block > 0:
-            for i in range(start_block, min(num_blocks, start_block + c_off)):
-                for j in range(
-                    max(start_block, i - a_off),
-                    min(a.dsdbsparse.num_blocks, i + a_off + 1),
-                ):
-                    comm.block.send(a[i, j], rank - 1)
-            for j in range(start_block, min(num_blocks, start_block + c_off)):
-                for i in range(
-                    max(start_block, j - b_off),
-                    min(b.dsdbsparse.num_blocks, j + b_off + 1),
-                ):
-                    comm.block.send(b[i, j], rank - 1)
+        if not (start_block > 0):
+            return
+
+        for i in range(start_block, min(num_blocks, start_block + c_off)):
+            for j in range(
+                max(start_block, i - a_off),
+                min(num_blocks, i + a_off + 1),
+            ):
+                comm.block.send(a[i, j], rank - 1)
+        for j in range(start_block, min(num_blocks, start_block + c_off)):
+            for i in range(
+                max(start_block, j - b_off),
+                min(num_blocks, j + b_off + 1),
+            ):
+                comm.block.send(b[i, j], rank - 1)
 
     # Receive halo blocks from next rank
     def _recv_from_next():
-        if end_block < a.dsdbsparse.num_blocks:
-            for i in range(end_block, min(num_blocks, end_block + c_off)):
-                for j in range(
-                    max(end_block, i - a_off),
-                    min(a.dsdbsparse.num_blocks, i + a_off + 1),
-                ):
-                    a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                    comm.block.recv(a[i, j], rank + 1)
-        if end_block < b.dsdbsparse.num_blocks:
-            for j in range(end_block, min(num_blocks, end_block + c_off)):
-                for i in range(
-                    max(end_block, j - b_off),
-                    min(b.dsdbsparse.num_blocks, j + b_off + 1),
-                ):
-                    b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                    comm.block.recv(b[i, j], rank + 1)
+        if not (end_block < num_blocks):
+            return
+
+        for i in range(end_block, min(num_blocks, end_block + c_off)):
+            for j in range(
+                max(end_block, i - a_off),
+                min(num_blocks, i + a_off + 1),
+            ):
+                a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                comm.block.recv(a[i, j], rank + 1)
+        for j in range(end_block, min(num_blocks, end_block + c_off)):
+            for i in range(
+                max(end_block, j - b_off),
+                min(num_blocks, j + b_off + 1),
+            ):
+                b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                comm.block.recv(b[i, j], rank + 1)
 
     # Send halo blocks to next rank
     def _send_to_next():
-        if end_block < a.dsdbsparse.num_blocks:
-            for i in range(end_block, min(num_blocks, end_block + a_off)):
-                for j in range(max(0, i - a_off), min(end_block, i + a_off + 1)):
-                    comm.block.send(a[i, j], rank + 1)
-        if end_block < b.dsdbsparse.num_blocks:
-            for j in range(end_block, min(num_blocks, end_block + b_off)):
-                for i in range(max(0, j - b_off), min(end_block, j + b_off + 1)):
-                    comm.block.send(b[i, j], rank + 1)
+        if not (end_block < num_blocks):
+            return
+
+        for i in range(end_block, min(num_blocks, end_block + a_off)):
+            for j in range(max(0, i - a_off), min(end_block, i + a_off + 1)):
+                comm.block.send(a[i, j], rank + 1)
+        for j in range(end_block, min(num_blocks, end_block + b_off)):
+            for i in range(max(0, j - b_off), min(end_block, j + b_off + 1)):
+                comm.block.send(b[i, j], rank + 1)
 
     # Receive halo blocks from previous rank
     def _recv_from_previous():
-        if start_block > 0:
-            for i in range(start_block, min(num_blocks, start_block + a_off)):
-                for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
-                    a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                    comm.block.recv(a[i, j], rank - 1)
-            for j in range(start_block, min(num_blocks, start_block + b_off)):
-                for i in range(max(0, j - b_off), min(start_block, i + b_off + 1)):
-                    b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
-                    comm.block.recv(b[i, j], rank - 1)
+        if not (start_block > 0):
+            return
+
+        for i in range(start_block, min(num_blocks, start_block + a_off)):
+            for j in range(max(0, i - a_off), min(start_block, i + a_off + 1)):
+                a[i, j] = xp.empty((a_ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                comm.block.recv(a[i, j], rank - 1)
+        for j in range(start_block, min(num_blocks, start_block + b_off)):
+            for i in range(max(0, j - b_off), min(start_block, j + b_off + 1)):
+                b[i, j] = xp.empty((b_ssz) + (bsz[i], bsz[j]), dtype=dtype)
+                comm.block.recv(b[i, j], rank - 1)
 
     if rank % 2 == 0:
         _send_to_previous()

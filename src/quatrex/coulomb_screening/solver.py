@@ -381,7 +381,7 @@ class CoulombScreeningSolver(SubsystemSolver):
         p_lesser: DSDBSparse,
         p_greater: DSDBSparse,
         p_retarded: DSDBSparse,
-        stack_slice: slice,
+        batch_slice: slice,
     ) -> None:
         """Computes open boundary conditions (OBC).
 
@@ -407,13 +407,13 @@ class CoulombScreeningSolver(SubsystemSolver):
             The greater polarization.
         p_retarded : DSDBSparse
             The retarded polarization.
-        stack_slice : slice
+        batch_slice : slice
             The slice of the energy stack corresponding to the current batch.
 
         """
         if comm.block.rank == 0:
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left-" + str(stack_slice),
+                contact="left-" + str(batch_slice),
                 p_lesser=p_lesser,
                 p_greater=p_greater,
                 p_retarded=p_retarded,
@@ -429,7 +429,7 @@ class CoulombScreeningSolver(SubsystemSolver):
             n = p_retarded.num_local_blocks - 1
             m = n - 1
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right-" + str(stack_slice),
+                contact="right-" + str(batch_slice),
                 p_lesser=p_lesser,
                 p_greater=p_greater,
                 p_retarded=p_retarded,
@@ -752,7 +752,7 @@ class CoulombScreeningSolver(SubsystemSolver):
 
         for i in range(len(batch_sizes)):
 
-            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
             off_slice = slice(0, int(batch_offsets[i + 1] - batch_offsets[i]))
 
             # Free data when the batch size changes
@@ -771,19 +771,19 @@ class CoulombScreeningSolver(SubsystemSolver):
                 self.l_lesser.allocate_data(stack_size=batch_sizes[i])
                 self.l_greater.allocate_data(stack_size=batch_sizes[i])
 
-                p_lesser_tmp = p_lesser.stack[stack_slice]
-                p_greater_tmp = p_greater.stack[stack_slice]
-                p_retarded_hermitian_tmp = p_retarded_hermitian.stack[stack_slice]
-                l_lesser_tmp = self.l_lesser.stack[off_slice]
-                l_greater_tmp = self.l_greater.stack[off_slice]
+                p_lesser_batch = p_lesser.stack[batch_slice]
+                p_greater_batch = p_greater.stack[batch_slice]
+                p_retarded_hermitian_batch = p_retarded_hermitian.stack[batch_slice]
+                l_lesser_batch = self.l_lesser.stack[off_slice]
+                l_greater_batch = self.l_greater.stack[off_slice]
 
                 # Change the block sizes to match the Coulomb matrix.
                 self._set_block_sizes(self.small_block_sizes)
 
             self._assemble_retarded_polarization(
-                p_lesser_tmp,
-                p_greater_tmp,
-                p_retarded_hermitian_tmp,
+                p_lesser_batch,
+                p_greater_batch,
+                p_retarded_hermitian_batch,
             )
 
             # Assemble the system matrix (Includes matrix multiplication).
@@ -791,10 +791,10 @@ class CoulombScreeningSolver(SubsystemSolver):
 
             # Apply the OBC algorithm.
             self._compute_obc(
-                p_lesser_tmp,
-                p_greater_tmp,
+                p_lesser_batch,
+                p_greater_batch,
                 self.p_retarded,
-                stack_slice,
+                batch_slice,
             )
             self.p_retarded.free_data()
 
@@ -808,21 +808,21 @@ class CoulombScreeningSolver(SubsystemSolver):
                 end_block = start_block + local_blocks[comm.block.rank]
                 bd_sandwich(
                     self.coulomb_matrix,
-                    p_lesser_tmp,
-                    out=l_lesser_tmp,
+                    p_lesser_batch,
+                    out=l_lesser_batch,
                     start_block=start_block,
                     end_block=end_block,
                 )
-                self._apply_spillover_sandwich(p_lesser_tmp, l_lesser_tmp)
+                self._apply_spillover_sandwich(p_lesser_batch, l_lesser_batch)
 
                 bd_sandwich(
                     self.coulomb_matrix,
-                    p_greater_tmp,
-                    out=l_greater_tmp,
+                    p_greater_batch,
+                    out=l_greater_batch,
                     start_block=start_block,
                     end_block=end_block,
                 )
-                self._apply_spillover_sandwich(p_greater_tmp, l_greater_tmp)
+                self._apply_spillover_sandwich(p_greater_batch, l_greater_batch)
 
             if self.flatband:
                 with profiler.profile_range(
@@ -831,8 +831,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                     comm=comm,
                 ):
                     homogenize(self.system_matrix)
-                    homogenize(l_lesser_tmp)
-                    homogenize(l_greater_tmp)
+                    homogenize(l_lesser_batch)
+                    homogenize(l_greater_batch)
 
             with profiler.profile_range(
                 label="CoulombScreeningSolver: Set block sizes back",
@@ -847,16 +847,16 @@ class CoulombScreeningSolver(SubsystemSolver):
             ):
                 out_l, out_g = out
                 out_slice = (
-                    out_l.stack[stack_slice],
-                    out_g.stack[stack_slice],
+                    out_l.stack[batch_slice],
+                    out_g.stack[batch_slice],
                 )
 
                 # Solve the system
                 if comm.block.size > 1:
                     self.solver_dist.selected_solve(
                         a=self.system_matrix,
-                        sigma_lesser=l_lesser_tmp,
-                        sigma_greater=l_greater_tmp,
+                        sigma_lesser=l_lesser_batch,
+                        sigma_greater=l_greater_batch,
                         obc_blocks=self.obc_blocks,
                         out=out_slice,
                         return_retarded=False,
@@ -865,8 +865,8 @@ class CoulombScreeningSolver(SubsystemSolver):
                 else:
                     self.solver.selected_solve(
                         a=self.system_matrix,
-                        sigma_lesser=l_lesser_tmp,
-                        sigma_greater=l_greater_tmp,
+                        sigma_lesser=l_lesser_batch,
+                        sigma_greater=l_greater_batch,
                         obc_blocks=self.obc_blocks,
                         out=out_slice,
                         return_retarded=False,

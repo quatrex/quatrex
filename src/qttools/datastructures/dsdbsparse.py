@@ -817,7 +817,18 @@ class DSDBSparse(ABC):
         free_mempool()
 
     def allocate_data(self, stack_size: int | None = None) -> None:
-        """Allocates the local data."""
+        """Allocates the local data.
+
+        This should not be called with a non-None stack size
+        if the data will be dtransposed.
+
+        Parameters
+        ----------
+        stack_size : int, optional
+            The size of the stack dimension to allocate. If None, the full
+            stack size is used. Default is None.
+
+        """
         free_mempool()
 
         # NOTE: Dangerous

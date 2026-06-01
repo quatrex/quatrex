@@ -543,12 +543,15 @@ class ElectronConfig(BaseModel):
     filtering_iteration_limit: PositiveInt = 1
 
     max_batch_size: PositiveInt | None = None
-    """The maximum number of energies per batch for the electronic subsystem.
-    
-    This controls the batching of the boundary condition and Green's function
-    solvers in the electronic subsystem. If not set, all energies are computed
-    at once.
-    
+    """The maximum number of energies to batch together in the solution
+    of the electronic subsystem.
+
+    This controls how many energies are treated together when computing boundary
+    conditions and electron Green's functions. If not set, all energies are
+    computed at once.
+
+    This can help mitigate memory bottlenecks.
+
     """
 
     @model_validator(mode="after")
@@ -714,12 +717,14 @@ class CoulombScreeningConfig(BaseModel):
         return self
 
     max_batch_size: PositiveInt | None = None
-    """The maximum number of energies per batch for the Coulomb screening
-    subsystem.
+    """The maximum number of energies to batch together in the solution
+    of the screened Coulomb interaction.
 
-    This controls the batching of the boundary condition and screend coulomb
-    interaction solver in the Coulomb screening subsystem. If not set, all
-    energies are computed at once.
+    This controls how many energies are treated together when computing boundary
+    conditions and screened Coulomb interactions. If not set, all energies are
+    computed at once.
+
+    This can help mitigate memory bottlenecks.
 
     """
 
@@ -864,8 +869,8 @@ class DeviceConfig(BaseModel):
 
     If set to `None`, all neighbor cells are considered. A
     `neighbor_cell_cutoff` of zero means that only the unit cell itself
-    is considered. 
-    
+    is considered.
+
     Along the transport direction, at least one neighboring cell must be
     included if `construct_from_unit_cell` is `True`. If
     `construct_from_unit_cell` is `False`, no neighboring cells should be

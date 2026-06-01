@@ -302,21 +302,21 @@ class ElectronSolver(SubsystemSolver):
         )
 
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
-    def _compute_obc(self, stack_slice: slice) -> None:
+    def _compute_obc(self, batch_slice: slice) -> None:
         """Computes open boundary conditions.
 
         Parameters
         ----------
-        stack_slice : slice
+        batch_slice : slice
             The slice of the energy stack corresponding to the current batch.
 
         """
         if comm.block.rank == 0:
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left-" + str(stack_slice),
+                contact="left-" + str(batch_slice),
                 diagonal_inds=(0, 0),
                 upper_inds=(0, 1),
-                occupancies=self.left_occupancies[stack_slice],
+                occupancies=self.left_occupancies[batch_slice],
             )
             self.obc_blocks.retarded[0] = obc_retarded
             self.obc_blocks.lesser[0] = obc_lesser
@@ -326,10 +326,10 @@ class ElectronSolver(SubsystemSolver):
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right-" + str(stack_slice),
+                contact="right-" + str(batch_slice),
                 diagonal_inds=(n, n),
                 upper_inds=(n, m),
-                occupancies=self.right_occupancies[stack_slice],
+                occupancies=self.right_occupancies[batch_slice],
                 order="reverse",
             )
             self.obc_blocks.retarded[-1] = obc_retarded
@@ -476,7 +476,7 @@ class ElectronSolver(SubsystemSolver):
         sse_lesser: DSDBSparse | _DStackView,
         sse_greater: DSDBSparse | _DStackView,
         sse_retarded_hermitian: DSDBSparse | _DStackView,
-        stack_slice: slice,
+        batch_slice: slice,
     ) -> None:
         """Assembles the system matrix.
 
@@ -488,7 +488,7 @@ class ElectronSolver(SubsystemSolver):
             The greater scattering self-energy.
         sse_retarded_hermitian : DSDBSparse | _DStackView
             The hermitian part of the retarded scattering self-energy.
-        stack_slice : slice
+        batch_slice : slice
             The slice of the energy stack corresponding to the current batch.
 
         """
@@ -500,7 +500,7 @@ class ElectronSolver(SubsystemSolver):
 
         scale_stack(
             self.system_matrix.data,
-            self.local_energies[stack_slice] + 1j * self.eta,
+            self.local_energies[batch_slice] + 1j * self.eta,
         )
 
         if self.overlap is None:
@@ -623,10 +623,10 @@ class ElectronSolver(SubsystemSolver):
 
         for i in range(len(batch_sizes)):
 
-            stack_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
-            sse_lesser_tmp = sse_lesser.stack[stack_slice]
-            sse_greater_tmp = sse_greater.stack[stack_slice]
-            sse_retarded_hermitian_tmp = sse_retarded_hermitian.stack[stack_slice]
+            batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            sse_lesser_batch = sse_lesser.stack[batch_slice]
+            sse_greater_batch = sse_greater.stack[batch_slice]
+            sse_retarded_hermitian_batch = sse_retarded_hermitian.stack[batch_slice]
 
             # Free data when the batch size changes
             if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
@@ -634,26 +634,29 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.allocate_data(stack_size=batch_sizes[i])
 
             self._assemble_system_matrix(
-                sse_lesser_tmp, sse_greater_tmp, sse_retarded_hermitian_tmp, stack_slice
+                sse_lesser_batch,
+                sse_greater_batch,
+                sse_retarded_hermitian_batch,
+                batch_slice,
             )
 
-            self._compute_obc(stack_slice)
+            self._compute_obc(batch_slice)
 
             with profiler.profile_range(
                 label="ElectronSolver: Solve", level="default", comm=comm
             ):
                 out_l, out_g, out_r = out
                 out_slice = (
-                    out_l.stack[stack_slice],
-                    out_g.stack[stack_slice],
-                    out_r.stack[stack_slice],
+                    out_l.stack[batch_slice],
+                    out_g.stack[batch_slice],
+                    out_r.stack[batch_slice],
                 )
                 if comm.block.size > 1:
                     self.meir_wingreen_current.append(
                         self.solver_dist.selected_solve(
                             a=self.system_matrix,
-                            sigma_lesser=sse_lesser_tmp,
-                            sigma_greater=sse_greater_tmp,
+                            sigma_lesser=sse_lesser_batch,
+                            sigma_greater=sse_greater_batch,
                             obc_blocks=self.obc_blocks,
                             out=out_slice,
                             return_retarded=True,
@@ -665,8 +668,8 @@ class ElectronSolver(SubsystemSolver):
                     self.meir_wingreen_current.append(
                         self.solver.selected_solve(
                             a=self.system_matrix,
-                            sigma_lesser=sse_lesser_tmp,
-                            sigma_greater=sse_greater_tmp,
+                            sigma_lesser=sse_lesser_batch,
+                            sigma_greater=sse_greater_batch,
                             obc_blocks=self.obc_blocks,
                             out=out_slice,
                             return_retarded=True,

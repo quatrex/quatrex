@@ -177,27 +177,42 @@ class RGFDist(GFSolver):
             # Initialize temporary buffers.
             reduced_system = _serinv.ReducedSystem(selected_solve=True)
 
-            xr_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
-            xr_buffer_lower: list[NDArray | None] = [None] * a.num_local_blocks
-            xr_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xr_diag_blocks: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
+            xr_buffer_lower: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
+            xr_buffer_upper: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
 
-            xl_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
+            xl_diag_blocks: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
             xl_buffer_lower = None
-            xl_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xl_buffer_upper: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
 
-            xg_diag_blocks: list[NDArray | None] = [None] * a.num_local_blocks
+            xg_diag_blocks: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
             xg_buffer_lower = None
-            xg_buffer_upper: list[NDArray | None] = [None] * a.num_local_blocks
+            xg_buffer_upper: list[NDArray | None] = [
+                None
+            ] * sigma_lesser.num_local_blocks
 
             if obc_blocks is None:
-                obc_blocks = OBCBlocks(num_blocks=a.num_local_blocks)
+                obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_local_blocks)
 
             if return_current:
                 # Allocate a buffer for the current. This includes current
                 # between each layer and from/to the leads (in total
                 # num_blocks + 1).
                 current = xp.zeros(
-                    (*sigma_lesser.shape[:-2], a.num_blocks + 1), dtype=a.dtype
+                    (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
+                    dtype=sigma_lesser.dtype,
                 )
                 # TODO: Only boundary currents are currently supported.
                 # Invalidate the remaining layers by setting them to

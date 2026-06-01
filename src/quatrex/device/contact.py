@@ -330,7 +330,7 @@ class Contact:
         # NOTE: We can either explicitly set the Fermi level in the
         # contact config, or compute it from the doping density and a
         # mid-gap energy.
-        if contact_config.fermi_level is not None:
+        if contact_config.fermi_level is not None and device.config.scsp is None:
             self.fermi_level = contact_config.fermi_level
             self.mid_gap_energy = contact_config.mid_gap_energy
         else:
@@ -365,7 +365,11 @@ class Contact:
             self.device.apply_potential()
             self._init_hamiltonian_overlap_matrices()
 
-            self.fermi_level, self.mid_gap_energy = self._compute_fermi_level(
+            (
+                self.fermi_level,
+                self.mid_gap_energy,
+                self.delta_fermi_level_conduction_band,
+            ) = self._compute_fermi_level(
                 num_kpoints_transport=contact_config.num_kpoints_transport,
                 kpoints_transverse=kpoints_transverse,
                 mid_gap_energy=contact_config.mid_gap_energy,
@@ -384,6 +388,10 @@ class Contact:
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
+            print(
+                f"    Delta Fermi level: {self.delta_fermi_level_conduction_band} eV",
+                flush=True,
+            )
             print(f"    Voltage: {self.voltage} V", flush=True)
             print(f"    Temperature: {self.temperature} K", flush=True)
 
@@ -1060,7 +1068,7 @@ class Contact:
         temperature: float,
         doping_density: float,
         cell_volume: float,
-    ) -> float:
+    ) -> tuple[float, float, float]:
         """Computes the Fermi level for the contact.
 
         Parameters
@@ -1089,9 +1097,11 @@ class Contact:
         -------
         fermi_level : float
             The computed Fermi level in eV.
-        e_k : NDArray
-            The computed band structure at the sampled k-points, used
-            for debugging and verification.
+        mid_gap_energy : float
+            The recomputed mid-gap energy based on the band structure.
+        delta_fermi_level_conduction_band : float
+            The energy difference between the Fermi level and the
+            conduction band edge.
 
         """
         # NOTE: I'm not 100% sure if i should be including the endpoint
@@ -1133,13 +1143,16 @@ class Contact:
         )
 
         # Recompute the actual mid-gap energy from the band structure.
-        band_edges = contact_band_edges(e_k, mid_gap_energy)
+        valence_band_edge, conduction_band_edge = contact_band_edges(
+            e_k, mid_gap_energy
+        )
         if comm.rank == 0:
-            print(f"    Conduction band minimum: {band_edges[1]} eV", flush=True)
-            print(f"    Valence band maximum: {band_edges[0]} eV", flush=True)
-        mid_gap_energy = np.mean(band_edges)
+            print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
+            print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
+        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+        delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
 
-        return fermi_level, mid_gap_energy
+        return fermi_level, mid_gap_energy, delta_fermi_level_conduction_band
 
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False

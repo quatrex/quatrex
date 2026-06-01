@@ -3,8 +3,9 @@
 """Main class for handling electrostatics."""
 
 import numpy as np
+import skfem
 
-from qttools import NDArray, xp
+from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.utils.gpu_utils import get_device, get_host
 from qttools.utils.mpi_utils import distributed_load
@@ -42,7 +43,7 @@ class ElectrostaticSolver:
 
     call_count = 0
 
-    def __init__(self, config: QuatrexConfig):
+    def __init__(self, config: QuatrexConfig, transport_solver: QTBM | SCBA):
         """Initializes the electrostatic solver."""
 
         self.config = config
@@ -56,7 +57,22 @@ class ElectrostaticSolver:
         potential_constraints, fixed_density = self._configure_constraints(
             config=config,
             device_mesh=self.device_mesh,
+            transport_solver=transport_solver,
         )
+
+        self.initial_guess_strategy = config.electrostatics.initial_guess
+
+        if self.initial_guess_strategy == "constraints":
+            # NOTE: When solving an initial guess from constraints, we
+            # impose Dirichlet potential constraints in the contacts as
+            # well, not only in the gates.
+            self.contact_potential_constraints = (
+                self._configure_contact_potential_constraints(
+                    config=config,
+                    atom_inds=self.atom_inds,
+                    transport_solver=transport_solver,
+                )
+            )
 
         self.poisson_solver = self._configure_poisson_solver(
             config=config,
@@ -69,21 +85,41 @@ class ElectrostaticSolver:
         # orbital occupations, we need the basis functions.
         # self.orbital_basis = ...
 
-        self.initial_guess_strategy = config.electrostatics.initial_guess
-
     @staticmethod
     def _configure_constraints(
         config: QuatrexConfig,
         device_mesh: DeviceMesh,
+        transport_solver: QTBM | SCBA,
     ) -> tuple[dict[str, tuple[float, NDArray]], NDArray]:
         """Configures the constraints for the electrostatic problem."""
+
+        # Determine the reference contact. Needed to determine the
+        # reference conduction band edge - Fermi level difference for
+        # the potential constraints.
+        if isinstance(transport_solver, QTBM):
+            for contact in transport_solver.device.contacts:
+                if contact.voltage == 0.0:
+                    delta_fermi_level_conduction_band = (
+                        contact.delta_fermi_level_conduction_band
+                    )
+                    break
+
+        elif isinstance(transport_solver, SCBA):
+            if config.electron.left_contact.voltage == 0.0:
+                delta_fermi_level_conduction_band = (
+                    transport_solver.electron_solver.left_delta_fermi_level_conduction_band
+                )
+            if config.electron.right_contact.voltage == 0.0:
+                delta_fermi_level_conduction_band = (
+                    transport_solver.electron_solver.right_delta_fermi_level_conduction_band
+                )
 
         potential_constraints = {}
         for region in config.device.geometry.regions:
             if not hasattr(region.properties, "voltage"):
                 continue
 
-            constraint_value = region.properties.voltage
+            constraint_value = -region.properties.voltage
             if (
                 config.electrostatics.electron_affinity is not None
                 and region.properties.work_function is not None
@@ -93,7 +129,13 @@ class ElectrostaticSolver:
                 constraint_value += (
                     region.properties.work_function
                     - config.electrostatics.electron_affinity
+                    - delta_fermi_level_conduction_band
                 )
+                if comm.rank == 0:
+                    print(
+                        f"Adding work function difference to potential constraint for region {region.name}: {constraint_value} V",
+                        flush=True,
+                    )
 
             potential_constraints[region.name] = (
                 constraint_value,
@@ -168,8 +210,11 @@ class ElectrostaticSolver:
             f"Unknown solving scheme: {config.electrostatics.solving_scheme}"
         )
 
-    def _get_contact_potential_constraints(
-        self, transport_solver: QTBM | SCBA
+    @staticmethod
+    def _configure_contact_potential_constraints(
+        config: QuatrexConfig,
+        atom_inds: NDArray,
+        transport_solver: QTBM | SCBA,
     ) -> dict[str, tuple[float, NDArray]]:
         """Gets the potential constraints for the contacts based on the
         transport solver.
@@ -179,6 +224,12 @@ class ElectrostaticSolver:
 
         Parameters
         ----------
+        config : QuatrexConfig
+            The configuration object containing the contact settings.
+        atom_inds : NDArray
+            The indices of the mesh nodes corresponding to the atomic
+            positions, which is needed to determine where to apply the
+            contact potential constraints.
         transport_solver : QTBM | SCBA
             The transport solver, which may be needed to determine the
             contact potential constraints.
@@ -196,7 +247,7 @@ class ElectrostaticSolver:
             # and gather their potentials.
             contact_potential_constraints = {}
             for contact in transport_solver.device.contacts:
-                contact_inds = self.atom_inds[contact.origin_atom_indices]
+                contact_inds = atom_inds[contact.origin_atom_indices]
                 contact_potential_constraints[contact.name] = (
                     -contact.voltage,
                     contact_inds,
@@ -206,28 +257,28 @@ class ElectrostaticSolver:
 
         # In NEGF the contacts are the first and last blocks of
         # orbitals.
-        if isinstance(self.config.device.block_size, int):
-            left_block_size = right_block_size = self.config.device.block_size
+        if isinstance(config.device.block_size, int):
+            left_block_size = right_block_size = config.device.block_size
         else:
-            left_block_size = self.config.device.block_size[0]
-            right_block_size = self.config.device.block_size[-1]
+            left_block_size = config.device.block_size[0]
+            right_block_size = config.device.block_size[-1]
 
-        left_contact_inds = self.atom_inds[:left_block_size]
-        right_contact_inds = self.atom_inds[-right_block_size:]
+        left_contact_inds = atom_inds[:left_block_size]
+        right_contact_inds = atom_inds[-right_block_size:]
 
         contact_potential_constraints = {
-            self.config.electron.left_contact.name: (
-                -self.config.electron.left_contact.voltage,
+            config.electron.left_contact.name: (
+                -config.electron.left_contact.voltage,
                 left_contact_inds,
             ),
-            self.config.electron.right_contact.name: (
-                -self.config.electron.right_contact.voltage,
+            config.electron.right_contact.name: (
+                -config.electron.right_contact.voltage,
                 right_contact_inds,
             ),
         }
         return contact_potential_constraints
 
-    def generate_initial_guess(self, transport_solver: QTBM | SCBA) -> NDArray:
+    def generate_initial_guess(self) -> NDArray:
         """Provides an initial guess for the potential.
 
         The initial guess can be generated based on different strategies
@@ -262,20 +313,10 @@ class ElectrostaticSolver:
             if comm.rank == 0:
                 print("using initial guess from constraints", flush=True)
 
-            # NOTE: When solving an initial guess from constraints, we
-            # impose Dirichlet potential constraints in the contacts as
-            # well, not only in the gates.
-            contact_potential_constraints = self._get_contact_potential_constraints(
-                transport_solver=transport_solver
-            )
-
             extended_potential_constraints = (
                 self.poisson_solver.potential_constraints
-                | contact_potential_constraints
+                | self.contact_potential_constraints
             )
-
-            import skfem
-            from scipy import sparse
 
             rhs = np.zeros(self.num_dofs)
             for value, indices in extended_potential_constraints.values():
@@ -297,7 +338,7 @@ class ElectrostaticSolver:
                 stiffness_matrix,
                 rhs,
                 M=preconditioner,
-                # NOTE: Zero starting guess was leading to parameter
+                # NOTE: Zero starting guess can lead to parameter
                 # breakdown, this seems more robust.
                 x0=preconditioner @ rhs,
             )

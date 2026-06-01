@@ -32,7 +32,7 @@ class SCSP:
         self.config = config
 
         self.transport_solver = self._configure_transport_solver(config)
-        self.electrostatic_solver = ElectrostaticSolver(config)
+        self.electrostatic_solver = ElectrostaticSolver(config, self.transport_solver)
 
         self.mixer = self._configure_mixer(config.scsp)
 
@@ -115,9 +115,7 @@ class SCSP:
             if not os.path.exists(self.config.output_dir):
                 os.mkdir(self.config.output_dir)
 
-        potential = self.electrostatic_solver.generate_initial_guess(
-            self.transport_solver
-        )
+        potential = self.electrostatic_solver.generate_initial_guess()
 
         for iteration in range(self.config.scsp.max_iterations):
 

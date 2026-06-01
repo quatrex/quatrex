@@ -33,7 +33,6 @@ num_orbitals_per_atom = { "X" = 1 }
         shape.length = 20
 
         properties.voltage = 0.0
-        properties.work_function = 4.5
 
         [[device.geometry.regions]]
         name = "oxide"

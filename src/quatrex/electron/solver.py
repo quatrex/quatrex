@@ -277,13 +277,13 @@ class ElectronSolver(SubsystemSolver):
         if (
             not config.electron.band_edge_tracking
             and contact_config.fermi_level is not None
+            and config.scsp is None
         ):
             # If band edge tracking is disabled and the Fermi level is
             # provided, we can directly return the provided Fermi level.
-            # The mid-gap energy might still be set to compute excess
-            # carrier density for Poisson solver. The difference between
-            # the conduction band edge and the Fermi level is definitely
-            # not needed in this case, so we return NaN for that.
+            # The difference between the conduction band edge and the
+            # Fermi level is definitely not needed in this case, so we
+            # return NaN for that.
             mid_gap_energy = (
                 xp.nan
                 if contact_config.mid_gap_energy is None

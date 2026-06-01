@@ -53,6 +53,8 @@ def scatter_add_scaled_obc(
         The transverse wavevector components.
     transverse_repetition_grid : tuple[int, int]
         The transverse repetition grid of the contact.
+    alpha : np.complex128
+        The scaling factor.
 
     """
     ky, kz = k

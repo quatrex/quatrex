@@ -749,6 +749,7 @@ class Contact:
         # TODO: The hopping matrix sits on the GPU. It seems that there
         # is some strange fancy indexing bug that makes it necessary to
         # handle slicing on the CPU. (cupy-13.5.1)
+        # TODO: Change how to check where the data resides (GPU or CPU)
         hopping_matrix = (
             hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
         )

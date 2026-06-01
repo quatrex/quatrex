@@ -267,6 +267,7 @@ class QTBM:
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
+    # TODO: Investigate performance of the system matrix allocation
     def _allocate_system_matrix(self) -> sparse.csr_matrix:
         """Allocates the system matrix."""
 
@@ -292,6 +293,7 @@ class QTBM:
                 nnz_cont.append(len(contact.orbital_indices))
                 total_nnz += len(contact.orbital_indices) ** 2
 
+        # TODO: Investigate using a SET instead
         # Concaate all indices from the hamiltonians, overlaps, and contacts into a single array to find unique indices for allocation
         concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
 

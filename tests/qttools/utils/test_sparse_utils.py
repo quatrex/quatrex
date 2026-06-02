@@ -7,10 +7,7 @@ import pytest
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.utils.sparse_utils import (
-    product_sparsity_pattern,
-    product_sparsity_pattern_dsdbsparse,
-)
+from qttools.utils.sparse_utils import product_sparsity_pattern_dsdbsparse
 
 GLOBAL_STACK_SHAPES = [
     pytest.param((4,), id="1D-stack"),
@@ -43,19 +40,6 @@ def setup_module():
     )
 
 
-def _create_coo(sizes: NDArray) -> sparse.coo_matrix:
-    """Returns a random complex sparse array."""
-    size = int(xp.sum(sizes))
-    rng = xp.random.default_rng()
-    density = rng.uniform(low=0.1, high=0.3)
-
-    def _rvs(size=None, rng=rng):
-        return xp.ones(size)
-
-    coo = sparse.random(size, size, density=density, data_rvs=_rvs, format="coo")
-    return coo
-
-
 def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
     """Returns a random complex sparse array."""
     size = int(xp.sum(sizes))
@@ -67,15 +51,15 @@ def _create_btd_coo(sizes: NDArray) -> sparse.coo_matrix:
         block_shape = (int(sizes[i]), int(sizes[i]))
         arr[offsets[i] : offsets[i + 1], offsets[i] : offsets[i + 1]] = xp.random.rand(
             *block_shape
-        )  # + 1j * xp.random.rand(*block_shape)
+        )
         # Superdiagonal block.
         if i < len(sizes) - 1:
             block_shape = (int(sizes[i]), int(sizes[i + 1]))
             arr[offsets[i] : offsets[i + 1], offsets[i + 1] : offsets[i + 2]] = (
-                xp.random.rand(*block_shape)  # + 1j * xp.random.rand(*block_shape)
+                xp.random.rand(*block_shape)
             )
             arr[offsets[i + 1] : offsets[i + 2], offsets[i] : offsets[i + 1]] = (
-                xp.random.rand(*block_shape).T  # + 1j * xp.random.rand(*block_shape).T
+                xp.random.rand(*block_shape).T
             )
     rng = xp.random.default_rng()
     cutoff = rng.uniform(low=0.1, high=0.4)
@@ -122,25 +106,6 @@ def _create_btd_coo_periodic(sizes: NDArray) -> sparse.coo_matrix:
     return coo
 
 
-def test_product_sparsity(
-    num_matrices: int,
-    block_sizes: NDArray,
-):
-    """Tests the computation of the matrix product's sparsity pattern."""
-    matrices = [_create_coo(block_sizes) for _ in range(num_matrices)]
-
-    product = functools.reduce(lambda x, y: x @ y, matrices)
-    product.data[:] = 1
-    ref = product.toarray()
-
-    rows, cols = product_sparsity_pattern(*matrices)
-    val = sparse.coo_matrix(
-        (xp.ones(len(rows)), (rows, cols)), shape=product.shape
-    ).toarray()
-
-    assert xp.allclose(ref, val)
-
-
 def _expand_matrix(
     matrix: sparse.spmatrix, block_sizes: NDArray, NBC: int = 1
 ) -> sparse.spmatrix:
@@ -168,18 +133,6 @@ def _expand_matrix(
     expanded[right_obc:, -right_obc:] = expanded[
         :-right_obc, -2 * right_obc : -right_obc
     ]
-    # expanded[:left_obc, : 2 * left_obc] = expanded[
-    #     left_obc : 2 * left_obc, left_obc : 3 * left_obc
-    # ]
-    # expanded[: 2 * left_obc, :left_obc] = expanded[
-    #     left_obc : 3 * left_obc, left_obc : 2 * left_obc
-    # ]
-    # expanded[-right_obc:, -2 * right_obc :] = expanded[
-    #     -2 * right_obc : -right_obc, -3 * right_obc : -right_obc
-    # ]
-    # expanded[-2 * right_obc :, -right_obc:] = expanded[
-    #     -3 * right_obc : -right_obc, -2 * right_obc : -right_obc
-    # ]
 
     return expanded
 
@@ -268,18 +221,6 @@ def test_product_sparsity_dsdbsparse_spillover(
     product = functools.reduce(lambda x, y: x @ y, expanded_matrices)
     product.data[:] = 1
     ref = _contract_matrix(product, block_sizes, 1).toarray()
-    # product = None
-    # for i, m in enumerate(matrices):
-    #     if product is None:
-    #         product = m
-    #     else:
-    #         expanded_m = _expand_matrix(m, block_sizes, 1)
-    #         product = product @ expanded_m
-    #         product.data[:] = 1
-    #         product = _contract_matrix(product, block_sizes, 1)
-    #     if i < num_matrices - 1:
-    #         product = _expand_matrix(product, block_sizes, 1)
-    # ref = product.toarray()
 
     rows, cols = product_sparsity_pattern_dsdbsparse(
         *dsdbsparse_matrices,
@@ -287,9 +228,6 @@ def test_product_sparsity_dsdbsparse_spillover(
         spillover=True,
     )
     val = sparse.coo_matrix((xp.ones(len(rows)), (rows, cols)), shape=shape).toarray()
-
-    if comm.rank == 0:
-        print(xp.nonzero(ref - val))
 
     assert xp.allclose(ref, val)
 

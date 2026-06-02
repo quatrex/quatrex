@@ -320,11 +320,90 @@ def test_send_recv(
 
             # send to and receive from the other rank (not self)
             other = 1 - test_comm.rank
-            source = other
-            dest = other
 
             test_comm.send_recv(
-                sendbuf=sendbuf, source=source, recvbuf=recvbuf, dest=dest
+                sendbuf=sendbuf, dest=other, recvbuf=recvbuf, source=other
+            )
+
+            expected = xp.ones((data_size), dtype=xp.float32)
+            assert xp.allclose(expected, recvbuf)
+
+
+@pytest.mark.mpi(min_size=2)
+def test_send_and_recv(
+    backend_type: str,
+    block_comm_size: int,
+):
+    """Test the send and recv functions."""
+
+    if not _configure(
+        backend_type=backend_type,
+        block_comm_size=block_comm_size,
+    ):
+        pytest.skip("Config not valid")
+
+    for test_comm in [comm.block, comm.stack]:
+
+        if test_comm.size < 2:
+            pytest.skip("Need at least 2 processes for isend_irecv test")
+
+        # random sendbuf
+        sendbuf = xp.ones((data_size), dtype=xp.float32)
+        recvbuf = xp.empty_like(sendbuf)
+
+        if test_comm.rank in [0, 1]:
+
+            # send to and receive from the other rank (not self)
+            other = 1 - test_comm.rank
+
+            if test_comm.rank == 0:
+                test_comm.send(buf=sendbuf, dest=other)
+                test_comm.recv(buf=recvbuf, source=other)
+            else:
+                test_comm.recv(buf=recvbuf, source=other)
+                test_comm.send(buf=sendbuf, dest=other)
+
+            expected = xp.ones((data_size), dtype=xp.float32)
+            assert xp.allclose(expected, recvbuf)
+
+
+@pytest.mark.mpi(min_size=2)
+def test_isend_and_irecv(
+    backend_type: str,
+    block_comm_size: int,
+):
+    """Test the isend and irecv functions."""
+
+    if not _configure(
+        backend_type=backend_type,
+        block_comm_size=block_comm_size,
+    ):
+        pytest.skip("Config not valid")
+
+    if backend_type == "host_mpi":
+        pytest.skip("Non-blocking receive is not implemented for the host_mpi backend.")
+
+    for test_comm in [comm.block, comm.stack]:
+
+        if test_comm.size < 2:
+            pytest.skip("Need at least 2 processes for isend_irecv test")
+
+        # random sendbuf
+        sendbuf = xp.ones((data_size), dtype=xp.float32)
+        recvbuf = xp.empty_like(sendbuf)
+
+        if test_comm.rank in [0, 1]:
+
+            # send to and receive from the other rank (not self)
+            other = 1 - test_comm.rank
+
+            test_comm.group_start(test_comm._config["send_recv"])
+
+            send_request = test_comm.isend(buf=sendbuf, dest=other)
+            recv_request = test_comm.irecv(buf=recvbuf, source=other)
+
+            test_comm.group_end(
+                test_comm._config["send_recv"], [send_request, recv_request]
             )
 
             expected = xp.ones((data_size), dtype=xp.float32)

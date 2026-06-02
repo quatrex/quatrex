@@ -1,60 +1,8 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import functools
-
 from qttools import NDArray, sparse, xp
 from qttools.datastructures.dsdbsparse import DSDBSparse
-from qttools.datastructures.routines import BlockMatrix, bd_matmul_distr
-
-
-def product_sparsity_pattern(
-    *matrices: sparse.spmatrix,
-) -> tuple[NDArray, NDArray]:
-    """Computes the sparsity pattern of the product of a sequence of matrices.
-
-    Parameters
-    ----------
-    matrices : sparse.spmatrix
-        A sequence of sparse matrices.
-
-    Returns
-    -------
-    rows : NDArray
-        The row indices of the sparsity pattern.
-    cols : NDArray
-        The column indices of the sparsity pattern.
-
-    """
-    # NOTE: cupyx.scipy.sparse does not support bool dtype in matmul.
-    csrs = [matrix.tocsr() for matrix in matrices]
-    for i, csr in enumerate(csrs):
-        if xp.iscomplexobj(csr.data):
-            csr = csr.copy()
-            csr.data = csr.data.real
-        csrs[i] = csr.astype(xp.float32)
-    product = functools.reduce(lambda x, y: x @ y, csrs)
-    product = product.tocoo()
-    # Canonicalize
-    product.sum_duplicates()
-
-    return product.row, product.col
-
-
-def tocsr_dict(matrix: DSDBSparse) -> dict[tuple[int, int], sparse.csr_matrix]:
-    """Converts a DSDBSparse matrix to a dictionary of CSR blocks."""
-
-    blocks = {}
-
-    for i in range(matrix.num_blocks):
-        for j in range(matrix.num_blocks):
-            sparse_data = matrix.sparse_blocks[i, j]
-            data = xp.ones_like(sparse_data[0][-1], dtype=xp.float32)
-            sparse_data = (data, *sparse_data[1:])
-            blocks[i, j] = sparse.csr_matrix(
-                sparse_data, shape=(matrix.block_sizes[i], matrix.block_sizes[j])
-            )
-
-    return blocks
+from qttools.datastructures.routines import BlockMatrix, bd_matmul
 
 
 def product_sparsity_pattern_dsdbsparse(
@@ -119,7 +67,7 @@ def product_sparsity_pattern_dsdbsparse(
         if n == len(matrices) - 2:
             tmp_num_diag = out_num_diag
 
-        c_ = bd_matmul_distr(
+        c_ = bd_matmul(
             a=a_,
             b=b,
             out=None,
@@ -128,7 +76,6 @@ def product_sparsity_pattern_dsdbsparse(
             out_num_diag=tmp_num_diag,
             start_block=start_block,
             end_block=end_block,
-            spillover_correction=False,
         )
 
         if spillover:

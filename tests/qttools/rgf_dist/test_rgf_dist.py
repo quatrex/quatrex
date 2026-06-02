@@ -401,8 +401,3 @@ def test_rgf_dist_batched(block_sizes: NDArray, global_stack_shape: tuple):
     assert xp.allclose(Xr_rgf, Xr_ref)
     assert xp.allclose(Xl_rgf, Xl_ref)
     assert xp.allclose(Xg_rgf, Xg_ref)
-
-
-if __name__ == "__main__":
-    setup_module()
-    pytest.main(["-v", "--with-mpi", __file__])

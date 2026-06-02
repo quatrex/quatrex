@@ -161,6 +161,12 @@ class _SubCommunicator:
         if "nccl" in config.values():
             self._init_nccl()
 
+        # NOTE: One can create still very unexpected behavior by using
+        # group start of both subcommunicators at once or
+        # by calling externally nccl group start or end.
+        # This is not something we can easily guard against.
+        self._group_start_called = False
+
     @classmethod
     def _validate_config(cls, config: dict):
         """Validate the configuration for the communication backend."""
@@ -238,8 +244,25 @@ class _SubCommunicator:
 
     def all_to_all(
         self, sendbuf: NDArray, recvbuf: NDArray, backend: str | None = None
-    ):
-        """Performs all-to-all communication."""
+    ) -> None:
+        """Performs all-to-all communication.
+
+        Parameters
+        ----------
+        sendbuf : NDArray
+            The buffer to send.
+        recvbuf : NDArray
+            The buffer to receive.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend will be used.
+
+        """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
+
         if backend is None:
             backend = self._config["all_to_all"]
         elif backend not in _backends:
@@ -284,8 +307,25 @@ class _SubCommunicator:
 
     def all_gather(
         self, sendbuf: NDArray, recvbuf: NDArray, backend: str | None = None
-    ):
-        """Performs all-gather communication."""
+    ) -> None:
+        """Performs all-gather communication.
+
+        Parameters
+        ----------
+        sendbuf : NDArray
+            The buffer to send.
+        recvbuf : NDArray
+            The buffer to receive.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend will be used.
+
+        """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
+
         if backend is None:
             backend = self._config["all_gather"]
         elif backend not in _backends:
@@ -335,8 +375,27 @@ class _SubCommunicator:
         recvbuf: NDArray,
         op: str = "sum",
         backend: str | None = None,
-    ):
-        """Performs all-reduce communication."""
+    ) -> None:
+        """Performs all-reduce communication.
+
+        Parameters
+        ----------
+        sendbuf : NDArray
+            The buffer to send.
+        recvbuf : NDArray
+            The buffer to receive.
+        op : str, optional
+            The operation to perform. Default is "sum".
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend will be used.
+
+        """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
+
         if backend is None:
             backend = self._config["all_reduce"]
         elif backend not in _backends:
@@ -380,8 +439,27 @@ class _SubCommunicator:
 
         synchronize_device()
 
-    def bcast(self, sendrecvbuf: NDArray, root: int = 0, backend: str | None = None):
-        """Perform broadcast communication."""
+    def bcast(
+        self, sendrecvbuf: NDArray, root: int = 0, backend: str | None = None
+    ) -> None:
+        """Perform broadcast communication.
+
+        Parameters
+        ----------
+        sendrecvbuf : NDArray
+            The buffer to send and receive.
+        root : int, optional
+            The rank of the root process. Default is 0.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend will be used.
+
+        """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
+
         if backend is None:
             backend = self._config["bcast"]
         elif backend not in _backends:
@@ -409,7 +487,7 @@ class _SubCommunicator:
             )
         synchronize_device()
 
-    def barrier(self):
+    def barrier(self) -> None:
         """Perform barrier synchronization."""
         self._mpi_comm.barrier()
 
@@ -437,6 +515,10 @@ class _SubCommunicator:
         NDArray
             The gathered buffer.
         """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
 
         if mask is not None:
             if mask.size // self.size < sendbuf.shape[axis]:
@@ -494,6 +576,10 @@ class _SubCommunicator:
             backend for sendrecv will be used.
 
         """
+        if self._group_start_called:
+            raise RuntimeError(
+                "This cannot be called between group_start and group_end."
+            )
 
         if backend is None:
             backend = self._config["send_recv"]
@@ -523,6 +609,11 @@ class _SubCommunicator:
                 use_pinned_memory=True,
             )
             recvbuf_host = empty_like_pinned(recvbuf)
+
+            # Need to synchronize the current stream to ensure that
+            # the H2D copy finished before the MPI call is made.
+            synchronize_device()
+
             self._mpi_comm.Sendrecv(
                 sendbuf=sendbuf_host,
                 dest=dest,
@@ -533,6 +624,310 @@ class _SubCommunicator:
                 recvbuf_host,
                 output_module="cupy",
                 use_pinned_memory=True,
+            )
+
+    def group_start(
+        self,
+        backend: str,
+    ) -> None:
+        """Starts a group of communication operations.
+
+        NOTE: The backend needs to specificied since it can be used
+        together with any communication operation, not just sendrecv.
+
+        Parameters
+        ----------
+        backend : str
+            The backend to use for the communication. Must be one of "nccl",
+            "device_mpi", or "host_mpi".
+
+        """
+
+        if self._group_start_called:
+            raise RuntimeError(
+                "group_start has already been called."
+                "group_start and group_end must be called in pairs."
+            )
+        self._group_start_called = True
+
+        if backend == "nccl":
+            nccl.groupStart()
+
+    def group_end(
+        self,
+        backend: str,
+        requests: list[MPI.Request] | list[None] | None = None,
+    ) -> None:
+        """Ends a group of communication operations.
+
+        NOTE: The backend needs to specificied since it can be used
+        together with any communication operation, not just sendrecv.
+
+        Parameters
+        ----------
+        backend : str
+            The backend to use for the communication. Must be one of "nccl",
+            "device_mpi", or "host_mpi".
+        requests : list[MPI.Request] | list[None] | None, optional
+            A list of requests to wait for. In the case of the "nccl" backend,
+            this must be None or a list of None, as the NCCL backend does not
+            use requests. For the "device_mpi" and "host_mpi" backends, this
+            must be a list of MPI.Request objects returned by non-blocking
+            communication operations.
+
+        """
+
+        if not self._group_start_called:
+            raise RuntimeError("group_start must be called before group_end.")
+        self._group_start_called = False
+
+        if backend == "nccl":
+            # check that requests is None or a list of None
+            if requests is not None and not all(r is None for r in requests):
+                raise ValueError(
+                    "requests must be None or"
+                    " a list of None when using the nccl backend."
+                )
+
+            nccl.groupEnd()
+        else:
+            if requests is None:
+                raise ValueError(
+                    "requests must be provided for device_mpi and host_mpi backends."
+                )
+
+            if not all(isinstance(r, MPI.Request) for r in requests):
+                raise ValueError("requests must be a list of MPI.Request objects.")
+
+            MPI.Request.Waitall(requests)
+
+    def send(
+        self,
+        buf: NDArray,
+        dest: int,
+        backend: str | None = None,
+    ) -> None:
+        """Performs non-blocking send communication.
+
+        Parameters
+        ----------
+        buf : NDArray
+            The buffer to send.
+        dest : int
+            The rank to send to.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend for sendrecv will be used.
+
+        """
+
+        if self._group_start_called:
+            raise RuntimeError(
+                "send cannot be called between group_start and group_end."
+                "They should be called together with isend."
+            )
+
+        if backend is None:
+            backend = self._config["send_recv"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
+
+        if backend == "nccl":
+            self._nccl_comm.send(buf, dest)
+
+        elif backend == "device_mpi":
+            self._mpi_comm.Send(
+                buf=buf,
+                dest=dest,
+            )
+
+        elif backend == "host_mpi":
+            buf_host = get_any_location(
+                buf,
+                output_module="numpy",
+                use_pinned_memory=True,
+            )
+
+            # Need to synchronize the current stream to ensure that
+            # the H2D copy finished before the MPI call is made.
+            synchronize_device()
+
+            self._mpi_comm.Send(
+                buf=buf_host,
+                dest=dest,
+            )
+
+    def recv(
+        self,
+        buf: NDArray,
+        source: int,
+        backend: str | None = None,
+    ) -> None:
+        """Performs non-blocking receive communication.
+
+        Parameters
+        ----------
+        buf : NDArray
+            The buffer to receive into.
+        source : int
+            The rank to receive from.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend for sendrecv will be used.
+
+        """
+
+        if self._group_start_called:
+            raise RuntimeError(
+                "recv cannot be called between group_start and group_end."
+                "They should be called together with irecv."
+            )
+
+        if backend is None:
+            backend = self._config["send_recv"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
+
+        if backend == "nccl":
+            self._nccl_comm.recv(buf, source)
+
+        elif backend == "device_mpi":
+            self._mpi_comm.Recv(
+                buf=buf,
+                source=source,
+            )
+
+        elif backend == "host_mpi":
+            buf_host = empty_like_pinned(buf)
+
+            # Need to synchronize the current stream to ensure that
+            # the alloc call is finished
+            synchronize_device()
+
+            self._mpi_comm.Recv(
+                buf=buf_host,
+                source=source,
+            )
+            buf[:] = get_any_location(
+                buf_host,
+                output_module="cupy",
+                use_pinned_memory=True,
+            )
+
+    def isend(
+        self,
+        buf: NDArray,
+        dest: int,
+        backend: str | None = None,
+    ) -> MPI.Request | None:
+        """Performs non-blocking send communication.
+
+        NOTE: For the nccl backend, the function is only non-blocking in the
+        sense that it can be used in a group of communication operations between
+        group_start and group_end.
+
+        Parameters
+        ----------
+        buf : NDArray
+            The buffer to send.
+        dest : int
+            The rank to send to.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend for sendrecv will be used.
+
+        Returns
+        -------
+        MPI.Request | None
+            The request object for the non-blocking communication operation. For
+            the nccl backend, this will always be None, as the NCCL backend does
+            not use requests
+
+        """
+
+        if not self._group_start_called:
+            raise RuntimeError(
+                "isend must be called between group_start and group_end."
+            )
+
+        if backend is None:
+            backend = self._config["send_recv"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
+
+        if backend == "nccl":
+            self._nccl_comm.send(buf, dest)
+            return None
+
+        elif backend == "device_mpi":
+            return self._mpi_comm.Isend(
+                buf=buf,
+                dest=dest,
+            )
+
+        elif backend == "host_mpi":
+            raise NotImplementedError(
+                "Non-blocking send is not implemented for the host_mpi backend."
+                "This is because it would need to synchronize in the irecv call,"
+                "which would defeat the purpose of non-blocking communication."
+            )
+
+    def irecv(
+        self,
+        buf: NDArray,
+        source: int,
+        backend: str | None = None,
+    ) -> MPI.Request | None:
+        """Performs non-blocking receive communication.
+
+        NOTE: For the nccl backend, the function is only non-blocking in the
+        sense that it can be used in a group of communication operations between
+        group_start and group_end.
+
+        Parameters
+        ----------
+        buf : NDArray
+            The buffer to receive into.
+        source : int
+            The rank to receive from.
+        backend : str, optional
+            The backend to use for the communication. If None, the default
+            backend for sendrecv will be used.
+
+        Returns
+        -------
+        MPI.Request | None
+            The request object for the non-blocking communication operation. For
+            the nccl backend, this will always be None, as the NCCL backend does
+            not use requests
+
+        """
+
+        if not self._group_start_called:
+            raise RuntimeError(
+                "irecv must be called between group_start and group_end."
+            )
+
+        if backend is None:
+            backend = self._config["send_recv"]
+        elif backend not in _backends:
+            raise ValueError(f"Invalid backend: {backend}. Must be one of {_backends}.")
+
+        if backend == "nccl":
+            self._nccl_comm.recv(buf, source)
+            return None
+
+        elif backend == "device_mpi":
+            return self._mpi_comm.Irecv(
+                buf=buf,
+                source=source,
+            )
+
+        elif backend == "host_mpi":
+            raise NotImplementedError(
+                "Non-blocking receive is not implemented for the host_mpi backend."
+                "This is because it would need to synchronize when copying the data back to the device,"
+                "which would defeat the purpose of non-blocking communication."
             )
 
 

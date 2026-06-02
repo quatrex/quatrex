@@ -3,7 +3,7 @@
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
-import os
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -104,6 +104,46 @@ def _run_negf(config):
             typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
+def _resolve_config_path(
+    config: Optional[Path],
+) -> Path:
+    """Resolves the configuration file path based on the provided argument.
+
+    Parameters
+    ----------
+    config : Optional[Path]
+        The user-provided configuration path, which can be:
+        - None: No argument provided, look for default config in working directory.
+        - A file path: Use this as the config file.
+        - A directory path: Look for 'quatrex_config.toml' inside this directory.
+
+    Returns
+    -------
+    Path
+        The resolved path to the configuration file.
+
+    """
+    # No arguments provided, check for the default config file in the
+    # working directory.
+    if config is None:
+        config = Path("./quatrex_config.toml")
+        if not config.exists():
+            raise BadArgumentUsage(
+                "No quatrex configuration file provided and default "
+                "'./quatrex_config.toml' does not exist."
+            )
+
+    # If a directory is provided, look for the config file inside.
+    if config.is_dir():
+        config = config / "quatrex_config.toml"
+        if not config.exists():
+            raise BadArgumentUsage(
+                f"No quatrex configuration file found in directory: {config.parent}"
+            )
+
+    return config.resolve()
+
+
 def _abort_quatrex(
     e: Exception,
 ) -> NoReturn:
@@ -125,17 +165,17 @@ def _abort_quatrex(
             f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
         )
 
-        os.write(2, error_msg.encode("utf-8"))
+        sys.stderr.write(error_msg)
     except Exception as traceback_exc:
         fallback_msg = f"\n[RANK {comm.rank}] traceback formatting failed with exception: {traceback_exc}\n"
 
-        os.write(2, fallback_msg.encode("utf-8"))
+        sys.stderr.write(fallback_msg)
 
     try:
         comm.Abort(1)
     except Exception as abort_exc:
         fallback_abort_msg = f"\n[RANK {comm.rank}] MPI abort failed while handling a fatal exception: {abort_exc}\n"
-        os.write(2, fallback_abort_msg.encode("utf-8"))
+        sys.stderr.write(fallback_abort_msg)
 
     raise e
 
@@ -163,23 +203,7 @@ def run(
     """Runs quatrex with the provided configuration."""
 
     try:
-        # No arguments provided, check for the default config file in the
-        # working directory.
-        if config is None:
-            config = Path("./quatrex_config.toml")
-            if not config.exists():
-                raise BadArgumentUsage(
-                    "No quatrex configuration file provided and default "
-                    "'./quatrex_config.toml' does not exist."
-                )
-
-        # If a directory is provided, look for the config file inside.
-        if config.is_dir():
-            config = config / "quatrex_config.toml"
-            if not config.exists():
-                raise BadArgumentUsage(
-                    f"No quatrex configuration file found in directory: {config.parent}"
-                )
+        config = _resolve_config_path(config)
 
         from qttools.profiling import Profiler
         from quatrex.core.config import parse_config, setup_context
@@ -206,8 +230,7 @@ def run(
     except Exception as e:
         if abort_on_exception:
             _abort_quatrex(e)
-        else:
-            raise
+        raise
 
 
 @quatrex_cli.callback(no_args_is_help=True)

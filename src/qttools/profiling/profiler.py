@@ -389,44 +389,45 @@ class Profiler:
         timestamp = time.time()
 
         # NOTE: We maybe need to barrier before starting the timer
+        exception_raised = False
+        try:
+            if xp.__name__ == "cupy":
+                xp.cuda.runtime.deviceSynchronize()
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePush(label)
+            start_time = time.perf_counter()
 
-        if xp.__name__ == "cupy":
-            xp.cuda.runtime.deviceSynchronize()
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePush(label)
-        start_time = time.perf_counter()
+            yield
 
-        # NOTE: There is not finally here since this would
-        # potentially lead to deadlocks.
-        # The only issue is that if the profiled code raises an exception,
-        # the depth will not be decreased and the profiling data will be inconsistent.
-        # However, we should always crash when profiled code raises an exception,
-        # so this should not be a problem in practice.
-        yield
+        except Exception:
+            exception_raised = True
+            raise
 
-        if xp.__name__ == "cupy":
-            xp.cuda.runtime.deviceSynchronize()
-            if NVTX_AVAILABLE:
-                xp.cuda.nvtx.RangePop()
+        finally:
+            if xp.__name__ == "cupy":
+                xp.cuda.runtime.deviceSynchronize()
+                if NVTX_AVAILABLE:
+                    xp.cuda.nvtx.RangePop()
 
-        call_time = time.perf_counter() - start_time
+            call_time = time.perf_counter() - start_time
 
-        if comm is not None and QTX_PROFILE_COMM_SYNC:
-            comm.barrier()
-            after_barrier_time = time.perf_counter() - start_time
-        else:
-            after_barrier_time = call_time
+            # Do not barrier when an exception was raised to avoid potential deadlocks.
+            if comm is not None and QTX_PROFILE_COMM_SYNC and not exception_raised:
+                comm.barrier()
+                after_barrier_time = time.perf_counter() - start_time
+            else:
+                after_barrier_time = call_time
 
-        self.eventlog.append(
-            (timestamp, self.depth, label, call_time, after_barrier_time)
-        )
+            self.eventlog.append(
+                (timestamp, self.depth, label, call_time, after_barrier_time)
+            )
 
-        if comm_world.rank == 0:
-            offset = "  " * (self.depth)
-            self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
-            if comm is not None and QTX_PROFILE_COMM_SYNC:
-                self.print_file.write(
-                    f"{offset}{label} all : {after_barrier_time:.4f}s"
-                )
+            if comm_world.rank == 0:
+                offset = "  " * (self.depth)
+                self.print_file.write(f"{offset}{label} : {call_time:.4f}s")
+                if comm is not None and QTX_PROFILE_COMM_SYNC:
+                    self.print_file.write(
+                        f"{offset}{label} all : {after_barrier_time:.4f}s"
+                    )
 
-        self.depth -= 1
+            self.depth -= 1

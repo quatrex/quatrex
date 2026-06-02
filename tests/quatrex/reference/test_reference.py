@@ -67,7 +67,7 @@ def test_single_rank(
     adjust_config_paths(quatrex_config_path, tmp_config_path)
 
     # Run the example using the CLI.
-    cli_run(tmp_config_path)
+    cli_run(tmp_config_path, abort_on_exception=False)
 
     output_dir = tmp_path / "outputs"
     reference_output_dir = example_path / "reference-outputs"
@@ -96,7 +96,7 @@ def test_distributed(
     comm.barrier()  # Ensure all ranks wait until the config is set up.
 
     # Run the example using the CLI.
-    cli_run(tmp_config_path)
+    cli_run(tmp_config_path, abort_on_exception=False)
 
     comm.barrier()  # Ensure all ranks wait until the run is complete.
 

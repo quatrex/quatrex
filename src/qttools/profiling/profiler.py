@@ -385,12 +385,12 @@ class Profiler:
         if self.print_file is None:
             raise ValueError("Before profiling, `set_parameters` needs to be called.")
 
+        self.depth += 1
+        timestamp = time.time()
+
+        # NOTE: We maybe need to barrier before starting the timer
+        exception_raised = False
         try:
-            self.depth += 1
-            timestamp = time.time()
-
-            # NOTE: We maybe need to barrier before starting the timer
-
             if xp.__name__ == "cupy":
                 xp.cuda.runtime.deviceSynchronize()
                 if NVTX_AVAILABLE:
@@ -399,8 +399,11 @@ class Profiler:
 
             yield
 
-        finally:
+        except Exception:
+            exception_raised = True
+            raise
 
+        finally:
             if xp.__name__ == "cupy":
                 xp.cuda.runtime.deviceSynchronize()
                 if NVTX_AVAILABLE:
@@ -408,7 +411,8 @@ class Profiler:
 
             call_time = time.perf_counter() - start_time
 
-            if comm is not None and QTX_PROFILE_COMM_SYNC:
+            # Do not barrier when an exception was raised to avoid potential deadlocks.
+            if comm is not None and QTX_PROFILE_COMM_SYNC and not exception_raised:
                 comm.barrier()
                 after_barrier_time = time.perf_counter() - start_time
             else:

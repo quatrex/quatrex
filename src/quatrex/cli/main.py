@@ -3,9 +3,11 @@
 """Main CLI entrypoint and command dispatch for quatrex."""
 
 from threadpoolctl import threadpool_limits, threadpool_info  # isort: skip
+import sys
 import time
+import traceback
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 import typer
 from click import BadArgumentUsage
@@ -102,20 +104,25 @@ def _run_negf(config):
             typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
 
-@quatrex_cli.command()
-def run(
-    config: Annotated[
-        Optional[Path],
-        typer.Argument(
-            ...,
-            help="Path to the quatrex TOML configuration file.",
-            dir_okay=True,
-            resolve_path=True,
-            exists=True,
-        ),
-    ] = None,
-):
-    """Runs quatrex with the provided configuration."""
+def _resolve_config_path(
+    config: Optional[Path],
+) -> Path:
+    """Resolves the configuration file path based on the provided argument.
+
+    Parameters
+    ----------
+    config : Optional[Path]
+        The user-provided configuration path, which can be:
+        - None: No argument provided, look for default config in working directory.
+        - A file path: Use this as the config file.
+        - A directory path: Look for 'quatrex_config.toml' inside this directory.
+
+    Returns
+    -------
+    Path
+        The resolved path to the configuration file.
+
+    """
     # No arguments provided, check for the default config file in the
     # working directory.
     if config is None:
@@ -134,26 +141,96 @@ def run(
                 f"No quatrex configuration file found in directory: {config.parent}"
             )
 
-    from qttools.profiling import Profiler
-    from quatrex.core.config import parse_config, setup_context
+    return config.resolve()
 
-    profiler = Profiler()
 
-    config = parse_config(config)
-    setup_context(config)
+def _abort_quatrex(
+    e: Exception,
+) -> NoReturn:
+    """Handles exceptions by printing the error and aborting the MPI program.
 
-    secho_header()
+    Parameters
+    ----------
+    e : Exception
+        The exception that was raised.
 
-    # Dispatch to the appropriate runner based on the formalism.
-    if config.formalism == "wf":
-        _run_wf(config)
-    elif config.formalism == "negf":
-        _run_negf(config)
-    else:
-        raise NotImplementedError(f"Formalism '{config.formalism}' is not implemented.")
+    """
 
-    if config.outputs.save_profiling_results:
-        profiler.dump_stats()
+    # Force MPI to abort in the case of an exception
+    # to avoid hanging processes.
+    try:
+        full_traceback = "".join(traceback.format_exception(e))
+
+        error_msg = (
+            f"\n[RANK {comm.rank}] !!! CRITICAL EXCEPTION !!!\n" f"{full_traceback}\n"
+        )
+
+        sys.stderr.write(error_msg)
+    except Exception as traceback_exc:
+        fallback_msg = f"\n[RANK {comm.rank}] traceback formatting failed with exception: {traceback_exc}\n"
+
+        sys.stderr.write(fallback_msg)
+
+    try:
+        comm.Abort(1)
+    except Exception as abort_exc:
+        fallback_abort_msg = f"\n[RANK {comm.rank}] MPI abort failed while handling a fatal exception: {abort_exc}\n"
+        sys.stderr.write(fallback_abort_msg)
+
+    raise e
+
+
+@quatrex_cli.command()
+def run(
+    config: Annotated[
+        Optional[Path],
+        typer.Argument(
+            ...,
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
+            resolve_path=True,
+            exists=True,
+        ),
+    ] = None,
+    abort_on_exception: Annotated[
+        bool,
+        typer.Option(
+            "--abort-on-exception/--no-abort-on-exception",
+            help="Force abort the entire MPI environment on an unhandled exception to prevent hanging processes.",
+        ),
+    ] = True,
+):
+    """Runs quatrex with the provided configuration."""
+
+    try:
+        config = _resolve_config_path(config)
+
+        from qttools.profiling import Profiler
+        from quatrex.core.config import parse_config, setup_context
+
+        profiler = Profiler()
+
+        config = parse_config(config)
+        setup_context(config)
+
+        secho_header()
+
+        # Dispatch to the appropriate runner based on the formalism.
+        if config.formalism == "wf":
+            _run_wf(config)
+        elif config.formalism == "negf":
+            _run_negf(config)
+        else:
+            raise NotImplementedError(
+                f"Formalism '{config.formalism}' is not implemented."
+            )
+
+        if config.outputs.save_profiling_results:
+            profiler.dump_stats()
+    except Exception as e:
+        if abort_on_exception:
+            _abort_quatrex(e)
+        raise
 
 
 @quatrex_cli.callback(no_args_is_help=True)

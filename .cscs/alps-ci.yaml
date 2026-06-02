@@ -42,22 +42,22 @@ build quatrex:
     SLURM_NTASKS: 1
     SLURM_GPUS_PER_TASK: 1
     SLURM_TIMELIMIT: '00:20:00'
-    SLURM_PARTITION: debug
+    SLURM_PARTITION: normal
 
 test quatrex single:
   extends: .test-common
   script:
-    - coverage run --source=src --parallel-mode -m pytest tests/quatrex
+    - coverage run --source=src --parallel-mode -m pytest -vv tests/quatrex
 
 test qttools single:
   extends: .test-common
   script:
-    - coverage run --source=src --parallel-mode -m pytest tests/qttools
+    - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools
 
 test quatrex dist:
   extends: .test-common
   script:
-    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/quatrex
+    - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/quatrex
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6
@@ -65,7 +65,7 @@ test quatrex dist:
 test qttools dist:
   extends: .test-common
   script:
-    - coverage run --source=src --parallel-mode -m pytest --only-mpi tests/qttools
+    - coverage run --source=src --parallel-mode -m pytest -vv --only-mpi tests/qttools
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 6

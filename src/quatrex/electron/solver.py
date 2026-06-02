@@ -266,7 +266,7 @@ class ElectronSolver(SubsystemSolver):
         self.fermi_levels = []
         self.charge_densities = []
         # Charge per unit volume
-        self.left_target_charge = (
+        self.left_target_charge = float(
             self.quatrex_config.electron.doping
             * xp.linalg.det(
                 # So far this only works for 2D systems.
@@ -574,7 +574,7 @@ class ElectronSolver(SubsystemSolver):
         #     if self.small_block_size % 2 == 1
         #     else self.small_block_size - 1
         # )
-        energy_shifts = np.repeat(energy_shifts, self.small_block_size)
+        energy_shifts = xp.repeat(energy_shifts, self.small_block_size)
         self.potential -= energy_shifts
         # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="edge"), np.ones(bs)/bs, mode="valid")
         # self.potential -= xp.convolve(np.pad(energy_shifts, pad_width=bs//2, mode="wrap"), np.ones(bs)/bs, mode="valid")
@@ -792,7 +792,7 @@ class ElectronSolver(SubsystemSolver):
     def _find_band_edges(self, ldos):
         """Finds the band edges based on the local density of states."""
         # Loop through the blocks and find the band edges for each block
-        band_edges = []
+        all_band_edges = []
         block_potential = self.potential.reshape((-1, self.small_block_size)).mean(-1)
         block_potential -= block_potential[0]
         for block in range(ldos.shape[1]):
@@ -800,9 +800,9 @@ class ElectronSolver(SubsystemSolver):
             edges = find_band_edges(
                 peaks, self.left_mid_gap_energy + block_potential[block]
             )
-            band_edges.append(edges)
+            all_band_edges.append(edges)
 
-        return band_edges
+        return xp.asarray(all_band_edges)
 
     @profiler.profile(level="basic")
     def solve(
@@ -1102,11 +1102,11 @@ class ElectronSolver(SubsystemSolver):
             # TODO: Check sign
             ldos = -self._block_resolved_dos(g_retarded) / xp.pi
 
-            band_edges = self._find_band_edges(ldos)
+            all_band_edges = self._find_band_edges(ldos)
             left_dos = ldos[..., 0]
-            left_band_edges = band_edges[0]
+            left_band_edges = all_band_edges[0]
             right_dos = ldos[..., -1]
-            right_band_edges = band_edges[-1]
+            right_band_edges = all_band_edges[-1]
 
             # NOTE: This will not work if comm.block.size > 1
             if self.band_edge_tracking == "charge-neutrality":
@@ -1237,11 +1237,13 @@ class ElectronSolver(SubsystemSolver):
                 # TODO: Check sign
                 el_ldos = self._block_resolved_dos(g_lesser) / (2 * np.pi)
                 excess_charge = []
-                midgap_energies = xp.mean(band_edges, axis=1)
+                midgap_energies = xp.mean(all_band_edges, axis=1)
                 for b in range(el_ldos.shape[-1]):
                     mask = self.energies > midgap_energies[b]
                     excess_charge.append(
-                        np.trapezoid(el_ldos[:, b][mask], self.energies[mask])
+                        # xp.trapezoid(el_ldos[:, b][mask], self.energies[mask])
+                        # NOTE: This have been deprecated in newer versions of CuPy
+                        float(xp.trapz(el_ldos[:, b][mask], self.energies[mask]))
                     )
                 # Zero the output Green's functions to be safe.
                 for g in out:

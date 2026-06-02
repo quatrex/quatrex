@@ -1,5 +1,7 @@
 import numpy as np
+from qttools import xp
 from scipy.interpolate import interp1d
+from qttools.utils.gpu_utils import get_host
 
 from quatrex.core.statistics import fermi_dirac
 
@@ -28,7 +30,7 @@ def generate_potential_profile(
     potential_profile : ndarray
         The potential profile evaluated on the grid. Shape will be (N,).
     """
-    coords = np.asarray(grid[:, transport_direction], dtype=float)
+    coords = xp.asarray(grid[:, transport_direction], dtype=float)
     coord0 = coords.min()
     transport_length = coords.max() - coord0
 
@@ -45,19 +47,19 @@ def generate_potential_profile(
     right_mask = s >= (transport_length - flat_length)
     middle_mask = ~(left_mask | right_mask)
 
-    potential_profile = np.empty_like(s)
+    potential_profile = xp.empty_like(s)
     potential_profile[left_mask] = 0.0
     potential_profile[right_mask] = -bias
 
-    if np.any(middle_mask):
+    if xp.any(middle_mask):
         drop_coords = s[middle_mask] - flat_length
         drop_length = transport_length - 2 * flat_length
 
         if potential_function == "tanh":
             xi = drop_coords / drop_length
-            # potential_profile[middle_mask] = -0.5 * bias * (1.0 + np.tanh(5 * (2 * xi - 1)))
+            # potential_profile[middle_mask] = -0.5 * bias * (1.0 + xp.tanh(5 * (2 * xi - 1)))
             potential_profile[middle_mask] = (
-                -0.5 * bias * (1.0 + np.tanh(3 * (2 * xi - 1)))
+                -0.5 * bias * (1.0 + xp.tanh(3 * (2 * xi - 1)))
             )
         elif potential_function == "linear":
             potential_profile[middle_mask] = -bias * (drop_coords / drop_length)
@@ -93,14 +95,19 @@ def compute_charge_for_fermi_levels(fermi_levels, ldos, midgap_energies, energie
 def find_energy_shift(
     charge_per_fermi_level, fermi_levels, target_charge, current_charge
 ):
-    energy_shift = np.empty(charge_per_fermi_level.shape[1])
+    # Make sure arrays are on host for interp1d, which doesn't support GPU arrays. 
+    charge_per_fermi_level = get_host(charge_per_fermi_level)
+    fermi_levels = get_host(fermi_levels)
+    energy_shift = xp.empty(charge_per_fermi_level.shape[1])
     for j in range(charge_per_fermi_level.shape[1]):
         cp = charge_per_fermi_level[:, j]
         # ensure monotonicity for interp; if not monotonic, sort
+        # Why should it be monotonic? Because charge should increase with increasing Fermi level
         if not (np.all(np.diff(cp) >= 0) or np.all(np.diff(cp) <= 0)):
             idx = np.argsort(cp)
             cp_sorted = cp[idx]
             fm_sorted = fermi_levels[idx]
+            # interp1d requires numpy arrays
             interp = interp1d(cp_sorted, fm_sorted, bounds_error=True)
         else:
             interp = interp1d(cp, fermi_levels, bounds_error=True)

@@ -5,35 +5,35 @@ formalism = "wf"
 
 [qtbm]
 max_batch_size = 1
-OBC_rank_reduced = true
+low_rank_obc = true
 [device]
 transport_direction = 'x'
-num_orbitals_per_atom = {"C"=13}
-kpoint_grid = [1,1,1]
-kpoint_shift = [0,0,0]
+num_orbitals_per_atom = { "C" = 13 }
+kpoint_grid = [1, 1, 1]
+kpoint_shift = [0, 0, 0]
 
     [[device.contacts]]
     name = "left"
-    origin = [0.65, 0 ,0]
-    lattice_vectors = [[2.57031, 0, 0], [0,10 , 0], [0, 0, 10]]
+    origin = [0.65, 0, 0]
+    lattice_vectors = [[2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
     direction = "a"
-     fermi_level = -3
+    fermi_level = -3
 
     [[device.contacts]]
     name = "right"
-    origin = [256.4,  -0.001 ,-0.001]
-    lattice_vectors = [[-2.57031 , 0, 0], [0, 10 , 0], [0, 0, 10]]
+    origin = [256.4, -0.001, -0.001]
+    lattice_vectors = [[-2.57031, 0, 0], [0, 10, 0], [0, 0, 10]]
     direction = "a"
     fermi_level = -3.001
 
 
 [electron]
-    conduction_band_edge = -2.4
-    valence_band_edge = -2.5
+conduction_band_edge = -2.4
+valence_band_edge = -2.5
 
-    energy_window_min = -5
-    energy_window_max = -4
-    energy_window_num = 10
+energy_window_min = -5
+energy_window_max = -4
+energy_window_num = 10
 
     [electron.obc]
     algorithm = "spectral"

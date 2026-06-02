@@ -53,12 +53,14 @@ class QTBMConfig(BaseModel):
     max_batch_size: PositiveInt = 10
     """The maximum number of energies per OBC batch."""
 
-    OBC_rank_reduced: bool = False
-    """Whether to use reduced rank for the OBC self-energies.
-    If set to True, OBC self energies are moved to the RHS of system matrix, reducing fill ins during factorization.
-    """
+    low_rank_obc: bool = False
+    """Whether to use reduced rank for the boundary self-energies.
+    
+    If set to True, boundary self-energies are moved to the
+    right-hand-side of linear system, which greatly reduces fill-in
+    during factorization.
 
-    dump_system_matrix: bool = False
+    """
 
 
 class SCBAConfig(BaseModel):
@@ -797,7 +799,6 @@ class ContactConfig(BaseModel):
         ]
     )
     direction: Literal["a", "b", "c"]
-    dump_matrix_elements: bool = False
 
     @model_validator(mode="after")
     def to_array(self) -> Self:

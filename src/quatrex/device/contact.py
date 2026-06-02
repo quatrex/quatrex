@@ -930,25 +930,6 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def dump_matrix_elements(self):
-        """Dumps the matrix elements of the contact unit cell matrices for debugging purposes."""
-
-        from scipy import sparse as sp
-
-        if comm.rank == 0:
-            print(f"Dumping contact unit cell matrices for contact {self.name}...")
-
-            for key, value in self.unit_cell_hamiltonian.items():
-                sp.save_npz(
-                    f"{self.name}_hamiltonian_{key[0]}_{key[1]}_{key[2]}.npz",
-                    value.get() if hasattr(value, "get") else value,
-                )
-            for key, value in self.unit_cell_overlap.items():
-                sp.save_npz(
-                    f"{self.name}_overlap_{key[0]}_{key[1]}_{key[2]}.npz",
-                    value.get() if hasattr(value, "get") else value,
-                )
-
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False
     ) -> NDArray:

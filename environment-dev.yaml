@@ -31,6 +31,7 @@ dependencies:
   - gst-plugins-base=1.14.1
   - gstreamer=1.14.1
   - harfbuzz=10.2.0
+  - h5py=3.16.0
   - icu=73.1
   - iniconfig=2.1.0
   - jpeg=9f

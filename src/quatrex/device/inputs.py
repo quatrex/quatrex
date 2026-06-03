@@ -491,7 +491,9 @@ def load_matrices(
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
     force_complex : bool
-        Whether to force the loaded matrices to be complex. If `True`, the loaded matrices will be cast to `xp.complex128`.
+        Whether to force the loaded matrices to be complex. If `True`,
+        the loaded matrices will be cast to `xp.complex128`.
+
     Returns
     -------
     dict

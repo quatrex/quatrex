@@ -9,12 +9,9 @@ from qttools.wave_function_solver.pardiso import PARDISO, pardiso_available
 from qttools.wave_function_solver.solver import WFSolver
 from qttools.wave_function_solver.superlu import SuperLU
 
-# Auto-select the solver based on the matrix type and view
-
 
 def auto_select_solver(matrix_type: str, view: str) -> WFSolver:
-    """
-    Auto-selects the solver based on the matrix type and view.
+    """Auto-selects the solver based on the matrix type and view.
 
     Parameters
     ----------
@@ -27,6 +24,7 @@ def auto_select_solver(matrix_type: str, view: str) -> WFSolver:
     -------
     WFSolver
         The selected wavefunction solver.
+
     """
     if xp.__name__ == "cupy":
         if matrix_type in [

@@ -576,8 +576,8 @@ class Contact:
         return coordinates
 
     def _hermitianize_unit_cell_matrices(self):
-        """Ensures that the unit cell Hamiltonian and overlap matrices are the Hermitian conjugate of the one
-        with the opposite index.
+        """Ensures that the unit cell Hamiltonian and overlap matrices
+        are the Hermitian conjugate of the one with the opposite index.
         """
 
         for key in list(self.unit_cell_hamiltonian.keys()):
@@ -1048,10 +1048,12 @@ class Contact:
         num_energies : int
             The number of energies for which to compute the total
             eigenvectors.
+
         Returns
         -------
         NDArray
             The concatenated eigenvectors for all k-points.
+
         """
 
         eig = [
@@ -1067,8 +1069,8 @@ class Contact:
         Parameters
         ----------
         pseudo_k : dict
-            A dictionary containing pseudo-inverse vectors indexed by (k1,
-            k2) tuples.
+            A dictionary containing pseudo-inverse vectors indexed by
+            (k1, k2) tuples.
         num_energies : int
             The number of energies for which to compute the total
             pseudo-inverse vectors.
@@ -1194,16 +1196,38 @@ class Contact:
             Batch of energy values for which to compute the boundary
             conditions.
         return_modes_only : bool, optional
-            Whether to return only the injection and surface modes without
-            computing the full self-energy and Bloch matrices.
+            Whether to return only the injection and surface modes
+            without computing the full self-energy and Bloch matrices.
 
         Returns
         -------
-        tuple
-            A tuple containing the computed self-energy, injection
-            vectors, transmission matrices, and
-            Bloch injection matrices. If `return_modes_only` is True, the injection vectors, injection_b,
-            reflection vectors, reflected modes, reflected eigenvalues, reflected pseudoinverse are returned instead.
+        injection : NDArray
+            The injection vectors for the contact at the given k-points
+            and energies.
+        b_injected : NDArray
+            The injection vectors before applying the contact coupling.
+        sigma_obc_k : dict, optional
+            A dictionary containing the computed self-energy for each
+            transverse k-point, indexed by (ky, kz) tuples. Only
+            returned if `return_modes_only` is False.
+        bloch_k : dict, optional
+            A dictionary containing the computed Bloch injection
+            matrices for each transverse k-point, indexed by (ky, kz)
+            tuples. Only returned if `return_modes_only` is False.
+        reflection : NDArray, optional
+            The reflection vectors for the contact at the given k-points
+            and energies. Only returned if `return_modes_only` is True.
+        phi_reflected : NDArray, optional
+            The reflected modes for the contact at the given k-points
+            and energies. Only returned if `return_modes_only` is True.
+        eig_reflected : NDArray, optional
+            The reflected eigenvalues for the contact at the given
+            k-points and energies. Only returned if `return_modes_only`
+            is True.
+        phi_inv_reflected : NDArray, optional
+            The pseudoinverse of the reflected modes for the contact at
+            the given k-points and energies. Only returned if
+            `return_modes_only` is True.
 
         """
 

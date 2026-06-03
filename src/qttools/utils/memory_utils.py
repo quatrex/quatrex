@@ -7,12 +7,14 @@ from qttools.utils.gpu_utils import synchronize_device
 
 
 def get_cpu_memory_gb() -> float:
-    """Get current CPU memory usage in GB.
+    """Get current CPU memory usage of the current process in GB.
 
     Returns
     -------
     float
-        Current CPU memory usage in GB, or 0.0 if it cannot be determined.
+        Current process CPU memory usage in GB, or 0.0 if it cannot be
+        determined.
+
     """
     try:
         with open("/proc/self/status", "r") as f:
@@ -21,21 +23,14 @@ def get_cpu_memory_gb() -> float:
                     # VmRSS is in kB
                     return int(line.split()[1]) / 1024 / 1024
     except FileNotFoundError:
-        # If status file is not found (e.g., on non-Linux systems), return 0.0
+        # If status file is not found (e.g., on non-Linux systems),
+        # return 0.0
         return 0.0
     return 0.0
 
 
 def print_memory_usage() -> None:
-    """Print CPU/GPU memory usage for rank 0.
-
-    Parameters
-    ----------
-    stage : str
-        Human-readable stage label.
-    energy_index : int | None, optional
-        Global energy index to include in the message.
-    """
+    """Print CPU/GPU memory usage for rank 0."""
     if comm.rank != 0:
         return
 

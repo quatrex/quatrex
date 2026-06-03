@@ -48,7 +48,9 @@ def scatter_add_scaled_obc(
     b : NDArray
         The array to be added from `a`.
     inds : NDArray
-        The indices at which to subtract `b` from `a`.
+        The indices at which to subtract `b` from `a`. The indices are
+        assumed unique. If there are duplicates, the behavior is
+        undefined due to potential race conditions.
     k : tuple[float, float]
         The transverse wavevector components.
     transverse_repetition_grid : tuple[int, int]

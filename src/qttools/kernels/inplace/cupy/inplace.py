@@ -24,7 +24,8 @@ def scatter_add_scaled(
     alpha : complex, optional
         The scalar multiplier for `b` before adding it to `a`.
     conjugate : bool, optional
-        Whether to take the complex conjugate of `b` before adding it to `a`.
+        Whether to take the complex conjugate of `b` before adding it to
+        `a`.
 
     """
     num_inds = inds.shape[0]

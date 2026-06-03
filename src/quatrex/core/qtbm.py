@@ -38,21 +38,23 @@ def construct_device_pseudo_inverse(
     injection_count: dict,
     num_orbitals: int,
 ) -> sparse.csr_matrix:
-    """
-    Construct the sparse device-size pseudo-inverse.
+    """Constructs the sparse device-size pseudo-inverse.
 
     Parameters
     ----------
     vector_per_cont : dict
-        Dictionary mapping each contact to its corresponding pseudo-inverse vector for the current energy index `i`.
+        Dictionary mapping each contact to its corresponding
+        pseudo-inverse vector for the current energy index `i`.
     injection_segments : dict
-        Dictionary mapping each contact and energy index to its corresponding injection segment.
+        Dictionary mapping each contact and energy index to its
+        corresponding injection segment.
     contacts : list
         List of contacts in the system.
     i : int
         Current energy index.
     injection_count : dict
-        Dictionary mapping each energy index to the number of injection sites.
+        Dictionary mapping each energy index to the number of injection
+        sites.
     num_orbitals : int
         Number of orbitals in the system.
 
@@ -60,6 +62,7 @@ def construct_device_pseudo_inverse(
     -------
     sparse.csr_matrix
         The sparse transposed vector.
+
     """
     return sparse.csr_matrix(
         (
@@ -279,19 +282,23 @@ class QTBM:
             nnz_H.append(h_r.nnz)
             total_nnz += h_r.nnz
             if not self.system_matrix_upper_view:
-                total_nnz += h_r.nnz  # Account for the symmetric part if not upper view
+                # Account for the symmetric part if not upper view
+                total_nnz += h_r.nnz
         for r, s_r in self.device.overlap_matrices.items():
             nnz_S.append(s_r.nnz)
             total_nnz += s_r.nnz
             if not self.system_matrix_upper_view:
-                total_nnz += s_r.nnz  # Account for the symmetric part if not upper view
+                # Account for the symmetric part if not upper view
+                total_nnz += s_r.nnz
         if not self.config.qtbm.low_rank_obc:
             for contact in self.device.contacts:
                 nnz_cont.append(len(contact.orbital_indices))
                 total_nnz += len(contact.orbital_indices) ** 2
 
         # TODO: Investigate using a SET instead
-        # Concaate all indices from the hamiltonians, overlaps, and contacts into a single array to find unique indices for allocation
+        # Concaate all indices from the hamiltonians, overlaps, and
+        # contacts into a single array to find unique indices for
+        # allocation
         concatenated_indices = xp.zeros((total_nnz, 2), dtype=xp.int64)
 
         start_idx = 0
@@ -343,7 +350,8 @@ class QTBM:
         concatenated_indices_M = (
             concatenated_indices[:, 0] * size + concatenated_indices[:, 1]
         )
-        # Find the unique indices and the inverse mapping to the original concatenated array
+        # Find the unique indices and the inverse mapping to the
+        # original concatenated array
         concatenated_indices_M, inverse_indices = xp.unique(
             concatenated_indices_M, return_inverse=True
         )
@@ -365,7 +373,8 @@ class QTBM:
             dtype=data.dtype,
         )
 
-        # Store the indices to update in-place the system matrix for each hamiltonian, overlap, and contact self-energy
+        # Store the indices to update in-place the system matrix for
+        # each hamiltonian, overlap, and contact self-energy
         start_idx = 0
         self.hamiltonian_update_indices = {}
         self.hamiltonian_update_indices_transpose = {}
@@ -410,17 +419,20 @@ class QTBM:
     def _add_matrix_to_system_matrix(
         self, k: xp.complex128, factor: xp.float64, type: str = "hamiltonian"
     ) -> None:
-        """
-        Adds the contribution of a matrix to the system matrix for a given k-point and multiplication factor.
+        """Adds the contribution of a matrix to the system matrix for a
+        given k-point and multiplication factor.
 
         Parameters
         ----------
         k : np.complex128
-            The k-point for which the system matrix is being constructed.
+            The k-point for which the system matrix is being
+            constructed.
         factor : np.float64
             A scaling factor for the matrix contribution.
         type : str, optional
-            The type of matrix to add, either "hamiltonian" or "overlap". Default is "hamiltonian".
+            The type of matrix to add, either "hamiltonian" or
+            "overlap". Default is "hamiltonian".
+
         """
 
         if type == "hamiltonian":
@@ -464,8 +476,8 @@ class QTBM:
     def _add_sigma_obc_to_system_matrix(
         self, factor: np.float64, sigma_obc_per_contact: dict, i: int
     ) -> None:
-        """
-        Adds the contribution of a contact self-energy to the system matrix for a given contact.
+        """Adds the contribution of a contact self-energy to the system
+        matrix for a given contact.
 
         Parameters
         ----------
@@ -475,6 +487,7 @@ class QTBM:
             Dictionary of self-energy matrices for each contact
         i : int
             Index of the current local energy being processed.
+
         """
 
         for contact, sigma_obc in sigma_obc_per_contact.items():
@@ -507,19 +520,22 @@ class QTBM:
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
         injection_segments : dict
-            Dictionary of slices for each
-            contact where each slice corresponds to the contact's injection modes.
+            Dictionary of slices for each contact where each slice
+            corresponds to the contact's injection modes.
         global_energy_index : int
             Energy index in the global energy array for storing results.
         sigma_obc_per_contact : dict
             Self-energy matrices for each contact, used for transmission
             calculations.
         reflection_per_contact : dict
-            Reflection matrices for each contact, used in reduced method.
+            Reflection matrices for each contact, used in reduced
+            method.
         eig_ref_per_contact : dict
-            Eigenvalues of the reflected wavefunctions for each contact, used in reduced method.
+            Eigenvalues of the reflected wavefunctions for each contact,
+            used in reduced method.
         phi_inv_ref_per_contact : dict
-            Inverse of the reflected wavefunctions for each contact, used in reduced method.
+            Inverse of the reflected wavefunctions for each contact,
+            used in reduced method.
         k_idx : int
             Index of the current k-point being processed.
 
@@ -583,7 +599,7 @@ class QTBM:
         k_loc: float,
         k_idx: int,
     ):
-        """Computes density of states.
+        r"""Computes density of states.
 
         Parameters
         ----------
@@ -591,8 +607,8 @@ class QTBM:
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
         injection_segments : dict
-            Dictionary of slices for each
-            contact where each slice corresponds to the contact's injection modes.
+            Dictionary of slices for each contact where each slice
+            corresponds to the contact's injection modes.
         global_energy_index : int
             Energy index in the global energy array for storing results.
         phi_inj_per_contact : dict
@@ -606,8 +622,8 @@ class QTBM:
         phi_inv_ref_per_contact : dict
             Inverse of the reflected wavefunctions for each contact.
         system_matrix : sparse.spmatrix
-            The system matrix used in the QTBM calculation.
-            $E*S - H + \Sigma_{obc}$
+            The system matrix used in the QTBM calculation. $E \cdot S -
+            H + \Sigma_{obc}$
         overlap_matrices : dict
             Overlap matrices for each hopping direction.
         k_loc : float
@@ -676,7 +692,8 @@ class QTBM:
             phi_ortho += temp
             del temp
 
-            # Remove the contribution from the diagonal of the overlap matrix
+            # Remove the contribution from the diagonal of the overlap
+            # matrix
             temp = sparse.diags(overlap.diagonal()) @ phi
             temp *= phase
 
@@ -728,7 +745,9 @@ class QTBM:
             # CHECK SPILL OVER ERROR (DEBUG)
             error = contact.get_coupling_matrix(self.system_matrix) @ phi_cont
             if self.real_system_matrix:
-                # For real system matrix, we need to convert phi to real before multiplying with the system matrix, and then convert back to complex
+                # For real system matrix, we need to convert phi to real
+                # before multiplying with the system matrix, and then
+                # convert back to complex
                 temp = phi.copy()
                 temp = xp.ascontiguousarray(temp)
                 temp = temp.view(xp.float64)
@@ -741,13 +760,16 @@ class QTBM:
             else:
                 error += (self.system_matrix @ phi)[orbital_indices, :]
             if self.system_matrix_upper_view:
-                # Need to add the contribution from the lower view of the system matrix as well
+                # Need to add the contribution from the lower view of
+                # the system matrix as well
                 error += (
                     contact.get_coupling_matrix(self.system_matrix, transpose=True)
                     @ phi_cont
                 )
                 if self.real_system_matrix:
-                    # For real system matrix, we need to convert phi to real before multiplying with the system matrix, and then convert back to complex
+                    # For real system matrix, we need to convert phi to
+                    # real before multiplying with the system matrix,
+                    # and then convert back to complex
                     temp = phi.copy()
                     temp = xp.ascontiguousarray(temp)
                     temp = temp.view(xp.float64)
@@ -822,8 +844,8 @@ class QTBM:
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
         injection_segments : dict
-            Dictionary of slices for each
-            contact where each slice corresponds to the contact's injection modes.
+            Dictionary of slices for each contact where each slice
+            corresponds to the contact's injection modes.
         local_energy_index : int
             Energy index in the local energy array.
         global_energy_index : int
@@ -831,15 +853,21 @@ class QTBM:
         sigma_obc_per_contact : dict
             Self-energy matrices for each contact, used for transmission
             calculations.
+        reflection_per_contact : dict
+            Reflection matrices for each contact, used in reduced
+            method.
+        eig_ref_per_contact : dict
+            Eigenvalues of the reflected wavefunctions for each contact,
+            used in reduced method.
+        phi_inv_ref_per_contact : dict
+            Inverse of the reflected wavefunctions for each contact,
+            used in reduced method.
         phi_inj_per_contact : dict
            Surface wavefunctions for each contact.
         bloch_per_contact : dict
             Bloch transmission matrices for each contact.
-        system_matrix : sparse.spmatrix
-            The system matrix used in the QTBM calculation.
-            $E*S - H + \Sigma_{obc}$
-        overlap_matrices : dict
-            Overlap matrices for each hopping direction.
+        phi_ref_per_contact : dict
+            Reflected wavefunctions for each contact.
         k_loc : float
             The local k-point value for the current calculation.
         k_idx : int
@@ -1026,7 +1054,8 @@ class QTBM:
                 eig_ref_per_contact = {}
                 phi_inv_ref_per_contact = {}
 
-                # Compute the boundary self-energy and the injection vector.
+                # Compute the boundary self-energy and the injection
+                # vector.
                 for contact in self.device.contacts:
                     times.append(time.perf_counter())
 
@@ -1072,10 +1101,11 @@ class QTBM:
                     injection_count += modes_per_energy
 
                 if self.config.qtbm.low_rank_obc:
-                    reflection_segments = {}  # Needed to stack the pseudo-inverse
-                    reflection_segments_translated = (
-                        {}
-                    )  # Needed to place the reflected modes in the correct position in the RHS
+                    # Needed to stack the pseudo-inverse
+                    reflection_segments = {}
+                    # Needed to place the reflected modes in the correct
+                    # position in the RHS
+                    reflection_segments_translated = {}
                     reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
                     for contact in self.device.contacts:
                         modes_per_energy = np.array(
@@ -1132,7 +1162,8 @@ class QTBM:
 
                     injection_tot = xp.asfortranarray(injection_tot)
 
-                    # Variables needed for the correction in the reduced OBC method
+                    # Variables needed for the correction in the reduced
+                    # OBC method
                     if self.config.qtbm.low_rank_obc:
                         # Generate the device-sized pseudo-inverse
                         phi_inv_tot = construct_device_pseudo_inverse(
@@ -1151,7 +1182,8 @@ class QTBM:
                             ]
                         )
 
-                    # If system matrix is real, convert the RHS to real with twice the number of columns
+                    # If system matrix is real, convert the RHS to real
+                    # with twice the number of columns
                     if self.real_system_matrix:
                         injection_tot = xp.ascontiguousarray(injection_tot)
                         injection_tot = injection_tot.view(np.float64)
@@ -1193,7 +1225,8 @@ class QTBM:
                                 reuse_sym_fact=True,
                                 reuse_fact=False,
                             )
-                            # Apply the correction to the injected modes according to the reduced method
+                            # Apply the correction to the injected modes
+                            # according to the reduced method
 
                             if self.real_system_matrix:
                                 phi = xp.ascontiguousarray(phi)
@@ -1232,7 +1265,9 @@ class QTBM:
                                 reuse_fact=False,
                             )
 
-                        # No need here to convert from real to complex, since the system matrix will never be real in the non-reduced method
+                        # No need here to convert from real to complex,
+                        # since the system matrix will never be real in
+                        # the non-reduced method
 
                     synchronize_device()
                     t_solve = time.perf_counter() - times.pop()

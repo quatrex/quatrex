@@ -195,8 +195,25 @@ class SolverConfig(BaseModel):
         "thomas",
         "auto",
     ] = "auto"
-    """The direct solver to use for the linear systems.
-    If set to "auto", the solver is automatically chosen based on other configurations and available libraries.
+    """The direct solver to use in `wf` simulations.
+
+    If set to `"auto"`, the solver is automatically chosen based on the
+    matrix type and the available direct solver libraries.
+
+    In runs with `low_rank_obc = true`, the system matrix will be
+    Hermitian or even real and symmetric in gamma-only simulations. In
+    those cases, libraries that can exploit the symmetry are preferred,
+    i.e., cuDSS on GPU and PARDISO on CPU.
+
+    On GPU, SuperLU is the only fallback option if cuDSS is not
+    available. On CPU, if PARDISO is not available, the fallback options
+    are MUMPS and then SuperLU.
+
+    The Thomas solver involves a straight-forward tiling of the system
+    matrix into blocks without reordering. It is therefore important
+    that the Hamiltonian is ordered in a way that results in a
+    block-tridiagonal structure.
+
     """
 
     @model_validator(mode="after")

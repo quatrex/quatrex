@@ -34,6 +34,14 @@ class MUMPS(WFSolver):
 
     Parameters
     ----------
+    matrix_type : str, optional
+        The type of matrix to be solved. Must be one of the valid matrix
+        types. Default is 'complex_nonsymmetric'.
+    view : str, optional
+        The view of the matrix. Valid options are 'default' and 'up'.
+        The 'up' view is a hint to the user to use the upper triangular
+        part of the matrix, which is required for symmetric matrices.
+        Default is 'default', meaning the full matrix is used.
     ordering : str, optional
         The ordering method to use for the matrix factorization. Valid
         options are 'amd', 'amf', 'scotch', 'pord', 'metis', 'qamd', and

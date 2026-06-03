@@ -18,22 +18,25 @@ profiler = Profiler()
 
 
 class Thomas(WFSolver):
-    """Wave function solver using block thomas algorithm."""
+    """Wave function solver using block thomas algorithm.
+
+    Parameters
+    ----------
+    matrix_type : str, optional
+        The type of the system matrix. Must be one of
+        'real_symmetric_indefinite', 'complex_hermitian_indefinite',
+        or 'complex_nonsymmetric'.
+    view : str, optional
+        The view of the system matrix. Must be one of 'default',
+        'up', or 'down'. 'up' and 'down' are only valid for
+        symmetric or Hermitian matrices.
+
+    """
 
     def __init__(
         self, matrix_type: str = "complex_nonsymmetric", view: str = "default"
     ):
-        """
-        Initialize the Thomas solver.
-
-        Parameters
-        ----------
-        matrix_type : str, optional
-            The type of the system matrix. Must be one of 'real_symmetric_indefinite', 'complex_hermitian_indefinite', or 'complex_nonsymmetric'.
-        view : str, optional
-            The view of the system matrix. Must be one of 'default', 'up', or
-            'down'. 'up' and 'down' are only valid for symmetric or Hermitian matrices.
-        """
+        """Initializes the Thomas solver."""
 
         if matrix_type not in [
             "real_symmetric_indefinite",
@@ -66,10 +69,15 @@ class Thomas(WFSolver):
         self._triu_cache = {}
 
     def _symmetrize_from_upper_inplace(self, block: NDArray) -> None:
-        """Make block Hermitian by folding the upper triangle into the lower one.
+        """Makes block Hermitian by folding the upper triangle into the
+        lower one.
 
-        For each off-diagonal pair (i, j) with i < j:
-            block[j, i]  = conj(block[i, j])
+        Parameters
+        ----------
+        block : NDArray
+            The block to be symmetrized. Must be square and will be
+            modified in-place.
+
         """
         n = block.shape[0]
         if n <= 1:
@@ -83,17 +91,17 @@ class Thomas(WFSolver):
         i, j = idx
         block[j, i] = block[i, j].conj()
 
-    def _plan(
-        self,
-        a: sparse.spmatrix,
-    ) -> None:
-        """
-        Find block structure of the sparse matrix a and prepare for solving.
-        It traverses the graph of the sparse matrix to find connected components.
-        The blocks are contigous and with variable size.
+    def _plan(self, a: sparse.spmatrix) -> None:
+        """Finds block structure of the sparse matrix a.
+
+        This traverses the graph of the sparse matrix to find connected
+        components. The blocks are contiguous and with variable size.
+
+        Parameters
         ----------
         a : sparse.spmatrix
             The sparse system matrix.
+
         """
 
         n = a.shape[0]
@@ -125,17 +133,17 @@ class Thomas(WFSolver):
             self.blocks[1] = xp.hstack([self.blocks[0], self.blocks[1]])
             self.blocks.pop(0)
 
-    def _run_forward(self, a, b):
-        """
-        Run the forward elimination phase of the block Thomas algorithm.
+    def _run_forward(self, a: sparse.spmatrix, b: NDArray):
+        """Runs the forward elimination phase of the block Thomas
+        algorithm.
+
         Parameters
         ----------
         a : sparse.spmatrix
             The sparse system matrix.
         b : NDArray
             The right-hand side vector.
-        sol : NDArray
-            The solution vector.
+
         """
 
         self.schur = []
@@ -190,13 +198,15 @@ class Thomas(WFSolver):
             (a00, piv), b[self.blocks[-1]] - a10 @ b[self.blocks[-2]], overwrite_b=False
         )
 
-    def _run_backward(self, b):
-        """
-        Run the backward substitution phase of the block Thomas algorithm.
+    def _run_backward(self, b: NDArray):
+        """Runs the backward substitution phase of the block Thomas
+        algorithm.
+
         Parameters
         ----------
         b : NDArray
             The right-hand side vector.
+
         """
 
         for i in range(len(self.blocks) - 2, -1, -1):
@@ -213,7 +223,10 @@ class Thomas(WFSolver):
         reuse_sym_fact: bool = False,
         reuse_fact: bool = False,
     ) -> NDArray:
-        """Solves the sparse system a @ x = b using the block Thomas algorithm. Since b is directly modified in-place, b is lost after this call.
+        """Solves the sparse system a @ x = b using the block Thomas algorithm.
+
+        Since b is directly modified in-place, b is lost after this
+        call.
 
         Parameters
         ----------

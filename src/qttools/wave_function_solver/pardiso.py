@@ -35,16 +35,20 @@ def pardiso_available():
 class PARDISO(WFSolver):
     """Wave function solver using PARDISO for sparse matrix solving.
 
-    This solver uses PARDISO to solve sparse linear systems on the CPU. It
-    can reuse the analysis phase if configured to do so, which can speed
-    up repeated solves with the same matrix structure.
+    This solver uses PARDISO to solve sparse linear systems on the CPU.
+    It can reuse the analysis phase if configured to do so, which can
+    speed up repeated solves with the same matrix structure.
 
     Parameters
     ----------
-
     matrix_type : str, optional
-        The type of matrix to be solved. Must be one of the valid matrix types.
-        Default is 'complex_nonsymmetric'.
+        The type of matrix to be solved. Must be one of the valid matrix
+        types. Default is 'complex_nonsymmetric'.
+    view : str, optional
+        The view of the matrix. Valid options are 'default' and 'up'.
+        The 'up' view is a hint to the user to use the upper triangular
+        part of the matrix, which is required for symmetric matrices.
+        Default is 'default', meaning the full matrix is used.
     verbose : bool, optional
         If True, enable verbose output from PARDISO. Default is False.
 
@@ -52,8 +56,8 @@ class PARDISO(WFSolver):
 
     def __init__(
         self,
-        matrix_type: str = None,
-        view="default",
+        matrix_type: str | None = None,
+        view: str | None = "default",
         verbose: bool = False,
     ) -> None:
         """Initializes the PARDISO wave function solver."""

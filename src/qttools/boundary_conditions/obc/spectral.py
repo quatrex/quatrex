@@ -422,9 +422,14 @@ class Spectral(OBCSolver):
         vs: NDArray,
         mask: NDArray,
     ) -> NDArray:
-        """Computes reflected modes and pseudo_inverses.
-        A symmetric pseudo inverse of \phi is computed by (\phi A_ij^H A_ij \phi)^-1 \phi^H A_ij^H A_ij, where \phi are the reflected modes.
-        It preserves the sparsity pattern of A_ij.
+        r"""Computes reflected modes and pseudo_inverses.
+
+        A symmetric pseudo inverse of $\phi$ is computed by
+        $$
+        \phi a_{ij}^H a_{ij} \phi)^-1 \phi^H a_{ij}^H a_{ij},
+        $$
+        where $\phi$ are the reflected modes. It preserves the sparsity
+        pattern of $a_{ij}$.
 
         Parameters
         ----------
@@ -463,7 +468,6 @@ class Spectral(OBCSolver):
             )
             phi_inv_reflected.append(v_inv)
 
-        # Calculate the surface Green's function.
         return phi_inv_reflected
 
     def __call__(
@@ -488,21 +492,33 @@ class Spectral(OBCSolver):
         contact : str
             The contact to which the boundary blocks belong.
         return_injected: bool, optional
-            Whether to return the injection vector
+            Whether to return the injection vector. If True, the
+            function returns a tuple of the surface Green's function and
+            the injection vector. False by default.
         return_modes_only: bool, optional
-            Whether to return the reflected modes without computing the surface Green's function
+            Whether to return the reflected modes without computing the
+            surface Green's function. If True, the function returns a
+            tuple of None, the injection vector, the reflected modes,
+            their eigenvalues, and their pseudoinverses. False by
+            default.
+
         Returns
         -------
         x_ii : NDArray
-            The system's surface Green's function. If return_modes_only is True, this is None.
+            The system's surface Green's function. If return_modes_only
+            is True, this is None.
         b_injected: NDArray
             The injected b. Returned only if return_injected is True.
         phi_reflected: NDArray
-            The reflected modes. Returned only if return_modes_only is True.
+            The reflected modes. Returned only if return_modes_only is
+            True.
         eig_reflected: NDArray
-            The eigenvalues corresponding to the reflected modes. Returned only if return_modes_only is True.
+            The eigenvalues corresponding to the reflected modes.
+            Returned only if return_modes_only is True.
         phi_inv_reflected: NDArray
-            The pseudoinverse of the reflected modes. Returned only if return_modes_only is True.
+            The pseudoinverse of the reflected modes. Returned only if
+            return_modes_only is True.
+
         """
 
         if return_modes_only and not return_injected:
@@ -559,7 +575,8 @@ class Spectral(OBCSolver):
                         RuntimeWarning,
                     )
 
-        # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
+        # Calculate the injection vector and return it together with the
+        # boundary self-energy and the injected eigenvalues
 
         if return_injected:
             b_injected = []

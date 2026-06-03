@@ -16,6 +16,17 @@ class SuperLU(WFSolver):
     on the chosen array module, the solution phase is computed on the
     CPU or GPU.
 
+    Parameters
+    ----------
+    matrix_type : str, optional
+        The type of matrix to be solved. Must be one of the valid matrix
+        types. Default is 'complex_nonsymmetric'.
+    view : str, optional
+        The view of the matrix. Valid options are 'default' and 'up'.
+        The 'up' view is a hint to the user to use the upper triangular
+        part of the matrix, which is required for symmetric matrices.
+        Default is 'default', meaning the full matrix is used.
+
     """
 
     def __init__(

@@ -74,7 +74,7 @@ def a_xx(request: pytest.FixtureRequest) -> tuple[NDArray, NDArray, NDArray]:
     config = parse_config(quatrex_config_path)
     setup_context(config)
 
-    hamiltonian_sparray = distributed_load(config.input_dir / "hamiltonian.mat")
+    hamiltonian_sparray = distributed_load(config.input_dir / "hamiltonian.h5")
     if (0, 0, 0) not in hamiltonian_sparray.keys():
         raise ValueError(
             f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "

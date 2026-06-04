@@ -12,7 +12,7 @@ MOS2_EXAMPLE = EXAMPLES_DIR / "w90" / "mos2" / "inputs"
 
 
 @pytest.fixture(scope="session")
-def matrix_dict(request: pytest.FixtureRequest) -> NDArray:
+def matrix_dict(request: pytest.FixtureRequest) -> dict[str, NDArray]:
     """Returns the wannier tight binding matrix of the mos2 example"""
 
     matrix_dict = distributed_load(MOS2_EXAMPLE / "hamiltonian.h5")

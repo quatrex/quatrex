@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import re
+
 import h5py
 import numpy as np
 from scipy import sparse
@@ -24,6 +26,9 @@ def load_hdf5_dict(filename: str) -> dict:
         matrix_dict = {}
 
         for key in f.keys():
+
+            if not re.fullmatch(r"\[[^,\[\]]+,[^,\[\]]+,[^,\[\]]+\]", key):
+                raise ValueError(f"Key '{key}' must be in the format [x,y,z].")
 
             item = f[key]
             fmt = item.attrs.get("format", None)
@@ -89,8 +94,30 @@ def save_hdf5_dict(filename: str, data: dict):
     None
 
     """
+
+    # VALIDATE IF THE DICTIONARY IS CONSISTENT WITH QUATREX FORMAT
+    for key, mat in data.items():
+        if not isinstance(key, str):
+            raise TypeError(
+                f"Keys in the dictionary must be strings, got {type(key)} for key '{key}'."
+            )
+
+        if not re.fullmatch(r"\[[^,\[\]]+,[^,\[\]]+,[^,\[\]]+\]", key):
+            raise ValueError(f"Key '{key}' must be in the format [x,y,z].")
+
+        if not isinstance(
+            mat, (sparse.csr_matrix, sparse.coo_matrix, sparse.csc_matrix, np.ndarray)
+        ):
+            raise TypeError(
+                f"Unsupported data type {type(mat)} for key '{key}'. "
+                f"Supported types are: scipy.sparse.csr_matrix, scipy.sparse.coo_matrix, "
+                f"scipy.sparse.csc_matrix, and numpy.ndarray."
+            )
+
+    # SAVE THE DICTIONARY TO THE HDF5 FILE
     with h5py.File(filename, "w") as f:
         for key, mat in data.items():
+
             if isinstance(mat, sparse.csr_matrix):
                 grp = f.create_group(key)
                 fmt = mat.format
@@ -127,8 +154,3 @@ def save_hdf5_dict(filename: str, data: dict):
             elif isinstance(mat, np.ndarray):
                 dset = f.create_dataset(key, data=mat, compression="gzip")
                 dset.attrs["format"] = "ndarray"
-
-            else:
-                print(
-                    f"Warning: Unsupported type {type(mat)} for key '{key}'. Skipping."
-                )

@@ -216,8 +216,8 @@ class Device:
 
         Loads sparse matrices from .h5 files in the input directory.
         Files should be named "hamiltonian.h5" and
-        "overlap.h5" where the keys are strings of [i,j,k] represent
-        lattice vector indices.
+        "overlap.h5" where the keys are strings of [i,j,k]
+        representing lattice vector indices.
 
         For missing overlap matrices, identity matrices are assumed
         (orthogonal basis). The (0,0,0) Hamiltonian matrix is mandatory

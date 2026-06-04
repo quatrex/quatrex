@@ -21,7 +21,7 @@ from qttools.wave_function_solver import (
     WFSolver,
     auto_select_solver,
     cuDSS,
-    preferred_matrix_type,
+    preferred_sparse_format,
 )
 from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
@@ -195,40 +195,62 @@ class QTBM:
                 dtype=xp.float64,
             )
 
-        self.system_matrix_upper_view = self.config.qtbm.low_rank_obc
+        if self.config.qtbm.low_rank_obc:
+            self.system_matrix_view = "upper"
+            # Check if we can use real arithmetic for the system matrix
+            # and solvers (only possible for reduced method with real
+            # Hamiltonian and no k-point shift)
+            if (
+                not self.device.matrices_complex
+                and self.config.device.kpoint_grid == (1, 1, 1)
+                and self.config.device.kpoint_shift == (0, 0, 0)
+            ):
+                if comm.rank == 0:
+                    print(
+                        "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: "
+                        "Using real arithmetic for the system matrix and solvers."
+                    )
+                self.system_matrix_type = "real_symmetric_indefinite"
 
-        # Check if we can use real arithmetic for the system matrix and solvers (only possible for reduced method with real Hamiltonian and no k-point shift)
-        if (
-            self.config.device.kpoint_grid == (1, 1, 1)
-            and self.config.device.kpoint_shift == (0, 0, 0)
-            and not self.device.matrices_complex
-            and self.config.qtbm.low_rank_obc
-        ):
-            self.real_system_matrix = True
-            if comm.rank == 0:
-                print(
-                    "REAL SYSTEM MATRIX OPTIMIZATION ENABLED: Using real arithmetic for the system matrix and solvers."
-                )
+            else:
+                self.system_matrix_type = "complex_hermitian_indefinite"
+
         else:
-            self.real_system_matrix = False
+            self.system_matrix_view = "full"
+            self.system_matrix_type = "complex_nonsymmetric"
 
-        self.solver = self._configure_solver(self.config.electron.solver)
+        self.solver = self._configure_solver(
+            self.config.electron.solver,
+            matrix_type=self.system_matrix_type,
+            matrix_view=self.system_matrix_view,
+        )
 
         # TODO Preferred_matrix_type is not used at the moment
-        self.matrix_type = preferred_matrix_type[
+        self.matrix_type = preferred_sparse_format[
             self.config.electron.solver.direct_solver
         ]
 
         self._allocate_system_matrix()
         free_mempool()
 
-    def _configure_solver(self, solver_config: SolverConfig) -> WFSolver:
+    @staticmethod
+    def _configure_solver(
+        solver_config: SolverConfig,
+        matrix_type: str,
+        matrix_view: str,
+    ) -> WFSolver:
         """Configures the wavefunction solver based on the config.
 
         Parameters
         ----------
         solver_config : SolverConfig
             The solver configuration containing solver type and options.
+        matrix_type : str
+            The type of the system matrix, describing properties like
+            symmetry and definiteness.
+        matrix_view : str
+            The view of the system matrix sparsity, indicating which part
+            of the matrix to use for symmetric matrices.
 
         Returns
         -------
@@ -236,34 +258,18 @@ class QTBM:
             The configured wavefunction solver instance.
 
         """
-        if self.config.qtbm.low_rank_obc:
-            if self.real_system_matrix:
-                matrix_type = "real_symmetric_indefinite"
-            else:
-                matrix_type = "complex_hermitian_indefinite"
-            if self.system_matrix_upper_view:
-                view = "up"
-            else:
-                raise ValueError("Symmetric matrix currently only supports upper view.")
-        else:
-            matrix_type = "complex_nonsymmetric"
-            if self.system_matrix_upper_view:
-                raise ValueError("Nonsymmetric matrix cannot have upper view.")
-            else:
-                view = "default"
-
         if solver_config.direct_solver == "mumps":
-            return MUMPS(matrix_type=matrix_type, view=view)
+            return MUMPS(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "superlu":
-            return SuperLU(matrix_type=matrix_type, view=view)
+            return SuperLU(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "cudss":
-            return cuDSS(matrix_type=matrix_type, view=view)
+            return cuDSS(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "pardiso":
-            return PARDISO(matrix_type=matrix_type, view=view)
+            return PARDISO(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "thomas":
-            return Thomas(matrix_type=matrix_type, view=view)
+            return Thomas(matrix_type=matrix_type, matrix_view=matrix_view)
         if solver_config.direct_solver == "auto":
-            return auto_select_solver(matrix_type=matrix_type, view=view)
+            return auto_select_solver(matrix_type=matrix_type, matrix_view=matrix_view)
 
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
@@ -281,13 +287,13 @@ class QTBM:
         for r, h_r in self.device.hamiltonians.items():
             nnz_H.append(h_r.nnz)
             total_nnz += h_r.nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "uppper":
                 # Account for the symmetric part if not upper view
                 total_nnz += h_r.nnz
         for r, s_r in self.device.overlap_matrices.items():
             nnz_S.append(s_r.nnz)
             total_nnz += s_r.nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 # Account for the symmetric part if not upper view
                 total_nnz += s_r.nnz
         if not self.config.qtbm.low_rank_obc:
@@ -309,7 +315,7 @@ class QTBM:
                 xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
             )
             start_idx += nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
                     xp.arange(h_r.shape[0], dtype=xp.int32),
@@ -324,7 +330,7 @@ class QTBM:
                 xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
             )
             start_idx += nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
                     xp.arange(s_r.shape[0], dtype=xp.int32),
@@ -363,7 +369,7 @@ class QTBM:
         concatenated_indices[:, 1] = concatenated_indices_M % size
 
         # Allocate system matrix
-        if self.real_system_matrix:
+        if "real" in self.system_matrix_type:
             data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.float64)
         else:
             data = xp.zeros_like(concatenated_indices[:, 0], dtype=xp.complex128)
@@ -383,7 +389,7 @@ class QTBM:
                 start_idx : start_idx + h_r.nnz
             ]
             start_idx += h_r.nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 self.hamiltonian_update_indices_transpose[r] = inverse_indices[
                     start_idx : start_idx + h_r.nnz
                 ]
@@ -396,7 +402,7 @@ class QTBM:
                 start_idx : start_idx + s_r.nnz
             ]
             start_idx += s_r.nnz
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 self.overlap_update_indices_transpose[r] = inverse_indices[
                     start_idx : start_idx + s_r.nnz
                 ]
@@ -461,7 +467,7 @@ class QTBM:
                 k_phase,
                 False,
             )
-            if not self.system_matrix_upper_view:
+            if self.system_matrix_view != "upper":
                 inplace.scatter_add_scaled(
                     self.system_matrix.data,
                     m_r.data,
@@ -744,7 +750,7 @@ class QTBM:
                 ) @ phi_cont
             # CHECK SPILL OVER ERROR (DEBUG)
             error = contact.get_coupling_matrix(self.system_matrix) @ phi_cont
-            if self.real_system_matrix:
+            if "real" in self.system_matrix_type:
                 # For real system matrix, we need to convert phi to real
                 # before multiplying with the system matrix, and then
                 # convert back to complex
@@ -759,14 +765,14 @@ class QTBM:
                 del temp
             else:
                 error += (self.system_matrix @ phi)[orbital_indices, :]
-            if self.system_matrix_upper_view:
+            if self.system_matrix_view == "upper":
                 # Need to add the contribution from the lower view of
                 # the system matrix as well
                 error += (
                     contact.get_coupling_matrix(self.system_matrix, transpose=True)
                     @ phi_cont
                 )
-                if self.real_system_matrix:
+                if "real" in self.system_matrix_type:
                     # For real system matrix, we need to convert phi to
                     # real before multiplying with the system matrix,
                     # and then convert back to complex
@@ -1184,7 +1190,7 @@ class QTBM:
 
                     # If system matrix is real, convert the RHS to real
                     # with twice the number of columns
-                    if self.real_system_matrix:
+                    if "real" in self.system_matrix_type:
                         injection_tot = xp.ascontiguousarray(injection_tot)
                         injection_tot = injection_tot.view(np.float64)
                         injection_tot = xp.asfortranarray(injection_tot)
@@ -1222,13 +1228,13 @@ class QTBM:
                             phi = self.solver.solve(
                                 self.system_matrix,
                                 injection_tot,
-                                reuse_sym_fact=True,
-                                reuse_fact=False,
+                                reuse_analysis=True,
+                                reuse_factorization=False,
                             )
                             # Apply the correction to the injected modes
                             # according to the reduced method
 
-                            if self.real_system_matrix:
+                            if "real" in self.system_matrix_type:
                                 phi = xp.ascontiguousarray(phi)
                                 phi = phi.view(xp.complex128)
                                 phi = xp.asfortranarray(phi)
@@ -1261,8 +1267,8 @@ class QTBM:
                             phi = self.solver.solve(
                                 self.system_matrix,
                                 injection_tot,
-                                reuse_sym_fact=True,
-                                reuse_fact=False,
+                                reuse_analysis=True,
+                                reuse_factorization=False,
                             )
 
                         # No need here to convert from real to complex,

@@ -9,7 +9,7 @@ from qttools.wave_function_solver.solver import WFSolver
 from qttools.wave_function_solver.superlu import SuperLU
 from qttools.wave_function_solver.thomas import Thomas
 
-preferred_matrix_type = {
+preferred_sparse_format = {
     "mumps": sparse.coo_matrix,
     "superlu": sparse.csc_matrix,
     "cudss": sparse.csr_matrix,
@@ -25,6 +25,6 @@ __all__ = [
     "cuDSS",
     "PARDISO",
     "Thomas",
-    "preferred_matrix_type",
+    "preferred_sparse_format",
     "auto_select_solver",
 ]

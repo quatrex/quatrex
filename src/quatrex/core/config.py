@@ -60,6 +60,13 @@ class QTBMConfig(BaseModel):
     right-hand-side of linear system, which greatly reduces fill-in
     during factorization.
 
+    The system matrix becomes Hermitian or even real symmetric in
+    gamma-only simulations. Therefore, the low_rank_obc parameter can
+    only be used in combination with direct solvers that can exploit the
+    symmetry, i.e., `direct_solver="cudss"` on GPU,
+    `direct_solver="pardiso"` on CPU, and `direct_solver="thomas"` on
+    both CPU and GPU.
+
     """
 
 

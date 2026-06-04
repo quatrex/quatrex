@@ -1,35 +1,42 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+
 try:
     import cupy as cp
     import nvmath
     from nvmath.bindings import cudss
-    from nvmath.bindings.cudss import MatrixType, MatrixViewType
 
-    nvmath_available = True
-
-    matrix_combination = {
-        "real_symmetric_positive_definite": MatrixType.SPD,
-        "real_symmetric_indefinite": MatrixType.SYMMETRIC,
-        "complex_hermitian_positive_definite": MatrixType.HPD,
-        "complex_hermitian_indefinite": MatrixType.HERMITIAN,
-        "real_nonsymmetric": MatrixType.GENERAL,
-        "complex_nonsymmetric": MatrixType.GENERAL,
+    cudss_matrix_types = {
+        "real_symmetric_positive_definite": cudss.MatrixType.SPD,
+        "real_symmetric_indefinite": cudss.MatrixType.SYMMETRIC,
+        "complex_hermitian_positive_definite": cudss.MatrixType.HPD,
+        "complex_hermitian_indefinite": cudss.MatrixType.HERMITIAN,
+        "real_nonsymmetric": cudss.MatrixType.GENERAL,
+        "complex_nonsymmetric": cudss.MatrixType.GENERAL,
     }
 
+    cudss_matrix_views = {
+        "full": cudss.MatrixViewType.FULL,
+        "upper": cudss.MatrixViewType.UPPER,
+        "lower": cudss.MatrixViewType.LOWER,
+    }
+
+    cudss_value_types = {
+        cp.dtype("float64"): nvmath.CudaDataType.CUDA_R_64F,
+        cp.dtype("complex128"): nvmath.CudaDataType.CUDA_C_64F,
+    }
+
+    cudss_available = True
+
+
 except ImportError:
-    nvmath_available = False
+    cudss_available = False
 
-import time
-
-from mpi4py.MPI import COMM_WORLD as comm
-
-from qttools import NDArray, sparse, xp
+from qttools import NDArray, sparse
+from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import synchronize_current_stream
 from qttools.wave_function_solver.solver import WFSolver
 
-
-def cudss_available():
-    """Checks if the cuDSS solver is available."""
-    return nvmath_available
+profiler = Profiler()
 
 
 class cuDSS(WFSolver):
@@ -39,275 +46,260 @@ class cuDSS(WFSolver):
     Parameters
     ----------
     matrix_type : str, optional
-        The type of the system matrix A.
-    view : str, optional
-        The view of the system matrix A.
+        The type of the system matrix. This describes properties like
+        symmetry and definiteness. If None, the solver will use a
+        general matrix type.
+    matrix_view : str, optional
+        The view of the system matrix sparsity. This solver supports
+        'full', 'upper', and 'lower' views. If None, the solver will use
+        the 'full' view.
 
     """
 
-    def _set_A(self, a: sparse.csr_matrix):
-        """Creates a cuDSS matrix wrapper for the sparse system matrix A
+    def __init__(self, matrix_type: str | None = None, matrix_view: str | None = None):
+        """Initializes the cuDSS solver."""
+        if not cudss_available:
+            raise ImportError(
+                "nvmath or its cudss bindings are not available. "
+                "Please install them to use this solver."
+            )
+        if matrix_type is not None and matrix_type not in cudss_matrix_types:
+            raise ValueError(
+                f"Invalid matrix type '{matrix_type}'. "
+                f"Valid options are: {list(cudss_matrix_types.keys())}"
+            )
+
+        self._mtype = cudss_matrix_types.get(matrix_type, cudss.MatrixType.GENERAL)
+        self._mview = cudss_matrix_views.get(matrix_view, cudss.MatrixViewType.FULL)
+
+        self._solver_handle = cudss.create()
+        self._solver_config = cudss.config_create()
+        self._solver_data = cudss.data_create(self._solver_handle)
+
+        self.analyzed = False
+        self.factorized = False
+
+    def _create_cudss_csr(self, a: sparse.csr_matrix) -> int:
+        """Creates a cuDSS matrix wrapper for the sparse system matrix a
         in CSR format.
 
         Parameters
         ----------
         a : sparse.csr_matrix
-            The sparse system matrix A in CSR format.
+            The sparse system matrix in CSR format.
+
+        Returns
+        -------
+        csr_handle : int
+            The cuDSS matrix handle for the matrix a.
+
         """
-        n = a.shape[0]
-        nnz = a.nnz
         if a.indices.dtype != cp.int32 or a.indptr.dtype != cp.int32:
             raise ValueError(
-                f"Matrix A has unsupported index data type. Expected int32 for both indices and indptr, but got {a.indices.dtype} and {a.indptr.dtype}."
+                f"Matrix has unsupported index data type. "
+                f"Expected int32 for both indices and indptr, "
+                f"but got {a.indices.dtype} and {a.indptr.dtype}."
             )
-        if a.dtype == cp.float64:
-            type = nvmath.CudaDataType.CUDA_R_64F
-        elif a.dtype == cp.complex128:
-            type = nvmath.CudaDataType.CUDA_C_64F
-        else:
+
+        value_type = cudss_value_types.get(a.dtype)
+
+        if value_type is None:
             raise ValueError(
-                f"Unsupported data type {a.dtype} for matrix A. Supported types are float64 and complex128."
+                f"Matrix has unsupported value data type {a.dtype}. "
+                f"Supported types are: {list(cudss_value_types.keys())}"
             )
-        self.A = cudss.matrix_create_csr(
-            n,  # nrows
-            n,  # ncols
-            nnz,  # nnz
-            a.indptr.data.ptr,  # row_start (beginning of row offset array)
-            0,  # row_end (NULL/0 - not used in standard CSR)
-            a.indices.data.ptr,  # column indices
-            a.data.data.ptr,  # values
-            nvmath.CudaDataType.CUDA_R_32I,  # index type (int32)
-            type,
-            self.M_type,  # matrix type (general)
-            self.M_view,  # matrix view (full)
-            cudss.IndexBase.ZERO,  # 0-based indexing
+
+        csr_handle = cudss.matrix_create_csr(
+            nrows=a.shape[0],
+            ncols=a.shape[1],
+            nnz=a.nnz,
+            row_start=a.indptr.data.ptr,  # Beginning of row offset array
+            row_end=0,  # Not used in standard CSR
+            col_indices=a.indices.data.ptr,
+            values=a.data.data.ptr,
+            index_type=nvmath.CudaDataType.CUDA_R_32I,
+            value_type=value_type,
+            mtype=self._mtype,
+            mview=self._mview,
+            index_base=cudss.IndexBase.ZERO,
         )
 
-    def _set_b(self, b: NDArray):
-        """
-        Create a cuDSS matrix wrapper for the dense right-hand side matrix B.
+        return csr_handle
+
+    def _create_cudss_array(self, arr: NDArray) -> int:
+        """Create a cuDSS wrapper for a dense array.
+
+        Used for the right-hand side and solution.
 
         Parameters
         ----------
-        b : NDArray
-            The dense right-hand side matrix B with shape (n, batchsize).
+        arr : NDArray
+            The dense array for which to create the cuDSS wrapper.
+
+        Returns
+        -------
+        array_handle : int
+            The cuDSS matrix handle for the array arr.
+
         """
 
-        n = b.shape[0]
-        batchsize = b.shape[1]
-
-        if b.dtype == cp.float64:
-            type = nvmath.CudaDataType.CUDA_R_64F
-        elif b.dtype == cp.complex128:
-            type = nvmath.CudaDataType.CUDA_C_64F
-        else:
+        value_type = cudss_value_types.get(arr.dtype)
+        if value_type is None:
             raise ValueError(
-                f"Unsupported data type {b.dtype} for matrix B. Supported types are float64 and complex128."
+                f"Array has unsupported value data type {arr.dtype}. "
+                f"Supported types are: {list(cudss_value_types.keys())}"
             )
-        self.B = cudss.matrix_create_dn(
-            n,  # nrows
-            batchsize,  # ncols (number of RHS)
-            n,  # leading dimension
-            b.data.ptr,  # values
-            type,
-            cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
-        )
 
-    def _set_x(self, x: NDArray, dtype):
-        """Creates a cuDSS matrix wrapper for the dense solution matrix
-        X.
+        array_handle = cudss.matrix_create_dn(
+            nrows=arr.shape[0],
+            ncols=arr.shape[1],
+            ld=arr.shape[0],  # leading dimension
+            values=arr.data.ptr,
+            value_type=value_type,
+            layout=cudss.Layout.COL_MAJOR,  # Fortran order
+        )
+        return array_handle
+
+    def _execute_phase(
+        self, phase: "cudss.Phase", matrix: int, solution: int, rhs: int
+    ):
+        """Executes a specific phase of the cuDSS solver.
 
         Parameters
         ----------
-        x : NDArray
-            The dense solution matrix X with shape (n, batchsize).
-        dtype : numpy.dtype
-            The data type of the solution matrix X.
+        phase : cudss.Phase
+            The phase of the solver to execute (ANALYSIS, FACTORIZATION,
+            SOLVE).
+        matrix : int
+            The cuDSS handle for the system matrix.
+        solution : int
+            The cuDSS handle for the solution array.
+        rhs : int
+            The cuDSS handle for the right-hand side array.
 
         """
-        n = x.shape[0]
-        batchsize = x.shape[1]
-        if dtype == cp.float64:
-            type = nvmath.CudaDataType.CUDA_R_64F
-        elif dtype == cp.complex128:
-            type = nvmath.CudaDataType.CUDA_C_64F
-        else:
-            raise ValueError(
-                f"Unsupported data type {dtype} for matrix X. Supported types are float64 and complex128."
-            )
-        self.X = cudss.matrix_create_dn(
-            n,  # nrows
-            batchsize,  # ncols (number of RHS)
-            n,  # leading dimension
-            x.data.ptr,  # values (will be allocated by cuDSS)
-            type,
-            cudss.Layout.COL_MAJOR,  # column-major (Fortran style)
-        )
-
-    def __init__(self, matrix_type: str | None = None, view: str | None = None):
-        """Initializes the cuDSS solver."""
-        if not nvmath_available:
-            raise ImportError(
-                "nvmath or its cudss bindings are not available. Please install them to use this solver."
-            )
-
-        self.sym_factorized = False
-        self.factorized = False
-
-        if matrix_type is not None:
-            if matrix_type not in matrix_combination:
-                raise ValueError(
-                    f"Invalid matrix type '{matrix_type}'. Valid options are: {list(matrix_combination.keys())}"
-                )
-            self.M_type = matrix_combination[matrix_type]
-        else:
-            self.M_type = MatrixType.GENERAL
-            self.M_view = MatrixViewType.FULL
-
-        if view is not None:
-            if view == "default":
-                self.M_view = MatrixViewType.FULL
-            elif view == "up":
-                self.M_view = MatrixViewType.UPPER
-            elif view == "down":
-                self.M_view = MatrixViewType.LOWER
-            else:
-                raise ValueError(
-                    f"Invalid view '{view}'. Valid options are: 'default', 'up', 'down'."
-                )
-
-        self.cudss_handle = cudss.create()
-        self.cudss_config = cudss.config_create()
-        self.cudss_data = cudss.data_create(self.cudss_handle)
-
-    def analyse(self):
-        """Performs symbolic factorization (analysis) of the system matrix A."""
-        xp.cuda.Stream.null.synchronize()
-        analysis_tic = time.perf_counter()
+        synchronize_current_stream()
         cudss.execute(
-            self.cudss_handle,
-            cudss.Phase.ANALYSIS,
-            self.cudss_config,
-            self.cudss_data,
-            self.A,
-            self.X,
-            self.B,
+            handle=self._solver_handle,
+            phase=phase,
+            solver_config=self._solver_config,
+            solver_data=self._solver_data,
+            input_matrix=matrix,
+            solution=solution,
+            rhs=rhs,
         )
-        xp.cuda.Stream.null.synchronize()
-        analysis_toc = time.perf_counter()
+        synchronize_current_stream()
 
-        return analysis_toc - analysis_tic
+    @profiler.profile("cuDSS: analysis", level="default")
+    def _analyze(self, matrix: int, solution: int, rhs: int):
+        """Performs symbolic factorization of the system.
 
-    def factorize(self):
-        """Performs numeric factorization of the system matrix A."""
-        xp.cuda.Stream.null.synchronize()
-        numeric_tic = time.perf_counter()
-        cudss.execute(
-            self.cudss_handle,
-            cudss.Phase.FACTORIZATION,
-            self.cudss_config,
-            self.cudss_data,
-            self.A,
-            self.X,
-            self.B,
-        )
-        xp.cuda.Stream.null.synchronize()
-        numeric_toc = time.perf_counter()
+        Parameters
+        ----------
+        matrix : int
+            The cuDSS handle for the system matrix.
+        solution : int
+            The cuDSS handle for the solution array.
+        rhs : int
+            The cuDSS handle for the right-hand side array.
 
-        return numeric_toc - numeric_tic
+        """
+        self._execute_phase(cudss.Phase.ANALYSIS, matrix, solution, rhs)
 
-    def _solve(self):
-        """Solves the linear system AX = B using the factorized form of A."""
-        xp.cuda.Stream.null.synchronize()
-        solve_tic = time.perf_counter()
-        cudss.execute(
-            self.cudss_handle,
-            cudss.Phase.SOLVE,
-            self.cudss_config,
-            self.cudss_data,
-            self.A,
-            self.X,
-            self.B,
-        )
-        xp.cuda.Stream.null.synchronize()
-        solve_toc = time.perf_counter()
+    @profiler.profile("cuDSS: factorization", level="default")
+    def _factorize(self, matrix: int, solution: int, rhs: int):
+        """Performs numeric factorization of the system.
 
-        return solve_toc - solve_tic
+        Parameters
+        ----------
+        matrix : int
+            The cuDSS handle for the system matrix.
+        solution : int
+            The cuDSS handle for the solution array.
+        rhs : int
+            The cuDSS handle for the right-hand side array.
 
-    def _destroy_data_wrappers(self):
-        """Destroys the cuDSS matrix wrappers for A, B, and X to free GPU memory."""
-        cudss.matrix_destroy(self.A)
-        cudss.matrix_destroy(self.B)
-        cudss.matrix_destroy(self.X)
+        """
+        self._execute_phase(cudss.Phase.FACTORIZATION, matrix, solution, rhs)
 
+    def _solve(self, matrix: int, solution: int, rhs: int):
+        """Solves the linear system a @ x = b.
+
+        Parameters
+        ----------
+        matrix : int
+            The cuDSS handle for the system matrix.
+        solution : int
+            The cuDSS handle for the solution array.
+        rhs : int
+            The cuDSS handle for the right-hand side array.
+
+        """
+        self._execute_phase(cudss.Phase.SOLVE, matrix, solution, rhs)
+
+    @profiler.profile("cuDSS solve", level="default")
     def solve(
         self,
-        a: sparse.spmatrix,
+        a: sparse.csr_matrix,
         b: NDArray,
-        reuse_sym_fact: bool = False,
-        reuse_fact: bool = False,
+        reuse_analysis: bool = False,
+        reuse_factorization: bool = False,
     ):
-        """Solves the linear system AX = B using cuDSS.
+        """Solves the sparse linear system a @ x = b using cuDSS.
 
         Parameters
         ----------
-        a : sparse.spmatrix
-            The sparse system matrix A in CSR format.
+        a : sparse.csr_matrix
+            The sparse system matrix in CSR format.
         b : NDArray
-            The dense right-hand side matrix B with shape (n,
-            batchsize).
-        reuse_sym_fact : bool, optional
+            The dense right-hand side array with shape (n, batchsize).
+        reuse_analysis : bool, optional
             Whether to reuse the symbolic factorization from a previous
-            solve. Default is False.
-        reuse_fact : bool, optional
-            Whether to reuse the numeric factorization from a previous
-            solve. Default is False.
+            solve. Default is False. This is useful when solving
+            multiple linear systems with the same sparsity pattern but
+            different numerical values.
+        reuse_factorization : bool, optional
+            Whether to reuse the numerical factorization from a previous
+            solve. Default is False. This can only be True if
+            reuse_analysis is also True. Note that this must only be
+            True if the matrix values have not changed since the last
+            factorization.
 
         Returns
         -------
         x : NDArray
-            The dense solution matrix X with shape (n, batchsize) that
-            satisfies AX = B
+            The solution array with shape (n, batchsize).
 
         """
-
-        x = xp.zeros_like(b)
-
-        self._set_A(a)
-        self._set_b(b)
-        self._set_x(x, b.dtype)
-
-        if a.dtype != b.dtype:
-            raise ValueError(
-                f"Data type of matrix A ({a.dtype}) does not match data type of matrix B ({b.dtype}). Please ensure they have the same data type."
-            )
-
-        if not reuse_sym_fact and reuse_fact:
+        if reuse_factorization and not reuse_analysis:
             raise ValueError(
                 "Cannot reuse total factorization without reusing symbolic factorization."
             )
+        if a.dtype != b.dtype:
+            raise ValueError(
+                f"Data type of a ({a.dtype}) does not match data type of b ({b.dtype}). "
+                "Please ensure they have the same data type."
+            )
 
-        if not reuse_sym_fact or not self.sym_factorized:
-            analysis_time = self.analyse()
-            if comm.rank == 0:
-                print(
-                    f"    CUDSS: Analysis time: {analysis_time:.6f} seconds", flush=True
-                )
-            self.sym_factorized = True
+        x = cp.zeros_like(b)
 
-        if not reuse_fact or not self.factorized:
-            factorization_time = self.factorize()
-            if comm.rank == 0:
-                print(
-                    f"    CUDSS: Factorization time: {factorization_time:.6f} seconds",
-                    flush=True,
-                )
+        # Set up the linear system.
+        matrix = self._create_cudss_csr(a)
+        solution = self._create_cudss_array(x)
+        rhs = self._create_cudss_array(b)
+
+        if not self.analyzed or not reuse_analysis:
+            self._analyze(matrix, solution, rhs)
+            self.analyzed = True
+
+        if not self.factorized or not reuse_factorization:
+            self._factorize(matrix, solution, rhs)
             self.factorized = True
 
-        solve_time = self._solve()
-        if comm.rank == 0:
-            print(f"    CUDSS: Solve time: {solve_time:.6f} seconds", flush=True)
+        self._solve(matrix, solution, rhs)
 
-        self._destroy_data_wrappers()
+        # Free GPU memory used for cuDSS linear system.
+        for handle in [matrix, rhs, solution]:
+            cudss.matrix_destroy(handle)
 
         return x

@@ -1,9 +1,13 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 from qttools import NDArray, sparse
+from qttools.profiling import Profiler
 from qttools.wave_function_solver.solver import WFSolver
 
-if "cupy" in sparse.__name__:
+profiler = Profiler()
+
+
+if sparse.__name__ == "cupyx.scipy.sparse":
     from cupyx.scipy.sparse import linalg
 else:
     from scipy.sparse import linalg
@@ -19,34 +23,38 @@ class SuperLU(WFSolver):
     Parameters
     ----------
     matrix_type : str, optional
-        The type of matrix to be solved. Must be one of the valid matrix
-        types. Default is 'complex_nonsymmetric'.
-    view : str, optional
-        The view of the matrix. Valid options are 'default' and 'up'.
-        The 'up' view is a hint to the user to use the upper triangular
-        part of the matrix, which is required for symmetric matrices.
-        Default is 'default', meaning the full matrix is used.
+        The type of matrix to be solved. The only valid option is
+        'complex_nonsymmetric', which is the default. This is a
+        placeholder for future support of other matrix types.
+    matrix_view : str, optional
+        The view of the matrix. The only valid option is 'full', which
+        means the full matrix is used. Default is 'full'. This is a
+        placeholder for future support of other matrix views.
 
     """
 
     def __init__(
         self,
         matrix_type: str = "complex_nonsymmetric",
-        view: str = "default",
+        matrix_view: str = "full",
     ) -> None:
         """Initializes the SuperLU wave function solver."""
 
-        # Matrix_type is currently not used in the SuperLU solver
+        if matrix_type != "complex_nonsymmetric" or matrix_view != "full":
+            raise ValueError(
+                "SuperLU solver currently only supports 'complex_nonsymmetric' "
+                "matrix type and 'full' matrix view."
+            )
 
-        if view != "default":
-            raise ValueError("SuperLU solver currently only supports 'default' view.")
+        self._lu = None
 
+    @profiler.profile("SuperLU solve", level="default")
     def solve(
         self,
         a: sparse.spmatrix,
         b: NDArray,
-        reuse_sym_fact: bool = False,
-        reuse_fact: bool = False,
+        reuse_analysis: bool = False,
+        reuse_factorization: bool = False,
     ) -> NDArray:
         """Solves the sparse system a @ x = b using LU decomposition.
 
@@ -56,6 +64,14 @@ class SuperLU(WFSolver):
             The sparse system matrix.
         b : NDArray
             The right-hand side vector.
+        reuse_analysis : bool, optional
+            Unused for this solver since it does not involve an analysis
+            phase.
+        reuse_factorization : bool, optional
+            Whether to reuse the numerical factorization from a previous
+            solve, by default False. Note that this must only be
+            True if the matrix values have not changed since the last
+            factorization.
 
         Returns
         -------
@@ -63,11 +79,11 @@ class SuperLU(WFSolver):
             The solution vector.
 
         """
+        if reuse_analysis:
+            raise ValueError("SuperLU solver does not support reuse of analysis.")
 
-        if reuse_sym_fact or reuse_fact:
-            print(
-                "Warning: SuperLU solver does not support factorization or sym. factorization reuse. Matrix will be refactorized."
-            )
+        if self._lu is None or not reuse_factorization:
+            with profiler.profile_range("SuperLU: factorization", level="default"):
+                self._lu = linalg.splu(a)
 
-        lu = linalg.splu(a)
-        return lu.solve(b)
+        return self._lu.solve(b)

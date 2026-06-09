@@ -1,16 +1,16 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the quatrex package.
 
 import os
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
-from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
+from qttools.comm import comm
 from qttools.kernels import inplace
 from qttools.kernels.linalg.kron import kron_matmul
-from qttools.utils.gpu_utils import free_mempool, synchronize_device
+from qttools.profiling import Profiler
+from qttools.utils.gpu_utils import free_mempool
 from qttools.utils.memory_utils import print_memory_usage
 from qttools.utils.mpi_utils import get_local_slice
 from qttools.wave_function_solver import (
@@ -27,75 +27,10 @@ from quatrex.core.config import QuatrexConfig, SolverConfig
 from quatrex.core.constants import e, h
 from quatrex.core.statistics import fermi_dirac
 from quatrex.device import Device
+from quatrex.device.contact import Contact, OBCResult
 from quatrex.grid import get_electron_energies, monkhorst_pack
 
-
-def construct_device_pseudo_inverse(
-    vector_per_cont: dict,
-    injection_segments: dict,
-    contacts: list,
-    i: int,
-    injection_count: dict,
-    num_orbitals: int,
-) -> sparse.csr_matrix:
-    """Constructs the sparse device-size pseudo-inverse.
-
-    Parameters
-    ----------
-    vector_per_cont : dict
-        Dictionary mapping each contact to its corresponding
-        pseudo-inverse vector for the current energy index `i`.
-    injection_segments : dict
-        Dictionary mapping each contact and energy index to its
-        corresponding injection segment.
-    contacts : list
-        List of contacts in the system.
-    i : int
-        Current energy index.
-    injection_count : dict
-        Dictionary mapping each energy index to the number of injection
-        sites.
-    num_orbitals : int
-        Number of orbitals in the system.
-
-    Returns
-    -------
-    sparse.csr_matrix
-        The sparse transposed vector.
-
-    """
-    return sparse.csr_matrix(
-        (
-            xp.concatenate(
-                list(vector_per_cont[contact][i].flatten() for contact in contacts),
-            ),
-            (
-                xp.concatenate(
-                    list(
-                        xp.repeat(
-                            xp.arange(
-                                injection_segments[contact, i].start,
-                                injection_segments[contact, i].stop,
-                            ),
-                            vector_per_cont[contact][i].shape[1],
-                        )
-                        for contact in contacts
-                    )
-                ),
-                xp.concatenate(
-                    list(
-                        xp.tile(
-                            xp.asarray(contact.orbital_indices),
-                            vector_per_cont[contact][i].shape[0],
-                        )
-                        for contact in contacts
-                    )
-                ),
-            ),
-        ),
-        shape=(injection_count[i], num_orbitals),
-        dtype=xp.complex128,
-    )
+profiler = Profiler()
 
 
 @dataclass
@@ -274,6 +209,7 @@ class QTBM:
         raise ValueError(f"Unknown solver: {solver_config.direct_solver}")
 
     # TODO: Investigate performance of the system matrix allocation
+    @profiler.profile("QTBM: Allocate system matrix", level="debug")
     def _allocate_system_matrix(self) -> sparse.csr_matrix:
         """Allocates the system matrix."""
 
@@ -287,7 +223,7 @@ class QTBM:
         for r, h_r in self.device.hamiltonians.items():
             nnz_H.append(h_r.nnz)
             total_nnz += h_r.nnz
-            if self.system_matrix_view != "uppper":
+            if self.system_matrix_view != "upper":
                 # Account for the symmetric part if not upper view
                 total_nnz += h_r.nnz
         for r, s_r in self.device.overlap_matrices.items():
@@ -422,6 +358,101 @@ class QTBM:
                 "System matrix is not in canonical format after allocation."
             )
 
+    def _get_obc_result_info(
+        self, obc_results: dict[Contact, OBCResult], energy_ind: int
+    ):
+        """Extracts the number of injected and reflected modes for each
+        contact at a given energy index.
+
+        Parameters
+        ----------
+        obc_results : dict[Contact, OBCResult]
+            Dictionary mapping each contact to its corresponding OBC
+            result containing injection and reflection data.
+        energy_ind : int
+            The energy index for which to extract the information.
+
+        Returns
+        -------
+        num_injected : np.ndarray
+            Array containing the number of injected modes for each
+            contact at the given energy index.
+        num_reflected : np.ndarray
+            Array containing the number of reflected modes for each
+            contact at the given energy index.
+
+        """
+        num_injected = np.zeros(len(obc_results), dtype=np.int32)
+        num_reflected = np.zeros(len(obc_results), dtype=np.int32)
+        for i, obc_result in enumerate(obc_results.values()):
+            num_injected[i] = obc_result.injection[energy_ind].shape[1]
+            if obc_result.reflection is not None:
+                num_reflected[i] = obc_result.reflection[energy_ind].shape[1]
+
+        return num_injected, num_reflected
+
+    @profiler.profile("QTBM: Assemble RHS", level="default")
+    def _assemble_rhs(
+        self, obc_results: dict[Contact, OBCResult], energy_ind: int
+    ) -> NDArray:
+        """Assembles the right-hand side vector for the linear system.
+
+        Parameters
+        ----------
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact, containing
+            injection and reflection data.
+        energy_ind : int
+            Index of the current energy being processed.
+
+        Returns
+        -------
+        rhs : NDArray
+            The assembled right-hand side vector for the linear system.
+
+        """
+        num_injected, num_reflected = self._get_obc_result_info(obc_results, energy_ind)
+
+        total_num_injected = num_injected.sum()
+
+        if total_num_injected == 0:
+            # This means we will be skipping the energy point.
+            return xp.zeros((self.num_orbitals, 0), dtype=xp.complex128, order="F")
+
+        rhs = xp.zeros(
+            (self.num_orbitals, total_num_injected + num_reflected.sum()),
+            dtype=xp.complex128,
+            order="F",
+        )
+
+        offsets_injected = np.hstack((0, np.cumsum(num_injected)))
+        offsets_reflected = total_num_injected + np.hstack(
+            (0, np.cumsum(num_reflected))
+        )
+
+        # Add the injection vector in the contact elements of the rhs
+        for i, (contact, obc_result) in enumerate(obc_results.items()):
+            rhs[
+                contact.orbital_indices, offsets_injected[i] : offsets_injected[i + 1]
+            ] = obc_result.injection[energy_ind]
+            if self.config.qtbm.low_rank_obc:
+                # Add the reflections.
+                rhs[
+                    contact.orbital_indices,
+                    offsets_reflected[i] : offsets_reflected[i + 1],
+                ] = obc_result.reflection[energy_ind]
+
+        rhs = xp.asfortranarray(rhs)
+
+        # If system matrix is real, convert the RHS to real with twice
+        # the number of columns
+        if "real" in self.system_matrix_type:
+            rhs = xp.ascontiguousarray(rhs)
+            rhs = rhs.view(np.float64)
+            rhs = xp.asfortranarray(rhs)
+
+        return rhs
+
     def _add_matrix_to_system_matrix(
         self, k: xp.complex128, factor: xp.float64, type: str = "hamiltonian"
     ) -> None:
@@ -480,7 +511,7 @@ class QTBM:
                 )
 
     def _add_sigma_obc_to_system_matrix(
-        self, factor: np.float64, sigma_obc_per_contact: dict, i: int
+        self, factor: np.float64, obc_results: dict[Contact, OBCResult], energy_ind: int
     ) -> None:
         """Adds the contribution of a contact self-energy to the system
         matrix for a given contact.
@@ -489,34 +520,192 @@ class QTBM:
         ----------
         factor : np.float64
             A scaling factor for the self-energy contribution.
-        sigma_obc_per_contact : dict
-            Dictionary of self-energy matrices for each contact
-        i : int
-            Index of the current local energy being processed.
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact.
+        energy_ind : int
+            Index of the current energy being processed.
 
         """
 
-        for contact, sigma_obc in sigma_obc_per_contact.items():
-            for k_t, sigma_obc_k in sigma_obc.items():
+        for contact, obc_result in obc_results.items():
+            for k_t, sigma_obc in obc_result.sigma_obc_k.items():
                 inplace.scatter_add_scaled_obc(
                     self.system_matrix.data,
-                    sigma_obc_k[i, :, :],
+                    sigma_obc[energy_ind, :, :],
                     self.sigma_obc_update_indices[contact],
                     k_t,
                     contact.transverse_repetition_grid,
                     factor,
                 )
 
+    @profiler.profile("QTBM: Assemble system matrix", level="default")
+    def _assemble_system_matrix(
+        self,
+        kpoint: xp.complex128,
+        energy: xp.float64,
+        obc_results: dict[Contact, OBCResult],
+        energy_ind: int,
+    ) -> None:
+        """Assembles the system matrix for a given k-point and energy index.
+
+        Parameters
+        ----------
+        kpoint : np.complex128
+            The k-point for which the system matrix is being constructed.
+        energy : np.float64
+            The energy value for which to construct the system matrix.
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact.
+        energy_ind : int
+            Index of the current energy being processed.
+
+        """
+        self.system_matrix.data[:] = 0
+
+        # Add the Hamiltonian and overlap to the system matrix
+        self._add_matrix_to_system_matrix(kpoint, -1, type="hamiltonian")
+        self._add_matrix_to_system_matrix(kpoint, energy, type="overlap")
+
+        if self.config.qtbm.low_rank_obc:
+            # No need to add the OBC self-energy to the system matrix
+            return
+
+        # Add the boundary self-energy contributions.
+        self._add_sigma_obc_to_system_matrix(-1, obc_results, energy_ind)
+
+    def _assemble_pseudo_inverse(
+        self,
+        obc_results: dict[Contact, OBCResult],
+        offsets_reflected: NDArray,
+        energy_ind: int,
+        shape: tuple,
+    ) -> sparse.csr_matrix:
+        """Constructs the sparse device-size pseudo-inverse.
+
+        Parameters
+        ----------
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact.
+        offsets_reflected : NDArray
+            Array of offsets for the reflected modes.
+        energy_ind : int
+            Index of the current energy being processed.
+        shape : tuple
+            Shape of the resulting sparse matrix.
+
+        Returns
+        -------
+        sparse.csr_matrix
+            The sparse transposed vector.
+
+        """
+
+        data = xp.concatenate(
+            list(
+                obc_result.phi_inv_reflected[energy_ind].flatten()
+                for obc_result in obc_results.values()
+            ),
+        )
+
+        rows = xp.concatenate(
+            list(
+                xp.repeat(
+                    xp.arange(start, stop),
+                    obc_result.phi_inv_reflected[energy_ind].shape[1],
+                )
+                for start, stop, obc_result in zip(
+                    offsets_reflected[:-1],
+                    offsets_reflected[1:],
+                    obc_results.values(),
+                )
+            )
+        )
+
+        cols = xp.concatenate(
+            list(
+                xp.tile(
+                    xp.asarray(contact.orbital_indices),
+                    obc_result.phi_inv_reflected[energy_ind].shape[0],
+                )
+                for contact, obc_result in obc_results.items()
+            )
+        )
+
+        return sparse.csr_matrix((data, (rows, cols)), shape=shape, dtype=xp.complex128)
+
+    @profiler.profile("QTBM: Recover full-rank wavefunction", level="default")
+    def _recover_full_rank_wavefunction(
+        self,
+        phi: NDArray,
+        obc_results: dict[Contact, OBCResult],
+        energy_ind: int,
+    ) -> NDArray:
+        """Recovers the full-rank wavefunction from the low-rank solution.
+
+        Parameters
+        ----------
+        phi : NDArray
+            The low-rank wavefunction solution obtained from solving the
+            linear system with the reduced method.
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact, containing
+            injection and reflection data.
+        energy_ind : int
+            Index of the current energy being processed.
+
+        Returns
+        -------
+        NDArray
+            The recovered full-rank-equivalent wavefunction solution.
+
+        """
+
+        num_injected, num_reflected = self._get_obc_result_info(obc_results, energy_ind)
+
+        total_num_injected = num_injected.sum()
+        offsets_reflected = np.hstack((0, np.cumsum(num_reflected)))
+
+        # Apply the correction to the injected modes
+        # according to the reduced method
+
+        # Generate the device-sized pseudo-inverse
+        phi_inv_tot = self._assemble_pseudo_inverse(
+            obc_results,
+            offsets_reflected,
+            energy_ind,
+            shape=(num_reflected.sum(), self.num_orbitals),
+        )
+
+        # Generate the eigenvalue matrix
+        eig_tot = xp.concatenate(
+            [
+                obc_result.eig_reflected[energy_ind]
+                for obc_result in obc_results.values()
+            ]
+        )
+
+        if "real" in self.system_matrix_type:
+            phi = xp.ascontiguousarray(phi)
+            phi = phi.view(xp.complex128)
+            phi = xp.asfortranarray(phi)
+
+        # NOTE: xp.split returns views, so this does not copy the data.
+        phi_injected, phi_reflected = xp.split(phi, [total_num_injected], axis=1)
+
+        phi_injected += phi_reflected @ xp.linalg.solve(
+            xp.diag(eig_tot) - phi_inv_tot @ phi_reflected,
+            phi_inv_tot @ phi_injected,
+        )
+
+        return phi_injected
+
     def _compute_transmissions(
         self,
         phi: NDArray,
-        injection_segments: dict,
-        global_energy_index: int,
-        sigma_obc_per_contact: dict,
-        reflection_per_contact: dict,
-        eig_ref_per_contact: dict,
-        phi_inv_ref_per_contact: dict,
-        k_idx: int,
+        injection_slices: dict,
+        global_energy_ind: int,
+        obc_results: dict[Contact, OBCResult],
+        kpoint_ind: int,
     ):
         """Computes transmission coefficients.
 
@@ -525,24 +714,15 @@ class QTBM:
         phi : NDArray
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
-        injection_segments : dict
+        injection_slices : dict
             Dictionary of slices for each contact where each slice
             corresponds to the contact's injection modes.
-        global_energy_index : int
+        global_energy_ind : int
             Energy index in the global energy array for storing results.
-        sigma_obc_per_contact : dict
-            Self-energy matrices for each contact, used for transmission
-            calculations.
-        reflection_per_contact : dict
-            Reflection matrices for each contact, used in reduced
-            method.
-        eig_ref_per_contact : dict
-            Eigenvalues of the reflected wavefunctions for each contact,
-            used in reduced method.
-        phi_inv_ref_per_contact : dict
-            Inverse of the reflected wavefunctions for each contact,
-            used in reduced method.
-        k_idx : int
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact, containing
+            injection and reflection data.
+        kpoint_ind : int
             Index of the current k-point being processed.
 
         """
@@ -554,56 +734,49 @@ class QTBM:
             # extract the elements inside contact 2
 
             # Wavefunctions injected from contact_in and evaluated at contact_out
-            phi_nt = phi[
-                contact_out.orbital_indices,
-                injection_segments[contact_in],
-            ]
+            phi_nt = phi[contact_out.orbital_indices, injection_slices[contact_in]]
 
             # Compute the transmission
-            if phi_nt.size != 0:
+            if phi_nt.size == 0:
+                continue
 
-                if self.config.qtbm.low_rank_obc:
-                    S_P = reflection_per_contact[contact_out] @ (
-                        xp.diag(1 / eig_ref_per_contact[contact_out])
-                        @ (phi_inv_ref_per_contact[contact_out] @ phi_nt)
+            obc_result = obc_results[contact_out]
+            if self.config.qtbm.low_rank_obc:
+                S_P = obc_result.reflection @ (
+                    xp.diag(1 / obc_result.eig_reflected)
+                    @ (obc_result.phi_inv_reflected @ phi_nt)
+                )
+
+            else:
+                S_P = xp.zeros_like(phi_nt)
+                # This upscales the self-energy if the contact
+                # has periodicity in the transverse directions
+                ny, nz = contact_out.transverse_repetition_grid
+                indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
+                indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
+
+                indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
+                indices_z = xp.tile(indices_z, (ny, ny))
+
+                for (ky, kz), sigma_obc in obc_result.sigma_obc_k.items():
+                    S_P += kron_matmul(
+                        xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
+                        sigma_obc,
+                        phi_nt,
                     )
 
-                else:
-                    S_P = xp.zeros_like(phi_nt)
-                    # This upscales the self-energy if the contact
-                    # has periodicity in the transverse directions
-                    ny, nz = contact_out.transverse_repetition_grid
-                    indices_y = -xp.arange(ny)[:, None] + xp.arange(ny)[None, :]
-                    indices_z = -xp.arange(nz)[:, None] + xp.arange(nz)[None, :]
-
-                    indices_y = xp.kron(indices_y, xp.ones((nz, nz)))
-                    indices_z = xp.tile(indices_z, (ny, ny))
-
-                    for (ky, kz), sigma_obc in sigma_obc_per_contact[
-                        contact_out
-                    ].items():
-                        S_P += kron_matmul(
-                            xp.exp(-1j * ky * indices_y - 1j * kz * indices_z),
-                            sigma_obc,
-                            phi_nt,
-                        )
-
-                transmission[k_idx, global_energy_index] = xp.trace(
-                    -2 * xp.imag(phi_nt.T.conj() @ S_P)
-                )
+            transmission[kpoint_ind, global_energy_ind] = xp.trace(
+                -2 * xp.imag(phi_nt.T.conj() @ S_P)
+            )
 
     def _compute_ldos(
         self,
         phi: NDArray,
-        injection_segments: dict,
-        global_energy_index: int,
-        phi_inj_per_contact: dict,
-        bloch_per_contact: dict,
-        phi_ref_per_contact: dict,
-        eig_ref_per_contact: dict,
-        phi_inv_ref_per_contact: dict,
-        k_loc: float,
-        k_idx: int,
+        injection_slices: dict,
+        global_energy_ind: int,
+        obc_results: dict[Contact, OBCResult],
+        kpoint: float,
+        kpoint_ind: int,
     ):
         r"""Computes density of states.
 
@@ -612,29 +785,17 @@ class QTBM:
         phi : NDArray
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
-        injection_segments : dict
+        injection_slices : dict
             Dictionary of slices for each contact where each slice
             corresponds to the contact's injection modes.
-        global_energy_index : int
+        global_energy_ind : int
             Energy index in the global energy array for storing results.
-        phi_inj_per_contact : dict
-           Surface wavefunctions for each contact.
-        bloch_per_contact : dict
-            Bloch transmission matrices for each contact.
-        phi_ref_per_contact : dict
-            Reflected wavefunctions for each contact.
-        eig_ref_per_contact : dict
-            Eigenvalues of the reflected wavefunctions for each contact.
-        phi_inv_ref_per_contact : dict
-            Inverse of the reflected wavefunctions for each contact.
-        system_matrix : sparse.spmatrix
-            The system matrix used in the QTBM calculation. $E \cdot S -
-            H + \Sigma_{obc}$
-        overlap_matrices : dict
-            Overlap matrices for each hopping direction.
-        k_loc : float
+        obc_results : dict[Contact, OBCResult]
+            Dictionary of OBC results for each contact, containing
+            injection and reflection data.
+        kpoint : float
             The local k-point value for the current calculation.
-        k_idx : int
+        kpoint_ind : int
             Index of the current k-point being processed.
 
         """
@@ -648,7 +809,7 @@ class QTBM:
 
         # Accumulate the contribution from every overlap matrix
         for r, overlap in self.device.overlap_matrices.items():
-            phase = xp.exp(2j * np.pi * np.dot(k_loc, r))
+            phase = xp.exp(2j * np.pi * np.dot(kpoint, r))
             if overlap.dtype == xp.complex128:
                 temp = overlap @ phi
                 temp *= phase
@@ -707,18 +868,18 @@ class QTBM:
 
             del temp
 
-        for contact in self.device.contacts:
+        for contact, obc_result in obc_results.items():
             orbital_indices = contact.orbital_indices
 
             phi_cont = xp.zeros(
                 (orbital_indices.shape[0], phi.shape[1]), dtype=xp.complex128
             )
-            phi_cont[:, injection_segments[contact]] = phi_inj_per_contact[contact]
+            phi_cont[:, injection_slices[contact]] = obc_result.b_injected
 
             if self.config.qtbm.low_rank_obc:
-                phi_cont += phi_ref_per_contact[contact] @ (
-                    xp.diag(1 / eig_ref_per_contact[contact])
-                    @ (phi_inv_ref_per_contact[contact] @ phi[orbital_indices, :])
+                phi_cont += obc_result.phi_reflected @ (
+                    xp.diag(1 / obc_result.eig_reflected)
+                    @ (obc_result.phi_inv_reflected @ phi[orbital_indices, :])
                 )
 
             else:
@@ -731,7 +892,7 @@ class QTBM:
 
                 # This upscales the block matrix if the contact
                 # has periodicity in the transverse directions
-                for key, value in bloch_per_contact[contact].items():
+                for key, value in obc_result.bloch_k.items():
                     phi_cont += kron_matmul(
                         xp.exp(-1j * key[0] * indices_y - 1j * key[1] * indices_z),
                         value,
@@ -742,11 +903,11 @@ class QTBM:
             for r, overlap in self.device.overlap_matrices.items():
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap)
-                    * xp.exp(2j * np.pi * np.dot(k_loc, r))
+                    * xp.exp(2j * np.pi * np.dot(kpoint, r))
                 ) @ phi_cont
                 phi_ortho[orbital_indices, :] += (
                     contact.get_coupling_matrix(overlap, transpose=True)
-                    * xp.exp(-2j * np.pi * np.dot(k_loc, r))
+                    * xp.exp(-2j * np.pi * np.dot(kpoint, r))
                 ) @ phi_cont
             # CHECK SPILL OVER ERROR (DEBUG)
             error = contact.get_coupling_matrix(self.system_matrix) @ phi_cont
@@ -808,7 +969,7 @@ class QTBM:
         # Compute the DOS for every injected wavefunction
         for contact in self.device.contacts:
 
-            injection_segment = injection_segments[contact]
+            injection_segment = injection_slices[contact]
 
             # Get the wavefunctions of the contact
             phi_c = phi[:, injection_segment]
@@ -818,24 +979,18 @@ class QTBM:
 
             if phi_c.size != 0:
                 self.observables.electron_ldos[contact][
-                    k_idx, :, global_energy_index
+                    kpoint_ind, :, global_energy_ind
                 ] = xp.real(xp.sum(phi_c * phi_c_ortho, axis=1) / (2 * xp.pi))
 
+    @profiler.profile("QTBM: Compute observables", level="default")
     def _compute_observables(
         self,
         phi: NDArray,
-        injection_segments: dict,
-        local_energy_index: int,
-        global_energy_index: int,
-        sigma_obc_per_contact: dict,
-        reflection_per_contact: dict,
-        eig_ref_per_contact: dict,
-        phi_inv_ref_per_contact: dict,
-        phi_inj_per_contact: dict,
-        bloch_per_contact: dict,
-        phi_ref_per_contact: dict,
-        k_loc: float,
-        k_idx: int,
+        local_energy_ind: int,
+        global_energy_ind: int,
+        obc_results: dict[Contact, OBCResult],
+        kpoint: float,
+        kpoint_ind: int,
     ):
         """Computes transport observables.
 
@@ -849,107 +1004,50 @@ class QTBM:
         phi : NDArray
             Wavefunction solution matrix. Each column represents a
             wavefunction for a specific injection mode.
-        injection_segments : dict
-            Dictionary of slices for each contact where each slice
-            corresponds to the contact's injection modes.
-        local_energy_index : int
+        local_energy_ind : int
             Energy index in the local energy array.
-        global_energy_index : int
+        global_energy_ind : int
             Energy index in the global energy array for storing results.
-        sigma_obc_per_contact : dict
-            Self-energy matrices for each contact, used for transmission
-            calculations.
-        reflection_per_contact : dict
-            Reflection matrices for each contact, used in reduced
-            method.
-        eig_ref_per_contact : dict
-            Eigenvalues of the reflected wavefunctions for each contact,
-            used in reduced method.
-        phi_inv_ref_per_contact : dict
-            Inverse of the reflected wavefunctions for each contact,
-            used in reduced method.
-        phi_inj_per_contact : dict
-           Surface wavefunctions for each contact.
-        bloch_per_contact : dict
-            Bloch transmission matrices for each contact.
-        phi_ref_per_contact : dict
-            Reflected wavefunctions for each contact.
-        k_loc : float
+        obc_results : dict[Contact, OBCResult]
+            Dictionary mapping each contact to its corresponding OBC
+            result containing injection and reflection data.
+        kpoint : float
             The local k-point value for the current calculation.
-        k_idx : int
+        kpoint_ind : int
             Index of the current k-point being processed.
 
         """
 
-        if phi.size == 0:
-            return
+        num_injected, __ = self._get_obc_result_info(obc_results, local_energy_ind)
+        offsets_injected = np.hstack((0, np.cumsum(num_injected)))
 
-        # Reshuffling data structures to isolate the current energy.
-        # TODO: Perhaps there is a better way to do all of this in some
-        # batched approach.
-        injection_segments = {
-            contact: value
-            for (contact, energy_index), value in injection_segments.items()
-            if local_energy_index == energy_index
-        }
-        sigma_obc_per_contact = {
-            contact: {
-                key: value[local_energy_index] for key, value in sigma_obcs.items()
-            }
-            for contact, sigma_obcs in sigma_obc_per_contact.items()
-        }
-        phi_inj_per_contact = {
-            contact: value[local_energy_index]
-            for contact, value in phi_inj_per_contact.items()
-        }
-        bloch_per_contact = {
-            contact: {key: value[local_energy_index] for key, value in bloch_k.items()}
-            for contact, bloch_k in bloch_per_contact.items()
+        injection_slices = {
+            contact: slice(offsets_injected[i], offsets_injected[i + 1])
+            for i, contact in enumerate(obc_results.keys())
         }
 
-        reflection_per_contact = {
-            contact: value[local_energy_index]
-            for contact, value in reflection_per_contact.items()
-        }
-
-        phi_ref_per_contact = {
-            contact: value[local_energy_index]
-            for contact, value in phi_ref_per_contact.items()
-        }
-
-        eig_ref_per_contact = {
-            contact: value[local_energy_index]
-            for contact, value in eig_ref_per_contact.items()
-        }
-
-        phi_inv_ref_per_contact = {
-            contact: value[local_energy_index]
-            for contact, value in phi_inv_ref_per_contact.items()
+        energy_obc_results = {
+            contact: obc_result[local_energy_ind]
+            for contact, obc_result in obc_results.items()
         }
 
         # Compute transmissions for all the possible contact couples
         self._compute_transmissions(
             phi,
-            injection_segments,
-            global_energy_index,
-            sigma_obc_per_contact,
-            reflection_per_contact,
-            eig_ref_per_contact,
-            phi_inv_ref_per_contact,
-            k_idx,
+            injection_slices,
+            global_energy_ind,
+            energy_obc_results,
+            kpoint_ind,
         )
+
         # Compute the DOS
         self._compute_ldos(
             phi,
-            injection_segments,
-            global_energy_index,
-            phi_inj_per_contact,
-            bloch_per_contact,
-            phi_ref_per_contact,
-            eig_ref_per_contact,
-            phi_inv_ref_per_contact,
-            k_loc,
-            k_idx,
+            injection_slices,
+            global_energy_ind,
+            energy_obc_results,
+            kpoint,
+            kpoint_ind,
         )
 
     def _compute_current(self):
@@ -981,6 +1079,7 @@ class QTBM:
             )
 
     def _write_outputs(self):
+        """Writes the computed observables to output files."""
         if comm.rank == 0:
 
             output_dir = self.config.output_dir
@@ -1013,349 +1112,111 @@ class QTBM:
                     ldos,
                 )
 
+    @profiler.profile(label="QTBM", level="default", comm=comm)
     def run(self) -> None:
         """Runs the complete QTBM transport calculation."""
         if comm.rank == 0:
             print("Entering QTBM calculation", flush=True)
 
-        times = []
-        comm.Barrier()
+        comm.barrier()
 
-        for k_idx in range(self.num_kpoints):
-
+        for kpoint_ind, kpoint in enumerate(self.kpoints):
             if comm.rank == 0:
-                print(f"Processing k-point {k_idx+1} of {self.num_kpoints}", flush=True)
-            k = self.kpoints[k_idx, :]
-
-            times.append(time.perf_counter())
-
-            times.append(time.perf_counter())
+                print(
+                    f"Processing k-point {kpoint_ind+1} of {self.num_kpoints}",
+                    flush=True,
+                )
 
             for batch_start in range(0, len(self.local_energies), self.max_batch_size):
+                with profiler.profile_range(
+                    label="QTBM: Process energy batch", level="default"
+                ):
+                    energy_batch = self.local_energies[
+                        batch_start : batch_start + self.max_batch_size
+                    ]
 
-                energy_batch = self.local_energies[
-                    batch_start : batch_start + self.max_batch_size
-                ]
-
-                if comm.rank == 0:
-                    print(
-                        f"Processing energies {batch_start} to {batch_start + len(energy_batch) - 1}",
-                        flush=True,
-                    )
-
-                # append for iteration time
-                times.append(time.perf_counter())
-
-                times.append(time.perf_counter())
-
-                synchronize_device()
-
-                injection_per_contact = {}
-                phi_inj_per_contact = {}
-                bloch_per_contact = {}
-                sigma_obc_per_contact = {}
-
-                reflection_per_contact = {}
-                phi_ref_per_contact = {}
-                eig_ref_per_contact = {}
-                phi_inv_ref_per_contact = {}
-
-                # Compute the boundary self-energy and the injection
-                # vector.
-                for contact in self.device.contacts:
-                    times.append(time.perf_counter())
-
-                    if self.config.qtbm.low_rank_obc:
-                        (
-                            injection_per_contact[contact],
-                            phi_inj_per_contact[contact],
-                            reflection_per_contact[contact],
-                            phi_ref_per_contact[contact],
-                            eig_ref_per_contact[contact],
-                            phi_inv_ref_per_contact[contact],
-                        ) = contact.compute_boundary(
-                            k * 2 * np.pi, energy_batch, return_modes_only=True
-                        )
-                    else:
-                        (
-                            injection_per_contact[contact],
-                            phi_inj_per_contact[contact],
-                            sigma_obc_per_contact[contact],
-                            bloch_per_contact[contact],
-                        ) = contact.compute_boundary(k * 2 * np.pi, energy_batch)
-
-                    synchronize_device()
-                    t_solve = time.perf_counter() - times.pop()
                     if comm.rank == 0:
                         print(
-                            f"Time for OBC in contact {contact.name[0]}: {t_solve:.2f} s",
+                            f"Processing energies {batch_start} to {batch_start + len(energy_batch) - 1}",
                             flush=True,
                         )
 
-                # Count the number of injected modes per energy
-                # needed to know the offset in the lhs/rhs vector
-                injection_segments = {}
-                injection_count = np.zeros(len(energy_batch), dtype=np.int32)
-                for contact in self.device.contacts:
-                    modes_per_energy = np.array(
-                        [arr.shape[1] for arr in injection_per_contact[contact]]
-                    )
-                    for i, num_modes in enumerate(modes_per_energy):
-                        start = injection_count[i]
-                        injection_segments[contact, i] = slice(start, start + num_modes)
+                    # Compute the boundary self-energy and injection vector.
+                    obc_results = {}
+                    free_mempool()
 
-                    injection_count += modes_per_energy
-
-                if self.config.qtbm.low_rank_obc:
-                    # Needed to stack the pseudo-inverse
-                    reflection_segments = {}
-                    # Needed to place the reflected modes in the correct
-                    # position in the RHS
-                    reflection_segments_translated = {}
-                    reflection_count = np.zeros(len(energy_batch), dtype=np.int32)
-                    for contact in self.device.contacts:
-                        modes_per_energy = np.array(
-                            [arr.shape[1] for arr in reflection_per_contact[contact]]
-                        )
-                        for i, num_modes in enumerate(modes_per_energy):
-                            start = reflection_count[i]
-                            reflection_segments[contact, i] = slice(
-                                start, start + num_modes
-                            )
-                            reflection_segments_translated[contact, i] = slice(
-                                start + injection_count[i],
-                                start + injection_count[i] + num_modes,
+                    with profiler.profile_range(
+                        label="QTBM: Boundary conditions", level="default"
+                    ):
+                        for contact in self.device.contacts:
+                            obc_results[contact] = contact.compute_boundary(
+                                kpoint * 2 * np.pi,
+                                energy_batch,
+                                return_modes_only=self.config.qtbm.low_rank_obc,
                             )
 
-                        reflection_count += modes_per_energy
+                    for energy_ind, energy in enumerate(energy_batch):
+                        rhs = self._assemble_rhs(obc_results, energy_ind)
 
-                synchronize_device()
-                t_solve = time.perf_counter() - times.pop()
-                if comm.rank == 0:
-                    print(f"Time for OBC: {t_solve:.2f} s", flush=True)
+                        if rhs.size == 0:
+                            # No modes are injected at this energy, so we
+                            # can skip the calculation.
+                            continue
 
-                for i, energy in enumerate(energy_batch):
-                    times.append(time.perf_counter())
-
-                    if not self.config.qtbm.low_rank_obc:
-                        injection_tot = xp.zeros(
-                            (self.num_orbitals, injection_count[i]),
-                            dtype=xp.complex128,
-                            order="F",
-                        )
-                    else:
-                        injection_tot = xp.zeros(
-                            (
-                                self.num_orbitals,
-                                injection_count[i] + reflection_count[i],
-                            ),
-                            dtype=xp.complex128,
-                            order="F",
+                        self._assemble_system_matrix(
+                            kpoint, energy, obc_results, energy_ind
                         )
 
-                    # Add the injection vector in the contact elements
-                    # of the rhs
-                    for contact in self.device.contacts:
-                        injection_tot[
-                            contact.orbital_indices, injection_segments[contact, i]
-                        ] = injection_per_contact[contact][i]
-                        if self.config.qtbm.low_rank_obc:
-                            # Add the reflection vectors
-                            injection_tot[
-                                contact.orbital_indices,
-                                reflection_segments_translated[contact, i],
-                            ] = reflection_per_contact[contact][i]
-
-                    injection_tot = xp.asfortranarray(injection_tot)
-
-                    # Variables needed for the correction in the reduced
-                    # OBC method
-                    if self.config.qtbm.low_rank_obc:
-                        # Generate the device-sized pseudo-inverse
-                        phi_inv_tot = construct_device_pseudo_inverse(
-                            phi_inv_ref_per_contact,
-                            reflection_segments,
-                            self.device.contacts,
-                            i,
-                            reflection_count,
-                            self.num_orbitals,
-                        )
-                        # Generate the eigenvalue matrix
-                        eig_tot = xp.concatenate(
-                            [
-                                eig_ref_per_contact[contact][i]
-                                for contact in self.device.contacts
-                            ]
-                        )
-
-                    # If system matrix is real, convert the RHS to real
-                    # with twice the number of columns
-                    if "real" in self.system_matrix_type:
-                        injection_tot = xp.ascontiguousarray(injection_tot)
-                        injection_tot = injection_tot.view(np.float64)
-                        injection_tot = xp.asfortranarray(injection_tot)
-
-                    self.system_matrix.data[:] = 0
-
-                    synchronize_device()
-                    # Add the Hamiltonian and overlap to the system matrix
-                    self._add_matrix_to_system_matrix(k, -1, type="hamiltonian")
-                    self._add_matrix_to_system_matrix(k, energy, type="overlap")
-
-                    if not self.config.qtbm.low_rank_obc:
-                        # Add the boundary self-energy contributions
-                        self._add_sigma_obc_to_system_matrix(
-                            -1, sigma_obc_per_contact, i
-                        )
-
-                    synchronize_device()
-                    t_solve = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(
-                            f"Time to set up system of eq.: {t_solve:.2f} s", flush=True
-                        )
-
-                    times.append(time.perf_counter())
-
-                    n_injected = injection_count[i]
-
-                    # SOLVE THE QTBM PROBLEM
-
-                    if self.config.qtbm.low_rank_obc:
-                        if injection_tot.size != 0:
-                            t1 = time.perf_counter()
-                            # Solve the system
-                            phi = self.solver.solve(
-                                self.system_matrix,
-                                injection_tot,
-                                reuse_analysis=True,
-                                reuse_factorization=False,
-                            )
-                            # Apply the correction to the injected modes
-                            # according to the reduced method
-
-                            if "real" in self.system_matrix_type:
-                                phi = xp.ascontiguousarray(phi)
-                                phi = phi.view(xp.complex128)
-                                phi = xp.asfortranarray(phi)
-
-                            synchronize_device()
-                            t2 = time.perf_counter()
-                            if comm.rank == 0:
-                                print(
-                                    f"Time for solve: {t2 - t1:.2f} s",
-                                    flush=True,
-                                )
-                            synchronize_device()
-                            t1 = time.perf_counter()
-                            # Correction
-                            phi[:, :n_injected] += phi[
-                                :, n_injected:
-                            ] @ xp.linalg.solve(
-                                xp.diag(eig_tot) - phi_inv_tot @ phi[:, n_injected:],
-                                phi_inv_tot @ phi[:, :n_injected],
-                            )
-                            synchronize_device()
-                            t2 = time.perf_counter()
-                            if comm.rank == 0:
-                                print(
-                                    f"Time for correction: {t2 - t1:.2f} s", flush=True
-                                )
-                    else:
                         # Solve for the wavefunction
-                        if injection_tot.size != 0:
-                            phi = self.solver.solve(
-                                self.system_matrix,
-                                injection_tot,
-                                reuse_analysis=True,
-                                reuse_factorization=False,
-                            )
-
-                        # No need here to convert from real to complex,
-                        # since the system matrix will never be real in
-                        # the non-reduced method
-
-                    synchronize_device()
-                    t_solve = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(f"Time for electron solver: {t_solve:.2f} s", flush=True)
-                    times.append(time.perf_counter())
-
-                    # Get the bare system matrix back, needed for
-                    # transmission calculation
-                    if not self.config.qtbm.low_rank_obc:
-                        # Add the boundary self-energy contributions
-                        self._add_sigma_obc_to_system_matrix(
-                            1, sigma_obc_per_contact, i
+                        phi = self.solver.solve(
+                            self.system_matrix,
+                            rhs,
+                            reuse_analysis=True,
+                            reuse_factorization=False,
                         )
 
-                    if injection_tot.size != 0:
+                        if self.config.qtbm.low_rank_obc:
+                            phi = self._recover_full_rank_wavefunction(
+                                phi, obc_results, energy_ind
+                            )
+
+                        if not self.config.qtbm.low_rank_obc:
+                            # Get the bare system matrix back, needed for
+                            # transmission calculation
+                            self._add_sigma_obc_to_system_matrix(
+                                1, obc_results, energy_ind
+                            )
+
                         # Input
                         self._compute_observables(
-                            phi[:, :n_injected],
-                            injection_segments,
-                            i,
-                            batch_start + i,
-                            sigma_obc_per_contact,
-                            reflection_per_contact,
-                            eig_ref_per_contact,
-                            phi_inv_ref_per_contact,
-                            phi_inj_per_contact,
-                            bloch_per_contact,
-                            phi_ref_per_contact,
-                            k,
-                            k_idx,
+                            phi,
+                            energy_ind,
+                            batch_start + energy_ind,
+                            obc_results,
+                            kpoint,
+                            kpoint_ind,
                         )
 
                         del phi
+                        del rhs
 
-                    del injection_tot
-                    if self.config.qtbm.low_rank_obc:
-                        del phi_inv_tot
-                        del eig_tot
-
-                    synchronize_device()
-                    t_observables = time.perf_counter() - times.pop()
-                    if comm.rank == 0:
-                        print(
-                            f"Time for computing observables: {t_observables:.2f} s",
-                            flush=True,
-                        )
-
-                    # Keep an end-of-energy memory report for all methods.
-                    print_memory_usage()
-                    free_mempool()
-
-                del injection_per_contact
-                del phi_inj_per_contact
-                del bloch_per_contact
-                del sigma_obc_per_contact
-
-                del reflection_per_contact
-                del phi_ref_per_contact
-                del eig_ref_per_contact
-                del phi_inv_ref_per_contact
-                free_mempool()
-
-                t_iteration = time.perf_counter() - times.pop()
-                if comm.rank == 0:
-                    print(f"Time for iteration: {t_iteration:.2f} s", flush=True)
-
-        t_iteration = time.perf_counter() - times.pop()
-        if comm.rank == 0:
-            print(f"Time for QTBM: {t_iteration:.2f} s", flush=True)
+                        # Keep an end-of-energy memory report for all methods.
+                        print_memory_usage()
+                        free_mempool()
 
         # Gather the observables
-        comm.Barrier()
         for key, transmission in self.observables.transmissions.items():
-            self.observables.transmissions[key] = xp.concatenate(
-                comm.allgather(transmission), axis=-1
+            self.observables.transmissions[key] = comm.stack.all_gather_v(
+                transmission, axis=1
             )
         for contact, ldos in self.observables.electron_ldos.items():
-            self.observables.electron_ldos[contact] = xp.concatenate(
-                comm.allgather(ldos), axis=-1
+            self.observables.electron_ldos[contact] = comm.stack.all_gather_v(
+                ldos, axis=2
             )
 
         self._compute_current()
 
         self._write_outputs()
+
+        if comm.rank == 0:
+            print("QTBM calculation complete", flush=True)

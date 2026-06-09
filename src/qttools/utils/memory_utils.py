@@ -1,32 +1,42 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-from mpi4py.MPI import COMM_WORLD as comm
+import os
 
 from qttools import xp
+from qttools.comm import comm
 from qttools.utils.gpu_utils import synchronize_device
 
 
-def get_cpu_memory_gb() -> float:
-    """Get current CPU memory usage of the current process in GB.
+def _get_host_meminfo() -> tuple[float, float]:
+    """Gets the total and free system memory in kB.
 
     Returns
     -------
-    float
-        Current process CPU memory usage in GB, or 0.0 if it cannot be
-        determined.
+    mem_free: float
+        The free system memory in kB. Can be NaN if the information is
+        not available.
+    mem_total: float
+        The total available system memory in kB. Can be NaN if the
+        information is not available.
 
     """
-    try:
-        with open("/proc/self/status", "r") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    # VmRSS is in kB
-                    return int(line.split()[1]) / 1024 / 1024
-    except FileNotFoundError:
-        # If status file is not found (e.g., on non-Linux systems),
-        # return 0.0
-        return 0.0
-    return 0.0
+    mem_total = float("nan")
+    mem_free = float("nan")
+
+    # Check whether /proc/meminfo is available and readable
+    if not os.path.exists("/proc/meminfo") or not os.access("/proc/meminfo", os.R_OK):
+        return mem_free, mem_total
+
+    with open("/proc/meminfo", "r") as f:
+        for line in f:
+            if line.startswith("MemTotal:"):
+                # The line looks like: "MemTotal:       16367432 kB"
+                mem_total = float(line.split()[1])
+            elif line.startswith("MemFree:"):
+                # The line looks like: "MemFree:    8134524 kB"
+                mem_free = float(line.split()[1])
+
+    return mem_free, mem_total
 
 
 def print_memory_usage() -> None:
@@ -34,17 +44,17 @@ def print_memory_usage() -> None:
     if comm.rank != 0:
         return
 
-    prefix = "[Memory]"
+    message = "[Memory]:"
 
-    cpu_mem_gb = get_cpu_memory_gb()
+    host_mem_free, host_mem_total = _get_host_meminfo()
+    host_mem_used = host_mem_total - host_mem_free
+    message += f" CPU {host_mem_used/1024**2:.2f}/{host_mem_total/1024**2:.2f} GB"
+
     if xp.__name__ == "cupy":
         synchronize_device()
         gpu_mem_free, gpu_mem_total = xp.cuda.Device().mem_info
-        gpu_mem_used_gb = (gpu_mem_total - gpu_mem_free) / 1024 / 1024 / 1024
-        gpu_mem_total_gb = gpu_mem_total / 1024 / 1024 / 1024
-        print(
-            f"{prefix}: CPU {cpu_mem_gb:.2f} GB, GPU {gpu_mem_used_gb:.2f}/{gpu_mem_total_gb:.2f} GB",
-            flush=True,
-        )
-    else:
-        print(f"{prefix}: CPU {cpu_mem_gb:.2f} GB", flush=True)
+        gpu_mem_used = gpu_mem_total - gpu_mem_free
+
+        message += f", GPU {gpu_mem_used/1024**3:.2f}/{gpu_mem_total/1024**3:.2f} GB"
+
+    print(message, flush=True)

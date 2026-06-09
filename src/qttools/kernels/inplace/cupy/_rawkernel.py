@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import cupy as cp
-import numpy as np
 
 _scatter_add_scaled_cuda_code = r"""
 #include <cupy/complex.cuh>
@@ -30,7 +29,7 @@ __global__ void _scatter_add_scaled(T1* M, const T2* U,
     }
 """
 
-_scatter_add_scaled_kers = (
+_scatter_add_scaled_functions = (
     "_scatter_add_scaled<double, double, double>",
     "_scatter_add_scaled<complex<double>, double, double>",
     "_scatter_add_scaled<complex<double>,complex<double>, double>",
@@ -39,23 +38,24 @@ _scatter_add_scaled_kers = (
 )
 
 _scatter_add_scaled = cp.RawModule(
-    code=_scatter_add_scaled_cuda_code, name_expressions=_scatter_add_scaled_kers
+    code=_scatter_add_scaled_cuda_code,
+    name_expressions=_scatter_add_scaled_functions,
 )
 
-ker_dict = {
-    (cp.float64, cp.float64, np.float64): _scatter_add_scaled.get_function(
+scatter_add_scaled_kernels = {
+    (cp.float64, cp.float64, cp.float64): _scatter_add_scaled.get_function(
         "_scatter_add_scaled<double, double, double>"
     ),
-    (cp.complex128, cp.float64, np.float64): _scatter_add_scaled.get_function(
+    (cp.complex128, cp.float64, cp.float64): _scatter_add_scaled.get_function(
         "_scatter_add_scaled<complex<double>, double, double>"
     ),
-    (cp.complex128, cp.complex128, np.float64): _scatter_add_scaled.get_function(
+    (cp.complex128, cp.complex128, cp.float64): _scatter_add_scaled.get_function(
         "_scatter_add_scaled<complex<double>,complex<double>, double>"
     ),
-    (cp.complex128, cp.float64, np.complex128): _scatter_add_scaled.get_function(
+    (cp.complex128, cp.float64, cp.complex128): _scatter_add_scaled.get_function(
         "_scatter_add_scaled<complex<double>, double, complex<double>>"
     ),
-    (cp.complex128, cp.complex128, np.complex128): _scatter_add_scaled.get_function(
+    (cp.complex128, cp.complex128, cp.complex128): _scatter_add_scaled.get_function(
         "_scatter_add_scaled<complex<double>, complex<double>, complex<double>>"
     ),
 }
@@ -108,3 +108,6 @@ void _scatter_add_scaled_obc(complex<double>* M, const complex<double>* S, const
 """,
     "_scatter_add_scaled_obc",
 )
+
+
+__all__ = ["scatter_add_scaled_kernels", "_scatter_add_scaled_obc"]

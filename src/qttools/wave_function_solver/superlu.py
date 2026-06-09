@@ -1,4 +1,5 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
+import warnings
 
 from qttools import NDArray, sparse
 from qttools.profiling import Profiler
@@ -80,7 +81,10 @@ class SuperLU(WFSolver):
 
         """
         if reuse_analysis:
-            raise ValueError("SuperLU solver does not support reuse of analysis.")
+            warnings.warn(
+                "SuperLU solver does not support an analysis phase, so "
+                "the reuse_analysis flag is ignored."
+            )
 
         if self._lu is None or not reuse_factorization:
             with profiler.profile_range("SuperLU: factorization", level="default"):

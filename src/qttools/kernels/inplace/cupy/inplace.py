@@ -31,8 +31,10 @@ def scatter_add_scaled(
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
-    ker = _rawkernel.ker_dict[(a.dtype.type, b.dtype.type, alpha.dtype.type)]
-    ker(
+    kernel = _rawkernel.scatter_add_scaled_kernels.get(
+        (a.dtype.type, b.dtype.type, alpha.dtype.type)
+    )
+    kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (a, b, inds, num_inds, alpha, conjugate),

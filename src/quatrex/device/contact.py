@@ -2,14 +2,87 @@
 
 import itertools
 from collections import defaultdict
+from dataclasses import dataclass
 
 import numpy as np
-from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
+from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
+from qttools.profiling import Profiler
 from quatrex.core.config import NEVPConfig, OBCConfig
+
+profiler = Profiler()
+
+
+@dataclass
+class OBCResult:
+    """Data class to hold the results of the contact's OBC calculation.
+
+    Attributes
+    ----------
+    injection : NDArray
+        The injection vectors for the contact at the given k-points and
+        energies.
+    b_injected : NDArray
+        The injection vectors before applying the contact coupling.
+    sigma_obc_k : dict
+        A dictionary containing the computed self-energy for each
+        transverse k-point, indexed by (ky, kz) tuples. Only returned if
+        `return_modes_only` is False.
+    bloch_k : dict
+        A dictionary containing the computed Bloch injection matrices
+        for each transverse k-point, indexed by (ky, kz) tuples. Only
+        returned if `return_modes_only` is False.
+    reflection : NDArray
+        The reflection vectors for the contact at the given k-points and
+        energies. Only returned if `return_modes_only` is True.
+    phi_reflected : NDArray
+        The reflected modes for the contact at the given k-points and
+        energies. Only returned if `return_modes_only` is True.
+    eig_reflected : NDArray
+        The reflected eigenvalues for the contact at the given k-points
+        and energies. Only returned if `return_modes_only` is True.
+    phi_inv_reflected : NDArray
+        The pseudoinverse of the reflected modes for the contact at the
+        given k-points and energies. Only returned if
+        `return_modes_only` is True.
+
+    """
+
+    # These two are always returned.
+    injection: NDArray
+    b_injected: NDArray
+
+    # These k-dependent quantities are returned when not using low-rank.
+    sigma_obc_k: dict[str, NDArray] | None = None
+    bloch_k: dict[str, NDArray] | None = None
+
+    # This is returned if we are in the context of low-rank OBCs.
+    reflection: NDArray | None = None
+    phi_reflected: NDArray | None = None
+    eig_reflected: NDArray | None = None
+    phi_inv_reflected: NDArray | None = None
+
+    def __getitem__(self, key: int) -> "OBCResult":
+        """Allows accessing a single energy index from the OBCResult."""
+        if not isinstance(key, int):
+            raise TypeError("OBCResult can only be indexed with an integer.")
+
+        # Go through all attributes and index them by the given key if
+        # they are not None.
+        kwargs = {}
+        for field in self.__dataclass_fields__:
+            value = getattr(self, field)
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                kwargs[field] = {k: v[key] for k, v in value.items()}
+            else:
+                kwargs[field] = value[key]
+
+        return OBCResult(**kwargs)
 
 
 def order_vector(
@@ -1180,12 +1253,13 @@ class Contact:
 
         return modes
 
+    @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
         self,
         k_outer: tuple[float, float, float],
         energies: NDArray,
         return_modes_only: bool = False,
-    ) -> tuple:
+    ) -> OBCResult:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
@@ -1201,33 +1275,9 @@ class Contact:
 
         Returns
         -------
-        injection : NDArray
-            The injection vectors for the contact at the given k-points
-            and energies.
-        b_injected : NDArray
-            The injection vectors before applying the contact coupling.
-        sigma_obc_k : dict, optional
-            A dictionary containing the computed self-energy for each
-            transverse k-point, indexed by (ky, kz) tuples. Only
-            returned if `return_modes_only` is False.
-        bloch_k : dict, optional
-            A dictionary containing the computed Bloch injection
-            matrices for each transverse k-point, indexed by (ky, kz)
-            tuples. Only returned if `return_modes_only` is False.
-        reflection : NDArray, optional
-            The reflection vectors for the contact at the given k-points
-            and energies. Only returned if `return_modes_only` is True.
-        phi_reflected : NDArray, optional
-            The reflected modes for the contact at the given k-points
-            and energies. Only returned if `return_modes_only` is True.
-        eig_reflected : NDArray, optional
-            The reflected eigenvalues for the contact at the given
-            k-points and energies. Only returned if `return_modes_only`
-            is True.
-        phi_inv_reflected : NDArray, optional
-            The pseudoinverse of the reflected modes for the contact at
-            the given k-points and energies. Only returned if
-            `return_modes_only` is True.
+        ContactOBCResult
+            An object containing the computed OBC results, including
+            injection modes, self-energy, and Bloch modes as applicable.
 
         """
 
@@ -1253,17 +1303,15 @@ class Contact:
             for i, n_rep in enumerate(self.transverse_repetition_grid)
         ]
 
+        injection_k = {}
+        b_injected_k = {}
         if return_modes_only:
-            injection_k = {}
-            b_injected_k = {}
             reflection_k = {}
             phi_reflected_k = {}
             eig_reflected_k = {}
             phi_inv_reflected_k = {}
         else:
             sigma_obc_k = {}
-            injection_k = {}
-            b_injected_k = {}
             bloch_k = {}
 
         for ky, kz in itertools.product(k_inner[0], k_inner[1]):
@@ -1312,21 +1360,24 @@ class Contact:
         injection = self._upscale_injection_modes(injection_k, num_energies)
         b_injected = self._upscale_injection_modes(b_injected_k, num_energies)
 
+        obc_result = OBCResult(injection, b_injected)
+
         if return_modes_only:
-            reflection = self._upscale_injection_modes(reflection_k, num_energies)
-            phi_reflected = self._upscale_injection_modes(phi_reflected_k, num_energies)
-            phi_inv_reflected = self._upscale_pseudo_inverse(
+            obc_result.reflection = self._upscale_injection_modes(
+                reflection_k, num_energies
+            )
+            obc_result.phi_reflected = self._upscale_injection_modes(
+                phi_reflected_k, num_energies
+            )
+            obc_result.eig_reflected = self._concatenate_eig(
+                eig_reflected_k, num_energies
+            )
+            obc_result.phi_inv_reflected = self._upscale_pseudo_inverse(
                 phi_inv_reflected_k, num_energies
             )
-            eig_reflected = self._concatenate_eig(eig_reflected_k, num_energies)
 
-            return (
-                injection,
-                b_injected,
-                reflection,
-                phi_reflected,
-                eig_reflected,
-                phi_inv_reflected,
-            )
+        else:
+            obc_result.sigma_obc_k = sigma_obc_k
+            obc_result.bloch_k = bloch_k
 
-        return injection, b_injected, sigma_obc_k, bloch_k
+        return obc_result

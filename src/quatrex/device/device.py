@@ -235,9 +235,11 @@ class Device:
         )
 
         for r in self.hamiltonians.keys():
-            assert (
-                self.hamiltonians[r].shape[0] == self.hamiltonians[r].shape[1]
-            ), f"Hamiltonian matrix at index {r} is not square."
+            if not self.hamiltonians[r].shape[0] == self.hamiltonians[r].shape[1]:
+                raise ValueError(
+                    f"Hamiltonian matrix at index {r} is not square. "
+                    f"Shape: {self.hamiltonians[r].shape}"
+                )
 
             # assert all hamiltonians are sparse matrices
             if not isinstance(self.hamiltonians[r], sparse.spmatrix):
@@ -261,18 +263,21 @@ class Device:
             overlap_matrices = load_matrices(self.config, "overlap")
 
             for r in self.overlap_matrices.keys():
-                assert (
+                if (
                     self.overlap_matrices[r].shape[0]
-                    == self.overlap_matrices[r].shape[1]
-                ), f"Hamiltonian matrix at index {r} is not square."
+                    != self.overlap_matrices[r].shape[1]
+                ):
+                    raise ValueError(
+                        f"Overlap matrix at index {r} is not square. "
+                        f"Shape: {self.overlap_matrices[r].shape}"
+                    )
 
-                assert (
-                    self.overlap_matrices[r].shape[0] == size
-                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {self.overlap_matrices[r].shape[0]}."
-
-                assert (
-                    self.overlap_matrices[r].shape[1] == size
-                ), f"Overlap matrix at index {r} has incompatible size with Hamiltonian. Expected {size}, got {self.overlap_matrices[r].shape[1]}."
+                if self.overlap_matrices[r].shape != (size, size):
+                    raise ValueError(
+                        f"Overlap matrix at index {r} has incompatible "
+                        f"shape with Hamiltonian. Expected {(size, size)}, "
+                        f"got {self.overlap_matrices[r].shape}."
+                    )
 
                 # assert all overlap_matrices are sparse matrices
                 if not isinstance(self.overlap_matrices[r], sparse.spmatrix):

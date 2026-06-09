@@ -5,4 +5,4 @@ COPY . /opt/repo
 WORKDIR /opt/repo
 
 # Install quatrex into the virtual environment.
-RUN . /opt/venv/bin/activate && python3 -m pip install .
+RUN . /opt/venv/bin/activate && python3 -m pip install . --no-deps

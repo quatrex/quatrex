@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import NoReturn, Optional
 
 import typer
-from click import BadArgumentUsage
 from mpi4py.MPI import COMM_WORLD as comm
 from rich import print as pprint
 from typing_extensions import Annotated
@@ -128,7 +127,7 @@ def _resolve_config_path(
     if config is None:
         config = Path("./quatrex_config.toml")
         if not config.exists():
-            raise BadArgumentUsage(
+            raise typer.BadParameter(
                 "No quatrex configuration file provided and default "
                 "'./quatrex_config.toml' does not exist."
             )
@@ -137,7 +136,7 @@ def _resolve_config_path(
     if config.is_dir():
         config = config / "quatrex_config.toml"
         if not config.exists():
-            raise BadArgumentUsage(
+            raise typer.BadParameter(
                 f"No quatrex configuration file found in directory: {config.parent}"
             )
 

@@ -1134,6 +1134,11 @@ class _DStackView:
         self._dsdbsparse._set_items(self._stack_index, rows, cols, values)
 
     @property
+    def distribution_state(self):
+        """Returns the distribution state of the substack."""
+        return self._dsdbsparse.distribution_state
+
+    @property
     def dtype(self):
         """Returns the dtype."""
         return self._dsdbsparse.dtype

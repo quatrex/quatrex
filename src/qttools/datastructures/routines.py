@@ -2,7 +2,7 @@
 
 from qttools import xp
 from qttools.comm import comm
-from qttools.datastructures.dsdbsparse import DSDBSparse
+from qttools.datastructures.dsdbsparse import DSDBSparse, _DStackView
 
 
 def _bd_sandwich(
@@ -468,9 +468,9 @@ def bd_matmul(
 
 
 def bd_sandwich(
-    a: DSDBSparse,
-    b: DSDBSparse,
-    out: DSDBSparse,
+    a: DSDBSparse | _DStackView,
+    b: DSDBSparse | _DStackView,
+    out: DSDBSparse | _DStackView,
     in_num_diag: int = 3,
     out_num_diag: int = 7,
     start_block: int = 0,

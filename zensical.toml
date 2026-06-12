@@ -1,0 +1,160 @@
+[project]
+site_name = "quatrex"
+site_url = "https://quatrex.github.io/quatrex/"
+site_description = "Quantum transport simulations at the exascale and beyond."
+copyright = "Copyright &copy; 2024-2026 ETH Zurich and the authors of the quatrex package."
+
+repo_url = "https://github.com/quatrex/quatrex"
+repo_name = "quatrex/quatrex"
+
+extra_javascript = [
+    "javascript/mathjax.js",
+    "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
+]
+
+extra_css = ["stylesheets/custom.css"]
+
+nav = [
+    { "Home" = "index.md" },
+    { "Getting Started" = [
+        { "Installation" = "getting_started/installation.md" },
+        { "Setting up a simulation" = "getting_started/setup_simulations.md" },
+        { "Running a simulation" = "getting_started/running_simulations.md" },
+    ] },
+    { "User Guide" = [
+        { "Overview" = "user_guide/index.md" },
+        { "Introduction" = "user_guide/introduction.md" },
+        { "Methodology" = "user_guide/methodology.md" },
+        { "Simulation Parameters" = [
+            { "Overview" = "user_guide/parameters/index.md" },
+            { "QuaTrEx" = "user_guide/parameters/quatrex.md" },
+            { "Device" = "user_guide/parameters/device.md" },
+            { "Contact" = "user_guide/parameters/contact.md" },
+            { "SCSP" = "user_guide/parameters/scsp.md" },
+            { "Poisson" = "user_guide/parameters/poisson.md" },
+            { "SCBA" = "user_guide/parameters/scba.md" },
+            { "QTBM" = "user_guide/parameters/qtbm.md" },
+            { "Electron" = "user_guide/parameters/electron.md" },
+            { "Phonon" = "user_guide/parameters/phonon.md" },
+            { "Coulomb Screening" = "user_guide/parameters/coulomb_screening.md" },
+            { "Photon" = "user_guide/parameters/photon.md" },
+            { "OBC" = "user_guide/parameters/obc.md" },
+            { "Lyapunov" = "user_guide/parameters/lyapunov.md" },
+            { "Memoizer" = "user_guide/parameters/memoizer.md" },
+            { "Solver" = "user_guide/parameters/solver.md" },
+            { "Output" = "user_guide/parameters/output.md" },
+        ] },
+        { "Examples" = [
+            { "Carbon Nanotube" = "user_guide/examples/cnt.md" },
+        ] },
+    ] },
+    { "Contributing" = "contributing.md" },
+    { "API Reference" = [
+        { "Overview" = "api/index.md" },
+        { "qttools" = "api/qttools/index.md" },
+        { "quatrex" = "api/quatrex/index.md" },
+    ] },
+]
+
+
+    [project.theme]
+    variant = "modern"
+    font.text = "Inter"
+    font.code = "Fira Code"
+
+    icon.repo = "fontawesome/brands/github"
+
+    features = [
+        "navigation.footer",
+        "navigation.indexes",
+        "navigation.sections",
+        "navigation.tabs",
+        "navigation.top",
+        "navigation.tracking",
+        "content.code.copy",
+    ]
+
+
+        [[project.theme.palette]]
+        media = "(prefers-color-scheme)"
+        primary = "white"
+        toggle.icon = "lucide/sun-moon"
+        toggle.name = "Switch to light mode"
+
+        [[project.theme.palette]]
+        media = "(prefers-color-scheme: light)"
+        primary = "white"
+        scheme = "default"
+        toggle.icon = "lucide/sun"
+        toggle.name = "Switch to dark mode"
+
+        [[project.theme.palette]]
+        media = "(prefers-color-scheme: dark)"
+        primary = "white"
+        scheme = "slate"
+        toggle.icon = "lucide/moon"
+        toggle.name = "Switch to system preference"
+
+
+    [project.markdown_extensions.abbr]
+    [project.markdown_extensions.admonition]
+    [project.markdown_extensions.attr_list]
+    [project.markdown_extensions.def_list]
+    [project.markdown_extensions.footnotes]
+    [project.markdown_extensions.md_in_html]
+    [project.markdown_extensions.toc]
+    permalink = "#"
+    [project.markdown_extensions.pymdownx.arithmatex]
+    generic = true
+    [project.markdown_extensions.pymdownx.betterem]
+    [project.markdown_extensions.pymdownx.caret]
+    [project.markdown_extensions.pymdownx.details]
+    [project.markdown_extensions.pymdownx.emoji]
+    emoji_generator = "zensical.extensions.emoji.to_svg"
+    emoji_index = "zensical.extensions.emoji.twemoji"
+    [project.markdown_extensions.pymdownx.highlight]
+    anchor_linenums = true
+    line_spans = "__span"
+    pygments_lang_class = true
+    [project.markdown_extensions.pymdownx.inlinehilite]
+    [project.markdown_extensions.pymdownx.keys]
+    [project.markdown_extensions.pymdownx.magiclink]
+    [project.markdown_extensions.pymdownx.mark]
+    [project.markdown_extensions.pymdownx.smartsymbols]
+    [project.markdown_extensions.pymdownx.superfences]
+    custom_fences = [
+        { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+    ]
+    [project.markdown_extensions.pymdownx.tabbed]
+    alternate_style = true
+    combine_header_slug = true
+    [project.markdown_extensions.tables]
+    [project.markdown_extensions.pymdownx.tasklist]
+    custom_checkbox = true
+    [project.markdown_extensions.pymdownx.tilde]
+
+
+    [project.plugins.mkdocstrings.handlers.python]
+    inventories = [
+        "https://docs.python.org/3/objects.inv",
+        "https://docs.scipy.org/doc/scipy/objects.inv",
+        "https://numpy.org/doc/stable/objects.inv",
+        "https://docs.cupy.dev/en/stable/objects.inv",
+    ]
+    paths = ["src"]
+
+        [project.plugins.mkdocstrings.handlers.python.options]
+        docstring_style = "numpy"
+        docstring_options.ignore_init_summary = true
+        docstring_section_style = "list"
+        signature_crossrefs = true
+        summary = true
+        parameter_headings = false
+        show_symbol_type_heading = true
+        show_symbol_type_toc = true
+        line_length = 88
+        show_source = false
+        merge_init_into_class = true
+        separate_signature = true
+        show_signature_annotations = true
+        members_order = "source"

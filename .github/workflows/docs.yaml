@@ -2,31 +2,34 @@
 name: deploy-docs
 on:
   push:
-      branches:
-        - main
-        - dev
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure Git Credentials
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
-      - uses: actions/cache@v4
+      - run: pip install zensical mkdocstrings-python griffe-pydantic tabulate
+      - run: pip install --editable . --no-deps
+      - run: python docs/scripts/generate_api_pages.py
+      - run: python docs/scripts/generate_parameter_docs.py
+      - run: zensical build --clean
+      - uses: actions/upload-pages-artifact@v4
         with:
-          key: mkdocs-material-${{ env.cache_id }}
-          path: ~/.cache 
-          restore-keys: |
-            mkdocs-material-
-      - run: pip install --editable ".[docs]"
-      - run: mkdocs gh-deploy --force
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deployment

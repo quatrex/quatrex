@@ -176,3 +176,8 @@ hostfile
 
 # quatrex output files
 *quatrex_times*
+
+# Auto-generated documentation files
+docs/api/qttools
+docs/api/quatrex
+docs/user_guide/parameters

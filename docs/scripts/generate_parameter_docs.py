@@ -24,7 +24,7 @@ camel_case_pattern = re.compile("((?<=[a-z0-9])[A-Z]|(?!^)[A-Z](?=[a-z]))")
 
 # Set up output paths.
 docs_dir = Path(__file__).parent.parent
-parameters_dir = docs_dir / "parameters"
+parameters_dir = docs_dir / "user_guide" / "parameters"
 index_path = parameters_dir / "index.md"
 
 

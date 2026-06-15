@@ -2,7 +2,7 @@
 site_name = "quatrex"
 site_url = "https://quatrex.github.io/quatrex/"
 site_description = "Quantum transport simulations at the exascale and beyond."
-copyright = "Copyright &copy; 2024-2026 ETH Zurich and the authors of the quatrex package."
+copyright = "Copyright &copy; 2024-2026 ETH Zürich and the authors of the quatrex package."
 
 repo_url = "https://github.com/quatrex/quatrex"
 repo_name = "quatrex/quatrex"
@@ -44,15 +44,146 @@ nav = [
             { "Solver" = "user_guide/parameters/solver.md" },
             { "Output" = "user_guide/parameters/output.md" },
         ] },
-        { "Examples" = [
-            { "Carbon Nanotube" = "user_guide/examples/cnt.md" },
-        ] },
     ] },
     { "Contributing" = "contributing.md" },
+    # This is a temporary solution while Zensical is currently reworking
+    # the automatic generation of navs. Once that is released, we can
+    # switch to an automatically generated API reference nav.
     { "API Reference" = [
         { "Overview" = "api/index.md" },
-        { "qttools" = "api/qttools/index.md" },
-        { "quatrex" = "api/quatrex/index.md" },
+        { "qttools" = [
+            "api/qttools/index.md",
+            { "boundary_conditions" = [
+                "api/qttools/boundary_conditions/index.md",
+                { "lyapunov" = [
+                    "api/qttools/boundary_conditions/lyapunov/index.md",
+                    "api/qttools/boundary_conditions/lyapunov/lyapunov.md",
+                    "api/qttools/boundary_conditions/lyapunov/doubling.md",
+                    "api/qttools/boundary_conditions/lyapunov/spectral.md",
+                ] },
+                { "obc" = [
+                    "api/qttools/boundary_conditions/obc/index.md",
+                    "api/qttools/boundary_conditions/obc/obc.md",
+                    "api/qttools/boundary_conditions/obc/sancho_rubio.md",
+                    "api/qttools/boundary_conditions/obc/spectral.md",
+                ] },
+                "api/qttools/boundary_conditions/boundary_system.md",
+                "api/qttools/boundary_conditions/system_reduction.md",
+            ] },
+            { "comm" = [
+                "api/qttools/comm/index.md",
+                "api/qttools/comm/comm.md",
+            ] },
+            { "datastructures" = [
+                "api/qttools/datastructures/index.md",
+                "api/qttools/datastructures/dsdbsparse.md",
+                "api/qttools/datastructures/dsdbcoo.md",
+                "api/qttools/datastructures/dsdbcsr.md",
+                "api/qttools/datastructures/routines.md",
+            ] },
+            { "fft" = [
+                "api/qttools/fft/index.md",
+                "api/qttools/fft/ffts.md",
+                "api/qttools/fft/convolve.md",
+            ] },
+            { "greens_function_solver" = [
+                "api/qttools/greens_function_solver/index.md",
+                "api/qttools/greens_function_solver/solver.md",
+                "api/qttools/greens_function_solver/rgf.md",
+                "api/qttools/greens_function_solver/rgf_dist.md",
+                "api/qttools/greens_function_solver/_serinv.md",
+                "api/qttools/greens_function_solver/inv.md",
+            ] },
+            { "nevp" = [
+                "api/qttools/nevp/index.md",
+                "api/qttools/nevp/nevp.md",
+                "api/qttools/nevp/beyn.md",
+                "api/qttools/nevp/full.md",
+            ] },
+            { "profiling" = [
+                "api/qttools/profiling/index.md",
+                "api/qttools/profiling/profiler.md",
+            ] },
+            { "toeplitz" = [
+                "api/qttools/toeplitz/index.md",
+                "api/qttools/toeplitz/toeplitz.md",
+            ] },
+            { "utils" = [
+                "api/qttools/utils/index.md",
+                "api/qttools/utils/solvers_utils.md",
+                "api/qttools/utils/gpu_utils.md",
+                "api/qttools/utils/hdf5_utils.md",
+                "api/qttools/utils/mpi_utils.md",
+                "api/qttools/utils/sparse_utils.md",
+                "api/qttools/utils/inplace_utils.md",
+                "api/qttools/utils/stack_utils.md",
+            ] },
+            { "wave_function_solver" = [
+                "api/qttools/wave_function_solver/index.md",
+                "api/qttools/wave_function_solver/superlu.md",
+                "api/qttools/wave_function_solver/cudss.md",
+                "api/qttools/wave_function_solver/mumps.md",
+                "api/qttools/wave_function_solver/solver.md",
+            ] },
+
+        ] },
+        { "quatrex" = [
+            "api/quatrex/index.md",
+            { "bandstructure" = [
+                "api/quatrex/bandstructure/index.md",
+                "api/quatrex/bandstructure/contact.md",
+                "api/quatrex/bandstructure/band_edges.md",
+            ] },
+            { "core" = [
+                "api/quatrex/core/index.md",
+                "api/quatrex/core/scba.md",
+                "api/quatrex/core/qtbm.md",
+                "api/quatrex/core/observables.md",
+                "api/quatrex/core/utils.md",
+                "api/quatrex/core/constants.md",
+                "api/quatrex/core/sse.md",
+                "api/quatrex/core/statistics.md",
+                "api/quatrex/core/subsystem.md",
+            ] },
+            { "coulomb_screening" = [
+                "api/quatrex/coulomb_screening/index.md",
+                "api/quatrex/coulomb_screening/solver.md",
+                "api/quatrex/coulomb_screening/polarization.md",
+            ] },
+            { "device" = [
+                "api/quatrex/device/index.md",
+                "api/quatrex/device/device.md",
+                "api/quatrex/device/inputs.md",
+                "api/quatrex/device/contact.md",
+            ] },
+            { "electron" = [
+                "api/quatrex/electron/index.md",
+                "api/quatrex/electron/sse_photon.md",
+                "api/quatrex/electron/solver.md",
+                "api/quatrex/electron/sse_coulomb_screening.md",
+                "api/quatrex/electron/sse_fock.md",
+                "api/quatrex/electron/sse_phonon.md",
+            ] },
+            { "grid" = [
+                "api/quatrex/grid/index.md",
+                "api/quatrex/grid/energies.md",
+                "api/quatrex/grid/kpoints.md",
+            ] },
+            { "phonon" = [
+                "api/quatrex/phonon/index.md",
+                "api/quatrex/phonon/polarization.md",
+                "api/quatrex/phonon/solver.md",
+            ] },
+            { "photon" = [
+                "api/quatrex/photon/index.md",
+                "api/quatrex/photon/solver.md",
+                "api/quatrex/photon/polarization.md",
+            ] },
+            { "post_processing" = [
+                "api/quatrex/post_processing/index.md",
+                "api/quatrex/post_processing/plot_ldos.md",
+            ] },
+        ] },
     ] },
 ]
 

@@ -214,10 +214,10 @@ class Device:
     def _init_hamiltonian(self) -> None:
         """Initializes Hamiltonian and overlap matrices from files.
 
-        Loads sparse matrices from .mat files in the input directory.
-        Files should be named "hamiltonian.mat" and
-        "overlap.mat" where the keys are strings of [i,j,k] represent
-        lattice vector indices.
+        Loads sparse matrices from .h5 files in the input directory.
+        Files should be named "hamiltonian.h5" and
+        "overlap.h5" where the keys are strings of [i,j,k]
+        representing lattice vector indices.
 
         For missing overlap matrices, identity matrices are assumed
         (orthogonal basis). The (0,0,0) Hamiltonian matrix is mandatory
@@ -227,7 +227,7 @@ class Device:
 
         self.gamma_only = False
 
-        if not (self.config.input_dir / "hamiltonian.mat").exists():
+        if not (self.config.input_dir / "hamiltonian.h5").exists():
             raise ValueError("Hamiltonian matrix not found.")
 
         # NOTE: Contains only the upper triangular parts of the matrices.
@@ -248,7 +248,7 @@ class Device:
 
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
-        if (self.config.input_dir / "overlap.mat").exists():
+        if (self.config.input_dir / "overlap.h5").exists():
             overlap_matrices = load_matrices(self.config, "overlap")
 
             self.overlap_matrices = {}

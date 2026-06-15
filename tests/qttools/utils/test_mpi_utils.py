@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import scipy.sparse as sps
 from mpi4py import MPI
@@ -10,6 +11,7 @@ from mpi4py.MPI import COMM_WORLD as global_comm
 from qttools import sparse as sparse
 from qttools import xp
 from qttools.comm import comm
+from qttools.utils.hdf5_utils import save_hdf5_dict
 from qttools.utils.mpi_utils import distributed_load, get_local_slice, get_section_sizes
 
 
@@ -104,6 +106,41 @@ def test_distributed_load_npz(mpi_tmp_path: Path):
 
     loaded_arr = distributed_load(mpi_tmp_path / "coo.npz")
     assert xp.allclose(coo.toarray(), loaded_arr.toarray())
+
+
+@pytest.mark.skipif(
+    _is_multi_node(),
+    reason="This test only works if all ranks see the same file system.",
+)
+@pytest.mark.mpi(min_size=2)
+def test_distributed_load_h5(mpi_tmp_path: Path):
+    """Test the distributed_load function."""
+    dict = None
+    if global_comm.rank == 0:
+        dict = {
+            "[0,0,0]": np.random.rand(10, 10),
+            "[1,0,0]": sps.random(10, 10, density=0.5, format="csr"),
+            "[0,1,0]": sps.random(10, 10, density=0.5, format="coo"),
+            "[0,0,1]": sps.random(10, 10, density=0.5, format="csc"),
+        }
+        save_hdf5_dict(mpi_tmp_path / "dict.h5", dict)
+
+    dict = global_comm.bcast(dict, root=0)
+
+    # Distributed_load converts the keys back to tuples of ints, so we need to do the same for the original dict.
+    dict = {
+        tuple(map(int, r.strip("[]").split(","))): h_r
+        for r, h_r in dict.items()
+        if r.startswith("[")
+    }
+
+    loaded_dict = distributed_load(mpi_tmp_path / "dict.h5")
+
+    for key in dict.keys():
+        if isinstance(dict[key], sps.spmatrix):
+            assert np.allclose(dict[key].toarray(), loaded_dict[key].toarray())
+        else:
+            assert np.allclose(dict[key], loaded_dict[key])
 
 
 @pytest.mark.mpi(min_size=2)

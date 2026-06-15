@@ -500,7 +500,7 @@ def load_matrices(
     """
 
     # load the matrices
-    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.mat")
+    matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
 
     if (0, 0, 0) not in matrix_dict.keys():
         raise ValueError(

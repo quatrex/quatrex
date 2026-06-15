@@ -234,21 +234,21 @@ class Device:
             self.config, "hamiltonian", force_complex=False
         )
 
-        for r in self.hamiltonians.keys():
-            if not self.hamiltonians[r].shape[0] == self.hamiltonians[r].shape[1]:
+        for r, h_r in self.hamiltonians.items():
+            if not h_r.shape[0] == h_r.shape[1]:
                 raise ValueError(
                     f"Hamiltonian matrix at index {r} is not square. "
-                    f"Shape: {self.hamiltonians[r].shape}"
+                    f"Shape: {h_r.shape}"
                 )
 
             # assert all hamiltonians are sparse matrices
-            if not isinstance(self.hamiltonians[r], sparse.spmatrix):
-                raise ValueError(
+            if not isinstance(h_r, sparse.spmatrix):
+                raise TypeError(
                     f"Hamiltonian matrix at index {r} is not a sparse matrix.\n"
-                    f"Matrix type: {type(self.hamiltonians[r])}"
+                    f"Matrix type: {type(h_r)}"
                 )
 
-            self.hamiltonians[r] = sparse.csr_matrix((self.hamiltonians[r]))
+            self.hamiltonians[r] = sparse.csr_matrix(self.hamiltonians[r])
 
             if self.hamiltonians[r].dtype in [np.complex64, np.complex128]:
                 self.matrices_complex = True
@@ -260,9 +260,9 @@ class Device:
         size = self.hamiltonians[(0, 0, 0)].shape[0]
 
         if (self.config.input_dir / "overlap.h5").exists():
-            overlap_matrices = load_matrices(self.config, "overlap")
+            self.overlap_matrices = load_matrices(self.config, "overlap")
 
-            for r in self.overlap_matrices.keys():
+            for r in self.overlap_matrices:
                 if (
                     self.overlap_matrices[r].shape[0]
                     != self.overlap_matrices[r].shape[1]
@@ -281,7 +281,7 @@ class Device:
 
                 # assert all overlap_matrices are sparse matrices
                 if not isinstance(self.overlap_matrices[r], sparse.spmatrix):
-                    raise ValueError(
+                    raise TypeError(
                         f"Overlap matrix at index {r} is not a sparse matrix."
                     )
 

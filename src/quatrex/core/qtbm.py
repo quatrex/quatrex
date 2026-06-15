@@ -601,14 +601,14 @@ class QTBM:
         """
 
         data = xp.concatenate(
-            list(
+            [
                 obc_result.phi_inv_reflected[energy_ind].flatten()
                 for obc_result in obc_results.values()
-            ),
+            ],
         )
 
         rows = xp.concatenate(
-            list(
+            [
                 xp.repeat(
                     xp.arange(start, stop),
                     obc_result.phi_inv_reflected[energy_ind].shape[1],
@@ -618,17 +618,17 @@ class QTBM:
                     offsets_reflected[1:],
                     obc_results.values(),
                 )
-            )
+            ]
         )
 
         cols = xp.concatenate(
-            list(
+            [
                 xp.tile(
                     xp.asarray(contact.orbital_indices),
                     obc_result.phi_inv_reflected[energy_ind].shape[0],
                 )
                 for contact, obc_result in obc_results.items()
-            )
+            ]
         )
 
         return sparse.csr_matrix((data, (rows, cols)), shape=shape, dtype=xp.complex128)
@@ -1068,7 +1068,7 @@ class QTBM:
 
             self.observables.contact_currents[contact_in, contact_out] = -(
                 xp.sum(
-                    xp.trapz(
+                    xp.trapezoid(
                         prefactor * transmission,
                         self.electron_energies,
                         axis=1,

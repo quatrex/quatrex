@@ -181,3 +181,7 @@ hostfile
 docs/api/qttools
 docs/api/quatrex
 docs/user_guide/parameters
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml

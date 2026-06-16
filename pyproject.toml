@@ -27,11 +27,12 @@ classifiers = [
 keywords = ["Nano-TCAD", "Quantum Transport", "NEGF"]
 dynamic = ["version"]
 requires-python = ">=3.13"
+
 dependencies = [
     "numpy>=1.23.2",
     "scipy",
-    "numba",
     "mpi4py",
+    "numba",
     "pydantic",
     "ase",
     "meshio",
@@ -55,25 +56,18 @@ dependencies = [
         "blacken-docs",
         "isort",
         "ruff",
-        "just",
         "clang-format",
+        "pre-commit",
     ]
-    docs = [
-        "mkdocs",
-        "mkdocs-material",
-        "griffe-pydantic",
-        "mkdocs-gen-files",
-        "tabulate",
-        "mkapi",
-        "mpich",  # If not present, mkapi cannot build the api docs.
-    ]
-    linting = ["pre-commit",]
+    docs = ["zensical", "mkdocstrings-python", "griffe-pydantic", "tabulate"]
+    linting = ["pre-commit"]
 
     [project.urls]
-    Code = "https://github.com/quatrex/quatrex"
+    source = "https://github.com/quatrex/quatrex"
+    documentation = "https://quatrex.github.io/quatrex/"
 
-[project.scripts]
-quatrex = "quatrex.cli:run_cli"
+    [project.scripts]
+    quatrex = "quatrex.cli:run_cli"
 
 [tool.setuptools.dynamic]
 version = { attr = "quatrex.__about__.__version__" }
@@ -87,3 +81,75 @@ profile = "black"
 
 [tool.setuptools.package-data]
 "*" = ["*.cu"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+numpy = ">=1.23.2"
+scipy = "*"
+mpi4py = "*"
+numba = "*"
+pydantic = "*"
+matplotlib = "*"
+threadpoolctl = "*"
+typer = "*"
+
+[tool.pixi.pypi-dependencies]
+quatrex = { path = ".", editable = true }
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+pytest-mpi = "*"
+pytest-xdist = "*"
+coverage = "*"
+
+[tool.pixi.feature.lint.dependencies]
+black = "*"
+blacken-docs = "*"
+isort = "*"
+ruff = "*"
+pre-commit = "*"
+
+[tool.pixi.feature.docs.pypi-dependencies]
+zensical = "*"
+griffe-pydantic = "*"
+mkdocstrings-python = "*"
+tabulate = "*"
+
+[tool.pixi.environments]
+docs = { features = ["docs"], solve-group = "dev" }
+test = { features = ["test"], solve-group = "dev" }
+lint = { features = ["lint"], solve-group = "dev" }
+dev = { features = ["test", "lint", "docs"], solve-group = "dev" }
+
+# gpu = { features = ["gpu"] }
+
+
+# hpc = { features = ["gpu"], solve-group = "hpc" }
+
+
+[tool.pixi.tasks.docs]
+cmd = """
+python docs/scripts/generate_api_pages.py \
+&& python docs/scripts/generate_parameter_docs.py \
+&& zensical
+"""
+default-environment = "docs"
+
+[tool.pixi.tasks.test]
+cmd = "pytest"
+default-environment = "test"
+
+[tool.pixi.tasks.format]
+cmd = """
+isort --profile black . \
+&& black . \
+&& blacken-docs
+"""
+
+[tool.pixi.tasks.lint]
+cmd = "ruff check"
+default-environment = "lint"

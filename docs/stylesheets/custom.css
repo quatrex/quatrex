@@ -12,3 +12,12 @@
 .md-grid {
     max-width: 1440px;
 }
+
+/* Custom styles for the title text next to the logo */
+.md-header__title {
+  font-family: "Fira Code";
+}
+/* but not for subcategories */
+.md-header__title--active {
+  font-family: revert;
+}

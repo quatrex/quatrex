@@ -17,39 +17,55 @@ extra_css = ["stylesheets/custom.css"]
 nav = [
     { "Home" = "index.md" },
     { "Getting Started" = [
-        { "What is quatrex?" = "getting_started/what_is_quatrex.md" },
-        { "Installation" = "getting_started/installation.md" },
-        { "Setting up and running a first simulation" = "getting_started/first_simulation.md" },
+        "getting_started/what_is_quatrex.md",
+        "getting_started/installation.md",
+        "getting_started/first_simulation.md",
     ] },
     { "User Guide" = [
         { "Overview" = "user_guide/index.md" },
-        { "Introduction" = "user_guide/introduction.md" },
         { "Running Transport Simulations" = [
+            "user_guide/basics.md",
             { "Command Line Interface" = "user_guide/cli.md" },
             { "Simulation Parameters" = [
                 "user_guide/parameters/index.md",
-                { "QuaTrEx" = "user_guide/parameters/quatrex.md" },
+                { "quatrex" = "user_guide/parameters/quatrex.md" },
                 { "Device" = "user_guide/parameters/device.md" },
                 { "Contact" = "user_guide/parameters/contact.md" },
                 { "SCSP" = "user_guide/parameters/scsp.md" },
                 { "Poisson" = "user_guide/parameters/poisson.md" },
                 { "SCBA" = "user_guide/parameters/scba.md" },
                 { "QTBM" = "user_guide/parameters/qtbm.md" },
-                { "Electron" = "user_guide/parameters/electron.md" },
-                { "Phonon" = "user_guide/parameters/phonon.md" },
-                { "Coulomb Screening" = "user_guide/parameters/coulomb_screening.md" },
-                { "Photon" = "user_guide/parameters/photon.md" },
-                { "OBC" = "user_guide/parameters/obc.md" },
-                { "Lyapunov" = "user_guide/parameters/lyapunov.md" },
-                { "Memoizer" = "user_guide/parameters/memoizer.md" },
                 { "Solver" = "user_guide/parameters/solver.md" },
                 { "Output" = "user_guide/parameters/output.md" },
+                { "Subsystems" = [
+                    { "Electron" = "user_guide/parameters/electron.md" },
+                    { "Coulomb Screening" = "user_guide/parameters/coulomb_screening.md" },
+                    { "Phonon" = "user_guide/parameters/phonon.md" },
+                    { "Photon" = "user_guide/parameters/photon.md" },
+                ] },
+                { "Boundary Conditions" = [
+                    { "Lyapunov" = "user_guide/parameters/lyapunov.md" },
+                    { "OBC" = "user_guide/parameters/obc.md" },
+                    { "Memoizer" = "user_guide/parameters/memoizer.md" },
+                ] },
+                { "Performance" = [
+                    { "Compute" = "user_guide/parameters/compute.md" },
+                    { "Convolve" = "user_guide/parameters/convolve.md" },
+                    { "NEVP" = "user_guide/parameters/nevp.md" },
+                    { "Lyapunov Compute" = "user_guide/parameters/lyapunov_compute.md" },
+                    { "Band Edge" = "user_guide/parameters/band_edge.md" },
+                    { "Comm" = "user_guide/parameters/comm.md" },
+                ] },
             ] },
         ] },
         { "Examples" = [
-            "user_guide/examples/test.md",
+            "user_guide/examples/index.md",
+            "user_guide/examples/cnt.md",
+            "user_guide/examples/mos2.md",
+            "user_guide/examples/silicon.md",
         ] },
         { "Methodology" = [
+            "user_guide/methodology/index.md",
             { "Atomistic Quantum Transport" = "user_guide/methodology/quantum_transport.md" },
             { "Open Boundary Conditions" = "user_guide/methodology/obc.md" },
             { "Quantum Transmitting Boundary Method" = "user_guide/methodology/qtbm.md" },
@@ -58,9 +74,9 @@ nav = [
         ] },
     ] },
     { "Contributing" = "contributing.md" },
-    # This is a temporary solution while Zensical is currently reworking
-    # the automatic generation of navs. Once that is released, we can
-    # switch to an automatically generated API reference nav.
+    # TODO: This is a temporary solution while Zensical is currently
+    # reworking the automatic generation of navs. Once that is released,
+    # we can switch to an automatically generated API reference nav.
     { "API Reference" = [
         { "Overview" = "api/index.md" },
         { "qttools" = [
@@ -204,6 +220,8 @@ nav = [
     variant = "modern"
     font.text = "Inter"
     font.code = "Fira Code"
+
+    # logo = "images/logo.png"
 
     icon.repo = "fontawesome/brands/github"
 

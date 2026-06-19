@@ -34,7 +34,13 @@ profiler = Profiler()
 
 
 class SCSPConfig(BaseModel):
-    """Options for the self-consistent Schrödinger-Poisson loop."""
+    """Parameters controlling the self-consistent Schrödinger-Poisson loop.
+
+    For more information on the self-consistent Schrödinger-Poisson
+    loop, see the [section on
+    electrostatics](../methodology/electrostatics.md) in the user guide.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -51,9 +57,9 @@ class SCSPConfig(BaseModel):
     This is defined as the infinity norm of the difference between the
     potential in the current iteration and the previous iteration.
 
-    \[
+    $$
         \lVert V_{n} - V_{n-1} \rVert_{\infty} < \texttt{convergence_tol}
-    \]
+    $$
 
     """
 
@@ -121,22 +127,33 @@ class SCSPConfig(BaseModel):
 
 
 class QTBMConfig(BaseModel):
-    """Options for the quantum transmitting boundary method (QTBM)."""
+    """Parameters for the quantum transmitting boundary method (QTBM).
+
+    !!! note
+        Only used in simulations where `formalism = "wf"`.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     max_batch_size: PositiveInt = 10
-    """The maximum number of energies per OBC batch."""
+    """The maximum number of energies that are batched together when
+    computing open boundary conditions (OBCs) in the QTBM solver.
+
+    This can be used to reduce the memory footprint of the QTBM solver,
+    at the cost of increased computation time.
+
+    """
 
     low_rank_obc: bool = False
     """Whether to use reduced rank for the boundary self-energies.
     
     If set to True, boundary self-energies are moved to the
-    right-hand-side of linear system, which greatly reduces fill-in
+    right-hand-side of the linear system, which greatly reduces fill-in
     during factorization.
 
     The system matrix becomes Hermitian or even real symmetric in
-    gamma-only simulations. Therefore, the low_rank_obc parameter can
+    gamma-only simulations. Therefore, the `low_rank_obc` parameter can
     only be used in combination with direct solvers that can exploit the
     symmetry, i.e., `direct_solver="cudss"` on GPU,
     `direct_solver="pardiso"` on CPU, and `direct_solver="thomas"` on
@@ -146,42 +163,109 @@ class QTBMConfig(BaseModel):
 
 
 class SCBAConfig(BaseModel):
-    """Options for the self-consistent Born approximation."""
+    """Parameters for the self-consistent Born approximation (SCBA)
+    loop.
+
+    This is the main loop that computes the self-energies and Green's
+    functions in simulations where `formalism = "negf"`.
+
+    See the [section on NEGF](../methodology/negf.md)
+    in the user guide for more information on the SCBA loop.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     min_iterations: PositiveInt = 1
+    """The minimum number of SCBA iterations to perform.
+
+    This must be greater than or equal to 1.
+
+    !!! warning
+        This parameter currently has no effect.
+
+    """
+
     max_iterations: PositiveInt = 100
+    """The maximum number of SCBA iterations to perform."""
+
     convergence_tol: PositiveFloat = 1e-5
+    """The convergence tolerance for the SCBA iterations.
+
+    !!! warning
+        This parameter currently has no effect.
+
+    """
 
     mixing_factor: PositiveFloat = Field(default=0.1, le=1.0)
+    r"""The under-relaxation factor for the SCBA iterations.
+
+    The new self-energy is computed as a weighted average of the
+    previous self-energy and the new self-energy.
+
+    $$
+    \mathbf{\Sigma}^{(n)} = (1 - \text{mixing_factor})
+    \mathbf{\Sigma}^{(n-1)} + \text{mixing_factor}
+    \mathbf{\Sigma}^{\text{new}}
+    $$
+
+    """
 
     output_interval: PositiveInt = 1
+    """The interval at which to output observables during the SCBA iterations.
+
+    !!! warning
+        This parameter currently has no effect.
+
+    """
 
     coulomb_screening: bool = False
+    """Whether to include screened Coulomb interactions."""
+
     photon: bool = False
+    """Whether to include electron-photon interactions."""
+
     phonon: bool = False
+    """Whether to include electron-phonon interactions."""
 
     symmetric: bool = False
+    """Whether to exploit symmetry in NEGF calculations.
+
+    All lesser and greater quantitiese are skew-Hermitian, allowing us
+    to only store and compute the upper triangular part of the matrices.
+
+    The retarded quantities can be decomposed into a Hermitian and
+    skew-Hermitian part, which also allows memory and computation
+    savings.
+
+    This can reduce the memory footprint and computation time by a
+    significant factor, especially for large systems.
+
+    """
 
     align_self_energy_to_complex_axes: bool = True
-    r"""Whether to discard parts of the self-energy.
+    r"""Whether to discard certain parts of the self-energy.
 
-    This affects the self-energy in the following way:
+    This is an approximation that affects the self-energy in the
+    following way:
+
     - The real parts of the lesser/greater self-energy are discarded.
     - The imaginary part of the retarded self-energy from any previous
-    computation is zeroed.
+      computation is discarded.
 
-    This happens before the imaginary part of the retarded self-energy
-    is computed from the lesser and greater parts as
-    $$\mathrm{Im}\left[\mathbf{\Sigma}^R\right] =
-    \frac{\mathbf{\Sigma}^> - \mathbf{\Sigma}^<}{2i}$$.
+    This happens before the anti-Hermitian part of the retarded
+    self-energy is computed from the lesser and greater parts as
+
+    $$
+    \mathbf{\Sigma}^R_{AH} = \frac{1}{2i} ( \mathbf{\Sigma}^> -
+    \mathbf{\Sigma}^< )
+    $$
 
     """
 
 
 class ElectrostaticsConfig(BaseModel):
-    """Options for the Poisson solver."""
+    """Parameters for the electrostatics calculations."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -288,46 +372,77 @@ class ElectrostaticsConfig(BaseModel):
 
 
 class MemoizerConfig(BaseModel):
-    """Options for memoizing wrappers.
+    """Parameters for memoizing wrappers.
 
     The memoizers store and reuse previously computed results
     to speed up the fixed-point iterations in OBC and Lyapunov solvers.
+
+    See the [section on open boundary conditions](../methodology/obc.md)
+    in the user guide for more information on the
 
     """
 
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["auto", "force", "force-after-first", "off"] = "auto"
-    """The memoization mode to determine when to do fixed-point iterations.
+    """The memoization mode determines when to reuse cached results.
 
-    - "auto": Automatically decides whether to use memoization based on the
-        specified tolerances. Only useful if all ranks memoize.
-    - "force": Always use memoization.
-    - "force-after-first": Use memoization after the first SCBA iteration.
-    - "off": Never use memoization.
+    - `"auto"`: Automatically decides whether to use memoization based
+      on the specified tolerances. This will only lead to iteration
+      savings when all ranks agree to memoize. This incurs a small
+      amount of communication overhead.
+    - `"force"`: Always use memoization on all ranks.
+    - `"force-after-first"`: Use memoization after the first SCBA
+      iteration.
+    - `"off"`: Never use memoization.
+
     """
 
     num_ref_iterations: PositiveInt = Field(default=2, ge=2)
-    """The number of fixed-point iterations to perform."""
+    """The number of fixed-point iterations to perform.
+
+    This must be greater than or equal to 2. The first iteration is used
+    to estimate the residuals, and a second fixed-point iteration is
+    performed to get the residuals after the memoization is applied.
+
+    """
 
     relative_tol: PositiveFloat = 2e-1
-    """The relative tolerance for the fixed-point iterations.
+    """The relative tolerance on fixed-point residuals for memoization.
 
-    Only used if `mode` is set to "auto".
+    !!! note
+        Only used if `mode` is set to `"auto"`.
+
     """
 
     absolute_tol: PositiveFloat = 1e-6
-    """The absolute tolerance for the fixed-point iterations.
+    """The absolute tolerance on fixed-point residuals for memoization.
 
-    Only used if `mode` is set to "auto".
+    !!! note
+        Only used if `mode` is set to `"auto"`.
+
     """
 
     warning_threshold: PositiveFloat = 1e-1
-    """The threshold for issuing a warning if the memoized functions
-        residual is above this value after the fixed-point iterations.
+    """The threshold for issuing a memoization warning.
+
+    If the memoized functions residual is above this value after the
+    fixed-point iterations, a warning is issued. This is to alert the
+    user that the memoization may not be accurate enough and that the
+    results may be unreliable.
+
     """
 
     agreement_threshold: float = Field(default=0.999, ge=0, le=1)
+    """The threshold for agreement between ranks for memoization.
+
+    The default value of 0.999 means 99.9% of the ranks must agree to
+    use memoization.
+
+    !!! note
+        Only used if `mode` is set to `"auto"`.
+
+    """
 
 
 class SolverConfig(BaseModel):
@@ -336,9 +451,25 @@ class SolverConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["rgf", "inv"] = "rgf"
+    """The algorithm to use for the system solver.
 
-    # The maximum number of energies per batch.
+    - `"rgf"`: Uses the recursive Green's function (RGF) algorithm to
+      compute the Green's functions. This is the default.
+
+    - `"inv"`: Uses a direct matrix inversion to compute the Green's
+      functions. This is mainly useful for debugging and testing, as it
+      is not efficient for realistically sized systems.
+
+    """
+
     max_batch_size: PositiveInt = 100
+    """The maximum number of energies that are batched together when
+    computing the Green's functions in the system solver.
+
+    This can be used to reduce the memory footprint of the system
+    solver, at the cost of increased computation time.
+
+    """
 
     compute_current: bool | None = None
     """Whether to compute the current via the Meir-Wingreen formula.
@@ -347,13 +478,13 @@ class SolverConfig(BaseModel):
     automatically determined based on the algorithm. (i.e. `True` for
     `"rgf"` and `False` for `"inv"`)
 
-    If `True`, the current is computed between each layer and from/to the
-    leads. This way of computing the current is usually preferable as it
-    is independet of any interaction cutoffs, since it is computed from
-    the temporarily densified Green's functions and self-energies.
+    If `True`, the current is computed between each layer and from/to
+    the leads. This way of computing the current is usually preferable
+    as it is independet of any interaction cutoffs, since it is computed
+    from the temporarily densified Green's functions and self-energies.
 
     !!! note
-        This is parameter is only used in the Electron Solver. The
+        This is parameter is only used in the electron solver. The
         Coulomb screening solver does not compute currents, so this
         parameter is ignored for the Coulomb screening solver.
 
@@ -406,170 +537,275 @@ class SolverConfig(BaseModel):
 
 
 class OBCConfig(BaseModel):
-    r"""Options for open-boundary condition (OBC) solvers.
+    r"""Options for open-boundary conditions (OBCs).
 
-    The OBC solvers compute the surface Green's functions of the contacts.
-    The surface Green's functions is the solution of the non-linear equation:
+    The OBC solvers compute the surface Green's functions of the
+    contacts. The retarded surface Green's function satisfies the
+    following recursion relation:
 
-    $$ \mathbf{g} = [\mathbf{M}_{0} - \mathbf{M}_{-1} g \mathbf{M}_{1} ]^{-1} $$
+    $$
+    \mathbf{g}^R = \left[\mathbf{m}_{0} - \mathbf{m}_{-1} \mathbf{g}^R
+    \mathbf{m}_{+1} \right]^{-1},
+    $$
+
+    where $\mathbf{m}_{0}$ is the contact Hamiltonian,
+    $\mathbf{m}_{-1}$ is the coupling from the device to the contact,
+    and $\mathbf{m}_{+1}$ is the coupling from the contact to the
+    device. In the NEGF framework, the system matrix $\mathbf{m}$
+    includes scattering self-energies.
+
+    More information on the boundary conditions can be found in the user
+    guide [section on open boundary conditions](../methodology/obc.md).
+
     """
 
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["sancho-rubio", "spectral"] = "spectral"
-    """The OBC algorithm to use.
+    """The algorithm to use when solving the OBC recursion relation.
 
-    - "sancho-rubio": Uses the Sancho-Rubio iterative scheme to compute the
-        surface Green's functions. This method achieves exponential convergence
-        compared to the linear convergence of fixed-point iterations.
-    - "spectral": Uses a spectral NEVP solver to compute eigenpair and uses
-        them to construct the surface Green's functions. This is generally more
-        efficient method when combined with a contour integral NEVP solver,
-        but requires more parameter tuning.
+    - `"sancho-rubio"`: Uses the Sancho-Rubio iterative
+      scheme[^sancho-rubio] to compute the surface Green's functions.
+      This method achieves exponential convergence compared to the
+      linear convergence of fixed-point iterations.
+
+    - `"spectral"`: Uses the specified `nevp_solver` to compute
+      eigenpairs of the polynomial contact eigenvalue problem and uses
+      them to construct the surface Green's functions. This is generally
+      more efficient method when combined with a contour integral NEVP
+      solver (`"beyn"`), but can require more parameter tuning.
+
+    [^sancho-rubio]: M. P. Lopez Sancho, et al., 1985 J. Phys. F: Met.
+        Phys. 15 851, https://doi.org/10.1088/0305-4608/15/4/009
+
     """
 
     nevp_solver: Literal["beyn", "full"] = "beyn"
     r"""The NEVP solver to use for the spectral OBC algorithm.
 
-    - "beyn": Uses the Beyn's contour integral method to solve the NEVP to
-        find the eigenpairs within a specified contour in the complex plane.
+    The contact eigenvalue problem is a polynomial eigenvalue problem of
+    the form:
 
-    - "full": Uses a full dense eigensolver to solve for all eigenvalues by linearizing
-        the problem. This results in a doubled problem size which is also not reduced by
-        block sectioning / periodicity.
+    $$
+    \sum \limits_{n=-b}^{+b} \lambda^{n} \hat{\mathbf{m}}_{n} \mathbf{v}
+    = 0,
+    $$
 
-    The following NEVP problem is solved:
+    where $b$ is the number of `block_sections`, and
+    $\hat{\mathbf{m}}_{n}$ are potentially reduced coupling matrices.
 
-    $$ \sum \limits_{n=-b}^{b} \lambda^{n} \hat{\mathbf{M}}_{n} \vec{v} = 0 $$
+    From selected eigenvalues $\lambda = e^{i k}$ and eigenvectors
+    $\mathbf{v}$, the surface Green's functions can be constructed.
 
-    where b goes from -block_sections to +block_sections and
-    $\hat{\mathbf{M}}_{n}$ are potentially reduced coupling matrices.
+    - `"beyn"`: Uses the Beyn's contour integral method[^beyn] to solve
+      the NEVP and find the eigenpairs within a specified contour in the
+      complex plane. Also see the `r_o`, `r_i`, `m_0`, and
+      `num_quad_points` parameters for configuration of the contour
+      integral method.
 
-    Only used if `algorithm` is set to "spectral".
+    - `"full"`: Uses a full dense eigensolver to solve for all
+      eigenvalues, linearizing the original polynomial problem. This
+      results in a doubled problem size which is also not reduced by
+      block sectioning or exploiting periodicity.
+
+    !!! note
+        Only used if `algorithm` is set to `"spectral"`.
+
+    [^beyn]: W.-J. Beyn, An integral method for solving nonlinear
+        eigenvalue problems, Linear Algebra and its Applications, 2012,
+        https://doi.org/10.1016/j.laa.2011.03.030.
+
     """
 
-    # Parameters for spectral OBC algorithms.
     block_sections: PositiveInt = 1
-    """The periodicity of the blocks along the transport direction.
+    """The number of unit cell blocks along transport direction.
 
-    Used in the spectral method with beyn to reduce the size of the NEVP.
-    For example, if the supercell is constructed from 2 unit cells along the
-    transport direction, setting this parameter to 2 will halve the size of the NEVP.
+    !!! note
+        This is automatically determined in QTBM calculations. Thus it
+        only has an effect in NEGF calculations.
 
-    Contact blocks need to be sorted accordingly.
+    In NEGF calculations, one needs to define block-sizes that lead to a
+    block-tridiagonal tiling of the system matrix. These *transport
+    blocks* are sometimes constructed from multiple unit cells.
+
+    With the `block_sections` parameter, one can specify how many unit
+    cells are merged into a single transport block. This is then used
+    when `nevp_solver` is set to `"beyn"` to reduce the size of the
+    contact NEVP.
+
+    For example, if the transport cell is constructed from two unit
+    cells along the transport direction, setting `block_sections = 2`
+    will halve the size of the NEVP. The contact transport blocks need
+    to be sorted accordingly.
+
     """
 
     min_decay: PositiveFloat = 1e-3
-    """The minimum decay rate where to differentiate between propagating and evanescent modes."""
+    r"""The minimum rate by which a mode must decay to be considered
+    evanescent.
+
+    The decay rate is computed as $\|\mathrm{Im}(k)\|$ where $k$ is the
+    complex wavevector of the mode.
+
+    This is used to classify the modes obtained from the spectral OBC
+    solver into propagating modes and evanescent modes. Modes with decay
+    rates below this threshold are considered propagating.
+
+    """
 
     max_decay: PositiveFloat | None = None
-    """The maximum decay rate for evanescent modes.
+    r"""The maximum rate a mode can decay while still being considered
+    relevant for the surface Green's functions.
 
-    Very large modes do not contribute to the surface Green's functions and
-    can be neglected. Very large modes can also lead to numerical instabilities.
+    The decay rate is computed as $\|\mathrm{Im}(k)\|$ where $k$ is the
+    complex wavevector of the mode.
 
-    If not set, it is computed as 1.5 * log(r_o).
+    Very rapidly decaying modes do not contribute to the surface Green's
+    functions and can be neglected. These modes should be filtered out
+    as including them can lead to numerical instabilities.
+
+    If `max_decay` is not set, it is computed from the outer contour
+    radius as `1.5 * log(r_o)`.
+
     """
 
     num_ref_iterations: PositiveInt = 2
-    r"""The number of fixed-point iterations used to refine the surface Green's functions.
+    """The number of fixed-point iterations used to refine the surface
+    Green's functions.
 
-    $$ \mathbf{g}_{n+1} = [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g}_{n} \mathbf{M}_{1} ]^{-1} $$
+    This is needed to improve the accuracy of the surface Green's
+    functions, especially if not enough eigenpairs are considered.
 
-    This is needed to improve the accuracy of the surface Green's functions
-    if not enough eigenpairs are considered.
+    !!! note
+        Only used if `algorithm` is set to `"spectral"`.
 
-    Only used if `algorithm` is set to "spectral".
     """
 
     min_propagation: PositiveFloat = 1e-2
-    r"""The minimum propagation speed for propagating modes.
+    r"""The minimum group velocity propagation/decay ratio for a mode to
+    be considered.
 
-    The propagation speed is computed as:
+    This ratio is determined by dividing the real part of the group
+    velocity by the imaginary part of the group velocity:
 
-    $$ abs(real(\frac{dE}{dk})) / abs(imag(\frac{dE}{dk})) $$
+    $$
+    \mathrm{Re}(\frac{dE}{dk}) / \mathrm{Im}(\frac{dE}{dk}).
+    $$
 
     """
 
     residual_tolerance: PositiveFloat = 1e-3
-    r"""The tolerance for the residual of the eigenpairs.
+    r"""The tolerance on the residual of an eigenpair.
 
-    The residuals are computed as:
+    The eigenpair residuals are computed as by inserting the eigenvalues
+    and eigenvectors back into the polynomial eigenvalue problem.
 
-    $$ \lvert \sum \limits_{n=-b}^{b} \lambda^{b} \mathbf{M}_{n} \vec{v} \rvert $$
+    $$
+    \text{residual} = \lvert \sum \limits_{n=-b}^{b} \lambda^{b}
+    \mathbf{M}_{n} \vec{v} \rvert.
+    $$
 
-    Modes above this tolerance are considered wrong and are not used.
+    Modes exceeding this tolerance are considered spurious and are
+    discarded.
 
-    Only used if `algorithm` is set to "spectral".
+    !!! note
+        Only used if `algorithm` is set to `"spectral"`.
+
     """
 
     residual_normalization: bool = True
-    """Whether to normalize the residuals by the norm of the eigenvalue.
+    """Whether to consider relative residuals instead of absolute
+    residuals when filtering eigenpairs.
 
-    This is useful to avoid that large eigenvalues have large residuals
-    and small eigenvalues have small residuals.
+    This is useful to avoid that large eigenvalues will have larger
+    absolute residuals than small eigenvalues.
+
     """
 
     warning_threshold: PositiveFloat = 1e-1
-    r"""The threshold for issuing a warning if the surface Green's functions
-    residual is above this value.
+    r"""The threshold for issuing a warning about the surface Green's
+    functions recursion residual.
 
-    The residual is computed as:
+    This residual is computed as
 
-    $$ \lvert \mathbf{g} - [\mathbf{M}_{0} - \mathbf{M}_{-1} \mathbf{g} \mathbf{M}_{1} ]^{-1} \rvert / \lvert \mathbf{g} \rvert $$
+    $$
+    \lvert \mathbf{g}^R - \left[\mathbf{M}_{0} - \mathbf{M}_{-1}
+    \mathbf{g}^R \mathbf{M}_{+1} \right]^{-1} \rvert / \lvert
+    \mathbf{g}^R \rvert
+    $$
 
-    This parameter is only used if the `formalism` is `wf`. Otherwise, the memoizer
-    is responsible for residual checking and warnings.
+    !!! note
+        This parameter is only used if the `formalism = "wf"`.
+        Otherwise, the memoizer is responsible for residual checking and
+        issuing warnings.
+
     """
 
     eta_decay: PositiveFloat = 1e-12
-    """Small value to separate very slow decaying modes from
-        non-decaying ones in the spectral OBC solver.
+    """Small value to separate very slowly decaying modes from perfectly
+    propagating ones.
 
-    Modes that are very close to the unit contour could be misclassified
-    with 'min_decay' and 'min_propagation' conditions i.e.
-    when their decay is smaller than 'min_decay' but they are not propagating fast enough.
-    The not fast enough propagating ones with decay smaller than 'eta_decay' are
-    considered as well decaying modes.
+    Modes that are very close to the unit circle could get misclassified
+    via the `min_decay` and `min_propagation` conditions, i.e., when
+    their decay rate is smaller than `min_decay` but their
+    propagation/decay ratio is not pronounced enough. Modes with decay
+    rates smaller than this value are considered as perfectly
+    propagating modes, even if the propagation/decay ratio is not above
+    the `min_propagation` threshold.
+
     """
 
     # Parameters for iterative OBC algorithms.
     max_iterations: PositiveInt = 100
-    """The maximum number of iterations for the Sancho-Rubio method."""
+    """The maximum number of iterations for the Sancho-Rubio method.
 
-    convergence_tol: PositiveFloat = 1e-6
-    """The convergence tolerance for the Sancho-Rubio method."""
+    A warning is issued if the method does not converge within this
+    number of iterations.
 
-    # Parameters for subspace NEVP solvers.
-    r_o: PositiveFloat = 10.0
-    """The outer radius of the contour in the complex plane for the contour methods.
-
-    This parameter should not be too large to avoid having too many eigenpairs
-    inside the contour. It should also not be too small to avoid missing important
-    eigenpairs. If a eigenpair is too close to the contour,
-    it can lead to numerical instabilities.
     """
 
-    r_i: PositiveFloat = 0.8
-    """The inner radius of the contour in the complex plane for the contour methods.
+    convergence_tol: PositiveFloat = 1e-6
+    """The convergence tolerance for the Sancho-Rubio method.
 
-    This parameter should be chosen to be <1 to capture propagating modes, but
-    not too small to avoid including too many modes.
+    This is the Frobenius norm of the update matrices `alpha` and `beta`
+    in the Sancho-Rubio method. Note that the norm is taken over the
+    entire energy batch.
+
+    """
+
+    # Parameters for subspace NEVP solvers.
+    r_o: PositiveFloat = Field(default=10.0, gt=1)
+    """The outer radius of the contour in the complex plane for the
+    contour nevp methods (`"beyn"`).
+
+    This parameter should not be too large to avoid having too many
+    eigenpairs inside the contour. It should also not be too small to
+    avoid missing important eigenpairs. If an eigenpair is very close to
+    the contour, it can lead to numerical instabilities.
+
+    """
+
+    r_i: PositiveFloat = Field(default=0.8, gt=0, lt=1)
+    """The inner radius of the contour in the complex plane for the
+    contour methods.
+
+    This must be less than one to capture propagating modes, but should
+    not be too small to avoid including too many decaying modes.
+
     """
 
     m_0: PositiveInt = 10
     """The subspace guess in the contour methods.
 
     The guess has to be larger than the expected number of eigenvalues
-    inside the contour. If too small, the method will fail. If too large, the method
-    will be not/less efficient.
+    inside the contour. If too small, the method will fail. If too
+    large, the method will be less efficient.
+
     """
 
     num_quad_points: PositiveInt = 20
     """The number of quadrature points for the contour integrals."""
 
-    # Parameters for reusing surface Green's functions from previous
-    # SCBA iterations.
     memoizer: MemoizerConfig = MemoizerConfig()
     """Options for memoizing the surface Green's functions."""
 
@@ -591,66 +827,79 @@ class OBCConfig(BaseModel):
 
 
 class LyapunovConfig(BaseModel):
-    r"""Options for solving the Lyapunov equation.
-    The discrete Lyapunov equation arises in the computation of
-    the boundary conditions for quantities such as W.
+    r"""Parameters for solving the (discrete-time) Lyapunov equation.
 
-    The discrete Lyapunov equation has the form:
+    The discrete-time Lyapunov equation (also called Stein equation)
+    arises in the computation of lesser boundary conditions.
 
-    $$ \mathbf{A} \mathbf{X} \mathbf{A}^{\dagger} - \mathbf{X} = - \mathbf{Q} $$
+    This is a matrix equation of the form
+
+    $$
+    \mathbf{A} \mathbf{X} \mathbf{A}^{\dagger} - \mathbf{X} =
+    -\mathbf{Q}
+    $$
 
     """
 
     model_config = ConfigDict(extra="forbid")
 
     algorithm: Literal["spectral", "doubling"] = "spectral"
-    r"""The Lyapunov solver algorithm used
+    r"""The Lyapunov solver algorithm to be used.
 
-    - "spectral": Uses the eigenvalue decomposition to solve the Lyapunov equation.
-        This method is more expensive since a full eigendecomposition is required.
-    - "doubling": Uses the doubling method to iteratively solve the Lyapunov equation.
-        This method should exponentially converge, but it is not stable if $\mathbf{A}$
-        has eigenvalues outside the unit circle.
+    - `"spectral"`: Uses eigenvalue decomposition to solve the Lyapunov
+      equation. This method is somewhat expensive since a full
+      eigendecomposition is required.
+
+    - `"doubling"`: Uses iterative doubling to solve the Lyapunov
+      equation. This method should converge exponentially, but is
+      theoretically unstable if $\mathbf{A}$ has eigenvalues outside the
+      unit circle. It is therefore generally recommended to use
+      `"spectral"` in conjuntion with the memoizer, which will only call
+      the actual Lyapunov solver when the residuals are above the
+      specified tolerances.
 
     """
 
     reduce_sparsity: bool = True
-    r"""Whether to use the sparsity of $\mathbf{A}$ to accelerate the Lyapunov solver.
+    r"""Whether to exploit the sparsity of $\mathbf{A}$ to accelerate
+    the Lyapunov solver.
 
-    This is done by removing zero rows and columns from $\mathbf{A}$, solving the reduced
-    Lyapunov equation, and then expanding the solution back to the original size.
+    This is done by removing zero rows and columns from $\mathbf{A}$,
+    solving the reduced Lyapunov equation, and then expanding the
+    solution back to the original system's size.
+
     """
 
     assume_constant_sparsity: bool = False
-    r"""Whether to assume that the sparsity pattern of $\mathbf{A}$ is constant
-    during the SCBA iterations.
-    In practice, this should be the case, but not guaranteed.
+    r"""Whether to assume that the sparsity pattern of $\mathbf{A}$
+    remains constant between calls to the Lyapunov solver. This is only
+    relevant when the Lyapunov solver is called during the SCBA
+    iterations. In practice, this should always be the case.
 
-    If set to True, the sparsity pattern is only computed once during
+    If set to `True`, the sparsity pattern is only computed once during
     the first SCBA iteration and reused for subsequent iterations.
+
     """
 
     # Parameters for iterative Lyapunov algorithms.
     max_iterations: PositiveInt = 100
-    """The maximum number of iterations for the doubling method."""
+    """The maximum number of iterations for the `"doubling"` algorithm."""
 
     relative_tol: PositiveFloat = 1e-4
-    """The relative tolerance for the doubling method."""
+    """The relative convergence tolerance for the `"doubling"` algorithm."""
 
     absolute_tol: PositiveFloat = 1e-8
-    """The absolute tolerance for the doubling method."""
+    """The absolute tolerance for the `"doubling"` algorithm."""
 
     # Parameter for spectral Lyapunov solver.
     num_ref_iterations: PositiveInt = Field(default=2, ge=1)
     """The number of fixed-point iterations used to refine the solution
-        of the solution of the spectral Lyapunov solver.
+    of the spectral Lyapunov solver.
 
-    This is not used in the doubling method. Additionally, the number of iterations in
-    the memoizer is also independent of this parameter.
     """
 
     memoizer: MemoizerConfig = MemoizerConfig()
-    """Options for memoizing the Lyapunov solver."""
+    """Options for memoizing the solution of the Lyapunov equation."""
 
 
 class ContactConfig(BaseModel):
@@ -775,11 +1024,35 @@ class ElectronConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     solver: SolverConfig = SolverConfig()
+    """Parameters concerning the system solver."""
+
     obc: OBCConfig = OBCConfig()
+    """Parameters concerning the open boundary conditions."""
+
     lyapunov: LyapunovConfig = LyapunovConfig()
+    """Parameters concerning the Lyapunov solver.
+
+    !!! warning
+        The Lyapunov solver is not used in the electronic subsystem
+        solver.
+
+    """
 
     eta_obc: NonNegativeFloat = 0  # eV
+    """Small imaginary value to add to the energy when computing the
+    OBCs.
+
+    Including this small broadening can help stabilize the convergence
+    of the iterative sancho-rubio OBC solver near van Hove
+    singularities.
+
+    """
+
     eta: NonNegativeFloat = 1e-12  # eV
+    """Small imaginary value to add to the energy when computing the
+    Green's functions.
+
+    """
 
     left_contact: ContactConfig | None = None
     """Configuration for the left contact.
@@ -818,20 +1091,67 @@ class ElectronConfig(BaseModel):
     edges, which is determined by the initial Fermi level and band
     edges. For example, if the initial Fermi level is 0.5 eV above the
     conduction band edge, the Fermi level is always set to be 0.5 eV
-    above the conduction band edge during the SCBA iterations.
+    above the conduction band edge during all SCBA iterations.
 
     """
 
     energy_window_min: float | None = None
+    """The minimum energy of the energy grid used for electronic
+    quantities."""
+
     energy_window_max: float | None = None
+    """The maximum energy of the energy grid used for electronic
+    quantities."""
+
     energy_window_num: PositiveInt | None = None
+    """The number of energy points in the energy grid used for electronic
+    quantities.
+
+    Either `energy_window_num` or `energy_window_num_per_rank` can be
+    set to determine the total number of energy points.
+
+    """
     energy_window_num_per_rank: PositiveInt | None = None
+    """The number of energy points per rank in the energy grid used for
+    electronic quantities.
+
+    Either `energy_window_num` or `energy_window_num_per_rank` can be
+    set to determine the total number of energy points.
+
+    """
 
     flatband: bool | None = None
+    """Whether the system is in flatband conditions.
+
+    If not set, it is automatically determined from the left and
+    right Fermi levels. If the Fermi levels are equal, it is assumed
+    to be in flatband conditions.
+
+    """
 
     dos_peak_limit: PositiveFloat = 100.0
+    """The maximum derivative of the density of states (DOS) with
+    respect to energy.
+
+    At energy points where the DOS derivative exceeds this value, the
+    electronic quantities are set to zero to stabilize the convergence
+    of the SCBA iterations.
+
+    This is especially a problem during the first few SCBA iterations
+    when the self-energies are not yet fully developed and can lead to
+    very sharp features in the DOS.
+
+    """
 
     filtering_iteration_limit: PositiveInt = 1
+    """The maximum number of SCBA iterations during which the DOS peak
+    filtering is applied.
+
+    This is because the DOS peak filtering is mainly needed during the
+    first few SCBA iterations when the self-energies are not yet fully
+    developed and can lead to very sharp features in the DOS.
+
+    """
 
     max_batch_size: PositiveInt | None = None
     """The maximum number of energies to batch together in the solution
@@ -899,74 +1219,163 @@ class CoulombScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
+    """The cutoff distance for the screened Coulomb interaction
+    self-energy.
+
+    Self-energy matrix elements corresponding to pairs of orbitals that
+    are further apart than this distance are not computed. A higher
+    cutoff can lead to more accurate results, but also increases the
+    computation time. The optimal value depends on the system and the
+    desired accuracy.
+
+    """
 
     solver: SolverConfig = SolverConfig()
+    """Parameters concernig the system solver."""
+
     obc: OBCConfig = OBCConfig()
+    """Parameters concerning the open boundary conditions."""
+
     lyapunov: LyapunovConfig = LyapunovConfig()
+    """Parameters concerning the Lyapunov solver."""
 
     temperature: PositiveFloat = 300.0  # K
+    """The temperature of the system.
+
+    !!! warning
+        The temperature in the Coulomb screening solver is not used. The
+        (contact) particle densities are computed via the Lyapunov
+        solver.
+
+    """
 
     epsilon_r: PositiveFloat = 1.0
+    """The relative permittivity of the system.
+
+    The Coulomb matrix is scaled by this value. It is primarily useful
+    as a way to scale the strength of the Coulomb interaction and to
+    better fit the model to experimental results.
+
+    """
 
     left_temperature: PositiveFloat | None = None
+    """The temperature of the left contact.
+
+    If not set, it is assumed to be the same as `temperature`.
+
+    """
     right_temperature: PositiveFloat | None = None
+    """The temperature of the right contact.
+
+    If not set, it is assumed to be the same as `temperature`.
+
+    """
 
     # How many blocks should be merged into a single block.
     num_connected_blocks: Literal["auto"] | PositiveInt = "auto"
+    r"""The number of connected blocks to merge into a single block.
+
+    The computation of the effective lesser/greater polarization
+    involves a "sandwich" multiplication (congruence transform) of the
+    form
+
+    $$
+    \mathbf{L}^{\lessgtr} = \mathbf{V} \mathbf{P}^{\lessgtr} \mathbf{V},
+    $$
+
+    where $\mathbf{V}$ is the Coulomb matrix and $\mathbf{P}^{\lessgtr}$
+    is the lesser/greater polarization. Since all of these matrices are
+    banded, the resulting effective polarization $\mathbf{L}^{\lessgtr}$
+    can have a much larger bandwidth.
+
+    The block-tridiagonal tiling of the system matrix used in the OBC is
+    therefore larger than the transport blocks used in the electron
+    solver. The `num_connected_blocks` parameter determines how many of
+    the original transport blocks are merged into a single block for the
+    Coulomb screening solver. If set to `"auto"`, the number of
+    connected blocks is automatically determined based on the
+    `interaction_cutoff` and the geometry of the system.
+
+    """
 
     dos_peak_limit: PositiveFloat = 100.0
+    """The maximum derivative of the density of states (DOS) with
+    respect to energy.
+
+    At energy points where the DOS derivative exceeds this value, the
+    Coulomb screening quantities are set to zero to stabilize the
+    convergence of the SCBA iterations.
+
+    """
 
     filtering_iteration_limit: PositiveInt = 1
+    """The maximum number of SCBA iterations during which the DOS peak
+    filtering is applied.
+
+    This is because the DOS peak filtering is mainly needed during the
+    first few SCBA iterations when the self-energies are not yet fully
+    developed and can lead to very sharp features in the DOS.
+
+    """
 
     align_polarization_to_complex_axes: bool = True
-    r"""Whether to discard parts of the polarization.
+    r"""Whether to discard certain parts of the polarization.
 
     This affects the polarization in the following way:
-    - The real parts of the lesser/greater polarization are discarded.
-    - The imaginary part of the retarded polarization from previous
-    computation is zeroed.
 
-    This happens before the imaginary part of the retarded polarization
-    is computed from the lesser and greater parts as
-    $$\mathrm{Im}\left[\mathbf{P}^R\right] = \frac{\mathbf{P}^> -
-    \mathbf{P}^<}{2i}$$.
+    - The real parts of the lesser/greater polarization are discarded.
+    - The imaginary part of the retarded polarization from anyprevious
+      computation is zeroed.
+
+    This happens before the anti-Hermitian part of the retarded
+    polarization is computed from the lesser and greater parts as
+
+    $$
+    \mathbf{P}^R_{AH} = \frac{1}{2i} ( \mathbf{P}^> - \mathbf{P}^< )
+    $$
 
     """
 
     include_energy_renormalization: Literal["self-energy", "polarization", "both"] = (
         "self-energy"
     )
-    r"""Whether to compute the real part of the retarded polarization and/or self-energy.
+    r"""Whether to compute the Hermitian part of the retarded
+    polarization and/or self-energy.
 
     Possible values are `"self-energy"`, `"polarization"`, and `"both"`.
 
-    The full retarded interaction quantities are complex-valued, where
-    the real part is computed from the imaginary part using the
-    Kramers-Kronig relations:
+    The full retarded interaction quantities are general complex-valued
+    matrices, where the Hermitian part is computed from the
+    skew-Hermitian part using the Kramers-Kronig relations:
 
-    $$\mathbf{X}^{R} = \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{2} +
+    $$
+    \mathbf{X}^{R} = \frac{1}{2} (\mathbf{X}^{>} - \mathbf{X}^{<}) +
     \frac{1}{2\pi} \mathrm{p.v.} \int_{-\infty}^{\infty}  dE' \,
-    \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{E^{'} - E}$$
+    \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{E^{'} - E}
+    $$
 
-    The real part only leads to only a shift in the energy, so it is
-    often neglected:
+    The Hermitian part only leads to only a shift in the energy, so it
+    is often neglected:
 
-    $$\mathbf{X}^{R} \approx \frac{\mathbf{X}^{>} - \mathbf{X}^{<}}{2}$$
+    $$
+    \mathbf{X}^{R} \approx \frac{1}{2} (\mathbf{X}^{>} - \mathbf{X}^{<})
+    $$
 
-    The default is to only include the real part in the Coulomb
-    screening self-energy and not in the polarization.
+    The default is to only include the skew-Hermitian part in the
+    Coulomb screening self-energy and not in the polarization.
 
-    The real part is computed using a Hilbert transform. For the Coulomb
-    screening self-energy, this Hilbert transform can lead to errors at
-    the edges of the energy window. The `apply_hilbert_correction`
-    option can be used to apply a correction to the Hilbert transform to
-    mitigate these errors.
+    The Hermitian part is computed using a Hilbert transform. For the
+    Coulomb screening self-energy, this Hilbert transform can lead to
+    errors at the edges of the energy window. The
+    `apply_hilbert_correction` option can be used to apply a correction
+    to the Hilbert transform to mitigate these errors.
 
     """
 
     apply_hilbert_correction: bool = False
-    """Whether to apply the corrections for the edges of the energy window
-    to the hilbert transform when computing the retarded self-energy.
+    """Whether to apply the corrections for the edges of the energy
+    window to the Hilbert transform when computing the retarded
+    self-energy.
 
     Computing the correction is slightly more expensive.
 
@@ -999,7 +1408,13 @@ class CoulombScreeningConfig(BaseModel):
 
 
 class PhotonConfig(BaseModel):
-    """Options for the optical degrees of freedom."""
+    """Parameters for photons and electron-photon interactions.
+
+    !!! warning
+        The photon solver is not implemented yet. The parameters in this
+        section are not used and may be subject to change in the future.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1011,20 +1426,57 @@ class PhotonConfig(BaseModel):
 
 
 class PhononConfig(BaseModel):
-    """Options for the thermal degrees of freedom."""
+    """Parameters for phonons and electron-phonon interactions."""
 
     model_config = ConfigDict(extra="forbid")
 
     interaction_cutoff: PositiveFloat = 10.0  # Angstrom
+    """The cutoff distance for the electron-phonon interaction
+    self-energy.
+
+    !!! note
+        Currently, only the `"pseudo-scattering"` model / deformation
+        potential interaction is implemented, which does not produce
+        any self-energy matrix elements besides the diagonal ones.
+
+    """
 
     solver: SolverConfig = SolverConfig()
+    """Parameters concerning the system solver."""
+
     obc: OBCConfig = OBCConfig()
+    """Parameters concerning the open boundary conditions."""
+
     lyapunov: LyapunovConfig = LyapunovConfig()
+    """Parameters concerning the Lyapunov solver."""
 
     model: Literal["pseudo-scattering", "negf"] = "pseudo-scattering"
+    r"""Which model to use for the electron-phonon interaction.
+
+    Currently, only a monochromatic `"pseudo-scattering"` model is
+    implemented.
+
+    In this model, the electron-phonon interaction is modeled as
+
+    $$
+    \Sigma^{\lessgtr}(E) = D^2 \left[ (N_{ph} + 1) G^{\lessgtr}(E - \hbar
+    \omega) + N_{ph} G^{\lessgtr}(E + \hbar \omega) \right],
+    $$
+
+    where $D$ is the `deformation_potential`, $\hbar \omega$ is the
+    `phonon_energy`, and $N_{ph}$ is the phonon occupation number given
+    by the Bose-Einstein distribution at the specified `temperature`.
+
+    """
+
     phonon_energy: NonNegativeFloat | None = None
+    """The energy of the phonon mode in eV."""
+
     deformation_potential: NonNegativeFloat | None = None
+    """The deformation potential of the phonon mode in eV."""
+
     temperature: PositiveFloat = 300.0  # K
+    """The temperature of the system in Kelvin."""
 
     @model_validator(mode="after")
     def check_phonon_energy_or_deformation_potential(self):
@@ -1038,39 +1490,113 @@ class PhononConfig(BaseModel):
 
 
 class OutputConfig(BaseModel):
-    """Options for the output."""
+    """Options for the output of `quatrex` calculations.
+
+    !!! warning
+        The output options are not yet fully implemented and may be
+        subject to change in the future. They are currently not used in
+        QTBM calculations.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     # Only the spectral currents are saved by default.
     device_currents: bool = True
+    """Whether to save the device currents.
+
+    This will output both the spectral device current between transport
+    cells computed from the lesser Green's function and, if configured,
+    the Meir-Wingreen device current.
+
+    """
 
     potential: bool = False
+    """Whether to save the potential.
+
+    !!! warning
+        This option is unused.
+
+    """
 
     electron_ldos: bool = False
+    """Whether to save the spectral electron local density of states
+    (LDOS).
+
+    This will output an energy and orbital resolved LDOS computed from
+    the retarded Green's function.
+
+    """
+
     electron_density: bool = False
+    """Whether to save the electron density.
+
+    This will output the energy-resolved electron density computed from
+    the lesser Green's function.
+
+    """
     hole_density: bool = False
+    """Whether to save the hole density.
+
+    This will output the energy-resolved hole density computed from the
+    greater Green's function.
+
+    """
 
     polarization_density: bool = False
+    """Whether to save the polarization density.
+
+    This will output the energy-resolved polarization densities computed
+    from the lesser and greater polarizations.
+
+    !!! note
+        This is primarily a debugging option.
+
+    """
+
     coulomb_screening_density: bool = False
+    """Whether to save the Coulomb screening density.
+
+    This will output the energy-resolved Coulomb screening densities
+    computed from the lesser and greater screened Coulomb interactions.
+
+    !!! note
+        This is primarily a debugging option.
+
+    """
 
     self_energy_density: bool = False
+    """Whether to save the self-energy density.
+
+    This will output the energy-resolved self-energy densities computed
+    from the lesser, greater, and retarded self-energies.
+
+    """
 
     profiling_path: Path | None = None
-    """The files to print and save the timing results to.
+    """The file to save the timing results to.
 
-    For printing, the full name with extension is used while for saving
-    the extension give by `profiling_save_format` is used.
+    The timing results are saved in the format specified by
+    `profiling_save_format`.
 
-    If None, the file is tried to be infered from the SLURM output file,
-    else the default quatrex_times.out is used.
+    If `save_profiling_results` is `True`, and the `profiling_path` is
+    not set, the file name is inferred from the SLURM output file if
+    running in a SLURM context. Otherwise, the default name
+    `quatrex_times.out` is used.
+
     """
 
     save_profiling_results: bool = False
-    """If the timing stats should be saved."""
+    """Whether to save the timing results to a file."""
 
     profiling_save_format: Literal["pickle", "json"] = "json"
-    """The format to save the timing results in."""
+    """The format to save the timing results in.
+
+    The timing results are saved in either `pickle` or `json` format.
+    The default is `json`. `pickle`-serialized files will contain a
+    dictionary with the timing results.
+
+    """
 
     @model_validator(mode="after")
     def set_profiling_parameters(self) -> Self:
@@ -1102,9 +1628,28 @@ class OutputConfig(BaseModel):
 
 
 class DeviceConfig(BaseModel):
+    """Configuration for the simulated device.
+
+    !!! warning
+        The contacts configuration in this table is only used in QTBM
+        calculations, since we allow more than two contacts in QTBM.
+
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     construct_from_unit_cell: bool = False
+    """Whether to construct a device from its unit cell geometry and
+    electronic structure.
+
+    If this is set to `True`, the Hamiltonian read from the input file
+    is assumed to be the tight-binding-like Hamiltonian of a single unit
+    cell. The simulated device structure is then constructed by
+    repeating the unit cell along the transport direction, as specified
+    by `num_transport_cells`, and including the neighboring cells as
+    configured by `neighbor_cell_cutoff`.
+
+    """
 
     geometry: GeometryConfig
     """The geometry configuration of the device.
@@ -1118,16 +1663,18 @@ class DeviceConfig(BaseModel):
     neighbor_cell_cutoff: (
         tuple[NonNegativeInt, NonNegativeInt, NonNegativeInt] | None
     ) = None
-    """The number of neighbor cells to consider along each lattice direction.
+    """The number of neighbor cells to consider along each lattice
+    direction.
 
-    If set to `None`, all neighbor cells are considered. A
-    `neighbor_cell_cutoff` of zero means that only the unit cell itself
-    is considered.
+    If set to `None`, all neighbor cells present in the Hamiltonian
+    input file are considered. A `neighbor_cell_cutoff` of zero means
+    that only the unit cell itself is considered.
 
     Along the transport direction, at least one neighboring cell must be
     included if `construct_from_unit_cell` is `True`. If
-    `construct_from_unit_cell` is `False`, no neighboring cells should be
-    included along the transport direction.
+    `construct_from_unit_cell` is `False`, including neighboring cells
+    in transport direction is not allowed, since the device should
+    already be upscaled in that case.
 
     If more neighbor cells are requested than present in the input
     Hamiltonian, a `ValueError` is raised.
@@ -1145,29 +1692,72 @@ class DeviceConfig(BaseModel):
     """
 
     transport_direction: Literal["x", "y", "z"]
+    """The direction along which the transport occurs.
+
+    !!! note
+        Currently, only axis-aligned transport directions are supported.
+
+    """
 
     block_size: PositiveInt | list[PositiveInt] | None = None
     """The block size to use for the device Hamiltonian.
+
+    This block size is used in NEGF calculations, where it determines
+    the block-tridiagonal tiling of all quantities.
 
     If a single integer is given, a constant block size is assumed.
     Alternatively, a list of block sizes can be given to specify the
     size of each block along transport direction.
 
-    This cannot be used in conjunction with
+    The `block_size` parameter cannot be used in conjunction with
     `construct_from_unit_cell=True` since the block sizes are determined
-    from the unit cell and the `neighbor_cell_cutoff`.
+    from the unit cell and the `neighbor_cell_cutoff` in that case.
 
-    On the other hand, if `construct_from_unit_cell=False`, the block
+    If `construct_from_unit_cell=False` in NEGF simulations, the block
     size must be given.
 
     """
 
     contacts: list[ContactConfig] = Field(default_factory=list)
+    """The contacts of the device.
+
+    !!! warning
+        The contacts configuration in this table is only used in QTBM
+        calculations, since we allow more than two contacts in QTBM.
+
+    """
 
     num_orbitals_per_atom: dict[str, int] = {"X": 1}
+    """The number of orbitals per atom type.
+
+    This mapping is used to connect the atomistic geometry with the
+    corresponding operator matrix elements.
+
+    Currently, this is primarily used when configuring contacts via
+    their real-space extents in QTBM calculations. It is also used to
+    map a given potential vector to the corresponding orbitals in the
+    Hamiltonian.
+
+    The keys can be any string, that matches the atom types in the
+    structure file. The default is a single atom type "X" with one
+    orbital per atom, which is useful when dealing with Wannier orbitals
+    that are not atom-centered.
+
+    """
 
     kpoint_grid: tuple[PositiveInt, PositiveInt, PositiveInt] = (1, 1, 1)
+    """The kpoint grid on which to compute transport quantities.
+
+    This is a Monkhorst-Pack grid, which is used to sample the Brillouin
+    zone transverse to the transport direction. The k-point grid is
+    specified as a tuple of three integers, which correspond to the
+    number of k-points along the x, y, and z directions, respectively.
+    The k-point grid must be 1 along the transport direction, since the
+    periodicity along that direction is broken.
+
+    """
     kpoint_shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    """The kpoint shift to apply to the Monkhorst-Pack grid."""
 
     @model_validator(mode="after")
     def to_tuple(self) -> Self:
@@ -1214,31 +1804,98 @@ class DeviceConfig(BaseModel):
 
 
 class LyapunovComputeConfig(BaseModel):
-    """Configuration concerning the Lyapunov solvers."""
+    """Configuration concerning the solution of the Lyapunov equation."""
 
     model_config = ConfigDict(extra="forbid")
 
     eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
+    """Backend to use for computing eigenvalues.
+
+    The spectral Lyapunov solver requires the computation of eigenvalues
+    of a general dense matrix. This parameter determines whether to use
+    NumPy, CuPy, or NVMath for this computation. The default is NumPy.
+
+    """
+
     use_pinned_memory: bool = True
+    """Whether to use pinned memory when transferring data in the
+    spectral Lyapunov solver."""
 
 
 class NEVPConfig(BaseModel):
-    """All configurations concerning the solution of NEVPs."""
+    """Configurations concerning the solution of NEVPs."""
 
     model_config = ConfigDict(extra="forbid")
 
     eig_compute_location: Literal["numpy", "cupy", "nvmath"] = "numpy"
+    """Backend to use for computing eigenvalues.
+
+    This parameter determines whether to use NumPy, CuPy, or NVMath for
+    computing eigenvalues in the NEVP solvers. The default is NumPy.
+
+    """
 
     # Parameters for contour NEVP solvers.
     project_compute_location: Literal["numpy", "cupy"] = "numpy"
+    """Backend to use for computing the projection matrices.
+
+    When using contour-based NEVP solvers, one needs to project the
+    non-linear system onto a linear subspace. This can either be done
+    using QR decomposition or by computing a singular value
+    decomposition (SVD), which is controlled by the `use_qr` parameter.
+
+    The `project_compute_location` parameter determines whether to use
+    NumPy or CuPy for this computation. The default is NumPy.
+
+    """
+
     use_pinned_memory: bool = True
+    """Whether to use pinned memory when transferring data in the NEVP
+    solvers."""
 
     use_qr: bool = False
+    """Whether to use QR decomposition or SVD for the projection.
+
+    When using contour-based NEVP solvers, one needs to project the
+    non-linear system onto a linear subspace. This can either be done
+    using QR decomposition or by computing a singular value
+    decomposition (SVD). The `use_qr` parameter determines which method
+    to use. The default is to use SVD, but QR decomposition can be
+    significantly faster than SVD.
+
+    """
+
     contour_batch_size: PositiveInt | None = None
+    """The batch size to use for the contour NEVP solvers.
+
+    The contour NEVP solvers require performing quadrature of an
+    operator over a contour in the complex plane. Since this can lead to
+    memory bottlenecks, the quadrature can be performed in batches. The
+    `contour_batch_size` parameter determines the number of quadrature
+    points to use in each batch. If set to `None`, the entire quadrature
+    is performed in a single batch.
+
+    """
+
     num_threads_contour: PositiveInt = 1024
+    """The number of GPU threads to use for computing the operator
+    inverses in the contour NEVP solvers.
+
+    Only used if the GPU is available and the contour NEVP solvers are
+    used.
+
+    """
 
     # Parameters for full NEVP solvers.
     reduce_sparsity: bool = False
+    """Whether to reduce the sparsity of the matrices in the full NEVP
+    solver.
+
+    The matrices arising in the full NEVP solver can contain some zero
+    rows and columns, which can be removed to reduce the size of the
+    eigenvalue problem.
+
+    """
 
 
 class BandEdgeConfig(BaseModel):
@@ -1247,26 +1904,48 @@ class BandEdgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_eigvalsh: bool = True
-    """Whether to use eigvalsh or eig to compute the eigenvalues to
-    determine the band edges. The eigvalsh function is more efficient,
-    but is an approximation if scattering is included.
+    r"""Whether to use eigvalsh when computing the band edges.
 
-    Only used if the band edge tracking is set to "eigenvalues".
+    The non-linear eigenvalue problem
+    
+    $$
+    \left[\mathbf{H} + \mathbf{\Sigma}^R(E)\right] \boldsymbol{\psi} = E
+    \boldsymbol{\psi},
+    $$
+
+    which needs to be solved to compute the band edges is in principle a
+    general eigenvalue problem. However, since we only care about real
+    eigenvalues and the energy renormalization due to the Hermitian part
+    of $\Sigma^R$, we can just solve the Hermitian part of the problem
+    using `eigvalsh`. This is significantly faster than solving the full
+    non-linear eigenvalue problem, but it is an approximation if
+    scattering is included.
+
+    Only relevant if `band_edge_tracking = True`.
+
     """
 
     eigvalsh_compute_location: Literal["numpy", "cupy"] = "numpy"
     """Location where to compute the eigenvalues.
 
-    Only used if the band edge tracking is set to "eigenvalues".
+    The eigenvalues can be computed either on the CPU using NumPy or on
+    the GPU using CuPy. The default is to use NumPy.
+
+    Only relevant if `band_edge_tracking = True`.
+
     """
 
     use_pinned_memory: bool = True
-    """Whether to use pinned memory for eigenvalue computations.
+    """Whether to use pinned memory when transferring data in the
+    band-edge tracking computation.
 
-    Only used if the band edge tracking is set to "eigenvalues".
+    Only relevant if `band_edge_tracking = True`.
+
     """
 
     block_sections: PositiveInt = 1
+    """The number of block sections to use when computing the band
+    edges."""
 
     @field_validator("use_eigvalsh", mode="after")
     @classmethod
@@ -1296,53 +1975,129 @@ class BandEdgeConfig(BaseModel):
 
 
 class ConvolveConfig(BaseModel):
-    """All configurations concerning the fft convolution."""
+    """Parameters concerning the FFT convolution."""
 
     model_config = ConfigDict(extra="forbid")
 
     # NOTE: should be calculate from the number of energy points, ranks,
     # and nnz.
     batch_size: PositiveInt | None = None
+    """The batch size to use for the FFT convolution.
+    
+    Since the performing FFT can lead to memory bottlenecks, the
+    convolution can be performed in batches. The `batch_size` parameter
+    determines the number of matrix elements to compute in each batch.
+    If set to `None`, the entire convolution is performed in a single
+    batch.
+
+    """
 
 
 class CommConfig(BaseModel):
-    """All configurations concerning the communication."""
+    """Parameters concerning the communication backends.
+
+    The communication backend in `quatrex` has two subcommicator groups:
+    One between energy points and one between matrix blocks.
+
+    For both `block` and `stack` subcommunicators, the following
+    communication operations can be performed:
+
+    - `all_to_all`
+    - `all_gather`
+    - `all_reduce`
+    - `bcast`
+    - `send_recv`
+
+    The communication backend can be set to either `"host_mpi"`,
+    `"device_mpi"`, or `"nccl"` for each of these operations.
+
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     block_comm_size: PositiveInt = 1
+    """The number of ranks over which to disctribute matrix blocks.
+    
+    SCBA supports spatial domain distribution. The matrix blocks can be
+    distributed over multiple ranks, which can be useful for extremely
+    large systems. The `block_comm_size` parameter determines the number
+    of ranks over which to distribute the matrix blocks.
+
+    If set to 1 (the default), the matrix blocks are not distributed
+    over multiple ranks.
+
+    """
 
     block_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block all-to-all."""
     block_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block all-gather."""
     block_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block all-reduce."""
     block_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block broadcast."""
     block_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for block send-receive."""
 
     stack_all_to_all: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-to-all."""
     stack_all_gather: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-gather."""
     stack_all_reduce: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack all-reduce."""
     stack_bcast: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack broadcast."""
     stack_send_recv: Literal["host_mpi", "device_mpi", "nccl"] | None = None
+    """Communication backend to use for stack send-receive."""
 
 
 class ComputeConfig(BaseModel):
-    """All configurations concerning computational details."""
+    """Top level configuration for all performance and compute options."""
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     dsdbsparse_type: DSDBSparse = DSDBCOO
+    """The type of sparse matrix to use for the DSDBSparse matrices.
+
+    !!! warning
+        Currently, only `DSDBCOO` is supported. A CSR type had been
+        implemented, but it is no longer fully supported.
+
+    """
     numba_threading_layer: Literal["workqueue", "omp", "tbb"] = "workqueue"
+    """The threading layer to use for Numba.
+    
+    We recommend using the default `"workqueue"` threading layer in
+    numba, as we have had issues with correctly limiting the number of
+    threads when using the `"omp"` threading layer.
+
+    """
+
     threadpool_api: Literal["blas", "openmp", "tbb"] | None = None
+    """
+    !!! warning
+        The `threadpool_api` parameter is currently not used.
+
+    """
+
     numba_num_threads: PositiveInt | None = None
+    """The number of threads to use for Numba."""
+
     blas_num_threads: PositiveInt | Literal["sequential_blas_under_openmp"] | None = (
         None
     )
+    """The number of threads to use for BLAS."""
 
     convolve: ConvolveConfig = ConvolveConfig()
+    """Parameters concerning the FFT convolution in scattering interactions."""
     nevp: NEVPConfig = NEVPConfig()
+    """Parameters concerning the solution of non-linear eigenvalue problems."""
     lyapunov: LyapunovComputeConfig = LyapunovComputeConfig()
+    """Parameters concerning the solution of Lyapunov equations."""
     band_edge: BandEdgeConfig = BandEdgeConfig()
+    """Parameters concerning the eigenvalue-based band-edge tracking."""
     comm: CommConfig = CommConfig()
+    """Parameters concerning the communication backends."""
 
     @field_validator("dsdbsparse_type", mode="before")
     @classmethod
@@ -1360,42 +2115,60 @@ class QuatrexConfig(BaseModel):
 
     # --- Simulation parameters ---------------------------------------
     device: DeviceConfig
+    """The device configuration."""
+
     formalism: Literal["wf", "negf"]
     """The transport formalism to use.
 
     There are two supported formalisms:
 
-    - "wf": Wavefunction formalism
-    - "negf": Non-equilibrium Green's function formalism
+    - `"wf"`: Wavefunction formalism
+    - `"negf"`: Non-equilibrium Green's function formalism
 
-    !!! warning "Input formats"
+    !!! warning "Inconsistent input formats"
 
         Currently, the input formats for the two formalisms are not
         consistent.
 
     """
     scsp: SCSPConfig | None = None
+    """Parameters for the self-consistent Schrödinger-Poisson loop."""
+
     scba: SCBAConfig = SCBAConfig()
+    """Parameters for the self-consistent Born approximation loop."""
+
     qtbm: QTBMConfig = QTBMConfig()
+    """Parameters for the quantum transmitting boundary method."""
+
     electrostatics: ElectrostaticsConfig = ElectrostaticsConfig()
+    """Parameters for the electrostatics calculations."""
 
     electron: ElectronConfig
+    """Parameters for the electronic system."""
 
     phonon: PhononConfig | None = None
+    """Parameters for the phonon system."""
     coulomb_screening: CoulombScreeningConfig | None = None
+    """Parameters for the Coulomb screening."""
     photon: PhotonConfig | None = None
+    """Parameters for the photon system."""
 
     # --- Directory paths ----------------------------------------------
     config_dir: Path
     simulation_dir: Path = Path("./quatrex/")
+    """The directory where the simulation is run."""
     input_dir: Path | None = None
+    """The directory where the input files are located."""
     output_dir: Path | None = None
+    """The directory where the output files are saved."""
 
     # --- Output options -----------------------------------------------
     outputs: OutputConfig = OutputConfig()
+    """Parameters for the output of `quatrex` calculations."""
 
     # --- Compute options ----------------------------------------------
     compute: ComputeConfig = ComputeConfig()
+    """Parameters for the performance and compute options."""
 
     @model_validator(mode="after")
     def resolve_config_path(self) -> Self:

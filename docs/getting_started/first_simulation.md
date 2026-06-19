@@ -1,3 +1,5 @@
+# Setting up and running a first simulation
+
 After [installing](installation.md) the package, you can run a simple
 simulation using a provided example setups.
 

@@ -1,18 +1,4 @@
-The `quatrex` package is an *ab initio* quantum transport simulator
-written in Python. We leverages Python's core CPU and GPU array
-frameworks ([`numpy`](https://numpy.org/) and
-[`cupy`](https://cupy.dev/)) as well as associated frameworks and
-libraries ([`scipy`](https://scipy.org/),
-[`mpi4py`](https://mpi4py.readthedocs.io/en/stable/),
-[`numba`](https://numba.pydata.org/)). The `quatrex` codebase is
-designed to be extensible, portable, and highly performant. It shows
-excellent scaling and sustained exascale performance on different
-supercomputers.[^1]
-
-[^1]: N. Vetsch, et al., *Ab-initio Quantum Transport with the GW
-    Approximation, 42,240 Atoms, and Sustained Exascale Performance*,
-    [arXiv:2508.19138](https://doi.org/10.48550/arXiv.2508.19138)
-    (2025).
+# Installation
 
 Here we provide instructions for setting up a basic environment for
 running quantum transport simulations with `quatrex`.

@@ -847,7 +847,7 @@ class DSDBCOO(DSDBSparse):
             )
 
     @classmethod
-    def zeros_like(cls, dsdbsparse: "DSDBCOO") -> "DSDBCOO":
+    def zeros_like(cls, dsdbcoo: "DSDBCOO") -> "DSDBCOO":
         """Creates a new DSDBCOO matrix with the same shape and dtype.
 
         All non-zero elements are set to zero, but the sparsity pattern
@@ -856,7 +856,7 @@ class DSDBCOO(DSDBSparse):
         Parameters
         ----------
         dsdbcoo : DSDBCOO
-            The matrix to copy the shape and dtype from.
+            The DSDBCOO matrix to copy the shape and dtype from.
 
         Returns
         -------
@@ -866,18 +866,18 @@ class DSDBCOO(DSDBSparse):
         """
         # deepcopy can lead to issues with cupy
         # segfaults in the tests observed
-        if dsdbsparse._data is None:
+        if dsdbcoo._data is None:
             raise ValueError("Cannot create zeros_like from deallocated DSDBSparse.")
 
         out = cls(
-            data=dsdbsparse.data,
-            rows=dsdbsparse.rows,
-            cols=dsdbsparse.cols,
-            block_sizes=dsdbsparse.block_sizes,
-            global_stack_shape=dsdbsparse.global_stack_shape,
-            return_dense=dsdbsparse.return_dense,
-            symmetry=dsdbsparse.symmetry,
-            symmetry_op=dsdbsparse.symmetry_op,
+            data=dsdbcoo.data,
+            rows=dsdbcoo.rows,
+            cols=dsdbcoo.cols,
+            block_sizes=dsdbcoo.block_sizes,
+            global_stack_shape=dsdbcoo.global_stack_shape,
+            return_dense=dsdbcoo.return_dense,
+            symmetry=dsdbcoo.symmetry,
+            symmetry_op=dsdbcoo.symmetry_op,
         )
         out._data[:] = 0
         return out

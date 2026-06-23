@@ -88,17 +88,9 @@ RUN python3 -m venv /opt/venv \
     && python3 -m pip install --no-binary=mpi4py mpi4py \
     && python3 -m pip install cupy \
     && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
-    && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist
-
-
-# Install cuDSS / nvmath-python.
-RUN wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && dpkg -i cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && cp /var/cudss-local-repo-ubuntu2404-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/ \
-    && apt-get update \
-    && apt-get -y install cudss \
-    && rm cudss-local-repo-ubuntu2404-0.7.1_0.7.1-1_arm64.deb \
-    && python3 -m pip install nvmath-python
+    && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist \
+    && python3 -m pip install nvmath-python \
+    && python3 -m pip install nvidia-cudss-cu12==0.7.1.6
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available

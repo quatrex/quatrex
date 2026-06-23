@@ -4,7 +4,7 @@ input_dir = "../inputs"
 formalism = "wf"
 
 [qtbm]
-max_batch_size = 1
+max_batch_size = 2
 [device]
 transport_direction = 'x'
 num_orbitals_per_atom = {"Si"=4}
@@ -27,7 +27,6 @@ kpoint_shift = [0,0.1,0.1]
 
 
 [electron]
-    solver.direct_solver = "superlu"
     conduction_band_edge = -2.4
     valence_band_edge = -2.5
 

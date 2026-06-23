@@ -1,24 +1,14 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
-import importlib.util
-
-import numpy as np
 import pytest
 
 from qttools import NDArray, sparse, xp
-from qttools.wave_function_solver import MUMPS, SuperLU, cuDSS
 
-mumps_available = importlib.util.find_spec("mumps") is not None
-nvmath_available = importlib.util.find_spec("nvmath") is not None
+from .conftest import WFSolverSpec
 
 
-def _assemble_system(
-    n: int,
-    m: int,
-    format: str,
-    order="C",
-) -> tuple[sparse.csc_matrix, NDArray]:
-    """Assembles a random sparse system of equations.
+def _assemble_banded_matrix(n: int, m: int, format: str) -> sparse.spmatrix:
+    """Assembles a random diagonally dominant banded matrix.
 
     Parameters
     ----------
@@ -27,121 +17,229 @@ def _assemble_system(
     m : int
         Number of columns in the right-hand side matrix.
     format : str
+        The format of the sparse matrix (e.g., 'csr', 'csc', 'coo').
+
+    Returns
+    -------
+    a : sparse.spmatrix
+        The generated sparse banded system matrix in the specified
+        format.
+
+    """
+    # NOTE: Important that the number of diagonals is not too small,
+    # otherwise the absence of pivoting in the Thomas algorithm will
+    # lead to large errors.
+    num_diags = max(n // 2, 1)
+    offsets = xp.arange(-num_diags // 2, num_diags // 2)
+
+    a = sparse.diags(
+        # This roughly mimics the decay of off-diagonal elements in a
+        # Hamiltonian matrix.
+        xp.exp(-5 * xp.abs(offsets)),
+        offsets=offsets,
+        shape=(n, n),
+        format=format,
+    )
+    a.data = a.data * (
+        xp.random.rand(*a.data.shape) + 1j * xp.random.rand(*a.data.shape)
+    )
+
+    # Make the matrix strongly diagonally dominant.
+    a.setdiag(xp.abs(a.diagonal() * 10))
+
+    return a
+
+
+def _assemble_system(
+    n: int,
+    m: int,
+    sparse_format: str,
+    order="C",
+    use_banded=False,
+) -> tuple[sparse.spmatrix, NDArray]:
+    """Assembles a random sparse system of equations.
+
+    Parameters
+    ----------
+    n : int
+        Number of rows/columns in the square matrix.
+    m : int
+        Number of columns in the right-hand side matrix.
+    sparse_format : str
         The format of the sparse matrix (e.g., 'csc', 'csr', 'coo').
     order : str, optional
         The memory order of the right-hand side matrix, 'C' for row-major or '
         'F' for column-major. Default is 'C'.
+    use_banded : bool, optional Whether to assemble a banded matrix
+        instead of a general sparse matrix. Default is False. If True,
+        the matrix will have a bandwidth of approximately n//2, which is
+        suitable for testing the Thomas solver. If False, a general
+        sparse matrix with random sparsity pattern will be generated,
+        which is better for testing the other solvers.
 
     Returns
     -------
-    a : sparse.csc_matrix
+    a : sparse.spmatrix
         The generated sparse system matrix in the specified format.
     b : NDArray
         The right-hand side matrix with shape (n, m).
 
     """
-    a = sparse.random(n, n, density=0.1, format=format, dtype=float)
-    a += 1j * sparse.random(n, n, density=0.1, format=format, dtype=float)
-    a += sparse.diags([2.0] * n, format=format, dtype=float)
-    b = xp.ones((n, m), dtype=xp.complex128, order=order)
+    if use_banded:
+        a = _assemble_banded_matrix(n, m, sparse_format)
+    else:
+        a = sparse.random(n, n, density=0.1, format=sparse_format, dtype=float)
+        a += 1j * sparse.random(n, n, density=0.1, format=sparse_format, dtype=float)
+        a += sparse.diags([2.0] * n, format=sparse_format, dtype=float)
+
+    b = xp.random.rand(n, m) + 1j * xp.random.rand(n, m)
+    b = xp.asarray(b, order=order)
     return a, b
 
 
-class TestLU:
-    """Tests for the LU wave function solver."""
+def test_solve(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver."""
+    a, b = _assemble_system(
+        n,
+        m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
+    solver = solver_spec.solver_type()
 
-    def test_solve(self, n: int, m: int):
-        """Tests the wave function solver."""
-        a, b = _assemble_system(n, m, format="csc")
-        solver = SuperLU()
+    x = solver.solve(a, b, **solver_spec.solve_kwargs)
 
-        x = solver.solve(a, b)
-
-        assert x.shape == (n, m)
-        assert xp.allclose(a @ x, b, atol=1e-6)
-
-
-@pytest.mark.skipif(not mumps_available, reason="Requires python-mumps package")
-@pytest.mark.skipif(xp.__name__ != "numpy", reason="Requires numpy backend")
-class TestMUMPS:
-    def test_solve(self, n: int, m: int):
-        """Tests the wave function solver."""
-        a, b = _assemble_system(n, m, format="coo")
-
-        solver = MUMPS(reuse_analysis=False)
-        x = solver.solve(a, b)
-
-        assert x.shape == (n, m)
-        assert np.allclose(a @ x, b, atol=1e-6)
-
-    def test_reuse_analysis(self, n: int, m: int):
-        """Tests the wave function solver with reuse of analysis."""
-        a, b = _assemble_system(n, m, format="coo")
-
-        solver = MUMPS(reuse_analysis=True)
-        x1 = solver.solve(a, b)
-        assert np.allclose(a @ x1, b, atol=1e-6)
-
-        # Reuse the analysis phase.
-        a.data[:] *= 10  # Modify the matrix to change the solution.
-
-        __, b = _assemble_system(n, 2 * m, format="coo")
-
-        x2 = solver.solve(a, b)
-        assert np.allclose(a @ x2, b, atol=1e-6)
-
-    def test_explicit_ordering(self, n: int, m: int):
-        """Tests the wave function solver with explicit ordering."""
-        a, b = _assemble_system(n, m, format="coo")
-
-        solver = MUMPS(ordering="scotch")
-        x = solver.solve(a, b)
-
-        assert x.shape == (n, m)
-        assert np.allclose(a @ x, b, atol=1e-6)
+    assert x.shape == (n, m)
+    assert xp.allclose(a @ x, b, atol=1e-6)
 
 
-@pytest.mark.skipif(not nvmath_available, reason="Requires nvmath-python package")
-@pytest.mark.skipif(xp.__name__ != "cupy", reason="Requires cupy backend")
-class TestcuDSS:
+def test_reuse_analysis(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver with reuse of analysis."""
+    if not solver_spec.supports_reuse_analysis:
+        pytest.skip(
+            f"{solver_spec.solver_type.__name__} does not support reuse of analysis."
+        )
 
-    def test_solve(self, n: int, m: int):
-        """Tests the wave function solver."""
-        a, b = _assemble_system(n, m, format="csr", order="F")
+    a, b = _assemble_system(
+        n,
+        m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
+    solver = solver_spec.solver_type()
 
-        solver = cuDSS()
-        x = solver.solve(a, b)
+    x1 = solver.solve(a, b, **solver_spec.solve_kwargs)
+    assert xp.allclose(a @ x1, b, atol=1e-6)
 
-        assert x.shape == (n, m)
-        assert xp.allclose(a @ x, b, atol=1e-6)
+    # Reuse the analysis phase.
+    a.data[:] *= 10  # Modify the matrix to change the solution.
 
-    def test_explicit_reset_operands(self, n: int, m: int):
-        """Tests the wave function solver with explicit reset of operands."""
-        a, b = _assemble_system(n, m, format="csr", order="F")
+    __, b = _assemble_system(
+        n,
+        2 * m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
 
-        solver = cuDSS(explicitely_reset_operands="a,b")
-        x1 = solver.solve(a, b)
-        assert xp.allclose(a @ x1, b, atol=1e-6)
+    x2 = solver.solve(a, b, reuse_analysis=True, **solver_spec.solve_kwargs)
+    assert xp.allclose(a @ x2, b, atol=1e-6)
 
-        # Modify the matrix to change the solution.
-        a.data[:] *= 10
 
-        __, b = _assemble_system(n, 2 * m, format="csr", order="F")
-        x2 = solver.solve(a, b)
-        assert xp.allclose(a @ x2, b, atol=1e-6)
+def test_reuse_factorization(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver with reuse of factorization."""
+    if not solver_spec.supports_reuse_factorization:
+        pytest.skip(
+            f"{solver_spec.solver_type.__name__} does not support reuse of factorization."
+        )
 
-    def test_implicit_reset_operands(self, n: int, m: int):
-        """Tests the wave function solver without explicit reset of operands."""
-        a, b = _assemble_system(n, m, format="csr", order="F")
+    a, b = _assemble_system(
+        n,
+        m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
+    solver = solver_spec.solver_type()
 
-        solver = cuDSS(explicitely_reset_operands="b")
-        x1 = solver.solve(a, b)
-        assert xp.allclose(a @ x1, b, atol=1e-6)
+    x1 = solver.solve(a, b, **solver_spec.solve_kwargs)
+    assert xp.allclose(a @ x1, b, atol=1e-6)
 
-        # Modify the matrix to change the solution.
-        a.data[:] *= 10
+    __, b = _assemble_system(
+        n,
+        2 * m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
 
-        __, b = _assemble_system(n, 2 * m, format="csr", order="F")
-        # The solver should still work without explicit reset.
-        x2 = solver.solve(a, b)
-        assert xp.allclose(a @ x2, b, atol=1e-6)
+    x2 = solver.solve(
+        a,
+        b,
+        reuse_analysis=solver_spec.supports_reuse_analysis,
+        reuse_factorization=True,
+        **solver_spec.solve_kwargs,
+    )
+    assert xp.allclose(a @ x2, b, atol=1e-6)
+
+
+def test_real_symmetric_system(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver on a real symmetric system."""
+    if not solver_spec.supports_symmetric:
+        pytest.skip(
+            f"{solver_spec.solver_type.__name__} does not support symmetric systems."
+        )
+
+    a, b = _assemble_system(
+        n,
+        m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
+
+    # Drop the imaginary part and symmetrize the system matrix.
+    a = a.astype(xp.float64)
+    a = a + a.T
+    b = b.astype(xp.float64, order=solver_spec.order)
+
+    solver = solver_spec.solver_type(
+        matrix_type="real_symmetric_indefinite", matrix_view="upper"
+    )
+    x = solver.solve(
+        sparse.triu(a, format=solver_spec.sparse_format), b, **solver_spec.solve_kwargs
+    )
+
+    assert x.shape == (n, m)
+    assert xp.allclose(a @ x, b, atol=1e-6)
+
+
+def test_complex_hermitian_system(n: int, m: int, solver_spec: WFSolverSpec):
+    """Tests the wave function solver on a complex Hermitian system."""
+    if not solver_spec.supports_hermitian:
+        pytest.skip(
+            f"{solver_spec.solver_type.__name__} does not support Hermitian systems."
+        )
+
+    a, b = _assemble_system(
+        n,
+        m,
+        sparse_format=solver_spec.sparse_format,
+        order=solver_spec.order,
+        use_banded=solver_spec.use_banded,
+    )
+
+    # Make the system matrix Hermitian.
+    a = a.conj().T + a
+
+    solver = solver_spec.solver_type(
+        matrix_type="complex_hermitian_indefinite", matrix_view="upper"
+    )
+    x = solver.solve(
+        sparse.triu(a, format=solver_spec.sparse_format), b, **solver_spec.solve_kwargs
+    )
+
+    assert x.shape == (n, m)
+    assert xp.allclose(a @ x, b, atol=1e-6)

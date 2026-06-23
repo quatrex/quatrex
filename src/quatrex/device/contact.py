@@ -2,14 +2,87 @@
 
 import itertools
 from collections import defaultdict
+from dataclasses import dataclass
 
 import numpy as np
-from mpi4py.MPI import COMM_WORLD as comm
 
 from qttools import NDArray, sparse, xp
 from qttools.boundary_conditions import obc
+from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
+from qttools.profiling import Profiler
 from quatrex.core.config import NEVPConfig, OBCConfig
+
+profiler = Profiler()
+
+
+@dataclass
+class OBCResult:
+    """Data class to hold the results of the contact's OBC calculation.
+
+    Attributes
+    ----------
+    injection : NDArray
+        The injection vectors for the contact at the given k-points and
+        energies.
+    b_injected : NDArray
+        The injection vectors before applying the contact coupling.
+    sigma_obc_k : dict
+        A dictionary containing the computed self-energy for each
+        transverse k-point, indexed by (ky, kz) tuples. Only returned if
+        `return_modes_only` is False.
+    bloch_k : dict
+        A dictionary containing the computed Bloch injection matrices
+        for each transverse k-point, indexed by (ky, kz) tuples. Only
+        returned if `return_modes_only` is False.
+    reflection : NDArray
+        The reflection vectors for the contact at the given k-points and
+        energies. Only returned if `return_modes_only` is True.
+    phi_reflected : NDArray
+        The reflected modes for the contact at the given k-points and
+        energies. Only returned if `return_modes_only` is True.
+    eig_reflected : NDArray
+        The reflected eigenvalues for the contact at the given k-points
+        and energies. Only returned if `return_modes_only` is True.
+    phi_inv_reflected : NDArray
+        The pseudoinverse of the reflected modes for the contact at the
+        given k-points and energies. Only returned if
+        `return_modes_only` is True.
+
+    """
+
+    # These two are always returned.
+    injection: NDArray
+    b_injected: NDArray
+
+    # These k-dependent quantities are returned when not using low-rank.
+    sigma_obc_k: dict[str, NDArray] | None = None
+    bloch_k: dict[str, NDArray] | None = None
+
+    # This is returned if we are in the context of low-rank OBCs.
+    reflection: NDArray | None = None
+    phi_reflected: NDArray | None = None
+    eig_reflected: NDArray | None = None
+    phi_inv_reflected: NDArray | None = None
+
+    def __getitem__(self, key: int) -> "OBCResult":
+        """Allows accessing a single energy index from the OBCResult."""
+        if not isinstance(key, int):
+            raise TypeError("OBCResult can only be indexed with an integer.")
+
+        # Go through all attributes and index them by the given key if
+        # they are not None.
+        kwargs = {}
+        for field in self.__dataclass_fields__:
+            value = getattr(self, field)
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                kwargs[field] = {k: v[key] for k, v in value.items()}
+            else:
+                kwargs[field] = value[key]
+
+        return OBCResult(**kwargs)
 
 
 def order_vector(
@@ -219,6 +292,8 @@ class Contact:
 
         # Initialize the hamiltonian and overlap matrices
         radius = self._init_hamiltonian_overlap_matrices()
+
+        self._hermitianize_unit_cell_matrices()
 
         if comm.rank == 0:
             print(
@@ -464,7 +539,6 @@ class Contact:
             residual_orbitals = self._init_orbitals_transverse(
                 transport_index, residual_orbitals
             )
-
             if self._residual_coupling(residual_orbitals) == 0:
                 return transport_index
 
@@ -476,7 +550,6 @@ class Contact:
                     f"Error in contact {self.name}: "
                     f"Could not find all orbitals in the contact unit cell. "
                 )
-
             residual_orbitals_old = residual_orbitals.copy()
 
     def _init_orbitals_transverse(
@@ -574,6 +647,25 @@ class Contact:
                     coordinates.append(np.array([y, z]))
 
         return coordinates
+
+    def _hermitianize_unit_cell_matrices(self):
+        """Ensures that the unit cell Hamiltonian and overlap matrices
+        are the Hermitian conjugate of the one with the opposite index.
+        """
+
+        for key in list(self.unit_cell_hamiltonian.keys()):
+            if key[0] == 0:
+
+                key_opp = (key[0], -key[1], -key[2])
+                self.unit_cell_hamiltonian[key_opp] = self.unit_cell_hamiltonian[
+                    key
+                ].T.conj()
+
+        for key in list(self.unit_cell_overlap.keys()):
+
+            if key[0] == 0:
+                key_opp = (key[0], -key[1], -key[2])
+                self.unit_cell_overlap[key_opp] = self.unit_cell_overlap[key].T.conj()
 
     def _init_hamiltonian_overlap_matrices(self) -> int:
         """Initializes the hamiltonian and overlap matrices.
@@ -712,33 +804,68 @@ class Contact:
 
         """
 
+        opposite_hopping_indices = (hopping_indices * -1).tolist()
         hopping_indices = hopping_indices.copy().tolist()
+
         hopping_indices.insert(self.direction, 0)
+        opposite_hopping_indices.insert(self.direction, 0)
+
         hopping_indices = tuple(hopping_indices)
+        opposite_hopping_indices = tuple(opposite_hopping_indices)
 
         hopping_matrix = quantity.get(hopping_indices)
         if hopping_matrix is None:
             return False
 
+        y, z = cell_coordinates
+
         # TODO: The hopping matrix sits on the GPU. It seems that there
         # is some strange fancy indexing bug that makes it necessary to
         # handle slicing on the CPU. (cupy-13.5.1)
+        # TODO: Change how to check where the data resides (GPU or CPU)
         hopping_matrix = (
             hopping_matrix.get() if hasattr(hopping_matrix, "get") else hopping_matrix
         )
-        unit = sparse.csr_matrix(
-            hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+
+        opposite_hopping_matrix = quantity.get(opposite_hopping_indices)
+
+        if opposite_hopping_matrix is None:
+            raise ValueError(
+                f"Error in contact {self.name}: \n"
+                f"Hopping matrix found at {hopping_indices} without corresponding opposite hopping at {opposite_hopping_indices}."
+            )
+
+        opposite_hopping_matrix = (
+            opposite_hopping_matrix.get()
+            if hasattr(opposite_hopping_matrix, "get")
+            else opposite_hopping_matrix
         )
+
+        # In reduced, the coupling is only given by the upper triangular part of the Hamiltonian.
+        # We need to add the lower part to get the full coupling.
+        unit = (
+            sparse.csr_matrix(
+                hopping_matrix[self.origin_orbital_indices, :][:, orbital_indices]
+            )
+            + sparse.csr_matrix(
+                opposite_hopping_matrix[orbital_indices, :][
+                    :, self.origin_orbital_indices
+                ]
+            ).T.conj()
+        )
+
+        if np.array_equal(self.origin_orbital_indices, orbital_indices):
+            unit -= sparse.diags(
+                hopping_matrix[self.origin_orbital_indices, :][
+                    :, orbital_indices
+                ].diagonal(),
+                format="csr",
+            )
 
         if unit.nnz == 0:
             return False
 
-        y, z = cell_coordinates
         output_dict[(transport_index, y, z)] = unit
-
-        # Force the hamiltonian to be hermitian
-        if transport_index == 0:
-            output_dict[(transport_index, -y, -z)] = unit.T.conj()
 
         return True
 
@@ -759,9 +886,14 @@ class Contact:
 
         """
 
-        return self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
-            :, residual_orbitals
-        ].nnz
+        return (
+            self.device.hamiltonians[0, 0, 0][self.origin_orbital_indices, :][
+                :, residual_orbitals
+            ].nnz
+            + self.device.hamiltonians[0, 0, 0][residual_orbitals, :][
+                :, self.origin_orbital_indices
+            ].nnz
+        )
 
     def _configure_obc(
         self, obc_config: OBCConfig, nevp_config: NEVPConfig
@@ -871,7 +1003,9 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
-    def get_coupling_matrix(self, M: sparse.spmatrix) -> NDArray:
+    def get_coupling_matrix(
+        self, M: sparse.spmatrix, transpose: bool = False
+    ) -> NDArray:
         """Extracts coupling matrix between device and contact.
 
         This method constructs the matrix that couples the device region
@@ -908,10 +1042,16 @@ class Contact:
 
         # Slice block column of the matrix
         # Thus, no conjugation and transpose is needed
-        layers = [
-            M[indices, :][:, indices_zero]
-            for indices in self.orbital_indices_per_layer[1:]
-        ]
+        if not transpose:
+            layers = [
+                M[indices, :][:, indices_zero]
+                for indices in self.orbital_indices_per_layer[1:]
+            ]
+        else:
+            layers = [
+                M[:, indices][indices_zero, :].T.conj()
+                for indices in self.orbital_indices_per_layer[1:]
+            ]
 
         # NOTE: Stacking sparse matrix is slow
         coupling_matrix = []
@@ -970,6 +1110,92 @@ class Contact:
 
         return contact_matrix
 
+    def _concatenate_eig(self, eig_k: dict, num_energies: int) -> NDArray:
+        """Concatenates eigenvectors for different k-points.
+
+        Parameters
+        ----------
+        eig_k : dict
+            A dictionary containing eigenvalues indexed by (k1, k2)
+            tuples.
+        num_energies : int
+            The number of energies for which to compute the total
+            eigenvectors.
+
+        Returns
+        -------
+        NDArray
+            The concatenated eigenvectors for all k-points.
+
+        """
+
+        eig = [
+            xp.concatenate([eig_k[key][i_E] for key in eig_k.keys()])
+            for i_E in range(num_energies)
+        ]
+
+        return eig
+
+    def _upscale_pseudo_inverse(self, pseudo_k: dict, num_energies: int) -> NDArray:
+        """Upscales injection vectors.
+
+        Parameters
+        ----------
+        pseudo_k : dict
+            A dictionary containing pseudo-inverse vectors indexed by
+            (k1, k2) tuples.
+        num_energies : int
+            The number of energies for which to compute the total
+            pseudo-inverse vectors.
+
+        Returns
+        -------
+        NDArray
+            The upscaled and concatenated pseudo-inverse vectors.
+
+        """
+        # Upscale the k-space modes Iterate over the wavevector keys
+        ny, nz = self.transverse_repetition_grid
+        norm = xp.sqrt(ny * nz)
+
+        modes_upscaled = defaultdict(list)
+        for key, value in pseudo_k.items():
+
+            assert (
+                len(value) == num_energies
+            ), "Mismatch in number of energies when upscaling pseudo-inverse vectors."
+
+            # Iterate over the energies in the batch
+            for i_E in range(num_energies):
+
+                # Upscale in 2nd direction first
+                I_2 = xp.concatenate(
+                    [
+                        pseudo_k[key][i_E] * xp.exp(-1j * (key[1] * j))
+                        for j in range(nz)
+                    ],
+                    axis=1,
+                )
+
+                # Upscale in 1st direction
+                I_1 = xp.concatenate(
+                    [I_2 * xp.exp(-1j * (key[0] * i)) for i in range(ny)], axis=1
+                )
+
+                modes_upscaled[key].append(I_1)
+
+        # Concatenate all the wavevector (transverse)
+        modes = [
+            xp.concatenate(
+                [value[i_E] for value in modes_upscaled.values()],
+                axis=0,
+            )
+            / norm
+            for i_E in range(num_energies)
+        ]
+
+        return modes
+
     def _upscale_injection_modes(self, modes_k: dict, num_energies: int) -> NDArray:
         """Upscales injection vectors.
 
@@ -1027,9 +1253,13 @@ class Contact:
 
         return modes
 
+    @profiler.profile("Contact: Compute Boundary", level="default")
     def compute_boundary(
-        self, k_outer: tuple[float, float, float], energies: NDArray
-    ) -> tuple:
+        self,
+        k_outer: tuple[float, float, float],
+        energies: NDArray,
+        return_modes_only: bool = False,
+    ) -> OBCResult:
         """Computes OBC for the contact at given k-points and energies.
 
         Parameters
@@ -1039,13 +1269,15 @@ class Contact:
         energies : NDArray
             Batch of energy values for which to compute the boundary
             conditions.
+        return_modes_only : bool, optional
+            Whether to return only the injection and surface modes
+            without computing the full self-energy and Bloch matrices.
 
         Returns
         -------
-        tuple
-            A tuple containing the computed self-energy, injection
-            vectors, transmission matrices, and
-            Bloch injection matrices.
+        ContactOBCResult
+            An object containing the computed OBC results, including
+            injection modes, self-energy, and Bloch modes as applicable.
 
         """
 
@@ -1071,10 +1303,16 @@ class Contact:
             for i, n_rep in enumerate(self.transverse_repetition_grid)
         ]
 
-        sigma_obc_k = {}
         injection_k = {}
-        phi_surface_k = {}
-        bloch_k = {}
+        b_injected_k = {}
+        if return_modes_only:
+            reflection_k = {}
+            phi_reflected_k = {}
+            eig_reflected_k = {}
+            phi_inv_reflected_k = {}
+        else:
+            sigma_obc_k = {}
+            bloch_k = {}
 
         for ky, kz in itertools.product(k_inner[0], k_inner[1]):
 
@@ -1089,23 +1327,57 @@ class Contact:
             # Construct the system matrices for the OBC solver
             A_tot = xp.split((energies[:, None, None] * S_dense - H_dense), 3, axis=2)
 
-            # Solve the OBC for the given ki and kj and store the
-            # results in dictionaries
-            x_ii, phi_surface = self.obc_solver(
-                A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
-            )
+            if return_modes_only:
+                _, b_injected, phi_reflected, eig_reflected, phi_inv_reflected = (
+                    self.obc_solver(
+                        A_tot[1],
+                        A_tot[2],
+                        A_tot[0],
+                        "",
+                        return_injected=True,
+                        return_modes_only=True,
+                    )
+                )
+                reflection_k[ky, kz] = [
+                    -A_tot[0][i] @ b for i, b in enumerate(phi_reflected)
+                ]
+                phi_reflected_k[ky, kz] = phi_reflected.copy()
+                eig_reflected_k[ky, kz] = eig_reflected.copy()
+                phi_inv_reflected_k[ky, kz] = phi_inv_reflected.copy()
+            else:
+                # Solve the OBC for the given ki and kj and store the
+                # results in dictionaries
+                x_ii, b_injected = self.obc_solver(
+                    A_tot[1], A_tot[2], A_tot[0], "", return_injected=True
+                )
+                sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
+                bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
 
-            sigma_obc_k[ky, kz] = A_tot[0] @ x_ii @ A_tot[2] / (ny * nz)
-
-            injection_k[ky, kz] = [
-                -A_tot[0][i] @ phi for i, phi in enumerate(phi_surface)
-            ]
-
-            phi_surface_k[ky, kz] = phi_surface
-            bloch_k[ky, kz] = -x_ii @ A_tot[2] / (ny * nz)
+            injection_k[ky, kz] = [-A_tot[0][i] @ b for i, b in enumerate(b_injected)]
+            b_injected_k[ky, kz] = b_injected
 
         # Upscale injection and Bloch injection matrices
         injection = self._upscale_injection_modes(injection_k, num_energies)
-        phi_surface = self._upscale_injection_modes(phi_surface_k, num_energies)
+        b_injected = self._upscale_injection_modes(b_injected_k, num_energies)
 
-        return injection, phi_surface, sigma_obc_k, bloch_k
+        obc_result = OBCResult(injection, b_injected)
+
+        if return_modes_only:
+            obc_result.reflection = self._upscale_injection_modes(
+                reflection_k, num_energies
+            )
+            obc_result.phi_reflected = self._upscale_injection_modes(
+                phi_reflected_k, num_energies
+            )
+            obc_result.eig_reflected = self._concatenate_eig(
+                eig_reflected_k, num_energies
+            )
+            obc_result.phi_inv_reflected = self._upscale_pseudo_inverse(
+                phi_inv_reflected_k, num_energies
+            )
+
+        else:
+            obc_result.sigma_obc_k = sigma_obc_k
+            obc_result.bloch_k = bloch_k
+
+        return obc_result

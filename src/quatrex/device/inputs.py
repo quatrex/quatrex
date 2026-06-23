@@ -257,7 +257,7 @@ def _expand_tight_binding_matrix(
         temp_list[transport_ind] = b * transport_cell_size
         block_inds.append(tuple(int(i) for i in temp_list))
 
-    if block_inds[-1] not in matrix_dict.keys():
+    if block_inds[-1] not in matrix_dict:
         warnings.warn(
             "Periodic shift is outside the available range. Interaction will be zero."
         )
@@ -344,7 +344,7 @@ def _sum_operator(
     """
 
     if phases is None:
-        phases = {coord: 1.0 for coord in matrix_dict.keys()}
+        phases = {coord: 1.0 for coord in matrix_dict}
 
     # NOTE: Sparse matrix addition is slow
     # but unavoidable due to memory constraints.
@@ -390,7 +390,7 @@ def _assemble_kpoint(
     if not matrix_dict:
         raise ValueError("No matrices found in matrix_dict.")
 
-    for cell in matrix_dict.keys():
+    for cell in matrix_dict:
         if len(cell) != num_dimensions:
             raise ValueError(
                 f"Cell {cell} has incorrect dimensionality. "
@@ -414,7 +414,7 @@ def _assemble_kpoint(
 
             phases = {
                 coord: xp.exp(2j * np.pi * (np.asarray(coord) @ kpoint))
-                for coord in matrix_dict.keys()
+                for coord in matrix_dict
             }
 
             out_matrix.stack[(...,) + stack_index] += _sum_operator(
@@ -457,7 +457,7 @@ def _create_matrix_from_unit_cells(
     out_matrix_dict = {}
 
     transport_ind = "xyz".index(config.device.transport_direction)
-    for coord in matrix_dict.keys():
+    for coord in matrix_dict:
 
         # Do not expand multiple time in
         # transport direction
@@ -480,6 +480,7 @@ def _create_matrix_from_unit_cells(
 def load_matrices(
     config: QuatrexConfig,
     matrix_name: str,
+    force_complex: bool = True,
 ):
     """Loads a Hermitian matrix from file
 
@@ -489,7 +490,9 @@ def load_matrices(
         The quatrex configuration.
     matrix_name : str
         The name of the matrix ('hamiltonian', 'overlap', etc.).
-
+    force_complex : bool
+        Whether to force the loaded matrices to be complex. If `True`,
+        the loaded matrices will be cast to `xp.complex128`.
 
     Returns
     -------
@@ -502,7 +505,7 @@ def load_matrices(
     # load the matrices
     matrix_dict = distributed_load(config.input_dir / f"{matrix_name}.h5")
 
-    if (0, 0, 0) not in matrix_dict.keys():
+    if (0, 0, 0) not in matrix_dict:
         raise ValueError(
             f"Expected to find a key [0,0,0] in the matrix file, but it was not found. "
             f"Available keys: {list(matrix_dict.keys())}"
@@ -528,12 +531,13 @@ def load_matrices(
         )
 
     # assert that more than the neighbor cell cutoff is available if the cutoff is requested
-    if config.device.neighbor_cell_cutoff is not None:
-        if any(max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)):
-            raise ValueError(
-                "Matrix contains fewer neighbor cells than requested."
-                f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
-            )
+    if config.device.neighbor_cell_cutoff is not None and any(
+        max_coords[i] < config.device.neighbor_cell_cutoff[i] for i in range(3)
+    ):
+        raise ValueError(
+            "Matrix contains fewer neighbor cells than requested."
+            f"({max_coords=}, {config.device.neighbor_cell_cutoff=})"
+        )
 
     # drop half the matrices
     # NOTE: this is done on the CPU
@@ -552,7 +556,7 @@ def load_matrices(
                 f"but expected shape is {matrix_shape}."
             )
         if not isinstance(matrix, matrix_type):
-            raise ValueError(
+            raise TypeError(
                 f"Matrix at coordinate {coord} has type {type(matrix)}, "
                 f"but expected type is {matrix_type}."
             )
@@ -571,13 +575,16 @@ def load_matrices(
     # transfer the matrix_dict to the GPU
     if isinstance(matrix_dict[(0, 0, 0)], np.ndarray):
         matrix_dict = {
-            coord: xp.asarray(matrix).astype(xp.complex128)
-            for coord, matrix in matrix_dict.items()
+            coord: xp.asarray(matrix) for coord, matrix in matrix_dict.items()
         }
     elif isinstance(matrix_dict[(0, 0, 0)], sps.spmatrix):
         matrix_dict = {
-            coord: sparse.csr_matrix(matrix).astype(xp.complex128)
-            for coord, matrix in matrix_dict.items()
+            coord: sparse.csr_matrix(matrix) for coord, matrix in matrix_dict.items()
+        }
+
+    if force_complex:
+        matrix_dict = {
+            coord: matrix.astype(xp.complex128) for coord, matrix in matrix_dict.items()
         }
 
     # expand potentially if the system is periodic

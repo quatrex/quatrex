@@ -50,8 +50,24 @@ class QTBMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # The maximum number of energies per batch.
     max_batch_size: PositiveInt = 10
+    """The maximum number of energies per OBC batch."""
+
+    low_rank_obc: bool = False
+    """Whether to use reduced rank for the boundary self-energies.
+    
+    If set to True, boundary self-energies are moved to the
+    right-hand-side of linear system, which greatly reduces fill-in
+    during factorization.
+
+    The system matrix becomes Hermitian or even real symmetric in
+    gamma-only simulations. Therefore, the low_rank_obc parameter can
+    only be used in combination with direct solvers that can exploit the
+    symmetry, i.e., `direct_solver="cudss"` on GPU,
+    `direct_solver="pardiso"` on CPU, and `direct_solver="thomas"` on
+    both CPU and GPU.
+
+    """
 
 
 class SCBAConfig(BaseModel):
@@ -178,7 +194,34 @@ class SolverConfig(BaseModel):
 
     """
 
-    direct_solver: Literal["superlu", "mumps", "cudss"] = "superlu"
+    direct_solver: Literal[
+        "superlu",
+        "mumps",
+        "cudss",
+        "pardiso",
+        "thomas",
+        "auto",
+    ] = "auto"
+    """The direct solver to use in `wf` simulations.
+
+    If set to `"auto"`, the solver is automatically chosen based on the
+    matrix type and the available direct solver libraries.
+
+    In runs with `low_rank_obc = true`, the system matrix will be
+    Hermitian or even real and symmetric in gamma-only simulations. In
+    those cases, libraries that can exploit the symmetry are preferred,
+    i.e., cuDSS on GPU and PARDISO on CPU.
+
+    On GPU, SuperLU is the only fallback option if cuDSS is not
+    available. On CPU, if PARDISO is not available, the fallback options
+    are MUMPS and then SuperLU.
+
+    The Thomas solver involves a straight-forward tiling of the system
+    matrix into blocks without reordering. It is therefore important
+    that the Hamiltonian is ordered in a way that results in a
+    block-tridiagonal structure.
+
+    """
 
     @model_validator(mode="after")
     def set_compute_current(self) -> Self:

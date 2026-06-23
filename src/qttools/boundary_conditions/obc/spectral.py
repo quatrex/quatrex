@@ -232,15 +232,6 @@ class Spectral(OBCSolver):
 
         """
 
-        batchsize = a_xx[0].shape[0]
-
-        if batchsize != 1 and find_injected:
-            # TODO: We keep this restriction, as we have not tested the
-            # injection vector calculation with batchsize > 1 yet.
-            raise ValueError(
-                "The injection vector can only be calculated with batchsize = 1"
-            )
-
         # Calculate the residual
         with warnings.catch_warnings(action="ignore", category=RuntimeWarning):
 
@@ -422,6 +413,63 @@ class Spectral(OBCSolver):
         # Calculate the surface Green's function.
         return linalg.inv(a_ii + a_ji @ x_ii_a_ij)
 
+    def _compute_pseudo_inverse(
+        self,
+        a_ii: NDArray,
+        a_ij: NDArray,
+        a_ji: NDArray,
+        ws: NDArray,
+        vs: NDArray,
+        mask: NDArray,
+    ) -> NDArray:
+        r"""Computes reflected modes and pseudo_inverses.
+
+        A symmetric pseudo inverse of $\phi$ is computed by
+        $$
+        \phi a_{ij}^H a_{ij} \phi)^-1 \phi^H a_{ij}^H a_{ij},
+        $$
+        where $\phi$ are the reflected modes. It preserves the sparsity
+        pattern of $a_{ij}$.
+
+        Parameters
+        ----------
+        a_ii : NDArray
+            The diagonal block of the periodic matrix.
+        a_ij : NDArray
+            The superdiagonal block of the periodic matrix.
+        a_ji : NDArray
+            The subdiagonal block of the periodic matrix.
+        ws : NDArray
+            The eigenvalues of the NEVP.
+        vs : NDArray
+            The right eigenvectors of the NEVP.
+        mask : NDArray
+            A boolean mask indicating which eigenvalues correspond to
+            reflected modes.
+
+        Returns
+        -------
+        phi_inv_reflected : NDArray
+            The pseudoinverse of the reflected modes.
+
+        """
+        phi_inv_reflected = []
+
+        for i in xp.ndindex(mask.shape[:-1]):
+            m = mask[i]
+            vr = vs[i][:, m]
+            # Moore-Penrose pseudoinverse.
+            a_ij_i = a_ij[i, :, :].squeeze()
+            v_inv = (
+                linalg.inv(vr.conj().T @ a_ij_i.conj().T @ a_ij_i @ vr)
+                @ vr.conj().T
+                @ a_ij_i.conj().T
+                @ a_ij_i
+            )
+            phi_inv_reflected.append(v_inv)
+
+        return phi_inv_reflected
+
     def __call__(
         self,
         a_ii: NDArray,
@@ -429,6 +477,7 @@ class Spectral(OBCSolver):
         a_ji: NDArray,
         contact: str,
         return_injected: bool = False,
+        return_modes_only: bool = False,
     ) -> NDArray | tuple[NDArray, NDArray, NDArray]:
         """Returns the surface Green's function.
 
@@ -443,16 +492,39 @@ class Spectral(OBCSolver):
         contact : str
             The contact to which the boundary blocks belong.
         return_injected: bool, optional
-            Whether to return the injection vector
+            Whether to return the injection vector. If True, the
+            function returns a tuple of the surface Green's function and
+            the injection vector. False by default.
+        return_modes_only: bool, optional
+            Whether to return the reflected modes without computing the
+            surface Green's function. If True, the function returns a
+            tuple of None, the injection vector, the reflected modes,
+            their eigenvalues, and their pseudoinverses. False by
+            default.
 
         Returns
         -------
         x_ii : NDArray
-            The system's surface Green's function.
-        phi_surface: NDArray
-            The surface phi. Returned only if return_injected is True.
+            The system's surface Green's function. If return_modes_only
+            is True, this is None.
+        b_injected: NDArray
+            The injected b. Returned only if return_injected is True.
+        phi_reflected: NDArray
+            The reflected modes. Returned only if return_modes_only is
+            True.
+        eig_reflected: NDArray
+            The eigenvalues corresponding to the reflected modes.
+            Returned only if return_modes_only is True.
+        phi_inv_reflected: NDArray
+            The pseudoinverse of the reflected modes. Returned only if
+            return_modes_only is True.
 
         """
+
+        if return_modes_only and not return_injected:
+            raise NotImplementedError(
+                "Returning only reflected modes is not implemented yet."
+            )
 
         if a_ii.ndim == 2:
             a_ii = a_ii[xp.newaxis, :, :]
@@ -478,28 +550,43 @@ class Spectral(OBCSolver):
                 a_xx=[a_ji, a_ii, a_ij],
             )
 
-        x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
-
-        # Perform a number of refinement iterations.
-        for __ in range(self.num_ref_iterations - 1):
-            x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
-
-        # Calculate the injection vector and return it together with the boundary self-energy and the injected eigenvalues
-        if return_injected:
-            x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
-
-            recursion_error = xp.max(
-                xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
-                / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+        if return_modes_only:
+            phi_inv_reflected = self._compute_pseudo_inverse(
+                a_ii, a_ij, a_ji, ws, vs, mask_reflected
             )
-            if recursion_error > self.warning_threshold:
-                warnings.warn(
-                    f"High relative recursion error: {recursion_error:.2e}",
-                    RuntimeWarning,
-                )
-            phi_surface = []
+        else:
+            x_ii = self._compute_x_ii(a_ii, a_ij, a_ji, ws, vs, mask_reflected)
 
-            x_ii_a_ij = x_ii_ref @ a_ij
+            # Perform a number of refinement iterations.
+            for __ in range(self.num_ref_iterations - 1):
+                x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+            if return_injected:
+                x_ii_ref = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
+
+                # Check the batch average recursion error.
+                recursion_error = xp.max(
+                    xp.linalg.norm(x_ii_ref - x_ii, axis=(-2, -1))
+                    / xp.linalg.norm(x_ii_ref, axis=(-2, -1))
+                )
+                if recursion_error > self.warning_threshold:
+                    warnings.warn(
+                        f"High relative recursion error: {recursion_error:.2e}",
+                        RuntimeWarning,
+                    )
+
+        # Calculate the injection vector and return it together with the
+        # boundary self-energy and the injected eigenvalues
+
+        if return_injected:
+            b_injected = []
+
+            if not return_modes_only:
+                # Compute the bloch matrix
+                x_ii_a_ij = -x_ii_ref @ a_ij
+            else:
+                phi_reflected = []
+                eig_reflected = []
 
             for i in range(a_ii.shape[0]):
                 mask_injected_i = mask_injected[i, :]
@@ -513,13 +600,29 @@ class Spectral(OBCSolver):
                     xp.real(dE_dk_injected[xp.newaxis, :])
                 )
 
-                # Compute surface phi
-                phi_surface.append(
-                    vrs_injected / wrs_injected[xp.newaxis, :]
-                    + x_ii_a_ij[i] @ vrs_injected
-                )
+                if not return_modes_only:
+                    # Compute surface phi
+                    b_injected.append(
+                        vrs_injected / wrs_injected[xp.newaxis, :]
+                        - x_ii_a_ij[i] @ vrs_injected
+                    )
+                else:
+                    vrs_reflected = vs[i][:, mask_reflected[i, :]]
+                    wrs_reflected = ws[i, mask_reflected[i, :]]
+                    phi_reflected.append(vrs_reflected)
+                    eig_reflected.append(wrs_reflected)
+                    b_injected.append(
+                        vrs_injected / wrs_injected[xp.newaxis, :]
+                        - vrs_reflected
+                        @ xp.diag(1 / wrs_reflected)
+                        @ phi_inv_reflected[i]
+                        @ vrs_injected
+                    )
 
-            return x_ii_ref, phi_surface
+            if return_modes_only:
+                return None, b_injected, phi_reflected, eig_reflected, phi_inv_reflected
+
+            return x_ii_ref, b_injected
 
         x_ii = linalg.inv(a_ii - a_ji @ x_ii @ a_ij)
 

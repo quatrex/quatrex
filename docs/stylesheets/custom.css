@@ -1,4 +1,26 @@
-/* Custom CSS for MkDocs Material */
+/* Custom CSS for zensical */
+#logo_light {
+  display: var(--md-header-logo-light);
+}
+
+#logo_dark {
+  display: var(--md-header-logo-dark);
+}
+
+[data-md-color-scheme="default"] {
+  --md-header-logo-dark: none;
+  --md-header-logo-light: block;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-header-logo-dark: block;
+  --md-header-logo-light: none;
+}
+
+.md-header__button.md-logo img {
+  width: 1.5rem;
+  height: 1.5rem;
+}
 
 /* Enables ligatures and kerning for code, kbd and pre elements */
 .md-typeset code,
@@ -10,7 +32,7 @@
 
 /* Overrides the default max-width for more space */
 .md-grid {
-    max-width: 1440px;
+  max-width: 1440px;
 }
 
 /* Custom styles for the title text next to the logo */

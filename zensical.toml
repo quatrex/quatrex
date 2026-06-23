@@ -221,8 +221,8 @@ nav = [
     font.text = "Inter"
     font.code = "Fira Code"
 
-    # logo = "images/logo.png"
-
+    custom_dir = "docs/overrides"
+    favicon = "images/favicon.svg"
     icon.repo = "fontawesome/brands/github"
 
     features = [

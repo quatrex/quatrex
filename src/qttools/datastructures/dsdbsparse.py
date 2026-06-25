@@ -850,8 +850,15 @@ class DSDBSparse(ABC):
             )
             stack_size = 1
 
-        if stack_size is None or stack_size == 0:
+        if stack_size is None:
             stack_size = int(max(self.stack_section_sizes))
+        # NOTE: Edge case for when the stack size is 0
+        if stack_size == 0:
+            warnings.warn(
+                "Stack size of 0 is not valid."
+                "Allocating data with a unit stack section size."
+            )
+            stack_size = 1
 
         if self._data is None:
             self._data = xp.empty(

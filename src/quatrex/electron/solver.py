@@ -471,6 +471,7 @@ class ElectronSolver(SubsystemSolver):
                 + hamiltonian_.blocks[j, i]
             )
 
+    @profiler.profile(label="ElectronSolver: Assemble", level="default", comm=comm)
     def _assemble_system_matrix(
         self,
         sse_lesser: DSDBSparse | _DStackView,
@@ -592,7 +593,7 @@ class ElectronSolver(SubsystemSolver):
 
         if self.band_edge_tracking:
             with profiler.profile_range(
-                label="ElectronSolver: Assemble", level="default", comm=comm
+                label="ElectronSolver: Band edges", level="default", comm=comm
             ):
                 left_band_edges, right_band_edges = find_renormalized_eigenvalues(
                     hamiltonian=self.hamiltonian,

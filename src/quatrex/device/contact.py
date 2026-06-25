@@ -388,10 +388,11 @@ class Contact:
         if comm.rank == 0:
             print(f"    Fermi level: {self.fermi_level} eV", flush=True)
             print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
-            print(
-                f"    Delta Fermi level: {self.delta_fermi_level_conduction_band} eV",
-                flush=True,
-            )
+            if contact_config.fermi_level is None or device.config.scsp is not None:
+                print(
+                    f"    Delta Fermi level: {self.delta_fermi_level_conduction_band} eV",
+                    flush=True,
+                )
             print(f"    Voltage: {self.voltage} V", flush=True)
             print(f"    Temperature: {self.temperature} K", flush=True)
 

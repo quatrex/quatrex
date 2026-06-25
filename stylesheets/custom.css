@@ -1,0 +1,14 @@
+/* Custom CSS for MkDocs Material */
+
+/* Enables ligatures and kerning for code, kbd and pre elements */
+.md-typeset code,
+.md-typeset kbd,
+.md-typeset pre {
+  font-feature-settings: "kern", "liga";
+  font-variant-ligatures: normal;
+}
+
+/* Overrides the default max-width for more space */
+.md-grid {
+    max-width: 1440px;
+}

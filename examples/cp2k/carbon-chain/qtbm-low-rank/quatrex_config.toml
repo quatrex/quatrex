@@ -28,8 +28,6 @@ kpoint_shift = [0, 0, 0]
 
 
 [electron]
-conduction_band_edge = -2.4
-valence_band_edge = -2.5
 
 energy_window_min = -5
 energy_window_max = -4

@@ -2,10 +2,8 @@ name: quatrex-dev
 channels:
   - conda-forge
   - defaults
-  - conda-forge
 dependencies:
   - pydiso=0.2.0
-  - aom=3.6.0
   - _openmp_mutex=4.5
   - _python_abi3_support=1.0
   - aiohappyeyeballs=2.6.2
@@ -205,6 +203,7 @@ dependencies:
   - pytest=9.0.3
   - pytest-cov=7.1.0
   - pytest-mpi=0.6
+  - pytest-xdist=3.6.1
   - python=3.13.13
   - python-dateutil=2.9.0.post0
   - python-gil=3.13.13
@@ -224,7 +223,6 @@ dependencies:
   - scooby=0.11.2
   - shellingham=1.5.4
   - six=1.17.0
-  - toml=0.10.2
   - snappy=1.2.2
   - spirv-tools=2026.1
   - sqlite=3.53.1

@@ -93,7 +93,8 @@ RUN python3 -m venv /opt/venv \
     && python3 -m pip install numba pydantic matplotlib threadpoolctl typer \
     && python3 -m pip install pytest pytest-mpi pytest-cov pytest-xdist \
     && python3 -m pip install nvmath-python \
-    && python3 -m pip install nvidia-cudss-cu12==0.7.1.6
+    && python3 -m pip install nvidia-cudss-cu12==0.7.1.6 \
+    && python3 -m pip install ase meshio scikit-fem pyvista
 
 # Get rid of the stubs libraries, because at runtime the CUDA driver and
 # libraries will be available

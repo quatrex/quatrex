@@ -12,6 +12,11 @@ on:
 jobs:
   test-cov:
     runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      NUMBA_NUM_THREADS: 1
+
     defaults:
       run:
         shell: bash -l {0}
@@ -19,7 +24,7 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      
+
       - name: Get Git LFS Files
         run: git lfs pull
 
@@ -47,15 +52,15 @@ jobs:
       - name: Run NUMBA Tests (QTTools Kernels)
         if: success() || failure()
         run: |
-          coverage run --source=src --parallel-mode -m pytest -vv tests/qttools/kernels
+          coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/qttools/kernels
 
       - name: Run QTTools Tests
         if: success() || failure()
         run: |
-          NUMBA_DISABLE_JIT=1 coverage run --source=src --parallel-mode -m pytest -vv tests/qttools
-      
+          NUMBA_DISABLE_JIT=1 coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/qttools
+
       - name: Run QuaTrEx Tests and Determine Coverage
         if: success() || failure()
         run: |
-          coverage run --source=src --parallel-mode -m pytest -vv tests/quatrex
+          coverage run --source=src --parallel-mode -m pytest -n auto -vv tests/quatrex
           coverage combine .; coverage report; coverage xml

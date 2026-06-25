@@ -5,10 +5,12 @@ import numpy as np
 from qttools import NDArray, sparse, xp
 from qttools.comm import comm
 from qttools.datastructures import DSDBSparse
+from qttools.datastructures.dsdbsparse import _DStackView
 from qttools.greens_function_solver.solver import OBCBlocks
 from qttools.profiling import Profiler
 from qttools.toeplitz.toeplitz import get_periodic_superblocks, homogenize
 from qttools.utils.mpi_utils import get_local_slice, get_section_sizes
+from qttools.utils.solvers_utils import get_batches
 from qttools.utils.stack_utils import scale_stack
 from quatrex.bandstructure.band_edges import find_renormalized_eigenvalues
 from quatrex.core.config import QuatrexConfig
@@ -164,6 +166,8 @@ class ElectronSolver(SubsystemSolver):
         self.call_count = 0
         self.filtering_iteration_limit = config.electron.filtering_iteration_limit
 
+        self.max_batch_size = config.electron.max_batch_size
+
     def update_potential(self, new_potential: NDArray) -> None:
         """Updates the potential matrix.
 
@@ -298,14 +302,21 @@ class ElectronSolver(SubsystemSolver):
         )
 
     @profiler.profile(label="ElectronSolver: OBC", level="default", comm=comm)
-    def _compute_obc(self) -> None:
-        """Computes open boundary conditions."""
+    def _compute_obc(self, batch_slice: slice) -> None:
+        """Computes open boundary conditions.
+
+        Parameters
+        ----------
+        batch_slice : slice
+            The slice of the energy stack corresponding to the current batch.
+
+        """
         if comm.block.rank == 0:
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="left",
+                contact="left-" + str(batch_slice),
                 diagonal_inds=(0, 0),
                 upper_inds=(0, 1),
-                occupancies=self.left_occupancies,
+                occupancies=self.left_occupancies[batch_slice],
             )
             self.obc_blocks.retarded[0] = obc_retarded
             self.obc_blocks.lesser[0] = obc_lesser
@@ -315,10 +326,10 @@ class ElectronSolver(SubsystemSolver):
             n = self.system_matrix.num_local_blocks - 1
             m = n - 1
             obc_retarded, obc_lesser, obc_greater = self._compute_contact_obc(
-                contact="right",
+                contact="right-" + str(batch_slice),
                 diagonal_inds=(n, n),
                 upper_inds=(n, m),
-                occupancies=self.right_occupancies,
+                occupancies=self.right_occupancies[batch_slice],
                 order="reverse",
             )
             self.obc_blocks.retarded[-1] = obc_retarded
@@ -406,9 +417,9 @@ class ElectronSolver(SubsystemSolver):
 
     def _subtract_hamiltonian_and_self_energy(
         self,
-        sse_lesser: DSDBSparse,
-        sse_greater: DSDBSparse,
-        sse_retarded_hermitian: DSDBSparse,
+        sse_lesser: DSDBSparse | _DStackView,
+        sse_greater: DSDBSparse | _DStackView,
+        sse_retarded_hermitian: DSDBSparse | _DStackView,
     ) -> None:
         r"""Subtracts the Hamiltonian and the self-energy from the system matrix
         on the block-tridiagonal.
@@ -421,11 +432,11 @@ class ElectronSolver(SubsystemSolver):
 
         Parameters
         ----------
-        sse_lesser : DSDBSparse
+        sse_lesser : DSDBSparse | _DStackView
             The lesser self-energy to subtract.
-        sse_greater : DSDBSparse
+        sse_greater : DSDBSparse | _DStackView
             The greater self-energy to subtract.
-        sse_retarded_hermitian : DSDBSparse
+        sse_retarded_hermitian : DSDBSparse | _DStackView
             The retarded self-energy to subtract.
 
         """
@@ -460,22 +471,26 @@ class ElectronSolver(SubsystemSolver):
                 + hamiltonian_.blocks[j, i]
             )
 
+    @profiler.profile(label="ElectronSolver: Assemble", level="default", comm=comm)
     def _assemble_system_matrix(
         self,
-        sse_lesser: DSDBSparse,
-        sse_greater: DSDBSparse,
-        sse_retarded_hermitian: DSDBSparse,
+        sse_lesser: DSDBSparse | _DStackView,
+        sse_greater: DSDBSparse | _DStackView,
+        sse_retarded_hermitian: DSDBSparse | _DStackView,
+        batch_slice: slice,
     ) -> None:
         """Assembles the system matrix.
 
         Parameters
         ----------
-        sse_lesser : DSDBSparse
+        sse_lesser : DSDBSparse | _DStackView
             The lesser scattering self-energy.
-        sse_greater : DSDBSparse
+        sse_greater : DSDBSparse | _DStackView
             The greater scattering self-energy.
-        sse_retarded_hermitian : DSDBSparse
+        sse_retarded_hermitian : DSDBSparse | _DStackView
             The hermitian part of the retarded scattering self-energy.
+        batch_slice : slice
+            The slice of the energy stack corresponding to the current batch.
 
         """
         self.system_matrix.data = 0.0
@@ -486,7 +501,7 @@ class ElectronSolver(SubsystemSolver):
 
         scale_stack(
             self.system_matrix.data,
-            self.local_energies + 1j * self.eta,
+            self.local_energies[batch_slice] + 1j * self.eta,
         )
 
         if self.overlap is None:
@@ -576,15 +591,6 @@ class ElectronSolver(SubsystemSolver):
                 homogenize(sse_lesser)
                 homogenize(sse_retarded_hermitian)
 
-        with profiler.profile_range(
-            label="ElectronSolver: Assemble", level="default", comm=comm
-        ):
-            self.system_matrix.allocate_data()
-
-            self._assemble_system_matrix(
-                sse_lesser, sse_greater, sse_retarded_hermitian
-            )
-
         if self.band_edge_tracking:
             with profiler.profile_range(
                 label="ElectronSolver: Band edges", level="default", comm=comm
@@ -607,32 +613,70 @@ class ElectronSolver(SubsystemSolver):
                 )
                 self._update_fermi_levels(left_band_edges, right_band_edges)
 
-        self._compute_obc()
+        if self.max_batch_size is None:
+            max_batch_size = sse_lesser.shape[0]
+        else:
+            max_batch_size = self.max_batch_size
 
-        with profiler.profile_range(
-            label="ElectronSolver: Solve", level="default", comm=comm
-        ):
-            if comm.block.size > 1:
-                self.meir_wingreen_current = self.solver_dist.selected_solve(
-                    a=self.system_matrix,
-                    sigma_lesser=sse_lesser,
-                    sigma_greater=sse_greater,
-                    obc_blocks=self.obc_blocks,
-                    out=out,
-                    return_retarded=True,
-                    return_current=self.compute_meir_wingreen_current,
-                )
+        batch_sizes, batch_offsets = get_batches(sse_lesser.shape[0], max_batch_size)
 
-            else:
-                self.meir_wingreen_current = self.solver.selected_solve(
-                    a=self.system_matrix,
-                    sigma_lesser=sse_lesser,
-                    sigma_greater=sse_greater,
-                    obc_blocks=self.obc_blocks,
-                    out=out,
-                    return_retarded=True,
-                    return_current=self.compute_meir_wingreen_current,
+        self.meir_wingreen_current = []
+
+        for i in range(len(batch_sizes)):
+
+            batch_slice = slice(int(batch_offsets[i]), int(batch_offsets[i + 1]))
+            sse_lesser_batch = sse_lesser.stack[batch_slice]
+            sse_greater_batch = sse_greater.stack[batch_slice]
+            sse_retarded_hermitian_batch = sse_retarded_hermitian.stack[batch_slice]
+
+            # Free data when the batch size changes
+            if i > 0 and batch_sizes[i] != batch_sizes[i - 1]:
+                self.system_matrix.free_data()
+            self.system_matrix.allocate_data(stack_size=batch_sizes[i])
+
+            self._assemble_system_matrix(
+                sse_lesser_batch,
+                sse_greater_batch,
+                sse_retarded_hermitian_batch,
+                batch_slice,
+            )
+
+            self._compute_obc(batch_slice)
+
+            with profiler.profile_range(
+                label="ElectronSolver: Solve", level="default", comm=comm
+            ):
+                out_l, out_g, out_r = out
+                out_slice = (
+                    out_l.stack[batch_slice],
+                    out_g.stack[batch_slice],
+                    out_r.stack[batch_slice],
                 )
+                if comm.block.size > 1:
+                    self.meir_wingreen_current.append(
+                        self.solver_dist.selected_solve(
+                            a=self.system_matrix,
+                            sigma_lesser=sse_lesser_batch,
+                            sigma_greater=sse_greater_batch,
+                            obc_blocks=self.obc_blocks,
+                            out=out_slice,
+                            return_retarded=True,
+                            return_current=self.compute_meir_wingreen_current,
+                        )
+                    )
+
+                else:
+                    self.meir_wingreen_current.append(
+                        self.solver.selected_solve(
+                            a=self.system_matrix,
+                            sigma_lesser=sse_lesser_batch,
+                            sigma_greater=sse_greater_batch,
+                            obc_blocks=self.obc_blocks,
+                            out=out_slice,
+                            return_retarded=True,
+                            return_current=self.compute_meir_wingreen_current,
+                        )
+                    )
 
         with profiler.profile_range(
             label="ElectronSolver: Filter", level="default", comm=comm
@@ -640,5 +684,10 @@ class ElectronSolver(SubsystemSolver):
             self.system_matrix.free_data()
             if self.call_count < self.filtering_iteration_limit:
                 self._filter_peaks(out)
+
+        if self.compute_meir_wingreen_current:
+            self.meir_wingreen_current = xp.concatenate(
+                self.meir_wingreen_current, axis=0
+            )
 
         self.call_count += 1

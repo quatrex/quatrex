@@ -164,21 +164,26 @@ class RGF(GFSolver):
 
         """
         # Initialize empty lists for the dense diagonal blocks.
-        xr_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
-        xl_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
-        xg_diag_blocks: list[NDArray | None] = [None] * a.num_blocks
+        xr_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
+        xl_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
+        xg_diag_blocks: list[NDArray | None] = [None] * sigma_lesser.num_blocks
 
         if obc_blocks is None:
-            obc_blocks = OBCBlocks(num_blocks=a.num_blocks)
+            obc_blocks = OBCBlocks(num_blocks=sigma_lesser.num_blocks)
 
         if return_current:
             # Allocate a buffer for the current. This includes current
             # between each layer and from/to the leads (in total
             # num_blocks + 1).
-            current = xp.zeros((*a.shape[:-2], a.num_blocks + 1), dtype=a.dtype)
+            current = xp.zeros(
+                (*sigma_lesser.shape[:-2], sigma_lesser.num_blocks + 1),
+                dtype=sigma_lesser.dtype,
+            )
 
         # Get list of batches to perform
-        batches_sizes, batches_slices = get_batches(a.shape[0], self.max_batch_size)
+        batches_sizes, batches_slices = get_batches(
+            sigma_lesser.shape[0], self.max_batch_size
+        )
 
         # If out is not none, xr will be the third element of the tuple.
         if out is not None:

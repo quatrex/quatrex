@@ -255,9 +255,6 @@ class ReducedSystem:
             )
         )
 
-        if comm.rank == 0:
-            print("Gathering reduced system.", flush=True)
-
         synchronize_device()
         comm.block.all_gather(
             xr_diag_blocks[2 * comm.block.rank : 2 * (comm.block.rank + 1)],

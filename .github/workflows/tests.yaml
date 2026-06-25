@@ -12,6 +12,11 @@ on:
 jobs:
   test-cov:
     runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      NUMBA_NUM_THREADS: 1
+
     defaults:
       run:
         shell: bash -l {0}

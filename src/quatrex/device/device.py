@@ -90,7 +90,7 @@ class Device:
         if self.config.qtbm.full_current:
             # Read bond information
             self.bonds = distributed_load(self.config.input_dir / "bonds.npy")
-            self.bonds = xp.asarray(self.bonds, dtype=xp.int32) - 1
+            self.bonds = xp.asarray(self.bonds, dtype=xp.int32)
 
             # P matrix to convert from orbital to atoms
             col_indices = np.repeat(

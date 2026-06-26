@@ -245,6 +245,10 @@ class ElectrostaticsConfig(BaseModel):
     """The dimensionality of the system to use for the single-band
     density model.
 
+    The density model does not have to match the actual dimensionality
+    of the system. For example, a 2D density model might actually work
+    best for systems of all dimensionalities.
+
     Only used if `solving_scheme` is set to "root-finding" and
     `density_model` is set to "single-band".
 
@@ -272,12 +276,13 @@ class ElectrostaticsConfig(BaseModel):
     """
 
     electron_affinity: float | None = None
-    """The electron affinity of the device.
+    """The electron affinity of the semiconductor channel.
 
-    This is used to align the voltage levels of any gates to the device
-    levels in SCSP runs. If not set, the voltages of the gates are taken
-    as absolute values without any alignment, i.e. they are directly
-    used as the Dirichlet boundary conditions for the Poisson equation.
+    This is used to align the voltage levels of any gates to the
+    semiconductor channel levels in SCSP runs. If not set, the voltages
+    of the gates are taken as absolute values without any alignment,
+    i.e. they are directly used as the Dirichlet boundary conditions for
+    the Poisson equation.
 
     """
 

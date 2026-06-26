@@ -711,9 +711,8 @@ class SCBA(TransportSolver):
     def get_charge_density(self) -> NDArray:
         """Gets the charge density.
 
-        This runs the SCBA to convergence (or to the maximum number of
-        iterations) and then computes the charge density from the
-        spectral electron and hole densities.
+        This computes the excess charge density from the spectral
+        electron and hole densities.
 
         Returns
         -------

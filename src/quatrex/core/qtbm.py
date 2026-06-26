@@ -1201,10 +1201,10 @@ class QTBM(TransportSolver):
     def get_charge_density(self) -> NDArray:
         """Gets the charge density from the QTBM calculation.
 
-        This method runs the full QTBM calculation and then integrates
-        the local density of states to obtain the charge density. This
-        is typically used in self-consistent calculations where the
-        charge density is needed to update the potential.
+        This method integrates the local density of states to obtain the
+        charge density. This is typically used in self-consistent
+        calculations where the charge density is needed to update the
+        potential.
 
         Returns
         -------

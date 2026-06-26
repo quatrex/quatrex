@@ -4,9 +4,10 @@
 
 In electronic structure calculations one is usually concerned with
 spectral properties (i.e. the eigenvalues and eigenvectors) of a quantum
-system in thermodynamic equilibrium. In quantum transport simulations,
-on the other hand, we are interested in properties of the
-resolvent under non-equilibrium conditions.
+system in thermodynamic equilibrium. In ***quantum transport
+simulations***, on the other hand, we are interested in properties of
+the [resolvent](https://en.wikipedia.org/wiki/Resolvent_formalism) under
+non-equilibrium conditions.
 
 In other words, instead of solving the eigenvalue problem
 
@@ -22,14 +23,14 @@ $$
 $$
 
 and how the system responds to external perturbations. The energy $E$ is
-now an input parameter, entering our system matrix $\mathbf{M}(E)$.
+now an input parameter, entering the system matrix $\mathbf{M}(E)$.
 
 To drive the system away from equilibrium, we further couple it to
 external reservoirs that allow us to exert control over the particle
 flow through the system. Introducing these reservoirs leads to a change
 ("renormalization") of the original system's dynamics, which is
 typically expressed in terms of self-energies $\mathbf{\Sigma}(E)$ that
-are added to the system matrix:
+are subtracted from the system matrix:
 
 $$
 \mathbf{M}(E) = E\mathbf{S} - \mathbf{H} - \mathbf{\Sigma}(E)
@@ -53,3 +54,10 @@ lifetime of the states in the system, while the Hermitian part leads to
 a shift of the system's energy levels.
 
 ## Atomistic Material Descriptions
+
+$$
+\begin{aligned}
+    H_{ij} &= \bra{\phi_i} \hat{H} \ket{\phi_j} \\
+    S_{ij} &= \braket{\phi_i \vert \phi_j}
+\end{aligned}
+$$

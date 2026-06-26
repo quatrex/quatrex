@@ -1157,9 +1157,9 @@ class ElectronConfig(BaseModel):
     """The maximum number of energies to batch together in the solution
     of the electronic subsystem.
 
-    This controls how many energies are treated together when computing boundary
-    conditions and electron Green's functions. If not set, all energies are
-    computed at once.
+    This controls how many energies are treated together when computing
+    boundary conditions and electron Green's functions. If not set, all
+    energies are computed at once.
 
     This can help mitigate memory bottlenecks.
 
@@ -1398,9 +1398,9 @@ class CoulombScreeningConfig(BaseModel):
     """The maximum number of energies to batch together in the solution
     of the screened Coulomb interaction.
 
-    This controls how many energies are treated together when computing boundary
-    conditions and screened Coulomb interactions. If not set, all energies are
-    computed at once.
+    This controls how many energies are treated together when computing
+    boundary conditions and screened Coulomb interactions. If not set,
+    all energies are computed at once.
 
     This can help mitigate memory bottlenecks.
 

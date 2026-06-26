@@ -59,10 +59,9 @@ Other available environments are:
 ## Installation using `uv`
 
 [`uv`](https://docs.astral.sh/uv/) is a general-purpose Python
-environment and dependency manager.
-
-After obtaining the source code you can create a virtual environment and
-install `quatrex` (in editable mode) and its dependencies with:
+environment and dependency manager. After obtaining the source code you
+can create a virtual environment and install `quatrex` (in editable
+mode) and its dependencies with:
 
 ```bash
 uv venv --python >=3.13
@@ -88,8 +87,8 @@ uv pip install --editable .[<dev|docs|gpu>]
 Installing `quatrex` on HPC systems is also quite straightforward using
 `pixi` or `uv`. However, there are some additional considerations to
 keep in mind when running on HPC systems, such as the need to build
-certain dependencies from source to ensure compatibility with the
-system's MPI and GPU backends/features.
+certain dependencies from source to ensure consistency with the system's
+MPI and GPU backends/features.
 
 Below, as an example, we provide instructions for installing `quatrex`
 using `pixi` and `uv` on the Alps supercomputer at the Swiss National
@@ -102,7 +101,7 @@ similar, i.e.:
 2. Install `quatrex` and its basic dependencies.
 3. Make sure you [install `mpi4py` from
    source](https://mpi4py.readthedocs.io/en/stable/install.html#building-from-sources)
-   to ensure compatibility with the system's MPI backend.
+   to ensure consistency with the system's MPI backend.
 4. Determine whether you need to [install `cupy` from
    source](https://docs.cupy.dev/en/stable/install.html#installing-cupy-from-source)
    or if a pre-built binary is available for your system (should be the
@@ -200,6 +199,13 @@ CUDA 13.x, you can run:
 uv pip install . --no-binary=mpi4py
 uv pip install cupy-cuda13x
 ```
+
+This way of installing is significantly faster, as it avoids building
+`cupy` from source. For more information on the available `cupy`
+binaries, see the [`cupy`
+documentation](https://docs.cupy.dev/en/stable/install.html). After the
+installation is complete, you can run quatrex on multiple nodes using a
+batch script similar to the following:
 
 ```bash
 #!/bin/bash

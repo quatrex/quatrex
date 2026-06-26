@@ -22,9 +22,9 @@ nav = [
         "getting_started/first_simulation.md",
     ] },
     { "User Guide" = [
-        { "Overview" = "user_guide/index.md" },
         { "Running Transport Simulations" = [
-            "user_guide/basics.md",
+            "user_guide/index.md",
+            "user_guide/input_data.md",
             { "Command Line Interface" = "user_guide/cli.md" },
             { "Simulation Parameters" = [
                 "user_guide/parameters/index.md",
@@ -235,23 +235,22 @@ nav = [
         "content.code.copy",
     ]
 
-
         [[project.theme.palette]]
         media = "(prefers-color-scheme)"
-        primary = "white"
+        primary = "custom"
         toggle.icon = "lucide/sun-moon"
         toggle.name = "Switch to light mode"
 
         [[project.theme.palette]]
         media = "(prefers-color-scheme: light)"
-        primary = "white"
+        primary = "custom"
         scheme = "default"
         toggle.icon = "lucide/sun"
         toggle.name = "Switch to dark mode"
 
         [[project.theme.palette]]
         media = "(prefers-color-scheme: dark)"
-        primary = "white"
+        primary = "custom"
         scheme = "slate"
         toggle.icon = "lucide/moon"
         toggle.name = "Switch to system preference"
@@ -293,6 +292,8 @@ nav = [
     [project.markdown_extensions.pymdownx.tasklist]
     custom_checkbox = true
     [project.markdown_extensions.pymdownx.tilde]
+    [project.markdown_extensions.pymdownx.snippets]
+    check_paths = true
 
 
     [project.plugins.mkdocstrings.handlers.python]

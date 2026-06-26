@@ -1,4 +1,11 @@
 /* Custom CSS for zensical */
+
+:root > * {
+  --md-primary-fg-color: #2081b9;
+  --md-accent-fg-color: #4a7abe;
+  --md-accent-fg-color--transparent: #4b7bbe18;
+}
+
 #logo_light {
   display: var(--md-header-logo-light);
 }

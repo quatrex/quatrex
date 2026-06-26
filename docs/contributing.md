@@ -17,15 +17,15 @@ pixi install --environment=dev
 The `dev` environment includes tools for development, testing, and
 linting:
 
-- `pytest` with the `coverage`,
+- [`pytest`](https://docs.pytest.org/en/stable/) with the
+  [`pytest-cov`](https://pytest-cov.readthedocs.io/en/latest/readme.html),
   [`pytest-mpi`](https://pytest-mpi.readthedocs.io/en/latest/), and
   [`pytest-xdist`](https://pytest-xdist.readthedocs.io/en/stable/)
-  plugins to run the tests,
-- [`ruff`](https://docs.astral.sh/ruff/) for linting,
-- [`black`](https://black.readthedocs.io/en/stable/) for code
-  formatting,
+  plugins to run the tests
+- [`ruff`](https://docs.astral.sh/ruff/) for linting
+- [`black`](https://black.readthedocs.io/en/stable/) for code formatting
 - [`isort`](https://isort.readthedocs.io/en/latest/) for sorting imports
-  according to [PEP 8](https://peps.python.org/pep-0008/) guidelines.
+  according to [PEP 8](https://peps.python.org/pep-0008/) guidelines
 
 Additionally, [`pre-commit`](https://pre-commit.com/) is used to manage
 pre-commit hooks for linting and formatting code. Install the pre-commit
@@ -44,23 +44,25 @@ pixi task list
 
 Besides other common Python development tools available in IDEs,
 astral's [`ty`](https://docs.astral.sh/ty/) language server is worth
-giving a try, as it may offer better performance on larger codebases.
+giving a try, as it may offer better performance on somewhat larger
+Python codebases.
 
 ## General guidelines
 
 - Follow [PEP 8](https://peps.python.org/pep-0008/) style guidelines for
   all Python code. We are using
-  [black](https://black.readthedocs.io/en/stable/) for automatic code
-  formatting.
+  [`black`](https://black.readthedocs.io/en/stable/) for automatic code
+  formatting and [`ruff`](https://docs.astral.sh/ruff/) for linting.
 - Write clear and concise docstrings for all functions and classes in
   accordance with the [NumPy documentation
   style](https://numpydoc.readthedocs.io/en/latest/format.html). You can
-  use standard markdown syntax for formatting and use `$...$` delimiters
-  for in-line mathematical expressions and `$$\n...\n$$` for block-level
-  equations. These are rendered using [mathjax](https://mathjax.org/).
+  use standard markdown syntax for formatting and `$...$`/`$$...$$`
+  delimiters for in-line/block-level mathematical expressions. These are
+  rendered using [mathjax](https://mathjax.org/).
 - It is always a good idea to include new unit tests for additional
   features and bug fixes.
-- Ensure that all tests pass locally, including style checks. We use
+- Ensure that all tests pass locally before submitting a pull request
+  and that the code is properly linted and formatted. We use
   [pre-commit](https://pre-commit.com/) to manage pre-commit hooks.
 
 ## Development flow
@@ -93,19 +95,16 @@ files can be read without authentication.
 
 ## Automated linting and testing
 
-We use GitHub actions for most of the automated testing and linting. We
-run linting and formatting with `ruff`, `black`, and `isort` and
-single-rank and distributed tests with `pytest` and `pytest-mpi`. Since
-the default GitHub runners do not have GPUs, we only run the CPU tests
-on GitHub. In addition, these runners have only 4 CPU cores, so we run
-the distributed tests with just 3 ranks.
+We use [GitHub actions](https://docs.github.com/en/actions) for most of
+the automated testing and linting. We run linting and formatting with
+`ruff`, `black`, and `isort` and single-rank and distributed tests with
+`pytest` and `pytest-mpi`. Since the default GitHub runners do not have
+GPUs, we only run the CPU tests on GitHub. These runners have only 4 CPU
+cores, so we run the distributed tests with just 3 ranks.
 
-We also run the test suite on Alps. See the CSCS [CI/CD
-documentation](https://docs.cscs.ch/services/cicd/) for reference. We
-set up a Docker image with the required dependencies and use it to run
-the GPU tests on Alps.
-
-If you have the necessary permissions, you can trigger the Alps pipeline
+We also run the full test suite on Alps' GPUs. See the CSCS [CI/CD
+documentation](https://docs.cscs.ch/services/cicd/) for reference. If
+you have the necessary permissions, you can trigger the Alps pipeline
 manually on pull requests by posting a comment starting with `cscs-ci
 run`.
 
@@ -129,5 +128,6 @@ task:
 pixi run docs serve
 ```
 
-For more information on writing documentation, see the documentation for
-[Zensical](https://zensical.org/docs/authoring/markdown/).
+For more information on writing documentation, see, e.g., the [section
+on authoring](https://zensical.org/docs/authoring/markdown/) in the
+Zensical documentation.

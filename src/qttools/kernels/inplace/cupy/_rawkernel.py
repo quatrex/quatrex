@@ -12,13 +12,11 @@ value_types = [
 index_types = [
     (cp.int32, "int"),
     (cp.uintp, "size_t"),
-    (cp.int64, "int64_t"),
+    (cp.int64, "long long"),
 ]
-
 
 _scatter_add_scaled_cuda_code = r"""
 #include <cupy/complex.cuh>
-#include <stdint.h>
 
 template <typename T> __device__ inline T make_conj(T x) { return x; }
 template <> __device__ inline complex<double> make_conj(complex<double> x) { return conj(x); }
@@ -44,6 +42,13 @@ __global__ void _scatter_add_scaled(
 
 signatures = []
 for t1, t2, t3, idx in product(value_types, value_types, value_types, index_types):
+
+    # Skip when T1 is real and T2/T3 is complex, since this would result in a type mismatch.
+    if (t1[0] in [cp.float64, cp.float32]) and (
+        t2[0] in [cp.complex128, cp.complex64] or t3[0] in [cp.complex128, cp.complex64]
+    ):
+        continue
+
     signatures.append((t1, t2, t3, idx))
 
 _scatter_add_scaled_functions = tuple(
@@ -64,7 +69,6 @@ scatter_add_scaled_kernels = {
 
 _scatter_add_scaled_obc_cuda_code = r"""
 #include <cupy/complex.cuh>
-#include <stdint.h>
 
 template<typename IndexType> 
 __global__ void _scatter_add_scaled_obc(
@@ -133,7 +137,7 @@ _scatter_add_scaled_obc = cp.RawModule(
 )
 
 _scatter_add_scaled_obc_kernels = {
-    (idx[0],): _scatter_add_scaled_obc.get_function(expr)
+    idx[0]: _scatter_add_scaled_obc.get_function(expr)
     for idx, expr in zip(index_types, _scatter_add_scaled_obc_functions)
 }
 

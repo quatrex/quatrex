@@ -51,8 +51,17 @@ test quatrex single:
 
 test qttools single:
   extends: .test-common
+  variables:
+    QTX_USE_CUPY_JIT: '0'
   script:
     - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools
+
+test qttools kernels:
+  extends: .test-common
+  variables:
+    QTX_USE_CUPY_JIT: '1'
+  script:
+    - coverage run --source=src --parallel-mode -m pytest -vv tests/qttools/kernels/datastructure
 
 test quatrex dist:
   extends: .test-common

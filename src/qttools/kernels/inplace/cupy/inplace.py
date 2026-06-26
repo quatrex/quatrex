@@ -35,12 +35,16 @@ def scatter_add_scaled(
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
-    if isinstance(alpha, NDArray):
+    if isinstance(alpha, cp.ndarray):
         alpha_t = alpha.dtype.type
     elif isinstance(alpha, complex):
         alpha_t = cp.complex128
-    else:
+    elif isinstance(alpha, float):
         alpha_t = cp.float64
+    else:
+        raise TypeError(
+            f"Unsupported type for alpha: {type(alpha)}. Must be float, complex, or NDArray."
+        )
 
     index_t = inds.dtype.type
 
@@ -89,14 +93,17 @@ def scatter_add_scaled_obc(
     # Launch kernel
     blocks_per_grid = (num_inds + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
 
-    if a.type != cp.complex128 or b.dtype != cp.complex128:
+    if a.dtype.type != cp.complex128 or b.dtype.type != cp.complex128:
         raise TypeError(
             "Only complex128 arrays are supported for scatter_add_scaled_obc."
         )
 
     if not isinstance(alpha, float):
         # NOTE: cupy will match float with double
-        raise TypeError("Only float alpha is supported for scatter_add_scaled_obc.")
+        raise TypeError(
+            "Only float alpha is supported for scatter_add_scaled_obc.\n"
+            f"Got {type(alpha)} instead."
+        )
 
     index_t = inds.dtype.type
 

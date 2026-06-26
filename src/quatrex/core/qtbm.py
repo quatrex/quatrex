@@ -514,14 +514,14 @@ class QTBM(TransportSolver):
                 )
 
     def _add_sigma_obc_to_system_matrix(
-        self, factor: np.float64, obc_results: dict[Contact, OBCResult], energy_ind: int
+        self, factor: float, obc_results: dict[Contact, OBCResult], energy_ind: int
     ) -> None:
         """Adds the contribution of a contact self-energy to the system
         matrix for a given contact.
 
         Parameters
         ----------
-        factor : np.float64
+        factor : float
             A scaling factor for the self-energy contribution.
         obc_results : dict[Contact, OBCResult]
             Dictionary of OBC results for each contact.
@@ -574,7 +574,7 @@ class QTBM(TransportSolver):
             return
 
         # Add the boundary self-energy contributions.
-        self._add_sigma_obc_to_system_matrix(-1, obc_results, energy_ind)
+        self._add_sigma_obc_to_system_matrix(-1.0, obc_results, energy_ind)
 
     def _assemble_pseudo_inverse(
         self,
@@ -1294,7 +1294,7 @@ class QTBM(TransportSolver):
                             # Get the bare system matrix back, needed for
                             # transmission calculation
                             self._add_sigma_obc_to_system_matrix(
-                                1, obc_results, energy_ind
+                                1.0, obc_results, energy_ind
                             )
 
                         # Input

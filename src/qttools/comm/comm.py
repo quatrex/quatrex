@@ -527,9 +527,9 @@ class _SubCommunicator:
                 )
             global_size = mask.size
         else:
-            counts = np.zeros(self.size, dtype=xp.int32)
+            counts = np.zeros(self.size, dtype=xp.int64)
             self.all_gather(
-                np.array(sendbuf.shape[axis], dtype=xp.int32),
+                np.array(sendbuf.shape[axis], dtype=xp.int64),
                 counts,
                 backend="device_mpi",
             )

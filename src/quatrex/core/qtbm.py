@@ -249,30 +249,32 @@ class QTBM(TransportSolver):
         start_idx = 0
         for r, h_r in self.device.hamiltonians.items():
             nnz = h_r.nnz
+            dtype = h_r.indices.dtype
             concatenated_indices[start_idx : start_idx + nnz, 1] = h_r.indices
             concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-                xp.arange(h_r.shape[0], dtype=xp.int32), xp.diff(h_r.indptr).tolist()
+                xp.arange(h_r.shape[0], dtype=dtype), xp.diff(h_r.indptr).tolist()
             )
             start_idx += nnz
             if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = h_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                    xp.arange(h_r.shape[0], dtype=xp.int32),
+                    xp.arange(h_r.shape[0], dtype=dtype),
                     xp.diff(h_r.indptr).tolist(),
                 )
                 start_idx += nnz
 
         for r, s_r in self.device.overlap_matrices.items():
             nnz = s_r.nnz
+            dtype = s_r.indices.dtype
             concatenated_indices[start_idx : start_idx + nnz, 1] = s_r.indices
             concatenated_indices[start_idx : start_idx + nnz, 0] = xp.repeat(
-                xp.arange(s_r.shape[0], dtype=xp.int32), xp.diff(s_r.indptr).tolist()
+                xp.arange(s_r.shape[0], dtype=dtype), xp.diff(s_r.indptr).tolist()
             )
             start_idx += nnz
             if self.system_matrix_view != "upper":
                 concatenated_indices[start_idx : start_idx + nnz, 0] = s_r.indices
                 concatenated_indices[start_idx : start_idx + nnz, 1] = xp.repeat(
-                    xp.arange(s_r.shape[0], dtype=xp.int32),
+                    xp.arange(s_r.shape[0], dtype=dtype),
                     xp.diff(s_r.indptr).tolist(),
                 )
                 start_idx += nnz

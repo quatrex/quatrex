@@ -605,7 +605,7 @@ class DSDBCOO(DSDBSparse):
             The new block sizes.
 
         """
-        block_sizes = np.asarray(block_sizes, dtype=np.int32)
+        block_sizes = np.asarray(block_sizes, dtype=self.index_type)
 
         if self.distribution_state == "nnz":
             raise NotImplementedError(
@@ -780,6 +780,7 @@ class DSDBCOO(DSDBSparse):
         # In the block distributed case, this is an upper bound, but sufficient for the check.
         num_rows = self.shape[-2]
 
+        # NOTE: This is upcasted to not overflow
         idx_original = (self.rows.astype(xp.int64) * num_rows) + self.cols
         idx_swapped = (self.cols.astype(xp.int64) * num_rows) + self.rows
 

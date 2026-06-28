@@ -1,5 +1,4 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
-import cupy as cp
 from cupyx import jit
 
 from qttools import NDArray
@@ -41,8 +40,8 @@ def _find_inds(
     """
     i = int(jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x)
     tid = int(jit.threadIdx.x)
-    cache_rows = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
-    cache_cols = jit.shared_memory(cp.int32, THREADS_PER_BLOCK)
+    cache_rows = jit.shared_memory(rows.dtype, THREADS_PER_BLOCK)
+    cache_cols = jit.shared_memory(rows.dtype, THREADS_PER_BLOCK)
 
     if i < num_self_rows:
         my_row = self_rows[i]

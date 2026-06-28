@@ -48,9 +48,9 @@ def test_scatter_add_scaled(
     b_data_sorted = xp.ascontiguousarray(b.data[sort_b])
 
     if double:
-        alpha = rng.uniform(0.1, 1.0).item()
+        alpha = xp.float64(rng.uniform(0.1, 1.0))
     else:
-        alpha = (rng.uniform(0.1, 1.0) + 1j * rng.uniform(0.1, 1.0)).item()
+        alpha = xp.complex128(rng.uniform(0.1, 1.0) + 1j * rng.uniform(0.1, 1.0))
 
     a_copy = a.copy()
 

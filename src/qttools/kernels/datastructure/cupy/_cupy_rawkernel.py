@@ -1,7 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
 import cupy as cp
-import numpy as np
 
 from qttools import NDArray
 from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
@@ -76,7 +75,7 @@ def reduction(
         (
             a,
             out,
-            np.int32(n),
+            dtype(n),
         ),
     )
 

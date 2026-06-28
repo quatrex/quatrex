@@ -595,8 +595,8 @@ class DSDBCSR(DSDBSparse):
             data[stack_idx] = data[stack_idx, inds_bcsr2bcsr]
         self.cols = self.cols[inds_bcsr2bcsr]
 
-        block_sizes = np.asarray(block_sizes, dtype=np.int32)
-        block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=np.int32)
+        block_sizes = np.asarray(block_sizes, dtype=self.index_type)
+        block_offsets = np.hstack(([0], np.cumsum(block_sizes)), dtype=self.index_type)
         self.num_blocks = num_blocks
         self._add_block_config(self.num_blocks, block_sizes, block_offsets)
 

@@ -73,6 +73,17 @@ class DSDBCSR(DSDBSparse):
     ) -> None:
         """Initializes the DBCSR matrix."""
 
+        # NOTE: The idea is that outside scipy decides
+        # the correct data type for the indices.
+        # We just need to make sure to follow suite.
+        index_type = cols.dtype
+        for item in rowptr_map.values():
+            if item.dtype != index_type:
+                raise TypeError(
+                    "rowptr map and column indices must have the same dtype "
+                    f"but got {item.dtype} and {cols.dtype}."
+                )
+
         if comm.block.size != 1:
             raise NotImplementedError(
                 "DSDBCSR is not yet implemented for distributed stacks."
@@ -82,15 +93,16 @@ class DSDBCSR(DSDBSparse):
             data,
             block_sizes,
             global_stack_shape,
+            index_type,
             return_dense,
             symmetry=symmetry,
             symmetry_op=symmetry_op,
         )
 
-        self.cols = cols.astype(int)
+        self.cols = cols
         self.rowptr_map = rowptr_map
 
-        inds = xp.arange(self.shape[-1])
+        inds = xp.arange(self.shape[-1], dtype=index_type)
         self._diag_inds, self._diag_value_inds = dsdbcsr_kernels.find_inds(
             self.rowptr_map, xp.asarray(self.block_offsets), self.cols, inds, inds
         )
@@ -140,6 +152,12 @@ class DSDBCSR(DSDBSparse):
             The requested items.
 
         """
+
+        # queried rows and cols might be in int64
+        # while the internal rows and cols are in int32
+        rows = rows.astype(self.index_type)
+        cols = cols.astype(self.index_type)
+
         if self.symmetry:
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
 
@@ -209,6 +227,11 @@ class DSDBCSR(DSDBSparse):
             The value to set.
 
         """
+        # queried rows and cols might be in int64
+        # while the internal rows and cols are in int32
+        rows = rows.astype(self.index_type)
+        cols = cols.astype(self.index_type)
+
         if self.symmetry:
             # items of upper triangle of the matrix
             rows, cols, mask_transposed = _upper_triangle(rows, cols)
@@ -730,7 +753,7 @@ class DSDBCSR(DSDBSparse):
             Column indices of the non-zero elements.
 
         """
-        rows = xp.zeros(self.cols.size, dtype=int)
+        rows = xp.zeros(self.cols.size, dtype=self.index_type)
         for (row, __), rowptr in self.rowptr_map.items():
             for i in range(int(self.block_sizes[row])):
                 rows[rowptr[i] : rowptr[i + 1]] = i + self.block_offsets[row]
@@ -805,6 +828,7 @@ class DSDBCSR(DSDBSparse):
             The new DSDBCSR matrix.
 
         """
+
         # We only distribute the first dimension of the stack.
         stack_section_sizes, __ = get_section_sizes(global_stack_shape[0], comm.size)
         section_size = stack_section_sizes[comm.rank]
@@ -819,8 +843,9 @@ class DSDBCSR(DSDBSparse):
             coo = sparse.triu(coo, format="coo")
 
         # Compute block sorting index and the transpose rowptr map.
+        index_type = coo.row.dtype
         block_sort_index, rowptr_map = dsdbcsr_kernels.compute_rowptr_map(
-            coo.row, coo.col, block_sizes
+            coo.row, coo.col, block_sizes.astype(index_type)
         )
 
         data = xp.zeros(local_stack_shape + (coo.nnz,), dtype=coo.data.dtype)

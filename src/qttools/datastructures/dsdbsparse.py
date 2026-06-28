@@ -81,7 +81,11 @@ class BlockConfig(object):
         The size of each block in the sparse matrix.
     block_offsets : NDArray
         The block offsets of the block-sparse matrix.
-    inds_canonical2lock : NDArray, optional
+    index_type : xp.int32 | xp.int64
+        The index type to use for the sparse matrix.
+        This is relevant for the low level kernels to avoid
+        unnecessary type conversions.
+    inds_canonical2block : NDArray, optional
         A mapping from canonical to block-sorted indices. Default is
         None.
     rowptr_map : dict, optional
@@ -96,14 +100,19 @@ class BlockConfig(object):
         self,
         block_sizes: NDArray,
         block_offsets: NDArray,
-        inds_canonical2bcoo: NDArray | None = None,
+        index_type: xp.int32 | xp.int64,
+        inds_canonical2block: NDArray | None = None,
         rowptr_map: dict | None = None,
         block_slice_cache: dict | None = None,
     ):
         """Initializes the block config."""
-        self.block_sizes = block_sizes
-        self.block_offsets = block_offsets
-        self.inds_canonical2block = inds_canonical2bcoo
+        self.block_sizes = block_sizes.astype(index_type)
+        self.block_offsets = block_offsets.astype(index_type)
+        self.inds_canonical2block = (
+            inds_canonical2block.astype(index_type)
+            if inds_canonical2block is not None
+            else None
+        )
         self.rowptr_map = rowptr_map or {}
         self.block_slice_cache = block_slice_cache or {}
 
@@ -123,10 +132,18 @@ class DSDBSparse(ABC):
     global_stack_shape : tuple or int
         The global shape of the stack. If this is an integer, it is
         interpreted as a one-dimensional stack.
+    index_type : xp.int32 | xp.int64
+        The index type to use for the sparse matrix.
+        This is relevant for the low level kernels to avoid
+        unnecessary type conversions.
     return_dense : bool, optional
         Whether to return dense arrays when accessing the blocks.
         Default is True.
-
+    symmetry : bool, optional
+        Whether the matrix is symmetric. Default is False.
+    symmetry_op : Callable, optional
+        The operation to use for symmetrization. Default is
+        `xp.conj`, which is the complex conjugate.
     """
 
     def __init__(
@@ -134,11 +151,14 @@ class DSDBSparse(ABC):
         data: NDArray,
         block_sizes: NDArray,
         global_stack_shape: tuple | int,
+        index_type: xp.int32 | xp.int64,
         return_dense: bool = True,
         symmetry: bool | None = False,
         symmetry_op: Callable = xp.conj,
     ):
         """Initializes a DSBDSparse matrix."""
+
+        self.index_type = index_type
 
         # --- Things concerning stack distribution ---------------------
 
@@ -174,7 +194,9 @@ class DSDBSparse(ABC):
             data.shape[-1], comm.stack.size, strategy="greedy"
         )
         self.nnz_section_sizes = nnz_section_sizes
-        self.nnz_section_offsets = xp.hstack(([0], np.cumsum(nnz_section_sizes)))
+        self.nnz_section_offsets = xp.hstack(
+            ([0], np.cumsum(nnz_section_sizes))
+        ).astype(index_type)
         self.total_nnz_size = total_nnz_size
 
         # Per default, we have the data is distributed in stack format.
@@ -273,7 +295,7 @@ class DSDBSparse(ABC):
 
         """
         self._block_config[num_blocks] = BlockConfig(
-            block_sizes, block_offsets, block_slice_cache
+            block_sizes, block_offsets, self.index_type, block_slice_cache
         )
 
     @property

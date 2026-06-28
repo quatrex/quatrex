@@ -97,8 +97,12 @@ def _reference_compute_block_slice(rows, cols, block_offsets, row, col):
 def test_find_inds(shape: tuple[int, int], num_inds: int):
     """Tests that the indices are found correctly."""
     coo = sparse.random(*shape, density=0.25, format="coo")
-    rows = xp.random.choice(shape[0], size=num_inds, replace=False)
-    cols = xp.random.choice(shape[1], size=num_inds, replace=False)
+    rows = xp.random.choice(shape[0], size=num_inds, replace=False).astype(
+        coo.row.dtype
+    )
+    cols = xp.random.choice(shape[1], size=num_inds, replace=False).astype(
+        coo.col.dtype
+    )
 
     reference_inds, reference_value_inds = xp.nonzero(
         (coo.row[:, xp.newaxis] == rows) & (coo.col[:, xp.newaxis] == cols)
@@ -130,6 +134,8 @@ def test_compute_block_slice(
     reference_block_slice = _reference_compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )
+
+    block_offsets = block_offsets.astype(rows.dtype)
     block_slice = dsdbcoo_kernels.compute_block_slice(
         rows, cols, block_offsets, *block_coords
     )

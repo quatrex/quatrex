@@ -53,7 +53,7 @@ def _reference_compute_rowptr_map(
             bins=xp.arange(block_sizes[i] + 1),
         )
         rowptr = xp.hstack(([0], xp.cumsum(rowptr))) + offset
-        rowptr_map[(i, j)] = rowptr
+        rowptr_map[(i, j)] = rowptr.astype(coo_rows.dtype)
 
         bnnz = xp.sum(mask)
 
@@ -122,15 +122,19 @@ def _reference_find_inds(
 def test_find_inds(shape: tuple[int, int], num_inds: int, num_blocks: int):
     """Tests the that we find the correct indices."""
     coo = sparse.random(*shape, density=0.25, format="coo")
-    rows = xp.random.choice(shape[0], size=num_inds, replace=False)
-    cols = xp.random.choice(shape[1], size=num_inds, replace=False)
+    rows = xp.random.choice(shape[0], size=num_inds, replace=False).astype(
+        coo.row.dtype
+    )
+    cols = xp.random.choice(shape[1], size=num_inds, replace=False).astype(
+        coo.row.dtype
+    )
 
     coo.sum_duplicates()
 
     block_sizes = xp.array(
         [a.size for a in xp.array_split(xp.arange(shape[0]), num_blocks)]
     )
-    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes)))
+    block_offsets = xp.hstack(([0], xp.cumsum(block_sizes))).astype(coo.row.dtype)
 
     sort_index, rowptr_map = _reference_compute_rowptr_map(
         coo.row, coo.col, block_sizes

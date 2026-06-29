@@ -234,8 +234,8 @@ class ElectrostaticsConfig(BaseModel):
       approximation.
     - `"omen"`: Uses the density model from the OMEN code. This is
       almost identical to the single-band model with `density_model_dim
-      = 2`. However, it uses slightly different physical constants, i.e.
-      not the CODATA values used everywhere else in `quatrex`.
+      = 2`. However, it uses slightly different physical constants,
+      i.e., not the CODATA values used everywhere else in `quatrex`.
 
     Only used if `solving_scheme` is set to "root-finding".
 
@@ -737,13 +737,13 @@ class ContactConfig(BaseModel):
 
     """
 
-    num_kpoints_transport: int = 51
+    num_kpoints_transport: int = 50
     """Number of k-points to use for contact band structure calculation.
 
     This is used when automatically determining the Fermi level of the
     contact from its band structure. The k-point grid along the
-    transverse directions are determined from the
-    [`kpoint_grid`][kpoint_grid] parameter.
+    transverse directions are determined from the `kpoint_grid`
+    parameter.
 
     """
 
@@ -1530,6 +1530,24 @@ class QuatrexConfig(BaseModel):
                     "Both `fermi_level` and `mid_gap_energy` cannot be set "
                     "simultaneously, unless band edge tracking is active "
                     "or the Schrödinger-Poisson solver is enabled."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def check_contact_direction(self) -> Self:
+        """Checks that the contact direction is set in "wf" formalism."""
+
+        if self.formalism == "negf":
+            # NOTE: The contact direction is not used in the NEGF
+            # formalism.
+            return self
+
+        for contact in self.device.contacts:
+            if contact.direction is None:
+                raise ValueError(
+                    "The `direction` parameter of each contact must be "
+                    "set in the 'wf' formalism."
                 )
 
         return self

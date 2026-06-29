@@ -172,9 +172,16 @@ def contact_fermi_level(
 
     """
 
-    # NOTE: int() does a implicit copy to the host
-    # which is need since the input for split needs to be a int
-    num_valence_bands = int((e_k < mid_gap_energy).sum(axis=1).max())
+    num_valence_bands_k = (e_k < mid_gap_energy).sum(axis=1)
+    if not np.all(num_valence_bands_k == num_valence_bands_k[0]):
+        raise ValueError(
+            "The number of valence bands is not the same for all "
+            "k-points. You may have to adjust the mid-gap energy guess."
+        )
+
+    # NOTE: int() does a implicit copy to the host which is needed since
+    # the input for split needs to be a int.
+    num_valence_bands = int(num_valence_bands_k[0])
     e_k_valence, e_k_conduction = xp.split(e_k, [num_valence_bands], axis=1)
 
     def objective_function(fermi_level):

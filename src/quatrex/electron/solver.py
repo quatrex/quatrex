@@ -314,7 +314,10 @@ class ElectronSolver(SubsystemSolver):
             s_xx = None
 
         kpoints_transport = np.linspace(
-            -np.pi, np.pi, contact_config.num_kpoints_transport
+            -np.pi,
+            np.pi,
+            contact_config.num_kpoints_transport,
+            endpoint=False,
         )
         e_k = contact_band_structure(kpoints_transport, h_xx, s_xx)
 

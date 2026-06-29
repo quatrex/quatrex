@@ -1105,9 +1105,9 @@ class Contact:
             conduction band edge.
 
         """
-        # NOTE: I'm not 100% sure if i should be including the endpoint
-        # in the k-point grid or if i end up double counting like this.
-        kpoints_transport = xp.linspace(-xp.pi, xp.pi, num_kpoints_transport)
+        kpoints_transport = xp.linspace(
+            -xp.pi, xp.pi, num_kpoints_transport, endpoint=False
+        )
 
         e_k = xp.zeros(
             (

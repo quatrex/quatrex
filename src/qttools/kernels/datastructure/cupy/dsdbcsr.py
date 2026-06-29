@@ -85,16 +85,11 @@ def find_inds(
         rowptr = rowptr_map.get((brow, bcol), None)
         if rowptr is None:
             continue
-        mask = cp.zeros_like(brows)
+        mask = cp.zeros_like(brows, dtype=cp.bool_)
 
-        if (
-            rowptr.dtype != dtype
-            or brows.dtype != dtype
-            or bcols.dtype != dtype
-            or mask.dtype != dtype
-        ):
+        if rowptr.dtype != dtype or brows.dtype != dtype or bcols.dtype != dtype:
             raise TypeError(
-                f"All input arrays must have the same dtype, but got {rowptr.dtype}, {brows.dtype}, {bcols.dtype}, {mask.dtype}."
+                f"All input arrays must have the same dtype, but got {rowptr.dtype}, {brows.dtype}, {bcols.dtype}."
             )
 
         cupy_backend._compute_block_mask(
@@ -109,7 +104,6 @@ def find_inds(
                 dtype(brows.shape[0]),
             ),
         )
-        mask = mask.astype(cp.bool_)
         mask_inds = cp.nonzero(mask)[0]
 
         # Renormalize the row indices for this block.
@@ -280,7 +274,7 @@ def compute_rowptr_map(
 
     sort_index = cp.zeros_like(coo_cols)
     rowptr_map = {}
-    mask = cp.zeros_like(coo_cols)
+    mask = cp.zeros_like(coo_cols, dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0
@@ -321,7 +315,7 @@ def compute_rowptr_map(
 
             # Compute the rowptr map.
             hist, __ = cp.histogram(
-                coo_rows[mask.astype(cp.bool_)] - block_offsets[i],
+                coo_rows[mask] - block_offsets[i],
                 bins=cp.arange(block_sizes[i] + 1),
             )
             rowptr = cp.hstack((cp.array([0]), cp.cumsum(hist))) + offset

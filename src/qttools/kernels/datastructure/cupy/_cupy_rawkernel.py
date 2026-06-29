@@ -16,11 +16,10 @@ if comm.rank == 0:
 kernels_template = comm.bcast(kernels_template, root=0)
 
 kernels_template = kernels_template.replace(
-    "%THREADS_PER_BLOCK%", str(THREADS_PER_BLOCK)
+    "TEMPLATE_THREADS_PER_BLOCK", str(THREADS_PER_BLOCK)
 )
 
 kernel_names = [
-    "_reduction",
     "_find_inds",
     "_compute_coo_block_mask",
     "_find_bcoords",
@@ -35,6 +34,16 @@ name_expressions = {
     for idx in index_types.items()
     for name in kernel_names
 }
+
+for idx1 in index_types.items():
+    for idx2 in index_types.items():
+        name_expressions[(idx1[0], idx2[0], "_reduction")] = (
+            f"_reduction<{idx1[1]}, {idx2[1]}>"
+        )
+
+for idx in index_types.items():
+    name_expressions[cp.bool_, idx[0], "_reduction"] = f"_reduction<bool, {idx[1]}>"
+
 for idx in index_types.items():
     for val in value_types.items():
         name_expressions[(idx[0], val[0], "_densify_block")] = (

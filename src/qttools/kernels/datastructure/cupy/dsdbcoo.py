@@ -112,7 +112,7 @@ def compute_block_slice(
         The stop index of the block.
 
     """
-    mask = cp.zeros_like(rows)
+    mask = cp.zeros_like(rows, dtype=cp.bool_)
 
     dtype = rows.dtype.type
     if block_offsets.dtype.type != dtype or cols.dtype.type != dtype:
@@ -285,7 +285,7 @@ def compute_block_sort_index(
     block_offsets = np.hstack((np.array([0]), np.cumsum(block_sizes)), dtype=dtype)
 
     sort_index = cp.zeros_like(coo_cols)
-    mask = cp.zeros_like(coo_cols)
+    mask = cp.zeros_like(coo_cols, dtype=cp.bool_)
 
     blocks_per_grid = (len(coo_cols) + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     offset = 0

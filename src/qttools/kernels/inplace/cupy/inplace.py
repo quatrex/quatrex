@@ -3,7 +3,7 @@
 import cupy as cp
 
 from qttools import NDArray
-from qttools.kernels.inplace.cupy import _rawkernel
+from qttools.kernels.inplace.cupy import _cupy_rawkernel
 
 THREADS_PER_BLOCK = 1024
 
@@ -36,20 +36,17 @@ def scatter_add_scaled(
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
     if isinstance(alpha, complex):
-        alpha_type = cp.complex128
+        alpha = cp.complex128(alpha)
     elif isinstance(alpha, float):
-        alpha_type = cp.float64
+        alpha = cp.float64(alpha)
     else:
         raise TypeError(
-            f"Unsupported type for alpha: {type(alpha)}. Must be float, complex, or NDArray."
+            f"Unsupported type for alpha: {type(alpha)}. Must be float or complex."
         )
 
     index_type = inds.dtype.type
 
-    kernel = _rawkernel.scatter_add_scaled_kernels[
-        a.dtype.type, b.dtype.type, alpha_type, index_type
-    ]
-    kernel(
+    _cupy_rawkernel._scatter_add_scaled(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (a, b, inds, index_type(num_inds), alpha, conjugate),
@@ -105,8 +102,7 @@ def scatter_add_scaled_obc(
 
     index_type = inds.dtype.type
 
-    kernel = _rawkernel._scatter_add_scaled_obc_kernels[index_type]
-    kernel(
+    _cupy_rawkernel._scatter_add_scaled_obc(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
         (

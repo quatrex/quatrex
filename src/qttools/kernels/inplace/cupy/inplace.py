@@ -12,7 +12,7 @@ def scatter_add_scaled(
     a: NDArray,
     b: NDArray,
     inds: NDArray,
-    alpha: NDArray | complex | float = 1.0,
+    alpha: complex | float = 1.0,
     conjugate: bool = False,
 ) -> None:
     """Adds array `b` to array `a` at indices `inds` in-place.
@@ -25,7 +25,7 @@ def scatter_add_scaled(
         The array to be added to `a`.
     inds : NDArray
         The indices at which to add `b` to `a`.
-    alpha : complex, optional
+    alpha : complex | float, optional
         The scalar multiplier for `b` before adding it to `a`.
     conjugate : bool, optional
         Whether to take the complex conjugate of `b` before adding it to
@@ -35,9 +35,7 @@ def scatter_add_scaled(
     num_inds = inds.shape[0]
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
-    if isinstance(alpha, cp.ndarray):
-        alpha_type = alpha.dtype.type
-    elif isinstance(alpha, complex):
+    if isinstance(alpha, complex):
         alpha_type = cp.complex128
     elif isinstance(alpha, float):
         alpha_type = cp.float64

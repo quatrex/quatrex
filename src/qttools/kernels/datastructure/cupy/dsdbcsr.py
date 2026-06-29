@@ -103,8 +103,8 @@ def find_inds(
             (
                 brows,
                 bcols,
-                brow,
-                bcol,
+                dtype(brow),
+                dtype(bcol),
                 mask,
                 dtype(brows.shape[0]),
             ),

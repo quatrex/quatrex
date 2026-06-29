@@ -295,7 +295,10 @@ class DSDBSparse(ABC):
 
         """
         self._block_config[num_blocks] = BlockConfig(
-            block_sizes, block_offsets, self.index_type, block_slice_cache
+            block_sizes,
+            block_offsets,
+            self.index_type,
+            block_slice_cache=block_slice_cache,
         )
 
     @property

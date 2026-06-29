@@ -1,5 +1,7 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import importlib.resources
+
 import cupy as cp
 from mpi4py.MPI import COMM_WORLD as comm
 
@@ -10,8 +12,8 @@ from qttools.kernels.datastructure.cupy import THREADS_PER_BLOCK
 kernels_template = None
 
 if comm.rank == 0:
-    with open(__file__.replace(".py", ".cu"), "r") as f:
-        kernels_template = f.read()
+    cu_file = importlib.resources.files(__package__) / "_cupy_rawkernel.cu"
+    kernels_template = cu_file.read_text(encoding="utf-8")
 
 kernels_template = comm.bcast(kernels_template, root=0)
 

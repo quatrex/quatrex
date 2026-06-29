@@ -84,3 +84,6 @@ testpaths = ["tests"]
 
 [tool.isort]
 profile = "black"
+
+[tool.setuptools.package-data]
+"*" = ["*.cu"]

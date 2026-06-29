@@ -1,5 +1,6 @@
 # Copyright (c) 2024-2026 ETH Zurich and the authors of the qttools package.
 
+import numpy as np
 import pytest
 
 from qttools import sparse, xp
@@ -19,7 +20,7 @@ def test_scatter_add_scaled(
 
     assert shape[0] == shape[1], "shape must be square for this test."
 
-    rng = xp.random.default_rng(42)
+    rng = np.random.default_rng(42)
 
     a = sparse.random(*shape, density=0.2, format="csr") + 1j * sparse.random(
         *shape, density=0.2, format="csr"
@@ -48,9 +49,9 @@ def test_scatter_add_scaled(
     b_data_sorted = xp.ascontiguousarray(b.data[sort_b])
 
     if double:
-        alpha = xp.float64(rng.uniform(0.1, 1.0))
+        alpha = rng.uniform(0.1, 1.0)
     else:
-        alpha = xp.complex128(rng.uniform(0.1, 1.0) + 1j * rng.uniform(0.1, 1.0))
+        alpha = rng.uniform(0.1, 1.0) + 1j * rng.uniform(0.1, 1.0)
 
     a_copy = a.copy()
 

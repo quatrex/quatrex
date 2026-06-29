@@ -36,25 +36,25 @@ def scatter_add_scaled(
     blocks_per_grid = (num_inds + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
 
     if isinstance(alpha, cp.ndarray):
-        alpha_t = alpha.dtype.type
+        alpha_type = alpha.dtype.type
     elif isinstance(alpha, complex):
-        alpha_t = cp.complex128
+        alpha_type = cp.complex128
     elif isinstance(alpha, float):
-        alpha_t = cp.float64
+        alpha_type = cp.float64
     else:
         raise TypeError(
             f"Unsupported type for alpha: {type(alpha)}. Must be float, complex, or NDArray."
         )
 
-    index_t = inds.dtype.type
+    index_type = inds.dtype.type
 
     kernel = _rawkernel.scatter_add_scaled_kernels[
-        a.dtype.type, b.dtype.type, alpha_t, index_t
+        a.dtype.type, b.dtype.type, alpha_type, index_type
     ]
     kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
-        (a, b, inds, index_t(num_inds), alpha, conjugate),
+        (a, b, inds, index_type(num_inds), alpha, conjugate),
     )
 
 
@@ -105,9 +105,9 @@ def scatter_add_scaled_obc(
             f"Got {type(alpha)} instead."
         )
 
-    index_t = inds.dtype.type
+    index_type = inds.dtype.type
 
-    kernel = _rawkernel._scatter_add_scaled_obc_kernels[index_t]
+    kernel = _rawkernel._scatter_add_scaled_obc_kernels[index_type]
     kernel(
         (blocks_per_grid,),
         (THREADS_PER_BLOCK,),
@@ -116,11 +116,11 @@ def scatter_add_scaled_obc(
             b.flatten(),
             ky,
             kz,
-            index_t(b.shape[1] * ny * nz),
-            index_t(b.shape[1]),
-            index_t(nz),
+            index_type(b.shape[1] * ny * nz),
+            index_type(b.shape[1]),
+            index_type(nz),
             inds,
-            index_t(num_inds),
+            index_type(num_inds),
             alpha,
         ),
     )

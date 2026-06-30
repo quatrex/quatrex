@@ -54,6 +54,8 @@ class Observables:
     excess_hole_density : NDArray, optional
         Orbital-resolved excess hole density.
 
+    bond_currents : NDArray, optional
+        Bond current values for each bond (couple of orbitals) in the device, if full current calculation is enabled.
     """
 
     electron_ldos: dict[QTBMContact, NDArray] = field(default_factory=dict)
@@ -66,8 +68,7 @@ class Observables:
 
     bond_currents: xp.ndarray = field(
         default_factory=lambda: xp.zeros(0, dtype=xp.float64)
-    ) 
-
+    )
 
 
 class QTBM(TransportSolver):
@@ -863,19 +864,31 @@ class QTBM(TransportSolver):
         if self.config.qtbm.full_current:
             for contact in self.device.contacts:
                 slice_tuple = injection_slices[contact].indices(phi.shape[1])
-                for n_phi in range(*slice_tuple):
-                    M = -(
-                        sparse.diags(phi[:, n_phi].T.conj())
-                        @ self.system_matrix
-                        @ sparse.diags(phi[:, n_phi])
+                row_indices = xp.repeat(
+                    xp.arange(self.system_matrix.shape[0]),
+                    xp.diff(self.system_matrix.indptr).tolist(),
+                )
+                for n_phi in range(
+                    *slice_tuple
+                ):  # Iterate over the injected modes for the current contact
+                    # Compute the bond current contribution directly on the existing
+                    # sparsity pattern so explicit zeros are preserved.
+                    bond_current_data = -(
+                        xp.conjugate(phi[row_indices, n_phi])
+                        * self.system_matrix.data
+                        * phi[self.system_matrix.indices, n_phi]
                     )
+                    # Update the bond currents observable with the contribution from this mode,
+                    # weighted by the Fermi-Dirac distribution and the energy differentials
+                    # Due to the large size of the bond transmission matrix,
+                    # we compute the contribution in-place without storing the full bond transmission matrix
                     self.observables.bond_currents -= (
                         2
-                        * xp.imag(M.data)
+                        * xp.imag(bond_current_data)
                         * fermi_dirac(
                             self.local_energies[global_energy_ind]
                             - contact.fermi_level,
-                            self.config.electron.temperature,
+                            contact.temperature,
                         )
                         * (
                             self.local_dEp[global_energy_ind]
@@ -1263,7 +1276,6 @@ class QTBM(TransportSolver):
                     ),
                 )
 
-
             if self.observables.excess_electron_density is not None:
                 np.save(
                     f"{output_dir}/excess_electron_density.npy",
@@ -1364,52 +1376,6 @@ class QTBM(TransportSolver):
             excess_electron_density,
             excess_hole_density,
         )
-
-    def set_potential(self, potential: NDArray):
-        """Sets the potential for the QTBM calculation.
-
-        This method can be used to update the potential for
-        self-consistent calculations.
-
-        Parameters
-        ----------
-        potential : NDArray
-            The new potential values to be set in the system matrix.
-
-        """
-        if potential.shape[0] == self.device.atom_coordinates.shape[0]:
-            # Upscale the potential to the number of orbitals
-            orbitals_per_atom = [
-                self.config.device.num_orbitals_per_atom.get(species, 1)
-                for species in self.device.atomic_species
-            ]
-            potential = xp.repeat(potential, orbitals_per_atom, axis=0)
-
-        self.device.potential = potential
-
-    def get_charge_density(self) -> NDArray:
-        """Gets the charge density from the QTBM calculation.
-
-        This method integrates the local density of states to obtain the
-        charge density. This is typically used in self-consistent
-        calculations where the charge density is needed to update the
-        potential.
-
-        Returns
-        -------
-        charge_density : NDArray
-            The computed charge density for the device.
-
-        """
-        electron_density, hole_density = self._compute_excess_charge_densities()
-        charge_density = electron_density - hole_density
-
-        # From orbital to atom resolved charge density.
-        charge_density = np.add.reduceat(
-            charge_density, self.device.orbital_offsets[:-1]
-        )
-
-        return charge_density
 
     def _compute_excess_charge_densities(self):
         """Computes the charge density from the local density of states.
@@ -1615,6 +1581,8 @@ class QTBM(TransportSolver):
             )
 
         if self.config.qtbm.full_current:
+            # Reduce the bond currents across all processes to get the total bond currents
+            # all_reduce_v is not present, so we need a temporary array
             temp = xp.empty_like(self.observables.bond_currents)
             comm.stack.all_reduce(self.observables.bond_currents, temp)
             self.observables.bond_currents = temp
@@ -1628,8 +1596,7 @@ class QTBM(TransportSolver):
         (
             self.observables.excess_electron_density,
             self.observables.excess_hole_density,
-        ) = self._compute_excess_charge_densities() 
-        
+        ) = self._compute_excess_charge_densities()
 
         self._write_outputs()
 

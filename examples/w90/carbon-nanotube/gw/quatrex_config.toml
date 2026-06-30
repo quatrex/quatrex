@@ -33,13 +33,13 @@ save_profiling_results = true
 
 
 [electron] # ===========================================================
-# 0.2 V Potential difference.
-left_fermi_level = -3.6  # eV
-right_fermi_level = -3.8 # eV
+left_contact.name = "source"
+left_contact.fermi_level = -3.600012853 # eV
+left_contact.mid_gap_energy = -3.8      # eV
 
-fermi_level = -3.6                        # eV
-conduction_band_edge = -3.566382123573606 # eV
-valence_band_edge = -4.174109778287768    # eV
+right_contact.name = "drain"
+right_contact.fermi_level = -3.600012853 # eV
+right_contact.mid_gap_energy = -3.8      # eV
 
 band_edge_tracking = true
 

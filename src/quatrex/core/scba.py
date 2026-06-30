@@ -14,6 +14,7 @@ from qttools.utils.gpu_utils import get_host
 from qttools.utils.mpi_utils import distributed_load, get_section_sizes
 from quatrex.core.config import QuatrexConfig
 from quatrex.core.observables import current_conservation, density, device_current
+from quatrex.core.transport import TransportSolver
 from quatrex.core.utils import compute_num_connected_blocks, compute_sparsity_pattern
 from quatrex.coulomb_screening import CoulombScreeningSolver, PCoulombScreening
 from quatrex.device import Device
@@ -46,7 +47,11 @@ class SCBAData:
         """Initializes the SCBA data."""
         # Load orbital positions, energy vector and block-sizes.
 
-        grid, __, __ = Device.load_structure(config)
+        grid, __, atomic_species = Device.load_structure(config)
+        self.orbitals_per_atom = [
+            config.device.num_orbitals_per_atom.get(s, 1) for s in atomic_species
+        ]
+
         block_sizes = get_block_sizes(config, grid)
 
         kpoint_grid = config.device.kpoint_grid
@@ -224,7 +229,7 @@ class Observables:
     thermal_current: NDArray = None
 
 
-class SCBA:
+class SCBA(TransportSolver):
     """Self-consistent Born approximation (SCBA) solver.
 
     Parameters
@@ -520,16 +525,19 @@ class SCBA:
                 self.data.g_retarded,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.electron_ldos *= 2  # Spin
         if self.config.outputs.electron_density:
             self.observables.electron_density = density(
                 self.data.g_lesser,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.electron_density *= 2  # Spin
         if self.config.outputs.hole_density:
             self.observables.hole_density = -density(
                 self.data.g_greater,
                 self.electron_solver.overlap,
             ) / (2 * xp.pi)
+            self.observables.hole_density *= 2  # Spin
 
         if self.config.outputs.device_currents:
             self.observables.electron_current["device"] = device_current(
@@ -636,6 +644,90 @@ class SCBA:
 
         for filename, data in outputs.items():
             xp.save(self.config.output_dir / filename, data)
+
+    def _compute_excess_charge_densities(self):
+        """Computes the charge density from the local density of states.
+
+        Returns
+        -------
+        excess_electron_density : NDArray
+            The excess electron density computed from the local density
+            of states.
+        excess_hole_density : NDArray
+            The excess hole density computed from the local density of
+            states.
+
+        """
+        if (
+            self.observables.electron_density is None
+            or self.observables.hole_density is None
+        ):
+            raise ValueError(
+                "Electron and hole densities must be computed "
+                "before computing excess charge densities."
+            )
+
+        # NOTE: Use the mid-gap-energy of a reference contact.
+        if self.electron_solver.left_voltage == 0.0:
+            mid_gap_energy = self.electron_solver.left_mid_gap_energy
+        elif self.electron_solver.right_voltage == 0.0:
+            mid_gap_energy = self.electron_solver.right_mid_gap_energy
+        else:
+            raise NotImplementedError(
+                "Cannot determine mid-gap energy for excess charge density calculation. "
+                "At least one contact must be grounded (zero voltage)."
+            )
+
+        mid_gap_energy = self.electron_solver.potential + mid_gap_energy
+
+        electron_density = self.observables.electron_density.copy()
+        hole_density = self.observables.hole_density.copy()
+
+        mask = self.electron_energies[:, None] > mid_gap_energy
+        electron_density[~mask] = 0
+        hole_density[mask] = 0
+
+        excess_electron_density = np.trapezoid(
+            electron_density, self.electron_energies, axis=0
+        )
+        excess_hole_density = np.trapezoid(hole_density, self.electron_energies, axis=0)
+
+        return excess_electron_density, excess_hole_density
+
+    def set_potential(self, potential: NDArray):
+        """Sets the potential for the SCBA calculation.
+
+        Parameters
+        ----------
+        potential : NDArray
+            The new potential values to be set in the system matrix.
+
+        """
+        if potential.shape[0] != np.sum(self.data.orbitals_per_atom):
+            potential = np.repeat(potential, self.data.orbitals_per_atom)
+
+        self.electron_solver.potential = potential
+
+    def get_charge_density(self) -> NDArray:
+        """Gets the charge density.
+
+        This computes the excess charge density from the spectral
+        electron and hole densities.
+
+        Returns
+        -------
+        charge_density : NDArray
+            The computed charge density for the device.
+
+        """
+        electron_density, hole_density = self._compute_excess_charge_densities()
+        charge_density = electron_density - hole_density
+
+        # From orbital to atom resolved charge density.
+        orbital_offsets = np.hstack(([0], np.cumsum(self.data.orbitals_per_atom)))
+        charge_density = np.add.reduceat(charge_density, orbital_offsets[:-1])
+
+        return charge_density
 
     @profiler.profile(label="SCBA", level="default", comm=comm)
     def run(self) -> None:

@@ -1,0 +1,104 @@
+simulation_dir = "."
+input_dir = "../inputs"
+
+formalism = "wf"
+
+[scsp]
+mixer = "under-relaxation"
+mixing_factor = 0.75
+adaptive_mixing = true
+
+max_iterations = 3
+
+[electrostatics]
+default_epsilon_r = 11.7
+density_model_dim = 1
+
+[device]
+transport_direction = "x"
+kpoint_grid = [1, 1, 1]
+num_orbitals_per_atom = { "X" = 1 }
+
+    [device.geometry]
+    default_mesh_size = 2
+    atoms_mesh_size = 1
+
+        [[device.geometry.regions]]
+        name = "gate"
+
+        shape.type = "tube"
+        shape.center = [50, 25, 25]
+        shape.axis = [1, 0, 0]
+        shape.radius = 20
+        shape.length = 20
+
+        properties.voltage = 0.0
+
+        [[device.geometry.regions]]
+        name = "oxide"
+
+        properties.epsilon_r = 3.9
+
+        shape.type = "difference"
+
+        shape.base.type = "cylinder"
+        shape.base.center = [50, 25, 25]
+        shape.base.axis = [1, 0, 0]
+        shape.base.radius = 20
+        shape.base.length = 20
+
+        shape.subtract.type = "cylinder"
+        shape.subtract.center = [50, 25, 25]
+        shape.subtract.axis = [1, 0, 0]
+        shape.subtract.radius = 7.5
+        shape.subtract.length = 20
+
+        [[device.geometry.regions]]
+        name = "source"
+
+        shape.type = "box"
+        shape.bounds = [[0, 0, 0], [10, 50, 50]]
+
+        properties.donor_concentration = 1e20 # in cm^-3
+
+
+        [[device.geometry.regions]]
+        name = "drain"
+
+        shape.type = "box"
+        shape.bounds = [[92.694, 0, 0], [102.694, 50, 50]]
+
+        properties.donor_concentration = 1e20 # in cm^-3
+
+
+    [[device.contacts]]
+    name = "source"
+    origin = [0.1551, 0.0, 0.0]
+    lattice_vectors = [[4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    direction = "a"
+
+    mid_gap_energy = -3.8
+
+    voltage = 0.0
+
+    [[device.contacts]]
+    name = "drain"
+    origin = [102.694, 0.0, 0.0]
+    lattice_vectors = [[-4.27615261, 0, 0], [0, 50, 0], [0, 0, 50]]
+    direction = "a"
+
+    mid_gap_energy = -3.8
+
+    voltage = -0.2
+
+[qtbm]
+max_batch_size = 1
+
+[electron]
+energy_window_min = -6.5
+energy_window_max = -1.0
+energy_window_num = 100
+
+solver.direct_solver = "superlu"
+
+obc.nevp_solver = "full"

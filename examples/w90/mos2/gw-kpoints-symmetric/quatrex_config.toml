@@ -22,7 +22,7 @@ phonon = true
 
 align_self_energy_to_complex_axes = false
 
-[outputs]  # Select which outputs to write.
+[outputs] # Select which outputs to write.
 electron_ldos = true
 device_currents = true
 electron_density = true
@@ -34,20 +34,20 @@ coulomb_screening_density = true
 
 
 [electron] # =========================================================
+left_contact.name = "source"
+left_contact.fermi_level = -0.031537969 # eV
+left_contact.mid_gap_energy = -1        # eV
 
-left_fermi_level = -0.3 # eV
-right_fermi_level = -0.4 # eV
-fermi_level = -0.3 # eV
-
-conduction_band_edge = -0.3187 # eV
-valence_band_edge = -2.0026 # eV
+right_contact.name = "drain"
+right_contact.fermi_level = -0.031537969 # eV
+right_contact.mid_gap_energy = -1        # eV
 
 band_edge_tracking = true
 
 flatband = false
 
 energy_window_min = -10.0 # eV
-energy_window_max = 5 # eV
+energy_window_max = 5     # eV
 energy_window_num = 100
 
 eta = 1e-5
@@ -79,7 +79,7 @@ obc.residual_tolerance = 1e-4
 [coulomb_screening] # ===============================================
 align_polarization_to_complex_axes = false
 apply_hilbert_correction = true
-interaction_cutoff = 8 #12 # Å
+interaction_cutoff = 8                     #12 # Å
 
 epsilon_r = 100.0
 

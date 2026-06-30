@@ -11,7 +11,14 @@ from qttools.boundary_conditions import obc
 from qttools.comm import comm
 from qttools.nevp import NEVP, Beyn, Full
 from qttools.profiling import Profiler
-from quatrex.core.config import NEVPConfig, OBCConfig
+from quatrex.bandstructure.contact import (
+    contact_band_edges,
+    contact_band_structure,
+    contact_doping_density,
+    contact_fermi_level,
+)
+from quatrex.core.config import ContactConfig, NEVPConfig, OBCConfig
+from quatrex.grid.kpoints import monkhorst_pack
 
 profiler = Profiler()
 
@@ -177,18 +184,10 @@ class Contact:
         The device object to which this contact is attached. Contains
         the Hamiltonian, overlap matrices, and atomic structure
         information.
-    name : str
-        A unique identifier for this contact.
-    origin : NDArray
-        The origin coordinates of the contact cell in device
-        coordinates.
-    lattice_vectors : NDArray
-        The lattice vectors defining the unit cell of the contact.
-    direction : str
-        The transport direction of the contact, specified as 'a', 'b',
-        or 'c' corresponding to the lattice axes.
-    fermi_level : float
-        The Fermi level of the contact in eV.
+    contact_config : ContactConfig
+        The configuration object containing the contact settings such as
+        lattice vectors, origin, transport direction, and Fermi level
+        information.
 
     Attributes
     ----------
@@ -220,33 +219,23 @@ class Contact:
 
     """
 
-    def __init__(
-        self,
-        device,
-        name: str,
-        origin: NDArray,
-        lattice_vectors: NDArray,
-        direction: str,
-        fermi_level: float,
-    ):
+    def __init__(self, device, contact_config: ContactConfig):
         """Initializes the contact object."""
 
-        if len(origin) != 3:
+        if len(contact_config.origin) != 3:
             raise ValueError("Origin must be a 3D coordinate.")
-        if lattice_vectors.shape != (3, 3):
+        if contact_config.lattice_vectors.shape != (3, 3):
             raise ValueError("Vectors must be a 3x3 array.")
-        if direction not in ["a", "b", "c"]:
+        if contact_config.direction not in ["a", "b", "c"]:
             raise ValueError("Direction must be one of 'a', 'b', or 'c'.")
 
-        self.name = name
         self.device = device
+        self.name = contact_config.name
 
-        self.fermi_level = fermi_level
+        self.lattice_vectors = contact_config.lattice_vectors
+        self.origin = contact_config.origin
 
-        self.lattice_vectors = lattice_vectors
-        self.origin = origin
-
-        self.direction = "abc".index(direction)
+        self.direction = "abc".index(contact_config.direction)
         self.transverse_axes = [0, 1, 2]
         self.transverse_axes.remove(self.direction)
 
@@ -337,6 +326,75 @@ class Contact:
         self.obc_solver = self._configure_obc(
             device.config.electron.obc, device.config.compute.nevp
         )
+
+        # NOTE: We can either explicitly set the Fermi level in the
+        # contact config, or compute it from the doping density and a
+        # mid-gap energy.
+        if contact_config.fermi_level is not None and device.config.scsp is None:
+            self.fermi_level = contact_config.fermi_level
+            self.mid_gap_energy = contact_config.mid_gap_energy
+        else:
+            # TODO: The kpoint grid info is not in the contact config,
+            # but we need it to compute a Fermi level. Would be nice if
+            # this could be accessed via a sort of general, global
+            # simulation context.
+            kpoints_transverse = (2 * np.pi) * monkhorst_pack(
+                device.config.device.kpoint_grid, device.config.device.kpoint_shift
+            )[:, self.transverse_axes]
+
+            doping_density = contact_doping_density(
+                coordinates=device.atom_coordinates[self.origin_atom_indices],
+                geometry_regions=device.config.device.geometry.regions,
+            )
+
+            if comm.rank == 0:
+                print(f"    Doping density: {doping_density} Å^-3", flush=True)
+
+            # HACK: If there is a potential present in the input folder,
+            # it will have already been baked into the unit cell
+            # Hamiltonian by the time we get here, so it now needs to be
+            # removed to correctly compute the Fermi level and band
+            # edges and then it has to be added back again immediately
+            # after to not affect the rest of the calculation. Because
+            # the potential is added in-place rather than just set, we
+            # have to in-place add its negative to effectively remove
+            # it.
+            potential = self.device.potential.copy()
+
+            self.device.potential = -potential
+            self.device.apply_potential()
+            self._init_hamiltonian_overlap_matrices()
+
+            (
+                self.fermi_level,
+                self.mid_gap_energy,
+                self.delta_fermi_level_conduction_band,
+            ) = self._compute_fermi_level(
+                num_kpoints_transport=contact_config.num_kpoints_transport,
+                kpoints_transverse=kpoints_transverse,
+                mid_gap_energy=contact_config.mid_gap_energy,
+                temperature=contact_config.temperature,
+                doping_density=doping_density,
+                cell_volume=np.abs(np.linalg.det(self.lattice_vectors)),
+            )
+
+            self.device.potential = potential
+            self.device.apply_potential()
+            self._init_hamiltonian_overlap_matrices()
+
+        self.voltage = contact_config.voltage
+        self.temperature = contact_config.temperature
+
+        if comm.rank == 0:
+            print(f"    Fermi level: {self.fermi_level} eV", flush=True)
+            print(f"    Mid-gap energy: {self.mid_gap_energy} eV", flush=True)
+            if contact_config.fermi_level is None or device.config.scsp is not None:
+                print(
+                    f"    Delta Fermi level: {self.delta_fermi_level_conduction_band} eV",
+                    flush=True,
+                )
+            print(f"    Voltage: {self.voltage} V", flush=True)
+            print(f"    Temperature: {self.temperature} K", flush=True)
 
     def _get_atom_indices_in_cell(self, nx: int, ny: int, nz: int) -> NDArray:
         """Gets the indices of atoms inside a specific periodic repetition.
@@ -1003,6 +1061,100 @@ class Contact:
             f"NEVP solver '{obc_config.nevp_solver}' not implemented."
         )
 
+    def _compute_fermi_level(
+        self,
+        num_kpoints_transport: int,
+        kpoints_transverse: NDArray,
+        mid_gap_energy: float,
+        temperature: float,
+        doping_density: float,
+        cell_volume: float,
+    ) -> tuple[float, float, float]:
+        """Computes the Fermi level for the contact.
+
+        Parameters
+        ----------
+        num_kpoints_transport : int
+            The number of k-points to sample in the transport direction
+            for the band structure calculation.
+        kpoints_transverse : NDArray
+            The array of transverse k-points at which to compute the
+            band structure.
+        mid_gap_energy : float
+            The mid-gap energy of the contact material.
+
+        temperature : float
+            The temperature of the contact in Kelvin.
+        doping_density : float
+            The doping density of the contact. This has to have the
+            inverse units of the cell volume, e.g. cm^-3 if the cell
+            volume is in cm^3.
+        cell_volume : float
+            The volume of the contact unit cell in the same units as the
+            inverse of the doping density, e.g. cm^3 if the doping
+            density is in cm^-3.
+
+        Returns
+        -------
+        fermi_level : float
+            The computed Fermi level in eV.
+        mid_gap_energy : float
+            The recomputed mid-gap energy based on the band structure.
+        delta_fermi_level_conduction_band : float
+            The energy difference between the Fermi level and the
+            conduction band edge.
+
+        """
+        kpoints_transport = xp.linspace(
+            -xp.pi, xp.pi, num_kpoints_transport, endpoint=False
+        )
+
+        e_k = xp.zeros(
+            (
+                num_kpoints_transport,
+                kpoints_transverse.shape[0],
+                self.num_transport_cells * self.origin_num_orbitals,
+            ),
+            dtype=float,
+        )
+
+        for n, (ki, kj) in enumerate(kpoints_transverse):
+            hamiltonian_layer = self._construct_contact_matrix(
+                self.unit_cell_hamiltonian, ki, kj
+            )
+            overlap_layer = self._construct_contact_matrix(
+                self.unit_cell_overlap, ki, kj
+            )
+
+            h_xx = xp.split(hamiltonian_layer.toarray(), 3, axis=-1)
+            s_xx = xp.split(overlap_layer.toarray(), 3, axis=-1)
+
+            e_k[:, n, :] = contact_band_structure(kpoints_transport, h_xx, s_xx)
+
+        # Average over transverse k-points.
+        e_k = xp.mean(e_k, axis=1)
+
+        fermi_level = contact_fermi_level(
+            e_k=e_k,
+            kpoints=kpoints_transport,
+            mid_gap_energy=mid_gap_energy,
+            cell_volume=cell_volume,
+            doping_density=doping_density,
+            temperature=temperature,
+        )
+
+        # Recompute the actual mid-gap energy from the band structure.
+        valence_band_edge, conduction_band_edge = contact_band_edges(
+            e_k, mid_gap_energy
+        )
+        if comm.rank == 0:
+            print(f"    Conduction band minimum: {conduction_band_edge} eV", flush=True)
+            print(f"    Valence band maximum: {valence_band_edge} eV", flush=True)
+        mid_gap_energy = 0.5 * (conduction_band_edge + valence_band_edge)
+        delta_fermi_level_conduction_band = conduction_band_edge - fermi_level
+
+        return fermi_level, mid_gap_energy, delta_fermi_level_conduction_band
+
     def get_coupling_matrix(
         self, M: sparse.spmatrix, transpose: bool = False
     ) -> NDArray:
@@ -1025,6 +1177,9 @@ class Contact:
             The matrix (Hamiltonian or overlap) from which to extract
             coupling elements. Should have dimensions
             (n_device_orbitals, n_device_orbitals).
+        transpose : bool, optional
+            If True, the method extracts the transpose of the coupling
+            matrix, by default False.
 
         Returns
         -------

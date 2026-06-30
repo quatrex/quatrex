@@ -7,32 +7,31 @@ formalism = "wf"
 max_batch_size = 2
 [device]
 transport_direction = 'x'
-num_orbitals_per_atom = {"Si"=4}
-kpoint_grid = [1,2,1]
-kpoint_shift = [0,0.1,0.1]
+num_orbitals_per_atom = { "Si" = 4 }
+kpoint_grid = [1, 2, 1]
+kpoint_shift = [0, 0.1, 0.1]
 
     [[device.contacts]]
     name = "left"
-    origin = [-0.01, -0.01 ,-0.01]
-    lattice_vectors = [[5.444, 0, 0], [0,5.444 , 0], [0, 0, 5.444]]
+    origin = [-0.01, -0.01, -0.01]
+    lattice_vectors = [[5.444, 0, 0], [0, 5.444, 0], [0, 0, 5.444]]
     direction = "a"
-     fermi_level = -3
+    fermi_level = -3
 
     [[device.contacts]]
     name = "right"
-    origin = [161.96,  -0.001 ,-0.001]
-    lattice_vectors = [[-5.444, 0, 0], [0, 5.444 , 0], [0, 0, 5.444]]
+    origin = [161.96, -0.001, -0.001]
+    lattice_vectors = [[-5.444, 0, 0], [0, 5.444, 0], [0, 0, 5.444]]
     direction = "a"
     fermi_level = -3.001
 
 
 [electron]
-    conduction_band_edge = -2.4
-    valence_band_edge = -2.5
+solver.direct_solver = "superlu"
 
-    energy_window_min = 6.2
-    energy_window_max = 7.2
-    energy_window_num = 10
+energy_window_min = 6.2
+energy_window_max = 7.2
+energy_window_num = 10
 
     [electron.obc]
     algorithm = "spectral"

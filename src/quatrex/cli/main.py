@@ -58,21 +58,15 @@ def _run_wf(config):
     from quatrex.core.qtbm import QTBM
     from quatrex.device import Device
 
-    with threadpool_limits(
-        limits=config.compute.blas_num_threads,
-        user_api=config.compute.threadpool_api,
-    ):
-        pprint(threadpool_info()) if comm.rank == 0 else None
+    device = Device(config)
+    qtbm = QTBM(device, config)
 
-        device = Device(config)
-        qtbm = QTBM(device, config)
+    tic = time.perf_counter()
+    qtbm.run()
+    toc = time.perf_counter()
 
-        tic = time.perf_counter()
-        qtbm.run()
-        toc = time.perf_counter()
-
-        if comm.rank == 0:
-            typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
+    if comm.rank == 0:
+        typer.secho(f"Leaving QTBM after: {(toc - tic):.2f} s")
 
 
 def _run_negf(config):
@@ -87,20 +81,35 @@ def _run_negf(config):
 
     from quatrex.core.scba import SCBA
 
-    with threadpool_limits(
-        limits=config.compute.blas_num_threads,
-        user_api=config.compute.threadpool_api,
-    ):
-        pprint(threadpool_info()) if comm.rank == 0 else None
+    scba = SCBA(config)
 
-        scba = SCBA(config)
+    tic = time.perf_counter()
+    scba.run()
+    toc = time.perf_counter()
 
-        tic = time.perf_counter()
-        scba.run()
-        toc = time.perf_counter()
+    if comm.rank == 0:
+        typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
 
-        if comm.rank == 0:
-            typer.secho(f"Leaving SCBA after: {(toc - tic):.2f} s")
+
+def _run_scsp(config):
+    """Runs the self-consistent Schrödinger-Poisson solver.
+
+    Parameters
+    ----------
+    config : QuatrexConfig
+        The main quatrex configuration.
+
+    """
+    from quatrex.core.scsp import SCSP
+
+    scsp = SCSP(config)
+
+    tic = time.perf_counter()
+    scsp.run()
+    toc = time.perf_counter()
+
+    if comm.rank == 0:
+        typer.secho(f"Leaving SCSP after: {(toc - tic):.2f} s")
 
 
 def _resolve_config_path(
@@ -215,21 +224,75 @@ def run(
         secho_header()
 
         # Dispatch to the appropriate runner based on the formalism.
-        if config.formalism == "wf":
-            _run_wf(config)
-        elif config.formalism == "negf":
-            _run_negf(config)
-        else:
-            raise NotImplementedError(
-                f"Formalism '{config.formalism}' is not implemented."
-            )
+        with threadpool_limits(
+            limits=config.compute.blas_num_threads,
+            user_api=config.compute.threadpool_api,
+        ):
+            pprint(threadpool_info()) if comm.rank == 0 else None
+
+            if config.scsp is not None:
+                _run_scsp(config)
+            elif config.formalism == "wf":
+                _run_wf(config)
+            elif config.formalism == "negf":
+                _run_negf(config)
+            else:
+                raise NotImplementedError(
+                    f"Formalism '{config.formalism}' is not implemented."
+                )
 
         if config.outputs.save_profiling_results:
             profiler.dump_stats()
+
     except Exception as e:
         if abort_on_exception:
             _abort_quatrex(e)
         raise
+
+
+@quatrex_cli.command()
+def mesh(
+    config: Annotated[
+        Path,
+        typer.Argument(
+            ...,
+            help="Path to the quatrex TOML configuration file.",
+            dir_okay=True,
+            resolve_path=True,
+            exists=True,
+        ),
+    ],
+    off_screen: Annotated[
+        bool,
+        typer.Option(
+            "--off-screen",
+            is_flag=True,
+            help="Whether to use off-screen rendering.",
+        ),
+    ] = False,
+):
+    """Generates and visualizes the device mesh based on the provided configuration.
+
+    This can only be run on a single process.
+
+    """
+    # Check that we're running on a single process.
+    if comm.size > 1:
+        raise RuntimeError("The 'mesh' command can only be run on a single process.")
+
+    from quatrex.core.config import parse_config, setup_context
+
+    config = parse_config(config)
+    setup_context(config)
+
+    secho_header()
+
+    from quatrex.electrostatics.meshing import DeviceMesh
+
+    # Trigger mesh generation and visualization.
+    device_mesh = DeviceMesh(config)
+    device_mesh.generate_mesh()
+    device_mesh.visualize(off_screen=off_screen)
 
 
 @quatrex_cli.callback(no_args_is_help=True)

@@ -31,6 +31,8 @@ self_energy_density = true
 # numbers.
 save_profiling_results = true
 
+save_scba_variables = true
+
 
 [electron] # ===========================================================
 # 0.2 V Potential difference.
